@@ -122,8 +122,8 @@ test.describe("use-cache basic", () => {
     const res1 = await request.get(f.url("/use-cache-test/plain-data"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(typeof body1.data.ts).toBe("number");
-    expect(typeof body1.data.rand).toBe("number");
+    expect(typeof body1.ts).toBe("number");
+    expect(typeof body1.rand).toBe("number");
 
     // Small delay for async cache write
     await new Promise((r) => setTimeout(r, 200));
@@ -133,8 +133,8 @@ test.describe("use-cache basic", () => {
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
 
-    expect(body2.data.ts).toBe(body1.data.ts);
-    expect(body2.data.rand).toBe(body1.data.rand);
+    expect(body2.ts).toBe(body1.ts);
+    expect(body2.rand).toBe(body1.rand);
   });
 
   test("use cache functions are branded at runtime", async ({ request }) => {
@@ -143,9 +143,9 @@ test.describe("use-cache basic", () => {
     const body = await res.json();
 
     // File-level "use cache" function should be branded
-    expect(body.data.cachedFnBranded).toBe(true);
+    expect(body.cachedFnBranded).toBe(true);
     // Plain function should not be branded
-    expect(body.data.plainFnBranded).toBe(false);
+    expect(body.plainFnBranded).toBe(false);
   });
 
   test("cookies() throws inside a 'use cache' function", async ({
@@ -154,9 +154,9 @@ test.describe("use-cache basic", () => {
     const res = await request.get(f.url("/use-cache-test/guard-cookies"));
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
-    expect(body.data.message).toMatch(/cache key/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.message).toMatch(/cache key/i);
   });
 
   test("headers() throws inside a 'use cache' function", async ({
@@ -166,8 +166,8 @@ test.describe("use-cache basic", () => {
     expect(res.status()).toBe(200);
     const body = await res.json();
 
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
   test("cookies() throws inside a no-argument 'use cache' function", async ({
@@ -178,8 +178,8 @@ test.describe("use-cache basic", () => {
     );
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/cookies\(\) cannot be called inside/i);
   });
 
   test("headers() throws inside a no-argument 'use cache' function", async ({
@@ -190,8 +190,8 @@ test.describe("use-cache basic", () => {
     );
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
   test("ctx.set() throws inside a 'use cache' function", async ({ page }) => {
@@ -308,7 +308,7 @@ test.describe("use-cache basic", () => {
     const res1 = await request.get(f.url("/use-cache-test/json-cached/1"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(body1.data.id).toBe("1");
+    expect(body1.id).toBe("1");
 
     // Small delay for async cache write
     await new Promise((r) => setTimeout(r, 200));
@@ -317,15 +317,15 @@ test.describe("use-cache basic", () => {
     const res2 = await request.get(f.url("/use-cache-test/json-cached/1"));
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    expect(body2.data.ts).toBe(body1.data.ts);
-    expect(body2.data.rand).toBe(body1.data.rand);
+    expect(body2.ts).toBe(body1.ts);
+    expect(body2.rand).toBe(body1.rand);
 
     // Different id — cache miss, different entry
     const res3 = await request.get(f.url("/use-cache-test/json-cached/2"));
     expect(res3.status()).toBe(200);
     const body3 = await res3.json();
-    expect(body3.data.id).toBe("2");
-    expect(body3.data.ts).not.toBe(body1.data.ts);
+    expect(body3.id).toBe("2");
+    expect(body3.ts).not.toBe(body1.ts);
   });
 });
 
@@ -425,8 +425,8 @@ test.describe("use-cache basic (production)", () => {
     const res1 = await request.get(f.url("/use-cache-test/plain-data"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(typeof body1.data.ts).toBe("number");
-    expect(typeof body1.data.rand).toBe("number");
+    expect(typeof body1.ts).toBe("number");
+    expect(typeof body1.rand).toBe("number");
 
     await new Promise((r) => setTimeout(r, 200));
 
@@ -434,8 +434,8 @@ test.describe("use-cache basic (production)", () => {
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
 
-    expect(body2.data.ts).toBe(body1.data.ts);
-    expect(body2.data.rand).toBe(body1.data.rand);
+    expect(body2.ts).toBe(body1.ts);
+    expect(body2.rand).toBe(body1.rand);
   });
 
   test("use cache functions are branded at runtime", async ({ request }) => {
@@ -443,8 +443,8 @@ test.describe("use-cache basic (production)", () => {
     expect(res.status()).toBe(200);
     const body = await res.json();
 
-    expect(body.data.cachedFnBranded).toBe(true);
-    expect(body.data.plainFnBranded).toBe(false);
+    expect(body.cachedFnBranded).toBe(true);
+    expect(body.plainFnBranded).toBe(false);
   });
 
   test("cookies() throws inside a 'use cache' function", async ({
@@ -453,9 +453,9 @@ test.describe("use-cache basic (production)", () => {
     const res = await request.get(f.url("/use-cache-test/guard-cookies"));
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
-    expect(body.data.message).toMatch(/cache key/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.message).toMatch(/cache key/i);
   });
 
   test("headers() throws inside a 'use cache' function", async ({
@@ -465,8 +465,8 @@ test.describe("use-cache basic (production)", () => {
     expect(res.status()).toBe(200);
     const body = await res.json();
 
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
   test("cookies() throws inside a no-argument 'use cache' function", async ({
@@ -477,8 +477,8 @@ test.describe("use-cache basic (production)", () => {
     );
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/cookies\(\) cannot be called inside/i);
   });
 
   test("headers() throws inside a no-argument 'use cache' function", async ({
@@ -489,8 +489,8 @@ test.describe("use-cache basic (production)", () => {
     );
     expect(res.status()).toBe(200);
     const body = await res.json();
-    expect(body.data.threw).toBe(true);
-    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+    expect(body.threw).toBe(true);
+    expect(body.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
   test("ctx.set() throws inside a 'use cache' function", async ({ page }) => {
@@ -596,20 +596,20 @@ test.describe("use-cache basic (production)", () => {
     const res1 = await request.get(f.url("/use-cache-test/json-cached/1"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(body1.data.id).toBe("1");
+    expect(body1.id).toBe("1");
 
     await new Promise((r) => setTimeout(r, 200));
 
     const res2 = await request.get(f.url("/use-cache-test/json-cached/1"));
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    expect(body2.data.ts).toBe(body1.data.ts);
-    expect(body2.data.rand).toBe(body1.data.rand);
+    expect(body2.ts).toBe(body1.ts);
+    expect(body2.rand).toBe(body1.rand);
 
     const res3 = await request.get(f.url("/use-cache-test/json-cached/2"));
     expect(res3.status()).toBe(200);
     const body3 = await res3.json();
-    expect(body3.data.id).toBe("2");
-    expect(body3.data.ts).not.toBe(body1.data.ts);
+    expect(body3.id).toBe("2");
+    expect(body3.ts).not.toBe(body1.ts);
   });
 });

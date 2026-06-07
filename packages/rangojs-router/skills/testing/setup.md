@@ -86,7 +86,7 @@ describe("api", () => {
   it("serializes a JSON response route", async () => {
     const res = await dispatch(router, { request: "/health" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ data: { status: "ok" } });
+    expect(await res.json()).toEqual({ status: "ok" });
   });
 });
 ```

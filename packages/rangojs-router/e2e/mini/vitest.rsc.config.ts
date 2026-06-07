@@ -18,5 +18,10 @@ export default defineConfig({
     exclude: ["node_modules", "dist"],
     pool: "forks",
     execArgv: ["--conditions=react-server"],
+    // @rangojs/router ships as TS source; force Vite (not Node) to transpile it
+    // so an installed consumer on Node >= 23 does not hit type-stripping errors.
+    // No-op in this monorepo (workspace symlink resolves outside node_modules).
+    // Mirrors rangoInlineDeps from @rangojs/router/testing/vitest.
+    server: { deps: { inline: [/@rangojs[/\\]router/] } },
   },
 });

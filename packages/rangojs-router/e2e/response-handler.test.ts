@@ -64,8 +64,8 @@ test.describe("response-handler", () => {
       expect(res.headers()["content-type"]).toContain("application/json");
       expect(res.headers()["x-api-version"]).toBe("v2");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
-      expect(body.data.version).toBe(2);
+      expect(body.source).toBe("json");
+      expect(body.version).toBe(2);
     });
 
     test("text handler can set custom headers via ctx.header()", async ({
@@ -122,8 +122,8 @@ test.describe("response-handler", () => {
       expect(res.status()).toBe(200);
       const body = await res.json();
       // Handler reads variables set by both middleware layers
-      expect(body.data.outer).toBe("outer-value");
-      expect(body.data.inner).toBe("inner-saw-outer-value");
+      expect(body.outer).toBe("outer-value");
+      expect(body.inner).toBe("inner-saw-outer-value");
     });
 
     test("both middleware headers are present on the response", async ({
@@ -173,7 +173,7 @@ test.describe("response-handler", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json-in-layout");
+      expect(body.source).toBe("json-in-layout");
     });
 
     test("path.md() inside layout returns markdown (layout is skipped)", async ({
@@ -258,8 +258,8 @@ test.describe("response-handler (production)", () => {
       expect(res.headers()["content-type"]).toContain("application/json");
       expect(res.headers()["x-api-version"]).toBe("v2");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
-      expect(body.data.version).toBe(2);
+      expect(body.source).toBe("json");
+      expect(body.version).toBe(2);
     });
 
     test("text handler can set custom headers via ctx.header()", async ({
@@ -317,8 +317,8 @@ test.describe("response-handler (production)", () => {
       const res = await request.get(fBuild.url("/response-mw/nested"));
       expect(res.status()).toBe(200);
       const body = await res.json();
-      expect(body.data.outer).toBe("outer-value");
-      expect(body.data.inner).toBe("inner-saw-outer-value");
+      expect(body.outer).toBe("outer-value");
+      expect(body.inner).toBe("inner-saw-outer-value");
     });
 
     test("both middleware headers are present on the response", async ({
@@ -367,7 +367,7 @@ test.describe("response-handler (production)", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json-in-layout");
+      expect(body.source).toBe("json-in-layout");
     });
 
     test("path.md() inside layout returns markdown (layout is skipped)", async ({

@@ -158,24 +158,24 @@ path.json("/products/:id", (ctx) => {
 });
 ```
 
-### JSON response envelope
+### JSON response body shape
 
-JSON response routes (`path.json`, `urls.json`) wrap results in a discriminated union envelope:
+JSON response routes (`path.json`, `urls.json`) serialize the handler's return value **directly** -- success bodies are the bare value, with no wrapper.
+
+Success: the bare `T` (whatever the handler returned), `Content-Type: application/json;charset=utf-8`, 200 status.
+
+Error: an [RFC 9457 problem+json](https://www.rfc-editor.org/rfc/rfc9457) object, `Content-Type: application/problem+json;charset=utf-8`, with the thrown error's HTTP status:
 
 ```typescript
-type ResponseEnvelope<T> =
-  | { data: T; error?: undefined }
-  | { data?: undefined; error: ResponseError };
-
-interface ResponseError {
-  message: string;
-  code?: string;
-  type?: string;
+interface ProblemDetails {
+  type?: string; // omitted this phase (RFC 9457: an absent type means "about:blank")
+  title: string; // HTTP status phrase, e.g. "Not Found"
+  status: number; // HTTP status code
+  detail: string; // human-readable message
+  code: string; // RouterError.code, else "INTERNAL"
   stack?: string; // dev only
 }
 ```
-
-Success: `{ data: T }`. Error: `{ error: { message, code?, type? } }` with appropriate HTTP status.
 
 Errors are handled automatically -- handlers throw `RouterError` for structured errors:
 
@@ -185,30 +185,36 @@ path.json("/products/:id", (ctx) => {
   if (!product) {
     throw new RouterError("NOT_FOUND", "Product not found", { status: 404 });
   }
-  return product; // wrapped as { data: product }
+  return product; // serialized directly as the bare product object
 });
-// On throw: { error: { message: "Product not found", code: "NOT_FOUND" } } with 404 status
+// On throw, application/problem+json with 404 status:
+// {
+//   "title": "Not Found",
+//   "status": 404,
+//   "detail": "Product not found",
+//   "code": "NOT_FOUND"
+// }
 ```
 
-`RouterError` messages are always exposed (developer-crafted). Generic `Error` messages are hidden in production (`"Internal Server Error"`).
+`RouterError` messages are always exposed (developer-crafted) in `detail`. Generic `Error` messages are hidden in production (`detail: "Internal Server Error"`, `code: "INTERNAL"`).
 
 Non-JSON response routes also catch errors and return plain text `Response` with the appropriate status code.
 
-### Client-side type guard
+### Client-side error handling
 
-`isResponseError<T>()` narrows a `ResponseEnvelope<T>` to the error branch:
+A JSON response route returns the bare value on success and a problem+json body on error. Branch on the HTTP status (or `Content-Type`) to tell them apart:
 
 ```typescript
-import { isResponseError, type ResponseEnvelope } from "@rangojs/router/client";
+import { type ProblemDetails } from "@rangojs/router/client";
 
-const result: ResponseEnvelope<Product> = await fetch(url).then((r) =>
-  r.json(),
-);
-if (isResponseError(result)) {
-  console.log(result.error.message, result.error.code);
+const res = await fetch(url);
+if (!res.ok) {
+  const problem: ProblemDetails = await res.json();
+  console.log(problem.detail, problem.code);
   return;
 }
-result.data.name; // fully typed as Product
+const product: Product = await res.json();
+product.name; // fully typed as Product
 ```
 
 ### Typed response lookup
@@ -221,11 +227,11 @@ Two mechanisms for extracting response types at the type level:
 ```typescript
 // Scoped (from UrlPatterns)
 type Health = RouteResponse<typeof apiPatterns, "health">;
-// ResponseEnvelope<{ status: string; timestamp: number }>
+// { status: string; timestamp: number }
 
 // Global (from RegisteredRoutes after createRouter().routes())
 type Health = PathResponse<"/api/health">;
-// ResponseEnvelope<{ status: string; timestamp: number }>
+// { status: string; timestamp: number }
 ```
 
 ### TypeScript constraints
@@ -604,16 +610,16 @@ For the case where a developer uses plain `href()` instead of `href.json()` on a
 
 ## What Changes
 
-| File                         | Change                                                                                                                                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/urls.ts`                | Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, add `.json`/`.text`/`.html`/`.xml`/`.image`/`.stream`/`.any` tag functions to `path`, `ResponseEnvelope`/`ResponseError` types, `RouterError` error class |
-| `src/server/context.ts`      | Add `responseType` field to route `EntryData`                                                                                                                                                           |
-| `src/types.ts`               | Add `responseType` to `RouteMatchResult` so trie match carries it                                                                                                                                       |
-| `src/router/match-api.ts`    | Extend `previewMatch()` to return `responseType` + handler                                                                                                                                              |
-| `src/rsc/handler.ts`         | Add short-circuit in `coreRequestHandler()` before RSC pipeline, JSON envelope wrapping, error handling for all response routes                                                                         |
-| `src/href-client.ts`         | Add `.json`/`.text`/`.html`/`.xml`/`.stream`/`.any` tag functions to `href` (return `{ to, data-external }`), `PathResponse` type                                                                       |
-| `src/client.tsx`             | Export `ResponseEnvelope`, `ResponseError`, `PathResponse`, `isResponseError()` type guard                                                                                                              |
-| `src/browser/react/Link.tsx` | No change needed -- `data-external` already works                                                                                                                                                       |
+| File                         | Change                                                                                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/urls.ts`                | Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, add `.json`/`.text`/`.html`/`.xml`/`.image`/`.stream`/`.any` tag functions to `path`, `ProblemDetails` type, `RouterError` error class |
+| `src/server/context.ts`      | Add `responseType` field to route `EntryData`                                                                                                                                        |
+| `src/types.ts`               | Add `responseType` to `RouteMatchResult` so trie match carries it                                                                                                                    |
+| `src/router/match-api.ts`    | Extend `previewMatch()` to return `responseType` + handler                                                                                                                           |
+| `src/rsc/handler.ts`         | Add short-circuit in `coreRequestHandler()` before RSC pipeline, bare-value JSON serialization, problem+json error handling for all response routes                                  |
+| `src/href-client.ts`         | Add `.json`/`.text`/`.html`/`.xml`/`.stream`/`.any` tag functions to `href` (return `{ to, data-external }`), `PathResponse` type                                                    |
+| `src/client.tsx`             | Export `ProblemDetails`, `PathResponse`                                                                                                                                              |
+| `src/browser/react/Link.tsx` | No change needed -- `data-external` already works                                                                                                                                    |
 
 ## What Doesn't Change
 
@@ -663,7 +669,7 @@ include("/api", apiPatterns, { name: "api" });
    - `path.json()`, `path.text()`, `path.html()`, `path.xml()`, `path.image()`, `path.stream()`, `path.any()` with `ResponseHandler` type
    - `urls.json()`, `urls.text()`, `urls.html()`, `urls.xml()`, `urls.stream()`, `urls.any()` with `ResponsePathHelpers`
    - `ResponseHandlerContext` (lighter, with env bindings extraction, searchParams, url, pathname)
-   - `ResponseEnvelope<T>`, `ResponseError`, `RouteResponse` types
+   - `ProblemDetails`, `RouteResponse` types
    - `RouterError` class for structured error throwing
 
 2. **Add `responseType` to `EntryData`** (`server/context.ts`)
@@ -678,7 +684,7 @@ include("/api", apiPatterns, { name: "api" });
 
 5. **Add short-circuit in `coreRequestHandler()`** (`rsc/handler.ts`)
    - After `previewMatch()`: if `responseType`, call handler directly, skip RSC pipeline
-   - JSON routes: try/catch with `{ data }` / `{ error }` envelope wrapping
+   - JSON routes: try/catch -- success serializes the bare value, error serializes a problem+json body
    - Non-JSON routes: try/catch with plain text error Response
    - `RouterError` messages always exposed; generic `Error` hidden in production
    - Still run app + route middleware

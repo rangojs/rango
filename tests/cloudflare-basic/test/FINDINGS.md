@@ -124,7 +124,8 @@ app. The working setup (now the preset) is:
   short-circuit, Set-Cookie merge, ordering. Required extracting the inline route
   middleware to an export; see `src/middleware/cookie-overlay.ts`.
 - `dispatch` against an importable, Prerender-free response-route router (real
-  handlers): JSON envelope, params, thrown `RouterError` → typed 404 envelope, 404.
+  handlers): bare JSON value, params, thrown `RouterError` → 404 RFC 9457
+  problem+json, 404.
 - `renderRoute` against real `"use client"` components (useParams / useReverse /
   Link / client navigate()).
 - `renderToFlightString` against pure leaf server components (real Flight wire +

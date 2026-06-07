@@ -152,8 +152,8 @@ test.describe("unnamed routes", () => {
     expect(res.headers()["content-type"]).toContain("application/json");
 
     const body = await res.json();
-    expect(body.data.index).toBe("/");
-    expect(body.data["blog.index"]).toBe("/blog");
+    expect(body.index).toBe("/");
+    expect(body["blog.index"]).toBe("/blog");
   });
 });
 
@@ -175,7 +175,7 @@ test.describe("unnamed routes (production)", () => {
     expect(res.headers()["content-type"]).toContain("application/json");
 
     const body = await res.json();
-    expect(body.data.index).toBe("/");
-    expect(body.data["blog.index"]).toBe("/blog");
+    expect(body.index).toBe("/");
+    expect(body["blog.index"]).toBe("/blog");
   });
 });

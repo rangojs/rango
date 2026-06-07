@@ -95,14 +95,14 @@ test.describe.serial("basename-hmr", () => {
     await expect(testId(page, "blog-index-page")).toBeVisible();
 
     // Verify reverse map has correct patterns (no basename prefix)
-    // path.json wraps response in { data: ... }
+    // path.json returns the bare value
     const reverseResponse = await page.request.get(
       f.url("/__debug/reverse-test?name=blog.index&name=blog.post"),
     );
     expect(reverseResponse.status()).toBe(200);
     const reverseBody = await reverseResponse.json();
-    expect(reverseBody.data["blog.index"]).toBe("/blog");
-    expect(reverseBody.data["blog.post"]).toBe("/blog/:postId");
+    expect(reverseBody["blog.index"]).toBe("/blog");
+    expect(reverseBody["blog.post"]).toBe("/blog/:postId");
 
     // ── Step 2: Add basename to router config ──
 
@@ -151,7 +151,7 @@ test.describe.serial("basename-hmr", () => {
     );
     expect(reverseAfter.status()).toBe(200);
     const reverseAfterBody = await reverseAfter.json();
-    expect(reverseAfterBody.data["blog.index"]).toBe("/app/blog");
-    expect(reverseAfterBody.data["blog.post"]).toBe("/app/blog/:postId");
+    expect(reverseAfterBody["blog.index"]).toBe("/app/blog");
+    expect(reverseAfterBody["blog.post"]).toBe("/app/blog/:postId");
   });
 });

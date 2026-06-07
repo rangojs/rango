@@ -37,8 +37,13 @@ import type { CacheProfile } from "../cache/profile-registry.js";
  * Options for runMiddleware.
  */
 export interface RunMiddlewareOptions<TEnv = any> {
-  /** The request the chain runs under: a `Request`, or a URL string (absolute or path). */
-  request: Request | string;
+  /**
+   * The request the chain runs under: a `Request`, or a URL string (absolute or
+   * path). Optional for parity with `runLoader`/`runInRequestContext` — when
+   * omitted it defaults to `http://localhost/`. Pass it for path-, header-, or
+   * cookie-driven middleware.
+   */
+  request?: Request | string;
   /** Environment bindings surfaced as `ctx.env`. */
   env?: TEnv;
   /** Route params surfaced as `ctx.params`. */

@@ -133,7 +133,7 @@ declare global {
 
 `RegisteredRoutes` is what exposes the richer routeMap entries containing
 response payload metadata. Without it, URL-pattern response lookup has paths but
-no payloads, so response types resolve to `ResponseEnvelope<never>`.
+no payloads, so response types resolve to `never`.
 
 ## How It Works
 

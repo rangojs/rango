@@ -415,29 +415,10 @@ export {
 // href-client.ts) — no import needed.
 export { href, type PatternToPath } from "./href-client.js";
 
-// Response envelope types for consuming JSON response routes
-export type { ResponseEnvelope, ResponseError } from "./urls.js";
-
-/**
- * Type guard for checking if a response envelope contains an error.
- *
- * @example
- * ```typescript
- * const result: ResponseEnvelope<Product> = await fetch(url).then(r => r.json());
- * if (isResponseError(result)) {
- *   console.log(result.error.message, result.error.code);
- *   return;
- * }
- * result.data // fully typed as Product
- * ```
- */
-export function isResponseError<T>(
-  result: import("./urls.js").ResponseEnvelope<T>,
-): result is import("./urls.js").ResponseEnvelope<T> & {
-  error: import("./urls.js").ResponseError;
-} {
-  return result.error !== undefined;
-}
+// Problem Details (RFC 9457) error body type for consuming JSON response routes.
+// On a non-2xx response, `await res.json()` yields this shape; on success the
+// body is the bare value (no envelope). Discriminate on `res.ok` / status.
+export type { ProblemDetails } from "./urls.js";
 
 // Mount context for include() scoped components
 export { useMount } from "./browser/react/use-mount.js";

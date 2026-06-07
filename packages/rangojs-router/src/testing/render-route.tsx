@@ -154,6 +154,10 @@ export interface RenderRouteOptions {
    * Passing `[loader, data]` pairs lets renderRoute assign a synthetic stable id
    * and wire `useLoader` to it. Prefer this over `loaderData` for real handles.
    *
+   * NOTE: when a real handle has no `$$id`, renderRoute MUTATES it to assign a
+   * synthetic stable id (so repeat renders key consistently). This is a side
+   * effect on your input object; a handle reused across tests keeps that id.
+   *
    * @example
    * renderRoute([{ path: "/cart", Component: CartBadge }], {
    *   loaders: [[CartLoader, { itemCount: 3, total: 89.97 }]],
@@ -501,6 +505,10 @@ export async function renderRoute(
   // re-render. No server fetch — only routes passed to renderRoute exist. The
   // store update is flushed inside act() so React commits before callers
   // assert, mirroring how a real navigation lands a single payload swap.
+  // NOTE: the seeded `loaderData` is reused for the target route too (no
+  // per-route loader fetch in a unit test), so every seeded loader stays
+  // available after navigate() — unlike a real navigation, which would fetch
+  // the target route's own loaders. This is a deliberate test-isolation design.
   const navigate = async (target: string): Promise<void> => {
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);

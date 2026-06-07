@@ -243,6 +243,11 @@ export function makeClientManifest(): unknown {
   );
 }
 
+// Module-level "init once" flag. Safe ONLY because the Flight test project runs
+// under `pool: "forks"` (see the shipped vitest.rsc.config.ts template): each
+// test FILE gets its own process, so the flag is fresh per file. Under
+// `pool: "threads"` (or any shared-worker pool) the loader would be installed
+// once and silently reused across files — keep the Flight project on `forks`.
 let loadInstalled = false;
 /**
  * Install the deserialize-side module loader. For the non-async manifest above,
@@ -263,6 +268,9 @@ function installDeserializeLoad(): void {
 }
 
 function stringToStream(text: string): ReadableStream<Uint8Array> {
+  // TextEncoder replaces invalid UTF-16 (unmatched surrogates) with U+FFFD. Flight
+  // strings come from the serializer, so this is not a concern in practice; a
+  // mangled input would surface downstream as a deserialize error, not here.
   const bytes = new TextEncoder().encode(text);
   return new ReadableStream({
     start(controller) {

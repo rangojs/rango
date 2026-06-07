@@ -43,7 +43,7 @@ function buildRouter() {
 }
 
 describe("dispatch", () => {
-  it("serializes a JSON response route (auto-wrapped under data)", async () => {
+  it("serializes a JSON response route (bare value, no envelope)", async () => {
     const router = buildRouter();
     const res = await dispatch(router, { request: "/api/data" });
 
@@ -51,7 +51,7 @@ describe("dispatch", () => {
     expect(res.headers.get("content-type")).toBe(
       "application/json;charset=utf-8",
     );
-    expect(await res.json()).toEqual({ data: { hello: "world" } });
+    expect(await res.json()).toEqual({ hello: "world" });
   });
 
   it("drains ctx.onResponse() callbacks like production finalization", async () => {
@@ -80,7 +80,7 @@ describe("dispatch", () => {
     const res = await dispatch(router, { request: "/api/hooked" });
     expect(res.status).toBe(201);
     expect(res.headers.get("x-on-response")).toBe("ran");
-    expect(await res.json()).toEqual({ data: { ok: true } });
+    expect(await res.json()).toEqual({ ok: true });
   });
 
   it("passes route params to a response-route handler", async () => {
@@ -88,7 +88,7 @@ describe("dispatch", () => {
     const res = await dispatch(router, { request: "/api/echo/42" });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ data: { id: "42" } });
+    expect(await res.json()).toEqual({ id: "42" });
   });
 
   it("serializes a text response route", async () => {
@@ -145,13 +145,11 @@ describe("dispatch", () => {
     ) as Parameters<typeof dispatch>[0];
 
     const res = await dispatch(router, { request: "/api/self/42" });
-    const body = (await res.json()) as {
-      data: { reversed?: string; error?: string };
-    };
+    const body = (await res.json()) as { reversed?: string; error?: string };
     // Pin the exact production behavior: with no explicit params the :id segment
     // is left unsubstituted (the raw pattern), NOT auto-filled from the request.
-    expect(body.data.reversed).toBe("/api/self/:id");
-    expect(body.data.error).toBeUndefined();
+    expect(body.reversed).toBe("/api/self/:id");
+    expect(body.error).toBeUndefined();
   });
 
   it("short-circuits a partial (_rsc_partial) request to X-RSC-Reload without running the handler", async () => {
@@ -270,7 +268,7 @@ describe("dispatch", () => {
     ) as Parameters<typeof dispatch>[0];
 
     const res = await dispatch(router, { request: "/api/probe" });
-    expect((await res.json()).data.hasStore).toBe(true);
+    expect((await res.json()).hasStore).toBe(true);
   });
 
   it("throws a clear error for an RSC (component) route", async () => {
@@ -322,7 +320,7 @@ describe("dispatch", () => {
     expect(ran).toBe(true);
     expect(res.status).toBe(200);
     expect(res.headers.get("X-Tag")).toBe("yes");
-    expect(await res.json()).toEqual({ data: { ok: true } });
+    expect(await res.json()).toEqual({ ok: true });
   });
 
   it("surfaces cookies set inside a response-route handler", async () => {
@@ -344,12 +342,144 @@ describe("dispatch", () => {
     expect(setCookie.some((c) => c.startsWith("session=tok"))).toBe(true);
   });
 
+  // A handler that returns a Response goes through the same rewrapResponse path
+  // as handleResponseRoute: stub headers/cookies merge, multiple Set-Cookie are
+  // preserved, the ctx.setStatus override wins, statusText is dropped, and a
+  // WebSocket-upgrade response is passed through WITHOUT reconstruction.
+  describe("handler-returned Response mirrors production rewrap", () => {
+    it("preserves multiple Set-Cookie headers (and drops statusText) on a returned Response", async () => {
+      // Combines the Set-Cookie preservation with a custom statusText so this is
+      // ALSO a regression guard for the statusText drop: pre-fix the generic
+      // re-wrap carried statusText through, post-fix rewrapHandlerResponse mirrors
+      // production and drops it.
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/multi",
+            () => {
+              const res = new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                statusText: "Custom",
+                headers: { "content-type": "application/json" },
+              });
+              res.headers.append("set-cookie", "a=1; Path=/");
+              res.headers.append("set-cookie", "b=2; Path=/");
+              return res;
+            },
+            { name: "api.multi" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/multi" });
+      expect(res.status).toBe(200);
+      expect(res.statusText).toBe("");
+      const cookies = res.headers.getSetCookie();
+      expect(cookies).toContain("a=1; Path=/");
+      expect(cookies).toContain("b=2; Path=/");
+      expect(await res.json()).toEqual({ ok: true });
+    });
+
+    it("drops statusText across the re-wrap (production parity)", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/oddstatus",
+            () =>
+              new Response("brewing", {
+                status: 299,
+                statusText: "Weird Status",
+              }),
+            { name: "api.oddstatus" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/oddstatus" });
+      expect(res.status).toBe(299);
+      // handleResponseRoute rebuilds the Response without carrying statusText.
+      expect(res.statusText).toBe("");
+      expect(await res.text()).toBe("brewing");
+    });
+
+    it("lets ctx.setStatus() override the returned Response's status", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/override",
+            () => {
+              getRequestContext().setStatus(202);
+              return new Response("queued", { status: 201 });
+            },
+            { name: "api.override" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/override" });
+      expect(res.status).toBe(202);
+      expect(await res.text()).toBe("queued");
+    });
+
+    it("merges ctx.header() stub headers onto a returned Response", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/stub",
+            (ctx: { header: (n: string, v: string) => void }) => {
+              ctx.header("X-Tag", "yes");
+              const res = new Response("ok", { status: 200 });
+              res.headers.set("X-Handler", "set");
+              return res;
+            },
+            { name: "api.stub" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/stub" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Tag")).toBe("yes");
+      expect(res.headers.get("X-Handler")).toBe("set");
+    });
+
+    it("passes a WebSocket-upgrade Response through without reconstruction", async () => {
+      // A WebSocket upgrade response carries a `webSocket` property (Cloudflare)
+      // and/or status 101 — which the Response constructor rejects. Production
+      // bypasses reconstruction via mergeStubHeadersAndFinalize; dispatch must
+      // too, or reconstruction would throw (101) / drop the socket. status 101
+      // cannot be built with `new Response` in a unit test, so this exercises the
+      // `webSocket`-property branch of isWebSocketUpgradeResponse — the SAME
+      // object must be returned (not rebuilt), so the property survives.
+      const socket = { kind: "fake-socket" };
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/ws",
+            () => {
+              const res = new Response(null, { status: 200 });
+              (res as unknown as { webSocket?: unknown }).webSocket = socket;
+              return res;
+            },
+            { name: "api.ws" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/ws" });
+      expect((res as unknown as { webSocket?: unknown }).webSocket).toBe(
+        socket,
+      );
+    });
+  });
+
   // Handler-error mapping mirrors handleResponseRoute's catch block:
-  // status is RouterError.status (else 500), json routes return a typed
-  // { error } envelope, other types return a text/plain message, and the
-  // dev/prod branch governs how much of a non-RouterError surfaces.
+  // status is RouterError.status (else 500), json routes return an RFC 9457
+  // problem+json body (application/problem+json), other types return a
+  // text/plain message, and the dev/prod branch governs how much of a
+  // non-RouterError surfaces.
   describe("handler errors mirror production response-route mapping", () => {
-    it("maps a thrown generic Error on a json route to a typed 500 (dev exposes message)", async () => {
+    it("maps a thrown generic Error on a json route to a problem+json 500 (dev exposes message)", async () => {
       const router = createRouter<{}>({}).routes(
         urls(({ path }) => [
           path.json(
@@ -365,14 +495,21 @@ describe("dispatch", () => {
       const res = await dispatch(router, { request: "/api/boom" });
       expect(res.status).toBe(500);
       expect(res.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8",
+        "application/problem+json;charset=utf-8",
       );
       // NODE_ENV is "test" under vitest, so the dev branch exposes the message.
       const body = await res.json();
-      expect(body.error.message).toBe("kaboom");
+      expect(body.detail).toBe("kaboom");
+      // Non-RouterError failures always carry the generic INTERNAL code and the
+      // status reason phrase as the problem title.
+      expect(body.code).toBe("INTERNAL");
+      expect(body.title).toBe("Internal Server Error");
+      expect(body.status).toBe(500);
+      // `type` is omitted this phase (RFC 9457 absent type === "about:blank").
+      expect(body.type).toBeUndefined();
     });
 
-    it("sanitizes a thrown generic Error on a json route to a 500 envelope in production", async () => {
+    it("sanitizes a thrown generic Error on a json route to a problem+json 500 in production", async () => {
       const prev = process.env.NODE_ENV;
       process.env.NODE_ENV = "production";
       try {
@@ -391,17 +528,18 @@ describe("dispatch", () => {
         const res = await dispatch(router, { request: "/api/boom" });
         expect(res.status).toBe(500);
         expect(res.headers.get("content-type")).toBe(
-          "application/json;charset=utf-8",
+          "application/problem+json;charset=utf-8",
         );
         const body = await res.json();
-        expect(body.error.message).toBe("Internal Server Error");
-        expect(body.error.stack).toBeUndefined();
+        expect(body.detail).toBe("Internal Server Error");
+        expect(body.code).toBe("INTERNAL");
+        expect(body.stack).toBeUndefined();
       } finally {
         process.env.NODE_ENV = prev;
       }
     });
 
-    it("maps a thrown RouterError to its status with code/type exposed", async () => {
+    it("maps a thrown RouterError to its status with code/detail exposed", async () => {
       const router = createRouter<{}>({}).routes(
         urls(({ path }) => [
           path.json(
@@ -409,7 +547,6 @@ describe("dispatch", () => {
             () => {
               throw new RouterError("NOT_FOUND", "Item not found", {
                 status: 404,
-                type: "https://errors/not-found",
               });
             },
             { name: "api.missing" },
@@ -420,12 +557,45 @@ describe("dispatch", () => {
       const res = await dispatch(router, { request: "/api/missing" });
       expect(res.status).toBe(404);
       expect(res.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8",
+        "application/problem+json;charset=utf-8",
       );
       const body = await res.json();
-      expect(body.error.message).toBe("Item not found");
-      expect(body.error.code).toBe("NOT_FOUND");
-      expect(body.error.type).toBe("https://errors/not-found");
+      expect(body.detail).toBe("Item not found");
+      expect(body.code).toBe("NOT_FOUND");
+      expect(body.title).toBe("Not Found");
+      expect(body.status).toBe(404);
+      // `type` is omitted this phase (RouterError no longer carries one).
+      expect(body.type).toBeUndefined();
+    });
+
+    it("resolves the effective ctx.setStatus() status into the problem body (production parity)", async () => {
+      // Production resolves the effective status (ctx.res.status override) BEFORE
+      // building the problem body, so a handler that setStatus(400) then throws a
+      // plain Error yields a body whose status/title say 400 — not the derived
+      // 500. dispatch mirrors handleResponseRoute's catch resolution.
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/bad",
+            () => {
+              getRequestContext().setStatus(400);
+              throw new Error("bad input");
+            },
+            { name: "api.bad" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/bad" });
+      expect(res.status).toBe(400);
+      expect(res.headers.get("content-type")).toBe(
+        "application/problem+json;charset=utf-8",
+      );
+      const body = await res.json();
+      expect(body.status).toBe(400);
+      expect(body.title).toBe("Bad Request");
+      expect(body.code).toBe("INTERNAL");
+      expect(body.detail).toBe("bad input");
     });
 
     it("maps a thrown error on a text route to a text/plain 500 (dev message)", async () => {
@@ -526,7 +696,7 @@ describe("dispatch", () => {
         "application/json;charset=utf-8",
       );
       expect(res.headers.get("Vary")).toBe("Accept");
-      expect(await res.json()).toEqual({ data: { shape: "json" } });
+      expect(await res.json()).toEqual({ shape: "json" });
     });
 
     it("appends Vary: Accept on a negotiated text variant", async () => {
@@ -553,7 +723,7 @@ describe("dispatch", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get("Vary")).toBeNull();
-      expect(await res.json()).toEqual({ data: { shape: "json" } });
+      expect(await res.json()).toEqual({ shape: "json" });
     });
   });
 });

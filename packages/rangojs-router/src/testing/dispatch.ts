@@ -13,12 +13,14 @@
  * - Trailing-slash and other findMatch() redirects   -> 308 with Location
  * - Unmatched paths                                  -> 404 Response
  * - Response routes (non-RSC)                         -> serialized Response
- *   - json:           JSON.stringify({ data }) with application/json
+ *   - json:           JSON.stringify(result) (bare value) with application/json
  *   - text/html/xml/md: String(result) with the mapped MIME type
- *   - handler returning a Response:                     passed through
+ *   - handler returning a Response:                     re-wrapped like
+ *     handleResponseRoute (stub headers/cookies merged, Set-Cookie preserved,
+ *     WebSocket upgrade passed through without reconstruction)
  *   - handler throwing an error:                        typed 500 / RouterError
- *     status, matching handleResponseRoute (JSON error envelope for json
- *     routes, text/plain message otherwise)
+ *     status, matching handleResponseRoute (RFC 9457 problem+json body with
+ *     application/problem+json for json routes, text/plain message otherwise)
  *   - content-negotiated route:                         Vary: Accept appended
  * - Global middleware (router.use(...)) AND route-level middleware, with full
  *   next()/short-circuit/throw-Response/header+cookie-merge fidelity.
@@ -63,8 +65,11 @@ import type { CacheProfile } from "../cache/profile-registry.js";
 import { setRouterManifest } from "../route-map-builder.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { RouterError } from "../errors.js";
-import { createResponseErrorPayload } from "../rsc/response-error.js";
-import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
+import { createProblemDetails } from "../rsc/response-error.js";
+import {
+  createResponseWithMergedHeaders,
+  mergeStubHeadersAndFinalize,
+} from "../rsc/helpers.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import type { Rango } from "../router/router-interfaces.js";
 
@@ -126,20 +131,22 @@ function toRequest(request: Request | string): Request {
 }
 
 /**
- * Serialize a response-route handler result, mirroring the router's
- * handleResponseRoute() contract:
- * - a returned Response is passed through unchanged,
- * - "json" wraps the value as JSON.stringify({ data }) with application/json,
+ * Serialize a NON-Response response-route handler result, mirroring the
+ * router's handleResponseRoute() contract:
+ * - "json" serializes the value verbatim (bare) with application/json,
  * - text/html/xml/md stringify with the mapped MIME type.
+ *
+ * A handler-returned Response is NOT routed here — callHandler re-wraps it via
+ * rewrapHandlerResponse (mirroring handleResponseRoute's rewrapResponse) so the
+ * WebSocket-upgrade bypass and Set-Cookie-preserving header merge match
+ * production.
  */
 function serializeResponseRouteResult(
   result: unknown,
   responseType: string,
 ): Response {
-  if (result instanceof Response) return result;
-
   if (responseType === "json") {
-    return new Response(JSON.stringify({ data: result }), {
+    return new Response(JSON.stringify(result), {
       status: 200,
       headers: { "content-type": "application/json;charset=utf-8" },
     });
@@ -164,27 +171,28 @@ function serializeResponseRouteResult(
 /**
  * Serialize a thrown handler error into the same typed Response the router's
  * handleResponseRoute() catch block produces:
- * - status is the RouterError.status, else 500,
- * - "json" routes return { error: <createResponseErrorPayload> } as JSON,
+ * - "json" routes return an RFC 9457 problem+json body (application/problem+json),
  * - all other types return a text/plain body (the RouterError message verbatim,
  *   the Error message in dev, else "Internal Server Error").
  *
- * Reuses the production createResponseErrorPayload so the JSON error envelope
- * is byte-identical rather than re-derived.
+ * `status` is the effective HTTP status resolved by the caller (RouterError.status
+ * or 500, overridden by ctx.setStatus()); it governs both the HTTP status and the
+ * problem body's `status`/`title` members. Reuses the production
+ * createProblemDetails so the error body is byte-identical rather than re-derived.
  */
 function serializeResponseRouteError(
   error: unknown,
   responseType: string,
+  status: number,
 ): Response {
   const isDev = process.env.NODE_ENV !== "production";
-  const status = error instanceof RouterError ? error.status : 500;
 
   if (responseType === "json") {
     return new Response(
-      JSON.stringify({ error: createResponseErrorPayload(error, isDev) }),
+      JSON.stringify(createProblemDetails(error, status, isDev)),
       {
         status,
-        headers: { "content-type": "application/json;charset=utf-8" },
+        headers: { "content-type": "application/problem+json;charset=utf-8" },
       },
     );
   }
@@ -202,6 +210,40 @@ function serializeResponseRouteError(
 }
 
 /**
+ * Re-wrap a handler-returned Response, byte-identical to handleResponseRoute's
+ * rewrapResponse:
+ * - A WebSocket upgrade (status 101 or a `webSocket` property) is returned via
+ *   mergeStubHeadersAndFinalize WITHOUT reconstruction — the Response
+ *   constructor rejects status 101, and an upgrade response's headers/socket
+ *   must not be rebuilt.
+ * - Otherwise headers are copied into a fresh Headers (Set-Cookie appended to
+ *   preserve duplicates, others set) and the Response is rebuilt through
+ *   createResponseWithMergedHeaders so stub headers/cookies, the ctx.setStatus
+ *   override, and onResponse callbacks merge exactly as in production. statusText
+ *   is intentionally dropped (production does not carry it across the re-wrap).
+ *
+ * Must run inside runWithRequestContext (reads the ambient request context via
+ * the helpers), which callHandler guarantees.
+ */
+function rewrapHandlerResponse(result: Response): Response {
+  if (isWebSocketUpgradeResponse(result)) {
+    return mergeStubHeadersAndFinalize(result);
+  }
+  const headers = new Headers();
+  result.headers.forEach((value, key) => {
+    if (key.toLowerCase() === "set-cookie") {
+      headers.append(key, value);
+    } else {
+      headers.set(key, value);
+    }
+  });
+  return createResponseWithMergedHeaders(result.body, {
+    status: result.status,
+    headers,
+  });
+}
+
+/**
  * Run a request through the router in-process and return the Response.
  *
  * @example
@@ -212,7 +254,7 @@ function serializeResponseRouteError(
  *
  * const res = await dispatch(router, { request: "/api/health" });
  * expect(res.status).toBe(200);
- * expect(await res.json()).toEqual({ data: { ok: true } });
+ * expect(await res.json()).toEqual({ ok: true });
  * ```
  */
 export async function dispatch<TEnv = any>(
@@ -369,28 +411,52 @@ export async function dispatch<TEnv = any>(
     (responseHandlerCtx as Record<symbol, unknown>)[NOCACHE_SYMBOL] = true;
 
     const callHandler = async (): Promise<Response> => {
-      let serialized: Response;
+      let merged: Response;
       try {
         const result = await (handler as Function)(responseHandlerCtx);
-        serialized = serializeResponseRouteResult(result, responseType);
+        if (result instanceof Response) {
+          // Handler returned a Response: mirror handleResponseRoute's
+          // rewrapResponse (WebSocket-upgrade bypass + Set-Cookie-preserving
+          // header rebuild, statusText dropped) rather than the generic
+          // createResponseWithMergedHeaders re-wrap below.
+          merged = rewrapHandlerResponse(result);
+        } else {
+          // Route the serialized (json/text/...) body through the SAME
+          // production finalizer the RSC handler uses, so ctx.onResponse()
+          // callbacks fire and stub headers/cookies + the ctx.setStatus
+          // override merge identically to production. Runs inside
+          // runWithRequestContext, so _getRequestContext() resolves here.
+          const serialized = serializeResponseRouteResult(result, responseType);
+          merged = createResponseWithMergedHeaders(serialized.body, {
+            status: serialized.status,
+            headers: serialized.headers,
+          });
+        }
       } catch (error) {
         // Mirror handleResponseRoute's catch: a genuine handler error becomes
         // the router's typed 500 / RouterError-status Response (NOT a rejected
         // promise). Middleware short-circuit via thrown Response is handled by
         // executeMiddleware and never reaches here.
-        serialized = serializeResponseRouteError(error, responseType);
+        const derivedStatus = error instanceof RouterError ? error.status : 500;
+        // Resolve the effective status the way createResponseWithMergedHeaders
+        // (below) will (ctx.res.status override) BEFORE building the problem
+        // body, so the body's status/title match the actual HTTP status when a
+        // handler called ctx.setStatus() before throwing — exactly as
+        // handleResponseRoute resolves it.
+        const status =
+          requestContext.res.status !== 200
+            ? requestContext.res.status
+            : derivedStatus;
+        const serialized = serializeResponseRouteError(
+          error,
+          responseType,
+          status,
+        );
+        merged = createResponseWithMergedHeaders(serialized.body, {
+          status: serialized.status,
+          headers: serialized.headers,
+        });
       }
-
-      // Route through the SAME production finalizer the RSC handler uses, so
-      // ctx.onResponse() callbacks fire and stub headers/cookies + ctx.setStatus
-      // merge identically to production (handleResponseRoute also goes through
-      // createResponseWithMergedHeaders). Runs inside runWithRequestContext, so
-      // _getRequestContext() resolves to this request's context.
-      const merged = createResponseWithMergedHeaders(serialized.body, {
-        status: serialized.status,
-        statusText: serialized.statusText,
-        headers: serialized.headers,
-      });
 
       // Append Vary: Accept on content-negotiated responses, matching
       // handleResponseRoute's callHandlerWithVary. Skipped on WebSocket upgrade

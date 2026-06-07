@@ -381,8 +381,8 @@ test.describe.serial("route-types-hmr", () => {
   ): Promise<Record<string, string | null>> {
     const params = names.map((n) => `name=${encodeURIComponent(n)}`).join("&");
     const res = await fetch(f.url(`/__debug/reverse-test?${params}`));
-    const envelope = await res.json();
-    return envelope.data;
+    const body = await res.json();
+    return body;
   }
 
   test("reverse() should resolve a newly added route", async () => {

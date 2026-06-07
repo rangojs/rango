@@ -63,8 +63,8 @@ test.describe("composable docs package", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data.total).toBe(3);
-    expect(body.data.results).toHaveLength(3);
+    expect(body.total).toBe(3);
+    expect(body.results).toHaveLength(3);
   });
 
   test("GET /docs/api/search?q=routing filters results", async ({
@@ -73,8 +73,8 @@ test.describe("composable docs package", () => {
     const response = await request.get(f.url("/docs/api/search?q=routing"));
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body.data.total).toBeGreaterThanOrEqual(1);
-    const titles = body.data.results.map((r: { title: string }) => r.title);
+    expect(body.total).toBeGreaterThanOrEqual(1);
+    const titles = body.results.map((r: { title: string }) => r.title);
     expect(titles).toContain("Routing Patterns");
   });
 
@@ -86,8 +86,8 @@ test.describe("composable docs package", () => {
     );
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body.data.total).toBe(0);
-    expect(body.data.results).toHaveLength(0);
+    expect(body.total).toBe(0);
+    expect(body.results).toHaveLength(0);
   });
 
   test("navigate from index to detail via link click", async ({ page }) => {
@@ -294,7 +294,7 @@ test.describe("composable docs package (production)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data.total).toBeGreaterThanOrEqual(1);
+    expect(body.total).toBeGreaterThanOrEqual(1);
   });
 
   test("Static sidebar renders in production", async ({ page }) => {

@@ -31,25 +31,27 @@ const env = {
 } as unknown as AppBindings;
 
 describe("dispatch against cloudflare-basic API route handlers", () => {
-  it("serializes /health and auto-wraps the value under { data }", async () => {
+  it("serializes /health as the bare handler value (no envelope)", async () => {
     const res = await dispatch(router, { request: "/health", env });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe(
       "application/json;charset=utf-8",
     );
-    const body = (await res.json()) as { data: { status: string } };
-    expect(body.data.status).toBe("ok");
-    expect(typeof body.data.status).toBe("string");
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe("ok");
+    expect(typeof body.status).toBe("string");
   });
 
   it("serializes the full /products list from the real handler", async () => {
     const res = await dispatch(router, { request: "/products", env });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      data: Array<{ id: string; name: string; price: number }>;
-    };
-    expect(body.data).toHaveLength(3);
-    expect(body.data[0]).toMatchObject({
+    const body = (await res.json()) as Array<{
+      id: string;
+      name: string;
+      price: number;
+    }>;
+    expect(body).toHaveLength(3);
+    expect(body[0]).toMatchObject({
       id: "1",
       name: "Widget",
       price: 9.99,
@@ -60,25 +62,32 @@ describe("dispatch against cloudflare-basic API route handlers", () => {
     const res = await dispatch(router, { request: "/products/2", env });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { id: string; name: string; description: string };
+      id: string;
+      name: string;
+      description: string;
     };
-    expect(body.data.id).toBe("2");
-    expect(body.data.name).toBe("Gadget");
-    expect(body.data.description).toContain("2");
+    expect(body.id).toBe("2");
+    expect(body.name).toBe("Gadget");
+    expect(body.description).toContain("2");
   });
 
-  it("maps the handler's thrown RouterError to a 404 + typed JSON envelope", async () => {
+  it("maps the handler's thrown RouterError to a 404 + RFC 9457 problem+json", async () => {
     // The real handler does: throw new RouterError("NOT_FOUND", ..., { status: 404 })
     const res = await dispatch(router, { request: "/products/999", env });
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toBe(
-      "application/json;charset=utf-8",
+      "application/problem+json;charset=utf-8",
     );
     const body = (await res.json()) as {
-      error: { message: string; code?: string };
+      title: string;
+      status: number;
+      detail: string;
+      code?: string;
     };
-    expect(body.error.code).toBe("NOT_FOUND");
-    expect(body.error.message).toContain("999");
+    expect(body.code).toBe("NOT_FOUND");
+    expect(body.detail).toContain("999");
+    expect(body.title).toBe("Not Found");
+    expect(body.status).toBe(404);
   });
 
   it("returns 404 for an unmatched path (this router has no catch-all)", async () => {

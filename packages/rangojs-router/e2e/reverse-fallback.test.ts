@@ -13,8 +13,8 @@ test.describe("reverse-module-level", () => {
     const res = await request.get(f.url("/reverse-fallback-test"));
     expect(res.status()).toBe(200);
 
-    const envelope = await res.json();
-    const results = envelope.data;
+    const body = await res.json();
+    const results = body;
 
     // These routes come from include() calls — at module load time the lazy
     // includes haven't resolved yet, so reverse() relies on the injected

@@ -39,7 +39,7 @@ function dispatch<TEnv = any>(
 ): Promise<Response>;
 ```
 
-A real `Response`: response-route body, a 308 redirect (`Location`), a 404, or a middleware short-circuit. A `path.json` handler that returns a bare value is wrapped `{ data: <value> }`; a returned `Response` passes through unwrapped; cookies and `ctx.header(...)` surface on the `Response`. `dispatch` accepts your public router type directly (no cast).
+A real `Response`: response-route body, a 308 redirect (`Location`), a 404, or a middleware short-circuit. A `path.json` handler that returns a bare value is serialized verbatim (no envelope); a returned `Response` passes through unchanged; cookies and `ctx.header(...)` surface on the `Response`. `dispatch` accepts your public router type directly (no cast).
 
 ## Recipe
 
@@ -52,19 +52,22 @@ import { apiPatterns } from "../src/api/urls"; // path.json(...) routes, no Prer
 const router = createRouter().routes(apiPatterns);
 
 describe("api routes via dispatch", () => {
-  it("serializes a JSON response route, auto-wrapped under { data }", async () => {
+  it("serializes a JSON response route as the bare handler value", async () => {
     const res = await dispatch(router, { request: "/health" });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe(
       "application/json;charset=utf-8",
     );
-    expect(await res.json()).toEqual({ data: { status: "ok" } });
+    expect(await res.json()).toEqual({ status: "ok" });
   });
 
-  it("maps a thrown RouterError to its status + typed JSON envelope", async () => {
+  it("maps a thrown RouterError to its status + RFC 9457 problem+json", async () => {
     const res = await dispatch(router, { request: "/products/999" }); // handler throws RouterError 404
     expect(res.status).toBe(404);
-    expect((await res.json()).error.code).toBe("NOT_FOUND");
+    expect(res.headers.get("content-type")).toBe(
+      "application/problem+json;charset=utf-8",
+    );
+    expect((await res.json()).code).toBe("NOT_FOUND"); // { title, status, detail, code }
   });
 
   it("returns 404 for an unmatched path", async () => {
@@ -79,7 +82,7 @@ describe("api routes via dispatch", () => {
 
 - Hitting a COMPONENT (RSC) route throws a clear directive error: `dispatch` is for response routes + redirects + 404 + content negotiation, plus the global + route-level middleware guard stack on RESPONSE routes — it never renders React. Use Flight primitives or e2e to exercise component rendering.
 - A COMPONENT route's guard stack cannot run here. Assert it at e2e, or extract the middleware fn and unit-test it with `runMiddleware` (see `./middleware.md`).
-- The `{ data }` wrap is conditional on what the handler returns, applied in `response-route-handler.ts`: a `path.json` handler that returns a BARE value is auto-wrapped as `{ data: <value> }` (status 200). Returning a `Response` (e.g. `Response.json(x)`) passes through UNWRAPPED; a thrown error yields `{ error: <payload> }` with the error's status (`RouterError.status`, else 500). Assert the shape matching what your handler returns.
+- JSON serialization is bare, applied in `response-route-handler.ts`: a `path.json` handler that returns a value is serialized verbatim (`JSON.stringify(value)`, status 200, `application/json`) — no envelope. Returning a `Response` (e.g. `Response.json(x)`) passes through unchanged. A thrown error yields an RFC 9457 problem+json body `{ title, status, detail, code }` (`application/problem+json`) with the error's status (`RouterError.status`, else 500, or the effective `ctx.setStatus()` override); `code` is the `RouterError.code`, else `"INTERNAL"`. The `type` member is omitted this phase. Assert the shape matching what your handler returns.
 - Setup: needs the preset (alias + virtual stubs) or a Vite-RSC env (see `./setup.md`); a bare router import throws on Vite virtuals.
 - The full app router often cannot be imported (`Prerender()`/`createLoader()` need the plugin-injected `$$id`) — build a router from a `Prerender`-free include (your API routes).
 - A `_rsc_partial` request to a response route runs global middleware first (an auth gate can still 401/redirect), then returns `X-RSC-Reload` — route-level middleware is skipped, exactly like production.
@@ -88,4 +91,4 @@ describe("api routes via dispatch", () => {
 
 - `/response-routes`, `/mime-routes` — the DSL this tests
 - Siblings: `./middleware.md`, `./setup.md`, `./cache-prerender.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "dispatch — request to Response, plus the vi.mock requirement"
+- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "dispatch — request to Response" (the `rangoTestConfig` preset stubs `@vitejs/plugin-rsc/rsc`, so no per-file `vi.mock` is needed)

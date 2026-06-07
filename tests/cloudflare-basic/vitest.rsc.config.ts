@@ -18,6 +18,7 @@
  */
 import { defineConfig } from "vitest/config";
 import {
+  rangoInlineDeps,
   rangoTestAliases,
   rangoUseClientTransform,
 } from "@rangojs/router/testing/vitest";
@@ -46,5 +47,9 @@ export default defineConfig({
     exclude: ["node_modules", "dist", "e2e"],
     pool: "forks",
     execArgv: ["--conditions=react-server"],
+    // @rangojs/router ships as TS source; force Vite (not Node) to transpile it
+    // so an installed consumer on Node >= 23 does not hit type-stripping errors.
+    // No-op in this monorepo (workspace symlink resolves outside node_modules).
+    server: { deps: { inline: rangoInlineDeps } },
   },
 });
