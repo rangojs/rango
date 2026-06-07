@@ -1,5 +1,5 @@
 import { registerRouteMap } from "../route-map-builder.js";
-import { extractStaticPrefix } from "./pattern-matching.js";
+import { extractStaticPrefix, joinPrefix } from "./pattern-matching.js";
 import {
   type EntryData,
   RangoContext,
@@ -113,7 +113,15 @@ export function evaluateLazyEntry<TEnv = any>(
   const lazyPatterns = entry.lazyPatterns as UrlPatterns<TEnv>;
   const lazyContext = entry.lazyContext;
 
-  // Create a new context for evaluating the lazy patterns
+  // Create a new context for evaluating the lazy patterns.
+  // KNOWN REDUNDANCY (LP3, docs/internal/matching-stability-review.md): this
+  // runs lazyPatterns.handler() purely to extract `patterns` (route name ->
+  // pattern) for matching, and DISCARDS the EntryData `manifest` it builds.
+  // loadManifest() then runs the SAME handler again on the first request to
+  // build the EntryData tree for rendering. Unifying the two runs is deferred
+  // (the two run in different contexts — see the LP3 todo in
+  // lazy-include-perf.test.ts). The precomputed-entries shortcut above avoids
+  // THIS run entirely for leaf includes.
   const manifest = new Map<string, EntryData>();
   const patterns = new Map<string, string>();
   const patternsByPrefix = new Map<string, Map<string, string>>();
@@ -145,10 +153,13 @@ export function evaluateLazyEntry<TEnv = any>(
       includeScope: lazyContext?.includeScope,
     },
     () => {
-      // Run the lazy patterns handler with the original context prefixes
-      // The prefix comes from the IncludeItem stored in lazyPatterns
+      // Run the lazy patterns handler with the original context prefixes.
+      // The prefix comes from the IncludeItem stored in lazyPatterns. Use the
+      // slash-collapsing join so a trailing-slash parent prefix does not bake a
+      // double slash into the registered route patterns (entry.routes,
+      // reverse(), EntryData.pattern, mountPath) when the handler runs.
       const includePrefix = (entry as any)._lazyPrefix || "";
-      const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
+      const fullPrefix = joinPrefix(lazyContext?.urlPrefix, includePrefix);
 
       if (fullPrefix || lazyContext?.namePrefix) {
         runWithPrefixes(fullPrefix, lazyContext?.namePrefix, () => {
@@ -190,10 +201,13 @@ export function evaluateLazyEntry<TEnv = any>(
   // Detect nested lazy includes and register them as new entries
   const nestedLazyIncludes = findLazyIncludes(handlerResult);
   for (const lazyInclude of nestedLazyIncludes) {
-    // Compute the full URL prefix (combining parent prefix if any)
-    const fullPrefix = lazyInclude.context.urlPrefix
-      ? lazyInclude.context.urlPrefix + lazyInclude.prefix
-      : lazyInclude.prefix;
+    // Compute the full URL prefix (combining parent prefix if any). Use the
+    // slash-collapsing join so a trailing-slash parent prefix does not produce
+    // a double-slash staticPrefix the trie's sp can never match.
+    const fullPrefix = joinPrefix(
+      lazyInclude.context.urlPrefix,
+      lazyInclude.prefix,
+    );
 
     const nestedEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
       prefix: "",

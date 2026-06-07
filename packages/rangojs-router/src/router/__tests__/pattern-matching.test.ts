@@ -6,6 +6,7 @@ import {
   isLazyEvaluationNeeded,
   getPatternCacheSize,
   clearPatternCache,
+  joinPrefix,
   type RouteMatchResult,
 } from "../pattern-matching";
 import type { RouteEntry, TrailingSlashMode } from "../../types";
@@ -1025,5 +1026,26 @@ describe("compilePattern cache", () => {
 
     clearPatternCache();
     expect(getPatternCacheSize()).toBe(0);
+  });
+});
+
+describe("joinPrefix", () => {
+  it("collapses the duplicate slash when base ends and prefix starts with '/'", () => {
+    expect(joinPrefix("/parent/", "/child")).toBe("/parent/child");
+  });
+
+  it("joins normally when only one side has the boundary slash", () => {
+    expect(joinPrefix("/parent", "/child")).toBe("/parent/child");
+    expect(joinPrefix("/parent/", "child")).toBe("/parent/child");
+  });
+
+  it("returns the prefix unchanged when base is empty or undefined", () => {
+    expect(joinPrefix("", "/child")).toBe("/child");
+    expect(joinPrefix(undefined, "/child")).toBe("/child");
+  });
+
+  it("never produces a double slash for the nested-include case", () => {
+    expect(joinPrefix("/parent/", "/child")).not.toContain("//");
+    expect(joinPrefix("/a/b/", "/c")).toBe("/a/b/c");
   });
 });

@@ -70,6 +70,7 @@ import {
 } from "./router/middleware.js";
 import {
   extractStaticPrefix,
+  joinPrefix,
   traverseBack,
 } from "./router/pattern-matching.js";
 import { resolveSink, safeEmit, getRequestId } from "./router/telemetry.js";
@@ -832,10 +833,13 @@ export function createRouter<TEnv = any>(
 
       // Create placeholder RouteEntry for each lazy include
       for (const lazyInclude of lazyIncludes) {
-        // Compute the full URL prefix (combining parent prefix if any)
-        const fullPrefix = lazyInclude.context.urlPrefix
-          ? lazyInclude.context.urlPrefix + lazyInclude.prefix
-          : lazyInclude.prefix;
+        // Compute the full URL prefix (combining parent prefix if any). Use the
+        // slash-collapsing join so a trailing-slash parent prefix does not
+        // produce a double-slash staticPrefix the trie's sp can never match.
+        const fullPrefix = joinPrefix(
+          lazyInclude.context.urlPrefix,
+          lazyInclude.prefix,
+        );
 
         const lazyEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
           prefix: "",

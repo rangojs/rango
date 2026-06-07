@@ -14,6 +14,7 @@ import {
   type MetricsStore,
 } from "../server/context";
 import MapRootLayout from "../server/root-layout";
+import { joinPrefix } from "./pattern-matching.js";
 import type { RouteEntry } from "../types";
 import type { UrlPatterns } from "../urls";
 import { VERSION } from "@rangojs/router:version";
@@ -23,10 +24,17 @@ import { VERSION } from "@rangojs/router:version";
 // stable references), so the resulting EntryData tree can be safely cached and reused
 // across requests within the same isolate.
 //
-// Cache is keyed by (VERSION, mountIndex, routeKey, isSSR). VERSION comes from the
+// Cache is keyed by (VERSION, routerId, mountIndex, routeKey, isSSR). routeKey is
+// REQUIRED in the key: loadManifest() runs the handler with forRoute=routeKey, and
+// path-helper.ts prunes (skips registering) every route except forRoute, so the
+// resulting Store.manifest is pruned to the requested route — NOT the full include.
+// Dropping routeKey would make a sibling route miss and overwrite this entry with its
+// own pruned manifest, so alternating sibling requests would thrash (re-run the
+// handler every time). Running the include handler once per isolate instead of once
+// per route is possible but needs an unpruned manifest cache with prune-on-read — see
+// LP1 in docs/internal/matching-stability-review.md. VERSION comes from the
 // @rangojs/router:version virtual module which Vite invalidates on RSC module HMR.
 // When VERSION changes, this module re-evaluates and the cache is recreated empty.
-// Including VERSION in the key is additional defense against stale entries.
 const manifestModuleCache = new Map<string, Map<string, EntryData>>();
 
 /**
@@ -34,8 +42,8 @@ const manifestModuleCache = new Map<string, Map<string, EntryData>>();
  * Handles lazy imports, unwrapping, and validation
  *
  * Results are cached at module level after first execution. Subsequent calls
- * for the same (routeKey, isSSR) within the same isolate return cached data
- * without re-executing the DSL handler.
+ * for the same (routerId, mountIndex, routeKey, isSSR) within the same isolate
+ * return cached data without re-executing the DSL handler.
  */
 /**
  * Clear the module-level manifest cache.
@@ -65,9 +73,11 @@ export async function loadManifest(
 
   const mountIndex = entry.mountIndex;
 
-  // Check module-level cache (persists across requests within same isolate)
+  // Check module-level cache (persists across requests within same isolate).
   // Include routerId so multi-router setups (host routing) don't share cached
   // EntryData across routers with overlapping mountIndex + routeKey combinations.
+  // routeKey is in the key because loadManifest() builds a manifest pruned to
+  // forRoute=routeKey (see path-helper.ts) — see the cache comment above.
   const cacheKey = `${VERSION}:${entry.routerId ?? ""}:${mountIndex ?? ""}:${routeKey}:${isSSR ? 1 : 0}`;
   const cached = manifestModuleCache.get(cacheKey);
   if (cached) {
@@ -176,7 +186,10 @@ export async function loadManifest(
         if (entry.lazy && entry.lazyPatterns) {
           const lazyPatterns = entry.lazyPatterns as UrlPatterns<any>;
           const includePrefix = (entry as any)._lazyPrefix || "";
-          const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
+          // Slash-collapsing join so a trailing-slash parent prefix does not
+          // bake a double slash into the registered route patterns (must match
+          // the same join in evaluateLazyEntry / the build-time runWithPrefixes).
+          const fullPrefix = joinPrefix(lazyContext?.urlPrefix, includePrefix);
 
           if (fullPrefix || lazyContext?.namePrefix) {
             return runWithPrefixes(fullPrefix, lazyContext?.namePrefix, () =>

@@ -13,6 +13,7 @@ import {
   setRouteTrie,
   setRouterManifest,
   setRouterTrie,
+  setRouterPrecomputedEntries,
 } from "../route-map-builder.js";
 
 /**
@@ -36,47 +37,13 @@ export async function buildRouterTrieFromUrlpatterns(
     undefined,
     router.basename ? { urlPrefix: router.basename } : undefined,
   );
-  if (
-    generated._routeAncestry &&
-    Object.keys(generated._routeAncestry).length > 0
-  ) {
-    const { buildRouteTrie } = await import("../build/route-trie.js");
-    // Map each route to its include() staticPrefix so the trie
-    // returns the correct sp for lazy entry lookup in findMatch.
-    const routeToStaticPrefix: Record<string, string> = {};
-    for (const name of Object.keys(generated.routeManifest)) {
-      routeToStaticPrefix[name] = "";
-    }
-    // Override with prefix from include() entries so the trie
-    // returns the correct sp for lazy entry lookup in findMatch.
-    // Walk recursively to include routes in nested includes.
-    if (generated.prefixTree) {
-      const visitPrefixNode = (node: any): void => {
-        const sp = node.staticPrefix || "";
-        for (const route of node.routes || []) {
-          routeToStaticPrefix[route] = sp;
-        }
-        for (const child of Object.values(node.children || {})) {
-          visitPrefixNode(child);
-        }
-      };
-      for (const node of Object.values(generated.prefixTree)) {
-        visitPrefixNode(node);
-      }
-    }
-    const trie = buildRouteTrie(
-      generated.routeManifest,
-      generated._routeAncestry,
-      routeToStaticPrefix,
-      generated.routeTrailingSlash,
-      generated.prerenderRoutes
-        ? new Set(generated.prerenderRoutes)
-        : undefined,
-      generated.passthroughRoutes
-        ? new Set(generated.passthroughRoutes)
-        : undefined,
-      generated.responseTypeRoutes,
-    );
+  // Build the trie through the SAME shared helper the production discovery uses
+  // (discover-routers.ts), so the dev runtime-rebuilt trie and the prod
+  // serialized trie cannot drift. buildPerRouterTrie returns null when there
+  // are no routes.
+  const { buildPerRouterTrie } = await import("../build/route-trie.js");
+  const trie = buildPerRouterTrie(generated);
+  if (trie) {
     setRouterTrie(router.id, trie);
     // Set global trie only if not already set by another router
     if (!getRouteTrie()) {
@@ -84,6 +51,26 @@ export async function buildRouterTrieFromUrlpatterns(
     }
   }
   setRouterManifest(router.id, generated.routeManifest);
+
+  // Match the production discovery path: precompute leaf-include entries so the
+  // match-time shortcut in evaluateLazyEntry applies in dev/Cloudflare too.
+  // Without this, dev re-runs each matched leaf include's handler at match time
+  // (evaluateLazyEntry) AND again at render time (loadManifest); with it, the
+  // match-time run is skipped and the handler runs once per first request.
+  // Identical route ownership to the handler path (the shortcut is guarded by
+  // the same prefixIsShared and #506 checks production uses).
+  const { flattenLeafEntries } = await import("../build/prefix-tree-utils.js");
+  const precomputed: Array<{
+    staticPrefix: string;
+    routes: Record<string, string>;
+  }> = [];
+  flattenLeafEntries(
+    generated.prefixTree,
+    generated.routeManifest,
+    precomputed,
+  );
+  setRouterPrecomputedEntries(router.id, precomputed);
+
   // Merge into global manifest (needed for reverse/href across routers)
   const existing = hasCachedManifest() ? getGlobalRouteMap() : {};
   setCachedManifest({ ...existing, ...generated.routeManifest });
