@@ -102,6 +102,37 @@ describe("tryTrieMatch", () => {
     expect(tryTrieMatch(trie, "/files/a/b")?.params).toEqual({ "*": "a/b" });
   });
 
+  // The bare-prefix wildcard match (C1) generalizes to a PARAM-prefixed wildcard:
+  // "/users/:id/*" matches "/users/5" with an empty splat (zero-or-more splat
+  // semantics, like React Router). Params bound before the wildcard are kept.
+  it("matches a param-prefixed wildcard at its bare prefix with an empty remainder", () => {
+    const trie = buildTestTrie({ "users.any": "/users/:id/*" });
+
+    expect(tryTrieMatch(trie, "/users/5")?.routeKey).toBe("users.any");
+    expect(tryTrieMatch(trie, "/users/5")?.params).toEqual({
+      id: "5",
+      "*": "",
+    });
+    // A deeper path keeps the splat remainder alongside the bound param.
+    expect(tryTrieMatch(trie, "/users/5/posts/3")?.params).toEqual({
+      id: "5",
+      "*": "posts/3",
+    });
+  });
+
+  it("prefers a param terminal over the param-prefixed wildcard at the bare prefix", () => {
+    const trie = buildTestTrie({
+      "users.show": "/users/:id",
+      "users.any": "/users/:id/*",
+    });
+
+    // Bare "/users/5": the param terminal wins over the wildcard.
+    expect(tryTrieMatch(trie, "/users/5")?.routeKey).toBe("users.show");
+    expect(tryTrieMatch(trie, "/users/5")?.params).toEqual({ id: "5" });
+    // Deeper: only the wildcard can match.
+    expect(tryTrieMatch(trie, "/users/5/x")?.routeKey).toBe("users.any");
+  });
+
   it("applies trailing slash redirects from trie metadata", () => {
     const trie = buildTestTrie(
       {

@@ -177,6 +177,22 @@ describe("lazy include parent isolation", () => {
       expect(nested).toBeDefined();
       expect(nested!.staticPrefix).not.toContain("//");
       expect(nested!.staticPrefix).toBe("/parent/child");
+
+      // Finding 2: evaluating the nested entry must also register its ROUTES
+      // with the normalized prefix. The handler-run fullPrefix (not just the
+      // placeholder staticPrefix) must collapse the slash, or the registered
+      // pattern becomes "/parent//child/leaf" — leaking into entry.routes,
+      // reverse(), EntryData.pattern, and mountPath/useMount().
+      evaluateLazyEntry(nested!, deps);
+      const nestedPatterns = Object.values(
+        nested!.routes as Record<string, string>,
+      );
+      expect(nestedPatterns.length).toBeGreaterThan(0);
+      for (const p of nestedPatterns) expect(p).not.toContain("//");
+      expect(nestedPatterns).toContain("/parent/child/leaf");
+      for (const p of Object.values(deps.mergedRouteMap)) {
+        expect(p).not.toContain("//");
+      }
     });
 
     it("isolates root-scoped includes with empty prefix and { name: '' }", () => {

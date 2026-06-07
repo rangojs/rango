@@ -20,9 +20,12 @@ Implemented and verified (typecheck, 3367 unit tests, oxlint, oxfmt, `build-rout
   killing the corrupt `/files`→`/file` regex-fallback redirect. (`trie-matching.ts`;
   regression tests in `trie-matching.test.ts`.)
 - **C5** — nested-include join normalized via a shared `joinPrefix`, fixing the
-  `/parent//child` staticPrefix that silently forced the regex fallback.
-  (`pattern-matching.ts` `joinPrefix`, used in `lazy-includes.ts` + `router.ts`; regression
-  tests in `lazy-include-isolation.test.ts` + `pattern-matching.test.ts`.)
+  `/parent//child` double slash. Applied to **both** the nested-placeholder
+  `staticPrefix` (which fed the trie-`sp` mismatch that forced the regex fallback) **and**
+  the handler-run prefix in `evaluateLazyEntry`/`loadManifest` (so the registered route
+  patterns in `entry.routes`/`reverse()`/`EntryData.pattern`/`mountPath` are normalized too).
+  (`pattern-matching.ts` `joinPrefix`, used in `lazy-includes.ts`, `manifest.ts`, `router.ts`;
+  regression tests in `lazy-include-isolation.test.ts` + `pattern-matching.test.ts`.)
 - **C7** — `createFindMatch` cache hit now returns a clone with an independent `params`, so a
   handler mutating `ctx.params` can't corrupt the shared single-entry cache. (`find-match.ts`;
   regression test in `find-match.test.ts`.)
@@ -41,9 +44,11 @@ Implemented and verified (typecheck, 3367 unit tests, oxlint, oxfmt, `build-rout
 - **C11/C12/C13** — new stability tests: trie↔regex parity, dev↔prod trie equality, and
   `createFindMatch` unit coverage (cache clone, recompute, MAX_LAZY_ITERATIONS cap).
 
-Remaining work is in the sections below (behavior decisions C2/M3, C3; defense-in-depth
-C4/C6/C8/C9/C10; e2e prod-coverage gaps C16/C17/C18; needs-design R9/R11; `optionalParams`
-removal). None are regressions from pass 1.
+Remaining work is in the sections below (behavior nuance C3; defense-in-depth
+C4/C6/C9/C10; e2e prod-coverage gaps C16/C17/C18; needs-design R9/R11 and lazy-include
+LP1/LP3/LP4; `optionalParams` removal). C2/M3 (trailing slash) and C8/LP2 (dev
+precomputed entries) are closed/done — see their sections. None are regressions from
+pass 1.
 
 ## Why this review exists
 
@@ -144,17 +149,26 @@ trie miss does. The divergence is only reachable if the trie is absent at match 
 (a should-not-happen window). Both dev and prod therefore match **via the same trie**,
 which is the actual v1 stability guarantee.
 
-### M3 — trie vs regex disagree on trailing-slash canonicalization (no explicit `ts` mode)
+### M3 — trie ignores the PATTERN-implicit trailing slash (explicit modes already work) — NOT a v1 issue
 
-- Status: `open` (empirically confirmed) · Severity: medium · Class: latent-fallback-only · Fix: moderate
-- Trie (`validateAndBuild`, `trie-matching.ts:214-226`) emits a redirect **only** for
-  explicit `ts` `always`/`never`; with no mode it serves both `/foo` and `/foo/` as 200.
-  Regex (`findMatch`, `pattern-matching.ts:610-625`) redirects to the pattern's canonical
-  form even with no mode.
-- Decide the canonical v1 behavior. The trie's "serve both" produces duplicate-content
-  200s (SEO/caching concern); the regex's "always canonicalize" matches most frameworks.
-  Recommendation: make the trie also redirect to canonical when no `ts` mode is set, then
-  lock with the M6 parity test. (Behavior decision — get sign-off before changing.)
+- Status: `closed` (not actionable) · Severity: low · Class: latent-fallback-only
+- **Trailing slash is already a complete, configurable feature.** The explicit modes —
+  `path(..., { trailingSlash: "never"|"always"|"ignore" })` and the same option on
+  `include(...)` (`urls/pattern-types.ts:47`) — are stored as `leaf.ts` and honored by the
+  trie (`validateAndBuild` redirects for `always`/`never`). The `route-resolution`
+  `trailing-slash-config` e2e proves all three modes behave correctly and **identically in
+  dev and production**. There is no `createRouter({ trailingSlash })` router-level option;
+  config is per-path / per-include, collected per-router.
+- The only residual: the trie build (`route-trie.ts:85-86`) normalizes the pattern's own
+  trailing slash away and stores only the explicit `leaf.ts` mode — it does **not** keep the
+  pattern-implicit slash. The regex fallback does (`pattern-matching.ts:623`), so with **no
+  explicit mode** the regex would canonicalize `path("/foo/")` while the trie serves both
+  forms. Since the trie is the live matcher in **both** dev and prod, behavior is consistent;
+  the regex fallback is never reached for manifest routes; and a consumer who wants
+  canonicalization sets the explicit mode (which works). So this is **not a stability bug, not
+  a dev/prod divergence, and not an open product decision** — it was over-flagged in the
+  initial pass. If we ever want pattern-implicit canonicalization in the trie too, it's a small
+  additive change (carry a `tts` flag on the leaf), but it is optional polish, not v1 work.
 
 ### M4 — trie (specificity) vs regex (definition-order) precedence models
 
@@ -265,8 +279,9 @@ not-recommended). Reconciled with the stability findings and triaged for this pa
 - **R9 `stop-serializing-trie-leaf-ancestry`** (needs-design, 1/3 behavior-preserving) — strip
   `leaf.a` from prod chunks (~bytes/route) and source debug ancestry from the build manifest.
   Contentious (multi-router debug symmetry); pair with the M2 mountIndex note. Defer.
-- **R10 = M3** `trie-canonical-trailing-slash-no-ts-mode` (needs-design) — behavior change;
-  see M3. Get sign-off.
+- **R10 = M3** `trie-canonical-trailing-slash-no-ts-mode` — **closed** (see M3): trailing
+  slash is configurable per-path/include and works dev/prod; pattern-implicit
+  canonicalization in the trie is optional future polish, not a v1 decision.
 - **R11 = M5** `harden-find-match-cache-mutation-and-hmr` — stop mutating the shared cached
   `matched.pt` (`match-api.ts:89/231`) and invalidate the `createFindMatch` single-entry cache
   on dev HMR. Confirmed the mutation + cross-request cache sharing are real; needs a careful
@@ -296,7 +311,10 @@ verified-safe**. Vote tallies in brackets are (real / parity).
   **308 redirect to `/file`** (corrupt). Identical dev and prod. Same gap makes `/*` not match
   `/`. (`/files/` serves fine — only the bare prefix is corrupt.) **Fix:** in `walkTrie`, when
   `index === segments.length` and `node.r` is absent, also return `node.w` with empty
-  wildcard value (matching the regex `*=''`).
+  wildcard value (matching the regex `*=''`). **Generalization (intended):** this also makes a
+  PARAM-prefixed wildcard match its bare prefix — `/users/:id/*` matches `/users/5` with
+  `{ id:"5", *:"" }` (zero-or-more splat, like React Router); a static/param terminal at that
+  node still wins. Covered by `trie-matching.test.ts` ("param-prefixed wildcard at its bare prefix").
 - **C5 `nested-include-double-slash-staticprefix-forces-regex`** — LOW, general-correctness
   [3/3,0/3], fix=straightforward. `include('/parent/', …)` (trailing slash) with a nested
   `include('/child', …)` produces a runtime nested-entry `staticPrefix` of `/parent//child`
@@ -316,7 +334,7 @@ verified-safe**. Vote tallies in brackets are (real / parity).
 
 ### Confirmed but latent / defense-in-depth (track)
 
-- **C2 = M3** `trie-trailing-slash-no-config-no-redirect` — MEDIUM, needs-design. See M3.
+- **C2 = M3** `trie-trailing-slash-no-config-no-redirect` — **closed** (non-issue). See M3.
 - **C3 `trie-splat-strips-trailing-slash`** — LOW [3/3,1/3]. `/files/a/b/` → trie `*=a/b`,
   regex `*=a/b/`. Trie strips the trailing slash before walking (`trie-matching.ts:49`).
   Latent (trie is live in both modes → dev/prod agree at `a/b`); it's a splat-semantics
@@ -326,11 +344,11 @@ verified-safe**. Vote tallies in brackets are (real / parity).
 - **C6 `content-negotiation-flags-absent-on-regex-fallback`** — LOW, latent. The regex fallback
   can't reproduce `negotiateVariants`/`rscFirst` (trie-leaf-only). Defense-in-depth; R3 guard
   reduces reachability. Track.
-- **C8 `dev-lacks-precomputed-entries-always-handler-path`** — LOW, latent. Cloudflare-dev /
-  post-HMR has no per-router precomputed entries, so `evaluateLazyEntry` always runs the
-  handler; outputs converge while the `prefixIsShared` + #506 guards hold. **Fold into R1:**
-  have `buildRouterTrieFromUrlpatterns` also `setRouterPrecomputedEntries` via
-  `flattenLeafEntries` so dev exercises the same branch as prod.
+- **C8 `dev-lacks-precomputed-entries-always-handler-path`** — **DONE (LP2).**
+  `buildRouterTrieFromUrlpatterns` now calls `setRouterPrecomputedEntries` via
+  `flattenLeafEntries`, so dev/Cloudflare exercises the same precomputed-shortcut branch
+  as prod (`evaluateLazyEntry` no longer re-runs the handler for leaf includes at match
+  time). Pinned by Part C of `lazy-include-perf.test.ts`.
 - **C9 `route-name-conflict-warn-only-on-handler-path`** — LOW [3/3,2/3], straightforward. Add
   the same conflict `console.warn` to the precomputed-shortcut branch (`lazy-includes.ts:99`)
   for diagnostic symmetry. Optional.
@@ -382,7 +400,8 @@ verified-safe**. Vote tallies in brackets are (real / parity).
 **Code fixes (straightforward/verified, low risk):** C1 (trie bare-wildcard), C5 (double-slash
 join), C7 (cache params clone), R4 (remove dead `ancestry`), R5 (drop unused import),
 R2 (consolidate `buildRouteToStaticPrefix` → `build/`), R1 (`buildPerRouterTrie` shared by
-dev+prod, folding in C8 precomputed-entries), R3 (Phase-2 dev-guard).
+dev+prod), R3 (Phase-2 dev-guard). (C8/LP2 dev precomputed entries landed separately in
+`manifest-init.ts`; the LP1 handler-identity cache key was attempted then reverted — see LP1.)
 
 **Tests (prove stability):** C11 trie↔regex parity, C12 dev↔prod trie equality, C13 findMatch
 unit, C15 replica de-drift, plus C1/C5 regressions; C16/C17 e2e prod siblings.
@@ -395,6 +414,101 @@ behavior decision), C4/C6 (regex-fallback defense-in-depth), R9 (stop serializin
 
 1. Merge workflow-verified findings; reconcile with M1–M7.
 2. Implement straightforward items (M1, M6, M7) with dev+prod coverage.
-3. Decide v1 trailing-slash canonical behavior (M3) and precedence contract (M4).
+3. Precedence contract (M4) — codify trie-as-canonical (done via R3 guard). Trailing
+   slash (M3) is closed: explicit per-path/include modes already work consistently dev/prod;
+   no v1 decision needed.
 4. Resolve M5 cache lifetime once verified.
 5. Re-run typecheck, unit, lint, format, and the semantic matrix before any push.
+
+## Lazy include() performance audit (2026-06-07)
+
+A 5-lens adversarial review (122 agents) plus a direct instrumentation test
+(`src/router/__tests__/lazy-include-perf.test.ts`, which counts handler
+executions across the lifecycle) answered: **is lazy include() beneficial, and
+is the implementation efficient?**
+
+**Verdict: lazy-by-default is the correct design and is beneficial — at boot,
+not per-request — and is efficient on the warm path.**
+
+- Confirmed (measured): defining `urls()` does not run the handler; `include()`
+  captures the patterns by reference (include-helper.ts:146) and does NOT run
+  them; `Rango.routes()` runs only the **top-level** handler once (router.ts:741)
+  and creates empty lazy placeholder entries. Nested include handlers run **zero
+  times** at construction. An unmatched include's handler **never runs**. Warm
+  requests run **zero** handlers (manifest cache). The eager-metadata guarantees
+  (trie/reverse/types/prerender) are built at **build** time, so runtime laziness
+  does not regress them. The boot win is "fewer module-body executions" (1 vs
+  1+N), not "fewer per-request executions".
+
+> Outcome of this audit: **LP2 fixed** (dev now precomputes leaf entries). LP1
+> (handler runs once per route, not per include) was attempted via a
+> handler-identity cache key but that **thrashes** under `forRoute` pruning, so it
+> was **reverted and deferred** (needs an unpruned-cache + prune-on-read design).
+> LP3/LP4 deferred (needs-design). Separately, the C5 trailing-slash join fix was
+> **completed** to also cover the handler-run prefix (not just the placeholder
+> staticPrefix) so nested includes under a trailing-slash parent register
+> normalized route patterns.
+
+### LP1 — an include with M routes runs its handler once per route on cold start — DEFERRED (needs-design)
+
+- Severity: low (cold-start, amortized), needs-design.
+- `loadManifest` builds a manifest **pruned to `forRoute=routeKey`** —
+  `path-helper.ts:153` skips registering every route except the matched one — and
+  `manifestModuleCache` is keyed by `routeKey`. So an include with M routes runs its
+  handler M times across the isolate's life (once per sibling route, each cached
+  after its first request).
+- **A handler-identity cache key (dropping `routeKey`) is NOT the fix — it is a
+  regression.** Because each cached manifest is pruned to one route, a sibling
+  request would miss (`cached.has(siblingKey)` is false), rebuild, and overwrite the
+  entry — so alternating sibling requests **thrash** (re-run the handler every time),
+  strictly worse than per-`routeKey` caching. An initial attempt at this was reverted;
+  a unit test masked it by running `loadManifest` without `forRoute`. The correct fix
+  is an **unpruned manifest cache with prune-on-read** (run the handler once without
+  `forRoute`, cache the full tree, prune to the requested route on each hit) — that
+  changes the pruning interaction, so it is deferred. Tracked as `it.todo` (LP1) in
+  `lazy-include-perf.test.ts`. The amortized cost is M handler runs per isolate, each
+  then cached — not thrashing — so the current behavior is correct, just not optimal.
+
+### LP2 — dev/Cloudflare lacked precomputed entries (double match+render run) — FIXED (C8)
+
+- `buildRouterTrieFromUrlpatterns` (dev/HMR trie rebuild) now also computes
+  per-router precomputed leaf entries via `flattenLeafEntries`, so the match-time
+  shortcut in `evaluateLazyEntry` applies in dev too — collapsing leaf-include
+  first-request handler runs from 2 (match + render) to 1, matching production.
+  Behavior-preserving (verified-safe negative: precomputed and handler paths
+  produce identical route ownership). Pinned by Part C of the perf test.
+
+### LP3 — double handler execution (match + render) for non-leaf / non-precomputed — DEFERRED (needs-design)
+
+- For nested includes (and any precomputed-miss), the handler runs at match-time
+  (`evaluateLazyEntry`) AND render-time (`loadManifest`) on the first request.
+  The match-time run builds an EntryData map that is then **discarded**
+  (lazy-includes.ts) — only the routes are kept. Eliminating the second run means
+  having `loadManifest` reuse the match-time build (or precomputing the nested
+  entry structure from the prefix tree). Behavior-sensitive — `evaluateLazyEntry`
+  runs in a throwaway `"lazy"` namespace context without `isSSR`/`mountIndex`,
+  while `loadManifest` builds under the per-request ALS Store. Track for a
+  dedicated pass; bounded to the first request per (route, isSSR) on cold start and
+  amortized to zero after (the per-routeKey manifest cache). Distinct from LP1 (the
+  per-sibling-route re-runs), which is also deferred — see LP1.
+
+### LP4 — isSSR doubles cold first-request handler runs for document loads — DEFERRED (needs-design)
+
+- A cold document request resolves twice (classify `isSSR=false`, render
+  `isSSR=true`); `isSSR` is in the cache key, so both miss → two handler runs.
+  Dropping `isSSR` was **refuted** as unsafe (one lens confirmed the produced tree
+  differs by `isSSR` via `loading()` behavior). A safe fix would split the
+  isSSR-dependent state out of the cached tree, or warm the `isSSR=true` key
+  during classification. Track.
+
+### Confirmed-but-immaterial (no change)
+
+`registerRouteMap`/`mergedRouteMap` full-spread per lazy eval, the cached-manifest
+copy into Store per warm request, the `prefixIsShared` O(entries) scan, and the
+find-match entry-resolution loop — all once-per-entry or small; not worth touching.
+
+### Follow-up
+
+- Add a real timing **benchmark** for lazy eval / `loadManifest` / cold start
+  (current `router-perf.bench.ts` only benches matching) to quantify LP3/LP4
+  before deciding whether they are worth the needs-design work.

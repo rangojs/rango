@@ -13,6 +13,7 @@ import {
   setRouteTrie,
   setRouterManifest,
   setRouterTrie,
+  setRouterPrecomputedEntries,
 } from "../route-map-builder.js";
 
 /**
@@ -50,6 +51,26 @@ export async function buildRouterTrieFromUrlpatterns(
     }
   }
   setRouterManifest(router.id, generated.routeManifest);
+
+  // Match the production discovery path: precompute leaf-include entries so the
+  // match-time shortcut in evaluateLazyEntry applies in dev/Cloudflare too.
+  // Without this, dev re-runs each matched leaf include's handler at match time
+  // (evaluateLazyEntry) AND again at render time (loadManifest); with it, the
+  // match-time run is skipped and the handler runs once per first request.
+  // Identical route ownership to the handler path (the shortcut is guarded by
+  // the same prefixIsShared and #506 checks production uses).
+  const { flattenLeafEntries } = await import("../build/prefix-tree-utils.js");
+  const precomputed: Array<{
+    staticPrefix: string;
+    routes: Record<string, string>;
+  }> = [];
+  flattenLeafEntries(
+    generated.prefixTree,
+    generated.routeManifest,
+    precomputed,
+  );
+  setRouterPrecomputedEntries(router.id, precomputed);
+
   // Merge into global manifest (needed for reverse/href across routers)
   const existing = hasCachedManifest() ? getGlobalRouteMap() : {};
   setCachedManifest({ ...existing, ...generated.routeManifest });
