@@ -47,7 +47,7 @@ test.describe("content-ownership (dev)", () => {
       expect(res.headers()["content-type"]).toContain("application/json");
 
       const body = await res.json();
-      expect(body.data.owner).toBe("json");
+      expect(body.owner).toBe("json");
 
       // Negative: no document shell leaked
       const text = JSON.stringify(body);
@@ -111,11 +111,15 @@ test.describe("content-ownership (dev)", () => {
     }) => {
       const res = await request.get(f.url("/content-ownership/error-json"));
       expect(res.status()).toBe(500);
-      expect(res.headers()["content-type"]).toContain("application/json");
+      expect(res.headers()["content-type"]).toContain(
+        "application/problem+json",
+      );
 
       const body = await res.json();
-      expect(body.error).toBeDefined();
-      expect(body.error.message).toContain("intentional-response-error");
+      expect(body.detail).toBeDefined();
+      expect(body.detail).toContain("intentional-response-error");
+      expect(body.title).toBe("Internal Server Error");
+      expect(body.status).toBe(500);
 
       // Negative: no document shell
       expect(body.data).toBeUndefined();
@@ -155,7 +159,7 @@ test.describe("content-ownership (dev)", () => {
       expect(response?.status()).toBe(200);
 
       const body = await response?.json();
-      expect(body.data.secret).toBe("classified-payload");
+      expect(body.secret).toBe("classified-payload");
     });
   });
 
@@ -171,7 +175,7 @@ test.describe("content-ownership (dev)", () => {
       // Negative: original handler's body was NOT returned
       expect(JSON.stringify(body)).not.toContain("should-not-reach");
       // Positive: we got the redirect target's body
-      expect(body.data.data).toBe("plain-response");
+      expect(body.data).toBe("plain-response");
     });
   });
 });
@@ -208,7 +212,7 @@ test.describe("content-ownership (production)", () => {
       expect(res.headers()["content-type"]).toContain("application/json");
 
       const body = await res.json();
-      expect(body.data.owner).toBe("json");
+      expect(body.owner).toBe("json");
 
       const text = JSON.stringify(body);
       expect(text).not.toContain("co-document-view");
@@ -269,12 +273,16 @@ test.describe("content-ownership (production)", () => {
     }) => {
       const res = await request.get(f.url("/content-ownership/error-json"));
       expect(res.status()).toBe(500);
-      expect(res.headers()["content-type"]).toContain("application/json");
+      expect(res.headers()["content-type"]).toContain(
+        "application/problem+json",
+      );
 
       const body = await res.json();
-      expect(body.error).toBeDefined();
+      expect(body.detail).toBeDefined();
       // Production: error message is hidden
-      expect(body.error.message).toBe("Internal Server Error");
+      expect(body.detail).toBe("Internal Server Error");
+      expect(body.title).toBe("Internal Server Error");
+      expect(body.status).toBe(500);
       expect(body.data).toBeUndefined();
     });
   });
@@ -310,7 +318,7 @@ test.describe("content-ownership (production)", () => {
       expect(response?.status()).toBe(200);
 
       const body = await response?.json();
-      expect(body.data.secret).toBe("classified-payload");
+      expect(body.secret).toBe("classified-payload");
     });
   });
 
@@ -323,7 +331,7 @@ test.describe("content-ownership (production)", () => {
 
       const body = await response?.json();
       expect(JSON.stringify(body)).not.toContain("should-not-reach");
-      expect(body.data.data).toBe("plain-response");
+      expect(body.data).toBe("plain-response");
     });
   });
 });

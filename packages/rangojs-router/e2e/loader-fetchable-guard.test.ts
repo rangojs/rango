@@ -101,7 +101,7 @@ test.describe("loader fetchable guard (production)", () => {
     });
     expect(res.status()).toBe(200);
     const json = await res.json();
-    loaderIds = json.data;
+    loaderIds = json;
   });
 
   test("fetchable loader is accessible via _rsc_loader endpoint", async ({

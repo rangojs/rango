@@ -41,15 +41,15 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
 
   const loadCatalog = async () => {
     const result = await api("/catalog");
-    if (result?.data?.products) {
-      setProducts(result.data.products);
+    if (result?.products) {
+      setProducts(result.products);
     }
   };
 
   const loadCart = async () => {
     const result = await api("/cart");
-    if (result?.data?.items) {
-      setCart(result.data.items);
+    if (result?.items) {
+      setCart(result.items);
     }
   };
 
@@ -59,8 +59,8 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ productId, quantity: 1 }),
     });
-    if (result?.data?.items) {
-      setCart(result.data.items);
+    if (result?.items) {
+      setCart(result.items);
     }
   };
 
@@ -70,7 +70,7 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ quantity }),
     });
-    if (result?.data?.item) {
+    if (result?.item) {
       await loadCart();
     }
   };

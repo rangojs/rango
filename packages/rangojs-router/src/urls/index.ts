@@ -21,8 +21,7 @@ export type {
 export type {
   ExtractRoutes,
   ExtractResponses,
-  ResponseError,
-  ResponseEnvelope,
+  ProblemDetails,
   RouteResponse,
 } from "./type-extraction.js";
 

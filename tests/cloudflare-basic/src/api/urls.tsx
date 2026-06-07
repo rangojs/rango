@@ -7,9 +7,11 @@ import { urls, RouterError } from "@rangojs/router";
  * Handlers can still return Response directly for full control
  * (custom status codes, headers, etc.).
  *
- * JSON routes return a { data } | { error } envelope:
- * - Success: { data: T }
- * - Error: { error: { message, code?, type? } } with appropriate HTTP status
+ * JSON route wire format:
+ * - Success: the bare handler value T, content-type application/json
+ * - Error: an RFC 9457 problem+json object
+ *   ({ type, title, status, detail, code }) with content-type
+ *   application/problem+json and the appropriate HTTP status
  */
 const products = [
   { id: "1", name: "Widget", price: 9.99 },

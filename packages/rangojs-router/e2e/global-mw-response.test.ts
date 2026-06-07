@@ -19,7 +19,7 @@ async function readErrorLog(
 ): Promise<Array<{ phase: string; message: string }> | null> {
   const response = await request.get(errorUrl);
   const data = await response.json();
-  return data.data;
+  return data;
 }
 
 function sharedTests(f: ReturnType<typeof useFixture>) {

@@ -19,17 +19,14 @@ test.describe("content negotiation (dev)", () => {
     expect(contentType).not.toContain("application/json");
   });
 
-  test("Accept: application/json returns JSON envelope", async ({
-    request,
-  }) => {
+  test("Accept: application/json returns bare JSON", async ({ request }) => {
     const response = await request.get(f.url("/test/negotiate"), {
       headers: { Accept: "application/json" },
     });
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ format: "json", negotiated: true });
-    expect(body.error).toBeUndefined();
+    expect(body).toEqual({ format: "json", negotiated: true });
   });
 
   test("no Accept header returns JSON (negotiate handler)", async ({
@@ -41,7 +38,7 @@ test.describe("content negotiation (dev)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data.format).toBe("json");
+    expect(body.format).toBe("json");
   });
 
   test("Accept: */* returns JSON (no explicit text/html)", async ({
@@ -53,7 +50,7 @@ test.describe("content negotiation (dev)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data.format).toBe("json");
+    expect(body.format).toBe("json");
   });
 
   test("Vary: Accept present on negotiated JSON response", async ({
@@ -161,7 +158,7 @@ test.describe("content negotiation (dev)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ format: "json" });
+    expect(body).toEqual({ format: "json" });
   });
 
   test("multi negotiate: text/plain returns text", async ({ request }) => {
@@ -221,7 +218,7 @@ test.describe("content negotiation (dev)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ format: "json", wildcard: "some/path" });
+    expect(body).toEqual({ format: "json", wildcard: "some/path" });
   });
 
   test("wildcard negotiate: Vary: Accept present", async ({ request }) => {
@@ -258,7 +255,7 @@ test.describe("content negotiation (production)", () => {
     mode: "build",
   });
 
-  test("Accept: application/json returns JSON envelope in production", async ({
+  test("Accept: application/json returns bare JSON in production", async ({
     request,
   }) => {
     const response = await request.get(f.url("/test/negotiate"), {
@@ -267,7 +264,7 @@ test.describe("content negotiation (production)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ format: "json", negotiated: true });
+    expect(body).toEqual({ format: "json", negotiated: true });
   });
 
   test("Accept: text/html returns HTML in production", async ({ request }) => {
@@ -334,7 +331,7 @@ test.describe("content negotiation (production)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ format: "json" });
+    expect(body).toEqual({ format: "json" });
   });
 
   test("multi negotiate: text in production", async ({ request }) => {
@@ -378,7 +375,7 @@ test.describe("content negotiation (production)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ format: "json", wildcard: "deep/path" });
+    expect(body).toEqual({ format: "json", wildcard: "deep/path" });
   });
 
   test("wildcard negotiate: HTML in production", async ({ request }) => {

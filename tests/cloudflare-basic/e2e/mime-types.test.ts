@@ -9,15 +9,12 @@ test.describe("MIME type response routes (dev)", () => {
     mode: "dev",
   });
 
-  test("path.json() returns application/json with envelope", async ({
-    request,
-  }) => {
+  test("path.json() returns bare application/json", async ({ request }) => {
     const response = await request.get(f.url("/test/mime/json"));
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ type: "json" });
-    expect(body.error).toBeUndefined();
+    expect(body).toEqual({ type: "json" });
   });
 
   test("path.text() returns text/plain", async ({ request }) => {
@@ -128,7 +125,7 @@ test.describe("MIME type response routes (production)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data).toEqual({ type: "json" });
+    expect(body).toEqual({ type: "json" });
   });
 
   test("path.text() returns text/plain in production", async ({ request }) => {

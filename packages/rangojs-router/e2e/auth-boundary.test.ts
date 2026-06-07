@@ -189,7 +189,7 @@ test.describe("auth-boundary (dev)", () => {
     expect(response?.status()).toBe(200);
 
     const body = await response?.json();
-    expect(body.data.secret).toBe("classified-data");
+    expect(body.secret).toBe("classified-data");
   });
 
   test.describe("progressive enhancement (no JS)", () => {
@@ -406,7 +406,7 @@ test.describe("auth-boundary (production)", () => {
     expect(response?.status()).toBe(200);
 
     const body = await response?.json();
-    expect(body.data.secret).toBe("classified-data");
+    expect(body.secret).toBe("classified-data");
   });
 
   test.describe("progressive enhancement (no JS)", () => {

@@ -10,51 +10,53 @@ test.describe("response routes", () => {
     mode: "dev",
   });
 
-  test("GET /api/health returns JSON envelope with status ok", async ({
+  test("GET /api/health returns bare JSON with status ok", async ({
     request,
   }) => {
     const response = await request.get(f.url("/api/health"));
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data.status).toBe("ok");
-    expect(body.data.timestamp).toBeDefined();
-    expect(body.error).toBeUndefined();
+    expect(body.status).toBe("ok");
+    expect(body.timestamp).toBeDefined();
   });
 
-  test("GET /api/products returns JSON envelope with array", async ({
+  test("GET /api/products returns bare JSON with array", async ({
     request,
   }) => {
     const response = await request.get(f.url("/api/products"));
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(Array.isArray(body.data)).toBe(true);
-    expect(body.data.length).toBe(3);
-    expect(body.data[0].name).toBe("Widget");
+    expect(Array.isArray(body)).toBe(true);
+    expect(body.length).toBe(3);
+    expect(body[0].name).toBe("Widget");
   });
 
-  test("GET /api/products/:id returns JSON envelope with params", async ({
+  test("GET /api/products/:id returns bare JSON with params", async ({
     request,
   }) => {
     const response = await request.get(f.url("/api/products/1"));
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body.data.id).toBe("1");
-    expect(body.data.name).toBe("Widget");
+    expect(body.id).toBe("1");
+    expect(body.name).toBe("Widget");
   });
 
-  test("GET /api/products/:id returns error envelope for non-existent product", async ({
+  test("GET /api/products/:id returns problem+json error for non-existent product", async ({
     request,
   }) => {
     const response = await request.get(f.url("/api/products/999"));
     expect(response.status()).toBe(404);
-    expect(response.headers()["content-type"]).toContain("application/json");
+    expect(response.headers()["content-type"]).toContain(
+      "application/problem+json",
+    );
     const body = await response.json();
-    expect(body.data).toBeUndefined();
-    expect(body.error).toBeDefined();
-    expect(body.error.message).toContain("not found");
-    expect(body.error.code).toBe("NOT_FOUND");
+    expect(body.title).toBe("Not Found");
+    expect(body.status).toBe(404);
+    expect(body.type).toBeUndefined();
+    expect(body.detail).toContain("not found");
+    expect(body.code).toBe("NOT_FOUND");
   });
 
   test("GET /robots.txt returns plain text", async ({ request }) => {
@@ -118,14 +120,14 @@ test.describe("response routes (production)", () => {
     mode: "build",
   });
 
-  test("GET /api/health returns JSON envelope in production build", async ({
+  test("GET /api/health returns bare JSON in production build", async ({
     request,
   }) => {
     const response = await request.get(f.url("/api/health"));
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
-    expect(body.data.status).toBe("ok");
+    expect(body.status).toBe("ok");
   });
 
   test("GET /robots.txt returns plain text in production build", async ({
@@ -144,16 +146,19 @@ test.describe("response routes (production)", () => {
     const response = await request.get(f.url("/api/products/1"));
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body.data.id).toBe("1");
-    expect(body.data.name).toBe("Widget");
+    expect(body.id).toBe("1");
+    expect(body.name).toBe("Widget");
   });
 
-  test("GET /api/products/:id returns error envelope in production for non-existent", async ({
+  test("GET /api/products/:id returns problem+json error in production for non-existent", async ({
     request,
   }) => {
     const response = await request.get(f.url("/api/products/999"));
     expect(response.status()).toBe(404);
+    expect(response.headers()["content-type"]).toContain(
+      "application/problem+json",
+    );
     const body = await response.json();
-    expect(body.error.code).toBe("NOT_FOUND");
+    expect(body.code).toBe("NOT_FOUND");
   });
 });
