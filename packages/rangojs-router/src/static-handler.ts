@@ -63,6 +63,11 @@ export interface StaticHandlerDefinition<
 
 // -- Function ---------------------------------------------------------------
 
+// Process-stable fallback id counter (mirrors createHandle / createLoader /
+// Prerender). Only assigned in a bare unit test where the Vite plugin did not
+// inject an id; never fires in a real build (the plugin always injects).
+let runtimeStaticIdCounter = 0;
+
 export function Static<TParams extends Record<string, any> = {}>(
   handler: (ctx: StaticBuildContext) => ReactNode | Promise<ReactNode>,
   options?: StaticHandlerOptions,
@@ -94,11 +99,22 @@ export function Static<TParams extends Record<string, any>>(
     id = maybeId ?? "";
   }
 
-  if (!id) {
+  if (!id && process.env.NODE_ENV === "development") {
     throw new Error(
       "[rango] Static: missing $$id. " +
         "Ensure the exposeInternalIds Vite plugin is configured.",
     );
+  }
+  // No build-injected id — only in a bare unit test (every real build runs the
+  // rango Vite plugin, which always injects; the dev-throw above catches a
+  // genuinely non-exported Static). Assign a process-stable runtime id so a
+  // whole-app router with Static() routes can construct in a bare test. Inert
+  // there: staticHandlerId is read only during RSC serving (never in dispatch /
+  // assertGeneratedRoutesMatch), and the build static manifest keys on the
+  // plugin-injected id (the fallback never fires under the plugin). Mirrors
+  // createHandle / createLoader / Prerender.
+  if (!id) {
+    id = `__rango_runtime_static_${runtimeStaticIdCounter++}`;
   }
 
   return {

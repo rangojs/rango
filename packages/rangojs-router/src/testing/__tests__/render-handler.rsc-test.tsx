@@ -102,4 +102,29 @@ describe("renderHandler", () => {
     }
     await expect(renderHandler(Page)).rejects.toThrow(/was not seeded/i);
   });
+
+  test("rethrows an actionable error when the handler hits the server-only stub (missing rsc alias)", async () => {
+    // Simulate the out-of-react-server stub throw a handler would hit if the
+    // vitest.rsc.config.ts resolve.alias does not map bare @rangojs/router to
+    // index.rsc.ts. renderHandler must surface it LOUDLY (not swallow it into
+    // result.thrown as an opaque tree:undefined).
+    function Page(): never {
+      throw new Error(
+        `cookies() is only available from "@rangojs/router" in a react-server/RSC environment.`,
+      );
+    }
+    await expect(renderHandler(Page)).rejects.toThrow(/rangoTestAliases/);
+  });
+
+  test("a normal handler throw is captured on result.thrown, NOT reclassified as setup", async () => {
+    // Control: an ordinary Error must stay observable on result.thrown (no
+    // false-positive from the server-only-stub guard).
+    const boom = new Error("boom from handler");
+    function Page(): never {
+      throw boom;
+    }
+    const { thrown, tree } = await renderHandler(Page);
+    expect(thrown).toBe(boom);
+    expect(tree).toBeUndefined();
+  });
 });

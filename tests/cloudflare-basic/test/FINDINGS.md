@@ -59,14 +59,17 @@ app. The working setup (now the preset) is:
      an explicit alias (or `ssr.resolve.conditions`, which then also flips React)
      does. This is why no existing test exercises the package's own react-server
      export map.
-   - Even with the alias, the **full** app router can't be imported in bare
-     vitest: real `Prerender()` / `createLoader()` throw "missing `$$id`" (the id
-     is injected by the rango Vite plugin at build time), and the barrel pulls
-     `virtual:` imports that need the plugin. So `dispatch` / `generated-routes` /
-     `cache-status` against the _whole_ router require the rango plugin or e2e.
-     **Workaround used here:** build a router from an importable, Prerender-free
-     include (the app's real `apiPatterns`) — this tests real handlers and works
-     with just the aliases.
+   - Handler `$$id` is NO LONGER the blocker: `Prerender()` / `createLoader()` /
+     `Static()` each assign a process-stable runtime fallback id in a bare test,
+     so they construct without "missing `$$id`". But the **full** app router
+     _file_ still can't be imported in bare vitest — its page modules pull
+     app-specific deps and/or plugin `virtual:` modules that need the rango
+     plugin (an import of `src/router.tsx` fails on a page dep before any rango
+     concern). So `dispatch` / `generated-routes` / `cache-status` against the
+     _whole_ router require the rango plugin or e2e.
+     **Workaround used here:** build a router from an importable, focused include
+     (the app's real `apiPatterns`) — this tests real handlers and works with
+     just the aliases.
 
    **Recommendation:** ship a one-line vitest preset from the testing package
    (e.g. `@rangojs/router/testing/vitest`) that wires the alias + virtual stubs +

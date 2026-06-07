@@ -7,11 +7,12 @@ import type { AppBindings } from "../src/env.js";
 // Dogfood `dispatch` against the cloudflare-basic app's REAL API route handlers.
 //
 // Why a router built from `apiPatterns` rather than `import { router }`:
-// importing the full app router (src/router.tsx) pulls Prerender()/createLoader()
-// calls whose build-time-injected `$$id` only exists under the rango Vite plugin
-// transform — in bare vitest the real Prerender() throws "missing $$id". The
-// app's API include (src/api/urls.tsx) is Prerender-free and uses only
-// path.json(...) with real handler bodies, so it imports and dispatches cleanly
+// the full app router file (src/router.tsx) can't be imported in bare vitest —
+// its page modules pull app-specific deps and/or plugin `virtual:` modules that
+// need the rango Vite plugin. (Handler $$id is NOT the blocker: Prerender()/
+// createLoader()/Static() each get a process-stable fallback id in a bare test.)
+// The app's API include (src/api/urls.tsx) uses only path.json(...) with real
+// handler bodies — no page-module imports — so it imports and dispatches cleanly
 // with just the vitest.config.ts aliases (no per-file vi.mock). This is the
 // realistic consumer pattern for unit-testing response/API routes.
 //

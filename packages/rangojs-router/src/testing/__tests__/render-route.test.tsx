@@ -254,6 +254,19 @@ describe("renderRoute mount (include() scope)", () => {
     expect(getByTestId("rev").getAttribute("href")).toBe("/shop/c/wine");
     expect(getByTestId("href").getAttribute("href")).toBe("/shop/cart");
   });
+
+  it("accepts a route path that itself equals the mount (production parity, no false guard)", async () => {
+    // renderRoute paths are include-RELATIVE; production simply prefixes them, so
+    // a relative path of "/shop" under mount "/shop" legitimately models the URL
+    // "/shop/shop". renderRoute must NOT reject this — it mirrors prefixing, it
+    // does not police it. (The request is the include-relative URL, like the
+    // other mount tests above.)
+    const { getByTestId } = await renderRoute(
+      [{ path: "/shop", Component: MountProbe }],
+      { mount: "/shop", request: "/shop" },
+    );
+    expect(getByTestId("mount").textContent).toBe("/shop");
+  });
 });
 
 describe("renderRoute reverse + optional params from the match", () => {

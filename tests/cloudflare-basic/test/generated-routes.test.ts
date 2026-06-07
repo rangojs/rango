@@ -11,11 +11,13 @@ import type { AppBindings } from "../src/env.js";
 // Drift check between the generated *.named-routes.gen.ts and a router's runtime
 // route map.
 //
-// LIMITATION (see test/FINDINGS.md): the FULL app router (src/router.tsx) cannot
-// be imported in bare vitest (its Prerender()/createLoader() calls need the Vite
-// plugin's injected $$id), so the whole-app drift check belongs in an e2e/build
-// step. Here we exercise the primitive against the importable, Prerender-free
-// API include — a real subtree — plus the real committed NamedRoutes file.
+// LIMITATION (see test/FINDINGS.md): the FULL app router file (src/router.tsx)
+// cannot be imported in bare vitest — its page modules pull app-specific deps
+// and/or plugin `virtual:` modules that need the Vite plugin. (Handler $$id is
+// NOT the blocker: Prerender()/createLoader()/Static() each construct via a
+// runtime fallback id.) So the whole-app drift check belongs in an e2e/build
+// step. Here we exercise the primitive against the importable, focused API
+// include — a real subtree — plus the real committed NamedRoutes file.
 describe("assertGeneratedRoutesMatch (generated-route drift)", () => {
   const apiRouter = createRouter<AppBindings>({}).routes(apiPatterns);
 

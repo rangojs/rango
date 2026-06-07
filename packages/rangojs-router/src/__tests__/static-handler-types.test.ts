@@ -137,8 +137,24 @@ describe("Prerender type constraints", () => {
 // ============================================================================
 
 describe("Static runtime constraints", () => {
-  it("throws when $$id is missing", () => {
-    expect(() => Static(() => null as any)).toThrow("Static: missing $$id");
+  it("throws when $$id is missing in development; assigns a runtime fallback otherwise", () => {
+    // Dev: a genuinely non-exported Static still throws (the plugin would have
+    // injected the id). Outside dev (bare test, or a production build where the
+    // plugin always injects first), a process-stable fallback id is assigned so a
+    // whole-app router can construct in a bare test — mirrors createHandle /
+    // createLoader / Prerender. The fallback is inert (staticHandlerId is read
+    // only during real RSC serving; the manifest keys on the plugin id).
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    try {
+      expect(() => Static(() => null as any)).toThrow("Static: missing $$id");
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+    // vitest runs with NODE_ENV "test", so the fallback fires (no throw).
+    expect(Static(() => null as any).$$id).toMatch(
+      /^__rango_runtime_static_\d+$/,
+    );
   });
 
   it("succeeds when $$id is provided", () => {

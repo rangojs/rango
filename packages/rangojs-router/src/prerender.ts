@@ -273,6 +273,11 @@ export interface PrerenderHandlerDefinition<
   use?: () => UseItems<HandlerUseItem>;
 }
 
+// Process-stable fallback id counter (mirrors createHandle / createLoader). Only
+// assigned in a bare unit test where the Vite plugin did not inject an id; never
+// fires in a real build (the plugin always injects).
+let runtimePrerenderIdCounter = 0;
+
 // -- Overloads --------------------------------------------------------------
 //
 // T accepts: named route string (global or .local) OR explicit param object.
@@ -376,11 +381,21 @@ export function Prerender<TParams extends Record<string, any>>(
     );
   }
 
-  if (!id) {
+  if (!id && process.env.NODE_ENV === "development") {
     throw new Error(
       "[rango] Prerender: missing $$id. " +
         "Ensure the exposeInternalIds Vite plugin is configured.",
     );
+  }
+  // No build-injected id — only in a bare unit test (every real build runs the
+  // rango Vite plugin, which always injects a stable id; the dev-throw above
+  // catches a genuinely non-exported Prerender). Assign a process-stable runtime
+  // id so a whole-app router with Prerender routes can construct in a bare test
+  // (for dispatch / assertGeneratedRoutesMatch). Provably inert in production:
+  // the fallback never fires under the plugin, and prerender storage/lookup keys
+  // on routeName + paramHash, never $$id (mirrors createHandle / createLoader).
+  if (!id) {
+    id = `__rango_runtime_prerender_${runtimePrerenderIdCounter++}`;
   }
 
   return {

@@ -109,6 +109,23 @@ export interface RenderHandlerResult {
  */
 class RenderHandlerSetupError extends Error {}
 
+/**
+ * Detect the server-only-API stub throw: when a handler/component imports
+ * getRequestContext()/cookies()/etc. from the BARE `@rangojs/router` specifier
+ * (the out-of-react-server stub in index.ts) instead of the react-server build.
+ * In an rsc test this happens when the vitest.rsc.config.ts `resolve.alias` does
+ * not map the bare specifier to `index.rsc.ts` (the `rangoTestAliases` preset).
+ * The dual-substring match keeps a legitimate handler throw from being
+ * reclassified as a setup error.
+ */
+function isServerOnlyStubError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("is only available from") &&
+    error.message.includes("react-server")
+  );
+}
+
 function headersToObject(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, name) => {
@@ -228,6 +245,19 @@ export async function renderHandler<TEnv = any>(
       // A harness misconfiguration (unseeded loader) is the consumer's mistake —
       // surface it as a rejection, not as a captured handler throw.
       if (error instanceof RenderHandlerSetupError) throw error;
+      // Same for the server-only-API stub throw: the handler read
+      // getRequestContext()/cookies() but the bare `@rangojs/router` resolved to
+      // the throwing stub. Rethrow LOUDLY with the fix, instead of silently
+      // capturing it (which surfaces as an opaque tree:undefined + bare throw).
+      if (isServerOnlyStubError(error)) {
+        throw new RenderHandlerSetupError(
+          `renderHandler: the handler called a server-only API (getRequestContext/cookies/...) ` +
+            `but "@rangojs/router" resolved to the out-of-react-server stub. Add ` +
+            `rangoTestAliases({ preset }) to your vitest.rsc.config.ts \`resolve.alias\` so the ` +
+            `bare specifier maps to index.rsc.ts (the real react-server implementations). ` +
+            `Original: ${(error as Error).message}`,
+        );
+      }
       // Otherwise captured, NOT re-thrown: a handler's success path is often
       // `throw redirect(...)`; its cookies/flash must stay observable.
       didThrow = true;

@@ -5,11 +5,13 @@ import {
 } from "@rangojs/router/testing";
 import { NamedRoutes } from "../src/router.named-routes.gen.js";
 
-// vite-rsc-demo uses Prerender (magazine), so the FULL router can't be imported
-// in a bare test (the real Prerender() throws "missing $$id"). So this exercises
-// the generated-routes primitive against the real committed NamedRoutes map plus
-// a constructed runtime map — pinning the primitive's behavior and a few real
-// route patterns. The whole-app drift check runs at build/e2e.
+// The FULL vite-rsc-demo router file can't be imported in a bare test — its page
+// modules pull app-specific deps and/or plugin `virtual:` modules that need the
+// Vite plugin. (Handler $$id is NOT the blocker: Prerender()/createLoader()/
+// Static() each construct via a runtime fallback id.) So this exercises the
+// generated-routes primitive against the real committed NamedRoutes map plus a
+// constructed runtime map — pinning the primitive's behavior and a few real route
+// patterns. The whole-app drift check runs at build/e2e.
 describe("generated-routes primitive against vite-rsc-demo's NamedRoutes", () => {
   it("the committed NamedRoutes carries the expected route patterns", () => {
     expect(NamedRoutes["shop.products.detail.view"]).toBe(
