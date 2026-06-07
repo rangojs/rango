@@ -192,6 +192,7 @@ Grouped by concern — read when you need to…
 | `/host-router`            | Multi-app host routing with domain/subdomain patterns                      |
 | `/links`                  | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
 | `/response-routes`        | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
+| `/api-client`             | Typed client for consuming your own response-route JSON APIs (recipe)      |
 | `/mime-routes`            | Content negotiation — same URL, different response types via Accept header |
 | `/streams-and-websockets` | SSE via `path.stream` and WebSocket upgrades via `path.any`                |
 | `/handler-use`            | Attach default loaders/middleware to a handler via `handler.use`           |

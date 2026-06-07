@@ -480,3 +480,7 @@ best-effort basis.
 5. Client-side navigation to response routes gets `X-RSC-Reload` header, triggering hard navigation
 6. Response types flow through `_responses` phantom type on `UrlPatterns`, propagated by `include()`
 7. When multiple routes share a URL pattern, the trie merges them for content negotiation (see `/mime-routes`)
+
+## Consuming response routes
+
+To call your own response-route JSON APIs from first-party TypeScript with a typed client (typed params, typed payloads inferred from the handler, no `.data`, typed `ProblemDetails` errors), see `/api-client` — a copy-paste recipe over `RouteResponse` + `ExtractParams` + a client-safe path builder. External/third-party consumers use the plain wire directly: bare JSON on success, `application/problem+json` on error.
