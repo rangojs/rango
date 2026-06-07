@@ -133,6 +133,52 @@ describe("lazy include parent isolation", () => {
       expect(dashEntry.routes).toHaveProperty("dashboard.index");
     });
 
+    // Regression (C5): a nested include() under a parent whose prefix carries a
+    // trailing slash must not produce a double-slash staticPrefix. The runtime
+    // join was naive (`urlPrefix + prefix`), yielding "/parent//child", which
+    // the trie's "/parent/child" sp can never match — silently forcing the
+    // regex fallback. The join must normalize like include()/runWithPrefixes.
+    it("normalizes nested-include staticPrefix under a trailing-slash parent prefix", () => {
+      const sharedParent = makeSyntheticRoot();
+
+      const childPatterns = urls<any>(({ path }) => [
+        path("/leaf", DashboardPage, { name: "leaf" }),
+      ]);
+      const parentPatterns = urls<any>(({ include }) => [
+        include("/child", childPatterns),
+      ]);
+
+      const routesEntries: RouteEntry[] = [];
+      const parentEntry: RouteEntry & { _lazyPrefix?: string } = {
+        prefix: "",
+        staticPrefix: "/parent",
+        routes: {},
+        handler: parentPatterns.handler,
+        mountIndex: 1,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: parentPatterns,
+        _lazyPrefix: "/parent/",
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: undefined,
+          parent: sharedParent,
+          counters: {},
+        },
+      } as unknown as RouteEntry;
+      routesEntries.push(parentEntry);
+
+      const deps = makeLazyEvalDeps(routesEntries);
+      evaluateLazyEntry(parentEntry, deps);
+
+      // A nested entry for include("/child", ...) must have been registered
+      // with a normalized staticPrefix — no double slash from "/parent/"+"/child".
+      const nested = routesEntries.find((e) => e !== parentEntry);
+      expect(nested).toBeDefined();
+      expect(nested!.staticPrefix).not.toContain("//");
+      expect(nested!.staticPrefix).toBe("/parent/child");
+    });
+
     it("isolates root-scoped includes with empty prefix and { name: '' }", () => {
       const sharedParent = makeSyntheticRoot();
 

@@ -10,6 +10,8 @@ import {
   parsePattern,
   type ParsedSegment,
 } from "../router/pattern-matching.js";
+import { buildRouteToStaticPrefix } from "./prefix-tree-utils.js";
+import type { FullManifest } from "./generate-manifest.js";
 
 // -- Trie data structures (compact keys for JSON serialization) --
 
@@ -96,6 +98,47 @@ export function buildRouteTrie(
   }
 
   return root;
+}
+
+/**
+ * Build a per-router trie from a generated manifest. This is the single
+ * construction path shared by build/discovery (discover-routers.ts, serialized
+ * into the production chunk) and the dev/HMR runtime rebuild
+ * (rsc/manifest-init.ts). Keeping one code path is what guarantees the dev
+ * runtime trie and the production serialized trie are byte-for-byte identical
+ * (modulo `leaf.a` ancestry, which embeds the mount index and is debug-only).
+ *
+ * Returns null when the manifest has no route ancestry (no routes), matching
+ * the prior guard at both call sites.
+ */
+export function buildPerRouterTrie(manifest: FullManifest): TrieNode | null {
+  const ancestry = manifest._routeAncestry;
+  if (!ancestry || Object.keys(ancestry).length === 0) {
+    return null;
+  }
+
+  // Seed every route to the root static prefix (""), then override with each
+  // route's include() scope prefix from the prefix tree so the trie returns the
+  // correct `sp` for lazy-entry lookup in find-match.
+  const routeToStaticPrefix: Record<string, string> = {};
+  for (const name of Object.keys(manifest.routeManifest)) {
+    routeToStaticPrefix[name] = "";
+  }
+  if (manifest.prefixTree) {
+    buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
+  }
+
+  return buildRouteTrie(
+    manifest.routeManifest,
+    ancestry,
+    routeToStaticPrefix,
+    manifest.routeTrailingSlash,
+    manifest.prerenderRoutes ? new Set(manifest.prerenderRoutes) : undefined,
+    manifest.passthroughRoutes
+      ? new Set(manifest.passthroughRoutes)
+      : undefined,
+    manifest.responseTypeRoutes,
+  );
 }
 
 /**

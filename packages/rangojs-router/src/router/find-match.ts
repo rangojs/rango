@@ -1,5 +1,5 @@
 import { tryTrieMatch } from "./trie-matching.js";
-import { getRouteTrie, getRouterTrie } from "../route-map-builder.js";
+import { getRouterTrie } from "../route-map-builder.js";
 import {
   findMatch as findRouteMatch,
   isLazyEvaluationNeeded,
@@ -7,6 +7,19 @@ import {
 } from "./pattern-matching.js";
 import type { MetricsStore } from "../server/context";
 import type { RouteEntry } from "../types";
+
+// Return a shallow copy with an independent `params` object. The single-entry
+// cache below is module-lifetime and keyed only on pathname, so the same result
+// object is handed to every same-pathname request in the isolate. ctx.params
+// aliases this `params` (see request-context), so without an own copy a handler
+// that mutates ctx.params would corrupt the cached entry for later requests.
+// `entry` and the flags are intentionally shared by reference: they are
+// read-only, and entry identity is compared in match-api (prevMatch.entry).
+function cloneMatchResult<TEnv>(
+  r: RouteMatchResult<TEnv> | null,
+): RouteMatchResult<TEnv> | null {
+  return r ? { ...r, params: { ...r.params } } : null;
+}
 
 export interface FindMatchDeps<TEnv = any> {
   routesEntries: RouteEntry<TEnv>[];
@@ -35,9 +48,10 @@ export function createFindMatch<TEnv = any>(
     pathname: string,
     ms?: MetricsStore,
   ): RouteMatchResult<TEnv> | null {
-    // Return cached result if same pathname (avoids double-match per request)
+    // Return cached result if same pathname (avoids double-match per request).
+    // Clone so a caller mutating ctx.params cannot corrupt the shared cache.
     if (lastFindMatchPathname === pathname) {
-      return lastFindMatchResult;
+      return cloneMatchResult(lastFindMatchResult);
     }
 
     // Helper to push sub-metrics
@@ -114,7 +128,6 @@ export function createFindMatch<TEnv = any>(
             params: trieResult.params,
             optionalParams: new Set(trieResult.optionalParams || []),
             redirectTo: trieResult.redirectTo,
-            ancestry: trieResult.ancestry,
             ...(trieResult.pr ? { pr: true } : {}),
             ...(trieResult.pt ? { pt: true } : {}),
             ...(trieResult.responseType
@@ -125,7 +138,7 @@ export function createFindMatch<TEnv = any>(
               : {}),
             ...(trieResult.rscFirst ? { rscFirst: true } : {}),
           };
-          return lastFindMatchResult;
+          return cloneMatchResult(lastFindMatchResult);
         }
       }
     }
@@ -153,8 +166,28 @@ export function createFindMatch<TEnv = any>(
     }
     pushMetric?.("match:regex-fallback", regexStart);
 
+    // The trie is the single source of truth and is built before findMatch in
+    // both dev (handler rebuild) and production (ensureRouterManifest). If the
+    // trie was present yet the regex fallback resolved a real match, the trie
+    // has a gap (e.g. a route shape it cannot represent) and dev/prod could
+    // diverge if the trie were ever absent. Surface it in dev; folded out in
+    // production builds.
+    if (
+      process.env.NODE_ENV !== "production" &&
+      routeTrie &&
+      result &&
+      !isLazyEvaluationNeeded(result)
+    ) {
+      console.warn(
+        `[@rangojs/router] Route "${pathname}" resolved via the regex fallback ` +
+          `even though the route trie was present. The trie should be the single ` +
+          `matching source of truth; this indicates a trie gap. Please report this ` +
+          `with your route configuration.`,
+      );
+    }
+
     lastFindMatchPathname = pathname;
     lastFindMatchResult = result;
-    return result;
+    return cloneMatchResult(result);
   };
 }

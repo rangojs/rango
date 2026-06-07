@@ -19,8 +19,6 @@ export interface TrieMatchResult {
    * from `params` (read as `undefined`), matching the
    * `ExtractParams<"/:locale?/...">` type. */
   optionalParams?: string[];
-  /** Ancestry shortCodes for layout pruning */
-  ancestry: string[];
   /** Redirect target if trailing slash requires it */
   redirectTo?: string;
   /** Route has pre-rendered data available */
@@ -59,6 +57,19 @@ export function tryTrieMatch(
         trie.r,
         [],
         undefined,
+        pathname,
+        pathnameHasTrailingSlash,
+      );
+    }
+    // A root-level wildcard ("/*") matches "/" with an empty remainder, the
+    // same value the regex matcher produces for the bare prefix. Without this
+    // the trie misses, the regex fallback runs, and its no-config branch emits
+    // a corrupt slice-off redirect. The static terminal still wins above.
+    if (trie.w) {
+      return validateAndBuild(
+        trie.w,
+        [],
+        "",
         pathname,
         pathnameHasTrailingSlash,
       );
@@ -104,6 +115,15 @@ function walkTrie(
   if (index === segments.length) {
     if (node.r) {
       return { leaf: node.r, paramValues: [...paramValues] };
+    }
+    // A wildcard at this node matches the bare prefix with an empty remainder
+    // (e.g. "/files" against "/files/*"), mirroring the regex matcher's `*=""`.
+    // walkTrie otherwise only reaches node.w in the index<length branch below,
+    // so without this a request to the wildcard's own prefix misses the trie
+    // and the regex fallback emits a corrupt redirect. A static terminal
+    // (node.r) still wins.
+    if (node.w) {
+      return { leaf: node.w, paramValues: [...paramValues], wildcardValue: "" };
     }
     return null;
   }
@@ -229,7 +249,6 @@ function validateAndBuild(
     routeKey: leaf.n,
     sp: leaf.sp,
     params,
-    ancestry: leaf.a,
   };
 
   if (leaf.op) result.optionalParams = leaf.op;

@@ -1,5 +1,5 @@
 import { registerRouteMap } from "../route-map-builder.js";
-import { extractStaticPrefix } from "./pattern-matching.js";
+import { extractStaticPrefix, joinPrefix } from "./pattern-matching.js";
 import {
   type EntryData,
   RangoContext,
@@ -190,10 +190,13 @@ export function evaluateLazyEntry<TEnv = any>(
   // Detect nested lazy includes and register them as new entries
   const nestedLazyIncludes = findLazyIncludes(handlerResult);
   for (const lazyInclude of nestedLazyIncludes) {
-    // Compute the full URL prefix (combining parent prefix if any)
-    const fullPrefix = lazyInclude.context.urlPrefix
-      ? lazyInclude.context.urlPrefix + lazyInclude.prefix
-      : lazyInclude.prefix;
+    // Compute the full URL prefix (combining parent prefix if any). Use the
+    // slash-collapsing join so a trailing-slash parent prefix does not produce
+    // a double-slash staticPrefix the trie's sp can never match.
+    const fullPrefix = joinPrefix(
+      lazyInclude.context.urlPrefix,
+      lazyInclude.prefix,
+    );
 
     const nestedEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
       prefix: "",

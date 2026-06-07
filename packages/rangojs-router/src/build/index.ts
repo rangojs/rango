@@ -22,7 +22,12 @@ export {
   type GeneratedManifest,
 } from "./generate-manifest.js";
 
-export { buildRouteTrie, type TrieNode, type TrieLeaf } from "./route-trie.js";
+export {
+  buildRouteTrie,
+  buildPerRouterTrie,
+  type TrieNode,
+  type TrieLeaf,
+} from "./route-trie.js";
 
 export { collectFallbackClientRefs } from "./collect-fallback-refs.js";
 

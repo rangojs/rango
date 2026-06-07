@@ -36,47 +36,13 @@ export async function buildRouterTrieFromUrlpatterns(
     undefined,
     router.basename ? { urlPrefix: router.basename } : undefined,
   );
-  if (
-    generated._routeAncestry &&
-    Object.keys(generated._routeAncestry).length > 0
-  ) {
-    const { buildRouteTrie } = await import("../build/route-trie.js");
-    // Map each route to its include() staticPrefix so the trie
-    // returns the correct sp for lazy entry lookup in findMatch.
-    const routeToStaticPrefix: Record<string, string> = {};
-    for (const name of Object.keys(generated.routeManifest)) {
-      routeToStaticPrefix[name] = "";
-    }
-    // Override with prefix from include() entries so the trie
-    // returns the correct sp for lazy entry lookup in findMatch.
-    // Walk recursively to include routes in nested includes.
-    if (generated.prefixTree) {
-      const visitPrefixNode = (node: any): void => {
-        const sp = node.staticPrefix || "";
-        for (const route of node.routes || []) {
-          routeToStaticPrefix[route] = sp;
-        }
-        for (const child of Object.values(node.children || {})) {
-          visitPrefixNode(child);
-        }
-      };
-      for (const node of Object.values(generated.prefixTree)) {
-        visitPrefixNode(node);
-      }
-    }
-    const trie = buildRouteTrie(
-      generated.routeManifest,
-      generated._routeAncestry,
-      routeToStaticPrefix,
-      generated.routeTrailingSlash,
-      generated.prerenderRoutes
-        ? new Set(generated.prerenderRoutes)
-        : undefined,
-      generated.passthroughRoutes
-        ? new Set(generated.passthroughRoutes)
-        : undefined,
-      generated.responseTypeRoutes,
-    );
+  // Build the trie through the SAME shared helper the production discovery uses
+  // (discover-routers.ts), so the dev runtime-rebuilt trie and the prod
+  // serialized trie cannot drift. buildPerRouterTrie returns null when there
+  // are no routes.
+  const { buildPerRouterTrie } = await import("../build/route-trie.js");
+  const trie = buildPerRouterTrie(generated);
+  if (trie) {
     setRouterTrie(router.id, trie);
     // Set global trie only if not already set by another router
     if (!getRouteTrie()) {

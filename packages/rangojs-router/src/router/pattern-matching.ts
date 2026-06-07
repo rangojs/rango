@@ -318,6 +318,21 @@ export function extractStaticPrefix(pattern: string): string {
 }
 
 /**
+ * Join a URL prefix to a sub-prefix, collapsing the duplicate slash when the
+ * base ends with "/" and the sub-prefix starts with "/". This mirrors the
+ * canonical join in `include()` (urls/include-helper.ts) and `runWithPrefixes`
+ * (server/context.ts) so a nested lazy include's runtime staticPrefix matches
+ * the build-time trie's `sp` (e.g. `include("/parent/", …)` containing
+ * `include("/child", …)` resolves to `/parent/child`, not `/parent//child`).
+ */
+export function joinPrefix(base: string | undefined, prefix: string): string {
+  if (!base) return prefix;
+  return base.endsWith("/") && prefix.startsWith("/")
+    ? base + prefix.slice(1)
+    : base + prefix;
+}
+
+/**
  * Match a pathname against registered routes
  *
  * Note: Optional params that are absent in the path are omitted from the
@@ -343,8 +358,6 @@ export interface RouteMatchResult<TEnv = any> {
   params: Record<string, string>;
   optionalParams: Set<string>;
   redirectTo?: string;
-  /** Ancestry shortCodes for layout pruning (from trie match) */
-  ancestry?: string[];
   /** Route has pre-rendered data available (from trie) */
   pr?: true;
   /** Passthrough: handler kept for live fallback on unknown params (from trie) */

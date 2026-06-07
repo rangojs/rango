@@ -340,36 +340,17 @@ export async function discoverRouters(
         mergedResponseTypeRoutes,
       );
 
-      // Build per-router tries for multi-router isolation.
+      // Build per-router tries for multi-router isolation. Uses the single
+      // shared buildPerRouterTrie so the production serialized trie is built by
+      // exactly the same code as the dev/HMR runtime rebuild (manifest-init.ts).
+      const buildPerRouterTrie = buildMod.buildPerRouterTrie;
       for (const { id, manifest } of allManifests) {
-        if (
-          !manifest._routeAncestry ||
-          Object.keys(manifest._routeAncestry).length === 0
-        )
-          continue;
-        const perRouterStaticPrefix: Record<string, string> = {};
-        for (const name of Object.keys(manifest.routeManifest)) {
-          perRouterStaticPrefix[name] = "";
+        const perRouterTrie = buildPerRouterTrie
+          ? buildPerRouterTrie(manifest)
+          : null;
+        if (perRouterTrie) {
+          newPerRouterTrieMap.set(id, perRouterTrie);
         }
-        buildRouteToStaticPrefix(manifest.prefixTree, perRouterStaticPrefix);
-
-        const perRouterPrerenderNames = manifest.prerenderRoutes
-          ? new Set<string>(manifest.prerenderRoutes)
-          : undefined;
-        const perRouterPassthroughNames = manifest.passthroughRoutes
-          ? new Set<string>(manifest.passthroughRoutes)
-          : undefined;
-
-        const perRouterTrie = buildRouteTrie(
-          manifest.routeManifest,
-          manifest._routeAncestry,
-          perRouterStaticPrefix,
-          manifest.routeTrailingSlash,
-          perRouterPrerenderNames,
-          perRouterPassthroughNames,
-          manifest.responseTypeRoutes,
-        );
-        newPerRouterTrieMap.set(id, perRouterTrie);
       }
     }
   }

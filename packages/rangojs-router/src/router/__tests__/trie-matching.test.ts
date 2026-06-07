@@ -65,6 +65,43 @@ describe("tryTrieMatch", () => {
     expect(result?.params).toEqual({ "*": "docs/guides/intro" });
   });
 
+  // Regression (C1): a wildcard whose parent node is reached with no remaining
+  // segments must match the bare prefix with an empty remainder. Previously the
+  // trie missed and the regex fallback emitted a corrupt slice-off redirect
+  // ("/files" -> "/file").
+  it("matches the bare wildcard prefix with an empty remainder", () => {
+    const trie = buildTestTrie({
+      "files.any": "/files/*",
+    });
+
+    expect(tryTrieMatch(trie, "/files")?.routeKey).toBe("files.any");
+    expect(tryTrieMatch(trie, "/files")?.params).toEqual({ "*": "" });
+    expect(tryTrieMatch(trie, "/files")?.redirectTo).toBeUndefined();
+    // Trailing-slash form normalizes to the same bare-prefix match.
+    expect(tryTrieMatch(trie, "/files/")?.routeKey).toBe("files.any");
+    expect(tryTrieMatch(trie, "/files/")?.params).toEqual({ "*": "" });
+  });
+
+  it("matches a root-level wildcard against '/' with an empty remainder", () => {
+    const trie = buildTestTrie({ "catch.all": "/*" });
+
+    expect(tryTrieMatch(trie, "/")?.routeKey).toBe("catch.all");
+    expect(tryTrieMatch(trie, "/")?.params).toEqual({ "*": "" });
+  });
+
+  it("prefers a static terminal over a wildcard at the same prefix", () => {
+    const trie = buildTestTrie({
+      "files.index": "/files",
+      "files.any": "/files/*",
+    });
+
+    // Bare prefix: the static index wins, not the wildcard.
+    expect(tryTrieMatch(trie, "/files")?.routeKey).toBe("files.index");
+    // Deeper path: only the wildcard can match.
+    expect(tryTrieMatch(trie, "/files/a/b")?.routeKey).toBe("files.any");
+    expect(tryTrieMatch(trie, "/files/a/b")?.params).toEqual({ "*": "a/b" });
+  });
+
   it("applies trailing slash redirects from trie metadata", () => {
     const trie = buildTestTrie(
       {
