@@ -220,44 +220,53 @@ export type ExtractResponses<T extends readonly any[]> =
   ExtractResponsesFromItems<T>;
 
 // ============================================================================
-// Response Envelope Types
+// Response Error (RFC 9457 problem+json) Type
 // ============================================================================
 
 /**
- * Error shape returned in the `{ error }` side of a JSON response envelope.
- */
-export interface ResponseError {
-  message: string;
-  code?: string;
-  type?: string;
-  stack?: string;
-}
-
-/**
- * Discriminated union envelope for JSON response routes.
- * Consumers check `result.error` to discriminate between success and failure.
+ * RFC 9457 (problem+json) error body returned by JSON response routes on a
+ * non-2xx status. Sent verbatim as the response body (not wrapped) with
+ * content-type `application/problem+json`.
  *
  * @example
  * ```typescript
- * const result: ResponseEnvelope<Product> = await fetch(url).then(r => r.json());
- * if (result.error) {
- *   console.log(result.error.message, result.error.code);
+ * const res = await fetch(url);
+ * if (!res.ok) {
+ *   const problem: ProblemDetails = await res.json();
+ *   console.log(problem.code, problem.detail); // "NOT_FOUND", "Product not found"
  *   return;
  * }
- * result.data.name // fully typed
+ * const product = await res.json(); // bare value, no envelope
  * ```
  */
-export type ResponseEnvelope<T> =
-  | { data: T; error?: undefined }
-  | { data?: undefined; error: ResponseError };
+export interface ProblemDetails {
+  /**
+   * URI reference identifying the problem type. Omitted in this phase (per RFC
+   * 9457 an absent `type` is treated as `"about:blank"` — no semantics beyond
+   * the HTTP status); per-route problem-type URIs arrive with the
+   * declared-errors map later.
+   */
+  type?: string;
+  /** Short, human-readable summary (the HTTP status reason phrase). */
+  title: string;
+  /** The HTTP status code. */
+  status: number;
+  /** Human-readable explanation specific to this occurrence (the error message). */
+  detail: string;
+  /** Stable machine-readable error code (`RouterError.code`, else `"INTERNAL"`). */
+  code: string;
+  /** Stack trace, included in development only. */
+  stack?: string;
+}
 
 // ============================================================================
 // Response Type Consumer Utilities
 // ============================================================================
 
 /**
- * Extract the response data type for a named route from a UrlPatterns instance.
- * Wraps in ResponseEnvelope since JSON response routes return enveloped data.
+ * Extract the JSON response payload type for a named route from a UrlPatterns
+ * instance. JSON response routes send the handler's return value verbatim
+ * (bare), so this resolves to the wire value a consumer receives — no envelope.
  *
  * @example
  * ```typescript
@@ -266,7 +275,7 @@ export type ResponseEnvelope<T> =
  * ]);
  *
  * type HealthData = RouteResponse<typeof apiPatterns, "health">;
- * // ResponseEnvelope<{ status: string; timestamp: number }>
+ * // { status: string; timestamp: number }
  * ```
  *
  * The payload is the JSON wire shape (via `Rango.JsonSerialize`), matching
@@ -277,6 +286,6 @@ export type RouteResponse<TPatterns, TName extends string> = TPatterns extends {
   readonly _responses?: infer R;
 }
   ? TName extends keyof R
-    ? ResponseEnvelope<JsonSerialize<Exclude<R[TName], Response>>>
+    ? JsonSerialize<Exclude<R[TName], Response>>
     : never
   : never;

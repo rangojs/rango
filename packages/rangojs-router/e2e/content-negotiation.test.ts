@@ -36,7 +36,7 @@ test.describe("content-negotiation", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
+      expect(body.source).toBe("json");
     });
   });
 
@@ -105,7 +105,7 @@ test.describe("content-negotiation", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
+      expect(body.source).toBe("json");
     });
   });
 
@@ -133,7 +133,7 @@ test.describe("content-negotiation", () => {
       // JSON defined first → JSON wins for */*
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
+      expect(body.source).toBe("json");
     });
 
     test("no Accept header returns first defined (RSC)", async ({
@@ -192,7 +192,7 @@ test.describe("content-negotiation", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
+      expect(body.source).toBe("json");
       expect(res.headers()["x-variant-mw"]).toBe("json");
     });
 
@@ -237,7 +237,7 @@ test.describe("content-negotiation (production)", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
+      expect(body.source).toBe("json");
     });
   });
 
@@ -261,7 +261,7 @@ test.describe("content-negotiation (production)", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
+      expect(body.source).toBe("json");
     });
   });
 
@@ -291,7 +291,7 @@ test.describe("content-negotiation (production)", () => {
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
-      expect(body.data.source).toBe("json");
+      expect(body.source).toBe("json");
       expect(res.headers()["x-variant-mw"]).toBe("json");
     });
 

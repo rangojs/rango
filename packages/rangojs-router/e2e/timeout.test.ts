@@ -22,8 +22,8 @@ async function waitForOnError(
         try {
           const response = await page.request.get(errorUrl);
           const data = await response.json();
-          if (data.data && data.data.phase === expectedPhase) {
-            result = data.data;
+          if (data && data.phase === expectedPhase) {
+            result = data;
             return true;
           }
         } catch {
@@ -108,7 +108,7 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     const response = await request.get(f.url("/timeout/fast-response"));
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body.data.ok).toBe(true);
+    expect(body.ok).toBe(true);
   });
 
   test("onError records timeout with metadata", async ({ page }) => {

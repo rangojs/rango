@@ -104,8 +104,7 @@ export type {
   JsonResponsePathFn,
   TextResponsePathFn,
   RouteResponse,
-  ResponseError,
-  ResponseEnvelope,
+  ProblemDetails,
 } from "./urls.js";
 
 // Middleware context types

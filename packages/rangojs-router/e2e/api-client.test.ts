@@ -23,21 +23,21 @@ test.describe("shop-api-client", () => {
       const res = await request.get(shopUrl("/catalog"));
       expect(res.status()).toBe(200);
       const body = await res.json();
-      expect(body.data).toBeDefined();
-      expect(body.data.products).toBeInstanceOf(Array);
-      expect(body.data.products.length).toBeGreaterThan(0);
-      expect(body.data.products[0]).toHaveProperty("id");
-      expect(body.data.products[0]).toHaveProperty("name");
-      expect(body.data.products[0]).toHaveProperty("price");
+      expect(body).toBeDefined();
+      expect(body.products).toBeInstanceOf(Array);
+      expect(body.products.length).toBeGreaterThan(0);
+      expect(body.products[0]).toHaveProperty("id");
+      expect(body.products[0]).toHaveProperty("name");
+      expect(body.products[0]).toHaveProperty("price");
     });
 
     test("GET /catalog/:productId returns product", async ({ request }) => {
       const res = await request.get(shopUrl("/catalog/p1"));
       expect(res.status()).toBe(200);
       const body = await res.json();
-      expect(body.data.product).toBeDefined();
-      expect(body.data.product.id).toBe("p1");
-      expect(body.data.product.name).toBe("Widget");
+      expect(body.product).toBeDefined();
+      expect(body.product.id).toBe("p1");
+      expect(body.product.name).toBe("Widget");
     });
 
     test("GET /catalog/:productId returns 404 for unknown product", async ({
@@ -46,9 +46,9 @@ test.describe("shop-api-client", () => {
       const res = await request.get(shopUrl("/catalog/nonexistent"));
       expect(res.status()).toBe(404);
       const body = await res.json();
-      expect(body.error).toBeDefined();
-      expect(body.error.code).toBe("NOT_FOUND");
-      expect(body.error.message).toContain("nonexistent");
+      expect(body).toBeDefined();
+      expect(body.code).toBe("NOT_FOUND");
+      expect(body.detail).toContain("nonexistent");
     });
 
     test("GET /cart returns empty cart initially", async ({ request }) => {
@@ -56,7 +56,7 @@ test.describe("shop-api-client", () => {
       const res = await request.get(shopUrl("/cart"));
       expect(res.status()).toBe(200);
       const body = await res.json();
-      expect(body.data.items).toEqual([]);
+      expect(body.items).toEqual([]);
     });
   });
 
@@ -71,10 +71,10 @@ test.describe("shop-api-client", () => {
       });
       expect(res.status()).toBe(200);
       const body = await res.json();
-      expect(body.data.added).toBeDefined();
-      expect(body.data.added.productId).toBe("p1");
-      expect(body.data.added.quantity).toBe(2);
-      expect(body.data.items.length).toBe(1);
+      expect(body.added).toBeDefined();
+      expect(body.added.productId).toBe("p1");
+      expect(body.added.quantity).toBe(2);
+      expect(body.items.length).toBe(1);
     });
 
     test("POST /cart with unknown product returns 404", async ({ request }) => {
@@ -83,7 +83,7 @@ test.describe("shop-api-client", () => {
       });
       expect(res.status()).toBe(404);
       const body = await res.json();
-      expect(body.error.code).toBe("NOT_FOUND");
+      expect(body.code).toBe("NOT_FOUND");
     });
   });
 
@@ -97,7 +97,7 @@ test.describe("shop-api-client", () => {
       const addRes = await request.post(shopUrl("/cart"), {
         data: { productId: "p1", quantity: 1 },
       });
-      const { data: addData } = await addRes.json();
+      const addData = await addRes.json();
       const itemId = addData.added.itemId;
 
       // Patch quantity
@@ -106,8 +106,8 @@ test.describe("shop-api-client", () => {
       });
       expect(patchRes.status()).toBe(200);
       const body = await patchRes.json();
-      expect(body.data.item.quantity).toBe(5);
-      expect(body.data.item.itemId).toBe(itemId);
+      expect(body.item.quantity).toBe(5);
+      expect(body.item.itemId).toBe(itemId);
     });
 
     test("PATCH nonexistent item returns 404", async ({ request }) => {
@@ -128,7 +128,7 @@ test.describe("shop-api-client", () => {
       const addRes = await request.post(shopUrl("/cart"), {
         data: { productId: "p1", quantity: 1 },
       });
-      const { data: addData } = await addRes.json();
+      const addData = await addRes.json();
       const itemId = addData.added.itemId;
 
       // Replace with different product
@@ -137,9 +137,9 @@ test.describe("shop-api-client", () => {
       });
       expect(putRes.status()).toBe(200);
       const body = await putRes.json();
-      expect(body.data.item.productId).toBe("p2");
-      expect(body.data.item.quantity).toBe(3);
-      expect(body.data.item.itemId).toBe(itemId);
+      expect(body.item.productId).toBe("p2");
+      expect(body.item.quantity).toBe(3);
+      expect(body.item.itemId).toBe(itemId);
     });
   });
 
@@ -153,27 +153,27 @@ test.describe("shop-api-client", () => {
       const addRes = await request.post(shopUrl("/cart"), {
         data: { productId: "p1" },
       });
-      const { data: addData } = await addRes.json();
+      const addData = await addRes.json();
       const itemId = addData.added.itemId;
 
       // Delete it
       const delRes = await request.delete(shopUrl(`/cart/${itemId}`));
       expect(delRes.status()).toBe(200);
       const body = await delRes.json();
-      expect(body.data.deleted).toBe(true);
-      expect(body.data.itemId).toBe(itemId);
+      expect(body.deleted).toBe(true);
+      expect(body.itemId).toBe(itemId);
 
       // Verify cart is empty
       const cartRes = await request.get(shopUrl("/cart"));
       const cartBody = await cartRes.json();
-      expect(cartBody.data.items).toEqual([]);
+      expect(cartBody.items).toEqual([]);
     });
 
     test("DELETE nonexistent cart item returns 404", async ({ request }) => {
       const res = await request.delete(shopUrl("/cart/nonexistent"));
       expect(res.status()).toBe(404);
       const body = await res.json();
-      expect(body.error.code).toBe("NOT_FOUND");
+      expect(body.code).toBe("NOT_FOUND");
     });
 
     test("DELETE /cart clears all items", async ({ request }) => {
@@ -184,18 +184,18 @@ test.describe("shop-api-client", () => {
       // Verify items exist
       const beforeRes = await request.get(shopUrl("/cart"));
       const beforeBody = await beforeRes.json();
-      expect(beforeBody.data.items.length).toBe(2);
+      expect(beforeBody.items.length).toBe(2);
 
       // Clear cart
       const clearRes = await request.delete(shopUrl("/cart"));
       expect(clearRes.status()).toBe(200);
       const clearBody = await clearRes.json();
-      expect(clearBody.data.cleared).toBe(true);
+      expect(clearBody.cleared).toBe(true);
 
       // Verify empty
       const afterRes = await request.get(shopUrl("/cart"));
       const afterBody = await afterRes.json();
-      expect(afterBody.data.items).toEqual([]);
+      expect(afterBody.items).toEqual([]);
     });
   });
 
@@ -216,15 +216,18 @@ test.describe("shop-api-client", () => {
       expect(res.status()).toBe(405);
     });
 
-    test("404 for missing resource includes error envelope", async ({
+    test("404 for missing resource includes problem details", async ({
       request,
     }) => {
       const res = await request.get(shopUrl("/catalog/does-not-exist"));
       expect(res.status()).toBe(404);
       const body = await res.json();
-      expect(body.error).toBeDefined();
-      expect(body.error.message).toBeDefined();
-      expect(body.error.code).toBe("NOT_FOUND");
+      expect(body).toBeDefined();
+      expect(body.detail).toBeDefined();
+      expect(body.code).toBe("NOT_FOUND");
+      expect(body.type).toBeUndefined();
+      expect(body.title).toBe("Not Found");
+      expect(body.status).toBe(404);
     });
   });
 
@@ -233,8 +236,8 @@ test.describe("shop-api-client", () => {
       const res = await request.get(shopUrl("/health"));
       expect(res.status()).toBe(200);
       const body = await res.json();
-      expect(body.data.status).toBe("ok");
-      expect(body.data.timestamp).toBeGreaterThan(0);
+      expect(body.status).toBe("ok");
+      expect(body.timestamp).toBeGreaterThan(0);
     });
   });
 });

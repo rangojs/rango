@@ -353,8 +353,8 @@ test.describe("prerender ctx.passthrough() (production)", () => {
       f.url("/__test/prerender-manifest-entries?route=prerenderCtx.detail"),
     );
     const json = await res.json();
-    // path.json() wraps in { data: ... } envelope
-    const data = json.data;
+    // path.json() returns the handler's value as the bare body
+    const data = json;
     // getParams returns [alpha, beta, gamma], but gamma called ctx.passthrough()
     // so only alpha + beta should have prerender manifest entries.
     expect(data.available).toBe(true);

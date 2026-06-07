@@ -20,7 +20,7 @@ test.describe("response-cache (dev)", () => {
     const res1 = await request.get(f.url("/test/uncached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
+    const ts1 = body1.ts;
     expect(typeof ts1).toBe("number");
 
     await new Promise((r) => setTimeout(r, 50));
@@ -29,7 +29,7 @@ test.describe("response-cache (dev)", () => {
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
 
-    expect(body2.data.ts).toBeGreaterThan(ts1);
+    expect(body2.ts).toBeGreaterThan(ts1);
   });
 
   test("path.json() with cache() returns identical timestamp on cache hit", async ({
@@ -39,7 +39,7 @@ test.describe("response-cache (dev)", () => {
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("application/json");
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
+    const ts1 = body1.ts;
     expect(typeof ts1).toBe("number");
 
     await new Promise((r) => setTimeout(r, 500));
@@ -48,7 +48,7 @@ test.describe("response-cache (dev)", () => {
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
 
-    expect(body2.data.ts).toBe(ts1);
+    expect(body2.ts).toBe(ts1);
   });
 
   test("path.text() with cache() returns identical body on cache hit", async ({
@@ -113,7 +113,7 @@ test.describe("response-cache (production)", () => {
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("application/json");
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
+    const ts1 = body1.ts;
     expect(typeof ts1).toBe("number");
 
     await new Promise((r) => setTimeout(r, 500));
@@ -122,7 +122,7 @@ test.describe("response-cache (production)", () => {
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
 
-    expect(body2.data.ts).toBe(ts1);
+    expect(body2.ts).toBe(ts1);
   });
 
   test("path.text() with cache() returns identical body on cache hit in production", async ({

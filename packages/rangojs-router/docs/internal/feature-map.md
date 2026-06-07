@@ -121,13 +121,13 @@ Internal API (`RangoInternal`, not exported):
 ### URL Typing and Generation
 
 - `route()` macro expansion, `href()`, `href.<format>()`, `reverse()`, scoped reverse APIs
-- `ResponseEnvelope` types and response-route type extraction
+- `ProblemDetails` (RFC 9457) error type and response-route type extraction
 
 ### Response Routes
 
 `path.json()`, `path.text()`, `path.html()`, `path.xml()`, `path.md()`, `path.image()`, `path.stream()`, `path.any()`
 
-Response middleware wrapping, automatic content negotiation, typed response envelopes, response error classification.
+Response middleware wrapping, automatic content negotiation, bare-value JSON responses, RFC 9457 (problem+json) error bodies.
 
 ### Match and Execution Pipeline
 

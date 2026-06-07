@@ -73,36 +73,48 @@ export const reverse = router.reverse;
 // They produce compile errors if the types regress — do not remove.
 // Rango.PathResponse is ambient (no import).
 
-// Rango.PathResponse wraps in ResponseEnvelope<T> = { data: T } | { error: ... }
+// Rango.PathResponse resolves to the bare serialized success payload (the
+// handler's return value verbatim). Errors arrive out-of-band as non-2xx
+// problem+json responses, so they are not part of this type.
 type _HealthResponse = Rango.PathResponse<"/api/health">;
-type _AssertHealthData = _HealthResponse extends
-  | { data: { status: string; timestamp: number } }
-  | { error: unknown }
+type _AssertHealthData = _HealthResponse extends {
+  status: string;
+  timestamp: number;
+}
   ? true
   : never;
 const _checkHealth: _AssertHealthData = true;
 
 type _ProductsResponse = Rango.PathResponse<"/api/products">;
-type _AssertProductsData = _ProductsResponse extends
-  | { data: Array<{ id: string; name: string; price: number }> }
-  | { error: unknown }
-  ? true
-  : never;
+type _AssertProductsData =
+  _ProductsResponse extends Array<{
+    id: string;
+    name: string;
+    price: number;
+  }>
+    ? true
+    : never;
 const _checkProducts: _AssertProductsData = true;
 
 type _ProductDetailResponse = Rango.PathResponse<"/api/products/:id">;
-type _AssertProductDetailData = _ProductDetailResponse extends
-  | { data: { id: string; name: string; price: number; description: string } }
-  | { error: unknown }
+type _AssertProductDetailData = _ProductDetailResponse extends {
+  id: string;
+  name: string;
+  price: number;
+  description: string;
+}
   ? true
   : never;
 const _checkProductDetail: _AssertProductDetailData = true;
 
 // Unified lookup: a concrete path resolves the same payload as its pattern.
 type _ProductByConcretePath = Rango.PathResponse<"/api/products/42">;
-type _AssertProductByPath = _ProductByConcretePath extends
-  | { data: { id: string; name: string; price: number; description: string } }
-  | { error: unknown }
+type _AssertProductByPath = _ProductByConcretePath extends {
+  id: string;
+  name: string;
+  price: number;
+  description: string;
+}
   ? true
   : never;
 const _checkProductByPath: _AssertProductByPath = true;

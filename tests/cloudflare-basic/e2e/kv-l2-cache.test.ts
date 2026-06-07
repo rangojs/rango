@@ -18,7 +18,7 @@ test.describe("KV L2 cache (dev)", () => {
     const res1 = await request.get(f.url("/test/kv-cached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
+    const ts1 = body1.ts;
     expect(typeof ts1).toBe("number");
 
     // Give waitUntil a moment to flush KV write
@@ -28,7 +28,7 @@ test.describe("KV L2 cache (dev)", () => {
     const kvRes = await request.get(f.url("/test/kv-l2-check"));
     expect(kvRes.status()).toBe(200);
     const kvBody = await kvRes.json();
-    expect(kvBody.data.kvKeyCount).toBeGreaterThan(0);
+    expect(kvBody.kvKeyCount).toBeGreaterThan(0);
   });
 
   test("cached route serves from cache with KV enabled", async ({
@@ -38,7 +38,7 @@ test.describe("KV L2 cache (dev)", () => {
     const res1 = await request.get(f.url("/test/kv-cached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
+    const ts1 = body1.ts;
 
     await new Promise((r) => setTimeout(r, 500));
 
@@ -47,7 +47,7 @@ test.describe("KV L2 cache (dev)", () => {
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
 
-    expect(body2.data.ts).toBe(ts1);
+    expect(body2.ts).toBe(ts1);
   });
 });
 
@@ -58,14 +58,14 @@ test.describe("KV L2 cache (production)", () => {
     const res1 = await request.get(f.url("/test/kv-cached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(typeof body1.data.ts).toBe("number");
+    expect(typeof body1.ts).toBe("number");
 
     await new Promise((r) => setTimeout(r, 500));
 
     const kvRes = await request.get(f.url("/test/kv-l2-check"));
     expect(kvRes.status()).toBe(200);
     const kvBody = await kvRes.json();
-    expect(kvBody.data.kvKeyCount).toBeGreaterThan(0);
+    expect(kvBody.kvKeyCount).toBeGreaterThan(0);
   });
 
   test("cached route serves from cache with KV enabled in production", async ({
@@ -74,7 +74,7 @@ test.describe("KV L2 cache (production)", () => {
     const res1 = await request.get(f.url("/test/kv-cached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
+    const ts1 = body1.ts;
 
     await new Promise((r) => setTimeout(r, 500));
 
@@ -82,6 +82,6 @@ test.describe("KV L2 cache (production)", () => {
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
 
-    expect(body2.data.ts).toBe(ts1);
+    expect(body2.ts).toBe(ts1);
   });
 });

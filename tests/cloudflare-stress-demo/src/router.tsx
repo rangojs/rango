@@ -1,6 +1,5 @@
 import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
-import type { ResponseEnvelope } from "@rangojs/router/client";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
@@ -41,27 +40,34 @@ declare global {
 // Compile errors here mean the type system regressed — do not remove.
 // Rango.PathResponse is ambient (no import).
 
-// Response routes resolve their typed response data (wrapped in ResponseEnvelope)
+// Response routes resolve their typed response payload (bare value, no envelope)
 type _HealthResponse = Rango.PathResponse<"/json-api/health">;
-type _AssertHealth = _HealthResponse extends
-  | { data: { status: "ok"; timestamp: number; uptime: number } }
-  | { error: unknown }
+type _AssertHealth = _HealthResponse extends {
+  status: "ok";
+  timestamp: number;
+  uptime: number;
+}
   ? true
   : never;
 const _checkHealth: _AssertHealth = true;
 
 type _StatsResponse = Rango.PathResponse<"/json-api/stats">;
-type _AssertStats = _StatsResponse extends
-  | { data: { routes: number; prefixes: number; lazy: boolean } }
-  | { error: unknown }
+type _AssertStats = _StatsResponse extends {
+  routes: number;
+  prefixes: number;
+  lazy: boolean;
+}
   ? true
   : never;
 const _checkStats: _AssertStats = true;
 
 type _ItemResponse = Rango.PathResponse<"/json-api/items/:id">;
-type _AssertItem = _ItemResponse extends
-  | { data: { id: string; name: string; price: number; inStock: boolean } }
-  | { error: unknown }
+type _AssertItem = _ItemResponse extends {
+  id: string;
+  name: string;
+  price: number;
+  inStock: boolean;
+}
   ? true
   : never;
 const _checkItem: _AssertItem = true;
@@ -101,9 +107,7 @@ type ItemDetailPayload = {
 // pattern lookup — and is NOT widened by the static list route or any of the
 // 10k other routes in the map.
 type _ConcreteItem = Rango.PathResponse<"/json-api/items/123">;
-type _CheckConcreteItem = _Expect<
-  _Equal<_ConcreteItem, ResponseEnvelope<ItemDetailPayload>>
->;
+type _CheckConcreteItem = _Expect<_Equal<_ConcreteItem, ItemDetailPayload>>;
 type _CheckConcreteEqPattern = _Expect<
   _Equal<_ConcreteItem, Rango.PathResponse<"/json-api/items/:id">>
 >;
@@ -111,33 +115,21 @@ type _CheckConcreteEqPattern = _Expect<
 // The static list route stays exactly its array payload (proves list/detail do
 // not bleed in either direction).
 type _CheckListExact = _Expect<
-  _Equal<
-    Rango.PathResponse<"/json-api/items">,
-    ResponseEnvelope<ItemListPayload>
-  >
+  _Equal<Rango.PathResponse<"/json-api/items">, ItemListPayload>
 >;
 
 // Query/hash suffixes are stripped before matching a concrete path.
 type _CheckQuerySuffix = _Expect<
-  _Equal<
-    Rango.PathResponse<"/json-api/health?ts=1">,
-    ResponseEnvelope<HealthPayload>
-  >
+  _Equal<Rango.PathResponse<"/json-api/health?ts=1">, HealthPayload>
 >;
 type _CheckHashSuffix = _Expect<
-  _Equal<
-    Rango.PathResponse<"/json-api/items/123#top">,
-    ResponseEnvelope<ItemDetailPayload>
-  >
+  _Equal<Rango.PathResponse<"/json-api/items/123#top">, ItemDetailPayload>
 >;
 
-// An unmatched concrete path resolves to ResponseEnvelope<never>, not a stray
+// An unmatched concrete path resolves to never, not a stray
 // payload picked up by greedy matching across the large map.
 type _CheckUnmatched = _Expect<
-  _Equal<
-    Rango.PathResponse<"/json-api/does-not-exist">,
-    ResponseEnvelope<never>
-  >
+  _Equal<Rango.PathResponse<"/json-api/does-not-exist">, never>
 >;
 
 // Typed-fetch wrapper: the response is inferred from the concrete path argument.
@@ -147,9 +139,7 @@ declare function typedGet<T extends Rango.Path>(
   path: T,
 ): Promise<Rango.PathResponse<T>>;
 type _WrapperItem = Awaited<ReturnType<typeof typedGet<"/json-api/items/7">>>;
-type _CheckWrapperItem = _Expect<
-  _Equal<_WrapperItem, ResponseEnvelope<ItemDetailPayload>>
->;
+type _CheckWrapperItem = _Expect<_Equal<_WrapperItem, ItemDetailPayload>>;
 
 // Reference the assertion aliases so they are unambiguously evaluated.
 export type _ConcretePathResponseAssertions = [
