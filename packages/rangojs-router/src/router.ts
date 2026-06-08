@@ -21,6 +21,7 @@ import type { AllUseItems } from "./route-types.js";
 import type { UrlPatterns } from "./urls.js";
 import type { UrlBuilder } from "./urls/pattern-types.js";
 import { urls } from "./urls.js";
+import { buildPrecomputedByPrefix } from "./build/prefix-tree-utils.js";
 import {
   type EntryData,
   getContext,
@@ -364,9 +365,11 @@ export function createRouter<TEnv = any>(
       getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
     if (current !== precomputedSource) {
       precomputedSource = current;
-      precomputedByPrefix = current
-        ? new Map(current.map((e) => [e.staticPrefix, e.routes]))
-        : null;
+      // buildPrecomputedByPrefix drops any staticPrefix owned by more than one
+      // leaf include instead of collapsing it last-wins (which would mis-assign
+      // one include's routes to another's entry and 500 a valid sibling route).
+      // Such shared-prefix includes resolve via the handler path instead.
+      precomputedByPrefix = current ? buildPrecomputedByPrefix(current) : null;
     }
     return precomputedByPrefix;
   }

@@ -52,6 +52,7 @@ import {
   ItemDetailPage,
   ProductReviewsPage,
   CatchAllPage,
+  FilesWildcardPage,
 } from "./pages/trie-routing-test.js";
 import {
   ShopProductPage,
@@ -257,6 +258,9 @@ export const urlpatterns = urls(
     include("/build-env-direct", buildEnvDirectPatterns, {
       name: "buildEnvDirect",
     }),
+    // Prefixed wildcard before the root catch-all: hitting bare "/files" must
+    // resolve "/files/*" with an empty splat (C1), not fall to "/*".
+    path("/files/*", FilesWildcardPage, { name: "filesWildcard" }),
     path("/*", CatchAllPage, { name: "catchAll" }),
 
     layout(<RootLayout />, () => [
