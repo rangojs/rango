@@ -9,19 +9,22 @@ import type { EntryData } from "../../server/context.js";
 
 // Lazy-include handler-execution cost benchmark (run: `vitest bench lazy-include-cost`).
 //
-// Quantifies the LP3 "double run": a non-leaf include's handler runs once at
-// match time (evaluateLazyEntry, to populate entry.routes + discover nested
-// includes) and again at render time (loadManifest, to build the EntryData tree
-// under the per-request store). This bench measures each phase so the LP3
-// deferral decision is backed by numbers, not estimates.
+// Quantifies the three deferred lazy-include redundancies so each deferral
+// decision is backed by numbers, not estimates. All three are cold-start handler
+// runs that amortize to ~0 (the warm `loadManifest` cache). See
+// docs/internal/matching-stability-review.md (LP1/LP3/LP4).
 //
-// Reading it:
-//   match     - the LP3 redundant run (subtract the `baseline: construct` row).
-//   render    - the unavoidable cold render build (first request).
-//   warm      - every request after the first (loadManifest cache hit).
-// Measured ~0.75us/route for the redundant run; ~50% of manifest-build but a
-// fraction of a percent of a real RSC request, amortized to ~0 by the warm
-// cache. See docs/internal/matching-stability-review.md (LP3).
+//   LP3 (this file's per-size benches): a NON-LEAF include's handler runs once at
+//     match (evaluateLazyEntry) AND once at render (loadManifest). Read `match`
+//     (subtract `baseline: construct`) for the redundant run vs `render cold` for
+//     the unavoidable one. Measured ~0.75us/route.
+//   LP1: an include with M routes runs its handler once PER ROUTE (loadManifest
+//     prunes to forRoute=routeKey, cache keyed by routeKey). Compare "warm all M
+//     routes from cold" (M runs) vs "re-hit all M routes" (M cache hits).
+//     Measured ~18us/route, paid once per route per isolate.
+//   LP4: a cold document request resolves twice (isSSR=false classify, isSSR=true
+//     render) — both miss the isSSR-keyed cache. Compare the double vs single
+//     resolve. Measured ~20us per cold document request.
 
 const Page = createElement("div");
 let mountSeq = 0;
@@ -90,7 +93,43 @@ function depsFor(routesEntries: RouteEntry[]) {
   };
 }
 
-async function render(entry: RouteEntry, routeKey: string) {
+// A leaf include with `size` sibling routes (no nesting) — the LP1 shape. Each
+// distinct routeKey is a separate loadManifest cache entry, so the handler runs
+// once per route hit.
+function makeMultiRouteInclude(size: number) {
+  const mountIndex = mountSeq++;
+  const patterns = urls<any>(({ path }) => {
+    const items: any[] = [];
+    for (let i = 0; i < size; i++) {
+      items.push(path(`/r${i}`, Page, { name: `r${i}` }));
+    }
+    return items;
+  });
+  const routes: Record<string, string> = {};
+  for (let i = 0; i < size; i++) routes[`sub.r${i}`] = `/sub/r${i}`;
+  const entry = {
+    prefix: "/sub",
+    staticPrefix: "/sub",
+    routes,
+    handler: patterns.handler,
+    mountIndex,
+    routerId: "lp3-bench",
+    lazy: true,
+    lazyEvaluated: true,
+    lazyPatterns: patterns,
+    _lazyPrefix: "/sub",
+    lazyContext: {
+      urlPrefix: "",
+      namePrefix: "sub",
+      parent: makeRoot(mountIndex),
+      counters: {},
+    },
+  } as unknown as RouteEntry;
+  const keys = Array.from({ length: size }, (_, i) => `sub.r${i}`);
+  return { entry, keys };
+}
+
+async function render(entry: RouteEntry, routeKey: string, isSSR?: boolean) {
   await RangoContext.run(
     {
       manifest: new Map(),
@@ -103,7 +142,7 @@ async function render(entry: RouteEntry, routeKey: string) {
       mountIndex: 0,
     } as any,
     async () => {
-      await loadManifest(entry, routeKey, "/group/r0");
+      await loadManifest(entry, routeKey, `/sub/${routeKey}`, undefined, isSSR);
     },
   );
 }
@@ -149,3 +188,48 @@ for (const size of [5, 50]) {
     );
   });
 }
+
+// LP1 — an include with M routes runs its handler once PER ROUTE on cold start.
+// "warm all M from cold" pays M handler runs; "re-hit all M" pays M cache hits.
+// The ideal (unpruned cache) would be 1 run + (M-1) hits; the gap is the waste.
+const LP1_SIZE = 30;
+describe(`LP1: include with ${LP1_SIZE} sibling routes`, () => {
+  bench("warm all routes from cold (current: M handler runs)", async () => {
+    clearManifestCache();
+    const { entry, keys } = makeMultiRouteInclude(LP1_SIZE);
+    for (const k of keys) await render(entry, k);
+  });
+
+  let warm: ReturnType<typeof makeMultiRouteInclude>;
+  bench(
+    "re-hit all routes (cache hits only — the amortized steady state)",
+    async () => {
+      for (const k of warm.keys) await render(warm.entry, k);
+    },
+    {
+      setup: async () => {
+        clearManifestCache();
+        warm = makeMultiRouteInclude(LP1_SIZE);
+        for (const k of warm.keys) await render(warm.entry, k); // populate cache
+      },
+    },
+  );
+});
+
+// LP4 — a cold document request resolves twice (isSSR=false classify, isSSR=true
+// render); both miss the isSSR-keyed cache, so the handler runs twice. The gap
+// between the double and single resolve is the waste.
+describe("LP4: cold document request (isSSR double resolve)", () => {
+  bench("double resolve: isSSR=false then isSSR=true (current)", async () => {
+    clearManifestCache();
+    const { entry, keys } = makeMultiRouteInclude(LP1_SIZE);
+    await render(entry, keys[0]!, false);
+    await render(entry, keys[0]!, true);
+  });
+
+  bench("single resolve: isSSR=true only (ideal)", async () => {
+    clearManifestCache();
+    const { entry, keys } = makeMultiRouteInclude(LP1_SIZE);
+    await render(entry, keys[0]!, true);
+  });
+});

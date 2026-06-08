@@ -252,11 +252,14 @@ describe("lazy-include redundancies still to remove (future work)", () => {
   // (path-helper.ts skips registering sibling routes), and the cache is keyed
   // by routeKey. So an include with M routes runs its handler M times across
   // the isolate's life — once per sibling route, each cached after its first
-  // request. Running it once per include needs an UNPRUNED manifest cache with
-  // prune-on-read (NOT a handler-identity cache key — that thrashes, because a
-  // sibling miss would overwrite the pruned entry; verified regression).
+  // request. MEASURED (lazy-include-cost.bench.ts): for a 30-route include,
+  // warming all 30 routes from cold is ~20x the cost of re-hitting them (cache
+  // hits) — ~20-25us/route, paid once each, amortized to 0. Running it once per
+  // include needs an UNPRUNED manifest cache with prune-on-read (NOT a
+  // handler-identity cache key — that thrashes, because a sibling miss would
+  // overwrite the pruned entry; verified regression). DEFERRED: risk >> reward.
   it.todo(
-    "LP1: an include with M routes runs its handler once, not once per route (unpruned cache + prune-on-read)",
+    "LP1: include with M routes runs handler once not M times (measured ~20us/route, deferred — see lazy-include-cost.bench.ts)",
   );
 
   // LP3: a non-leaf include (path() routes alongside a nested include(), so it is
@@ -277,10 +280,15 @@ describe("lazy-include redundancies still to remove (future work)", () => {
 
   // LP4: a cold document request resolves twice — classify (isSSR=false) then
   // render (isSSR=true) — and both miss the isSSR-keyed manifest cache, so the
-  // handler runs twice. Dropping isSSR is unsafe (the EntryData tree differs by
-  // isSSR via loading() behavior); the fix must split the isSSR-dependent state
-  // out of the cached tree, or warm the isSSR=true key during classification.
+  // handler runs twice. MEASURED (lazy-include-cost.bench.ts): the double resolve
+  // is ~1.9x a single — ~20-25us waste per cold document request, paid once per
+  // route per isolate, amortized to 0.
+  // Dropping isSSR is unsafe (the EntryData tree differs by isSSR via loading()
+  // behavior); the fix must split the isSSR-dependent state out of the cached
+  // tree (or warm the isSSR=true key during classification) — the same refactor
+  // LP3 depends on, touching shortCodes + the semantic matrix. DEFERRED: risk >>
+  // reward; LP4 is the gate for revisiting LP3.
   it.todo(
-    "LP4: a cold document request runs each handler once across the isSSR=false/true resolves",
+    "LP4: cold document request runs each handler once across isSSR false/true (measured ~20us, deferred — see lazy-include-cost.bench.ts)",
   );
 });
