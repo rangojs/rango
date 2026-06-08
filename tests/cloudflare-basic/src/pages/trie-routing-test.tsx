@@ -37,3 +37,16 @@ export function CatchAllPage(ctx: HandlerContext) {
     </div>
   );
 }
+
+// Prefixed wildcard page — tests the C1 bare-prefix-wildcard match. Hitting the
+// bare prefix "/files" must resolve "/files/*" with an EMPTY splat (""), not
+// regex-fallback to a corrupt "/file" redirect. Rendered in brackets so an
+// empty splat is observable as "[]" vs "[a/b]" for a deeper path.
+export function FilesWildcardPage(ctx: HandlerContext) {
+  const splat = (ctx.params as Record<string, string>)["*"];
+  return (
+    <div data-testid="files-wildcard-page">
+      <h1 data-testid="files-splat-value">Files splat: [{splat}]</h1>
+    </div>
+  );
+}

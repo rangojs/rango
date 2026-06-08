@@ -70,12 +70,19 @@ export function createFindMatch<TEnv = any>(
     // routers and must not be used — in multi-router setups (host routing)
     // overlapping paths like "/" would match the wrong app's route.
     const routeTrie = getRouterTrie(deps.routerId);
+    // Whether the trie produced a match for this pathname (independent of
+    // whether the owning RouteEntry was resolvable yet). Used to suppress the
+    // R3 dev warning below: if the trie DID match but we fell through to the
+    // regex fallback only because a lazy entry was not spliced in yet, that is
+    // not a trie gap.
+    let trieMatched = false;
     if (routeTrie) {
       const trieStart = performance.now();
       const trieResult = tryTrieMatch(routeTrie, pathname);
       pushMetric?.("match:trie", trieStart);
 
       if (trieResult) {
+        trieMatched = true;
         // Find the RouteEntry that contains this route.
         // Multiple entries can share the same staticPrefix (e.g., several
         // include("/", patterns) calls all produce staticPrefix=""). Evaluate
@@ -172,9 +179,17 @@ export function createFindMatch<TEnv = any>(
     // has a gap (e.g. a route shape it cannot represent) and dev/prod could
     // diverge if the trie were ever absent. Surface it in dev; folded out in
     // production builds.
+    //
+    // Suppress when the trie DID match (`trieMatched`): that path falls through
+    // to the regex fallback only on the first request to a not-yet-spliced lazy
+    // entry (e.g. a 2+-level nested include whose deeper parent has not been
+    // evaluated). The trie knew the route; runtime lazy discovery simply lagged.
+    // That is the supported lazy-include flow, not a trie gap, so warning on it
+    // is a false positive (it manufactures bug reports and erodes the signal).
     if (
       process.env.NODE_ENV !== "production" &&
       routeTrie &&
+      !trieMatched &&
       result &&
       !isLazyEvaluationNeeded(result)
     ) {

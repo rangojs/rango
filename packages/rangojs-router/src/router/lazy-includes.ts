@@ -81,11 +81,16 @@ export function evaluateLazyEntry<TEnv = any>(
   // Check for pre-computed routes from build-time data.
   // Only leaf nodes (no nested includes) are precomputed, so entries with
   // nested lazy includes fall through to the handler below.
-  // When multiple entries share the same staticPrefix (e.g., several
-  // include("/", ...) calls), the precomputed data merges all their routes
-  // into one entry. Assigning that merged set to the first matching entry
-  // causes findMatch to pick the wrong handler for routes belonging to a
-  // different include. Skip the shortcut when the prefix is shared.
+  //
+  // The load-bearing protection against two includes sharing a staticPrefix
+  // lives UPSTREAM in buildPrecomputedByPrefix (build/prefix-tree-utils): a
+  // shared staticPrefix is omitted from the map entirely, so currentPrecomputed
+  // never returns routes for it and the shortcut is skipped. The live-count
+  // check below is a secondary guard only — it is TIMING-BLIND (it counts
+  // routesEntries, which cannot see a nested sibling that has not been spliced
+  // in yet), so it must NOT be relied on alone. Kept as defense-in-depth for the
+  // all-siblings-live case (e.g. several include("/", ...) placeholders created
+  // up front).
   const currentPrecomputed = deps.getPrecomputedByPrefix();
   if (currentPrecomputed) {
     const routes = currentPrecomputed.get(entry.staticPrefix);

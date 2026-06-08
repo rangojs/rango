@@ -62,6 +62,46 @@ export function flattenLeafEntries(
 }
 
 /**
+ * Build the staticPrefix -> routes lookup the runtime shortcut consumes from a
+ * flat precomputed-entry array.
+ *
+ * A staticPrefix owned by MORE THAN ONE leaf include cannot be collapsed to a
+ * single routes object: `new Map(entries.map(e => [e.staticPrefix, e.routes]))`
+ * is last-wins, so one include's routes are silently dropped and mis-assigned
+ * to whichever entry evaluates first. Two distinct includes legitimately share a
+ * staticPrefix when a dynamic param collapses their literal prefixes onto the
+ * same value (e.g. `include("/shop/:cat", ...)` and a nested
+ * `include("/shop/:brand", ...)` both extract "/shop/"). Merging them is also
+ * wrong — assigning the merged set to the first matching entry makes findMatch
+ * pick the wrong handler for routes belonging to the other include, which then
+ * fails its `Store.manifest.has(routeKey)` invariant at render (500 on a valid
+ * route, dev/prod identical).
+ *
+ * So any shared staticPrefix is OMITTED from the shortcut entirely. Those
+ * includes fall through to the handler path in evaluateLazyEntry(), which is the
+ * ground truth (identical to pre-precomputed behavior). The shortcut is purely an
+ * optimization, so dropping a prefix can only cost a handler run, never change a
+ * result.
+ */
+export function buildPrecomputedByPrefix(
+  entries: Array<{ staticPrefix: string; routes: Record<string, string> }>,
+): Map<string, Record<string, string>> {
+  const byPrefix = new Map<string, Record<string, string>>();
+  const shared = new Set<string>();
+  for (const e of entries) {
+    if (byPrefix.has(e.staticPrefix)) {
+      shared.add(e.staticPrefix);
+    } else {
+      byPrefix.set(e.staticPrefix, e.routes);
+    }
+  }
+  for (const sp of shared) {
+    byPrefix.delete(sp);
+  }
+  return byPrefix;
+}
+
+/**
  * Walk prefix tree to map each route name to its scope's staticPrefix.
  */
 export function buildRouteToStaticPrefix(

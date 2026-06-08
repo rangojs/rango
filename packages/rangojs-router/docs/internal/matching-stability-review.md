@@ -50,6 +50,41 @@ LP1/LP3/LP4; `optionalParams` removal). C2/M3 (trailing slash) and C8/LP2 (dev
 precomputed entries) are closed/done — see their sections. None are regressions from
 pass 1.
 
+## Pass 2 — landed (2026-06-08)
+
+A follow-up adversarial audit (6 skeptic lenses, refute-by-default verification) confirmed
+LP1/LP3/LP4 are genuinely correctness-neutral (see their sections) and surfaced **one**
+real correctness bug that the pass-1 work had not covered:
+
+- **C19 — precomputed shared-staticPrefix collapse (500 on a valid sibling route).**
+  `getPrecomputedByPrefix` (`router.ts`) built its lookup as
+  `new Map(entries.map(e => [e.staticPrefix, e.routes]))`. Two **distinct** leaf includes can
+  legitimately share a `staticPrefix` when a dynamic param collapses their literal prefixes
+  onto the same value — e.g. `include("/shop/:cat", ...)` and a nested
+  `include("/shop/:brand", ...)` both extract `"/shop"` (verified: `generateManifestFull`
+  emits two `"/shop"` leaf entries). The `Map` constructor is last-wins, so one include's
+  routes were silently dropped and the survivor's routes mis-assigned to whichever lazy
+  entry evaluated first. The `prefixIsShared` guard in `evaluateLazyEntry` did **not** save
+  it: that guard counts live `routesEntries`, which cannot see a nested sibling not yet
+  spliced (timing-blind). Net effect: `findMatch` selects the wrong include's entry (its
+  corrupted `routes` contain the sibling's key), then `loadManifest` runs the wrong handler
+  and fails its `Store.manifest.has(routeKey)` invariant → `RouteNotFoundError`/500 on a
+  valid route, **identical in dev and production**. This branch had zero coverage (every
+  unit test passed `getPrecomputedByPrefix: () => null`).
+  - **Fix:** new `buildPrecomputedByPrefix(entries)` in `build/prefix-tree-utils.ts` — any
+    `staticPrefix` owned by more than one leaf include is **omitted** from the shortcut
+    (not collapsed, not merged), so those includes resolve via the handler path (ground
+    truth, identical to pre-precomputed behavior). The shortcut is purely an optimization,
+    so dropping a prefix can only cost a handler run, never change a result. Wired into
+    `router.ts`; the `prefixIsShared` comment in `lazy-includes.ts` was updated to record
+    that the load-bearing protection now lives upstream and the live-count guard is
+    timing-blind defense-in-depth only.
+  - **Tests:** `router/__tests__/precomputed-prefix-collision.test.ts` pins (a) the real
+    config emits duplicate-`staticPrefix` leaves, (b) naive collapse loses routes while
+    `buildPrecomputedByPrefix` omits the shared prefix and keeps unshared ones, and (c) the
+    runtime consequence via `evaluateLazyEntry` — old collapse mis-assigns the sibling's
+    routes, the fix runs the handler and registers the entry's own routes.
+
 ## Why this review exists
 
 The router has two matching code paths and two trie-construction code paths that must

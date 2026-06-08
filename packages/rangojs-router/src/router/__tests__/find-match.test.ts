@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFindMatch } from "../find-match.js";
+import { buildRouteTrie } from "../../build/route-trie.js";
+import { setRouterTrie } from "../../route-map-builder.js";
 import type { RouteEntry } from "../../types.js";
 
 // No router trie is registered for these routerIds, so createFindMatch skips
@@ -60,6 +62,64 @@ describe("createFindMatch", () => {
     expect(fm("/users/7")?.routeKey).toBe("user.show");
     expect(fm("/about")?.routeKey).toBe("about");
     expect(fm("/users/9")?.params).toEqual({ id: "9" });
+  });
+
+  // Regression (R3): the dev-only "regex fallback resolved while the trie was
+  // present" warning must fire ONLY on a genuine trie gap — not when the trie
+  // matched but its owning RouteEntry was not resolvable yet (the supported
+  // first-request lazy-splicing flow). We force the entry-resolve to miss by
+  // giving the entry a staticPrefix that differs from the trie leaf's sp, so
+  // findMatch falls through to the regex fallback even though the trie matched.
+  it("does NOT warn when the trie matched but the entry resolved via the fallback (lazy lag)", () => {
+    // Trie knows the route (sp "/foo"); the flat entry has sp "" so the
+    // trie-side entry-resolve misses and we fall through to Phase 2.
+    setRouterTrie(
+      "find-match-r3-suppress",
+      buildRouteTrie(
+        { "foo.show": "/foo/:id" },
+        { "foo.show": ["A:foo.show"] },
+        { "foo.show": "/foo" },
+      ),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const fm = createFindMatch({
+        routesEntries: [nonLazyEntry({ "foo.show": "/foo/:id" })],
+        evaluateLazyEntry: () => {},
+        routerId: "find-match-r3-suppress",
+      });
+      expect(fm("/foo/5")?.routeKey).toBe("foo.show");
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("DOES warn when the trie was present but did not match (genuine trie gap)", () => {
+    // Trie holds an unrelated route, so it returns no match for "/foo/5" while
+    // the regex fallback resolves it — a real trie gap worth surfacing in dev.
+    setRouterTrie(
+      "find-match-r3-warn",
+      buildRouteTrie(
+        { "bar.index": "/bar" },
+        { "bar.index": ["A:bar.index"] },
+        { "bar.index": "/bar" },
+      ),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const fm = createFindMatch({
+        routesEntries: [nonLazyEntry({ "foo.show": "/foo/:id" })],
+        evaluateLazyEntry: () => {},
+        routerId: "find-match-r3-warn",
+      });
+      expect(fm("/foo/5")?.routeKey).toBe("foo.show");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("regex fallback"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   // Regression: a lazy entry whose evaluateLazyEntry never marks it evaluated
