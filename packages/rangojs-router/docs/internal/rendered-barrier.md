@@ -2,21 +2,30 @@
 
 **Status**: Experimental. Works in DSL loaders, including streaming trees that use `loading()` (the barrier waits for the streaming handlers to settle).
 
-## Problem
+If you're about to touch how loaders read handle data — or you just hit
+`ctx.rendered()` in a loader and want to know what it actually promises —
+start here. This is a small feature with a sharp edge, and the edge is exactly
+where the scar tissue lives.
 
-Loaders run before handlers. A loader that needs to know which data the
-handler tree produced (e.g., which product IDs were rendered) must either
-duplicate the fetch or create a loader-to-loader waterfall.
+## The problem it solves
 
-Handles accumulate data from handlers/layouts for downstream consumption,
-but loaders cannot read handles because handles are populated after loaders
-start.
+Loaders run before handlers. That ordering is fine until a loader needs to know
+what the handler tree produced — say, which product IDs ended up rendered. With
+nothing to lean on, that loader has two bad options: duplicate the fetch the
+handler already did, or chain itself behind another loader and create a
+loader-to-loader waterfall. Neither is something you want to write twice.
 
-## Solution
+Handles look like the natural answer — they exist precisely to accumulate data
+from handlers and layouts for downstream consumption. But there's a timing
+mismatch: handles are populated _after_ loaders start, so a loader that reads a
+handle reads it empty. The data it wants hasn't been written yet.
 
-Add `await ctx.rendered()` to loader context. After the promise resolves,
-the non-loader render tree has settled and all handle data is available.
-The loader can then read handles via `ctx.use(handle)`.
+## The fix
+
+Give the loader a way to wait. `await ctx.rendered()` is that wait: once the
+promise resolves, the non-loader render tree has settled and all handle data is
+in place. From there the loader can read handles via `ctx.use(handle)` and get
+real values.
 
 ```ts
 const PricesLoader = createLoader(async (ctx) => {
@@ -29,15 +38,22 @@ const PricesLoader = createLoader(async (ctx) => {
 
 ## Semantics
 
+This is the contract you can rely on:
+
 - `rendered()` returns a `Promise<void>` that resolves when all non-loader
   segments in the matched tree have settled and handle data is available.
 - After `await ctx.rendered()`, `ctx.use(handle)` returns the accumulated
   handle data (the collected value, same shape as `useHandle()` on client).
-- Before `await ctx.rendered()`, `ctx.use(handle)` throws.
+- Before `await ctx.rendered()`, `ctx.use(handle)` throws. (The handle isn't
+  populated yet, so there's nothing correct to hand back — better to throw than
+  to lie.)
 - `ctx.use(loader)` continues to work normally at any point.
 - `rendered()` is idempotent — multiple calls return the same promise.
 
-## Phase 1 Scope
+## Phase 1 scope
+
+This is the first cut, so the supported surface is deliberately narrow. Here's
+what's in.
 
 ### Supported
 
@@ -51,7 +67,10 @@ const PricesLoader = createLoader(async (ctx) => {
 - Prerender replay: handles are replayed from build artifacts, barrier
   resolves immediately.
 
-### Not Supported (Phase 1)
+### Not supported (Phase 1)
+
+And here's what's intentionally out — each of these is a case we either couldn't
+make correct yet or chose not to chase:
 
 - Handler-invoked loaders (`ctx.use(Loader)` inside a route/layout handler).
   Calling `rendered()` from a handler-invoked loader throws immediately.
@@ -60,7 +79,10 @@ const PricesLoader = createLoader(async (ctx) => {
 - Nested `rendered()` dependencies (loader A awaits rendered, loader B
   depends on loader A via `ctx.use(A)` — this works but is not optimized).
 
-### Known Limitations
+### Known limitations
+
+Two sharp edges to keep in mind. Both are real and both can bite quietly, so
+they're worth reading before you build on this:
 
 - **Promise handle values**: `rendered()` guarantees the handler has
   executed and called `push()`, but does NOT guarantee that promise values
@@ -68,13 +90,16 @@ const PricesLoader = createLoader(async (ctx) => {
   the loader will see the unresolved Promise object. Push synchronous
   values for Phase 1 correctness.
 - **Deadlock with handler ctx.use()**: If a loader calls `rendered()`, a
-  handler must not `await ctx.use(thatSameLoader)`. The handler would block
-  segment resolution, which blocks the barrier, which blocks the loader.
-  A runtime check detects this when the loader has already called
-  `rendered()` before the handler runs; timing-dependent cases may still
-  deadlock without detection.
+  handler must not `await ctx.use(thatSameLoader)` — the handler would block
+  segment resolution, which blocks the barrier, which blocks the loader. The
+  runtime guard catches this bidirectionally (whichever side runs first), and on
+  streaming trees it stays live until `handleStore.settled`, so a `loading()`
+  handler that resumes after the barrier is still caught. The cycle surfaces as
+  an error instead of hanging.
 
-## Guard Rules
+## Guard rules
+
+When the guards fire and when they don't, in one table:
 
 | Condition                                        | Behavior                                              |
 | ------------------------------------------------ | ----------------------------------------------------- |
@@ -85,11 +110,12 @@ const PricesLoader = createLoader(async (ctx) => {
 | `ctx.use(handle)` before `await ctx.rendered()`  | Throws                                                |
 | `ctx.use(handle)` after `await ctx.rendered()`   | Returns collected handle data                         |
 
-## Implementation Notes
+## Implementation notes
 
-### Render Barrier Lifecycle
+### Render barrier lifecycle
 
-The render barrier is a deferred promise on the request context:
+Under the hood the render barrier is a deferred promise on the request context.
+What resolves it depends on which path the request took:
 
 - **Fresh path (non-streaming)**: Resolved after `resolveAllSegments()`
   returns. At that point all handlers have completed and all synchronous
@@ -108,7 +134,7 @@ The render barrier is a deferred promise on the request context:
 - **Prerender path**: Resolved after handle data is replayed from build
   artifacts. Same as cache hit.
 
-### Loader `use(handle)` After Barrier
+### Loader `use(handle)` after barrier
 
 After `rendered()` resolves, the loader's `ctx.use(handle)` reads from
 the HandleStore. The data is collected using the handle's `collect`
@@ -117,7 +143,7 @@ function (same as `useHandle()` on the client), producing the same shape.
 Segment order for collection follows the segment resolution order
 (parent → child), captured when the barrier resolves.
 
-### How Streaming Works
+### How streaming works
 
 In a streaming tree, handlers behind `loading()` have not finished pushing
 when `resolveAllSegments()` returns — only their _rendered output_ streams
@@ -136,10 +162,14 @@ none is unregistered; pushes happen _within_ those tracked promises (before
 `settled`); and the payload's later `stream()` auto-seal is idempotent.
 
 The one thing this does NOT do is wait for promise _values_ inside pushes (see
-Known Limitations) — `settled` waits for the handler to push, not for a pushed
+Known limitations) — `settled` waits for the handler to push, not for a pushed
 `Promise` to resolve.
 
-## Stop Conditions
+## Stop conditions
+
+If you're extending this, these are the lines that should make you stop and
+reconsider rather than push through — the points where the feature stops earning
+its complexity:
 
 - Broad changes across render, cache, prerender, and streaming to support
   the basic case.
