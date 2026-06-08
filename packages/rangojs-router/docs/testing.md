@@ -205,16 +205,17 @@ symlink resolves to a realpath outside node_modules that Vite already transpiles
 in-repo. If you want only the aliases, `rangoTestAliases()` is still exported;
 then wire `server.deps.inline` yourself.)
 
-> **`Prerender()` / `createLoader()` / `Static()` construct now:** each assigns a
-> process-stable runtime fallback `$$id` when the Vite plugin injected none, so a
-> router using them **builds** in a bare test without the "missing $$id" throw
-> (the fallback is inert in a real build — the plugin always injects, and the
-> static manifest keys on the plugin id; `Static`'s `$$id`is read only during
-real RSC serving). **The remaining caveat is the whole router _file_:** importing
-your real`router.tsx`can still fail on app-specific module imports (a page
-pulling its own deps) or plugin`virtual:`modules that need the rango plugin.
-For whole-router`dispatch`/drift checks, build from a focused include (e.g.
-> your API routes), or run them at e2e.
+**`Prerender()`, `createLoader()`, and `Static()` construct now** — each assigns
+a process-stable runtime fallback `$$id` in a bare test, so a router using them
+builds without the "missing `$$id`" throw. This is inert in a real build: the
+plugin always injects, the static manifest keys on the plugin id, and the
+`Static` id is read only during real RSC serving.
+
+**The remaining caveat is the whole router _file_.** Importing your real
+`router.tsx` can still fail on app-specific page-module imports (a page pulling
+its own deps) or plugin `virtual:` modules that need the rango plugin. For
+whole-router `dispatch` / drift checks, build from a focused include (e.g. your
+API routes), or run them at e2e.
 
 ### Two vitest projects
 

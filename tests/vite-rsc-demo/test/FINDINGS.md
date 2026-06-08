@@ -45,11 +45,12 @@ on object identity, not the empty `$$id`).
 
 ## Other notes
 
-- **No response routes** in vite-rsc-demo and **Prerender** in `magazine.tsx`, so
-  the full router can't be imported and there are no `path.json`-style handlers to
-  `dispatch` — `dispatch` is therefore not exercised here (covered by
-  cloudflare-basic). The `generated-routes` primitive is exercised against the
-  real committed `NamedRoutes` map + a constructed runtime map.
+- **No response routes** in vite-rsc-demo (no `path.json`-style handlers to
+  `dispatch`), and the full router file can't be bare-imported (its page modules
+  pull app deps / plugin `virtual:` modules — NOT handler `$$id`, which now falls
+  back). So `dispatch` is not exercised here (covered by cloudflare-basic). The
+  `generated-routes` primitive is exercised against the real committed
+  `NamedRoutes` map + a constructed runtime map.
 - The shop middleware call `next()` without `return next()`; `runMiddleware` still
   reports `nextCalled === 1` and a 200 response (the terminal handler ran). That
   matches the app's intent (these are fire-through middleware).
