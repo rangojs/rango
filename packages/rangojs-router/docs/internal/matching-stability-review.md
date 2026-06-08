@@ -484,25 +484,28 @@ not per-request — and is efficient on the warm path.**
 > staticPrefix) so nested includes under a trailing-slash parent register
 > normalized route patterns.
 
-### LP1 — an include with M routes runs its handler once per route on cold start — DEFERRED (needs-design)
+### LP1 — an include with M routes runs its handler once per route on cold start — MEASURED, DEFERRED (not worth it)
 
-- Severity: low (cold-start, amortized), needs-design.
-- `loadManifest` builds a manifest **pruned to `forRoute=routeKey`** —
+- **What.** `loadManifest` builds a manifest **pruned to `forRoute=routeKey`** —
   `path-helper.ts:153` skips registering every route except the matched one — and
   `manifestModuleCache` is keyed by `routeKey`. So an include with M routes runs its
   handler M times across the isolate's life (once per sibling route, each cached
-  after its first request).
-- **A handler-identity cache key (dropping `routeKey`) is NOT the fix — it is a
-  regression.** Because each cached manifest is pruned to one route, a sibling
-  request would miss (`cached.has(siblingKey)` is false), rebuild, and overwrite the
-  entry — so alternating sibling requests **thrash** (re-run the handler every time),
-  strictly worse than per-`routeKey` caching. An initial attempt at this was reverted;
-  a unit test masked it by running `loadManifest` without `forRoute`. The correct fix
-  is an **unpruned manifest cache with prune-on-read** (run the handler once without
-  `forRoute`, cache the full tree, prune to the requested route on each hit) — that
-  changes the pruning interaction, so it is deferred. Tracked as `it.todo` (LP1) in
-  `lazy-include-perf.test.ts`. The amortized cost is M handler runs per isolate, each
-  then cached — not thrashing — so the current behavior is correct, just not optimal.
+  after its first request) instead of once.
+- **Measured cost** (`lazy-include-cost.bench.ts`, LP1 benches): for a **30-route**
+  include, warming **all** 30 routes from cold costs ~0.6–0.8 ms (the 30 handler
+  runs) vs. ~40–60 µs for re-hitting them (all cache hits) — i.e. the warm steady
+  state is **~20× cheaper**. The waste is **~20–25 µs/route, paid once per route per
+  isolate** and amortized to zero. That is the worst case (every route hit); most
+  includes have few routes and most routes are hit rarely.
+- **Why not fixed.** A handler-identity cache key (dropping `routeKey`) is NOT the
+  fix — it is a **regression**: each cached manifest is pruned to one route, so a
+  sibling request misses, rebuilds, and overwrites the entry → alternating siblings
+  **thrash** (re-run every time), strictly worse. (Tried and reverted; a unit test
+  masked it by running `loadManifest` without `forRoute`.) The real fix is an
+  **unpruned manifest cache with prune-on-read** — a deeper change to the pruning
+  interaction. **Risk ≫ reward** for a ~20-µs/route, amortizes-to-zero cold-start
+  cost. Deferred as a documented decision. Tracked as `it.todo` (LP1) in
+  `lazy-include-perf.test.ts`. Current behavior is correct, just not minimal.
 
 ### LP2 — dev/Cloudflare lacked precomputed entries (double match+render run) — FIXED (C8)
 
@@ -541,14 +544,19 @@ not per-request — and is efficient on the warm path.**
   Deferred as a documented decision, not planned work. Distinct from LP1 (the
   per-sibling-route re-runs), also deferred — see LP1.
 
-### LP4 — isSSR doubles cold first-request handler runs for document loads — DEFERRED (needs-design)
+### LP4 — isSSR doubles cold first-request handler runs for document loads — MEASURED, DEFERRED (not worth it)
 
-- A cold document request resolves twice (classify `isSSR=false`, render
+- **What.** A cold document request resolves twice (classify `isSSR=false`, render
   `isSSR=true`); `isSSR` is in the cache key, so both miss → two handler runs.
-  Dropping `isSSR` was **refuted** as unsafe (one lens confirmed the produced tree
-  differs by `isSSR` via `loading()` behavior). A safe fix would split the
-  isSSR-dependent state out of the cached tree, or warm the `isSSR=true` key
-  during classification. Track.
+- **Measured cost** (`lazy-include-cost.bench.ts`, LP4 benches): the two-resolve
+  path is ~1.9× a single resolve → **~20–25 µs waste per cold document request**,
+  paid **once per route per isolate** and amortized to zero thereafter.
+- **Why not fixed.** Dropping `isSSR` from the key was **refuted** as unsafe (the
+  produced tree differs by `isSSR` via `loading()` behavior). A safe fix must split
+  the `isSSR`-dependent state out of the cached tree (or warm the `isSSR=true` key
+  during classification) — the same refactor LP3 depends on, touching shortCodes and
+  the semantic matrix. **Risk ≫ reward** for a ~20-µs, amortizes-to-zero cost.
+  Deferred as a documented decision; LP4 is the gate for ever revisiting LP3.
 
 ### Confirmed-but-immaterial (no change)
 
@@ -558,10 +566,12 @@ find-match entry-resolution loop — all once-per-entry or small; not worth touc
 
 ### Follow-up
 
-- **Done:** the lazy-eval / `loadManifest` / cold-start timing benchmark now exists
-  (`src/router/__tests__/lazy-include-cost.bench.ts`, run `vitest bench
-lazy-include-cost`). It quantified **LP3** (~0.75 µs/route redundant run,
-  amortizes to ~0) and the numbers drove the LP3 deferral above.
-- **LP4** remains open and is the gate for ever revisiting LP3 (both turn on
-  splitting `isSSR`-dependent state out of the cached EntryData tree). Use the same
-  bench to quantify the cold document-request double resolve before taking it on.
+- **Done — all three quantified.** The lazy-eval / `loadManifest` / cold-start
+  timing benchmark (`src/router/__tests__/lazy-include-cost.bench.ts`, run `vitest
+bench lazy-include-cost`) now measures **LP1** (~20 µs/route, ~20× cheaper warm),
+  **LP3** (~0.75 µs/route redundant run), and **LP4** (~1.9× double-resolve). All
+  three are cold-start, paid once per route/isolate, amortizing to ~0 — the numbers
+  drove the deferral of each. **No optimization is warranted.**
+- The only thing that could ever change the calculus is the shared **LP3+LP4**
+  refactor (splitting `isSSR`-dependent state out of the cached EntryData tree). Re-run
+  the bench to re-justify before taking that on; nothing today does.
