@@ -21,9 +21,9 @@ that route tree.
   stable across SSR, navigation, and action renders
 - [Stability roadmap](./internal/stability-roadmap.md) - where the router is
   trying to get stricter and easier to reason about
-- [Matching & lazy-discovery stability review](./internal/matching-stability-review.md) -
-  dev/prod matching parity, the trie-vs-regex contract, and the lazy include()
-  performance audit (findings + deferred work)
+- [Matching & lazy-discovery](./internal/matching-and-lazy-discovery.md) -
+  architecture & accepted tradeoffs: dev/prod matching parity, the trie-vs-regex
+  contract, the matching invariants, and the measured lazy include() cost tradeoffs
 
 ## Caching And Prerender
 

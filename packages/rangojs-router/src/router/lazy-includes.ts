@@ -119,7 +119,7 @@ export function evaluateLazyEntry<TEnv = any>(
   const lazyContext = entry.lazyContext;
 
   // Create a new context for evaluating the lazy patterns.
-  // KNOWN REDUNDANCY (LP3, docs/internal/matching-stability-review.md): this
+  // KNOWN REDUNDANCY (LP3, docs/internal/matching-and-lazy-discovery.md): this
   // runs lazyPatterns.handler() purely to extract `patterns` (route name ->
   // pattern) for matching, and DISCARDS the EntryData `manifest` it builds.
   // loadManifest() then runs the SAME handler again on the first request to

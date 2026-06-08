@@ -174,7 +174,7 @@ describe("included handler execution count across the request lifecycle", () => 
     // That cost was MEASURED (~0.75us/route, ~50% of manifest-build but <0.5% of a
     // real RSC request, amortized to ~0 by the warm cache — lazy-include-cost.bench.ts)
     // and DEFERRED as not worth the LP4-coupled risk (see the LP3 it.todo below and
-    // docs/internal/matching-stability-review.md). This `2` is expected to STAY `2`.
+    // docs/internal/matching-and-lazy-discovery.md). This `2` is expected to STAY `2`.
     await runLoadManifest(entry, routeKey);
     expect(runs()).toBe(2);
 
@@ -241,7 +241,7 @@ describe("dev trie rebuild precomputes leaf-include entries (C8)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Known future work (needs-design) — see docs/internal/matching-stability-review.md
+// Known future work (needs-design) — see docs/internal/matching-and-lazy-discovery.md
 // "Lazy include() performance audit" (LP1, LP3, LP4). These are intentionally
 // `todo`: the desired behavior is not yet implemented and the fixes are
 // behavior-sensitive. The Part B sentinel will flip when LP3 lands.

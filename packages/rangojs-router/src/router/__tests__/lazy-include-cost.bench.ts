@@ -12,7 +12,7 @@ import type { EntryData } from "../../server/context.js";
 // Quantifies the three deferred lazy-include redundancies so each deferral
 // decision is backed by numbers, not estimates. All three are cold-start handler
 // runs that amortize to ~0 (the warm `loadManifest` cache). See
-// docs/internal/matching-stability-review.md (LP1/LP3/LP4).
+// docs/internal/matching-and-lazy-discovery.md (LP1/LP3/LP4).
 //
 //   LP3 (this file's per-size benches): a NON-LEAF include's handler runs once at
 //     match (evaluateLazyEntry) AND once at render (loadManifest). Read `match`

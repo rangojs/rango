@@ -32,7 +32,7 @@ import { VERSION } from "@rangojs/router:version";
 // own pruned manifest, so alternating sibling requests would thrash (re-run the
 // handler every time). Running the include handler once per isolate instead of once
 // per route is possible but needs an unpruned manifest cache with prune-on-read — see
-// LP1 in docs/internal/matching-stability-review.md. VERSION comes from the
+// LP1 in docs/internal/matching-and-lazy-discovery.md. VERSION comes from the
 // @rangojs/router:version virtual module which Vite invalidates on RSC module HMR.
 // When VERSION changes, this module re-evaluates and the cache is recreated empty.
 const manifestModuleCache = new Map<string, Map<string, EntryData>>();
