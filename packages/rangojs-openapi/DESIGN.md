@@ -343,13 +343,68 @@ was compile-verified.)
 5. **Build emit** — Vite plugin / CLI for the on-disk `openapi.json` artifact; the
    `/docs` page as a prerenderable RSC route.
 
-### Open questions
+### Resolved decisions
 
-- **`query` ↔ Rango `search`.** The package validates `query` itself from the
-  Standard Schema. Optional future bridge: derive Rango's `search` descriptor so
-  `ctx.searchParams` is also typed and the route's query shows in `*.gen.ts`.
-- **Per-status responses.** `response` covers 2xx; a `responses: { [status]: Schema }`
-  form (and an `errors: [{ status, code }]` enumeration) can come later — errors are
-  already uniformly documented via the shared problem+json component.
-- **Validator surface.** Standard Schema keeps it validator-agnostic; do we ship a
-  thin Zod-first convenience, or stay strictly Standard Schema?
+- **No `search` integration.** Query lives entirely in the contract; the rendered
+  multiplex handler validates it. We do **not** bridge to Rango's `search`
+  descriptor. Rango stays a pure handler-mounting substrate — it mounts one handler
+  per path and the package's handler dispatches `get`/`post`/`put` per the resource
+  definition. Rango never sees query/body schemas.
+- **Response inference from the contract.** The `response` schema in the resource is
+  the type source. Rango's `_responses` phantom is never read.
+- **Validation: unlocked, Zod advised.** Standard Schema so any validator works;
+  docs recommend Zod as the default. The resource owns the choice.
+- **Per-status responses (deferred, not blocking).** `response` = 2xx; a
+  `responses: { [status]: Schema }` form and an `errors: [{ status, code }]`
+  enumeration can land later — errors are already uniformly documented via the
+  shared problem+json component.
+
+---
+
+## 10. The general pattern — Rango as a DSL substrate
+
+This package is **instance #1** of a broader pattern, not a one-off. A
+self-contained "app" owns its own domain complexity and emits **Rango DSL** as its
+output; Rango serves it without understanding the domain — it knows only routing
+and rendering. The seam between them is the **route item as an intermediate
+representation (IR)**.
+
+```
+   app authoring surface              what Rango sees
+   (schemas, UI tree, plugin          (plain values it can route + render)
+    manifest, CMS content types)
+            │   compiles to                   │
+            ▼                                  ▼
+   ┌─────────────────────┐   route items   ┌──────────────────────────┐
+   │  the layer / "app"   │ ──────────────▶ │  Rango: route, render,    │
+   │  (owns complexity;   │                 │  reverse, manifest, cache,│
+   │   derives OpenAPI,   │                 │  middleware, prerender    │
+   │   client, docs, UI…) │                 │  (blind to your domain)   │
+   └─────────────────────┘                 └──────────────────────────┘
+```
+
+Three Rango properties make this work (and they are load-bearing):
+
+1. **Route items are plain values** — any layer can emit them programmatically; the
+   IR is data, not framework magic.
+2. **Discovery executes the entry** (not source parsing) — so _generated_ routes are
+   first-class: names, reverse, manifest, prerender, middleware, caching all work,
+   with Rango unaware a layer produced them.
+3. **The framework is blind to the domain** — Rango sees only
+   `path.json(pattern, handler, { name })`; it knows nothing of "schema,"
+   "contract," "plugin," or "content type," so the layer can encode arbitrary
+   complexity above the IR.
+
+The substrate contract: **the layer owes valid route items; Rango provides
+everything from routing down.** Neither reaches into the other. The same shape
+applies to a CMS (content types → routes + pages + admin UI), a plugin system (each
+plugin emits a DSL slice the host mounts), a UI/app builder, or a CRUD/forms
+generator — each is "an app that happens to render Rango's DSL."
+
+**Discipline:** the "contract is the sole source of truth / only public types
+imported / core frozen" rules are what _keep the seam a seam_. If a layer reaches
+into Rango internals — or Rango grows to understand schemas — the substrate property
+breaks. So this package is the **reference implementation**: keep its seam clean and
+the pattern is extractable later as a thin general "mountable app" primitive — but
+do **not** abstract that prematurely. Prove it once here; let the general primitive
+fall out.
