@@ -290,9 +290,14 @@ function createLoaderExecutor<TEnv>(
             );
           }
           const segmentOrder = reqCtx._renderBarrierSegmentOrder ?? [];
-          const snapshot =
-            reqCtx._renderBarrierHandleSnapshot ??
-            buildHandleSnapshot(reqCtx._handleStore, segmentOrder);
+          // For streaming trees the eager snapshot built when the barrier
+          // resolved is incomplete (loading() handlers were still in flight, so
+          // their pushes had not landed). rendered() awaited handleStore.settled
+          // for streaming, so the store is now complete — build a fresh snapshot.
+          const snapshot = reqCtx._treeHasStreaming
+            ? buildHandleSnapshot(reqCtx._handleStore, segmentOrder)
+            : (reqCtx._renderBarrierHandleSnapshot ??
+              buildHandleSnapshot(reqCtx._handleStore, segmentOrder));
           return collectHandleData(item, snapshot, segmentOrder);
         }
 
@@ -311,15 +316,7 @@ function createLoaderExecutor<TEnv>(
           );
         }
 
-        // Guard: reject streaming trees
         const reqCtx = reqCtxRef ?? _getRequestContext();
-        if (reqCtx?._treeHasStreaming) {
-          throw new Error(
-            `ctx.rendered() is not supported when the matched route tree uses loading(). ` +
-              `Streaming handlers may not have settled when rendered() resolves. ` +
-              `Remove loading() from the route tree or restructure to avoid rendered().`,
-          );
-        }
 
         if (renderedPromise) return renderedPromise;
 
@@ -330,7 +327,10 @@ function createLoaderExecutor<TEnv>(
         }
 
         // Bidirectional deadlock check: if a handler already started
-        // awaiting this loader, calling rendered() would deadlock.
+        // awaiting this loader, calling rendered() would deadlock. This is the
+        // real cycle guard (it holds for both streaming and non-streaming): the
+        // handler blocks segment resolution, which blocks the barrier, which
+        // blocks this loader.
         if (reqCtx._handlerLoaderDeps?.has(currentLoaderId)) {
           throw new Error(
             `Deadlock: loader "${currentLoaderId}" called ctx.rendered() but a handler ` +
@@ -348,7 +348,21 @@ function createLoaderExecutor<TEnv>(
         }
         reqCtx._renderBarrierWaiters.add(currentLoaderId);
 
-        renderedPromise = reqCtx._renderBarrier.then(() => {
+        // Streaming trees (loading()): the barrier resolves once the segment
+        // tree is resolved, but loading() handlers stream behind Suspense and
+        // their handle pushes are still in flight then. Their async execution
+        // IS tracked in the handle store (trackHandler -> store.track), so after
+        // the barrier we seal (no further handlers register once the tree is
+        // resolved) and wait for settled — every tracked handler, streaming
+        // included, has finished pushing. The loader's own segment streams in
+        // after, so this does not block the shell; the deadlock guard above
+        // keeps a handler from depending on this loader.
+        const streaming = reqCtx._treeHasStreaming === true;
+        renderedPromise = reqCtx._renderBarrier.then(async () => {
+          if (streaming) {
+            reqCtx._handleStore.seal();
+            await reqCtx._handleStore.settled;
+          }
           renderedResolved = true;
         });
         return renderedPromise;

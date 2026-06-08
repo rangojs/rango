@@ -146,13 +146,21 @@ function AccumulatePage(ctx: any) {
   );
 }
 
-// ─── Streaming route: rendered() should be rejected ─────────────────────
+// ─── Streaming route: handler is behind loading() and pushes its handle
+//     data AFTER an await, so the push lands while the segment is still
+//     streaming (past the render barrier). rendered() must wait for it. ─────
 
-function StreamingPage(ctx: any) {
+async function StreamingPage(ctx: any) {
   const push = ctx.use(RenderedProducts);
-  push("widget-a");
+  // Defer the push past the barrier — a real streaming handler awaits its
+  // data before pushing, so the push happens during the streaming phase.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  push("gadget-x");
+  push("gadget-y");
   return (
     <div data-testid="rendered-streaming-page">
+      <h1 data-testid="rendered-streaming-title">Streaming Products</h1>
+      <p data-testid="rendered-streaming-ids">gadget-x,gadget-y</p>
       <PriceDisplay loader={LivePricesLoader} testId="rendered-streaming" />
     </div>
   );
@@ -193,13 +201,14 @@ export const renderedBarrierPatterns = urls(
         ]),
       ]),
 
-      // Streaming route: loading() + rendered() should throw
-      path(
-        "/streaming-rejected",
-        StreamingPage,
-        { name: "streamingRejected" },
-        () => [loading(<div>Loading prices...</div>), loader(LivePricesLoader)],
-      ),
+      // Streaming route: loading() + a deferred handle push. rendered() waits
+      // for the streaming handler to settle, then the loader reads the data.
+      path("/streaming", StreamingPage, { name: "streaming" }, () => [
+        loading(
+          <div data-testid="rendered-streaming-loading">Loading prices...</div>,
+        ),
+        loader(LivePricesLoader),
+      ]),
     ]),
   ],
 );

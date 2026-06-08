@@ -125,8 +125,8 @@ describe("rendered barrier", () => {
     });
   });
 
-  describe("rendered() guard: streaming tree", () => {
-    it("throws when the tree has loading()", async () => {
+  describe("rendered() under streaming (loading())", () => {
+    it("waits for streaming handlers to settle, then reads complete handle data", async () => {
       mockInsideLoaderScope = true;
       mockRequestContext = createMockRequestContext({
         treeHasStreaming: true,
@@ -134,7 +134,60 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
+      const Prices = createHandle<string>(undefined, "test#Prices");
+
       const loader = createLoader("streamingLoader", async (loaderCtx) => {
+        await loaderCtx.rendered();
+        return loaderCtx.use(Prices);
+      });
+
+      setupLoaderAccess(ctx, loaderPromises);
+
+      const handleStore = mockRequestContext._handleStore;
+
+      // Simulate a loading() handler: its async execution is tracked in the
+      // handle store (trackHandler -> store.track) and pushes its handle data
+      // only when it finishes — which is AFTER the barrier resolves.
+      let finishStreamingHandler!: () => void;
+      const streamingHandler = new Promise<void>((r) => {
+        finishStreamingHandler = r;
+      });
+      handleStore.track(
+        streamingHandler.then(() => {
+          handleStore.push("test#Prices", "shop.layout", "live-price");
+        }),
+      );
+
+      // Loader starts and pauses at rendered().
+      const loaderPromise = ctx.use(loader);
+
+      // Barrier resolves while the streaming handler is still in flight: the
+      // handle has NOT been pushed yet. Pre-streaming, rendered() would have
+      // resolved here with empty data (the bug).
+      mockRequestContext._resolveRenderBarrier(["shop.layout"]);
+      await Promise.resolve();
+
+      // Streaming handler finishes and pushes; only now should rendered()
+      // resolve and the loader read the complete handle data.
+      finishStreamingHandler();
+
+      const result = await loaderPromise;
+      expect(result).toEqual(["live-price"]);
+    });
+
+    it("still rejects a handler-awaits-loader deadlock under streaming", async () => {
+      mockInsideLoaderScope = true;
+      mockRequestContext = createMockRequestContext({
+        treeHasStreaming: true,
+      });
+      // A handler is already awaiting this loader via ctx.use() — calling
+      // rendered() would deadlock, streaming or not.
+      mockRequestContext._handlerLoaderDeps = new Set(["deadlockLoader"]);
+
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const loader = createLoader("deadlockLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
         return "data";
       });
@@ -144,9 +197,7 @@ describe("rendered barrier", () => {
       const result = await Promise.allSettled([ctx.use(loader)]);
       const rejection = result[0] as PromiseRejectedResult;
       expect(rejection.status).toBe("rejected");
-      expect(rejection.reason.message).toContain(
-        "not supported when the matched route tree uses loading()",
-      );
+      expect(rejection.reason.message).toContain("Deadlock");
     });
   });
 

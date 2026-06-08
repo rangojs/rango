@@ -189,44 +189,32 @@ function renderedBarrierTests(mode: "dev" | "build") {
       );
     });
 
-    test("streaming tree: rendered() rejects with loading()", async ({
+    test("streaming tree: rendered() waits for the loading() handler, then reads its data", async ({
       page,
     }) => {
-      // rendered() throws inside the loader because the route has loading().
-      // The error propagates through RSC and surfaces as either a page error
-      // (pageerror event) or visible error UI (React error boundary / Vite
-      // overlay). We assert BOTH that prices did not render AND that an error
-      // signal was observed — ruling out a silent hang/deadlock.
-      const errors: string[] = [];
-      page.on("pageerror", (error) => errors.push(error.message));
+      using _ = expectNoPageError(page);
+      // The handler is behind loading() and pushes gadget-x/gadget-y only after
+      // an await (during the streaming phase, past the render barrier). Before
+      // the fix, rendered() threw here. Now it waits for the streaming handler
+      // to settle, so the loader reads the pushed IDs and resolves their prices.
+      await page.goto(f.url("/rendered-barrier/streaming"));
+      await waitForHydration(page);
 
-      const response = await page.goto(
-        f.url("/rendered-barrier/streaming-rejected"),
+      await expect(testId(page, "rendered-streaming-title")).toHaveText(
+        "Streaming Products",
       );
-      await page.waitForTimeout(3000);
 
-      // Prices must NOT have rendered
-      const pricesVisible = await testId(page, "rendered-streaming-prices")
-        .isVisible()
-        .catch(() => false);
-      expect(pricesVisible).toBe(false);
-
-      // At least one error signal must be present: page error event,
-      // non-200 response, or visible error text in the DOM.
-      const hasPageError = errors.length > 0;
-      const hasErrorStatus = response !== null && response.status() >= 400;
-      const hasErrorText = await page
-        .locator("text=/error/i")
-        .first()
-        .isVisible({ timeout: 1000 })
-        .catch(() => false);
-
-      expect(
-        hasPageError || hasErrorStatus || hasErrorText,
-        `Expected an error signal from rendered() rejection, but got none. ` +
-          `Page errors: ${errors.length}, status: ${response?.status()}, ` +
-          `error text visible: ${hasErrorText}`,
-      ).toBe(true);
+      // Prices loaded — proves the loader saw the handle data pushed during
+      // streaming (an empty/early barrier would yield a count of 0).
+      await expect(testId(page, "rendered-streaming-price-count")).toHaveText(
+        "2",
+      );
+      await expect(
+        testId(page, "rendered-streaming-price-gadget-x"),
+      ).toContainText("$49.99");
+      await expect(
+        testId(page, "rendered-streaming-price-gadget-y"),
+      ).toContainText("$99.99");
     });
   });
 }
