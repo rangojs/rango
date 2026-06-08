@@ -1,9 +1,11 @@
 # Execution Model
 
-This is the canonical runtime contract for `@rangojs/router`.
-
-Use this document as the source of truth for request flow, middleware scope,
-segment recomputation, and context visibility.
+If you're changing how the router runs a request — the order middleware fires in,
+when segments recompute, or what a handler can see in its context — this is the
+contract you're working against. It's the canonical runtime model for
+`@rangojs/router`, and the source of truth for request flow, middleware scope,
+segment recomputation, and context visibility. When you're unsure what runs when,
+this is the document that settles it.
 
 ## Terminology
 

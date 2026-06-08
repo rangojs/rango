@@ -1,7 +1,10 @@
 # Route Manifest System
 
-The route manifest maps route names to URL patterns (e.g., `{ "blog.post": "/blog/:postId" }`).
-It powers `reverse()`, `href()`, and typed `Handler<"name">` without executing handler code at runtime.
+If you've ever wondered how `reverse()` knows a route's URL without running
+anything — or where the type safety in `Handler<"blog.post">` comes from — the
+answer is the route manifest. It maps route names to URL patterns (e.g.,
+`{ "blog.post": "/blog/:postId" }`), and it powers `reverse()`, `href()`, and
+typed `Handler<"name">` without executing handler code at runtime.
 
 ## Data Flow
 

@@ -2,9 +2,9 @@
 
 ## Overview
 
-`"use cache"` is a function/component-level caching directive for RSC. It caches the return value of async server functions and RSC components. The router does not need to understand `"use cache"` -- it operates below the router at the function/component level.
+`"use cache"` is a function/component-level caching directive for RSC: mark an async server function or RSC component, and its return value is cached. The part that keeps it simple is that the router doesn't need to understand `"use cache"` at all -- it operates below the router, at the function/component level.
 
-This is complementary to the existing `cache()` DSL (route-segment-level) and `Static()`/`Prerender()` (build-time caching). All three share the same backing `SegmentCacheStore`.
+It's the third of the caching mechanisms, complementary to the existing `cache()` DSL (route-segment-level) and `Static()`/`Prerender()` (build-time caching). All three share the same backing `SegmentCacheStore`.
 
 ## Directive Syntax
 
