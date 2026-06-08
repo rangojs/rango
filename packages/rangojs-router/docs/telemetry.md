@@ -1,5 +1,10 @@
 # Router Observability
 
+When you need to see what the router is actually doing on a request — where the
+time went, or what it decided and why — you reach for one of two systems. They
+answer different questions, so the first thing to get straight is which one you
+want.
+
 The router has two complementary observability systems:
 
 - **Performance timeline** (`debugPerformance`) — a per-request waterfall of

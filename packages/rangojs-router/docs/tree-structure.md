@@ -1,5 +1,10 @@
 # Tree-Structure-Critical Files (DO NOT MODIFY without understanding)
 
+The title isn't being dramatic. If you're about to touch segment rendering,
+merging, or a wrapper component, read this first — the files below are the ones
+where a small, innocent-looking change ripples into a class of bug that is genuinely
+miserable to track down.
+
 The following files control the React tree structure. Changing the tree structure
 (element types, nesting depth, or keys at any position) between SSR, navigation,
 and action renders will cause React to remount components, destroying client state
