@@ -73,8 +73,10 @@ API docs. They cover both public and internal surfaces.
 Internal notes and review plans live under [`docs/internal`](./internal).
 They are useful when changing router semantics, tests, or implementation
 details, but they are not the first stop for learning the public API.
+Completed, superseded, and point-in-time plan/handoff docs are moved to
+[`internal/archive`](./internal/archive) — kept for history, not maintained.
 
-- [Prerender passthrough action plan](./internal/prerender-passthrough-action-plan.md)
+- [Prerender passthrough action plan](./internal/archive/prerender-passthrough-action-plan.md) (archived)
   - superseded — documents the migration from `{ passthrough: true }` to `Passthrough()` wrapper
 - [Why include() is synchronous](./internal/why-includes-is-sync.md) -
   design rationale for the `UrlPatterns`-only `include()` signature and
@@ -87,10 +89,10 @@ details, but they are not the first stop for learning the public API.
   why the shared `onwarn` suppresses content-hashed asset re-emit collisions
   from `@vitejs/plugin-rsc`'s cross-environment copy, the sourcemap-safety
   argument, and why the warning is only reproducible in a host-router multi-app
-- [Generated route type surfaces handoff](./internal/generated-route-type-surfaces-handoff.md) -
+- [Generated route type surfaces handoff](./internal/archive/generated-route-type-surfaces-handoff.md) (archived) -
   **completed audit** (findings applied to the skills/docs); retained as the
   record of the three generated type surfaces — `GeneratedRouteMap`, per-module
   `.gen.ts`, and `RegisteredRoutes` — and response/MIME payload inference
-- [Loader client refresh key handoff](./internal/loader-client-refresh-key-handoff.md) -
+- [Loader client refresh key handoff](./internal/archive/loader-client-refresh-key-handoff.md) (archived) -
   proposal handoff for adding a hook-level client refresh key to partition
   `useLoader()` / `useFetchLoader()` `load()` fan-out

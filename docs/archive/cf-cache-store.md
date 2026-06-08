@@ -1,3 +1,5 @@
+> **Archived.** Historical design; the Cloudflare cache store shipped. Canonical reference is the cache skills and `@rangojs/router/cache`.
+
 # Cloudflare Cache Store Design
 
 > **Historical design document.** This captures the original design narrative for

@@ -100,7 +100,7 @@ Build matrix-style tests around semantic boundaries, not just features.
 Canonical Phase 2 artifacts:
 
 - `e2e/semantic-matrix.test.ts`
-- `docs/internal/test-quality-baseline.md`
+- `docs/internal/archive/test-quality-baseline.md` (archived)
 - The completed A1-A7 test quality stabilization work tracked from that baseline
 
 Required coverage:
@@ -271,7 +271,7 @@ Success criteria:
 
 Completed execution plan:
 
-- [Stability next steps plan](./stability-next-steps-plan.md) (all workstreams done)
+- [Stability next steps plan](./archive/stability-next-steps-plan.md) (archived; all workstreams done)
 
 Near-term focus:
 
