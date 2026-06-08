@@ -46,7 +46,15 @@ export function createLoader<T>(
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   const loaderId = __injectedId || "";
 
-  if (!loaderId && process.env.NODE_ENV === "development") {
+  // Throw unless under a test runner. This is the client/SSR build of
+  // createLoader; the plugin always injects $$id for a supported `export const`
+  // loader, so a missing id outside a test runner means an UNSUPPORTED shape the
+  // plugin skipped (dev OR a real build — fail loud, never ship `$$id: ""` which
+  // would make a client useLoader read the wrong key). `process.env.VITEST` is
+  // the only signal true in both vitest projects yet absent in a real build.
+  // (The react-server build in loader.rsc.ts adds a runtime fallback id for
+  // whole-router construction in a bare test; the client build needs no id there.)
+  if (!loaderId && !process.env.VITEST) {
     throw missingInjectedIdError("Loader", "createLoader");
   }
 

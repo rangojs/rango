@@ -381,19 +381,23 @@ export function Prerender<TParams extends Record<string, any>>(
     );
   }
 
-  if (!id && process.env.NODE_ENV === "development") {
+  // Throw unless under a test runner. The plugin always injects $$id for a
+  // supported `export const` Prerender on every build, so a missing id means
+  // either no plugin (a bare test — fall back below) or an UNSUPPORTED shape the
+  // plugin silently skipped (dev OR a real build — fail loud; a synthetic id
+  // would degrade to a silent prerender miss). `process.env.VITEST` is the only
+  // signal true in both vitest projects yet absent in a real build.
+  if (!id && !process.env.VITEST) {
     throw new Error(
-      "[rango] Prerender: missing $$id. " +
-        "Ensure the exposeInternalIds Vite plugin is configured.",
+      "[rango] Prerender: missing $$id. Use `export const X = Prerender(...)` " +
+        "and ensure the exposeInternalIds Vite plugin is configured.",
     );
   }
-  // No build-injected id — only in a bare unit test (every real build runs the
-  // rango Vite plugin, which always injects a stable id; the dev-throw above
-  // catches a genuinely non-exported Prerender). Assign a process-stable runtime
-  // id so a whole-app router with Prerender routes can construct in a bare test
-  // (for dispatch / assertGeneratedRoutesMatch). Provably inert in production:
-  // the fallback never fires under the plugin, and prerender storage/lookup keys
-  // on routeName + paramHash, never $$id (mirrors createHandle / createLoader).
+  // Under vitest with no plugin id: assign a process-stable runtime id so a
+  // whole-app router with Prerender routes constructs in a bare test (for
+  // dispatch / assertGeneratedRoutesMatch). Never reached in a real build (the
+  // throw above fires there); prerender storage/lookup keys on routeName +
+  // paramHash, never $$id (mirrors createHandle / createLoader).
   if (!id) {
     id = `__rango_runtime_prerender_${runtimePrerenderIdCounter++}`;
   }

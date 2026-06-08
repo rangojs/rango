@@ -25,7 +25,7 @@ import { dispatch } from "../testing/dispatch.js";
 // dispatch / assertGeneratedRoutesMatch, and the build manifest keys on the
 // plugin-injected id (the fallback never fires under the plugin).
 describe("Static bare-test $$id fallback", () => {
-  it("constructs without a plugin-injected $$id (NODE_ENV != development)", () => {
+  it("constructs without a plugin-injected $$id under a test runner", () => {
     const def = Static(() => null);
     expect(def.__brand).toBe("staticHandler");
     expect(def.$$id).toMatch(/^__rango_runtime_static_\d+$/);
@@ -35,13 +35,17 @@ describe("Static bare-test $$id fallback", () => {
     expect(Static(() => null).$$id).not.toBe(Static(() => null).$$id);
   });
 
-  it("still throws in development for a missing id (dev-throw preserved)", () => {
-    const prev = process.env.NODE_ENV;
-    process.env.NODE_ENV = "development";
+  it("throws outside a test runner (a real build) for a missing id", () => {
+    // No VITEST = a real build/dev: a missing id means an unsupported handler
+    // shape the plugin skipped — fail loud rather than mask it with a synthetic
+    // id (which would silently miss the static manifest). Restores the pre-PR
+    // safety net that dev-only gating removed.
+    const prev = process.env.VITEST;
+    delete process.env.VITEST;
     try {
       expect(() => Static(() => null)).toThrow(/missing \$\$id/);
     } finally {
-      process.env.NODE_ENV = prev;
+      process.env.VITEST = prev;
     }
   });
 

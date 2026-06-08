@@ -99,20 +99,24 @@ export function Static<TParams extends Record<string, any>>(
     id = maybeId ?? "";
   }
 
-  if (!id && process.env.NODE_ENV === "development") {
+  // Throw unless under a test runner. The plugin always injects $$id for a
+  // supported `export const` Static on every build, so a missing id means either
+  // no plugin (a bare test — fall back below) or an UNSUPPORTED shape the plugin
+  // silently skipped (dev OR a real build — fail loud; a synthetic id would
+  // degrade to a silent static/prerender miss). `process.env.VITEST` is the only
+  // signal true in both vitest projects yet absent in a real build.
+  if (!id && !process.env.VITEST) {
     throw new Error(
-      "[rango] Static: missing $$id. " +
-        "Ensure the exposeInternalIds Vite plugin is configured.",
+      "[rango] Static: missing $$id. Use `export const X = Static(...)` and " +
+        "ensure the exposeInternalIds Vite plugin is configured.",
     );
   }
-  // No build-injected id — only in a bare unit test (every real build runs the
-  // rango Vite plugin, which always injects; the dev-throw above catches a
-  // genuinely non-exported Static). Assign a process-stable runtime id so a
-  // whole-app router with Static() routes can construct in a bare test. Inert
-  // there: staticHandlerId is read only during RSC serving (never in dispatch /
-  // assertGeneratedRoutesMatch), and the build static manifest keys on the
-  // plugin-injected id (the fallback never fires under the plugin). Mirrors
-  // createHandle / createLoader / Prerender.
+  // Under vitest with no plugin id: assign a process-stable runtime id so a
+  // whole-app router with Static() routes constructs in a bare test. Never
+  // reached in a real build (the throw above fires there); staticHandlerId is
+  // read only during RSC serving (never in dispatch / assertGeneratedRoutesMatch),
+  // and the build static manifest keys on the plugin id. Mirrors createHandle /
+  // createLoader / Prerender.
   if (!id) {
     id = `__rango_runtime_static_${runtimeStaticIdCounter++}`;
   }

@@ -57,20 +57,20 @@ export function createLoader<T>(
   // For fetchable loaders, __injectedId is also passed as a parameter
   let loaderId = __injectedId || "";
 
-  if (!loaderId && process.env.NODE_ENV === "development") {
+  // Throw unless under a test runner. The plugin always injects $$id for a
+  // supported `export const` loader on both builds, so a missing id means either
+  // no plugin (a bare test — fall back below) or an UNSUPPORTED shape (e.g. a
+  // namespace import `rango.createLoader(...)`) the plugin skipped (dev OR a real
+  // build — fail loud, never mask it). `process.env.VITEST` is the only signal
+  // true in both vitest projects yet absent in a real build.
+  if (!loaderId && !process.env.VITEST) {
     throw missingInjectedIdError("Loader", "createLoader");
   }
 
-  // No build-injected id. This happens in a bare unit test (no plugin), or for
-  // a call shape the plugin's id injection does not support (e.g. a namespace
-  // import `rango.createLoader(...)`) — but those are caught by the dev-throw
-  // above in `pnpm dev`, and such a loader cannot be exported to the client in a
-  // supported shape, so the client-fetchable / RSC-recovery $$id path is
-  // unaffected (the plugin always injects a stable id for supported, exported
-  // loaders on BOTH builds). Assign a process-stable runtime id so the fn
-  // registers below and the loader is exercisable via runLoader(loaderHandle)
-  // (it recovers the fn from the registry by $$id). Mirrors createHandle's
-  // runtime fallback.
+  // Under vitest with no plugin id: assign a process-stable runtime id so the fn
+  // registers below and the loader is exercisable via runLoader(loaderHandle) (it
+  // recovers the fn from the registry by $$id). Never reached in a real build —
+  // the throw above fires there. Mirrors createHandle.
   if (!loaderId) {
     loaderId = `__rango_runtime_loader_${runtimeLoaderIdCounter++}`;
   }

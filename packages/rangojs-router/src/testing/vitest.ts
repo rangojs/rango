@@ -61,12 +61,13 @@
  * - `renderRoute` (`@rangojs/router/testing/dom`) tests run in this same project
  *   under a DOM environment (`happy-dom`/`jsdom`); the alias does not affect them.
  * - A router using `Prerender()` / `createLoader()` / `Static()` now CONSTRUCTS in
- *   a bare test: each assigns a process-stable runtime fallback `$$id` when the
- *   Vite plugin did not inject one, so `createRouter().routes(...)` builds without
- *   the "missing `$$id`" throw (for `dispatch` / `assertGeneratedRoutesMatch`).
- *   Provably inert in production: the fallback never fires under the plugin, and
- *   the static manifest keys on the plugin-injected id (`Static`'s `$$id` is read
- *   only during real RSC serving, never in a bare test).
+ *   a bare test: each assigns a process-stable runtime fallback `$$id` ONLY under
+ *   a test runner (`process.env.VITEST`), so `createRouter().routes(...)` builds
+ *   without the "missing `$$id`" throw (for `dispatch` / `assertGeneratedRoutesMatch`).
+ *   Outside a test runner (a real build) a missing id still THROWS — so an
+ *   unsupported handler shape the plugin skipped (e.g. `export let`) fails loud
+ *   rather than getting a silent synthetic id. (The plugin always injects for
+ *   supported `export const` shapes, and the static manifest keys on that id.)
  * - Importing your app's whole router *file* can still fail for app-specific
  *   reasons (page modules pulling their own deps, or plugin `virtual:` modules
  *   that need the rango plugin) — build whole-router `dispatch`/drift checks from

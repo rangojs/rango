@@ -206,10 +206,12 @@ in-repo. If you want only the aliases, `rangoTestAliases()` is still exported;
 then wire `server.deps.inline` yourself.)
 
 **`Prerender()`, `createLoader()`, and `Static()` construct now** — each assigns
-a process-stable runtime fallback `$$id` in a bare test, so a router using them
-builds without the "missing `$$id`" throw. This is inert in a real build: the
-plugin always injects, the static manifest keys on the plugin id, and the
-`Static` id is read only during real RSC serving.
+a process-stable runtime fallback `$$id` **only under a test runner**
+(`process.env.VITEST`), so a router using them builds without the "missing
+`$$id`" throw. Outside a test runner (a real build) a missing id still throws, so
+an unsupported handler shape the plugin skipped (e.g. `export let X = Static(...)`)
+fails loud rather than getting a silent synthetic id — the plugin always injects
+for supported `export const` shapes, and the static manifest keys on that id.
 
 **The remaining caveat is the whole router _file_.** Importing your real
 `router.tsx` can still fail on app-specific page-module imports (a page pulling

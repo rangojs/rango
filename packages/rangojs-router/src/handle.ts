@@ -102,18 +102,21 @@ export function createHandle<TData, TAccumulated = TData[]>(
 ): Handle<TData, TAccumulated> {
   let handleId = __injectedId ?? "";
 
-  if (!handleId && process.env.NODE_ENV === "development") {
+  // Throw unless under a test runner. The plugin always injects $$id for a
+  // supported `export const` handle on every build, so a missing id at runtime
+  // means either no plugin (a bare test — fall back below) or an UNSUPPORTED
+  // shape the plugin silently skipped (dev OR a real build — fail loud, never
+  // mask it with a synthetic id). `process.env.VITEST` is the only signal true in
+  // both vitest projects (the RSC one forces NODE_ENV=production) yet absent in a
+  // real build.
+  if (!handleId && !process.env.VITEST) {
     throw missingInjectedIdError("Handle", "createHandle");
   }
 
-  // No build-injected id. This only happens in a bare unit test — every real
-  // build runs the rango Vite plugin, which always injects a stable id (and the
-  // line above throws for a genuinely non-exported handle in dev). Assign a
-  // process-stable runtime id so the collect registers below and the handle is
-  // fully exercisable in tests (useHandle, collectHandle, renderRoute's `handles`
-  // seeding run the REAL collect). Provably inert in production: the fallback
-  // never triggers when the plugin injects the id, so server/client id
-  // consistency (required for RSC recovery) is unaffected.
+  // Under vitest with no plugin id: assign a process-stable runtime id so the
+  // collect registers below and the handle is exercisable in tests (useHandle,
+  // collectHandle, renderRoute's `handles` seeding run the REAL collect). Never
+  // reached in a real build — the throw above fires there.
   if (!handleId) {
     handleId = `__rango_runtime_handle_${runtimeHandleIdCounter++}`;
   }
