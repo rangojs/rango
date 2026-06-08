@@ -1,3 +1,5 @@
+> **Archived.** Plan/outcome tracker; `clientChunks` shipped (#535/#536). See `packages/rangojs-router/docs/client-chunking.md`.
+
 # Build Chunking — Plan & Outcome
 
 Concrete plan derived from `build-chunking-findings.md` (in-repo empirical proof)

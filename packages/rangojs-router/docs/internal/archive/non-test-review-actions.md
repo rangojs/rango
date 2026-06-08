@@ -1,3 +1,5 @@
+> **Archived.** Code-review remediation plan; the fixes have landed.
+
 # Non-Test Review Actions (Bridge Runtime)
 
 Status: Implemented (core findings F1-F3 addressed in navigation-bridge,
