@@ -13,7 +13,7 @@ import type { RouteEntry } from "../../types.js";
 // production; the regex fallback (Phase 2) is a should-not-happen safety net.
 // This test pins that the two matchers AGREE on the common surface, and
 // documents the known, intentional divergences (the regex path is deficient by
-// design — see docs/internal/matching-stability-review.md M3/M4/C1).
+// design — see docs/internal/matching-and-lazy-discovery.md M3/M4/C1).
 
 // Build a trie + a single flat RouteEntry from the same routes so both matchers
 // see identical input. sp/ancestry are synthetic — they do not affect the
