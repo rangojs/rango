@@ -1,13 +1,17 @@
 # `[FILE_NAME_CONFLICT]` build warnings — analysis & resolution
 
-**TL;DR:** Some production builds emit `[FILE_NAME_CONFLICT]` warnings (e.g. 1 CSS +
-12 woff2 fonts) — benign duplicate emits of byte-identical, content-hashed assets
-from `@vitejs/plugin-rsc`'s cross-environment asset copy. rango's shared `onwarn`
-(`src/vite/utils/shared-utils.ts`) now suppresses **only** the content-hashed
-variety; a collision on a stable (non-hashed) name still surfaces. This note
-records the confirmed mechanism, the two bugs the first cuts had, why consumer-side
-suppression is the right fix, the sourcemap-safety argument, and why the warning is
-not reproducible by an in-repo build fixture.
+If you've hit a wall of `[FILE_NAME_CONFLICT]` warnings on a production build (the
+classic shape is 1 CSS + 12 woff2 fonts) and you're wondering whether to worry —
+you don't, and this explains why, plus exactly what rango does about it.
+
+**TL;DR:** those warnings are benign duplicate emits of byte-identical,
+content-hashed assets from `@vitejs/plugin-rsc`'s cross-environment asset copy.
+rango's shared `onwarn` (`src/vite/utils/shared-utils.ts`) now suppresses **only**
+the content-hashed variety; a collision on a stable (non-hashed) name still
+surfaces, because that one could be a genuine problem. The rest of this note is
+the confirmed mechanism, the three bugs the first cuts had, why consumer-side
+suppression is the right fix, the sourcemap-safety argument, and why the warning
+is not reproducible by an in-repo build fixture.
 
 ## Symptom
 
@@ -19,15 +23,15 @@ overwrites a previously emitted file of the same name.
 …  (reporter: 1 CSS + 12 .woff2; build still exits 0)
 ```
 
-Filenames are content-hashed, so "same name" ⇒ identical bytes. MD5 of each
-re-emitted asset matches across every environment output:
+The filenames are content-hashed, so "same name" means identical bytes. The MD5
+of each re-emitted asset matches across every environment output:
 
 | Asset                | client    | rsc       | rsc/ssr   |
 | -------------------- | --------- | --------- | --------- |
 | `index-DlGNrvnU.css` | 404f3dd5… | 404f3dd5… | 404f3dd5… |
 | `inter-latin-…woff2` | 260c81a4… | 260c81a4… | 260c81a4… |
 
-Final files are correct; nothing is lost.
+The final files are correct; nothing is lost.
 
 ## Root cause (confirmed)
 
@@ -67,8 +71,9 @@ different-content overwrite. Pinned by `src/vite/__tests__/onwarn.test.ts` (19
 cases, incl. hashes that themselves contain `-`/`_`) and a 200k-case fuzz during
 development (0 mismatches, 0 stable-name leaks).
 
-Three independent bugs surfaced from re-testing the suppression on a real app —
-the suppression only works with **all three** fixed:
+The part worth internalizing: this looked like one fix but was really three
+independent bugs — they surfaced only from re-testing the suppression on a real
+app, and the suppression works only with **all three** fixed.
 
 **1. Wiring — `onwarn` must live on the CLIENT environment, not just top-level.**
 The conflicts are emitted by the client-environment build. In the Vite 8 +
@@ -107,6 +112,9 @@ fail-safe is "the warning reappears", never a wrong suppression.)
 
 ## Why consumer-side suppression (not a dep bump or a patch)
 
+The obvious instincts are to upgrade the dependency or patch it. Neither works,
+and here's the case for filtering it on our side instead:
+
 - **No upstream fix.** As of `@vitejs/plugin-rsc@0.5.27` (latest) the emit block is
   byte-identical to 0.5.26 — no `if (!bundle[fileName])` guard, no config flag, no
   issue/PR. The relevant upstream PR #1112 (shipped in 0.5.26) reworked _which_
@@ -125,8 +133,8 @@ fail-safe is "the warning reappears", never a wrong suppression.)
 
 ## Sourcemap safety
 
-The user asked whether sourcemaps stay correct. They do, and the `onwarn` filter
-cannot affect them:
+A natural worry is whether sourcemaps stay correct. They do, and the `onwarn`
+filter can't affect them either way:
 
 - Rollup's `EmittedAsset` / `OutputAsset` have **no `map` field** — the re-emit
   copies only `source`. `.map` files are generated post-emission from content, so
@@ -138,11 +146,12 @@ cannot affect them:
 
 ## Reproduction is topology-specific (no in-repo build fixture)
 
-The warning fires only under a **host-router multi-app** build — sub-apps loaded
-via `.lazy(() => import())`, a wide shared client tree, and a shared webfont-CSS
-reachable across apps (the reporter's cloudflare app, React Compiler enabled). It
-was verified that the warning does **not** fire — even with the suppression
-disabled — under any single-router in-repo app:
+This is the part that makes it awkward to test: the warning fires only under a
+**host-router multi-app** build — sub-apps loaded via `.lazy(() => import())`, a
+wide shared client tree, and a shared webfont-CSS reachable across apps (the
+reporter's cloudflare app, React Compiler enabled). It was verified that the
+warning does **not** fire — even with the suppression disabled — under any
+single-router in-repo app:
 
 - **node preset (`e2e/mini`):** client-component CSS never enters the rsc bundle,
   so the cross-environment copy never happens. A server-side `import "./x.css"`
