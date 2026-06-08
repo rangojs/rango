@@ -513,19 +513,33 @@ not per-request — and is efficient on the warm path.**
   Behavior-preserving (verified-safe negative: precomputed and handler paths
   produce identical route ownership). Pinned by Part C of the perf test.
 
-### LP3 — double handler execution (match + render) for non-leaf / non-precomputed — DEFERRED (needs-design)
+### LP3 — double handler execution (match + render) for non-leaf includes — MEASURED, DEFERRED (not worth it)
 
-- For nested includes (and any precomputed-miss), the handler runs at match-time
-  (`evaluateLazyEntry`) AND render-time (`loadManifest`) on the first request.
-  The match-time run builds an EntryData map that is then **discarded**
-  (lazy-includes.ts) — only the routes are kept. Eliminating the second run means
-  having `loadManifest` reuse the match-time build (or precomputing the nested
-  entry structure from the prefix tree). Behavior-sensitive — `evaluateLazyEntry`
-  runs in a throwaway `"lazy"` namespace context without `isSSR`/`mountIndex`,
-  while `loadManifest` builds under the per-request ALS Store. Track for a
-  dedicated pass; bounded to the first request per (route, isSSR) on cold start and
-  amortized to zero after (the per-routeKey manifest cache). Distinct from LP1 (the
-  per-sibling-route re-runs), which is also deferred — see LP1.
+- **Scope (narrowed by measurement).** The common case is already 1 run: leaf
+  includes are precomputed (`flattenLeafEntries`), so `evaluateLazyEntry` takes the
+  shortcut and only `loadManifest` runs the handler (this is C8/LP2). The residual
+  double-run is a **non-leaf include's direct routes** — a module with `path()`
+  routes alongside a nested `include()` is never precomputed (it has children), so
+  its handler runs at match-time (`evaluateLazyEntry`, to populate `entry.routes`
+  AND discover the nested include) AND render-time (`loadManifest`). The match-time
+  EntryData build is discarded; only the routes are kept.
+- **Measured cost** (`src/router/__tests__/lazy-include-cost.bench.ts`, run
+  `vitest bench lazy-include-cost`): the redundant match run is **~0.75 µs/route**
+  (~7 µs for a 5-route include, ~39 µs for 50 routes) — about **50% of the
+  manifest-build time**, but manifest-build is itself microseconds and a real RSC
+  first request (render + Flight + SSR) is milliseconds, so the waste is **well
+  under 0.5% of a cold first request**. It is paid **once per route per isolate**
+  and **amortizes to ~0** (warm `loadManifest` cache hit is ~0.8–1.8 µs).
+- **Why not fixed.** You cannot skip the match run (nested-include discovery needs
+  it — the nested handler reference only exists once the parent handler runs, so it
+  cannot be serialized at build time). You cannot skip the render run (the
+  match-time tree is built in a throwaway `"lazy"` namespace **without `isSSR`** —
+  which is not even known at match time). Reusing the match-time tree for render
+  therefore requires splitting `isSSR`-dependent state out of the cached tree — that
+  is the **LP4 refactor**, touching shortCodes and the semantic matrix. **Risk ≫
+  reward** for a sub-microsecond-per-route, amortizes-to-zero cold-start cost.
+  Deferred as a documented decision, not planned work. Distinct from LP1 (the
+  per-sibling-route re-runs), also deferred — see LP1.
 
 ### LP4 — isSSR doubles cold first-request handler runs for document loads — DEFERRED (needs-design)
 
@@ -544,6 +558,10 @@ find-match entry-resolution loop — all once-per-entry or small; not worth touc
 
 ### Follow-up
 
-- Add a real timing **benchmark** for lazy eval / `loadManifest` / cold start
-  (current `router-perf.bench.ts` only benches matching) to quantify LP3/LP4
-  before deciding whether they are worth the needs-design work.
+- **Done:** the lazy-eval / `loadManifest` / cold-start timing benchmark now exists
+  (`src/router/__tests__/lazy-include-cost.bench.ts`, run `vitest bench
+lazy-include-cost`). It quantified **LP3** (~0.75 µs/route redundant run,
+  amortizes to ~0) and the numbers drove the LP3 deferral above.
+- **LP4** remains open and is the gate for ever revisiting LP3 (both turn on
+  splitting `isSSR`-dependent state out of the cached EntryData tree). Use the same
+  bench to quantify the cold document-request double resolve before taking it on.

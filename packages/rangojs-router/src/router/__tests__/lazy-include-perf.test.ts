@@ -165,11 +165,16 @@ describe("included handler execution count across the request lifecycle", () => 
     evaluateLazyEntry(entry, deps);
     expect(runs()).toBe(1);
 
-    // Render-time loadManifest runs it AGAIN (a separate handler execution on
-    // the same first request). This `2` is the SENTINEL for LP3 (the known
-    // match+render double run — see docs/internal/matching-stability-review.md
-    // and the `it.todo` below): when LP3 is fixed so the handler runs once, this
-    // assertion will flip to `1` — update it here and drop the LP3 todo.
+    // Render-time loadManifest runs the handler AGAIN on the same first request.
+    // This `2` is the LP3 double-run sentinel. NOTE: this test DISABLES the
+    // precomputed shortcut (getPrecomputedByPrefix: () => null) to exercise the
+    // handler path directly. In real production, leaf includes ARE precomputed
+    // (C8/LP2), so they run ONCE — see the WITH-shortcut test below. The residual
+    // real double-run is a non-leaf include's direct routes (never precomputed).
+    // That cost was MEASURED (~0.75us/route, ~50% of manifest-build but <0.5% of a
+    // real RSC request, amortized to ~0 by the warm cache — lazy-include-cost.bench.ts)
+    // and DEFERRED as not worth the LP4-coupled risk (see the LP3 it.todo below and
+    // docs/internal/matching-stability-review.md). This `2` is expected to STAY `2`.
     await runLoadManifest(entry, routeKey);
     expect(runs()).toBe(2);
 
@@ -254,15 +259,20 @@ describe("lazy-include redundancies still to remove (future work)", () => {
     "LP1: an include with M routes runs its handler once, not once per route (unpruned cache + prune-on-read)",
   );
 
-  // LP3: on the first matching request, a non-leaf / precomputed-miss include
-  // runs its handler at match time (evaluateLazyEntry) AND render time
-  // (loadManifest) — the match-time EntryData build is discarded. Unifying them
-  // so the handler runs once is behavior-sensitive: evaluateLazyEntry runs in a
-  // throwaway "lazy" namespace without isSSR/mountIndex, while loadManifest
-  // builds under the per-request ALS Store. The Part B "WITHOUT the precomputed
-  // shortcut" test pins the current run count (2); it flips to 1 when this lands.
+  // LP3: a non-leaf include (path() routes alongside a nested include(), so it is
+  // never precomputed) runs its handler at match time (evaluateLazyEntry) AND
+  // render time (loadManifest) on the first request — the match-time EntryData
+  // build is discarded. MEASURED (lazy-include-cost.bench.ts): ~0.75us/route for
+  // the redundant match run, ~50% of manifest-build but <0.5% of a real RSC
+  // request, amortized to ~0 by the warm manifest cache. Removing it is
+  // entangled with LP4: evaluateLazyEntry runs in a throwaway "lazy" namespace
+  // WITHOUT isSSR (not even known at match time), while loadManifest builds under
+  // the per-request ALS Store; reusing the match-time tree needs isSSR-dependent
+  // state split out (the LP4 refactor, touching shortCodes + the semantic matrix).
+  // DEFERRED: risk >> reward. Kept as a marker, not planned work. (Leaf includes
+  // are already 1 run via C8 — see the WITH-shortcut test above.)
   it.todo(
-    "LP3: a precomputed-miss include runs its handler once on the first request (match+render unified)",
+    "LP3: non-leaf include handler runs match+render (measured ~0.75us/route, deferred — see lazy-include-cost.bench.ts)",
   );
 
   // LP4: a cold document request resolves twice — classify (isSSR=false) then
