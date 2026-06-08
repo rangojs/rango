@@ -1,5 +1,10 @@
 # Pre-rendering Design
 
+This is the canonical design for pre-rendering — read it before changing anything
+in that area. There's one mental model to hold, and almost every "wait, how does
+that work?" follows from it: there are no static files. Hold that and the rest of
+the doc reads itself.
+
 ## Core Principle
 
 Pre-rendering is **caching at build time**. The worker handles every request --

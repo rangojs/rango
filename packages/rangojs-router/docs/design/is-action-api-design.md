@@ -4,6 +4,11 @@
 shipped on the revalidate predicate context; see `/loader` → "Matching actions:
 `ctx.isAction()`" and `/typesafety` → "Stable identity" for usage.
 
+If you've ever matched a server action in a `revalidate()` predicate by
+substring-ing its id and felt the unease — this is why that footgun exists and how
+`ctx.isAction()` closes it. The short of it: string matching breaks silently the
+moment someone renames or moves the action, and the compiler can't warn you.
+
 ## Problem
 
 `revalidate()` predicates match server actions by substring on the action id:

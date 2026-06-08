@@ -1,6 +1,8 @@
 # Named Routes
 
-Rango is a named-route router first.
+If you've used routers where you string URLs together by hand and hope nothing
+moved, Rango works the other way around — it's a named-route router first, and
+that choice shapes a lot of the API. Here's the idea.
 
 Paths define where a route lives. Names define how the app refers to it.
 
