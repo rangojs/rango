@@ -1,20 +1,38 @@
 # Context API Design
 
-## Overview
+If you're adding a capability to a handler context — or just wondering why a
+loader can `redirect()` but can't set a header — this is the model that decides
+it. There's one rule underneath all of it, and once you have that rule the matrix
+below mostly reads itself.
 
-All request-time handlers share a single base context created after route matching. Each handler type receives a view of this context with capabilities narrowed based on execution semantics. Illegal operations produce TypeScript errors at compile time and throw at runtime.
+## The core principle
 
-Core principle: **what is guaranteed to execute determines what you can mutate.**
+Every request-time handler shares a single base context, created once right after
+route matching. Each handler type then gets a _view_ of it with capabilities
+narrowed to match its execution semantics — and illegal operations are caught
+twice: a TypeScript error at compile time, and a throw at runtime.
 
-## Request Lifecycle
+The rule that draws every line:
+
+> **What is guaranteed to execute determines what you can mutate.**
+
+If something always runs (middleware, or a route handler before its children), it
+can safely own and write shared data. If something runs in parallel, is memoized,
+or might not run at all, it stays read-only on anything shared. Hold that, and the
+rest follows.
+
+## Request lifecycle
 
 ```
 Request -> Route matching -> Base context created -> Middleware -> Segment resolution -> Response
 ```
 
-The base context is created once per request right after route matching. It holds request properties, an empty variables map, and a response stub. Middleware populates variables and may set headers/cookies. Segment resolution (handlers, parallels, intercepts, loaders) reads from this context.
+The base context is created once per request, right after route matching. It
+holds the request properties, an empty variables map, and a response stub.
+Middleware populates variables and may set headers/cookies. Segment resolution
+(handlers, parallels, intercepts, loaders) reads from this context.
 
-## Base Context
+## Base context
 
 ### Request properties (read-only)
 
@@ -40,7 +58,10 @@ The base context is created once per request right after route matching. It hold
 - `cookies()` -- standalone API: `cookies().get(name)`, `cookies().set(name, value, opts)`, `cookies().delete(name, opts)`
 - `headers()` -- standalone API: read-only view of request headers
 
-## Capability Matrix
+## Capability matrix
+
+The whole surface in one grid — read each cell as "this handler type, can it do
+this thing?"
 
 | Capability              | Middleware    | Handler / Layout / Parallel / Intercept | Loader          | Action | Prerender |
 | ----------------------- | ------------- | --------------------------------------- | --------------- | ------ | --------- |
@@ -56,47 +77,79 @@ The base context is created once per request right after route matching. It hold
 | `theme` / `setTheme`    | --            | yes                                     | no              | yes    | no        |
 | `body` / `formData`     | --            | --                                      | yes (fetchable) | yes    | no        |
 
-## Design Rationale
+## Design rationale — why each line sits where it does
 
-### `set` is available to middleware and route handlers
+### `set` belongs to middleware and route handlers
 
-Middleware always executes on every request, so `set` is always safe there. Route handlers also have `set` because they run before their children (orphan layouts, parallels) during segment resolution. This lets the handler act as data owner for its subtree.
+Middleware runs on every request, so writing variables there is always safe.
+Route handlers get `set` too, and the reason is worth spelling out: a handler runs
+before its children (orphan layouts, parallels) during segment resolution, so it
+can act as the data owner for its subtree.
 
-Caching wraps all segments for a route together (per-route, not per-segment). On cache hit, nothing runs. On cache miss, everything runs with the handler first. There is no partial scenario where the handler is cached but its layout isn't.
+There's no partial-execution loophole to worry about, either. Caching wraps all
+segments for a route together (per-route, not per-segment). On a cache hit nothing
+runs; on a cache miss everything runs, with the handler first. There is no
+scenario where the handler is cached but its layout isn't.
 
-Middleware sets cross-cutting data (auth, request ID). Route handlers set subtree-scoped data (fetched entities their layout/parallel children need). Layouts, parallels, and intercepts cannot `set` -- they are children in the resolution order and should only read.
+So the division of labor is clean: middleware sets cross-cutting data (auth,
+request ID); route handlers set subtree-scoped data (the fetched entities their
+layout/parallel children need). Layouts, parallels, and intercepts cannot `set` —
+they're children in the resolution order, and should only read.
 
 ### Loaders cannot touch the response
 
-Loaders run in parallel and are memoized. Multiple loaders setting headers concurrently is a race condition. Loaders are pure data fetchers that read context and return data.
+Loaders run in parallel and are memoized. Multiple loaders setting headers
+concurrently is a race condition. So loaders stay pure data fetchers: read
+context, return data.
 
-### Loaders can redirect and throw notFound
+### ...but loaders _can_ redirect and throw notFound
 
-Control flow (redirect, notFound, throw) aborts the request deterministically -- only one wins. This is distinct from response decoration (headers, cookies, handles) which is additive and races under parallel execution. A loader that discovers moved or missing data needs to express that without duplicating logic in middleware.
+This looks like it contradicts the rule above, so it's worth the distinction.
+Control flow (redirect, notFound, throw) aborts the request deterministically —
+only one wins. That's different from response _decoration_ (headers, cookies,
+handles), which is additive and races under parallel execution. A loader that
+discovers moved or missing data needs to express that without duplicating the
+logic up in middleware.
 
 ### Middleware has no `use`
 
-Middleware is the setup layer. `use(loader)` would duplicate the existing pattern of fetching data in middleware and calling `ctx.set()`. `use(handle)` has no meaning because middleware has no segment identity to key handle data against.
+Middleware is the setup layer. `use(loader)` would just duplicate the existing
+pattern of fetching data in middleware and calling `ctx.set()`. `use(handle)` has
+no meaning here — middleware has no segment identity to key handle data against.
 
 ### `reverse` scoping follows `include()` boundaries
 
-Local dot-prefixed names (`.products`) resolve within the `include()` boundary where the handler or middleware is defined. This enables composability -- middleware inside an `include()` can reference local routes without knowing global names, and the `include()` can be remounted without breaking references. Loaders and actions resolve globally since they are standalone definitions outside route trees.
+Local dot-prefixed names (`.products`) resolve within the `include()` boundary
+where the handler or middleware is defined. That's what makes includes composable:
+middleware inside an `include()` can reference local routes without knowing their
+global names, and the `include()` can be remounted without breaking references.
+Loaders and actions resolve globally, since they are standalone definitions
+outside route trees.
 
 ### Actions have no `use(handle)`
 
-Handles are keyed by segment identity. Actions are standalone `"use server"` functions with no segment in the rendering tree to key against.
+Handles are keyed by segment identity. Actions are standalone `"use server"`
+functions — there's no segment in the rendering tree to key against.
 
 ### `set` is a function, not property assignment
 
-`ctx.get(key)` / `ctx.set(key, value)` rather than `ctx.var.key = value`. Functions can be typed as `never` per handler type to produce compile-time errors. Property assignment cannot be restricted at the type level per-context without complex wrappers.
+It's `ctx.get(key)` / `ctx.set(key, value)`, not `ctx.var.key = value`, and the
+reason is typing: a function can be typed as `never` per handler type to produce a
+compile-time error. Property assignment cannot be restricted at the type level
+per-context without complex wrappers.
 
-## Open Questions
+## Open questions (and one settled decision)
 
-### Intercepts and `use(handle)`
+Two items live here — one genuinely open, one a recorded decision kept for context.
 
-Intercepts only run on client-side navigation, not on SSR. If an intercept pushes handle data, that data is present on client nav but absent on initial page load. The capability matrix currently allows it (intercepts are segments in the tree), but this inconsistency may warrant restricting it.
+### Intercepts and `use(handle)` — open
 
-### `ctx.var` removal
+Intercepts only run on client-side navigation, not on SSR. If an intercept pushes
+handle data, that data is present on client nav but absent on initial page load.
+The capability matrix currently allows it (intercepts are segments in the tree),
+but this inconsistency may warrant restricting it.
+
+### `ctx.var` removal — decided
 
 Decision: remove `ctx.var` from public contexts and keep variable access on
 `ctx.get()` / `ctx.set()` only. The shared backing store remains internal.
