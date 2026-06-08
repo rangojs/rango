@@ -166,6 +166,30 @@ async function StreamingPage(ctx: any) {
   );
 }
 
+// ─── Streaming deadlock route: a handler awaits a loader that calls
+//     rendered() — a cycle. The guard must turn this into an error, not a
+//     hang. Regression for the window AFTER the barrier resolves but while
+//     rendered() is still awaiting handleStore.settled on a streaming tree. ──
+
+// Must be an `export const` so the expose-internal-ids transform injects a
+// stable $$id — the deadlock guard keys on loader.$$id.
+export const DeadlockLoader = createLoader(async (ctx) => {
+  "use server";
+  await ctx.rendered();
+  return "unreachable";
+});
+
+async function StreamingDeadlockPage(ctx: any) {
+  // Stay in flight (streaming) and then await the rendered() loader — the cycle.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const data = await ctx.use(DeadlockLoader);
+  return (
+    <div data-testid="rendered-deadlock-page">
+      <h1 data-testid="rendered-deadlock-title">Deadlock {data}</h1>
+    </div>
+  );
+}
+
 // ─── URL patterns ───────────────────────────────────────────────────────
 
 export const renderedBarrierPatterns = urls(
@@ -209,6 +233,21 @@ export const renderedBarrierPatterns = urls(
         ),
         loader(LivePricesLoader),
       ]),
+
+      // Streaming deadlock: a handler awaits a loader that calls rendered().
+      // The guard must error rather than hang (regression for the post-barrier
+      // streaming settle-wait window).
+      path(
+        "/streaming-deadlock",
+        StreamingDeadlockPage,
+        { name: "streamingDeadlock" },
+        () => [
+          loading(
+            <div data-testid="rendered-deadlock-loading">Loading...</div>,
+          ),
+          loader(DeadlockLoader),
+        ],
+      ),
     ]),
   ],
 );

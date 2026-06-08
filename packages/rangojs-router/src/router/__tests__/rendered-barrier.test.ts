@@ -79,21 +79,43 @@ function createMockRequestContext(opts?: { treeHasStreaming?: boolean }): any {
     resolveBarrier = resolve;
   });
   let barrierResolved = false;
+  const streaming = opts?.treeHasStreaming ?? false;
 
-  return {
+  const mock: any = {
     _handleStore: handleStore,
     _renderBarrier: barrier,
+    _renderBarrierSegmentOrder: undefined,
+    _renderBarrierWaiters: undefined,
+    _handlerLoaderDeps: undefined,
+    _renderBarrierGuardClosed: undefined,
+    _renderBarrierHandleSnapshot: undefined,
+    _treeHasStreaming: streaming,
+    // Mirrors the REAL _resolveRenderBarrier cleanup (server/request-context.ts)
+    // so the deadlock-guard window closes at the right time: immediately for
+    // non-streaming trees, but only after handleStore.settled for streaming
+    // trees (rendered() keeps waiting past the barrier, so a loading() handler
+    // can still resume and await a rendered() loader).
     _resolveRenderBarrier: (segmentOrder: string[]) => {
       if (barrierResolved) return;
       barrierResolved = true;
-      mockRequestContext._renderBarrierSegmentOrder = segmentOrder;
+      mock._renderBarrierSegmentOrder = segmentOrder;
+      if (streaming) {
+        handleStore.settled.then(() => {
+          mock._renderBarrierWaiters = undefined;
+          mock._handlerLoaderDeps = undefined;
+          mock._renderBarrierGuardClosed = true;
+        });
+      } else {
+        mock._renderBarrierWaiters = undefined;
+        mock._handlerLoaderDeps = undefined;
+        mock._renderBarrierGuardClosed = true;
+      }
       resolveBarrier!();
     },
-    _renderBarrierSegmentOrder: undefined,
-    _treeHasStreaming: opts?.treeHasStreaming ?? false,
     // Helper to resolve barrier from test code
-    _resolveBarrier: resolveBarrier!,
+    _resolveBarrier: () => resolveBarrier!(),
   };
+  return mock;
 }
 
 describe("rendered barrier", () => {
@@ -198,6 +220,61 @@ describe("rendered barrier", () => {
       const rejection = result[0] as PromiseRejectedResult;
       expect(rejection.status).toBe("rejected");
       expect(rejection.reason.message).toContain("Deadlock");
+    });
+
+    it("rejects a handler that awaits a still-waiting rendered() loader DURING the streaming settle wait", async () => {
+      // The actual P1: rendered() keeps waiting on handleStore.settled past the
+      // barrier, and the real _resolveRenderBarrier used to clear the guard
+      // state at barrier time. So a loading() handler could resume after the
+      // barrier, await the same loader, and form an undetected cycle. With the
+      // fix the guard window stays open until settled, so this is caught.
+      mockInsideLoaderScope = true;
+      mockRequestContext = createMockRequestContext({ treeHasStreaming: true });
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const handleStore = mockRequestContext._handleStore;
+
+      // A streaming handler still in flight: keep handleStore.settled pending so
+      // the guard window stays open (mirrors a loading() handler not yet done).
+      let releaseHandler!: () => void;
+      handleStore.track(
+        new Promise<void>((r) => {
+          releaseHandler = r;
+        }),
+      );
+
+      const renderedLoader = createLoader("renderedLoader", async (lctx) => {
+        await lctx.rendered();
+        return "loader-data";
+      });
+
+      setupLoaderAccess(ctx, loaderPromises);
+
+      // Start the loader: it calls rendered() (registers as a barrier waiter)
+      // and then pauses awaiting settled (the streaming handler hasn't settled).
+      const loaderPromise = ctx.use(renderedLoader);
+      await Promise.resolve();
+
+      // Barrier resolves. For a streaming tree the guard state is KEPT (the real
+      // _resolveRenderBarrier defers teardown to settled — mirrored by the mock).
+      mockRequestContext._resolveRenderBarrier(["root.layout"]);
+      await Promise.resolve();
+
+      // Now a HANDLER (not in loader scope) awaits the same loader — the cycle.
+      mockInsideLoaderScope = false;
+      let handlerError: Error | undefined;
+      try {
+        ctx.use(renderedLoader);
+      } catch (e) {
+        handlerError = e as Error;
+      }
+      expect(handlerError?.message).toContain("Deadlock");
+      expect(handlerError?.message).toContain("ctx.rendered()");
+
+      // Let the loader finish so the test doesn't leak a pending promise.
+      releaseHandler();
+      await loaderPromise.catch(() => {});
     });
   });
 

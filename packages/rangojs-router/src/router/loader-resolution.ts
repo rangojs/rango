@@ -480,13 +480,17 @@ export function setupLoaderAccess<TEnv>(
               `Move the data dependency to a loader-to-loader pattern instead.`,
           );
         }
-        // Direction 2: track dep so rendered() can detect the deadlock
-        // if the loader calls it later. Skip when the barrier has already
-        // resolved — no deadlock is possible (rendered() resolves immediately).
-        // _renderBarrierSegmentOrder is undefined before resolution, string[]
-        // after. This also prevents false positives from handle push callbacks
-        // that resume after their first await (post-barrier-resolution).
-        if (reqCtx._renderBarrierSegmentOrder === undefined) {
+        // Direction 2: track dep so rendered() can detect the deadlock if the
+        // loader calls it later. Skip once the guard window is CLOSED — for a
+        // non-streaming tree that is when the barrier resolves (rendered()
+        // resolves immediately), and for a streaming tree it is when
+        // handleStore.settled completes (rendered() keeps waiting until then, so
+        // a loading() handler resuming after the barrier can still form a
+        // cycle). Using the explicit guard-closed flag rather than
+        // _renderBarrierSegmentOrder keeps tracking live across the streaming
+        // settle wait. (Handle push callbacks are already excluded above via
+        // insideHandlePush, so they cannot produce false positives here.)
+        if (!reqCtx._renderBarrierGuardClosed) {
           if (!reqCtx._handlerLoaderDeps) reqCtx._handlerLoaderDeps = new Set();
           reqCtx._handlerLoaderDeps.add(loader.$$id);
         }

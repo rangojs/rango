@@ -216,6 +216,43 @@ function renderedBarrierTests(mode: "dev" | "build") {
         testId(page, "rendered-streaming-price-gadget-y"),
       ).toContainText("$99.99");
     });
+
+    test("streaming deadlock: handler awaiting a rendered() loader errors, does not hang", async ({
+      page,
+    }) => {
+      // A loading() handler awaits a loader that calls rendered() — a cycle.
+      // The deadlock guard must surface an error rather than hang, even though
+      // rendered() keeps waiting on handleStore.settled AFTER the barrier
+      // resolves. We assert the success title did NOT render and that an error
+      // signal is present; a regression that reopened the deadlock would instead
+      // time this test out.
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+
+      const response = await page.goto(
+        f.url("/rendered-barrier/streaming-deadlock"),
+      );
+      await page.waitForTimeout(2000);
+
+      const titleVisible = await testId(page, "rendered-deadlock-title")
+        .isVisible()
+        .catch(() => false);
+      expect(titleVisible).toBe(false);
+
+      const hasPageError = errors.length > 0;
+      const hasErrorStatus = response !== null && response.status() >= 400;
+      const hasErrorText = await page
+        .locator("text=/error/i")
+        .first()
+        .isVisible({ timeout: 1000 })
+        .catch(() => false);
+      expect(
+        hasPageError || hasErrorStatus || hasErrorText,
+        `Expected a deadlock error signal, got none. ` +
+          `pageErrors=${errors.length}, status=${response?.status()}, ` +
+          `errorText=${hasErrorText}`,
+      ).toBe(true);
+    });
   });
 }
 
