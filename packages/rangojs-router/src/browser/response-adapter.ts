@@ -56,11 +56,17 @@ export function handleReloadHeader(
  *
  * If the response has no body, onComplete fires synchronously.
  * If signal is provided, an abort cancels the tracking reader.
+ *
+ * `silent` suppresses the stream-error log. Prefetch passes it: a speculative,
+ * low-priority prefetch that is aborted or never consumed can error its stream
+ * benignly, which is not worth surfacing. The fresh-navigation path keeps the
+ * log (default), where a stream error reflects a real failed navigation.
  */
 export function teeWithCompletion(
   response: Response,
   onComplete: () => void,
   signal?: AbortSignal,
+  silent = false,
 ): Response {
   if (!response.body) {
     onComplete();
@@ -84,7 +90,7 @@ export function teeWithCompletion(
       onComplete();
     }
   })().catch((error) => {
-    if (!signal?.aborted) {
+    if (!silent && !signal?.aborted) {
       console.error("[Browser] Error reading tracking stream:", error);
     }
     onComplete();
