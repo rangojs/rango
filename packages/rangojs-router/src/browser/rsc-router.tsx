@@ -23,6 +23,7 @@ import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
+import { setPrefetchDecoder } from "./prefetch/fetch.js";
 import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
@@ -237,6 +238,10 @@ export async function initBrowserApp(
   if (prefetchCacheTTL !== undefined) {
     initPrefetchCache(prefetchCacheTTL);
   }
+
+  // Wire the RSC decoder so prefetches decode eagerly and warm the route's
+  // client chunks (same createFromFetch the navigation client uses).
+  setPrefetchDecoder((response) => deps.createFromFetch<RscPayload>(response));
 
   // Create a bound renderSegments that reads rootLayout through the shell
   // ref. On app switch the ref is updated before the tree re-renders, so
