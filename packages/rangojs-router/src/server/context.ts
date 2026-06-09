@@ -805,3 +805,35 @@ export function runInsideLoaderScope<T>(fn: () => T): T {
 export function runInsideLoaderBodyScope<T>(fn: () => T): T {
   return loaderBodyScopeALS.run({ active: true }, fn);
 }
+
+// Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).
+// A push callback's value is stored as-is; if it is a promise it is NOT tracked
+// by handleStore.settled and does not block segment resolution, so a
+// ctx.use(loader) made from inside such a callback can never form a rendered()
+// deadlock. This is an ALS (not a plain boolean) so the exemption survives the
+// callback's own awaits — an async push callback that resumes after `await`
+// still reads as "inside a push callback" and stays out of the deadlock guard.
+const PUSH_CALLBACK_SCOPE_KEY = Symbol.for(
+  "rangojs-router:push-callback-scope",
+);
+const pushCallbackScopeALS: AsyncLocalStorage<{ active: true }> = ((
+  globalThis as any
+)[PUSH_CALLBACK_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+
+/**
+ * Check if the current execution is inside a handle push callback (sync or an
+ * async callback's continuation). Used by the handler-to-loader deadlock guard
+ * to exempt push-callback continuations.
+ */
+export function isInsidePushCallbackScope(): boolean {
+  return pushCallbackScopeALS.getStore()?.active === true;
+}
+
+/**
+ * Run `fn` inside a push-callback scope. Wraps the invocation of a handle push
+ * callback so that any ctx.use(loader) it makes — including after one of its own
+ * awaits — is exempt from the deadlock guard.
+ */
+export function runInsidePushCallbackScope<T>(fn: () => T): T {
+  return pushCallbackScopeALS.run({ active: true }, fn);
+}
