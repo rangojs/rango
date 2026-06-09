@@ -35,6 +35,7 @@ import type { Handler } from "./types.js";
 import type { StaticBuildContext } from "./prerender.js";
 import type { UseItems, HandlerUseItem } from "./route-types.js";
 import { isCachedFunction } from "./cache/taint.js";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 // -- Types ------------------------------------------------------------------
 
@@ -103,9 +104,10 @@ export function Static<TParams extends Record<string, any>>(
   // supported `export const` Static on every build, so a missing id means either
   // no plugin (a bare test — fall back below) or an UNSUPPORTED shape the plugin
   // silently skipped (dev OR a real build — fail loud; a synthetic id would
-  // degrade to a silent static/prerender miss). `process.env.VITEST` is the only
-  // signal true in both vitest projects yet absent in a real build.
-  if (!id && !process.env.VITEST) {
+  // degrade to a silent static/prerender miss). The message is already small (no
+  // stack-parsing diagnostic), so it ships as-is. isUnderTestRunner() is
+  // runtime-safe — never a bare `process.env` access.
+  if (!id && !isUnderTestRunner()) {
     throw new Error(
       "[rango] Static: missing $$id. Use `export const X = Static(...)` and " +
         "ensure the exposeInternalIds Vite plugin is configured.",

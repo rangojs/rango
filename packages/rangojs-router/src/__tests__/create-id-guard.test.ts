@@ -65,4 +65,17 @@ describe("createHandle missing $$id guard", () => {
     const handle = (createHandle as Function)(undefined, "test-file#MyHandle");
     expect(handle.$$id).toBe("test-file#MyHandle");
   });
+
+  it("throws a SMALL (non-stack-parsing) message in a production build", () => {
+    // Outside a test runner with NODE_ENV=production: the rich, stack-parsing
+    // diagnostic is folded out of a real build (NODE_ENV define) and tree-shaken;
+    // only this small throw ships. Runtime branch verified here; the DCE is
+    // verified by the bundle check in the build.
+    vi.stubEnv("VITEST", "");
+    vi.stubEnv("NODE_ENV", "production");
+    const msg = messageOf(() => createHandle());
+    expect(msg).toContain("Handle is missing $$id");
+    expect(msg).not.toContain("Unsupported createHandle shape");
+    expect(msg).not.toMatch(/created at .+:\d+:\d+/);
+  });
 });
