@@ -58,6 +58,18 @@ Every non-trivial PR description must include:
 
 PR #481 (`fix(router): throw Response from top-level middleware short-circuits`) is a reference template — match its structure for consumer-facing fixes and features.
 
+## Documentation voice (internal docs)
+
+Internal docs (`docs/internal/*`, design docs, architecture notes) should read like a senior engineer onboarding a teammate — warm and direct, not a spec sheet. The reference exemplar is `packages/rangojs-router/docs/internal/matching-and-lazy-discovery.md`; match its voice.
+
+- **Write to the reader.** Use "you". Open by orienting them ("if you're about to touch X, start here"), and where there's a natural doubt, voice it and then answer it ("a fair reaction is 'are we re-running handlers every request?' — we measured; here's the answer").
+- **Lead with the why, then the mechanics.** Give the intuition before the call-site details. A rule the reader actually understands is one they won't accidentally break.
+- **Treat non-obvious rules as scar tissue.** Most invariants exist because something broke; say so. "This started as a bug" earns the reader's care far better than a bare assertion.
+- **Stay precise — warmth is not a substitute for facts.** Keep file references, identifiers, tables, and exact numbers. Warm prose wraps the facts; it never replaces them. Warm ≠ chatty: don't pad, don't editorialize.
+- **No emoji, no marketing tone, no "honest"/"honestly".** State things directly ("one caveat", not "one honest caveat"). The same no-emoji rule as code comments applies.
+
+This is for prose docs. Code comments stay terse and implementation-focused — see the top of this file.
+
 ## Semantic Contract
 
 - **Semantic matrix** (`packages/rangojs-router/e2e/semantic-matrix.test.ts`): This test encodes the router's core execution guarantees. Any change to middleware scope, handler-first ordering, context visibility, or PE/JS parity MUST keep the semantic matrix green. If a semantic change is intentional, update the matrix rows to match the new contract AND update `packages/rangojs-router/docs/internal/execution-model.md`.

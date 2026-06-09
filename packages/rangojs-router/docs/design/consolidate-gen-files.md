@@ -1,5 +1,9 @@
 # Consolidate Generated Route Type Files
 
+If you're wondering why there's one `.named-routes.gen.ts` per router instead of
+the pile of generated files there used to be, this is the design that collapsed
+them — and the reasoning for what got kept versus merged.
+
 ## Status: Implemented
 
 > **Historical note.** The local-map handler examples below use bare names

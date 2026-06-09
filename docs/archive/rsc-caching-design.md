@@ -1,3 +1,5 @@
+> **Archived.** Early exploration superseded by `docs/design/caching.md` and the shipped segment-level `cache()`.
+
 # RSC Caching Design
 
 Research branch for exploring RSC caching with revival capabilities.

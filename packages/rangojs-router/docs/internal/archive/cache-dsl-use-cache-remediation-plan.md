@@ -1,3 +1,5 @@
+> **Archived.** Remediation plan; all phases complete.
+
 # Cache DSL + `"use cache"` Remediation Plan
 
 Status: Implemented

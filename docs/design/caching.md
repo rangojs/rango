@@ -1,5 +1,11 @@
 # RSC Router Caching Design
 
+If you want the _reasoning_ behind segment-level caching — why it caches at the
+segment level, how SWR and proactive caching fit, what the cache key carries —
+this is where it's written down. Just go in knowing it's the original design
+narrative, not an API reference; the note below tells you where the shipped API
+lives.
+
 > **Historical design context.** This document captures the original design and POC narrative for segment caching. Some examples below predate the shipped API surface and are kept for the reasoning they record, not as copy-paste references. For the current, shipped API see the skills: `skills/caching`, `skills/cache-guide`, `skills/use-cache`, and `skills/document-cache`. The package is `@rangojs/router`; cache stores and the document-cache middleware are imported from `@rangojs/router/cache`.
 
 ## Implementation Status

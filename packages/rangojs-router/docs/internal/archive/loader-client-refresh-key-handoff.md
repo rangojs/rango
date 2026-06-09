@@ -1,3 +1,5 @@
+> **Archived.** Handoff implemented.
+
 # Loader Client Refresh Key Handoff
 
 > **Status: Implemented.** Shipped as the `key` option on `UseLoaderOptions`

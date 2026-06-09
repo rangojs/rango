@@ -1,3 +1,5 @@
+> **Archived.** Execution plan complete (all workstreams done).
+
 # Stability Next Steps Plan
 
 Date: 2026-03-10

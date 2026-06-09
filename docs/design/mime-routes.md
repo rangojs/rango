@@ -1,5 +1,10 @@
 # Response Routes Design
 
+If you're wiring up a route that returns a `Response` instead of JSX — a JSON API,
+`robots.txt`, plain text — this is the design behind how those routes are matched
+and served, and why they get their own path through the pipeline instead of riding
+the RSC one.
+
 ## Problem
 
 Routes can return `Response` objects instead of JSX (JSON APIs, `robots.txt`, plain text). This works today via a throw/catch mechanism in `handleHandlerResult()`, but has two issues:

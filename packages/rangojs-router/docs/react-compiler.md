@@ -1,5 +1,9 @@
 # React Compiler
 
+If you want the React Compiler's automatic memoization in a Rango app, the good
+news is there's almost nothing Rango-specific to learn — it's the standard setup,
+with one boundary worth knowing (it compiles client components, not RSC).
+
 Rango supports the [React Compiler](https://react.dev/learn/react-compiler) the
 same way the upstream `@vitejs/plugin-rsc` example does. The compiler is **opt-in**
 — Rango does not enable it for you — but the plugin pipeline is fully compatible.

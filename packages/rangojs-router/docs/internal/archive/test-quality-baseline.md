@@ -1,3 +1,5 @@
+> **Archived.** Point-in-time test inventory snapshot.
+
 # Test Quality Baseline (Executed) and Action Backlog
 
 Date: 2026-03-10 (updated)

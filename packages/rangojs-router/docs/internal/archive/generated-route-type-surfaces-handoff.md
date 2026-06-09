@@ -1,3 +1,5 @@
+> **Archived.** Handoff applied; the live contract is in `docs/manifests.md` and the skills.
+
 # Generated Route Type Surfaces Handoff
 
 > **Status: Applied.** The audit findings below have been actioned in the skills
