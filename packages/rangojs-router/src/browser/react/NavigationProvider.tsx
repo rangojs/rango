@@ -220,8 +220,9 @@ export function NavigationProvider({
   }, []);
 
   // basename/version are always read through a shell ref so the context value
-  // has a single shape: a supplied appShellRef stays live (app-switch updates
-  // it), the standalone fallback is a frozen ref over the mount-time props.
+  // has a single shape. Both are set once: a supplied appShellRef is seeded
+  // from the init payload (a cross-app navigation reloads, so it is not swapped
+  // in-session), and the standalone fallback wraps the mount-time props.
   const fallbackShellRef = useRef<AppShellRef | null>(null);
   if (!fallbackShellRef.current) {
     fallbackShellRef.current = createAppShellRef({ basename, version });

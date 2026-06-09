@@ -245,9 +245,10 @@ export async function initBrowserApp(
   // client chunks (same createFromFetch the navigation client uses).
   setPrefetchDecoder((response) => deps.createFromFetch<RscPayload>(response));
 
-  // Create a bound renderSegments that reads rootLayout through the shell
-  // ref. On app switch the ref is updated before the tree re-renders, so
-  // the new app's Document (rootLayout) replaces the previous one.
+  // Create a bound renderSegments that reads rootLayout through the shell ref.
+  // The shell is set once at init and not swapped within a session (a cross-app
+  // navigation is a full document load), so this always renders this app's
+  // Document; reading through the ref just avoids closing over a stale value.
   const renderSegments = (
     segments: ResolvedSegment[],
     options?: RenderSegmentsOptions,

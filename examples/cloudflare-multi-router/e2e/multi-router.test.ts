@@ -447,6 +447,32 @@ test.describe("multi-router (dev)", () => {
       await expect.poll(htmlTheme, { timeout: 5000 }).toBe("dark");
     });
 
+    // Regression for the cross-app -> target-404 reload bypass: navigating
+    // across an app boundary to a route that does NOT exist in the target app
+    // must still hard-reload, not render the target's 404 in-place under the
+    // source app's document. The app-switch reload check runs BEFORE route
+    // resolution (see request-classification.ts), so a missing target route
+    // reloads instead of throwing RouteNotFoundError and 404-ing in place.
+    test("cross-app navigation to a missing target route reloads (no in-place 404)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b-404").click();
+
+      // The reload navigates to the target URL and replaces app-a's document
+      // (its shell is gone). The prior soft fallback would have rendered the
+      // target's 404 in place, leaving app-a's document mounted.
+      await page.waitForURL(/\/app-b\/does-not-exist/, { timeout: 10000 });
+      await expect(page.locator('[data-app-shell="a"]')).toHaveCount(0);
+    });
+
     // Regression for the cross-app shared-stylesheet drop. site (source)
     // renders a SHARED href UNMANAGED (no precedence); app-a (target) renders
     // the SAME href MANAGED (precedence). Under the old SOFT switch, React 19's
@@ -955,6 +981,32 @@ test.describe("multi-router (production)", () => {
       await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
 
       await expect.poll(htmlTheme, { timeout: 5000 }).toBe("dark");
+    });
+
+    // Regression for the cross-app -> target-404 reload bypass: navigating
+    // across an app boundary to a route that does NOT exist in the target app
+    // must still hard-reload, not render the target's 404 in-place under the
+    // source app's document. The app-switch reload check runs BEFORE route
+    // resolution (see request-classification.ts), so a missing target route
+    // reloads instead of throwing RouteNotFoundError and 404-ing in place.
+    test("cross-app navigation to a missing target route reloads (no in-place 404)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b-404").click();
+
+      // The reload navigates to the target URL and replaces app-a's document
+      // (its shell is gone). The prior soft fallback would have rendered the
+      // target's 404 in place, leaving app-a's document mounted.
+      await page.waitForURL(/\/app-b\/does-not-exist/, { timeout: 10000 });
+      await expect(page.locator('[data-app-shell="a"]')).toHaveCount(0);
     });
 
     // Regression for the cross-app shared-stylesheet drop. site (source)
