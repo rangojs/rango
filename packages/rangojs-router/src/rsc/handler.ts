@@ -128,6 +128,22 @@ import {
  * });
  * ```
  */
+
+/**
+ * Response that tells the client to do a full document navigation. Shared by
+ * the terminal reload plans (version-mismatch and app-switch): an empty 200
+ * carrying X-RSC-Reload, which the client turns into window.location.href.
+ */
+function createReloadResponse(reloadUrl: string) {
+  return createResponseWithMergedHeaders(null, {
+    status: 200,
+    headers: {
+      "X-RSC-Reload": reloadUrl,
+      "content-type": "text/x-component;charset=utf-8",
+    },
+  });
+}
+
 export function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
@@ -642,26 +658,14 @@ export function createRSCHandler<
       console.log(
         `[RSC] Version mismatch: client=${url.searchParams.get("_rsc_v")}, server=${version}. Forcing reload.`,
       );
-      return createResponseWithMergedHeaders(null, {
-        status: 200,
-        headers: {
-          "X-RSC-Reload": plan.reloadUrl,
-          "content-type": "text/x-component;charset=utf-8",
-        },
-      });
+      return createReloadResponse(plan.reloadUrl);
     }
 
     if (plan.mode === "app-switch") {
       // Cross-app SPA navigation crossed a host-router app boundary. Force a
       // real document navigation so the target app's document is re-established
       // (stylesheets, theme, warmup, prefetch-TTL). See request-classification.
-      return createResponseWithMergedHeaders(null, {
-        status: 200,
-        headers: {
-          "X-RSC-Reload": plan.reloadUrl,
-          "content-type": "text/x-component;charset=utf-8",
-        },
-      });
+      return createReloadResponse(plan.reloadUrl);
     }
 
     // ---- 3. Origin guard (gate for action/loader/PE modes) ----

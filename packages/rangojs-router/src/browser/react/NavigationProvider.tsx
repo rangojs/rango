@@ -439,10 +439,10 @@ export function NavigationProvider({
   let content = <RootErrorBoundary>{root}</RootErrorBoundary>;
 
   // Wrap with ThemeProvider when theme is enabled. The ThemeProvider is
-  // document-lifetime: its config comes from the initial load and does NOT
-  // swap on cross-app transitions, because the ThemeProvider sits above the
-  // segment tree and a smooth (no-reload) app switch cannot safely remount
-  // it. A new theme config only takes effect on a full document load.
+  // document-lifetime: its config comes from the initial load and persists for
+  // the session. It sits above the segment tree and is not remounted in-session;
+  // a cross-app navigation is a full document load (X-RSC-Reload), so the target
+  // app's theme config takes effect on its own load.
   if (themeConfig) {
     content = (
       <ThemeProvider config={themeConfig} initialTheme={initialTheme}>
