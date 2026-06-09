@@ -237,6 +237,27 @@ export function createPartialUpdater(
       streamingToken.end();
     });
 
+    // Integrity guard (defense in depth). The server redirects on a cross-app
+    // routerId mismatch (X-RSC-Reload), so a partial payload's routerId must
+    // match this client's. If it doesn't — a stale/edge cache keyed without the
+    // routerId, a proxy mixing app responses, or a server classification bug —
+    // do NOT splice a foreign app's segments and client references into this
+    // document. Force a full reload so the server re-establishes the
+    // authoritative document for this URL.
+    const currentRouterId = store.getRouterId?.();
+    if (
+      payload.metadata?.routerId &&
+      currentRouterId &&
+      payload.metadata.routerId !== currentRouterId
+    ) {
+      console.error(
+        `[rango] Partial response router id "${payload.metadata.routerId}" does not ` +
+          `match this client ("${currentRouterId}"); discarding it and reloading to re-sync.`,
+      );
+      window.location.href = url;
+      return;
+    }
+
     // Handle server-side redirect with state
     if (payload.metadata?.redirect) {
       if (signal?.aborted) {
