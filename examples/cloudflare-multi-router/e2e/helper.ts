@@ -132,3 +132,23 @@ export async function expectNoReload(page: Page) {
     },
   };
 }
+
+/**
+ * Verify that a navigation DID perform a full document reload. Injects a DOM
+ * marker; on dispose asserts it was wiped (a real document navigation replaces
+ * the DOM). The inverse of expectNoReload — used for cross-app navigation,
+ * which is deliberately a hard document boundary.
+ */
+export async function expectFullReload(page: Page) {
+  await page.evaluate(() => {
+    const el = document.createElement("meta");
+    el.setAttribute("name", "x-reload-check");
+    document.head.append(el);
+  });
+
+  return {
+    [Symbol.asyncDispose]: async () => {
+      await expect(page.locator(`meta[name="x-reload-check"]`)).toHaveCount(0);
+    },
+  };
+}

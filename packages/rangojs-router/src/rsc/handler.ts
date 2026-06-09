@@ -651,6 +651,19 @@ export function createRSCHandler<
       });
     }
 
+    if (plan.mode === "app-switch") {
+      // Cross-app SPA navigation crossed a host-router app boundary. Force a
+      // real document navigation so the target app's document is re-established
+      // (stylesheets, theme, warmup, prefetch-TTL). See request-classification.
+      return createResponseWithMergedHeaders(null, {
+        status: 200,
+        headers: {
+          "X-RSC-Reload": plan.reloadUrl,
+          "content-type": "text/x-component;charset=utf-8",
+        },
+      });
+    }
+
     // ---- 3. Origin guard (gate for action/loader/PE modes) ----
     const originPhase = ORIGIN_CHECK_PHASE_BY_MODE[plan.mode];
     if (originPhase) {

@@ -245,15 +245,17 @@ export function createPartialUpdater(
       streamingToken.end();
     });
 
-    // Detect app switch: if routerId changed, the navigation crossed into
-    // a different router (e.g., via host router path mount). Downgrade
-    // partial to full so the entire tree is replaced without reconciliation
-    // against stale segments from the previous app, and replace the app
-    // shell (rootLayout, basename, version) so the target app's document
-    // and router config take effect instead of remaining captured from the
-    // initial load. Theme, warmup, and prefetch TTL are intentionally
-    // document-lifetime (see AppShell doc); a new document navigation
-    // applies them.
+    // App switch (the navigation crossed into a different router, e.g. a host
+    // router path mount). In normal operation this branch does NOT run: the
+    // server returns X-RSC-Reload for a cross-app SPA request, so the client
+    // does a full document navigation (see request-classification.ts, mode
+    // "app-switch") — precisely because a soft swap cannot faithfully
+    // re-establish the target app's document (stylesheets dropped by React's
+    // by-href dedup, and theme/warmup/prefetch-TTL are document-lifetime; see
+    // browser/app-shell.ts). This is retained as a defensive fallback (if a
+    // cross-app payload ever reached the client without a reload, swap the app
+    // shell so at least the tree/router-config track the target). The
+    // soft-switch machinery here is dead and slated for removal.
     if (payload.metadata?.routerId) {
       const prevRouterId = store.getRouterId?.();
       if (prevRouterId && prevRouterId !== payload.metadata.routerId) {

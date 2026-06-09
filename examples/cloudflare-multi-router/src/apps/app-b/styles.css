@@ -1,0 +1,6 @@
+/* App B document-level stylesheet, declared in app-b/document.tsx <head> via a
+   precedence-tracked <link rel="stylesheet">. See app-a/styles.css. A distinct
+   body background from App A lets the e2e tell whose CSS is currently applied. */
+body {
+  background-color: rgb(40, 50, 60);
+}

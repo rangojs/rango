@@ -218,6 +218,7 @@ Grouped by concern — read when you need to…
 | `/theme`            | Light/dark mode with FOUC prevention                                      |
 | `/i18n`             | Locale routing with `:locale?`, resolution chains, react-intl integration |
 | `/fonts`            | Load web fonts with preload hints                                         |
+| `/css`              | Import CSS in the Document `<head>` (`?url` + managed `precedence` links) |
 | `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                |
 | `/view-transitions` | React View Transitions on layouts, routes, and parallel slots             |
 | `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                     |
