@@ -292,14 +292,15 @@ function createLoaderExecutor<TEnv>(
             );
           }
           const segmentOrder = reqCtx._renderBarrierSegmentOrder ?? [];
-          // For streaming trees the eager snapshot built when the barrier
-          // resolved is incomplete (loading() handlers were still in flight, so
-          // their pushes had not landed). rendered() awaited handleStore.settled
-          // for streaming, so the store is now complete — build a fresh snapshot.
-          const snapshot = reqCtx._treeHasStreaming
-            ? buildHandleSnapshot(reqCtx._handleStore, segmentOrder)
-            : (reqCtx._renderBarrierHandleSnapshot ??
-              buildHandleSnapshot(reqCtx._handleStore, segmentOrder));
+          // The complete snapshot is cached at barrier resolution for
+          // non-streaming trees, and by rendered() after handleStore.settled for
+          // streaming trees (where the eager snapshot would have been incomplete
+          // because loading() handlers were still in flight). Either way it is
+          // present by the time a loader reads a handle; the fresh build is only
+          // a defensive fallback.
+          const snapshot =
+            reqCtx._renderBarrierHandleSnapshot ??
+            buildHandleSnapshot(reqCtx._handleStore, segmentOrder);
           return collectHandleData(item, snapshot, segmentOrder);
         }
 
@@ -364,6 +365,14 @@ function createLoaderExecutor<TEnv>(
           if (streaming) {
             reqCtx._handleStore.seal();
             await reqCtx._handleStore.settled;
+            // The eager snapshot was intentionally left unbuilt for streaming
+            // (it would have been incomplete). Build the complete one once, now
+            // that the store has settled, so every ctx.use(handle) reads the
+            // cached snapshot instead of rebuilding it per call.
+            reqCtx._renderBarrierHandleSnapshot ??= buildHandleSnapshot(
+              reqCtx._handleStore,
+              reqCtx._renderBarrierSegmentOrder ?? [],
+            );
           }
           renderedResolved = true;
         });
@@ -490,7 +499,8 @@ export function setupLoaderAccess<TEnv>(
         // cycle). Using the explicit guard-closed flag rather than
         // _renderBarrierSegmentOrder keeps tracking live across the streaming
         // settle wait. (Handle push callbacks are already excluded above via
-        // insideHandlePush, so they cannot produce false positives here.)
+        // isInsidePushCallbackScope(), so they cannot produce false positives
+        // here.)
         if (!reqCtx._renderBarrierGuardClosed) {
           if (!reqCtx._handlerLoaderDeps) reqCtx._handlerLoaderDeps = new Set();
           reqCtx._handlerLoaderDeps.add(loader.$$id);

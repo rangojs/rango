@@ -813,22 +813,26 @@ export function createRequestContext<TEnv>(
       .map((s) => s.id);
     ctx._renderBarrierSegmentOrder = segOrder;
 
+    // Closing the guard window means no handler can still form a deadlock cycle
+    // with a rendered() loader: drop the dependency-tracking state and mark it
+    // closed. WHEN this runs is the only streaming/non-streaming difference.
+    const closeGuard = () => {
+      ctx._renderBarrierWaiters = undefined;
+      ctx._handlerLoaderDeps = undefined;
+      ctx._renderBarrierGuardClosed = true;
+    };
+
     if (ctx._treeHasStreaming) {
       // Streaming: rendered() keeps waiting on handleStore.settled past this
       // point, and loading() handlers are still in flight. The eager snapshot
-      // here would be incomplete, so leave it unset — rendered()'s ctx.use()
-      // builds a fresh one after settled. Keep the deadlock guard state live
-      // (do NOT clear waiters/deps, do NOT close the guard) so a handler that
-      // resumes and awaits a still-waiting rendered() loader is still caught.
-      // Tear it down once settled: every tracked handler has finished then, so
-      // none can await a loader anymore. settled resolves after rendered()
-      // seals; if no loader used rendered(), nothing seals and the (empty)
-      // guard state is simply GC'd at request end.
-      handleStore.settled.then(() => {
-        ctx._renderBarrierWaiters = undefined;
-        ctx._handlerLoaderDeps = undefined;
-        ctx._renderBarrierGuardClosed = true;
-      });
+      // here would be incomplete, so leave it unset — rendered() builds and
+      // caches the complete one after settled. Keep the guard window OPEN so a
+      // handler that resumes and awaits a still-waiting rendered() loader is
+      // still caught; close it once settled (every tracked handler has finished
+      // then, so none can await a loader anymore). settled resolves after
+      // rendered() seals; if no loader used rendered(), nothing seals and the
+      // (empty) guard state is simply GC'd at request end.
+      handleStore.settled.then(closeGuard);
     } else {
       // Non-streaming: all handlers have settled by now. Build and cache the
       // snapshot so loader ctx.use(handle) calls don't rebuild it, and close the
@@ -837,9 +841,7 @@ export function createRequestContext<TEnv>(
         handleStore,
         segOrder,
       );
-      ctx._renderBarrierWaiters = undefined;
-      ctx._handlerLoaderDeps = undefined;
-      ctx._renderBarrierGuardClosed = true;
+      closeGuard();
     }
     if (resolveBarrier) resolveBarrier();
   };

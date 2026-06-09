@@ -714,10 +714,11 @@ describe("rendered barrier", () => {
       mockInsideLoaderScope = false;
       const push = ctx.use(Products);
       push(async () => {
-        // This await causes insideHandlePush to be false when we resume
+        // The push-callback ALS scope survives this await, so the resume below
+        // still reads as "inside a push callback".
         await new Promise((resolve) => setTimeout(resolve, 5));
-        // This ctx.use(loader) runs with insideHandlePush=false, but
-        // barrier has already resolved by now — should NOT register dep
+        // This ctx.use(loader) runs after the barrier resolved; it must NOT
+        // register a handler-to-loader dep (it is a push-callback continuation).
         const data = await ctx.use(loader);
         return "derived";
       });
