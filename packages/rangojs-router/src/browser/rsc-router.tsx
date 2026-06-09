@@ -117,10 +117,12 @@ export interface BrowserAppContext {
   /** App version for prefetch version mismatch detection */
   version?: string;
   /**
-   * Live app-shell ref. Cross-app navigations replace its contents so the
-   * NavigationProvider and renderSegments pick up the target app's
-   * rootLayout, basename, and version without consumer rerenders. Theme,
-   * warmup, and prefetch TTL are document-lifetime (see AppShell).
+   * App-shell ref, read through on each render so renderSegments and the
+   * NavigationProvider see rootLayout/basename/version without closing over a
+   * stale snapshot. Set once from the initial payload and not swapped within a
+   * session: a cross-app navigation is a full document load (X-RSC-Reload), so
+   * the target app establishes its own shell on load. Theme, warmup, and
+   * prefetch TTL are document-lifetime too (see AppShell).
    */
   appShellRef?: import("./app-shell.js").AppShellRef;
 }

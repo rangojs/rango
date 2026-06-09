@@ -157,9 +157,11 @@ export interface NavigationProviderProps {
   basename?: string;
 
   /**
-   * Live app-shell ref. When provided, the context's `basename` and `version`
-   * properties become live getters that track app-switch updates without
-   * invalidating the memoized context value.
+   * App-shell ref. When provided, the context's `basename` and `version` are
+   * read through it (live getters) so they don't close over a stale snapshot or
+   * invalidate the memoized context value. The shell is set once at init and is
+   * not swapped within a session — a cross-app navigation is a full document
+   * load (X-RSC-Reload), so the target app establishes its own shell on load.
    */
   appShellRef?: AppShellRef;
 }

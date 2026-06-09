@@ -13,9 +13,9 @@
  * Storage key is namespaced per routerId (`rango-state:{routerId}`) so
  * tabs in different apps on the same origin do not collide. Two tabs in
  * the same app share a key → one tab's invalidation is picked up by the
- * other via the `storage` event. A smooth cross-app transition in this
- * tab rebinds to the target app's key; other tabs still in the old app
- * keep their own key intact.
+ * other via the `storage` event. The key is bound once at document init; a
+ * cross-app navigation is a full document load (X-RSC-Reload), so the target
+ * app's document binds its own key on load (tabs in the old app keep theirs).
  *
  * If no routerId is supplied, falls back to a single legacy key for
  * backward compatibility (single-app deployments unaffected).

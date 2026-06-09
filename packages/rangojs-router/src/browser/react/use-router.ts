@@ -13,9 +13,10 @@ import type { RouterInstance, RouterNavigateOptions } from "../types.js";
  * useRouter() do not re-render on navigation state changes.
  * For reactive navigation state, use useNavigation() instead.
  *
- * Methods read `basename` from the live context on each call so that
- * cross-app navigation (app-switch) sees the current app's basename
- * rather than the one captured at mount time.
+ * Methods read `basename` from the context on each call. It is set once from
+ * the initial payload and is stable within a session — a cross-app navigation
+ * is a full document load (X-RSC-Reload), so the target app mounts fresh with
+ * its own basename.
  *
  * @example
  * ```tsx
