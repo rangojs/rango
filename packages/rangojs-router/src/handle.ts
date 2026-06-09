@@ -1,4 +1,5 @@
 import { missingInjectedIdError } from "./missing-id-error.js";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 /**
  * Handle definition for accumulating data across route segments.
@@ -102,20 +103,24 @@ export function createHandle<TData, TAccumulated = TData[]>(
 ): Handle<TData, TAccumulated> {
   let handleId = __injectedId ?? "";
 
-  if (!handleId && process.env.NODE_ENV === "development") {
-    throw missingInjectedIdError("Handle", "createHandle");
-  }
-
-  // No build-injected id. This only happens in a bare unit test — every real
-  // build runs the rango Vite plugin, which always injects a stable id (and the
-  // line above throws for a genuinely non-exported handle in dev). Assign a
-  // process-stable runtime id so the collect registers below and the handle is
-  // fully exercisable in tests (useHandle, collectHandle, renderRoute's `handles`
-  // seeding run the REAL collect). Provably inert in production: the fallback
-  // never triggers when the plugin injects the id, so server/client id
-  // consistency (required for RSC recovery) is unaffected.
+  // No build-injected id. Under a test runner: fall back to a synthetic id so the
+  // collect registers below and the handle is exercisable in tests (useHandle,
+  // collectHandle, renderRoute's `handles` run the REAL collect). Otherwise (dev
+  // or a real build) it means an UNSUPPORTED handler shape the plugin skipped —
+  // fail loud. The rich, stack-parsing diagnostic stays behind the NODE_ENV check
+  // so a production build folds it away and tree-shakes missing-id-error.ts out,
+  // shipping the small throw instead. isUnderTestRunner() is runtime-safe.
   if (!handleId) {
-    handleId = `__rango_runtime_handle_${runtimeHandleIdCounter++}`;
+    if (isUnderTestRunner()) {
+      handleId = `__rango_runtime_handle_${runtimeHandleIdCounter++}`;
+    } else if (process.env.NODE_ENV !== "production") {
+      throw missingInjectedIdError("Handle", "createHandle");
+    } else {
+      throw new Error(
+        "[rango] Handle is missing $$id — the build plugin did not inject one. " +
+          "Export it as `export const X = createHandle(...)`.",
+      );
+    }
   }
 
   const collectFn =

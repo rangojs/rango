@@ -16,15 +16,15 @@ function messageOf(fn: () => unknown): string {
 }
 
 describe("createLoader missing $$id guard", () => {
-  it("throws in development when __injectedId is missing", () => {
-    vi.stubEnv("NODE_ENV", "development");
+  it("throws outside a test runner (a real build) when __injectedId is missing", () => {
+    vi.stubEnv("VITEST", "");
     expect(() => createLoader(async () => ({ data: 1 }))).toThrow(
       "Loader is missing $$id",
     );
   });
 
   it("gives located, actionable guidance for a non-exported loader", () => {
-    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
     const msg = messageOf(() => createLoader(async () => ({ data: 1 })));
     expect(msg).toContain("Loader is missing $$id");
     expect(msg).toContain("export const X = createLoader(...)");
@@ -46,13 +46,13 @@ describe("createLoader missing $$id guard", () => {
 });
 
 describe("createHandle missing $$id guard", () => {
-  it("throws in development when __injectedId is missing", () => {
-    vi.stubEnv("NODE_ENV", "development");
+  it("throws outside a test runner (a real build) when __injectedId is missing", () => {
+    vi.stubEnv("VITEST", "");
     expect(() => createHandle()).toThrow("Handle is missing $$id");
   });
 
   it("gives located, actionable guidance for a non-exported handle", () => {
-    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
     const msg = messageOf(() => createHandle());
     expect(msg).toContain("Handle is missing $$id");
     expect(msg).toContain("export const X = createHandle(...)");
@@ -64,5 +64,18 @@ describe("createHandle missing $$id guard", () => {
     vi.stubEnv("NODE_ENV", "development");
     const handle = (createHandle as Function)(undefined, "test-file#MyHandle");
     expect(handle.$$id).toBe("test-file#MyHandle");
+  });
+
+  it("throws a SMALL (non-stack-parsing) message in a production build", () => {
+    // Outside a test runner with NODE_ENV=production: the rich, stack-parsing
+    // diagnostic is folded out of a real build (NODE_ENV define) and tree-shaken;
+    // only this small throw ships. Runtime branch verified here; the DCE is
+    // verified by the bundle check in the build.
+    vi.stubEnv("VITEST", "");
+    vi.stubEnv("NODE_ENV", "production");
+    const msg = messageOf(() => createHandle());
+    expect(msg).toContain("Handle is missing $$id");
+    expect(msg).not.toContain("Unsupported createHandle shape");
+    expect(msg).not.toMatch(/created at .+:\d+:\d+/);
   });
 });

@@ -59,14 +59,17 @@ app. The working setup (now the preset) is:
      an explicit alias (or `ssr.resolve.conditions`, which then also flips React)
      does. This is why no existing test exercises the package's own react-server
      export map.
-   - Even with the alias, the **full** app router can't be imported in bare
-     vitest: real `Prerender()` / `createLoader()` throw "missing `$$id`" (the id
-     is injected by the rango Vite plugin at build time), and the barrel pulls
-     `virtual:` imports that need the plugin. So `dispatch` / `generated-routes` /
-     `cache-status` against the _whole_ router require the rango plugin or e2e.
-     **Workaround used here:** build a router from an importable, Prerender-free
-     include (the app's real `apiPatterns`) — this tests real handlers and works
-     with just the aliases.
+   - Handler `$$id` is NO LONGER the blocker: `Prerender()` / `createLoader()` /
+     `Static()` each assign a process-stable runtime fallback id in a bare test,
+     so they construct without "missing `$$id`". But the **full** app router
+     _file_ still can't be imported in bare vitest — its page modules pull
+     app-specific deps and/or plugin `virtual:` modules that need the rango
+     plugin (an import of `src/router.tsx` fails on a page dep before any rango
+     concern). So `dispatch` / `generated-routes` / `cache-status` against the
+     _whole_ router require the rango plugin or e2e.
+     **Workaround used here:** build a router from an importable, focused include
+     (the app's real `apiPatterns`) — this tests real handlers and works with
+     just the aliases.
 
    **Recommendation:** ship a one-line vitest preset from the testing package
    (e.g. `@rangojs/router/testing/vitest`) that wires the alias + virtual stubs +
@@ -123,7 +126,7 @@ app. The working setup (now the preset) is:
 - `runMiddleware` against exported middleware fns — real `executeMiddleware`,
   short-circuit, Set-Cookie merge, ordering. Required extracting the inline route
   middleware to an export; see `src/middleware/cookie-overlay.ts`.
-- `dispatch` against an importable, Prerender-free response-route router (real
+- `dispatch` against an importable, focused response-route router (real
   handlers): bare JSON value, params, thrown `RouterError` → 404 RFC 9457
   problem+json, 404.
 - `renderRoute` against real `"use client"` components (useParams / useReverse /
@@ -146,8 +149,9 @@ app. The working setup (now the preset) is:
   real response) need the running app with `debugCacheSignal` on — `dispatch` does
   not emit cache decisions and the full router can't be imported here.
 - Whole-app generated-route drift (`assertGeneratedRoutesMatch(fullRouter, …)`)
-  needs the full router. For cloudflare-basic that's still blocked by Prerender
-  (can't import the full router), but for apps WITHOUT Prerender the primitive now
-  force-expands lazy `include()`s and does the whole-app check in a unit test (see
-  the mini app). renderRoute also now seeds `useLoader`/`useLocationState`/
+  needs importing the full router file. For cloudflare-basic that file still
+  can't be bare-imported (app page-module deps / plugin `virtual:` modules — NOT
+  handler `$$id`, which now falls back), but for an app whose router file IS
+  bare-importable the primitive force-expands lazy `include()`s and does the
+  whole-app check in a unit test (see the mini app). renderRoute also now seeds `useLoader`/`useLocationState`/
   `useHandle` by reference (the `loaders`/`locationState`/`handles` options).

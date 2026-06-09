@@ -60,10 +60,18 @@
  *   the testing guide for the full Flight config.
  * - `renderRoute` (`@rangojs/router/testing/dom`) tests run in this same project
  *   under a DOM environment (`happy-dom`/`jsdom`); the alias does not affect them.
- * - LIMITATION: the FULL app router still cannot be imported if it uses
- *   `Prerender()` / `createLoader()` (their build-time-injected `$$id` is absent
- *   in a bare test). Build a router from an importable, Prerender-free include for
- *   `dispatch`, or assert whole-router behavior with e2e.
+ * - A router using `Prerender()` / `createLoader()` / `Static()` now CONSTRUCTS in
+ *   a bare test: each assigns a process-stable runtime fallback `$$id` ONLY under
+ *   a test runner (`process.env.VITEST`), so `createRouter().routes(...)` builds
+ *   without the "missing `$$id`" throw (for `dispatch` / `assertGeneratedRoutesMatch`).
+ *   Outside a test runner (a real build) a missing id still THROWS — so an
+ *   unsupported handler shape the plugin skipped (e.g. `export let`) fails loud
+ *   rather than getting a silent synthetic id. (The plugin always injects for
+ *   supported `export const` shapes, and the static manifest keys on that id.)
+ * - Importing your app's whole router *file* can still fail for app-specific
+ *   reasons (page modules pulling their own deps, or plugin `virtual:` modules
+ *   that need the rango plugin) — build whole-router `dispatch`/drift checks from
+ *   a focused include, or use e2e.
  */
 
 import { fileURLToPath } from "node:url";

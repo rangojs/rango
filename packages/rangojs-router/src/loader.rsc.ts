@@ -22,6 +22,7 @@ import {
   getFetchableLoader,
 } from "./server/fetchable-loader-store.js";
 import { missingInjectedIdError } from "./missing-id-error.js";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 export { getFetchableLoader };
 
@@ -57,22 +58,24 @@ export function createLoader<T>(
   // For fetchable loaders, __injectedId is also passed as a parameter
   let loaderId = __injectedId || "";
 
-  if (!loaderId && process.env.NODE_ENV === "development") {
-    throw missingInjectedIdError("Loader", "createLoader");
-  }
-
-  // No build-injected id. This happens in a bare unit test (no plugin), or for
-  // a call shape the plugin's id injection does not support (e.g. a namespace
-  // import `rango.createLoader(...)`) — but those are caught by the dev-throw
-  // above in `pnpm dev`, and such a loader cannot be exported to the client in a
-  // supported shape, so the client-fetchable / RSC-recovery $$id path is
-  // unaffected (the plugin always injects a stable id for supported, exported
-  // loaders on BOTH builds). Assign a process-stable runtime id so the fn
-  // registers below and the loader is exercisable via runLoader(loaderHandle)
-  // (it recovers the fn from the registry by $$id). Mirrors createHandle's
-  // runtime fallback.
+  // No build-injected id. Under a test runner: fall back to a synthetic id so the
+  // fn registers below and the loader is exercisable via runLoader(loaderHandle)
+  // (it recovers the fn from the registry by $$id). Otherwise (dev or a real
+  // build) it means an UNSUPPORTED shape (e.g. a namespace import
+  // `rango.createLoader(...)`) the plugin skipped — fail loud. The rich
+  // diagnostic stays behind the NODE_ENV check so production folds it away and
+  // ships the small throw. isUnderTestRunner() is runtime-safe. Mirrors createHandle.
   if (!loaderId) {
-    loaderId = `__rango_runtime_loader_${runtimeLoaderIdCounter++}`;
+    if (isUnderTestRunner()) {
+      loaderId = `__rango_runtime_loader_${runtimeLoaderIdCounter++}`;
+    } else if (process.env.NODE_ENV !== "production") {
+      throw missingInjectedIdError("Loader", "createLoader");
+    } else {
+      throw new Error(
+        "[rango] Loader is missing $$id — the build plugin did not inject one. " +
+          "Export it as `export const X = createLoader(...)`.",
+      );
+    }
   }
 
   // If not fetchable, store fn in registry (for SSR ctx.use() resolution)
