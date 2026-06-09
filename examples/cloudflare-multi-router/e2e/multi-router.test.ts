@@ -505,6 +505,11 @@ test.describe("multi-router (dev)", () => {
     // to insert app-a's managed one) and app-a rendered unstyled. Forcing a full
     // document reload on the app switch fixes it: app-a loads fresh and its
     // stylesheet applies regardless of how the source rendered the href.
+    // This test pins the consumer-visible outcome (shared stylesheet applies
+    // after the switch) and the reload mechanism (expectFullReload). With the
+    // reload in place the by-href dedup path is unreachable by construction, so
+    // the cross-app missing-route (404 bypass) test is what catches a disabled
+    // app-switch check.
     test("cross-app reload re-applies a stylesheet shared across apps", async ({
       page,
     }) => {
@@ -1066,6 +1071,11 @@ test.describe("multi-router (production)", () => {
     // to insert app-a's managed one) and app-a rendered unstyled. Forcing a full
     // document reload on the app switch fixes it: app-a loads fresh and its
     // stylesheet applies regardless of how the source rendered the href.
+    // This test pins the consumer-visible outcome (shared stylesheet applies
+    // after the switch) and the reload mechanism (expectFullReload). With the
+    // reload in place the by-href dedup path is unreachable by construction, so
+    // the cross-app missing-route (404 bypass) test is what catches a disabled
+    // app-switch check.
     test("cross-app reload re-applies a stylesheet shared across apps", async ({
       page,
     }) => {

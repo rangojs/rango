@@ -17,7 +17,7 @@ import {
   emptyResponse,
   handleReloadHeader,
   teeWithCompletion,
-  checkRouterIdHeader,
+  isForeignRouterId,
 } from "./response-adapter.js";
 import {
   buildPrefetchKey,
@@ -186,7 +186,7 @@ export function createNavigationClient(
         // before createFromFetch imports its chunks. Ordered AFTER the reload
         // and redirect handlers — control responses are never stamped with
         // X-RSC-Router-Id, so they are steered first and never reach here.
-        if (checkRouterIdHeader(response, routerId) === "mismatch") {
+        if (isForeignRouterId(response, routerId)) {
           if (tx) {
             browserDebugLog(tx, `router id mismatch, reloading (${source})`);
           }

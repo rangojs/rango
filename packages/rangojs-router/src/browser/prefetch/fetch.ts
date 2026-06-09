@@ -30,7 +30,7 @@ import { getRangoState } from "../rango-state.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 import { debugLog } from "../logging.js";
-import { teeWithCompletion, checkRouterIdHeader } from "../response-adapter.js";
+import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import type { RscPayload } from "../types.js";
 
 /**
@@ -170,7 +170,7 @@ function executePrefetchFetch(
       // Integrity check: never warm (or decode/import the chunks of) a foreign
       // app's payload. A speculative prefetch must never reload — just drop it;
       // navigation re-fetches and the server steers it.
-      if (checkRouterIdHeader(response, expectedRouterId) === "mismatch") {
+      if (isForeignRouterId(response, expectedRouterId)) {
         return null;
       }
 

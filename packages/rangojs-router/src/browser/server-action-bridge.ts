@@ -27,7 +27,7 @@ import {
   emptyResponse,
   handleReloadHeader,
   teeWithCompletion,
-  checkRouterIdHeader,
+  isForeignRouterId,
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
@@ -266,9 +266,13 @@ export function createServerActionBridge(
         // the post-decode partial-update guard does NOT cover (the action
         // bridge has its own createFromFetch -> onUpdate). Ordered after the
         // reload/redirect handlers, which steer control responses first.
+        // Reloads via window.location.reload() rather than navigating to a
+        // target (as the navigation-client guard does): an action has no
+        // navigation target, so reloading the current URL re-syncs the
+        // document against the server-applied action effect.
         if (
           !handle.signal.aborted &&
-          checkRouterIdHeader(response, store.getRouterId?.()) === "mismatch"
+          isForeignRouterId(response, store.getRouterId?.())
         ) {
           log("action router id mismatch, reloading to re-sync");
           handle.complete(undefined);

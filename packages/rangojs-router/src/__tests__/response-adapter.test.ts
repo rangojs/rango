@@ -16,41 +16,41 @@ afterEach(() => {
 let extractRscHeaderUrl: typeof import("../browser/response-adapter").extractRscHeaderUrl;
 let emptyResponse: typeof import("../browser/response-adapter").emptyResponse;
 let teeWithCompletion: typeof import("../browser/response-adapter").teeWithCompletion;
-let checkRouterIdHeader: typeof import("../browser/response-adapter").checkRouterIdHeader;
+let isForeignRouterId: typeof import("../browser/response-adapter").isForeignRouterId;
 
 beforeEach(async () => {
   const mod = await import("../browser/response-adapter");
   extractRscHeaderUrl = mod.extractRscHeaderUrl;
   emptyResponse = mod.emptyResponse;
   teeWithCompletion = mod.teeWithCompletion;
-  checkRouterIdHeader = mod.checkRouterIdHeader;
+  isForeignRouterId = mod.isForeignRouterId;
 });
 
-describe("checkRouterIdHeader", () => {
+describe("isForeignRouterId", () => {
   const withId = (id: string) =>
     new Response(null, { headers: { "X-RSC-Router-Id": id } });
 
-  it("returns 'match' when the header equals the expected id", () => {
-    expect(checkRouterIdHeader(withId("app-a"), "app-a")).toBe("match");
+  it("is false when the header equals the expected id", () => {
+    expect(isForeignRouterId(withId("app-a"), "app-a")).toBe(false);
   });
 
-  it("returns 'mismatch' when the header differs from the expected id", () => {
-    expect(checkRouterIdHeader(withId("other-app"), "app-a")).toBe("mismatch");
+  it("is true when the header differs from the expected id", () => {
+    expect(isForeignRouterId(withId("other-app"), "app-a")).toBe(true);
   });
 
   // The both-present guard — these are the false-positive safeguards. An absent
   // header (control reload/redirect responses are not stamped) or an absent
-  // expected id (client not yet seeded) must never read as a mismatch.
-  it("returns 'absent' when the header is missing", () => {
-    expect(checkRouterIdHeader(new Response(null), "app-a")).toBe("absent");
+  // expected id (client not yet seeded) must never read as foreign.
+  it("is false when the header is missing", () => {
+    expect(isForeignRouterId(new Response(null), "app-a")).toBe(false);
   });
 
-  it("returns 'absent' when the expected id is undefined", () => {
-    expect(checkRouterIdHeader(withId("app-a"), undefined)).toBe("absent");
+  it("is false when the expected id is undefined", () => {
+    expect(isForeignRouterId(withId("app-a"), undefined)).toBe(false);
   });
 
-  it("returns 'absent' when both are missing", () => {
-    expect(checkRouterIdHeader(new Response(null), undefined)).toBe("absent");
+  it("is false when both are missing", () => {
+    expect(isForeignRouterId(new Response(null), undefined)).toBe(false);
   });
 });
 
