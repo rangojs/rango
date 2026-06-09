@@ -487,6 +487,50 @@ function miniTests(f: Fixture) {
     expect(names.some((n) => /widget/i.test(n))).toBe(false);
   });
 
+  // Prefetch warming (dev + production). /warm ships NONE of /widgets' client
+  // code and carries a render-strategy prefetch link to it. Decoding the
+  // prefetched RSC eagerly imports /widgets' client chunk, so it is warm before
+  // the click and the navigation loads no new JS for it. The /widget/-resource
+  // check works in both modes (prod "app-widgets-*.js", dev ".../widgets/..."
+  // module), exactly like the chunk-isolation tests above. Mirrors waku #2099.
+  test("clientChunks: prefetch warms the route's client chunk before the click", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const widgetJs = async () =>
+      (
+        await page.evaluate(() =>
+          performance.getEntriesByType("resource").map((e) => e.name),
+        )
+      ).filter((n) => /widget/i.test(n));
+
+    await page.goto(f.url("/warm"));
+    await waitForHydration(page);
+
+    // /warm renders none of /widgets — yet the render-strategy prefetch decodes
+    // /widgets eagerly, which imports its client chunk. Poll until that resource
+    // shows up: it loaded with NO click, NO render — that IS the warming.
+    await expect
+      .poll(async () => (await widgetJs()).length, { timeout: 10_000 })
+      .toBeGreaterThan(0);
+    // The chunk is warm but not yet rendered (we are still on /warm).
+    await expect(page.getByTestId("widget-a")).toHaveCount(0);
+    const warmed = new Set(await widgetJs());
+
+    // Navigate. The route renders and hydrates (interactive)...
+    await page.getByTestId("warm-to-widgets").click();
+    await expect(page.getByTestId("widget-a")).toBeVisible();
+    await page.getByTestId("widget-a-btn").click();
+    await expect(page.getByTestId("widget-a-btn")).toHaveText(
+      "widget-a count: 1",
+    );
+
+    // ...but loaded NO new /widgets JS on the click — the chunk was warm.
+    const afterClick = await widgetJs();
+    expect(afterClick.filter((n) => !warmed.has(n))).toEqual([]);
+  });
+
   // Multi-group CSS co-render (dev + production). /combined renders client
   // components from TWO route groups at once (app-widgets + app-charts). This is
   // the case the single-route tests above do NOT cover: two split stylesheets

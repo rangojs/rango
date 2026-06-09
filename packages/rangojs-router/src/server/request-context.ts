@@ -273,7 +273,9 @@ export interface RequestContext<
 
   /**
    * @internal Set to true when the matched entry tree contains any `loading()`
-   * entries (streaming). Used by rendered() to fail fast.
+   * entries (streaming). On a streaming tree rendered() waits for the streaming
+   * handlers to settle (via handleStore.settled) before resolving, and the
+   * deadlock guard state is kept live until that wait completes.
    */
   _treeHasStreaming?: boolean;
 
@@ -296,6 +298,18 @@ export interface RequestContext<
    * Avoids rebuilding the snapshot on every loader ctx.use(handle) call.
    */
   _renderBarrierHandleSnapshot?: HandleData;
+
+  /**
+   * @internal The deadlock guard window is closed (no further handler-awaits-
+   * loader cycle is possible). For non-streaming trees this is set when the
+   * barrier resolves. For streaming trees the window stays open until
+   * handleStore.settled — rendered() keeps waiting past the barrier and a
+   * loading() handler can still resume and await a still-waiting loader — so it
+   * is set only after settled. The guard (loader-resolution `setupLoaderAccess`)
+   * reads this instead of `_renderBarrierSegmentOrder` so it does not go blind
+   * during the streaming settle wait.
+   */
+  _renderBarrierGuardClosed?: boolean;
 
   /** @internal Per-request error dedup set for onError reporting */
   _reportedErrors: WeakSet<object>;
@@ -364,6 +378,7 @@ export type PublicRequestContext<
   | "_renderBarrierWaiters"
   | "_handlerLoaderDeps"
   | "_renderBarrierHandleSnapshot"
+  | "_renderBarrierGuardClosed"
   | "_reportBackgroundError"
   | "_debugPerformance"
   | "_metricsStore"
@@ -807,14 +822,37 @@ export function createRequestContext<TEnv>(
       .filter((s) => s.type !== "loader")
       .map((s) => s.id);
     ctx._renderBarrierSegmentOrder = segOrder;
-    // Build and cache handle snapshot so loader ctx.use(handle) calls
-    // don't rebuild it on every invocation.
-    ctx._renderBarrierHandleSnapshot = buildHandleSnapshot(
-      handleStore,
-      segOrder,
-    );
-    ctx._renderBarrierWaiters = undefined;
-    ctx._handlerLoaderDeps = undefined;
+
+    // Closing the guard window means no handler can still form a deadlock cycle
+    // with a rendered() loader: drop the dependency-tracking state and mark it
+    // closed. WHEN this runs is the only streaming/non-streaming difference.
+    const closeGuard = () => {
+      ctx._renderBarrierWaiters = undefined;
+      ctx._handlerLoaderDeps = undefined;
+      ctx._renderBarrierGuardClosed = true;
+    };
+
+    if (ctx._treeHasStreaming) {
+      // Streaming: rendered() keeps waiting on handleStore.settled past this
+      // point, and loading() handlers are still in flight. The eager snapshot
+      // here would be incomplete, so leave it unset — rendered() builds and
+      // caches the complete one after settled. Keep the guard window OPEN so a
+      // handler that resumes and awaits a still-waiting rendered() loader is
+      // still caught; close it once settled (every tracked handler has finished
+      // then, so none can await a loader anymore). settled resolves after
+      // rendered() seals; if no loader used rendered(), nothing seals and the
+      // (empty) guard state is simply GC'd at request end.
+      handleStore.settled.then(closeGuard);
+    } else {
+      // Non-streaming: all handlers have settled by now. Build and cache the
+      // snapshot so loader ctx.use(handle) calls don't rebuild it, and close the
+      // guard window immediately.
+      ctx._renderBarrierHandleSnapshot = buildHandleSnapshot(
+        handleStore,
+        segOrder,
+      );
+      closeGuard();
+    }
     if (resolveBarrier) resolveBarrier();
   };
   Object.defineProperty(ctx, "_renderBarrier", {

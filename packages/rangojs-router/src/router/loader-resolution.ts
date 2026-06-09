@@ -27,6 +27,8 @@ import { _getRequestContext } from "../server/request-context.js";
 import {
   isInsideLoaderScope,
   runInsideLoaderBodyScope,
+  isInsidePushCallbackScope,
+  runInsidePushCallbackScope,
 } from "../server/context.js";
 import { debugLog } from "./logging.js";
 
@@ -290,6 +292,12 @@ function createLoaderExecutor<TEnv>(
             );
           }
           const segmentOrder = reqCtx._renderBarrierSegmentOrder ?? [];
+          // The complete snapshot is cached at barrier resolution for
+          // non-streaming trees, and by rendered() after handleStore.settled for
+          // streaming trees (where the eager snapshot would have been incomplete
+          // because loading() handlers were still in flight). Either way it is
+          // present by the time a loader reads a handle; the fresh build is only
+          // a defensive fallback.
           const snapshot =
             reqCtx._renderBarrierHandleSnapshot ??
             buildHandleSnapshot(reqCtx._handleStore, segmentOrder);
@@ -311,15 +319,7 @@ function createLoaderExecutor<TEnv>(
           );
         }
 
-        // Guard: reject streaming trees
         const reqCtx = reqCtxRef ?? _getRequestContext();
-        if (reqCtx?._treeHasStreaming) {
-          throw new Error(
-            `ctx.rendered() is not supported when the matched route tree uses loading(). ` +
-              `Streaming handlers may not have settled when rendered() resolves. ` +
-              `Remove loading() from the route tree or restructure to avoid rendered().`,
-          );
-        }
 
         if (renderedPromise) return renderedPromise;
 
@@ -330,7 +330,10 @@ function createLoaderExecutor<TEnv>(
         }
 
         // Bidirectional deadlock check: if a handler already started
-        // awaiting this loader, calling rendered() would deadlock.
+        // awaiting this loader, calling rendered() would deadlock. This is the
+        // real cycle guard (it holds for both streaming and non-streaming): the
+        // handler blocks segment resolution, which blocks the barrier, which
+        // blocks this loader.
         if (reqCtx._handlerLoaderDeps?.has(currentLoaderId)) {
           throw new Error(
             `Deadlock: loader "${currentLoaderId}" called ctx.rendered() but a handler ` +
@@ -348,7 +351,29 @@ function createLoaderExecutor<TEnv>(
         }
         reqCtx._renderBarrierWaiters.add(currentLoaderId);
 
-        renderedPromise = reqCtx._renderBarrier.then(() => {
+        // Streaming trees (loading()): the barrier resolves once the segment
+        // tree is resolved, but loading() handlers stream behind Suspense and
+        // their handle pushes are still in flight then. Their async execution
+        // IS tracked in the handle store (trackHandler -> store.track), so after
+        // the barrier we seal (no further handlers register once the tree is
+        // resolved) and wait for settled — every tracked handler, streaming
+        // included, has finished pushing. The loader's own segment streams in
+        // after, so this does not block the shell; the deadlock guard above
+        // keeps a handler from depending on this loader.
+        const streaming = reqCtx._treeHasStreaming === true;
+        renderedPromise = reqCtx._renderBarrier.then(async () => {
+          if (streaming) {
+            reqCtx._handleStore.seal();
+            await reqCtx._handleStore.settled;
+            // The eager snapshot was intentionally left unbuilt for streaming
+            // (it would have been incomplete). Build the complete one once, now
+            // that the store has settled, so every ctx.use(handle) reads the
+            // cached snapshot instead of rebuilding it per call.
+            reqCtx._renderBarrierHandleSnapshot ??= buildHandleSnapshot(
+              reqCtx._handleStore,
+              reqCtx._renderBarrierSegmentOrder ?? [],
+            );
+          }
           renderedResolved = true;
         });
         return renderedPromise;
@@ -404,12 +429,6 @@ export function setupLoaderAccess<TEnv>(
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
 
-  // Track whether we're inside a handle push callback. Loaders started
-  // from push callbacks (e.g. push(async () => ctx.use(Loader))) do NOT
-  // block segment resolution, so they must not be registered as handler
-  // dependencies for deadlock detection.
-  let insideHandlePush = false;
-
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
       const handle = item;
@@ -430,15 +449,17 @@ export function setupLoaderAccess<TEnv>(
         if (!store) return;
 
         if (typeof dataOrFn === "function") {
-          // Mark scope so ctx.use(loader) calls inside the callback
-          // are not registered as handler-to-loader deps.
-          insideHandlePush = true;
-          try {
-            const result = (dataOrFn as () => Promise<unknown>)();
-            store.push(handle.$$id, segmentId, result);
-          } finally {
-            insideHandlePush = false;
-          }
+          // Run the callback inside the push-callback scope so ctx.use(loader)
+          // calls it makes — including after its own awaits, for an async
+          // callback — are not registered as handler-to-loader deps and do not
+          // trip the deadlock guard. A pushed promise value is not tracked by
+          // handleStore.settled and does not block segment resolution, so it
+          // cannot form a rendered() deadlock. The ALS scope (not a plain
+          // boolean) is what survives the callback's awaits.
+          const result = runInsidePushCallbackScope(() =>
+            (dataOrFn as () => Promise<unknown>)(),
+          );
+          store.push(handle.$$id, segmentId, result);
           return;
         }
 
@@ -450,9 +471,12 @@ export function setupLoaderAccess<TEnv>(
     // Skip when inside a DSL loader scope (resolveLoaderData also calls
     // ctx.use() but that's DSL-to-DSL, not handler-to-loader) or when
     // inside a handle push callback (push callbacks don't block segment
-    // resolution so they can't cause rendered() deadlocks).
+    // resolution so they can't cause rendered() deadlocks). The push-callback
+    // check is an ALS scope so it also exempts an ASYNC callback's continuation
+    // after its first await — relevant on streaming trees, where the guard
+    // state now stays live until handleStore.settled.
     const loader = item as LoaderDefinition<any, any>;
-    if (!isInsideLoaderScope() && !insideHandlePush) {
+    if (!isInsideLoaderScope() && !isInsidePushCallbackScope()) {
       const reqCtx = reqCtxRef ?? _getRequestContext();
       if (reqCtx) {
         // Direction 1: handler awaits loader that already called rendered()
@@ -466,13 +490,18 @@ export function setupLoaderAccess<TEnv>(
               `Move the data dependency to a loader-to-loader pattern instead.`,
           );
         }
-        // Direction 2: track dep so rendered() can detect the deadlock
-        // if the loader calls it later. Skip when the barrier has already
-        // resolved — no deadlock is possible (rendered() resolves immediately).
-        // _renderBarrierSegmentOrder is undefined before resolution, string[]
-        // after. This also prevents false positives from handle push callbacks
-        // that resume after their first await (post-barrier-resolution).
-        if (reqCtx._renderBarrierSegmentOrder === undefined) {
+        // Direction 2: track dep so rendered() can detect the deadlock if the
+        // loader calls it later. Skip once the guard window is CLOSED — for a
+        // non-streaming tree that is when the barrier resolves (rendered()
+        // resolves immediately), and for a streaming tree it is when
+        // handleStore.settled completes (rendered() keeps waiting until then, so
+        // a loading() handler resuming after the barrier can still form a
+        // cycle). Using the explicit guard-closed flag rather than
+        // _renderBarrierSegmentOrder keeps tracking live across the streaming
+        // settle wait. (Handle push callbacks are already excluded above via
+        // isInsidePushCallbackScope(), so they cannot produce false positives
+        // here.)
+        if (!reqCtx._renderBarrierGuardClosed) {
           if (!reqCtx._handlerLoaderDeps) reqCtx._handlerLoaderDeps = new Set();
           reqCtx._handlerLoaderDeps.add(loader.$$id);
         }

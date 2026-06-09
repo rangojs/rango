@@ -189,30 +189,129 @@ function renderedBarrierTests(mode: "dev" | "build") {
       );
     });
 
-    test("streaming tree: rendered() rejects with loading()", async ({
+    test("streaming tree: rendered() waits for the loading() handler, then reads its data", async ({
       page,
     }) => {
-      // rendered() throws inside the loader because the route has loading().
-      // The error propagates through RSC and surfaces as either a page error
-      // (pageerror event) or visible error UI (React error boundary / Vite
-      // overlay). We assert BOTH that prices did not render AND that an error
-      // signal was observed — ruling out a silent hang/deadlock.
+      using _ = expectNoPageError(page);
+      // The handler is behind loading() and pushes gadget-x/gadget-y only after
+      // an await (during the streaming phase, past the render barrier). Before
+      // the fix, rendered() threw here. Now it waits for the streaming handler
+      // to settle, so the loader reads the pushed IDs and resolves their prices.
+      await page.goto(f.url("/rendered-barrier/streaming"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "rendered-streaming-title")).toHaveText(
+        "Streaming Products",
+      );
+
+      // Prices loaded — proves the loader saw the handle data pushed during
+      // streaming (an empty/early barrier would yield a count of 0).
+      await expect(testId(page, "rendered-streaming-price-count")).toHaveText(
+        "2",
+      );
+      await expect(
+        testId(page, "rendered-streaming-price-gadget-x"),
+      ).toContainText("$49.99");
+      await expect(
+        testId(page, "rendered-streaming-price-gadget-y"),
+      ).toContainText("$99.99");
+    });
+
+    test("streaming + cache hit: rendered() reads replayed handle data on the cached path", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // A loading() handler under cache(): the streamed handle push must be
+      // captured into the cache on the miss and replayed on the hit, so the live
+      // loader's rendered() reads it on the cache-hit path (not the empty live
+      // store). First visit populates the cache.
+      await page.goto(f.url("/rendered-barrier/streaming-cached"));
+      await waitForHydration(page);
+      await expect(testId(page, "rendered-streaming-cached-title")).toHaveText(
+        "Streaming Cached",
+      );
+      const ts1 = await testId(
+        page,
+        "rendered-streaming-cached-ts",
+      ).textContent();
+      await expect(
+        testId(page, "rendered-streaming-cached-price-count"),
+      ).toHaveText("2");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-a"),
+      ).toContainText("$9.99");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-b"),
+      ).toContainText("$19.99");
+
+      await page.waitForTimeout(50);
+
+      // Second visit — cache HIT: handler (and its streamed handle data) replayed
+      // from cache. The handler ts is unchanged; the live loader re-runs and its
+      // rendered() reads the replayed handle data on the cache-hit path.
+      await page.goto(f.url("/rendered-barrier/streaming-cached"));
+      await waitForHydration(page);
+      const ts2 = await testId(
+        page,
+        "rendered-streaming-cached-ts",
+      ).textContent();
+      expect(ts1).toBe(ts2);
+      await expect(
+        testId(page, "rendered-streaming-cached-price-count"),
+      ).toHaveText("2");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-a"),
+      ).toContainText("$9.99");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-b"),
+      ).toContainText("$19.99");
+    });
+
+    test("streaming + prerender replay: rendered() reads replayed handle data", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // A loading() handler that is build-time prerendered. At runtime the
+      // handler output and its streamed handle data are replayed; the live
+      // loader's rendered() must read the replayed data on the prerender path.
+      await page.goto(f.url("/rendered-barrier/streaming-prerender"));
+      await waitForHydration(page);
+      await expect(
+        testId(page, "rendered-streaming-prerender-title"),
+      ).toHaveText("Streaming Prerender");
+      await expect(
+        testId(page, "rendered-streaming-prerender-price-count"),
+      ).toHaveText("2");
+      await expect(
+        testId(page, "rendered-streaming-prerender-price-widget-a"),
+      ).toContainText("$9.99");
+      await expect(
+        testId(page, "rendered-streaming-prerender-price-widget-c"),
+      ).toContainText("$29.99");
+    });
+
+    test("streaming deadlock: handler awaiting a rendered() loader errors, does not hang", async ({
+      page,
+    }) => {
+      // A loading() handler awaits a loader that calls rendered() — a cycle.
+      // The deadlock guard must surface an error rather than hang, even though
+      // rendered() keeps waiting on handleStore.settled AFTER the barrier
+      // resolves. We assert the success title did NOT render and that an error
+      // signal is present; a regression that reopened the deadlock would instead
+      // time this test out.
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
 
       const response = await page.goto(
-        f.url("/rendered-barrier/streaming-rejected"),
+        f.url("/rendered-barrier/streaming-deadlock"),
       );
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(2000);
 
-      // Prices must NOT have rendered
-      const pricesVisible = await testId(page, "rendered-streaming-prices")
+      const titleVisible = await testId(page, "rendered-deadlock-title")
         .isVisible()
         .catch(() => false);
-      expect(pricesVisible).toBe(false);
+      expect(titleVisible).toBe(false);
 
-      // At least one error signal must be present: page error event,
-      // non-200 response, or visible error text in the DOM.
       const hasPageError = errors.length > 0;
       const hasErrorStatus = response !== null && response.status() >= 400;
       const hasErrorText = await page
@@ -220,12 +319,11 @@ function renderedBarrierTests(mode: "dev" | "build") {
         .first()
         .isVisible({ timeout: 1000 })
         .catch(() => false);
-
       expect(
         hasPageError || hasErrorStatus || hasErrorText,
-        `Expected an error signal from rendered() rejection, but got none. ` +
-          `Page errors: ${errors.length}, status: ${response?.status()}, ` +
-          `error text visible: ${hasErrorText}`,
+        `Expected a deadlock error signal, got none. ` +
+          `pageErrors=${errors.length}, status=${response?.status()}, ` +
+          `errorText=${hasErrorText}`,
       ).toBe(true);
     });
   });

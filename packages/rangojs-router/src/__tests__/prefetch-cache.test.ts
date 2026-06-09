@@ -25,7 +25,21 @@ import {
   markPrefetchInflight,
   setInflightPromise,
   storePrefetch,
+  type DecodedPrefetch,
 } from "../browser/prefetch/cache";
+import type { RscPayload } from "../browser/types";
+
+/**
+ * The cache stores eagerly-decoded prefetch entries (payload + streamComplete
+ * + scope), not raw Responses. These helpers stand in for a real decode.
+ */
+function makeEntry(scope: "source" | "wildcard" = "wildcard"): DecodedPrefetch {
+  return {
+    payload: Promise.resolve({} as RscPayload),
+    streamComplete: Promise.resolve(),
+    scope,
+  };
+}
 
 describe("prefetch cache", () => {
   beforeEach(() => {
@@ -60,24 +74,23 @@ describe("prefetch cache", () => {
     expect(hasPrefetch("/products")).toBe(false);
   });
 
-  it("tracks stored responses and reports them via hasPrefetch", () => {
+  it("tracks stored entries and reports them via hasPrefetch", () => {
     const key = "http://localhost/\0/products";
     expect(hasPrefetch(key)).toBe(false);
 
     const gen = currentGeneration();
-    const response = new Response("test body");
-    storePrefetch(key, response, gen);
+    storePrefetch(key, makeEntry(), gen);
     expect(hasPrefetch(key)).toBe(true);
   });
 
-  it("consumePrefetch returns response and deletes entry", () => {
+  it("consumePrefetch returns the decoded entry and deletes it", () => {
     const key = "http://localhost/\0/products";
     const gen = currentGeneration();
-    const response = new Response("test body");
-    storePrefetch(key, response, gen);
+    const entry = makeEntry();
+    storePrefetch(key, entry, gen);
 
     const consumed = consumePrefetch(key);
-    expect(consumed).toBe(response);
+    expect(consumed).toBe(entry);
     expect(hasPrefetch(key)).toBe(false);
 
     // Second consume returns null
@@ -87,8 +100,7 @@ describe("prefetch cache", () => {
   it("consumePrefetch returns null for expired entries", () => {
     const key = "http://localhost/\0/products";
     const gen = currentGeneration();
-    const response = new Response("test body");
-    storePrefetch(key, response, gen);
+    storePrefetch(key, makeEntry(), gen);
 
     // Fast-forward past TTL (5 minutes)
     vi.useFakeTimers();
@@ -104,11 +116,7 @@ describe("prefetch cache", () => {
     const staleGeneration = currentGeneration();
 
     clearPrefetchCache();
-    storePrefetch(
-      "http://localhost/\0/stale",
-      new Response("body"),
-      staleGeneration,
-    );
+    storePrefetch("http://localhost/\0/stale", makeEntry(), staleGeneration);
 
     expect(hasPrefetch("http://localhost/\0/stale")).toBe(false);
     expect(consumePrefetch("http://localhost/\0/stale")).toBe(null);
@@ -117,7 +125,7 @@ describe("prefetch cache", () => {
   it("clears state, bumps generation, and triggers invalidation side effects", () => {
     const before = currentGeneration();
     markPrefetchInflight("/a");
-    storePrefetch("http://localhost/\0/b", new Response("body"), before);
+    storePrefetch("http://localhost/\0/b", makeEntry(), before);
 
     clearPrefetchCache();
 
@@ -133,22 +141,28 @@ describe("prefetch cache", () => {
 
     // Fill cache to capacity (50)
     for (let i = 0; i < 50; i++) {
-      storePrefetch(`key-${i}`, new Response(`body-${i}`), gen);
+      storePrefetch(`key-${i}`, makeEntry(), gen);
     }
 
     // Adding one more should evict the oldest (key-0)
-    storePrefetch("key-50", new Response("body-50"), gen);
+    storePrefetch("key-50", makeEntry(), gen);
 
     expect(hasPrefetch("key-0")).toBe(false);
     expect(hasPrefetch("key-50")).toBe(true);
     expect(hasPrefetch("key-1")).toBe(true);
   });
 
+  it("preserves the scope tag through store/consume", () => {
+    const gen = currentGeneration();
+    storePrefetch("http://localhost/\0/modal", makeEntry("source"), gen);
+    expect(consumePrefetch("http://localhost/\0/modal")?.scope).toBe("source");
+  });
+
   describe("inflight promise tracking", () => {
     it("consumeInflightPrefetch returns stored promise and removes it", async () => {
       const key = "http://localhost/\0/products";
-      const response = new Response("prefetched");
-      const promise = Promise.resolve(response);
+      const entry = makeEntry();
+      const promise = Promise.resolve(entry);
 
       markPrefetchInflight(key);
       setInflightPromise(key, promise);
@@ -167,7 +181,7 @@ describe("prefetch cache", () => {
 
       // Promise still resolves correctly
       const result = await consumed;
-      expect(result).toBe(response);
+      expect(result).toBe(entry);
     });
 
     it("consumeInflightPrefetch returns null when nothing is in-flight", () => {
@@ -189,7 +203,7 @@ describe("prefetch cache", () => {
     it("clearPrefetchCache clears inflight promises", () => {
       const key = "/test";
       markPrefetchInflight(key);
-      setInflightPromise(key, Promise.resolve(new Response("body")));
+      setInflightPromise(key, Promise.resolve(makeEntry()));
 
       clearPrefetchCache();
 
