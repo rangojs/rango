@@ -27,6 +27,8 @@ import { _getRequestContext } from "../server/request-context.js";
 import {
   isInsideLoaderScope,
   runInsideLoaderBodyScope,
+  isInsidePushCallbackScope,
+  runInsidePushCallbackScope,
 } from "../server/context.js";
 import { debugLog } from "./logging.js";
 
@@ -418,12 +420,6 @@ export function setupLoaderAccess<TEnv>(
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
 
-  // Track whether we're inside a handle push callback. Loaders started
-  // from push callbacks (e.g. push(async () => ctx.use(Loader))) do NOT
-  // block segment resolution, so they must not be registered as handler
-  // dependencies for deadlock detection.
-  let insideHandlePush = false;
-
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
       const handle = item;
@@ -444,15 +440,17 @@ export function setupLoaderAccess<TEnv>(
         if (!store) return;
 
         if (typeof dataOrFn === "function") {
-          // Mark scope so ctx.use(loader) calls inside the callback
-          // are not registered as handler-to-loader deps.
-          insideHandlePush = true;
-          try {
-            const result = (dataOrFn as () => Promise<unknown>)();
-            store.push(handle.$$id, segmentId, result);
-          } finally {
-            insideHandlePush = false;
-          }
+          // Run the callback inside the push-callback scope so ctx.use(loader)
+          // calls it makes — including after its own awaits, for an async
+          // callback — are not registered as handler-to-loader deps and do not
+          // trip the deadlock guard. A pushed promise value is not tracked by
+          // handleStore.settled and does not block segment resolution, so it
+          // cannot form a rendered() deadlock. The ALS scope (not a plain
+          // boolean) is what survives the callback's awaits.
+          const result = runInsidePushCallbackScope(() =>
+            (dataOrFn as () => Promise<unknown>)(),
+          );
+          store.push(handle.$$id, segmentId, result);
           return;
         }
 
@@ -464,9 +462,12 @@ export function setupLoaderAccess<TEnv>(
     // Skip when inside a DSL loader scope (resolveLoaderData also calls
     // ctx.use() but that's DSL-to-DSL, not handler-to-loader) or when
     // inside a handle push callback (push callbacks don't block segment
-    // resolution so they can't cause rendered() deadlocks).
+    // resolution so they can't cause rendered() deadlocks). The push-callback
+    // check is an ALS scope so it also exempts an ASYNC callback's continuation
+    // after its first await — relevant on streaming trees, where the guard
+    // state now stays live until handleStore.settled.
     const loader = item as LoaderDefinition<any, any>;
-    if (!isInsideLoaderScope() && !insideHandlePush) {
+    if (!isInsideLoaderScope() && !isInsidePushCallbackScope()) {
       const reqCtx = reqCtxRef ?? _getRequestContext();
       if (reqCtx) {
         // Direction 1: handler awaits loader that already called rendered()

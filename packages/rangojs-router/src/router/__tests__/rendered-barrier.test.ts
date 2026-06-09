@@ -6,17 +6,30 @@ let mockInsideLoaderScope = false;
 // Track mock request context
 let mockRequestContext: any = null;
 
-vi.mock("../../server/context", () => ({
-  track: () => () => {},
-  isInsideLoaderScope: () => mockInsideLoaderScope,
-  runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
-}));
+// isInsideLoaderScope is mocked (controlled per test), but the push-callback
+// scope uses the REAL AsyncLocalStorage implementation so the "scope survives
+// the callback's await" behavior is exercised faithfully.
+vi.mock("../../server/context", async (importActual) => {
+  const actual = await importActual<typeof import("../../server/context")>();
+  return {
+    track: () => () => {},
+    isInsideLoaderScope: () => mockInsideLoaderScope,
+    runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+    isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
+    runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
+  };
+});
 
-vi.mock("../../server/context.js", () => ({
-  track: () => () => {},
-  isInsideLoaderScope: () => mockInsideLoaderScope,
-  runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
-}));
+vi.mock("../../server/context.js", async (importActual) => {
+  const actual = await importActual<typeof import("../../server/context.js")>();
+  return {
+    track: () => () => {},
+    isInsideLoaderScope: () => mockInsideLoaderScope,
+    runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+    isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
+    runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
+  };
+});
 
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => mockRequestContext,
@@ -722,6 +735,74 @@ describe("rendered barrier", () => {
       const result = await loaderPromise;
       expect(loaderRenderedCalled).toBe(true);
       expect(result).toContainEqual("product-z");
+    });
+
+    it("does NOT false-deadlock from an async push callback DURING the streaming settle wait", async () => {
+      // Streaming counterpart of the test above. On a streaming tree the guard
+      // window stays open until handleStore.settled (not just until the
+      // barrier), so a push callback that resumes after its await runs while
+      // _renderBarrierWaiters is still live. Its ctx.use(loader) must still be
+      // exempt: a pushed promise value is not tracked by settled and cannot
+      // block resolution. Without the push-callback ALS scope this throws a
+      // false "Deadlock".
+      mockRequestContext = createMockRequestContext({ treeHasStreaming: true });
+      const ctx = createMockContext();
+      (ctx as any)._currentSegmentId = "root.layout";
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const Products = createHandle<string>(
+        undefined,
+        "test#StreamPushProducts",
+      );
+
+      const loader = createLoader("streamPushLoader", async (loaderCtx) => {
+        await loaderCtx.rendered();
+        return loaderCtx.use(Products);
+      });
+
+      const handleStore = mockRequestContext._handleStore;
+
+      // A streaming handler still in flight keeps settled pending, so the guard
+      // window stays OPEN (waiters live) while the push callback resumes.
+      let releaseHandler!: () => void;
+      handleStore.track(
+        new Promise<void>((r) => {
+          releaseHandler = r;
+        }),
+      );
+
+      mockInsideLoaderScope = true;
+      setupLoaderAccess(ctx, loaderPromises);
+      const loaderPromise = ctx.use(loader);
+      await Promise.resolve();
+
+      // Handler pushes an async callback that awaits, THEN — during the open
+      // settle window — calls ctx.use(loader). Capture any error it throws.
+      mockInsideLoaderScope = false;
+      const push = ctx.use(Products);
+      let callbackError: Error | undefined;
+      push(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        try {
+          const data = await ctx.use(loader);
+          return "derived-" + data;
+        } catch (e) {
+          callbackError = e as Error;
+          throw e;
+        }
+      });
+
+      handleStore.push("test#StreamPushProducts", "root.layout", "product-q");
+      mockRequestContext._resolveRenderBarrier(["root.layout"]);
+
+      // Let the push callback resume (its 5ms await) while the window is open,
+      // then release the streaming handler so settled resolves and L finishes.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      releaseHandler();
+
+      const result = await loaderPromise;
+      expect(callbackError).toBeUndefined();
+      expect(result).toContainEqual("product-q");
     });
 
     it("does NOT throw when DSL resolves a rendered() loader from another segment", async () => {
