@@ -166,6 +166,54 @@ async function StreamingPage(ctx: any) {
   );
 }
 
+// ─── Streaming + cache: a loading() handler wrapped in cache(). The first
+//     request renders fresh (streaming); the second is a cache HIT where the
+//     handler output AND its streamed handle data are replayed. The loader
+//     stays live and calls rendered() on the cache-hit path — it must read the
+//     replayed handle data, not the (incomplete) live store. ─────────────────
+
+async function StreamingCachedPage(ctx: any) {
+  const push = ctx.use(RenderedProducts);
+  // Defer the push past the barrier (streaming), then it is captured into the
+  // cache on the miss and replayed on the hit.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  push("widget-a");
+  push("widget-b");
+  return (
+    <div data-testid="rendered-streaming-cached-page">
+      <h1 data-testid="rendered-streaming-cached-title">Streaming Cached</h1>
+      <span data-testid="rendered-streaming-cached-ts">{Date.now()}</span>
+      <PriceDisplay
+        loader={LivePricesLoader}
+        testId="rendered-streaming-cached"
+      />
+    </div>
+  );
+}
+
+// ─── Streaming + prerender: a loading() handler that is build-time
+//     prerendered. At runtime the handler output and streamed handle data are
+//     replayed from build artifacts; the live loader calls rendered() on the
+//     prerender-replay path and must read the replayed handle data. ──────────
+
+export const StreamingPrerenderPage = Prerender(async (ctx) => {
+  const push = ctx.use(RenderedProducts);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  push("widget-a");
+  push("widget-c");
+  return (
+    <div data-testid="rendered-streaming-prerender-page">
+      <h1 data-testid="rendered-streaming-prerender-title">
+        Streaming Prerender
+      </h1>
+      <PriceDisplay
+        loader={LivePricesLoader}
+        testId="rendered-streaming-prerender"
+      />
+    </div>
+  );
+});
+
 // ─── Streaming deadlock route: a handler awaits a loader that calls
 //     rendered() — a cycle. The guard must turn this into an error, not a
 //     hang. Regression for the window AFTER the barrier resolves but while
@@ -205,6 +253,22 @@ export const renderedBarrierPatterns = urls(
         path("/cached", CachedPage, { name: "cached" }, () => [
           loader(LivePricesLoader),
         ]),
+
+        // Streaming + cache hit: loading() handler under cache(). rendered()
+        // reads the replayed handle data on the cache-hit path.
+        path(
+          "/streaming-cached",
+          StreamingCachedPage,
+          { name: "streamingCached" },
+          () => [
+            loading(
+              <div data-testid="rendered-streaming-cached-loading">
+                Loading...
+              </div>,
+            ),
+            loader(LivePricesLoader),
+          ],
+        ),
       ]),
 
       // "use cache" handler
@@ -216,6 +280,22 @@ export const renderedBarrierPatterns = urls(
       path("/prerender", PrerenderProductsPage, { name: "prerender" }, () => [
         loader(LivePricesLoader),
       ]),
+
+      // Streaming + prerender replay: loading() handler that is prerendered.
+      // rendered() reads the replayed handle data on the prerender path.
+      path(
+        "/streaming-prerender",
+        StreamingPrerenderPage,
+        { name: "streamingPrerender" },
+        () => [
+          loading(
+            <div data-testid="rendered-streaming-prerender-loading">
+              Loading...
+            </div>,
+          ),
+          loader(LivePricesLoader),
+        ],
+      ),
 
       // Layout + route accumulation: AccumulateLayout pushes widget-a,
       // AccumulatePage pushes widget-b + widget-c. Loader sees all three.

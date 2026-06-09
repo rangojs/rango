@@ -217,6 +217,79 @@ function renderedBarrierTests(mode: "dev" | "build") {
       ).toContainText("$99.99");
     });
 
+    test("streaming + cache hit: rendered() reads replayed handle data on the cached path", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // A loading() handler under cache(): the streamed handle push must be
+      // captured into the cache on the miss and replayed on the hit, so the live
+      // loader's rendered() reads it on the cache-hit path (not the empty live
+      // store). First visit populates the cache.
+      await page.goto(f.url("/rendered-barrier/streaming-cached"));
+      await waitForHydration(page);
+      await expect(testId(page, "rendered-streaming-cached-title")).toHaveText(
+        "Streaming Cached",
+      );
+      const ts1 = await testId(
+        page,
+        "rendered-streaming-cached-ts",
+      ).textContent();
+      await expect(
+        testId(page, "rendered-streaming-cached-price-count"),
+      ).toHaveText("2");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-a"),
+      ).toContainText("$9.99");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-b"),
+      ).toContainText("$19.99");
+
+      await page.waitForTimeout(50);
+
+      // Second visit — cache HIT: handler (and its streamed handle data) replayed
+      // from cache. The handler ts is unchanged; the live loader re-runs and its
+      // rendered() reads the replayed handle data on the cache-hit path.
+      await page.goto(f.url("/rendered-barrier/streaming-cached"));
+      await waitForHydration(page);
+      const ts2 = await testId(
+        page,
+        "rendered-streaming-cached-ts",
+      ).textContent();
+      expect(ts1).toBe(ts2);
+      await expect(
+        testId(page, "rendered-streaming-cached-price-count"),
+      ).toHaveText("2");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-a"),
+      ).toContainText("$9.99");
+      await expect(
+        testId(page, "rendered-streaming-cached-price-widget-b"),
+      ).toContainText("$19.99");
+    });
+
+    test("streaming + prerender replay: rendered() reads replayed handle data", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // A loading() handler that is build-time prerendered. At runtime the
+      // handler output and its streamed handle data are replayed; the live
+      // loader's rendered() must read the replayed data on the prerender path.
+      await page.goto(f.url("/rendered-barrier/streaming-prerender"));
+      await waitForHydration(page);
+      await expect(
+        testId(page, "rendered-streaming-prerender-title"),
+      ).toHaveText("Streaming Prerender");
+      await expect(
+        testId(page, "rendered-streaming-prerender-price-count"),
+      ).toHaveText("2");
+      await expect(
+        testId(page, "rendered-streaming-prerender-price-widget-a"),
+      ).toContainText("$9.99");
+      await expect(
+        testId(page, "rendered-streaming-prerender-price-widget-c"),
+      ).toContainText("$29.99");
+    });
+
     test("streaming deadlock: handler awaiting a rendered() loader errors, does not hang", async ({
       page,
     }) => {
