@@ -433,12 +433,6 @@ export interface NavigationStore {
   markCacheAsStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
-  /**
-   * Clear this tab's nav + prefetch caches without broadcasting or rotating
-   * shared state. Intended for app-switch transitions that affect only this
-   * tab's session.
-   */
-  clearHistoryCacheLocal(): void;
   broadcastCacheInvalidation(): void;
 
   // Cross-tab refresh callback (set by navigation bridge)
@@ -556,13 +550,6 @@ export interface NavigationBridge {
   getVersion(): string | undefined;
   /** Update the RSC version (e.g. after HMR). Clears prefetch cache. */
   updateVersion(newVersion: string): void;
-  /**
-   * Replace the active app-shell snapshot (rootLayout, basename, version)
-   * atomically. Used on cross-app navigations when the response's routerId
-   * indicates the user entered a different app. Theme, warmup, and prefetch
-   * TTL are document-lifetime and not part of the shell.
-   */
-  updateAppShell(next: import("./app-shell.js").AppShell): void;
 }
 
 /**

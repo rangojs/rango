@@ -213,11 +213,11 @@ export async function initBrowserApp(
   // Create composable utilities
   const client = createNavigationClient(deps);
 
-  // Capture the per-router app-shell so cross-app navigations can replace
-  // it atomically. rootLayout, basename, and version live here and are
-  // read through the ref at call time rather than closed over. Theme,
-  // warmup, and prefetch TTL are deliberately excluded — they are
-  // document-lifetime and stay stable across smooth cross-app transitions.
+  // Capture the per-router app-shell. rootLayout, basename, and version live
+  // here and are read through the ref at call time rather than closed over.
+  // It is set once from the initial payload and not swapped within a session:
+  // a cross-app navigation is a full document load (X-RSC-Reload), so the
+  // target app establishes its own shell on load.
   const version = initialPayload.metadata?.version;
   const appShellRef = createAppShellRef({
     routerId: initialPayload.metadata?.routerId,
@@ -285,7 +285,6 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version: version,
-    appShellRef,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)

@@ -184,6 +184,8 @@ export async function executeServerAction<TEnv>(
       const payload: RscPayload = {
         metadata: {
           pathname: url.pathname,
+          // routerId exposed for the frontend (current app identity); see
+          // rsc-rendering.ts partial branch.
           routerId: ctx.router.id,
           segments: errorResult.segments,
           isPartial: true,
@@ -296,6 +298,8 @@ export async function revalidateAfterAction<TEnv>(
   const payload: RscPayload = {
     metadata: {
       pathname: url.pathname,
+      // routerId exposed for the frontend (current app identity); see
+      // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
       segments: matchResult.segments,
       isPartial: true,

@@ -61,13 +61,6 @@ export interface PartialUpdateConfig {
   ) => Promise<ReactNode> | ReactNode;
   /** RSC version getter — returns the current version (may change after HMR) */
   getVersion?: () => string | undefined;
-  /**
-   * Replace the active app-shell when a cross-app navigation is detected.
-   * Called before the full-update tree replacement renders, so the new
-   * payload's rootLayout, basename, and version are picked up. Theme,
-   * warmup, and prefetch TTL are not part of the shell — see AppShell.
-   */
-  applyAppShell?: (next: import("./app-shell.js").AppShell) => void;
 }
 
 /**
@@ -137,7 +130,6 @@ export function createPartialUpdater(
     onUpdate,
     renderSegments,
     getVersion = () => undefined,
-    applyAppShell,
   } = config;
 
   /**
@@ -244,34 +236,6 @@ export function createPartialUpdater(
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
     });
-
-    // App switch (the navigation crossed into a different router, e.g. a host
-    // router path mount). In normal operation this branch does NOT run: the
-    // server returns X-RSC-Reload for a cross-app SPA request, so the client
-    // does a full document navigation (see request-classification.ts, mode
-    // "app-switch") — precisely because a soft swap cannot faithfully
-    // re-establish the target app's document (stylesheets dropped by React's
-    // by-href dedup, and theme/warmup/prefetch-TTL are document-lifetime; see
-    // browser/app-shell.ts). This is retained as a defensive fallback (if a
-    // cross-app payload ever reached the client without a reload, swap the app
-    // shell so at least the tree/router-config track the target). The
-    // soft-switch machinery here is dead and slated for removal.
-    if (payload.metadata?.routerId) {
-      const prevRouterId = store.getRouterId?.();
-      if (prevRouterId && prevRouterId !== payload.metadata.routerId) {
-        debugLog(
-          `[Browser] App switch detected (${prevRouterId} → ${payload.metadata.routerId}), forcing full update`,
-        );
-        payload.metadata.isPartial = false;
-        applyAppShell?.({
-          routerId: payload.metadata.routerId,
-          rootLayout: payload.metadata.rootLayout,
-          basename: payload.metadata.basename,
-          version: payload.metadata.version,
-        });
-      }
-      store.setRouterId?.(payload.metadata.routerId);
-    }
 
     // Handle server-side redirect with state
     if (payload.metadata?.redirect) {

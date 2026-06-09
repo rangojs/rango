@@ -83,6 +83,11 @@ export async function handleRscRendering<TEnv>(
       payload = {
         metadata: {
           pathname: url.pathname,
+          // routerId is serialized on every payload (including within-session
+          // ones) so the frontend can read the current app/router identity. It
+          // always equals the current app's id: a cross-app navigation is
+          // intercepted server-side (X-RSC-Reload) and never delivers a
+          // different-router payload to the client.
           routerId: ctx.router.id,
           segments: result.segments,
           matched: result.matched,
