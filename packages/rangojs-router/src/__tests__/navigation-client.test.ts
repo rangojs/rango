@@ -112,6 +112,68 @@ describe("navigation-client", () => {
     await expect(result.streamComplete).resolves.toBeUndefined();
   });
 
+  it("reloads to the navigation target when the response router id does not match", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 200,
+          headers: { "X-RSC-Router-Id": "other-app" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(async () => ({
+      metadata: { isPartial: true },
+    }));
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    // Client is "client-app"; the response belongs to "other-app" (a stale/edge
+    // cache or proxy mix-up). The integrity check reloads to the target instead
+    // of decoding + applying the foreign payload.
+    client
+      .fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        routerId: "client-app",
+      })
+      .catch(() => {});
+
+    await vi.waitFor(() =>
+      expect((window as any).location.href).toBe("/products"),
+    );
+  });
+
+  it("lets the reload header win over a router-id mismatch (no double reload)", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 200,
+          headers: {
+            "X-RSC-Reload": "http://localhost/reloaded",
+            "X-RSC-Router-Id": "other-app",
+          },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(async () => ({ metadata: {} }));
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    client
+      .fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        routerId: "client-app",
+      })
+      .catch(() => {});
+
+    // The reload header is handled first (ordered before the routerId check),
+    // so we reload to the header's URL, not the navigation target.
+    await vi.waitFor(() =>
+      expect((window as any).location.href).toBe("http://localhost/reloaded"),
+    );
+  });
+
   it("wraps network failures as NetworkError", async () => {
     const fetchMock = vi.fn(async () => {
       throw new TypeError("Failed to fetch");

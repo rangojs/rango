@@ -30,7 +30,7 @@ import { getRangoState } from "../rango-state.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 import { debugLog } from "../logging.js";
-import { teeWithCompletion } from "../response-adapter.js";
+import { teeWithCompletion, checkRouterIdHeader } from "../response-adapter.js";
 import type { RscPayload } from "../types.js";
 
 /**
@@ -139,6 +139,7 @@ function executePrefetchFetch(
   sourceKey: string,
   fetchUrl: string,
   forceSourceScope: boolean,
+  expectedRouterId?: string,
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
   const gen = currentGeneration();
@@ -164,6 +165,12 @@ function executePrefetchFetch(
         response.headers.has("X-RSC-Reload") ||
         response.headers.has("X-RSC-Redirect")
       ) {
+        return null;
+      }
+      // Integrity check: never warm (or decode/import the chunks of) a foreign
+      // app's payload. A speculative prefetch must never reload — just drop it;
+      // navigation re-fetches and the server steers it.
+      if (checkRouterIdHeader(response, expectedRouterId) === "mismatch") {
         return null;
       }
 
@@ -282,6 +289,7 @@ export function prefetchDirect(
     sourceKey,
     targetUrl.toString(),
     forceSourceScope,
+    routerId,
   );
 }
 
@@ -334,6 +342,7 @@ export function prefetchQueued(
       sourceKey,
       fetchUrlStr,
       forceSourceScope,
+      routerId,
       signal,
     ).then(() => {});
   });

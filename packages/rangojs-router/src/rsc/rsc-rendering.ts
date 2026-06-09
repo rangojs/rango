@@ -185,6 +185,11 @@ export async function handleRscRendering<TEnv>(
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
+      // Router identity, so the client can verify pre-decode (before importing
+      // chunks) that this content payload belongs to its app and refuse a
+      // foreign one (cache/proxy/bug). Control-only reload/redirect responses
+      // are deliberately NOT stamped. See browser/response-adapter.ts.
+      "X-RSC-Router-Id": ctx.router.id,
     };
     // Tell the client's prefetch cache to scope this response to its source
     // URL (instead of the default source-agnostic wildcard). Intercept

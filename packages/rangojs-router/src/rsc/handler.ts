@@ -1085,7 +1085,12 @@ export function createRSCHandler<
           if (isRscRequest(request, url, isPartial)) {
             return createResponseWithMergedHeaders(rscStream, {
               status: 404,
-              headers: { "content-type": "text/x-component;charset=utf-8" },
+              headers: {
+                "content-type": "text/x-component;charset=utf-8",
+                // Router identity for the client's pre-decode integrity check; a
+                // same-app 404 matches and applies in place. See response-adapter.
+                "X-RSC-Router-Id": router.id,
+              },
             });
           }
 

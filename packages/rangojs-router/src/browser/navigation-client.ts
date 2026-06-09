@@ -17,6 +17,7 @@ import {
   emptyResponse,
   handleReloadHeader,
   teeWithCompletion,
+  checkRouterIdHeader,
 } from "./response-adapter.js";
 import {
   buildPrefetchKey,
@@ -179,6 +180,19 @@ export function createNavigationClient(
           }
           resolveStreamComplete();
           throw new ServerRedirect(redirect.url, undefined);
+        }
+
+        // Integrity check (pre-decode): refuse a foreign app's content response
+        // before createFromFetch imports its chunks. Ordered AFTER the reload
+        // and redirect handlers — control responses are never stamped with
+        // X-RSC-Router-Id, so they are steered first and never reach here.
+        if (checkRouterIdHeader(response, routerId) === "mismatch") {
+          if (tx) {
+            browserDebugLog(tx, `router id mismatch, reloading (${source})`);
+          }
+          resolveStreamComplete();
+          window.location.href = targetUrl;
+          return new Promise<Response>(() => {});
         }
 
         return response;

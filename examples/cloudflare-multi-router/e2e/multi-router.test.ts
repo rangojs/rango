@@ -473,6 +473,31 @@ test.describe("multi-router (dev)", () => {
       await expect(page.locator('[data-app-shell="a"]')).toHaveCount(0);
     });
 
+    // A 404 WITHIN the current app must stay a SOFT in-place update — only
+    // crossing an app boundary reloads. The app-switch reload keys on the
+    // routerId mismatch, so a same-app 404 (matching routerId) must NOT reload.
+    test("same-app navigation to a missing route stays soft (no reload)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectNoReload(page);
+      await testId(page, "app-a-nav-self-404").click();
+
+      // Soft, in-place: the URL changes but app-a's document stays mounted and
+      // there is no full document reload (the expectNoReload marker survives).
+      await page.waitForURL(/\/app-a\/does-not-exist/, { timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+    });
+
     // Regression for the cross-app shared-stylesheet drop. site (source)
     // renders a SHARED href UNMANAGED (no precedence); app-a (target) renders
     // the SAME href MANAGED (precedence). Under the old SOFT switch, React 19's
@@ -1007,6 +1032,31 @@ test.describe("multi-router (production)", () => {
       // target's 404 in place, leaving app-a's document mounted.
       await page.waitForURL(/\/app-b\/does-not-exist/, { timeout: 10000 });
       await expect(page.locator('[data-app-shell="a"]')).toHaveCount(0);
+    });
+
+    // A 404 WITHIN the current app must stay a SOFT in-place update — only
+    // crossing an app boundary reloads. The app-switch reload keys on the
+    // routerId mismatch, so a same-app 404 (matching routerId) must NOT reload.
+    test("same-app navigation to a missing route stays soft (no reload)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectNoReload(page);
+      await testId(page, "app-a-nav-self-404").click();
+
+      // Soft, in-place: the URL changes but app-a's document stays mounted and
+      // there is no full document reload (the expectNoReload marker survives).
+      await page.waitForURL(/\/app-a\/does-not-exist/, { timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
     });
 
     // Regression for the cross-app shared-stylesheet drop. site (source)

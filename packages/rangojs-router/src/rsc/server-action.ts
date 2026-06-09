@@ -213,7 +213,12 @@ export async function executeServerAction<TEnv>(
 
       return createResponseWithMergedHeaders(rscStream, {
         status: actionStatus,
-        headers: { "content-type": "text/x-component;charset=utf-8" },
+        headers: {
+          "content-type": "text/x-component;charset=utf-8",
+          // Router identity for the client's pre-decode integrity check (the
+          // action apply path has no post-decode guard). See response-adapter.
+          "X-RSC-Router-Id": ctx.router.id,
+        },
       });
     }
   }
@@ -335,6 +340,11 @@ export async function revalidateAfterAction<TEnv>(
 
   return createResponseWithMergedHeaders(rscStream, {
     status: actionStatus,
-    headers: { "content-type": "text/x-component;charset=utf-8" },
+    headers: {
+      "content-type": "text/x-component;charset=utf-8",
+      // Router identity for the client's pre-decode integrity check (the action
+      // apply path has no post-decode guard). See response-adapter.
+      "X-RSC-Router-Id": ctx.router.id,
+    },
   });
 }

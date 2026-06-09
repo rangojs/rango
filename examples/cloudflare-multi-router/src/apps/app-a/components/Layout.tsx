@@ -21,6 +21,12 @@ export function AppALayout() {
         <Link to="/app-b/does-not-exist" data-testid="app-a-nav-app-b-404">
           App B (missing route)
         </Link>
+        {/* Same-app link to a route that does NOT exist in app-a. Used by the
+            same-app 404 test: it must stay a SOFT in-place 404 (no reload) —
+            only crossing an app boundary reloads. */}
+        <Link to="/app-a/does-not-exist" data-testid="app-a-nav-self-404">
+          App A (missing route)
+        </Link>
       </nav>
       <Outlet />
     </>

@@ -25,6 +25,26 @@ export function emptyResponse(): Response {
 }
 
 /**
+ * Compare the server-stamped router identity (`X-RSC-Router-Id`) on an RSC
+ * content response against the id this client expects (its own routerId, the
+ * value also sent as `_rsc_rid`). Pre-decode integrity check: lets a caller
+ * refuse a foreign app's payload before `createFromFetch` imports its chunks.
+ *
+ * Returns "mismatch" ONLY when both the header and the expected id are present
+ * and differ. An absent header (control-only reload/redirect responses are not
+ * stamped) or an absent expected id (e.g. before the client is seeded) yields
+ * "absent" — a pass-through, never a false reload.
+ */
+export function checkRouterIdHeader(
+  response: Response,
+  expectedId: string | undefined,
+): "match" | "mismatch" | "absent" {
+  const got = response.headers.get("X-RSC-Router-Id");
+  if (!got || !expectedId) return "absent";
+  return got === expectedId ? "match" : "mismatch";
+}
+
+/**
  * Handle the X-RSC-Reload control header (server requests a full page reload on
  * a version mismatch). Returns a short-circuit response when the header is
  * present -- emptyResponse() if the URL was blocked by origin validation, or a

@@ -27,6 +27,7 @@ import {
   emptyResponse,
   handleReloadHeader,
   teeWithCompletion,
+  checkRouterIdHeader,
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
@@ -258,6 +259,22 @@ export function createServerActionBridge(
         if (redirect === "blocked") {
           resolveStreamComplete();
           return emptyResponse();
+        }
+
+        // Integrity check (pre-decode): a foreign app's action response must
+        // not be decoded + applied here. This is the one decode-and-apply path
+        // the post-decode partial-update guard does NOT cover (the action
+        // bridge has its own createFromFetch -> onUpdate). Ordered after the
+        // reload/redirect handlers, which steer control responses first.
+        if (
+          !handle.signal.aborted &&
+          checkRouterIdHeader(response, store.getRouterId?.()) === "mismatch"
+        ) {
+          log("action router id mismatch, reloading to re-sync");
+          handle.complete(undefined);
+          resolveStreamComplete();
+          window.location.reload();
+          return new Promise<Response>(() => {});
         }
 
         // Start streaming immediately when response arrives
