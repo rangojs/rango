@@ -13,9 +13,9 @@
  * Storage key is namespaced per routerId (`rango-state:{routerId}`) so
  * tabs in different apps on the same origin do not collide. Two tabs in
  * the same app share a key → one tab's invalidation is picked up by the
- * other via the `storage` event. A smooth cross-app transition in this
- * tab rebinds to the target app's key; other tabs still in the old app
- * keep their own key intact.
+ * other via the `storage` event. The key is bound once at document init; a
+ * cross-app navigation is a full document load (X-RSC-Reload), so the target
+ * app's document binds its own key on load (tabs in the old app keep theirs).
  *
  * If no routerId is supplied, falls back to a single legacy key for
  * backward compatibility (single-app deployments unaffected).
@@ -31,10 +31,9 @@ function buildStorageKey(routerId: string | undefined): string {
 // Initialized from localStorage on first access or by initRangoState().
 let cachedState: string | null = null;
 
-// The localStorage key this tab is currently bound to. Rebinds on
-// initRangoState (document boot) and setRangoStateLocal (smooth app
-// switch). The storage listener filters cross-tab events by this key so
-// events from tabs in a different app are ignored.
+// The localStorage key this tab is currently bound to. Bound on
+// initRangoState (document boot). The storage listener filters cross-tab
+// events by this key so events from tabs in a different app are ignored.
 let currentStorageKey: string = LEGACY_STORAGE_KEY;
 
 // Cross-tab sync: the `storage` event fires in OTHER tabs when one tab writes
@@ -112,21 +111,6 @@ export function getRangoState(): string {
   }
 
   return "0:0";
-}
-
-/**
- * Update the in-memory rango-state to a new version WITHOUT writing
- * localStorage. Intended for smooth cross-app transitions in this tab only:
- * subsequent requests from this tab send the new token, but other tabs
- * still in the previous app do not observe a storage event. Rebinds this
- * tab's storage key to the target app's namespace (`rango-state:{routerId}`)
- * so subsequent storage events only reflect the new app. On the next hard
- * reload, initRangoState reconciles localStorage from the server's
- * authoritative version.
- */
-export function setRangoStateLocal(version: string, routerId?: string): void {
-  currentStorageKey = buildStorageKey(routerId);
-  cachedState = `${version}:${Date.now()}`;
 }
 
 /**

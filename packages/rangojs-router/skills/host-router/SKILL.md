@@ -241,3 +241,24 @@ export default regional;
 // host-router.ts
 router.host(["**.regional.example.com"]).lazy(() => import("./apps/regional"));
 ```
+
+## Cross-app navigation is a full document load
+
+A client-side navigation that crosses an app boundary (e.g. a `<Link>` or
+intercepted `<a>` from the app at `/` into an app mounted at `/shop`) is a **hard
+document navigation**, not a soft in-tree swap. When the server sees a partial
+(SPA) request whose router id doesn't match the matched app, it returns
+`X-RSC-Reload` and the client does a real document navigation to the target.
+
+Why a reload rather than a soft swap: a soft swap can't faithfully re-establish
+the target app's **document-level** state. Stylesheets shared across apps are
+dropped by React 19's by-`href` resource dedup; and theme, warmup, and
+prefetch-TTL are document-lifetime (captured once at load — see
+`browser/app-shell.ts`), so the target app's config would never take effect. A
+full document load re-establishes the target app's entire document — CSS, theme,
+meta, everything — by construction. So you do **not** need to coordinate
+stylesheet `href`s, `precedence`, theme config, etc. across independently-authored
+apps; each app owns its own document.
+
+**Within-app** navigation is unchanged — a normal soft SPA update (the document
+stays mounted). Only crossing an app boundary triggers the reload.

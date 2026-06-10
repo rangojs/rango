@@ -246,6 +246,29 @@ describe("prefetch fetch reduced-data behavior", () => {
       ),
     ).toBeNull();
   });
+
+  it("does not warm (or decode) a response whose router id does not match", async () => {
+    setupBrowser({ saveData: false, reducedData: false });
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", {
+          status: 200,
+          headers: { "X-RSC-Router-Id": "other-app" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+    // This client is router "client-app"; the response belongs to "other-app"
+    // (a stale/edge-cache or proxy mix-up). The foreign payload must be dropped
+    // before decode — never warmed, no chunks imported.
+    prefetchDirect("/blog", ["A0"], "v1", "client-app");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(decodeMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("prefetch wildcard cache (default source-agnostic)", () => {

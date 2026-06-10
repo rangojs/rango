@@ -111,15 +111,23 @@ export async function clickAndWaitFor(
 }
 
 /**
- * Verify that navigation happens without full page reload.
- * Uses a DOM marker to detect if the page was reloaded.
+ * Inject a DOM marker used to detect whether a navigation reloaded the
+ * document. A real document navigation wipes it; a soft SPA update keeps it.
  */
-export async function expectNoReload(page: Page) {
+async function injectReloadMarker(page: Page): Promise<void> {
   await page.evaluate(() => {
     const el = document.createElement("meta");
     el.setAttribute("name", "x-reload-check");
     document.head.append(el);
   });
+}
+
+/**
+ * Verify that navigation happens without full page reload.
+ * Uses a DOM marker to detect if the page was reloaded.
+ */
+export async function expectNoReload(page: Page) {
+  await injectReloadMarker(page);
 
   return {
     [Symbol.asyncDispose]: async () => {
@@ -129,6 +137,22 @@ export async function expectNoReload(page: Page) {
       await page.evaluate(() => {
         document.querySelector(`meta[name="x-reload-check"]`)!.remove();
       });
+    },
+  };
+}
+
+/**
+ * Verify that a navigation DID perform a full document reload. Injects a DOM
+ * marker; on dispose asserts it was wiped (a real document navigation replaces
+ * the DOM). The inverse of expectNoReload — used for cross-app navigation,
+ * which is deliberately a hard document boundary.
+ */
+export async function expectFullReload(page: Page) {
+  await injectReloadMarker(page);
+
+  return {
+    [Symbol.asyncDispose]: async () => {
+      await expect(page.locator(`meta[name="x-reload-check"]`)).toHaveCount(0);
     },
   };
 }

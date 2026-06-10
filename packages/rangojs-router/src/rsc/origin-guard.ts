@@ -30,6 +30,8 @@ export const ORIGIN_CHECK_PHASE_BY_MODE: Record<
   response: null,
   redirect: null,
   "version-mismatch": null,
+  // Terminal: handled before the origin guard (emits X-RSC-Reload, no execution).
+  "app-switch": null,
 };
 
 /**

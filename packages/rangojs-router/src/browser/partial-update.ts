@@ -61,13 +61,6 @@ export interface PartialUpdateConfig {
   ) => Promise<ReactNode> | ReactNode;
   /** RSC version getter — returns the current version (may change after HMR) */
   getVersion?: () => string | undefined;
-  /**
-   * Replace the active app-shell when a cross-app navigation is detected.
-   * Called before the full-update tree replacement renders, so the new
-   * payload's rootLayout, basename, and version are picked up. Theme,
-   * warmup, and prefetch TTL are not part of the shell — see AppShell.
-   */
-  applyAppShell?: (next: import("./app-shell.js").AppShell) => void;
 }
 
 /**
@@ -137,7 +130,6 @@ export function createPartialUpdater(
     onUpdate,
     renderSegments,
     getVersion = () => undefined,
-    applyAppShell,
   } = config;
 
   /**
@@ -245,30 +237,25 @@ export function createPartialUpdater(
       streamingToken.end();
     });
 
-    // Detect app switch: if routerId changed, the navigation crossed into
-    // a different router (e.g., via host router path mount). Downgrade
-    // partial to full so the entire tree is replaced without reconciliation
-    // against stale segments from the previous app, and replace the app
-    // shell (rootLayout, basename, version) so the target app's document
-    // and router config take effect instead of remaining captured from the
-    // initial load. Theme, warmup, and prefetch TTL are intentionally
-    // document-lifetime (see AppShell doc); a new document navigation
-    // applies them.
-    if (payload.metadata?.routerId) {
-      const prevRouterId = store.getRouterId?.();
-      if (prevRouterId && prevRouterId !== payload.metadata.routerId) {
-        debugLog(
-          `[Browser] App switch detected (${prevRouterId} → ${payload.metadata.routerId}), forcing full update`,
-        );
-        payload.metadata.isPartial = false;
-        applyAppShell?.({
-          routerId: payload.metadata.routerId,
-          rootLayout: payload.metadata.rootLayout,
-          basename: payload.metadata.basename,
-          version: payload.metadata.version,
-        });
-      }
-      store.setRouterId?.(payload.metadata.routerId);
+    // Integrity guard (defense in depth). The server redirects on a cross-app
+    // routerId mismatch (X-RSC-Reload), so a partial payload's routerId must
+    // match this client's. If it doesn't — a stale/edge cache keyed without the
+    // routerId, a proxy mixing app responses, or a server classification bug —
+    // do NOT splice a foreign app's segments and client references into this
+    // document. Force a full reload so the server re-establishes the
+    // authoritative document for this URL.
+    const currentRouterId = store.getRouterId?.();
+    if (
+      payload.metadata?.routerId &&
+      currentRouterId &&
+      payload.metadata.routerId !== currentRouterId
+    ) {
+      console.error(
+        `[rango] Partial response router id "${payload.metadata.routerId}" does not ` +
+          `match this client ("${currentRouterId}"); discarding it and reloading to re-sync.`,
+      );
+      window.location.href = url;
+      return;
     }
 
     // Handle server-side redirect with state
