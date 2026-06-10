@@ -416,6 +416,15 @@ export async function renderRoute(
   if (routes.length === 0) {
     throw new Error("renderRoute: `routes` must contain at least one entry");
   }
+  // The pre-rename `initialUrl` option was renamed to `request`. A plain-JS or
+  // spread-defeated caller still passing it would otherwise be silently ignored;
+  // fail loud with the migration name instead.
+  if ("initialUrl" in options) {
+    throw new Error(
+      "renderRoute: the `initialUrl` option was renamed to `request`. " +
+        "Pass { request: <Request | url> } instead.",
+    );
+  }
 
   const { render, act } = await import("@testing-library/react");
 

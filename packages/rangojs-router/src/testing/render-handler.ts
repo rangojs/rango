@@ -34,7 +34,7 @@ import { isHandle, type Handle } from "../handle.js";
 import type { HandlerContext } from "../types/handler-context.js";
 import type { LoaderDefinition } from "../types.js";
 import { seedVariables, type VarsInit } from "./internal/seed-vars.js";
-import { serializeNodeToFlight } from "./flight.js";
+import { assertNoLegacyUrlOption, serializeNodeToFlight } from "./flight.js";
 import {
   deserializeFlight,
   makeClientManifest,
@@ -145,10 +145,24 @@ function toRequest(
   return new Request(DEFAULT_URL, { headers });
 }
 
-function buildResponse(reqCtx: RequestContext<any>, thrown: unknown): Response {
+/**
+ * Build the result `response` from the request-context stub and, when present,
+ * the Response the handler returned or threw (`source`). The stub cookies and
+ * headers are merged in (Set-Cookie appended to preserve duplicates, other stub
+ * headers filled in without clobbering the source), mirroring dispatch.ts's
+ * rewrap.
+ *
+ * The source's BODY is carried over (not dropped): a response route returns a
+ * `new Response(JSON.stringify(...))`, so callers reach for
+ * `await result.response.text()`/`.json()`. Pre-fix this rewrapped to
+ * `new Response(null, ...)` and the body was lost irrecoverably. A body is a
+ * single-use stream; `source` is not read again here or by renderHandler, so
+ * handing its body to the new Response is safe.
+ */
+function buildResponse(reqCtx: RequestContext<any>, source: unknown): Response {
   const stub = reqCtx.res;
-  if (thrown instanceof Response) {
-    const merged = new Headers(thrown.headers);
+  if (source instanceof Response) {
+    const merged = new Headers(source.headers);
     for (const cookie of stub.headers.getSetCookie()) {
       merged.append("set-cookie", cookie);
     }
@@ -156,7 +170,10 @@ function buildResponse(reqCtx: RequestContext<any>, thrown: unknown): Response {
       if (name.toLowerCase() === "set-cookie") return;
       if (!merged.has(name)) merged.set(name, value);
     });
-    return new Response(null, { status: thrown.status, headers: merged });
+    return new Response(source.body, {
+      status: source.status,
+      headers: merged,
+    });
   }
   return new Response(null, { status: stub.status, headers: stub.headers });
 }
@@ -180,6 +197,7 @@ export async function renderHandler<TEnv = any>(
   handler: TestableHandler<TEnv>,
   opts: RenderHandlerOptions<TEnv> = {},
 ): Promise<RenderHandlerResult> {
+  assertNoLegacyUrlOption(opts, "renderHandler");
   if (opts.clientComponents) registerClientComponents(opts.clientComponents);
   const request = toRequest(opts.request, opts.headers);
   const url = new URL(request.url);
@@ -216,7 +234,15 @@ export async function renderHandler<TEnv = any>(
     (hctx as { use: unknown }).use = (item: unknown) => {
       if (isHandle(item)) {
         const handle = item as Handle<any, any>;
-        return (value: unknown) => {
+        return (dataOrFn: unknown) => {
+          // Mirror production's push fn (loader-resolution.ts): a FUNCTION arg
+          // (ctx.use(Meta)(() => fetchMeta())) is CALLED and its result is
+          // recorded, not the function itself. An async callback records the
+          // promise it returns, same as production (which does not await it).
+          const value =
+            typeof dataOrFn === "function"
+              ? (dataOrFn as () => unknown)()
+              : dataOrFn;
           const pushed = handlePushes.get(handle) ?? [];
           pushed.push(value);
           handlePushes.set(handle, pushed);

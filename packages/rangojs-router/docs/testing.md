@@ -53,10 +53,10 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | a `loader()` body                                | data logic given params/env/vars/search                            | unit (node)         | `runLoader` (handle or raw fn)                                                          | `/loader`                                |
 | `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                       | unit (node)         | `runMiddleware`                                                                         | `/middleware`                            |
 | a client component reading router context        | it renders given params/loaderData/Outlet                          | unit (DOM)          | `renderRoute`                                                                           | `/hooks`                                 |
-| a component reading `useLocationState`           | it renders the seeded location-state value                         | unit (DOM)          | `renderRoute` (`locationState` option)                                                  | `/location-state`                        |
-| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                | unit (DOM)          | `renderRoute` (`handles` option)                                                        | `/handles`                               |
-| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                | unit (node)         | `collectHandle`                                                                         | `/handles`                               |
-| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix               | unit (DOM)          | `renderRoute` (`mount` option)                                                          | `/include`                               |
+| a component reading `useLocationState`           | it renders the seeded location-state value                         | unit (DOM)          | `renderRoute` (`locationState` option)                                                  | `/hooks`                                 |
+| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                | unit (DOM)          | `renderRoute` (`handles` option)                                                        | `/breadcrumbs`                           |
+| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                | unit (node)         | `collectHandle`                                                                         | `/breadcrumbs`                           |
+| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix               | unit (DOM)          | `renderRoute` (`mount` option)                                                          | `/composability`                         |
 | a server action's cookie / header / flash output | `Set-Cookie`, response headers, flash — even on `throw redirect()` | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState }`) | `/server-actions`                        |
 | a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation                    | integration         | `dispatch`                                                                              | `/response-routes`, `/mime-routes`       |
 | a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                               | integration         | `dispatch`                                                                              | `/middleware`, `/route`                  |
@@ -398,9 +398,10 @@ Unit-only limitations:
 
 ### Middleware
 
-`runMiddleware` executes the chain through the router's real `executeMiddleware`,
-so behavior is production-identical: `next()`, return-Response and throw-Response
-short-circuits, double-next guards, header/cookie merge.
+`runMiddleware` executes the chain through the router's real
+`executeLoaderMiddleware`, so behavior is production-identical: `next()`,
+return-Response and throw-Response short-circuits, double-next guards,
+header/cookie merge.
 
 ```ts
 import { runMiddleware } from "@rangojs/router/testing";
@@ -427,8 +428,9 @@ it("sets a session cookie and passes through", async () => {
 `redirect({ state })`) as effective views, parity with `runInRequestContext`. The
 returned `ctx` is the underlying `RequestContext`. The request the chain runs
 under is `opts.request`. Seed prior state with `vars`, model the downstream route
-with `next`, enable `ctx.reverse` with `routeMap`/`routeName`, pass an array to
-run several in order.
+with `next`, enable `ctx.reverse` with `routeMap` (map-only, matching production —
+`routeName` only feeds `ctx.routeName`, it does not scope `.name` reverse), pass
+an array to run several in order.
 
 ### Reverse and components
 
@@ -614,7 +616,10 @@ typecheck` (or `tsc --noEmit`), which a runtime test cannot do:
    ```ts
    import { expectTypeOf } from "vitest";
    expectTypeOf(await runLoader(cartLoader)).toEqualTypeOf<{ count: number }>();
-   expectTypeOf<RouteParams<"/blog/:slug">>().toEqualTypeOf<{ slug: string }>();
+   // RouteParams takes a route NAME and a route map (defaulting to the global map).
+   expectTypeOf<
+     RouteParams<"blogPost", { blogPost: "/blog/:slug" }>
+   >().toEqualTypeOf<{ slug: string }>();
    ```
 
 3. **A dedicated `*.test-d.ts` + tsconfig, for a large type suite.** Collect
@@ -648,9 +653,11 @@ Setup: use the `rangoTestConfig()` preset (above) so `@rangojs/router` resolves
 to real impls and the `@vitejs/plugin-rsc/rsc` virtual is stubbed — no per-file
 `vi.mock` needed. `dispatch` accepts your public router type directly (no cast).
 
-Because the full app router usually can't be imported in a bare test (the
-`Prerender`/`createLoader` `$$id` limitation above), build a router from an
-importable, `Prerender`-free include — typically your response/API routes:
+Because the full app router usually can't be imported in a bare test — its page
+modules pull their own deps or plugin `virtual:` modules that need the rango
+plugin (handler `$$id` is NOT the blocker; `Prerender()`/`createLoader()`/
+`Static()` construct via a runtime fallback id) — build a router from an
+importable, `Prerender`-free include, typically your response/API routes:
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -839,7 +846,8 @@ it("client props survive the serialize -> deserialize round trip", async () => {
 ```
 
 `findClientBoundaries(tree, selector?)` returns every boundary (each
-`{ id, name, props, element }`) in document order; it always returns an array, so
+`{ id, name, props, children, element }`, where `props` EXCLUDES `children` —
+read the nested tree off `.children`) in document order; it always returns an array, so
 destructure `const [tag] = …` for a single expected island and assert on
 `.length` when the count matters (no match yields `[]`). The selector is either a
 **string** (match by export name) or an object that filters by `name` / `testId`
@@ -863,7 +871,7 @@ APIs).
 
 `findClientBoundaries` finds client islands; `findElements(tree, selector?)`
 finds the **server/host elements** a server component rendered (`<article>`,
-`<h2>`, …) — each `{ tag, type, props, children, text, element }`, in document
+`<h2>`, …) — each `{ tag, props, children, text, element }`, in document
 order, always an array. The selector is a host **tag string** (`"h2"`) or an
 object filtering by `tag` / `testId` / `props` (subset deep-equal) / `text`
 (substring or `RegExp`) / `where`:
@@ -1001,7 +1009,7 @@ parityDescribe("add to cart parity", (f) => {
 
 It applies the intent (`{ navigate }` or `{ submit: { testId, data? } }`) over
 the JS page and a fresh no-JS context, then asserts the observed testids' text,
-the pathname, and `document.cookie` are equal. Contract: PE parity only holds if
+the location (pathname + search + hash), and `document.cookie` are equal. Contract: PE parity only holds if
 the submit target is a real `<form>` (no-JS triggers a native POST). Cookie
 observation sees non-HttpOnly cookies only in v1. If a page renders a
 nondeterministic value, exclude that testid from `observe`.
@@ -1050,13 +1058,17 @@ import { assertCacheStatus } from "@rangojs/router/testing/e2e";
 parityDescribe("product page caches", (f) => {
   test("second request is a hit", async ({ page }) => {
     // The key is the route NAME (the X-Rango-Cache id), NOT the URL pattern.
+    // Playwright APIResponse.headers() is a method returning a plain record, so
+    // wrap it in a Headers to match CacheStatusTarget (`{ headers: Headers }`).
+    const first = await page.request.get(f.url("/products/1"));
     assertCacheStatus(
-      await page.request.get(f.url("/products/1")),
+      { headers: new Headers(first.headers()) },
       "product.detail",
       "miss",
     );
+    const second = await page.request.get(f.url("/products/1"));
     assertCacheStatus(
-      await page.request.get(f.url("/products/1")),
+      { headers: new Headers(second.headers()) },
       "product.detail",
       "hit",
     );
@@ -1111,7 +1123,7 @@ rangoInlineDeps: RegExp[];  // the server.deps.inline patterns, if wiring them y
 // Response; the render/run primitives -> an envelope (effect snapshot and/or tree).
 runMiddleware(
   mw: Middleware | Middleware[],
-  opts: { request: Request | string; env?, params?, vars?, routeMap?, routeName?, basename?, next?: () => Promise<Response> },
+  opts: { request?: Request | string; env?, params?, vars?, routeMap?, routeName?, basename?, next?: () => Promise<Response> }, // request optional, defaults to http://localhost/
 ): Promise<{ response: Response; ctx: RequestContext; nextCalled: number;
              cookies: Record<string, string>; headers: Record<string, string>;
              locationState: Record<string, unknown> }>;
@@ -1164,7 +1176,7 @@ flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnaps
 renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
 renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents? }):
   Promise<{ tree, flight, thrown, response, cookies, headers, locationState, handles }>;
-findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,element}[]; [] if none
+findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,children,element}[] (props excludes children); [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
 textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)
 rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-discover islands
@@ -1220,8 +1232,8 @@ createRangoE2E({ test, expect, defaultRoot? }): {
   waitForHydration, expectNoReload, expectNoPageError, testId,
   waitForNavigation, goBack, goForward, /* ...timing/util helpers... */
 };
-useFixture({ root, mode?: "dev"|"build", command?, buildCommand?, isolatedServer?, readyPath?, skipBuild? })
-  -> { mode, root, url(path?), proc() };
+useFixture({ root, mode: "dev"|"build", command?, buildCommand?, isolatedServer?, readyPath?, skipBuild? })
+  -> { mode, root, url(path?), proc() }; // mode is required; omitting it throws at useFixture time
 parityDescribe(name, (f) => { /* tests */ }, options?); // dev + (production) from one body
 expectParity(page, { navigate } | { submit: { testId, data? } }, { observe: string[], baseURL? });
 rangoMatchers; // expect.extend -> toHaveRangoPathname(page, expected)

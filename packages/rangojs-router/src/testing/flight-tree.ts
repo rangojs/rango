@@ -33,7 +33,7 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/react/browser";
 import { setRequireModule } from "@vitejs/plugin-rsc/core/browser";
 import * as RSDServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";
 import type { ReactNode } from "react";
-import { serializeToFlightString } from "./flight.js";
+import { assertNoLegacyUrlOption, serializeToFlightString } from "./flight.js";
 import type { RenderToFlightStringOptions } from "./flight.js";
 
 /** Options for {@link renderServerTree}. */
@@ -118,15 +118,43 @@ export interface BoundarySelector {
  * Structural equality for boundary-prop matching. Handles the value kinds that
  * survive a Flight round-trip (primitives, Date, Map, Set, Array, plain object);
  * falls back to reference identity for anything exotic.
+ *
+ * `seen` guards against cyclic input: a deserialized tree can carry a cycle (an
+ * element whose props reference an ancestor), and without the guard the
+ * recursion blows the stack with a RangeError. When a pair `(a, b)` is already
+ * on the active comparison path we treat it as equal — the same
+ * reference-identity fallback the docs promise — so a cycle resolves instead of
+ * recursing forever.
  */
-function deepEqual(a: unknown, b: unknown): boolean {
+function deepEqual(
+  a: unknown,
+  b: unknown,
+  seen: WeakMap<object, WeakSet<object>> = new WeakMap(),
+): boolean {
   if (Object.is(a, b)) return true;
   if (a instanceof Date && b instanceof Date)
     return a.getTime() === b.getTime();
+  // Cycle guard: only objects can recurse, so key on object identity. If we are
+  // already comparing this exact pair higher in the stack, stop and treat it as
+  // equal (reference-identity fallback).
+  if (
+    a !== null &&
+    b !== null &&
+    typeof a === "object" &&
+    typeof b === "object"
+  ) {
+    let partners = seen.get(a as object);
+    if (partners?.has(b as object)) return true;
+    if (!partners) {
+      partners = new WeakSet();
+      seen.set(a as object, partners);
+    }
+    partners.add(b as object);
+  }
   if (a instanceof Map && b instanceof Map) {
     if (a.size !== b.size) return false;
     for (const [key, value] of a) {
-      if (!b.has(key) || !deepEqual(value, b.get(key))) return false;
+      if (!b.has(key) || !deepEqual(value, b.get(key), seen)) return false;
     }
     return true;
   }
@@ -136,13 +164,14 @@ function deepEqual(a: unknown, b: unknown): boolean {
     // objects/Dates that survived deserialization still match.
     const bValues = [...b];
     for (const value of a) {
-      if (!bValues.some((other) => deepEqual(value, other))) return false;
+      if (!bValues.some((other) => deepEqual(value, other, seen))) return false;
     }
     return true;
   }
   if (Array.isArray(a) && Array.isArray(b)) {
     return (
-      a.length === b.length && a.every((value, i) => deepEqual(value, b[i]))
+      a.length === b.length &&
+      a.every((value, i) => deepEqual(value, b[i], seen))
     );
   }
   if (
@@ -161,6 +190,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
         deepEqual(
           (a as Record<string, unknown>)[key],
           (b as Record<string, unknown>)[key],
+          seen,
         ),
       )
     );
@@ -290,6 +320,7 @@ export async function renderServerTree(
   element: ReactNode,
   opts: RenderServerTreeOptions = {},
 ): Promise<RenderServerTreeResult> {
+  assertNoLegacyUrlOption(opts, "renderServerTree");
   if (opts.clientComponents) registerClientComponents(opts.clientComponents);
   const flight = await serializeToFlightString(
     element,
@@ -349,12 +380,27 @@ function asFlightLazy(node: unknown): FlightLazy | undefined {
  * (synchronous for a fully-drained stream; never calls a client `load`). Client
  * references (`status: "resolved_module"`) are left untouched — they are the
  * boundary markers {@link findClientBoundaries} reads.
+ *
+ * Why `"fulfilled"` is also accepted: the vendored client's readChunk (which is
+ * the lazy's `_init`) is destructive — the FIRST read transitions the shared
+ * chunk `resolved_model` -> `fulfilled` and stores the materialized value on
+ * `_payload.value` (see initializeModelChunk in the vendored client). A second
+ * encounter of the same lazy (textContent called twice, or a parent host
+ * element materializing the chunk before a child reads it within one walk) then
+ * sees `fulfilled`. Pre-fix this guard bailed on `fulfilled` and returned the
+ * lazy wrapper, so the subtree was silently skipped (textContent went ""; a
+ * findElements text selector missed). Initializing a `fulfilled` chunk is a
+ * no-op that returns `_payload.value`, so accepting it makes resolution
+ * idempotent.
  */
 function resolveServerLazy(node: unknown): unknown {
   let current = node;
   for (let guard = 0; guard < 1000; guard++) {
     const lazy = asFlightLazy(current);
-    if (!lazy || lazy._payload.status !== "resolved_model") return current;
+    const status = lazy?._payload.status;
+    if (!lazy || (status !== "resolved_model" && status !== "fulfilled")) {
+      return current;
+    }
     try {
       current = lazy._init(lazy._payload);
     } catch {
@@ -523,7 +569,9 @@ export function textContent(node: unknown): string {
       out += value;
       return;
     }
-    if (typeof value === "number") {
+    if (typeof value === "number" || typeof value === "bigint") {
+      // React renders both numbers and bigints as text; mirror that here so a
+      // {2n} leaf is counted like a {2} leaf.
       out += String(value);
       return;
     }

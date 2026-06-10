@@ -42,6 +42,7 @@ import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
 import { isHandle, type Handle } from "../handle.js";
+import { collectHandle } from "./collect-handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
@@ -320,6 +321,12 @@ export async function runLoader<T>(
         }
         // Handle reads (ctx.use(SomeHandle)) resolve from the seeded map first.
         if (handleSeeds.has(dep)) return handleSeeds.get(dep);
+        // Post-barrier, an UNSEEDED handle must match production
+        // (loader-resolution.ts -> collectHandleData), which runs the handle's
+        // registered collect over empty segments (collect([])) rather than
+        // throwing or leaking into the loader resolver. Resolve it via
+        // collectHandle, which recovers and runs that same collect.
+        if (isHandle(dep)) return collectHandle(dep, []);
         // Loader reads (ctx.use(OtherLoader)) resolve from the seeded map next,
         // then the dynamic `use` resolver, then the real request-context use().
         if (loaderSeeds.has(dep)) return loaderSeeds.get(dep);

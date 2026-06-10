@@ -29,7 +29,13 @@
  */
 
 import { expect } from "vitest";
-import { normalizeFlight } from "./flight.js";
+// Import from the serializer-free module, NOT ./flight.js: that module
+// top-level imports the vendored react-server-dom serializer, which throws when
+// loaded outside the `react-server` condition. flight-matchers must be
+// importable under the plain node condition (a consumer's shared setupFiles
+// does `expect.extend(flightMatchers)`), so it cannot transitively pull in the
+// serializer.
+import { normalizeFlight } from "./flight-normalize.js";
 
 interface MatcherResult {
   pass: boolean;

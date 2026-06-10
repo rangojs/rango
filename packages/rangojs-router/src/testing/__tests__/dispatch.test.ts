@@ -726,4 +726,133 @@ describe("dispatch", () => {
       expect(await res.json()).toEqual({ shape: "json" });
     });
   });
+
+  // Production wraps EVERYTHING (the trailing-slash 308, the unmatched 404, the
+  // response route) in the global middleware chain and finalizes terminally
+  // (handler.ts:481-502). These tests pin dispatch to that ordering: global
+  // middleware runs first (so it can short-circuit the 308/404), its
+  // cookies/headers merge onto the 308, partial redirects are made Flight-safe,
+  // and onResponse callbacks drain on every exit. Each fails on the pre-fix code.
+  describe("global chain wraps the 308/404 and finalizes terminally (production parity)", () => {
+    it("lets global middleware 401 WIN over the trailing-slash 308", async () => {
+      // Pre-fix dispatch returned the 308 before any middleware ran. Production
+      // produces the 308 inside coreHandler, wrapped by the global chain, so an
+      // auth middleware short-circuits it.
+      let ran = false;
+      const authMw: MiddlewareFn = async () => {
+        ran = true;
+        return new Response(null, { status: 401 });
+      };
+      const router = createRouter<{}>({})
+        .use(authMw)
+        .routes(
+          urls(({ path }) => [
+            path("/old/", Home, { name: "old", trailingSlash: "always" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, { request: "/old" });
+      expect(ran).toBe(true);
+      expect(res.status).toBe(401);
+      expect(res.headers.get("Location")).toBeNull();
+    });
+
+    it("lets global middleware 401 WIN over the unmatched 404", async () => {
+      // Production throws RouteNotFoundError inside coreHandler (wrapped by the
+      // chain), so middleware runs before the 404 is produced.
+      let ran = false;
+      const authMw: MiddlewareFn = async () => {
+        ran = true;
+        return new Response(null, { status: 401 });
+      };
+      const router = createRouter<{}>({})
+        .use(authMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, { request: "/nope" });
+      expect(ran).toBe(true);
+      expect(res.status).toBe(401);
+    });
+
+    it("merges middleware cookies/headers onto the 308 when middleware calls next()", async () => {
+      // Production builds the 308 via createResponseWithMergedHeaders inside
+      // coreHandler, so a passing-through middleware's stub cookies/headers
+      // merge onto it. Pre-fix dispatch returned a bare 308 before middleware.
+      const tagMw: MiddlewareFn = async (ctx, next) => {
+        ctx.header("X-Tag", "yes");
+        cookies().set("session", "tok", { path: "/" });
+        return next();
+      };
+      const router = createRouter<{}>({})
+        .use(tagMw)
+        .routes(
+          urls(({ path }) => [
+            path("/old/", Home, { name: "old", trailingSlash: "always" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, { request: "/old?ref=email" });
+      expect(res.status).toBe(308);
+      expect(res.headers.get("Location")).toBe("/old/?ref=email");
+      expect(res.headers.get("X-Tag")).toBe("yes");
+      expect(
+        res.headers.getSetCookie().some((c) => c.startsWith("session=tok")),
+      ).toBe(true);
+    });
+
+    it("converts a middleware 302 on a _rsc_partial request to 204 + X-RSC-Redirect", async () => {
+      // Production's global-chain exit runs interceptRedirectForPartial on a
+      // partial/action request (handler.ts:491-499): a no-location-state 3xx
+      // becomes a 204 + X-RSC-Redirect so fetch() does not auto-follow it.
+      // Pre-fix dispatch returned the raw 302.
+      const redirectMw: MiddlewareFn = async () =>
+        new Response(null, { status: 302, headers: { Location: "/login" } });
+      const router = createRouter<{}>({})
+        .use(redirectMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, {
+        request: "/api/data?_rsc_partial=1",
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      // The raw 3xx Location is replaced by the Flight-safe header.
+      expect(res.headers.get("Location")).toBeNull();
+    });
+
+    it("fires ctx.onResponse() when global middleware short-circuits", async () => {
+      // Production drains onResponse via finalizeResponse on every global-chain
+      // exit (handler.ts:499-501). A middleware that registers an onResponse
+      // hook and then short-circuits had its callback silently dropped pre-fix
+      // (the drain only ran inside createResponseWithMergedHeaders on handler
+      // paths, which a short-circuit never reaches).
+      const gateMw: MiddlewareFn = async () => {
+        const ctx = getRequestContext();
+        ctx.onResponse((res) => {
+          res.headers.set("x-on-response", "ran");
+          return res;
+        });
+        return new Response(null, { status: 403 });
+      };
+      const router = createRouter<{}>({})
+        .use(gateMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, { request: "/api/data" });
+      expect(res.status).toBe(403);
+      expect(res.headers.get("x-on-response")).toBe("ran");
+    });
+  });
 });

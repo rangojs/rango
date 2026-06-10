@@ -99,11 +99,20 @@ parityDescribe("add to cart parity", (f) => {
 });
 ```
 
+This add-to-cart example only works because the cart is **session-scoped**. A `submit` intent runs against the one live server TWICE — once on the JS page, once in a fresh no-JS context — so `cart-count` lands on the same value on both transports only if each context has its own cart (two distinct sessions, each going 0 -> 2). If the cart were a single global counter shared across contexts, the no-JS pass would observe the JS pass's mutation too (2 then 4) and the snapshots would diverge. See the submit caveats below before reaching for a `submit` intent.
+
 ## Caveats
 
 - Every e2e covers BOTH dev and production — a dev-only e2e is not acceptable. `parityDescribe` enforces it structurally: one body registers the dev describe AND the `(production)` describe.
 - Bucketing footgun: a `useFixture({ mode: "build" })` describe whose title omits `(production)` silently lands in the DEV bucket — prod coverage lost, no error. Never hand-title a build describe; the bucketing matches the literal `(production)`, so `(prod)`, `-build`, `-prod` do NOT count. Use `parityDescribe`.
 - `expectParity` contract: PE parity only holds if the submit target is a real `<form>` (with JS off the browser does a native POST). Cookie observation is `document.cookie` — non-HttpOnly cookies only in v1; an HttpOnly (session/auth) divergence is NOT caught here.
+
+### `submit`-intent parity — two scar-tissue hazards
+
+A `submit` intent does NOT replay against a snapshot of the server — it submits for real, twice, against the one running instance, and then compares two whole browser jars. Both of these have bitten before; read them before you write a `submit` parity test.
+
+- **Double execution.** The JS path submits on the page you handed `expectParity`. The no-JS pass then reloads the SAME `originUrl` in a fresh, scripting-disabled context and submits AGAIN. So a non-idempotent action (anything that mutates server state) runs twice against one server, and the no-JS snapshot sees BOTH mutations — UNLESS the mutated state is per-session / per-context. The add-to-cart example above only passes because the cart is session-scoped: each context owns its own cart and independently goes 0 -> 2, so both snapshots read 2. A globally-shared counter would read 2 after the JS submit and 4 after the no-JS submit, and the equality assertion would fail with no obvious cause. Increment-shaped actions are the trap; make the observable state session-scoped, or assert the submit path outside `expectParity`.
+- **Whole jar, not the delta.** The cookie assertion compares `document.cookie` of the JS context against `document.cookie` of the fresh no-JS context (`parity.ts`, the final `cookies` equality). The JS context carries every cookie it accumulated before the intent — consent banners, analytics, cookies set during earlier navigation in the same test. The no-JS context starts empty and only picks up what THIS submit sets. So a pre-existing, intent-unrelated cookie in the JS context false-mismatches: the helper is diffing two jars, not the per-submit cookie delta. Keep the JS context's pre-intent cookie state minimal (a fresh page goto, no prior cookie-setting steps), or assert the specific Set-Cookie in a dedicated test.
 - `rangoMatchers` ships `toHaveRangoPathname` only. `toHaveSegments`/`toHaveParams` are a documented future addition — they need a client-emitted signal that does not exist yet; do not assume them.
 - Subset run: add `--no-deps`. `--grep` does NOT filter dependency projects, so grepping one production test otherwise pulls in the whole dev suite. `--grep` is a regex: a pasted title containing `(production)` / `:locale?` / `[...]` mis-matches — grep a metacharacter-free fragment (or escape it). Example: `pnpm exec playwright test --project=production --no-deps --grep "add to cart parity"`.
 - Import the harness from the `/e2e` entry — the unit barrel (`@rangojs/router/testing`) is not loadable in a plain Playwright runner (it pulls a build-only virtual). The helpers take your `test`/`expect`, so this entry never imports `@playwright/test` at runtime.

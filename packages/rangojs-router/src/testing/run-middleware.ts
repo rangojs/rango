@@ -52,7 +52,12 @@ export interface RunMiddlewareOptions<TEnv = any> {
   vars?: VarsInit;
   /** Route name -> pattern map enabling `ctx.reverse()`. */
   routeMap?: Record<string, string>;
-  /** Matched route name for scoped `.name` reverse resolution. */
+  /**
+   * Matched route name surfaced as `ctx.routeName`. Does NOT scope `.name`
+   * reverse: the chain receives a map-only `reverse` (built from `routeMap`
+   * alone), matching production app/response middleware — see the reverse
+   * construction below.
+   */
   routeName?: string;
   /** Router basename surfaced on the context (drives redirect() prefixing). */
   basename?: string;

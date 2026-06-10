@@ -47,7 +47,7 @@ that route tree.
   consumer testing surface, split into six entries by test runtime:
   `@rangojs/router/testing` (unit: `runLoader`, `runMiddleware`; integration:
   `dispatch`; cache/prerender signals; generated-route drift),
-  `@rangojs/router/testing/vitest` (the `rangoTestAliases` setup preset),
+  `@rangojs/router/testing/vitest` (the `rangoTestConfig` setup preset),
   `@rangojs/router/testing/dom` (`renderRoute`),
   `@rangojs/router/testing/e2e` (`createRangoE2E` -> `parityDescribe`,
   `expectParity`), `@rangojs/router/testing/flight`

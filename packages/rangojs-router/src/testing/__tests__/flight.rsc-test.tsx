@@ -99,4 +99,14 @@ describe("renderToFlightString (Flight RSC)", () => {
       "KABOOM from server component",
     );
   }, 2000);
+
+  it("throws a migration error for the legacy { url } option", async () => {
+    // The { url } option was renamed to { request }. A plain-JS / spread-defeated
+    // consumer still passing it would otherwise have it SILENTLY ignored and
+    // render against the default origin; the runtime guard surfaces it instead.
+    await expect(
+      // @ts-expect-error legacy option removed; runtime guard catches it.
+      renderToFlightString(<Greeting name="Ada" />, { url: "/legacy" }),
+    ).rejects.toThrow(/`url` option was renamed to `request`/);
+  });
 });

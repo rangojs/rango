@@ -127,4 +127,68 @@ describe("renderHandler", () => {
     expect(thrown).toBe(boom);
     expect(tree).toBeUndefined();
   });
+
+  test("a handler that RETURNS a Response preserves its body (response route)", async () => {
+    // The documented response-route case: a handler returns
+    // `new Response(JSON.stringify(...))`. Pre-fix buildResponse rewrapped to
+    // `new Response(null, ...)` and the body was lost; now it is carried over so
+    // `await result.response.text()`/`.json()` works.
+    function Health(): Response {
+      return new Response(JSON.stringify({ ok: true, count: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const { tree, response } = await renderHandler(Health);
+    expect(tree).toBeUndefined(); // a Response, not RSC
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.text()).toBe('{"ok":true,"count":2}');
+  });
+
+  test("a returned Response body survives alongside a handler-set cookie", async () => {
+    // The stub-cookie merge must not clobber the carried-over body.
+    function Page(ctx: HandlerContext): Response {
+      ctx.headers.set("X-Trace", "abc");
+      return new Response("plain body", {
+        status: 201,
+        headers: { "content-type": "text/plain" },
+      });
+    }
+    const { response, headers } = await renderHandler(Page);
+    expect(response.status).toBe(201);
+    expect(headers["x-trace"]).toBe("abc");
+    expect(await response.text()).toBe("plain body");
+  });
+
+  test("ctx.use(Handle)(() => value) records the EVALUATED value, not the function", async () => {
+    // Production's push fn CALLS a function argument and pushes its RESULT
+    // (loader-resolution.ts). The harness must mirror it, so the function form
+    // (the typed signature is `() => Promise<...>`) yields the awaited value in
+    // result.handles, not a raw `[Function]`. Pre-fix the function itself was
+    // recorded.
+    function Page(ctx: HandlerContext) {
+      const meta = ctx.use(Meta);
+      meta(async () => ({ title: "Computed Title" }));
+      return <main>ok</main>;
+    }
+    const { handles } = await renderHandler(Page);
+    const [pushed] = handles.get(Meta) ?? [];
+    // The fix: the callback was invoked. Pre-fix `pushed` would be the function.
+    expect(typeof pushed).not.toBe("function");
+    expect(pushed).toBeInstanceOf(Promise); // an async callback records its promise
+    expect(await pushed).toEqual({ title: "Computed Title" });
+  });
+
+  test("throws a migration error for the legacy { request -> url } rename", async () => {
+    // { url } was renamed to { request }. A plain-JS / spread-defeated consumer
+    // still passing it would otherwise render against the default origin.
+    function Page() {
+      return <main />;
+    }
+    await expect(
+      // @ts-expect-error legacy option removed; runtime guard catches it.
+      renderHandler(Page, { url: "/legacy" }),
+    ).rejects.toThrow(/`url` option was renamed to `request`/);
+  });
 });

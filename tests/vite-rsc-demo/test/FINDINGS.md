@@ -2,7 +2,7 @@
 
 Third dogfood target (after `tests/cloudflare-basic` — the primary findings log —
 and `e2e/mini`). Setup is the shipped preset: `resolve: { alias: rangoTestAliases() }`
-(node preset). 9 tests across 4 entries: `runMiddleware`, `renderRoute` (`/dom`),
+(node preset). 4 entries are exercised: `runMiddleware`, `renderRoute` (`/dom`),
 `renderToFlightString` (`/flight`), and the `generated-routes` primitive.
 
 What vite-rsc-demo adds: **real, exported, app-realistic middleware** — the shop

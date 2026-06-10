@@ -212,6 +212,57 @@ describe("runLoader", () => {
       ).rejects.toThrow(/rendered\(\) is not available/);
     });
 
+    it("returns [] for an UNSEEDED handle with the default collect (production parity)", async () => {
+      // Post-barrier, production resolves an unseeded handle via collectHandleData
+      // -> collect([]); for the default collect that is []. The testing tier must
+      // not throw or leak the handle into the loader resolver.
+      const Products = createHandle<string>();
+      const data = await runLoader(
+        async (ctx) => {
+          await ctx.rendered();
+          return ctx.use(Products);
+        },
+        { rendered: true },
+      );
+      expect(data).toEqual([]);
+    });
+
+    it("runs a CUSTOM collect over empty segments for an unseeded handle", async () => {
+      const PageTitle = createHandle<string, string>(
+        (s) => s.flat().at(-1) ?? "fallback",
+      );
+      const data = await runLoader(
+        async (ctx) => {
+          await ctx.rendered();
+          return ctx.use(PageTitle);
+        },
+        { rendered: true },
+      );
+      expect(data).toBe("fallback");
+    });
+
+    it("never feeds an unseeded handle into the opts.use loader resolver", async () => {
+      // opts.use is a loaders-only resolver; a handle must resolve via the
+      // collect path, not silently land in opts.use as if it were a loader.
+      const Products = createHandle<string>();
+      let useResolverSaw: unknown;
+      const data = await runLoader(
+        async (ctx) => {
+          await ctx.rendered();
+          return ctx.use(Products);
+        },
+        {
+          rendered: true,
+          use: (loader) => {
+            useResolverSaw = loader;
+            return [] as any;
+          },
+        },
+      );
+      expect(useResolverSaw).toBeUndefined();
+      expect(data).toEqual([]);
+    });
+
     it("throws if ctx.use(handle) is read BEFORE await ctx.rendered() (production parity)", async () => {
       // Production gates handle reads on the render barrier
       // (loader-resolution.ts). A loader that forgets `await ctx.rendered()`

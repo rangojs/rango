@@ -17,7 +17,12 @@ import {
 export interface FixtureOptions {
   /** Absolute or cwd-relative path to the consumer app under test. */
   root: string;
-  mode?: "dev" | "build";
+  /**
+   * Server mode. Required: omitting it would spawn no server in beforeAll and
+   * surface only as a bare "Invalid URL" from `url()` at first use, so we fail
+   * eagerly at useFixture time instead.
+   */
+  mode: "dev" | "build";
   /** Override the server command (default: `pnpm dev` for dev, `pnpm preview` for build). */
   command?: string;
   /** Override the build command (default: `pnpm build`). */
@@ -32,7 +37,7 @@ export interface FixtureOptions {
 }
 
 export interface Fixture {
-  mode: "dev" | "build" | undefined;
+  mode: "dev" | "build";
   root: string;
   /** Resolve a path against the running server's base URL. */
   url: (url?: string) => string;
@@ -49,6 +54,11 @@ export function createUseFixture(
   test: TestType<any, any>,
 ): (options: FixtureOptions) => Fixture {
   return function useFixture(options: FixtureOptions): Fixture {
+    if (options.mode !== "dev" && options.mode !== "build") {
+      throw new Error(
+        `useFixture: mode is required: 'dev' | 'build' (got ${JSON.stringify(options.mode)}).`,
+      );
+    }
     let cleanup: (() => Promise<void>) | undefined;
     let baseURL!: string;
 
@@ -79,6 +89,14 @@ export function createUseFixture(
           ...options.cliOptions,
           env: cliEnv,
         });
+        // Assign cleanup immediately after spawn, before any await that can
+        // throw (findPort/waitForReady). Otherwise a beforeAll failure leaves
+        // afterAll's cleanup a no-op and orphans the dev server (plus workerd
+        // children) for the rest of the run.
+        cleanup = async () => {
+          proc!.kill();
+          await proc!.done;
+        };
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const readyUrl = options.readyPath
@@ -96,10 +114,6 @@ export function createUseFixture(
         if (options.isolatedServer) {
           await warmupDevServer(readyUrl);
         }
-        cleanup = async () => {
-          proc!.kill();
-          await proc!.done;
-        };
       }
 
       if (options.mode === "build") {
@@ -112,7 +126,25 @@ export function createUseFixture(
             ...options.cliOptions,
             env: cliEnv,
           });
-          await buildProc.done;
+          // The build is a finite process, but assign cleanup before the await
+          // so a hung build is still killed if beforeAll is torn down.
+          cleanup = async () => {
+            buildProc.kill();
+            await buildProc.done;
+          };
+          // Fail loudly on a nonzero build exit. Without this a failed build is
+          // swallowed and preview serves the previous stale dist/ (green
+          // production tests against old code), or times out with "Server not
+          // ready" that never mentions the build failure. The captured build
+          // output (stdout/stderr above) precedes this throw.
+          const code = await buildProc.exitCode;
+          if (code !== 0) {
+            throw new Error(
+              `Build failed with exit code ${code} for "${options.root}" ` +
+                `(command: ${options.buildCommand ?? "pnpm build"}). ` +
+                `See the captured build output above for the cause.`,
+            );
+          }
         }
         proc = runCli({
           command: options.command ?? `pnpm preview`,
@@ -121,6 +153,12 @@ export function createUseFixture(
           ...options.cliOptions,
           env: cliEnv,
         });
+        // Switch cleanup to the preview process immediately after spawn, before
+        // findPort/waitForReady can throw and orphan it.
+        cleanup = async () => {
+          proc!.kill();
+          await proc!.done;
+        };
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const buildReadyUrl = options.readyPath
@@ -130,10 +168,6 @@ export function createUseFixture(
           stdout: proc!.stdout(),
           stderr: proc!.stderr(),
         }));
-        cleanup = async () => {
-          proc!.kill();
-          await proc!.done;
-        };
       }
     });
 

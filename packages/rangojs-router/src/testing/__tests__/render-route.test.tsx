@@ -18,6 +18,19 @@ afterEach(() => {
   cleanup();
 });
 
+describe("renderRoute option migration guard", () => {
+  it("throws a clear migration error when the renamed `initialUrl` option is passed", async () => {
+    function View() {
+      return <span>x</span>;
+    }
+    await expect(
+      renderRoute([{ path: "/", Component: View }], {
+        initialUrl: "/",
+      } as any),
+    ).rejects.toThrow(/`initialUrl` option was renamed to `request`/);
+  });
+});
+
 describe("renderRoute handles seeding runs the real collect", () => {
   it("applies a handle's CUSTOM collect (not just a flatten) to seeded values", () => {
     const LastTitle = createHandle<string, string>(

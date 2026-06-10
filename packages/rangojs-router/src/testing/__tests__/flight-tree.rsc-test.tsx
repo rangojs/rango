@@ -324,4 +324,110 @@ describe("renderServerTree", () => {
     expect(textContent(tree)).toContain("Hello Ada");
     expect(textContent(tree)).toContain("Subtitle here");
   });
+
+  // Regression: the vendored client's readChunk transitions a deferred chunk
+  // resolved_model -> fulfilled on the FIRST read. resolveServerLazy used to bail
+  // on `fulfilled` and return the lazy wrapper, so a second encounter skipped the
+  // subtree (textContent went "", a child host element under an
+  // already-materialized parent reported text "").
+  describe("async-server-component chunk resolution is idempotent", () => {
+    test("textContent returns the same result on a second call", async () => {
+      // The async child must be NESTED so its deferred chunk survives into the
+      // tree (a top-level async tree is fully materialized by renderServerTree
+      // itself, never re-reading a chunk). Reading text twice then re-reads the
+      // same nested chunk — pre-fix the second read returned "".
+      async function AsyncChild() {
+        await Promise.resolve();
+        return <em>async text</em>;
+      }
+      function Wrapper() {
+        return (
+          <section>
+            <AsyncChild />
+          </section>
+        );
+      }
+      const { tree } = await renderServerTree(<Wrapper />);
+      const first = textContent(tree);
+      const second = textContent(tree);
+      expect(first).toContain("async text");
+      expect(second).toBe(first); // not "" on the second read
+    });
+
+    test("nested async child: article/p/em all report the text in ONE pass", async () => {
+      // AsyncChild is an async server component (a deferred chunk). The parent
+      // host elements materialize the shared chunk first; the child must still
+      // report the async text in the SAME findElements walk.
+      async function AsyncChild() {
+        await Promise.resolve();
+        return <em>async text</em>;
+      }
+      function Article() {
+        return (
+          <article>
+            <p>
+              <AsyncChild />
+            </p>
+          </article>
+        );
+      }
+      const { tree } = await renderServerTree(<Article />);
+
+      const elements = findElements(tree);
+      const byTag = new Map(elements.map((e) => [e.tag, e]));
+      expect(byTag.get("article")?.text).toContain("async text");
+      expect(byTag.get("p")?.text).toContain("async text");
+      expect(byTag.get("em")?.text).toContain("async text");
+
+      // The { tag: "p", text: "async" } selector must match (pre-fix it silently
+      // missed because the parent had already exhausted the chunk).
+      expect(findElements(tree, { tag: "p", text: "async" })).toHaveLength(1);
+    });
+  });
+
+  test("textContent counts a bigint leaf like a number", async () => {
+    function Page() {
+      return (
+        <p>
+          n=
+          {9007199254740993n}
+        </p>
+      );
+    }
+    const { tree } = await renderServerTree(<Page />);
+    expect(textContent(tree)).toContain("9007199254740993");
+  });
+
+  test("props selector deep-equal does not stack-overflow on a cyclic prop", async () => {
+    // A cyclic object as a boundary prop: deepEqual must terminate (cycle guard)
+    // rather than recurse to a RangeError.
+    type Node = { id: number; self?: Node };
+    const cyclic: Node = { id: 1 };
+    cyclic.self = cyclic;
+    const Widget = (_props: { node: Node }) => <span />;
+    function Page() {
+      return <Widget node={cyclic} />;
+    }
+    const { tree } = await renderServerTree(<Page />, {
+      clientComponents: { Widget },
+    });
+    // The deserialized prop is its own cyclic structure; matching it against an
+    // equivalently-cyclic query must not blow the stack.
+    const query: Node = { id: 1 };
+    query.self = query;
+    expect(() =>
+      findClientBoundaries(tree, { name: "Widget", props: { node: query } }),
+    ).not.toThrow();
+  });
+
+  test("renderServerTree throws a migration error for the legacy { url } option", async () => {
+    function Page() {
+      return <p>hi</p>;
+    }
+    await expect(
+      // @ts-expect-error legacy option removed; the runtime guard catches a
+      // plain-JS / spread-defeated consumer still passing it.
+      renderServerTree(<Page />, { url: "/legacy" }),
+    ).rejects.toThrow(/`url` option was renamed to `request`/);
+  });
 });

@@ -8,7 +8,7 @@ infra and the app. This file records what we hit.
 Status: all 4 entries are exercised and green here —
 `runLoader`/`runMiddleware`/`dispatch` (unit + integration), `renderRoute`
 (`/dom`), `renderToFlightString` (`/flight`), plus the `cache-status` and
-`generated-routes` helpers. 31 tests (`pnpm test:unit` + `pnpm test:unit:rsc`).
+`generated-routes` helpers (`pnpm test:unit` + `pnpm test:unit:rsc`).
 
 **Most findings below were FIXED in the same change** (see "Resolution" tags):
 the setup is now a one-line preset (`@rangojs/router/testing/vitest` →

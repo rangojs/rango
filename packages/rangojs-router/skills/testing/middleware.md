@@ -2,25 +2,25 @@
 
 **Layer:** unit (node) · **Import:** `@rangojs/router/testing` · **DSL it tests:** `middleware()` (see `/middleware`)
 
-`runMiddleware` executes your chain through the router's REAL `executeMiddleware`, so `next()`, return-Response and throw-Response short-circuits, double-next guards, and header/cookie merge are production-identical. You SEED the request and any prior-middleware state (`vars`, `params`, `env`, `routeMap`); everything else (cookie/header merge, request-context resolution) is real machinery.
+`runMiddleware` executes your chain through the router's REAL `executeLoaderMiddleware`, so `next()`, return-Response and throw-Response short-circuits, double-next guards, and header/cookie merge are production-identical. You SEED the request and any prior-middleware state (`vars`, `params`, `env`, `routeMap`); everything else (cookie/header merge, request-context resolution) is real machinery.
 
 ## API
 
 ### Options — `RunMiddlewareOptions<TEnv>`
 
-| Field                | Type                           | Meaning                                                                                                                                                                                   |
-| -------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request` (required) | `Request \| string`            | The request the chain runs under: a `Request`, or a URL string (absolute or path).                                                                                                        |
-| `env`                | `TEnv`                         | Environment bindings surfaced as `ctx.env`. Your seam for doubling platform bindings (see `./bindings.md`).                                                                               |
-| `params`             | `Record<string, string>`       | Route params surfaced as `ctx.params`.                                                                                                                                                    |
-| `vars`               | `VarsInit`                     | Variables a prior middleware would have set (object form, or `[key, value]` tuples where `key` may be a `createVar()` handle).                                                            |
-| `routeMap`           | `Record<string, string>`       | Route name -> pattern map enabling `ctx.reverse()`.                                                                                                                                       |
-| `routeName`          | `string`                       | Matched route name for scoped `.name` reverse resolution.                                                                                                                                 |
-| `basename`           | `string`                       | Router basename surfaced on the context (drives `redirect()` prefixing).                                                                                                                  |
-| `theme`              | `ThemeConfig \| true`          | Theme config in the `createRouter({ theme })` shape; enables `ctx.theme`.                                                                                                                 |
-| `next`               | `() => Promise<Response>`      | Terminal handler invoked when the chain calls `next()` all the way through. Defaults to a 200 empty Response. Use it to model the downstream route/handler response.                      |
-| `cacheStore`         | `SegmentCacheStore`            | Cache store backing any `use cache` function a middleware invokes. Without it, `registerCachedFunction` bypasses, so the cached fn runs uncached and its taint/profile guards never fire. |
-| `cacheProfiles`      | `Record<string, CacheProfile>` | Cache profiles in the `createRouter({ cacheProfiles })` shape.                                                                                                                            |
+| Field           | Type                           | Meaning                                                                                                                                                                                   |
+| --------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`       | `Request \| string`            | The request the chain runs under: a `Request`, or a URL string (absolute or path). Optional — defaults to `http://localhost/`; pass it for path-, header-, or cookie-driven middleware.   |
+| `env`           | `TEnv`                         | Environment bindings surfaced as `ctx.env`. Your seam for doubling platform bindings (see `./bindings.md`).                                                                               |
+| `params`        | `Record<string, string>`       | Route params surfaced as `ctx.params`.                                                                                                                                                    |
+| `vars`          | `VarsInit`                     | Variables a prior middleware would have set (object form, or `[key, value]` tuples where `key` may be a `createVar()` handle).                                                            |
+| `routeMap`      | `Record<string, string>`       | Route name -> pattern map enabling `ctx.reverse()`.                                                                                                                                       |
+| `routeName`     | `string`                       | Matched route name surfaced as `ctx.routeName`. Does NOT enable scoped `.name` reverse: the chain's `reverse` is deliberately map-only, matching production app/response middleware.      |
+| `basename`      | `string`                       | Router basename surfaced on the context (drives `redirect()` prefixing).                                                                                                                  |
+| `theme`         | `ThemeConfig \| true`          | Theme config in the `createRouter({ theme })` shape; enables `ctx.theme`.                                                                                                                 |
+| `next`          | `() => Promise<Response>`      | Terminal handler invoked when the chain calls `next()` all the way through. Defaults to a 200 empty Response. Use it to model the downstream route/handler response.                      |
+| `cacheStore`    | `SegmentCacheStore`            | Cache store backing any `use cache` function a middleware invokes. Without it, `registerCachedFunction` bypasses, so the cached fn runs uncached and its taint/profile guards never fire. |
+| `cacheProfiles` | `Record<string, CacheProfile>` | Cache profiles in the `createRouter({ cacheProfiles })` shape.                                                                                                                            |
 
 ### Context — `MiddlewareContext` (what your code receives)
 
@@ -86,7 +86,7 @@ Pass an array to run several in order. Cookies set inside middleware via the sta
 
 - No `handles`/`rendered` option by design: middleware runs BEFORE the render barrier, so it has no post-barrier `ctx.use(Handle)` access in production. Read handle data in a loader/handler and test it with `runLoader` (see `./handles.md`).
 - A COMPONENT route's guard stack cannot be exercised through `dispatch` (it throws on component routes), and `renderToFlightString`/`renderRoute` don't run route middleware. Extract the middleware fn and unit-test it here, or assert the guard stack at e2e.
-- Middleware-phase `ctx.reverse` is map-only (no auto-fill from current params), matching production. Pass `routeMap` (and `routeName` for scoped `.name`).
+- Middleware-phase `ctx.reverse` is map-only (no auto-fill from current params), matching production — enable it with `routeMap`. `routeName` only feeds `ctx.routeName`; it does NOT scope `.name` reverse (the chain reverse stays map-only by design).
 - `ctx.theme` is `undefined` unless `theme` is passed; `redirect()` does no basename prefixing unless `basename` is seeded.
 - Platform bindings are yours to double via `env` (see `./bindings.md`).
 

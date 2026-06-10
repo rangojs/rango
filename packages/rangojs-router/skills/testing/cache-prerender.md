@@ -8,11 +8,11 @@ The router's REAL cache pipeline runs (runtime cache, SWR revalidation, prerende
 
 ### Options — `assertCacheStatus(target, segment, expected)`
 
-| Field      | Type                                                                                                          | Meaning                                                                                                                                 |
-| ---------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `target`   | `Response \| { headers: Headers }` (`CacheStatusTarget`)                                                      | The thing carrying the `X-Rango-Cache` header. A Playwright `APIResponse`, a `Response` from `router.fetch(...)`, or any `{ headers }`. |
-| `segment`  | `string`                                                                                                      | The route NAME (e.g. `product.detail`), the same id the header carries — NOT the URL pattern (`/products/:id`).                         |
-| `expected` | `"hit" \| "miss" \| "stale" \| "prerendered" \| "passthrough"` (`ExpectedCacheStatus` = `CacheSegmentStatus`) | The cache status you assert for that route.                                                                                             |
+| Field      | Type                                                                                                          | Meaning                                                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `target`   | `Response \| { headers: Headers }` (`CacheStatusTarget`)                                                      | The thing carrying the `X-Rango-Cache` header: a `Response` from `router.fetch(...)`, or any `{ headers: Headers }`. A Playwright `APIResponse` exposes headers as a method, so wrap it: `{ headers: new Headers(res.headers()) }`. |
+| `segment`  | `string`                                                                                                      | The route NAME (e.g. `product.detail`), the same id the header carries — NOT the URL pattern (`/products/:id`).                                                                                                                     |
+| `expected` | `"hit" \| "miss" \| "stale" \| "prerendered" \| "passthrough"` (`ExpectedCacheStatus` = `CacheSegmentStatus`) | The cache status you assert for that route.                                                                                                                                                                                         |
 
 ### Context — what your code under test emits
 
@@ -53,13 +53,17 @@ import { assertCacheStatus } from "@rangojs/router/testing/e2e";
 parityDescribe("product page caches", (f) => {
   test("second request is a hit", async ({ page }) => {
     // The key is the route NAME (the X-Rango-Cache id), NOT the URL pattern.
+    // Playwright APIResponse.headers() is a method returning a plain record, so
+    // wrap it in a Headers to match CacheStatusTarget (`{ headers: Headers }`).
+    const first = await page.request.get(f.url("/products/1"));
     assertCacheStatus(
-      await page.request.get(f.url("/products/1")),
+      { headers: new Headers(first.headers()) },
       "product.detail",
       "miss",
     );
+    const second = await page.request.get(f.url("/products/1"));
     assertCacheStatus(
-      await page.request.get(f.url("/products/1")),
+      { headers: new Headers(second.headers()) },
       "product.detail",
       "hit",
     );

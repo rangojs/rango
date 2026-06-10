@@ -3,7 +3,7 @@
 Mini is the second dogfood target (after `tests/cloudflare-basic`, whose
 `test/FINDINGS.md` is the primary findings log + the working-recipe rationale).
 Setup here is the shipped preset: `resolve: { alias: rangoTestAliases() }` (no
-`cloudflare` flag — mini is a node-preset app). 10 tests across 4 entries:
+`cloudflare` flag — mini is a node-preset app). 4 entries are exercised:
 `generated-routes`, `dispatch`, `renderRoute` (`/dom`), `renderToFlightString`
 (`/flight`).
 

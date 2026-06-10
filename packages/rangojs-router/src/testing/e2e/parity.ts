@@ -76,6 +76,26 @@ export interface Parity {
    * are therefore NOT compared — a PE/JS divergence in an HttpOnly cookie will
    * not be caught here. Assert on those via `read_network_requests` / response
    * Set-Cookie headers in a dedicated test, not expectParity.
+   *
+   * Submit-intent requirements (the `submit` path runs the intent TWICE against
+   * the same server, and compares whole cookie jars from two contexts):
+   * - DOUBLE EXECUTION: the JS path submits, then the no-JS pass reloads the
+   *   same `originUrl` in a fresh context and submits AGAIN. Both hit the one
+   *   running server, so a non-idempotent action runs twice. The no-JS snapshot
+   *   then observes BOTH mutations unless the mutated state is per-session /
+   *   per-context — e.g. an add-to-cart count only reaches the same value on
+   *   both transports if the cart is session-scoped (the JS context and the
+   *   fresh no-JS context are distinct sessions). A globally-shared counter
+   *   would read N after the JS submit and N+1 after the no-JS submit and
+   *   false-mismatch. Make the action's observable state session/context-scoped,
+   *   or assert the submit path some other way.
+   * - COOKIE JAR vs DELTA: the cookie check compares the WHOLE `document.cookie`
+   *   of two different contexts. The JS context carries every cookie accumulated
+   *   before the intent (consent, analytics, prior navigations); the fresh no-JS
+   *   context starts empty. Unrelated pre-existing cookies therefore false-
+   *   mismatch — expectParity compares jars, not the per-submit cookie delta.
+   *   Keep the JS context's pre-intent cookie state minimal, or assert the
+   *   specific Set-Cookie elsewhere.
    */
   expectParity: (
     page: Page,

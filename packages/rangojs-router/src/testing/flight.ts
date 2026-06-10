@@ -42,8 +42,14 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { seedVariables, type VarsInit } from "./internal/seed-vars.js";
+import { normalizeFlight } from "./flight-normalize.js";
 import type { RscPayload } from "../rsc/types.js";
 import type { ResolvedSegment } from "../types.js";
+
+// Re-export from the serializer-free module so this entry's public surface is
+// unchanged while flight-matchers can import normalizeFlight without pulling in
+// the vendored serializer (which throws outside the react-server condition).
+export { normalizeFlight };
 
 /**
  * Options for {@link renderToFlightString}.
@@ -75,6 +81,24 @@ export interface RenderToFlightStringOptions {
 }
 
 const DEFAULT_URL = "http://localhost/";
+
+/**
+ * Guard the pre-rename `{ url }` option (renamed to `{ request }`). A plain-JS
+ * consumer, or one whose object spread defeats the compile-time type error,
+ * would otherwise have `{ url }` SILENTLY ignored and render against
+ * http://localhost/. Throw a clear migration error instead. Cheap: a single
+ * `in` check on the already-built options object.
+ */
+export function assertNoLegacyUrlOption(opts: object, fnName: string): void {
+  if ("url" in opts) {
+    throw new Error(
+      `${fnName}: the \`url\` option was renamed to \`request\`. Pass ` +
+        `{ request: "<url-or-path>" } (or a Request) instead of { url }. ` +
+        `The legacy \`url\` key is ignored, so the render would silently use ` +
+        `the default origin.`,
+    );
+  }
+}
 
 /**
  * Wrap a single element in the minimal ResolvedSegment + RscPayload shape that
@@ -112,6 +136,7 @@ export async function renderToFlightString(
   element: ReactNode,
   opts: RenderToFlightStringOptions = {},
 ): Promise<string> {
+  assertNoLegacyUrlOption(opts, "renderToFlightString");
   // Server-only trees: empty client manifest. A client reference would emit an
   // unresolvable `I` row here; use renderServerTree (flight-tree.ts) when the
   // tree has client boundaries you want to inspect.
@@ -189,31 +214,6 @@ export async function serializeNodeToFlight(
   const text = await new Response(stream).text();
   if (didError) throw renderError;
   return text;
-}
-
-// Volatile leading reference row: `:N<timestamp>` (dev debug-info anchor).
-const REFERENCE_ROW_RE = /^:N[\d.]+\n/;
-// Absolute file:// paths embedded in dev STACK rows. The serializer emits stack
-// frames as `["Component","file:///abs/path.tsx",<line>,<col>,...]`, so the
-// path is a quoted JSON string immediately followed by `",<line>,<col>`. The
-// lookahead scopes the scrub to exactly that frame shape, leaving a legitimate
-// `file://` href in RENDERED content (e.g. `{"href":"file:///x"}`) untouched.
-const FILE_URL_RE = /file:\/\/[^"\\]+(?=",\d+,\d+)/g;
-
-/**
- * Scrub volatile bits from a Flight string so snapshots are stable across runs
- * and machines:
- * - the leading `:N<timestamp>` reference row (dev only),
- * - absolute `file://...` paths inside dev stack rows.
- *
- * Under NODE_ENV=production these rows are already absent; normalize is a
- * no-op safety net there. In dev mode it removes the machine/clock-specific
- * noise while leaving the rendered tree intact.
- */
-export function normalizeFlight(flight: string): string {
-  return flight
-    .replace(REFERENCE_ROW_RE, "")
-    .replace(FILE_URL_RE, "file://<path>");
 }
 
 /**

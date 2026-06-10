@@ -12,6 +12,12 @@ export type { SpawnOptions };
 export interface RunCliHandle {
   proc: ReturnType<typeof x>["process"];
   done: Promise<void>;
+  /**
+   * Resolves with the process's exit code (null if killed by signal) when it
+   * exits. Unlike `done`, callers can branch on a nonzero code. Used to fail
+   * the build step loudly; the long-running serve processes never inspect it.
+   */
+  exitCode: Promise<number | null>;
   findPort: (timeoutMs?: number) => Promise<number>;
   kill: () => void;
   stdout: () => string;
@@ -49,11 +55,16 @@ export function runCli(
       console.log(styleText("magenta", label), data.toString());
     }
   });
+  let resolveExitCode!: (code: number | null) => void;
+  const exitCode = new Promise<number | null>((resolve) => {
+    resolveExitCode = resolve;
+  });
   const done = new Promise<void>((resolve) => {
     child.on("exit", (code) => {
       if (code !== 0 && code !== 143 && process.platform !== "win32") {
         console.log(styleText("magenta", `${label}`), `exit code ${code}`);
       }
+      resolveExitCode(code);
       resolve();
     });
   });
@@ -106,6 +117,7 @@ export function runCli(
   return {
     proc: child,
     done,
+    exitCode,
     findPort,
     kill,
     stdout: () => stdout,
