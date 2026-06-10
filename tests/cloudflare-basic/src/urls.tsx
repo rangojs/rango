@@ -25,6 +25,7 @@ import {
   ProactiveCacheItemBPage,
 } from "./pages/proactive-cache.js";
 import { DocumentCachePage } from "./pages/document-cache.js";
+import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { ThemePage } from "./pages/theme.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
@@ -328,6 +329,13 @@ export const urlpatterns = urls(
         // Slow cache route
         cache({ ttl: 60, swr: 300 }, () => [
           path("/slow-cache", SlowCachePage, { name: "slowCache" }),
+        ]),
+
+        // Cached-handles regression route: a cache()-wrapped route whose handler
+        // pushes a Promise<ReactNode> breadcrumb content that must survive the
+        // cache round-trip (see pages/cached-handles.tsx).
+        cache({ ttl: 60, swr: 300 }, () => [
+          path("/cached-handles", CachedHandlesPage, { name: "cachedHandles" }),
         ]),
 
         // Theme route

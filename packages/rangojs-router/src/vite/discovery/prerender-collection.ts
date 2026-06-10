@@ -282,10 +282,9 @@ export async function expandPrerenderRoutes(
               const interceptKey = `${result.routeName}/${paramHash}/i`;
               const interceptValue = JSON.stringify({
                 segments: [...result.segments, ...result.interceptSegments],
-                handles: {
-                  ...result.handles,
-                  ...(result.interceptHandles || {}),
-                },
+                // interceptHandles is the pre-encoded MERGED (main + intercept)
+                // handle string (the producer merged before encoding).
+                handles: result.interceptHandles ?? "",
               });
               manifestEntries[interceptKey] = stageBuildAssetModule(
                 state.projectRoot,
@@ -420,7 +419,8 @@ export async function renderStaticHandlers(
             !state.isBuildMode,
           );
           if (result) {
-            const hasHandles = Object.keys(result.handles).length > 0;
+            // result.handles is the pre-encoded handle string ("" when none).
+            const hasHandles = result.handles !== "";
             const exportValue = hasHandles
               ? JSON.stringify(result)
               : JSON.stringify(result.encoded);

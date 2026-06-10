@@ -553,18 +553,21 @@ describe('prefetchKey=":source" opt-out', () => {
     const adopted = consumeInflightPrefetch(sourceKeyA);
     expect(adopted).not.toBeNull();
 
-    // Resolve the fetch so .finally runs clearPrefetchInflight. The
-    // response has no `x-rsc-prefetch-scope` header, so it stores under
-    // wildcardKey — drain that cache entry to leave no cache trace.
+    // Resolve the fetch so .finally runs clearPrefetchInflight. The response
+    // has no `x-rsc-prefetch-scope` header, so it would store under wildcardKey
+    // — but because the in-flight promise was adopted, storePrefetch must NOT
+    // publish the now-owned (single-use) entry to the cache. A leftover here is
+    // exactly the bug that drops a route's handles on a later navigation served
+    // the drained entry.
     resolveFetch!(
       new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
     );
     await adopted;
     await new Promise((r) => setTimeout(r, 0));
-    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+    expect(consumePrefetch(wildcardKey)).toBeNull();
 
-    // With the cache entry drained, neither key should report prefetched —
-    // any lingering `true` here would come from a stuck inflight flag.
+    // No cache entry was published and no inflight flag is stuck — neither key
+    // reports prefetched after an adopted+resolved fetch.
     expect(hasPrefetch(sourceKeyA)).toBe(false);
     expect(hasPrefetch(wildcardKey)).toBe(false);
 

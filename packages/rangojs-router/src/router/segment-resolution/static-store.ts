@@ -8,6 +8,7 @@
 import type { ReactNode } from "react";
 import { _getRequestContext } from "../../server/request-context.js";
 import type { StaticStore } from "../../prerender/store.js";
+import type { SegmentHandleData } from "../../cache/types.js";
 
 // Lazy-initialized static store for production Static handler interception.
 // Remains undefined until first check; null means checked but no manifest.
@@ -19,6 +20,9 @@ let _staticStore: StaticStore | null | undefined =
     ? undefined
     : null;
 let _deserializeComponent: ((encoded: string) => Promise<unknown>) | undefined;
+let _decodeHandleValue:
+  | typeof import("../../cache/handle-snapshot.js").decodeHandleValue
+  | undefined;
 
 async function ensureStaticDeps(): Promise<void> {
   if (_staticStore === undefined) {
@@ -29,6 +33,9 @@ async function ensureStaticDeps(): Promise<void> {
     const { deserializeComponent } =
       await import("../../cache/segment-codec.js");
     _deserializeComponent = deserializeComponent;
+    const { decodeHandleValue } =
+      await import("../../cache/handle-snapshot.js");
+    _decodeHandleValue = decodeHandleValue;
   }
 }
 
@@ -53,13 +60,20 @@ export async function tryStaticLookup(
   const entry = await _staticStore.get(handlerId);
   if (!entry) return undefined;
 
-  // Replay handle data captured during build-time rendering.
-  // The data was keyed by handlerId at build time; replay under segmentId
-  // so it matches the segment order used by useHandle on the client.
-  if (entry.handles && Object.keys(entry.handles).length > 0) {
+  // Replay handle data captured during build-time rendering. entry.handles is a
+  // Flight-encoded string ("" when none) — decode before replay so
+  // Promise/ReactNode handle values are revived. The data was keyed by handlerId
+  // at build time; replay under segmentId so it matches the segment order used
+  // by useHandle on the client.
+  if (entry.handles && _decodeHandleValue) {
     const handleStore = _getRequestContext()?._handleStore;
     if (handleStore) {
-      handleStore.replaySegmentData(segmentId, entry.handles);
+      const segHandles = await _decodeHandleValue<SegmentHandleData>(
+        entry.handles,
+      );
+      if (segHandles) {
+        handleStore.replaySegmentData(segmentId, segHandles);
+      }
     }
   }
 

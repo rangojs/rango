@@ -8,14 +8,14 @@
  * that anchors import() resolution relative to the manifest file.
  */
 
-import type {
-  SerializedSegmentData,
-  SegmentHandleData,
-} from "../cache/types.js";
+import type { SerializedSegmentData } from "../cache/types.js";
 
 export interface PrerenderEntry {
   segments: SerializedSegmentData[];
-  handles: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle map (see handle-snapshot.ts encodeHandles); "" when the
+   *  route pushed no handles. Encoded so Promise/ReactNode handle values survive
+   *  the JSON-serialized build artifact / dev wire, identical to the runtime cache. */
+  handles: string;
 }
 
 export interface PrerenderStore {
@@ -28,7 +28,9 @@ export interface PrerenderStore {
 
 export interface StaticEntry {
   encoded: string;
-  handles: Record<string, unknown[]>;
+  /** RSC-encoded single-segment handle data (see encodeHandleValue); "" when the
+   *  Static handler pushed no handles. */
+  handles: string;
 }
 
 export interface StaticStore {
@@ -174,7 +176,7 @@ export function createStaticStore(): StaticStore | null {
           const val = mod.default;
           // Normalize: string-only (no handles) or { encoded, handles }
           if (typeof val === "string") {
-            return { encoded: val, handles: {} } as StaticEntry;
+            return { encoded: val, handles: "" } as StaticEntry;
           }
           return val as StaticEntry;
         })

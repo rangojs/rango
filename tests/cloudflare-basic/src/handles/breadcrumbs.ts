@@ -1,8 +1,16 @@
 import { createHandle } from "@rangojs/router";
+import type { ReactNode } from "react";
 
 export interface BreadcrumbItem {
   label: string;
   href: string;
+  /**
+   * Optional async/element content rendered next to the crumb. A
+   * Promise<ReactNode> here is the exact value shape the cache must round-trip
+   * through Flight (JSON.stringify would flatten it to {}). Used by the
+   * cached-handles regression fixture.
+   */
+  content?: ReactNode | Promise<ReactNode>;
 }
 
 /**

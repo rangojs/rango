@@ -32,7 +32,11 @@ import {
 export { isCachedFunction };
 import { serializeResult, deserializeResult } from "./segment-codec.js";
 import { createHandleStore } from "../server/handle-store.js";
-import { restoreHandles } from "./handle-snapshot.js";
+import {
+  restoreHandles,
+  encodeHandles,
+  decodeHandles,
+} from "./handle-snapshot.js";
 import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 import { sortedSearchString } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
@@ -170,7 +174,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (cached.handles && hasTaintedArgs) {
           const handleStore = requestCtx?._handleStore;
           if (handleStore) {
-            restoreHandles(cached.handles, handleStore);
+            const r = await decodeHandles(cached.handles);
+            if (r) restoreHandles(r, handleStore);
           }
         }
         return result;
@@ -186,7 +191,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (cached.handles && hasTaintedArgs) {
           const handleStore = requestCtx?._handleStore;
           if (handleStore) {
-            restoreHandles(cached.handles, handleStore);
+            const r = await decodeHandles(cached.handles);
+            if (r) restoreHandles(r, handleStore);
           }
         }
         // Background revalidation — must capture handles if tainted args present.
@@ -242,8 +248,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             bgStopCapture?.();
             const serialized = await serializeResult(freshResult);
             if (serialized !== null) {
+              const encodedHandles = bgCapture?.data
+                ? await encodeHandles(bgCapture.data)
+                : undefined;
               await store.setItem!(cacheKey, serialized, {
-                handles: bgCapture?.data,
+                handles: encodedHandles,
                 ttl: profile.ttl,
                 swr: profile.swr,
                 tags: profile.tags,
@@ -317,8 +326,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       try {
         const serialized = await serializeResult(result);
         if (serialized !== null) {
+          const encodedHandles = capture?.data
+            ? await encodeHandles(capture.data)
+            : undefined;
           await store.setItem!(cacheKey, serialized, {
-            handles: capture?.data,
+            handles: encodedHandles,
             ttl: profile.ttl,
             swr: profile.swr,
             tags: profile.tags,

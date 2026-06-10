@@ -114,6 +114,9 @@ let _deserializeSegments:
 let _restoreHandles:
   | typeof import("../../cache/handle-snapshot.js").restoreHandles
   | undefined;
+let _decodeHandles:
+  | typeof import("../../cache/handle-snapshot.js").decodeHandles
+  | undefined;
 let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
@@ -148,6 +151,7 @@ async function ensurePrerenderDeps() {
     ]);
     _deserializeSegments = codec.deserializeSegments;
     _restoreHandles = snapshot.restoreHandles;
+    _decodeHandles = snapshot.decodeHandles;
     _hashParams = paramHash.hashParams;
     _lazyGetRequestContext = reqCtx.getRequestContext;
     if (prerenderStoreInstance === undefined) {
@@ -174,6 +178,7 @@ async function* yieldFromStore<TEnv>(
   if (
     !_deserializeSegments ||
     !_restoreHandles ||
+    !_decodeHandles ||
     !_hashParams ||
     !_lazyGetRequestContext
   ) {
@@ -182,11 +187,15 @@ async function* yieldFromStore<TEnv>(
 
   const segments = await _deserializeSegments(entry.segments);
 
-  // Replay handle data (same as runtime cache hit path).
-  // Prefer the eagerly-captured handleStoreRef to avoid ALS disruption in workerd.
+  // Replay handle data (same as runtime cache hit path). entry.handles is a
+  // Flight-encoded string ("" when none) — decode before restore so
+  // Promise/ReactNode handle values are revived, not the corrupted JSON form.
   const handleStore = handleStoreRef ?? _lazyGetRequestContext()?._handleStore;
-  if (handleStore) {
-    _restoreHandles(entry.handles, handleStore);
+  if (handleStore && entry.handles) {
+    const handlesRecord = await _decodeHandles(entry.handles);
+    if (handlesRecord) {
+      _restoreHandles(handlesRecord, handleStore);
+    }
   }
 
   state.cacheHit = true;

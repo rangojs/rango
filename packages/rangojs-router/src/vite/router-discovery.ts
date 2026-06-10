@@ -893,10 +893,9 @@ export function createRouterDiscoveryPlugin(
             if (wantIntercept && result.interceptSegments?.length) {
               payload = {
                 segments: [...result.segments, ...result.interceptSegments],
-                handles: {
-                  ...result.handles,
-                  ...(result.interceptHandles || {}),
-                },
+                // Pre-encoded MERGED handle string from the producer (handles are
+                // Flight-encoded so Promise/ReactNode values survive the wire).
+                handles: result.interceptHandles ?? "",
               };
             } else {
               payload = { segments: result.segments, handles: result.handles };

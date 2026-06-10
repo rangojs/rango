@@ -12,7 +12,6 @@ import type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
-  SegmentHandleData,
 } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 import {
@@ -56,7 +55,9 @@ interface CachedResponseEntry {
 
 interface CachedItemEntry {
   value: string;
-  handles?: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle data (see handle-snapshot.ts encodeHandles). Stored as
+   *  the encoded string by reference, identical to the JSON-serializing stores. */
+  handles?: string;
   expiresAt: number;
   staleAt: number;
 }

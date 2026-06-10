@@ -496,14 +496,16 @@ test.describe("bundle-analysis", () => {
 
       for (const file of prFiles) {
         const content = readFileSync(join(RSC_ASSETS_DIR, file), "utf-8");
-        // Each asset exports a default with segments[] and handles{}
+        // Each asset exports a default with segments[] and an RSC-Flight-encoded
+        // handles string ("" when none) — encoded so Promise/ReactNode handle
+        // values survive the JSON artifact instead of being flattened.
         expect(content).toContain("export default");
         const match = content.match(/export default\s+({[\s\S]*});\s*$/);
         expect(match).toBeTruthy();
         const data = JSON.parse(match![1]);
         expect(Array.isArray(data.segments)).toBe(true);
         expect(data.segments.length).toBeGreaterThan(0);
-        expect(typeof data.handles).toBe("object");
+        expect(typeof data.handles).toBe("string");
       }
     });
 

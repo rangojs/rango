@@ -131,7 +131,26 @@ export async function handleResponseRoute<TEnv>(
 
       // Handled before the MIME lookup (json is also a RESPONSE_TYPE_MIME key).
       if (preview.responseType === "json") {
-        return createResponseWithMergedHeaders(JSON.stringify(result), {
+        // Runtime guard: the json() return type rejects nested Promises at
+        // compile time, but an `as`-cast or untyped (JS) handler can still slip
+        // one through. JSON.stringify would silently emit {} for it (the
+        // forgotten-await footgun — the RSC pipeline awaits nested promises, this
+        // path does not). Throw a clear error instead of shipping empty data.
+        const body = JSON.stringify(result, (_key, value) => {
+          if (
+            value != null &&
+            typeof (value as { then?: unknown }).then === "function"
+          ) {
+            throw new RouterError(
+              "RESPONSE_NOT_SERIALIZABLE",
+              "A json() response route returned a Promise (likely a forgotten " +
+                "await). Await async values before returning so they serialize, " +
+                "instead of emitting an empty {}.",
+            );
+          }
+          return value;
+        });
+        return createResponseWithMergedHeaders(body, {
           status: 200,
           headers: { "content-type": "application/json;charset=utf-8" },
         });
