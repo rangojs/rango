@@ -271,6 +271,7 @@ export const NamedRoutes = {
   responseWrapCustom: "/response-wrap/custom-response",
   responseWrapHtml: "/response-wrap/html",
   responseWrapJsonHeaders: "/response-wrap/json-headers",
+  responseWrapNestedPromise: "/response-wrap/nested-promise",
   responseWrapText: "/response-wrap/text",
   responseWrapWithHeaders: "/response-wrap/with-headers",
   responseWrapXml: "/response-wrap/xml",
