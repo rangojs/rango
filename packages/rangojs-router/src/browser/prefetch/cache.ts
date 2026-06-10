@@ -109,6 +109,21 @@ const inflightPromises = new Map<string, Promise<DecodedPrefetch | null>>();
  */
 const inflightAliases = new Map<string, string[]>();
 
+/**
+ * Keys whose in-flight prefetch promise was adopted by a navigation (via
+ * `consumeInflightPrefetch`). A `DecodedPrefetch` carries a single-use
+ * `metadata.handles` async generator; the adopter drains it. The same entry is
+ * also published to the `cache` map by `storePrefetch` when the fetch resolves
+ * — which runs AFTER adoption (adoption only succeeds while the fetch is still
+ * in flight, so the entry is not yet cached). Without this guard the adopted,
+ * now-drained entry would be left in the cache and served to a later navigation
+ * whose handle generator yields nothing, silently dropping that route's
+ * breadcrumbs. Recording the adopted keys lets `storePrefetch` skip publishing
+ * them, keeping the existing one-time-consumption contract (a consumed prefetch
+ * is gone; the next navigation re-fetches).
+ */
+const adoptedKeys = new Set<string>();
+
 // Generation counter incremented on each clearPrefetchCache(). Fetches that
 // started before a clear carry a stale generation and must not store their
 // response (the data may be stale due to a server action invalidation).
@@ -225,11 +240,16 @@ export function consumeInflightPrefetch(
   const promise = inflightPromises.get(key);
   if (!promise) return null;
   // Remove the promise under every alias so a second consumer cannot
-  // adopt the same stream and race on the body. `inflightAliases` is
-  // intentionally preserved — `clearPrefetchInflight()` in the fetch's
-  // `.finally()` still needs it to clear every inflight flag; deleting
-  // here would strand the sibling's flag forever.
-  forEachAlias(key, (k) => inflightPromises.delete(k));
+  // adopt the same stream and race on the body, and mark every alias as
+  // adopted so the pending `storePrefetch` (which resolves later, after this
+  // adoption) does not leave the now-owned, single-use entry in the cache map.
+  // `inflightAliases` is intentionally preserved — `clearPrefetchInflight()` in
+  // the fetch's `.finally()` still needs it to clear every inflight flag and
+  // adopted marker; deleting here would strand the sibling's flag forever.
+  forEachAlias(key, (k) => {
+    inflightPromises.delete(k);
+    adoptedKeys.add(k);
+  });
   return promise;
 }
 
@@ -246,6 +266,16 @@ export function storePrefetch(
 ): void {
   if (cacheTTL <= 0) return;
   if (fetchGeneration !== generation) return;
+
+  // If a navigation already adopted this prefetch's in-flight promise, it owns
+  // the single-use entry (and has drained its handle generator). Do NOT also
+  // publish it to the cache map, or a later navigation would be served the
+  // exhausted entry and lose that route's handles. Clear the marker (under all
+  // aliases) now that the decision is made.
+  if (adoptedKeys.has(key)) {
+    forEachAlias(key, (k) => adoptedKeys.delete(k));
+    return;
+  }
 
   // Evict expired entries
   const now = Date.now();
@@ -307,6 +337,9 @@ export function clearPrefetchInflight(key: string): void {
     inflight.delete(k);
     inflightPromises.delete(k);
     inflightAliases.delete(k);
+    // Clear any adopted marker too, so a fetch that failed before storePrefetch
+    // (the marker's normal consumer) does not strand it across the next prefetch.
+    adoptedKeys.delete(k);
   });
 }
 
@@ -323,6 +356,7 @@ export function clearPrefetchCache(): void {
   inflight.clear();
   inflightPromises.clear();
   inflightAliases.clear();
+  adoptedKeys.clear();
   cache.clear();
   abortAllPrefetches();
   invalidateRangoState();
@@ -340,6 +374,7 @@ export function clearPrefetchCacheLocal(): void {
   generation++;
   inflight.clear();
   inflightPromises.clear();
+  adoptedKeys.clear();
   cache.clear();
   abortAllPrefetches();
 }

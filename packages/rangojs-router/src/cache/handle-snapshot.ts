@@ -9,6 +9,86 @@
 import type { ResolvedSegment } from "../types.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { SegmentHandleData } from "./types.js";
+import { serializeResult, deserializeResult } from "./segment-codec.js";
+
+/**
+ * Bound on the background cache-write encode of handle data. A pushed handle
+ * value can be a Promise (request-context push-a-promise) or a Promise<ReactNode>
+ * (Breadcrumbs content), which the Flight encoder awaits while draining. The
+ * encode runs in waitUntil/runBackground, so a never-resolving handle value
+ * would otherwise pin a background slot indefinitely; on timeout the entry's
+ * handles coalesce to empty rather than hanging or poisoning the whole write.
+ */
+const HANDLE_ENCODE_TIMEOUT_MS = 5000;
+
+type HandleRecord = Record<string, SegmentHandleData>;
+
+// Encoded form of an empty handle map, computed once. Used as the fallback when
+// encoding times out or fails so the stored field is always a decodable string.
+let emptyEncodedHandles: string | null = null;
+async function encodeEmptyHandles(): Promise<string> {
+  if (emptyEncodedHandles === null) {
+    emptyEncodedHandles = (await serializeResult({})) ?? "";
+  }
+  return emptyEncodedHandles;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout), ms);
+  });
+  return Promise.race([
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        return v;
+      },
+      (e) => {
+        clearTimeout(timer);
+        throw e;
+      },
+    ),
+    timeout,
+  ]);
+}
+
+/**
+ * Encode a captured handle map to a string for cache storage.
+ *
+ * Handle values can be Promises or React elements (e.g. Breadcrumbs `content`).
+ * JSON.stringify destroys those (Promise -> {}, ReactNode non-representable), so
+ * persisting the raw map silently corrupts non-scalar handle values on stores
+ * that serialize to JSON (the Cloudflare cache). Routing the map through the same
+ * RSC-Flight codec the segments/value already use awaits Promises and serializes
+ * React elements, so the stored field is a lossless, JSON-safe string. The
+ * in-memory store keeps the same string by reference, so both backends replay
+ * identical decoded values.
+ */
+export async function encodeHandles(handles: HandleRecord): Promise<string> {
+  const encoded = await withTimeout(
+    serializeResult(handles),
+    HANDLE_ENCODE_TIMEOUT_MS,
+    null,
+  );
+  return encoded ?? (await encodeEmptyHandles());
+}
+
+/**
+ * Decode a stored handle string back to a handle map. Returns null on any
+ * decode failure (e.g. a cross-version entry read under a pinned static
+ * version), so the caller can skip handle restore without discarding the
+ * otherwise-valid cached segments alongside it.
+ */
+export async function decodeHandles(
+  encoded: string,
+): Promise<HandleRecord | null> {
+  try {
+    return await deserializeResult<HandleRecord>(encoded);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Capture handle data for a set of segments from the handle store.

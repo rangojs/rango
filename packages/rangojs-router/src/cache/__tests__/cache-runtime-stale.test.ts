@@ -33,10 +33,17 @@ vi.mock("../segment-codec.js", () => ({
   deserializeResult: vi.fn((v: string) => JSON.parse(v)),
 }));
 
-// Mock handle snapshot
+// Mock handle snapshot. encodeHandles/decodeHandles stand in for the Flight
+// codec: encode produces the stored string, decode reverses it. decode tolerates
+// a raw object too, so existing fixtures that set `handles` as a Record still
+// drive restoreHandles with the same reference.
 const mockRestoreHandles = vi.fn();
 vi.mock("../handle-snapshot.js", () => ({
   restoreHandles: (...args: any[]) => mockRestoreHandles(...args),
+  encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
+  decodeHandles: vi.fn(async (s: any) =>
+    typeof s === "string" ? JSON.parse(s) : s,
+  ),
 }));
 
 // Mock internal debug
@@ -281,7 +288,8 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(mockStore.setItem).toHaveBeenCalledTimes(1);
     const setItemOptions = mockStore.setItem.mock.calls[0][2];
     expect(setItemOptions).toBeDefined();
-    // handles should be an object (possibly empty if nothing was pushed)
+    // handles is the encoded string produced by encodeHandles when a capture
+    // exists (the raw Record is never stored — it would corrupt non-scalars)
     expect(setItemOptions.handles).toBeDefined();
   });
 

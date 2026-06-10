@@ -175,8 +175,10 @@ export interface SegmentCacheStore<TEnv = unknown> {
 export interface CacheItemResult {
   /** RSC-serialized return value */
   value: string;
-  /** Handle data captured during execution (breadcrumbs, metadata, etc.) */
-  handles?: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle data captured during execution (breadcrumbs, metadata,
+   *  etc.). Encoded via the Flight codec so Promise/ReactNode handle values
+   *  survive JSON-serializing stores — see handle-snapshot.ts encodeHandles. */
+  handles?: string;
   /** Whether the entry is stale and should be revalidated */
   shouldRevalidate: boolean;
 }
@@ -185,8 +187,8 @@ export interface CacheItemResult {
  * Options for setItem() for function-level caching ("use cache").
  */
 export interface CacheItemOptions {
-  /** Handle data to store alongside the value */
-  handles?: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle data to store alongside the value (see encodeHandles). */
+  handles?: string;
   /** Time-to-live in seconds */
   ttl?: number;
   /** Stale-while-revalidate window in seconds */
@@ -227,8 +229,10 @@ export interface SerializedSegmentData {
 export interface CachedEntryData {
   /** Serialized segments for this entry */
   segments: SerializedSegmentData[];
-  /** Handle data keyed by segment ID */
-  handles: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle data keyed by segment ID. Encoded via the Flight codec
+   *  (see handle-snapshot.ts encodeHandles) so Promise/ReactNode handle values
+   *  round-trip through JSON-serializing stores instead of being flattened. */
+  handles: string;
   /** Expiration timestamp (ms since epoch) */
   expiresAt: number;
 }
