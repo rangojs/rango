@@ -72,6 +72,27 @@ function harnessSpecs(): void {
       { observe: ["blog-title"], baseURL },
     );
   });
+
+  test("expectParity: parity-counter submit matches across JS and no-JS", async ({
+    page,
+  }) => {
+    // The /parity-counter form posts an `amount` to a server action that
+    // increments a cookie-scoped count and re-renders it. The harness applies
+    // the submit on the JS page, then again in a fresh no-JS context against the
+    // same server. Because the count lives in a per-context cookie, both
+    // transports start at 0 and reach the same value after a single submit, and
+    // their whole cookie jars match — exercising expectParity's submit path
+    // (applyIntent fill + click, settleSubmit, jar compare) end to end.
+    await page.goto("/parity-counter");
+    await waitForHydration(page);
+
+    const baseURL = new URL(page.url()).origin;
+    await expectParity(
+      page,
+      { submit: { testId: "parity-counter-form", data: { amount: "1" } } },
+      { observe: ["parity-counter-value"], baseURL },
+    );
+  });
 }
 
 // Dev bucket: title WITHOUT "(production)" -> runs against the :5188 dev server.
