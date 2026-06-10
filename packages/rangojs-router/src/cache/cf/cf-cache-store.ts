@@ -72,6 +72,15 @@ const CACHE_ORIG_CC_HEADER = "x-edge-cache-orig-cc";
  */
 export const MAX_REVALIDATION_INTERVAL = 30;
 
+/**
+ * Maximum time (ms) to wait for an L1 edge cache (CF Cache API) read before
+ * giving up and treating it as a miss. The Cache API is normally sub-millisecond
+ * per-colo, so a slow `match` signals a degraded colo; we don't want it adding
+ * latency to the request. On timeout the lookup is abandoned, a warning is
+ * logged, and the read falls through to its normal miss path (L2/KV or render).
+ */
+export const EDGE_LOOKUP_TIMEOUT_MS = 10;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -341,6 +350,50 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     return caches.default;
   }
 
+  /**
+   * Read from the L1 edge cache with a latency budget. A `match` that takes
+   * longer than EDGE_LOOKUP_TIMEOUT_MS is abandoned and reported as a miss
+   * (undefined) so a degraded colo cannot stall the request; callers then fall
+   * through to their normal miss path (L2/KV or render). The slow `match` is
+   * left to settle in the background (errors swallowed) rather than aborted,
+   * since the Cache API exposes no cancellation.
+   * @internal
+   */
+  private async matchWithTimeout(
+    cache: Cache,
+    request: Request,
+  ): Promise<Response | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<{ timedOut: true }>((resolve) => {
+      timer = setTimeout(
+        () => resolve({ timedOut: true }),
+        EDGE_LOOKUP_TIMEOUT_MS,
+      );
+    });
+    try {
+      const matchPromise = cache.match(request);
+      // The losing branch keeps running; ensure a late rejection can't surface
+      // as an unhandled rejection once we've stopped awaiting it.
+      matchPromise.catch(() => {});
+      const result = await Promise.race([
+        matchPromise.then((response) => ({
+          timedOut: false as const,
+          response,
+        })),
+        timeout,
+      ]);
+      if (result.timedOut) {
+        console.warn(
+          `[CFCacheStore] edge cache lookup exceeded ${EDGE_LOOKUP_TIMEOUT_MS}ms; treating as miss`,
+        );
+        return undefined;
+      }
+      return result.response;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   // ============================================================================
   // Segment Cache Methods
   // ============================================================================
@@ -360,7 +413,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(key);
-      const response = await cache.match(request);
+      const response = await this.matchWithTimeout(cache, request);
 
       if (!response) {
         return this.kvGetSegment(key);
@@ -494,7 +547,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`doc:${key}`);
-      const response = await cache.match(request);
+      const response = await this.matchWithTimeout(cache, request);
 
       if (!response || response.status !== 200) {
         return this.kvGetResponse(key);
@@ -640,7 +693,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`fn:${key}`);
-      const response = await cache.match(request);
+      const response = await this.matchWithTimeout(cache, request);
 
       if (!response) return this.kvGetItem(key);
 

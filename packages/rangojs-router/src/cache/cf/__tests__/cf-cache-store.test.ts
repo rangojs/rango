@@ -4,6 +4,7 @@ import {
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
   MAX_REVALIDATION_INTERVAL,
+  EDGE_LOOKUP_TIMEOUT_MS,
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 import { runWithRequestContext } from "../../../server/request-context";
@@ -489,6 +490,48 @@ describe("CFCacheStore", () => {
       expect(
         keys.every((k) => k.startsWith("https://rsc-dummy-host-1.com/")),
       ).toBe(true);
+    });
+  });
+
+  describe("edge cache lookup timeout", () => {
+    it("treats an L1 lookup exceeding the budget as a miss and warns", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // match never resolves -> the latency budget must win and report a miss
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockImplementation(() => new Promise<Response>(() => {}));
+
+      const store = new CFCacheStore({ ctx: createMockCtx() });
+      const resultPromise = store.get("slow-key");
+      await vi.advanceTimersByTimeAsync(EDGE_LOOKUP_TIMEOUT_MS);
+      const result = await resultPromise;
+
+      // No KV configured -> "not hit" resolves to a full miss.
+      expect(result).toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`exceeded ${EDGE_LOOKUP_TIMEOUT_MS}ms`),
+      );
+
+      matchSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it("does not warn when the L1 lookup resolves within the budget", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+      const data = createTestData();
+
+      await store.set("fast-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const result = await store.get("fast-key");
+
+      expect(result).not.toBeNull();
+      expect(result!.data).toEqual(data);
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      warnSpy.mockRestore();
     });
   });
 
