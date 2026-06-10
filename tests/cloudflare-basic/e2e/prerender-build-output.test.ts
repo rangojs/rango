@@ -261,7 +261,9 @@ test.describe("prerender asset structure (production)", () => {
 
       expect(Array.isArray(data.segments)).toBe(true);
       expect(data.segments.length).toBeGreaterThan(0);
-      expect(typeof data.handles).toBe("object");
+      // handles is an RSC-Flight-encoded string ("" when none) — Promise/ReactNode
+      // handle values would be corrupted by JSON if stored as a raw object.
+      expect(typeof data.handles).toBe("string");
     }
   });
 
