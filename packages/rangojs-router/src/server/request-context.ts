@@ -33,6 +33,7 @@ import {
   type HandleData,
 } from "./handle-store.js";
 import { isHandle } from "../handle.js";
+import { withDefer } from "../defer.js";
 import { track, type MetricsStore } from "./context.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
@@ -998,18 +999,18 @@ export function createUseFunction<TEnv>(
       }
 
       // Return a push function bound to this handle and segment
-      return (
-        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
-      ) => {
-        // If it's a function, call it immediately to get the promise
-        const valueOrPromise =
-          typeof dataOrFn === "function"
-            ? (dataOrFn as () => Promise<unknown>)()
-            : dataOrFn;
+      return withDefer(
+        (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+          // If it's a function, call it immediately to get the promise
+          const valueOrPromise =
+            typeof dataOrFn === "function"
+              ? (dataOrFn as () => Promise<unknown>)()
+              : dataOrFn;
 
-        // Push directly - promises will be serialized by RSC and streamed
-        handleStore.push(handle.$$id, segmentId, valueOrPromise);
-      };
+          // Push directly - promises will be serialized by RSC and streamed
+          handleStore.push(handle.$$id, segmentId, valueOrPromise);
+        },
+      );
     }
 
     // Loader case

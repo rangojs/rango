@@ -305,6 +305,22 @@ function breadcrumbTests(mode: "dev" | "build") {
         page.getByText("resolved-by-deep-component").first(),
       ).toBeVisible({ timeout: 5000 });
     });
+
+    // The .defer() safety net: a reserved slot whose resolver is never called
+    // must auto-resolve to `else` (short timeout) so the response flushes
+    // instead of hanging on the open Flight row.
+    test("a deferred handle value that is never resolved falls back on timeout (no hang)", async ({
+      page,
+    }) => {
+      // page.goto resolving at all proves the response flushed (no hang).
+      await page.goto(f.url("/breadcrumb-trail/deferred-timeout"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "deferred-timeout-page")).toBeVisible();
+      await expect(page.getByText("fallback-content").first()).toBeVisible({
+        timeout: 5000,
+      });
+    });
   });
 }
 

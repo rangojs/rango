@@ -21,6 +21,7 @@ import type {
 } from "../types";
 import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, collectHandleData, type Handle } from "../handle.js";
+import { withDefer } from "../defer.js";
 import { buildHandleSnapshot } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
@@ -443,28 +444,28 @@ export function setupLoaderAccess<TEnv>(
         );
       }
 
-      return (
-        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
-      ) => {
-        if (!store) return;
+      return withDefer(
+        (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+          if (!store) return;
 
-        if (typeof dataOrFn === "function") {
-          // Run the callback inside the push-callback scope so ctx.use(loader)
-          // calls it makes — including after its own awaits, for an async
-          // callback — are not registered as handler-to-loader deps and do not
-          // trip the deadlock guard. A pushed promise value is not tracked by
-          // handleStore.settled and does not block segment resolution, so it
-          // cannot form a rendered() deadlock. The ALS scope (not a plain
-          // boolean) is what survives the callback's awaits.
-          const result = runInsidePushCallbackScope(() =>
-            (dataOrFn as () => Promise<unknown>)(),
-          );
-          store.push(handle.$$id, segmentId, result);
-          return;
-        }
+          if (typeof dataOrFn === "function") {
+            // Run the callback inside the push-callback scope so ctx.use(loader)
+            // calls it makes — including after its own awaits, for an async
+            // callback — are not registered as handler-to-loader deps and do not
+            // trip the deadlock guard. A pushed promise value is not tracked by
+            // handleStore.settled and does not block segment resolution, so it
+            // cannot form a rendered() deadlock. The ALS scope (not a plain
+            // boolean) is what survives the callback's awaits.
+            const result = runInsidePushCallbackScope(() =>
+              (dataOrFn as () => Promise<unknown>)(),
+            );
+            store.push(handle.$$id, segmentId, result);
+            return;
+          }
 
-        store.push(handle.$$id, segmentId, dataOrFn);
-      };
+          store.push(handle.$$id, segmentId, dataOrFn);
+        },
+      );
     }
 
     // Deadlock guard and handler-to-loader dependency tracking.

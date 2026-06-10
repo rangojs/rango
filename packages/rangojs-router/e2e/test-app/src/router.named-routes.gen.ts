@@ -17,6 +17,7 @@ export const NamedRoutes = {
   "blog.index": "/blog",
   "blog.post": "/blog/:postId",
   "breadcrumbTrail.deferred": "/breadcrumb-trail/deferred",
+  "breadcrumbTrail.deferredTimeout": "/breadcrumb-trail/deferred-timeout",
   "breadcrumbTrail.docs": "/breadcrumb-trail/docs",
   "breadcrumbTrail.guide": "/breadcrumb-trail/docs/getting-started",
   "breadcrumbTrail.index": "/breadcrumb-trail",

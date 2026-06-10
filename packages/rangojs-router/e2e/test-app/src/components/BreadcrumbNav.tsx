@@ -10,7 +10,21 @@ import { Fragment, ReactNode, Suspense, use } from "react";
 export function BreadcrumbNav({ testId }: { testId?: string }) {
   const breadcrumbs = useHandle(Breadcrumbs);
 
-  if (!breadcrumbs.length) return null;
+  // A handle that uses `.defer()` reserves a slot whose value is the WHOLE item
+  // as a Promise until a deep component resolves it. This global nav renders the
+  // crumbs it already knows and skips a not-yet-resolved (thenable) entry rather
+  // than rendering it with an undefined href/label. Deferred-aware rendering
+  // (use() inside Suspense) lives in the page-level component, see
+  // DeferredTrailBreadcrumbs.
+  const renderable = breadcrumbs.filter(
+    (crumb) =>
+      !(
+        crumb != null &&
+        typeof (crumb as { then?: unknown }).then === "function"
+      ),
+  );
+
+  if (!renderable.length) return null;
 
   return (
     <nav
@@ -31,7 +45,7 @@ export function BreadcrumbNav({ testId }: { testId?: string }) {
           padding: 0,
         }}
       >
-        {breadcrumbs.map((crumb, index) => (
+        {renderable.map((crumb, index) => (
           <Fragment key={crumb.href}>
             <li
               style={{
@@ -45,7 +59,7 @@ export function BreadcrumbNav({ testId }: { testId?: string }) {
                   /
                 </span>
               )}
-              {index === breadcrumbs.length - 1 ? (
+              {index === renderable.length - 1 ? (
                 <span
                   data-testid={testId ? `${testId}-current` : undefined}
                   style={{ color: "#666" }}

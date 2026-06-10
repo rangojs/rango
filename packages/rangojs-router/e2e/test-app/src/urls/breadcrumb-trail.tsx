@@ -1,7 +1,10 @@
 import { urls, Breadcrumbs } from "@rangojs/router";
 import { Outlet, Link } from "@rangojs/router/client";
-import { Suspense, type ReactNode } from "react";
-import { TrailBreadcrumbs } from "../components/TrailBreadcrumbs.js";
+import { Suspense } from "react";
+import {
+  TrailBreadcrumbs,
+  DeferredTrailBreadcrumbs,
+} from "../components/TrailBreadcrumbs.js";
 
 /**
  * Test routes for the built-in Breadcrumbs handle with a user-land component.
@@ -80,34 +83,31 @@ function TrailDocsGuide(ctx: any) {
 // late? The content is a Promise pushed at handler time and resolved by an async
 // child during its own render. If the breadcrumb content still renders, then
 // "decide-sync, resolve-late" works on the existing Flight transport with no new
-// machinery — which would make the completion-detection answer a small
-// `deferHandle` API + docs rather than the out-of-band stream redesign (option A).
+// machinery — which makes the completion-detection answer the small
+// `ctx.use(Handle).defer()` API + docs rather than the out-of-band stream
+// redesign (option A).
 function DeferredResolvePage(ctx: any) {
   const breadcrumb = ctx.use(Breadcrumbs);
-  let resolveContent!: (value: ReactNode) => void;
-  const content = new Promise<ReactNode>((resolve) => {
-    resolveContent = resolve;
-  });
-  // Synchronous decision at handler time; the value is still pending.
-  breadcrumb({
-    label: "Deferred",
-    href: "/breadcrumb-trail/deferred",
-    content,
-  });
+  // Decide to push the crumb now (slot reserved before the stream seals); a deep
+  // async component resolves the WHOLE item later via the resolver — the same
+  // call shape as breadcrumb({...}).
+  const resolveCrumb = breadcrumb.defer({ within: 5000, else: null });
 
-  // A deep async component resolves the pushed content LATE, during its own
-  // render — it never touches ctx or the handle store.
   async function DeepResolver() {
     await new Promise((r) => setTimeout(r, 300));
-    resolveContent(
-      <span data-testid="deferred-resolved">resolved-by-deep-component</span>,
-    );
+    resolveCrumb({
+      label: "Deferred",
+      href: "/breadcrumb-trail/deferred",
+      content: (
+        <span data-testid="deferred-resolved">resolved-by-deep-component</span>
+      ),
+    });
     return <div data-testid="deep-resolver-done">deep done</div>;
   }
 
   return (
     <div data-testid="deferred-resolve-page">
-      <TrailBreadcrumbs />
+      <DeferredTrailBreadcrumbs />
       <Suspense fallback={<div data-testid="deep-loading">loading</div>}>
         <DeepResolver />
       </Suspense>
@@ -115,9 +115,34 @@ function DeferredResolvePage(ctx: any) {
   );
 }
 
+// Safety net: a deferred slot whose resolver is NEVER called. The short timeout
+// must auto-resolve the slot to `else` so the response flushes instead of
+// hanging forever on the open Flight row.
+function DeferredTimeoutPage(ctx: any) {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  breadcrumb.defer({
+    within: 300,
+    else: {
+      label: "Forgotten",
+      href: "/breadcrumb-trail/deferred-timeout",
+      content: <span data-testid="deferred-fallback">fallback-content</span>,
+    },
+  });
+  // Resolver intentionally never called.
+
+  return (
+    <div data-testid="deferred-timeout-page">
+      <DeferredTrailBreadcrumbs />
+    </div>
+  );
+}
+
 export const breadcrumbTrailPatterns = urls(({ path, layout }) => [
   path("/breadcrumb-trail/deferred", DeferredResolvePage, {
     name: "breadcrumbTrail.deferred",
+  }),
+  path("/breadcrumb-trail/deferred-timeout", DeferredTimeoutPage, {
+    name: "breadcrumbTrail.deferredTimeout",
   }),
   layout(TrailLayout, () => [
     path("/breadcrumb-trail", TrailIndex, { name: "breadcrumbTrail.index" }),

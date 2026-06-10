@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Handle } from "../handle.js";
+import type { HandlePush } from "../defer.js";
 import type { ContextVar } from "../context-var.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { Theme } from "../theme/types.js";
@@ -323,7 +324,7 @@ export type HandlerContext<
     ): Promise<T>;
     <TData, TAccumulated = TData[]>(
       handle: Handle<TData, TAccumulated>,
-    ): (data: TData | Promise<TData> | (() => Promise<TData>)) => void;
+    ): HandlePush<TData>;
   };
   /**
    * Current theme (from cookie or default).

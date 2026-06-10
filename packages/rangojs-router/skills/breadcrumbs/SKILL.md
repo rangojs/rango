@@ -81,6 +81,54 @@ path("/product/:id", async (ctx) => {
 Async content is a `Promise<ReactNode>`. Resolve it in your component
 with React's `use()` hook wrapped in `<Suspense>`.
 
+### Deferred content (decide now, resolve from a deep component)
+
+When the handler should DECIDE to push a crumb (it holds `ctx`, so the decision
+must land before the handles stream seals) but the value is produced far away — by
+a deep async component, not the handler — call `.defer()` on the push function.
+`ctx.use(Handle)` returns the push function; `.defer(options)` reserves the crumb's
+slot synchronously and returns a **resolver that is push-equal** — you call it
+later, anywhere in the render, with the same argument you'd have passed to the
+push (a value, a `Promise`, or a thunk). The only added behavior is a timeout, so a
+forgotten resolve can't hold the Flight stream (and the HTTP response) open forever.
+
+```tsx
+import { Breadcrumbs } from "@rangojs/router";
+
+function DocsLayout(ctx) {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  // Decide now (the slot is reserved before the stream seals); resolve later.
+  const resolve = breadcrumb.defer({ within: 5000, else: null });
+  return <Outlet context={{ resolveCrumb: resolve }} />;
+}
+
+// Deep, async, far from the handler — never touches ctx:
+async function LiveBadge() {
+  const n = await countOpenIssues();
+  // Same call shape as breadcrumb({ ... }), just deferred:
+  useOutletContext().resolveCrumb({
+    label: "Docs",
+    href: "/docs",
+    content: <span>{n}</span>,
+  });
+  return null;
+}
+```
+
+If the resolver is never called, the slot auto-resolves to `else` after `within`
+ms (default 10s) and warns in dev — graceful degradation instead of a hung
+request. `within: 0` or `Infinity` disable the timeout intentionally; any other
+non-finite or negative value falls back to the default rather than silently
+disabling the safety net.
+
+**Consumer note:** because `.defer()` reserves the slot for the WHOLE item, a
+client reading the handle (`useHandle(Breadcrumbs)`) sees that entry as a
+`Promise` until it resolves. A deferred-aware consumer should `use()` thenable
+entries inside `<Suspense>`; a simple one can skip them (`typeof entry.then ===
+"function"`). Use `.defer()` only when even `label`/`href` are unknown at handler
+time — if you know them and only the `content` is async, push a concrete item with
+a `Promise` `content` field instead (no `.defer()` needed).
+
 ## Consuming Breadcrumbs (Client)
 
 Use `useHandle(Breadcrumbs)` in a client component to read the accumulated items:

@@ -95,6 +95,19 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 `createLoader`, `createHandle`, `isHandle`, `createLocationState`, `href()`
 
+### Deferred handle values — `ctx.use(Handle).defer()`
+
+The push function returned by `ctx.use(Handle)` (typed `HandlePush<TData>`) carries
+a `.defer(options?: DeferOptions)` method for the "decide-sync, resolve-late" handle
+pattern. `.defer({ within, else })` reserves the handle's slot synchronously (so the
+decision lands before the stream seals) and returns a **push-equal resolver** — same
+argument shapes as the push (value / `Promise` / thunk), same behavior — that a deep
+async component calls later. The mandatory `within` timeout (default
+`DEFAULT_DEFER_TIMEOUT_MS`, 10s) auto-resolves the slot to `else` if the resolver is
+never called, so a forgotten resolve cannot hang the Flight stream / response.
+Exported types: `HandlePush`, `HandlePushFn`, `DeferOptions`, `DEFAULT_DEFER_TIMEOUT_MS`.
+`createDeferred` is internal (the `withDefer` building block), not a public export.
+
 ---
 
 ## Feature Map by Capability
