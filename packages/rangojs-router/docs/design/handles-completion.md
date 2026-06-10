@@ -192,14 +192,19 @@ is per-Flight-request so pass two runs cold — only Rango `"use cache"` content
 spared the double execution. Reserve it behind a per-route `lateHandles: true`
 flag, and only if someone needs it.
 
-The **build-time** variant, though, is the cheap win hiding in this option. The
-build pipeline already contains a full render-drain barrier: `serializeSegments`
-stringifies every segment's Flight stream, fully draining it. So the documented
-deep-push gap at build time closes with a seal/collect _reorder_ — finalize handles
-_after_ serialization (`src/router/prerender-match.ts` around the step-11-13 block,
-~lines 275-290; and `src/rsc/rsc-rendering.ts:115-141`). No `prerender()` import, no
-new vendor dependency. S-M effort, and it lines up exactly with the prerender
-design's "prerender = build-time cache" principle.
+The **build-time** variant, though, was floated as a cheap win: the build pipeline
+already contains a full render-drain barrier (`serializeSegments` drains every
+segment's Flight stream), so a seal/collect _reorder_ at
+`src/router/prerender-match.ts` (~lines 275-290) and `src/rsc/rsc-rendering.ts:115-141`
+looked like it would close a build-time "deep-push gap" for free.
+
+**Correction:** that "deep-push gap" rests on the same premise disproved as bug 2
+below — `serializeSegments` re-renders components but cannot push handles (no
+`ctx._currentSegmentId`), so there is no missed-push gap to close, at build time or
+runtime. The build path's _real_ handle defect is the same as bug 1: prerender
+handle persistence `JSON.stringify`s the values, corrupting Promise/ReactNode
+handles. The fix there is the Flight encoding, not a reorder — tracked as the
+deferred follow-up under "Cache bugs found along the way" below.
 
 ### G — Static handle declarations
 
@@ -233,29 +238,50 @@ fixture to confirm (see experiments below), and if it does, the practical answer
 "how do we handle deep async pushes" is a small resolver API plus docs, not a new
 detection mechanism.
 
-## Two real bugs found along the way
+## Cache bugs found along the way (fixed in PR #556)
 
-Independent of which direction wins, the audit surfaced two cache defects in the
-same few lines. They compose into one PR:
+The audit surfaced two real cache defects — plus one that looked real and was
+disproved on a closer read. All three were verified against the live code before
+anything shipped.
 
-1. **Promise-valued handles are silently corrupted in the Cloudflare cache.**
-   `captureHandles` copies raw pushed values including Promises
-   (`src/cache/handle-snapshot.ts`), and the CF persistence sites `JSON.stringify`
-   them into `{}` (`cf-cache-store.ts:408, 689`). A cached breadcrumb whose value
-   was a promise comes back empty. Note the deeper version: handle values can be
-   `ReactNode` / nested promises (the Breadcrumbs `content` type), which are not
-   JSON-serializable at all — so the fix needs bounded deep-await plus a decision
-   about normalizing the cached shape against the in-memory shape.
-2. **Cache capture runs before the segments are drained.** `captureHandles` runs
-   _before_ `serializeSegments` (`src/cache/cache-scope.ts:361` then `:371`), so
-   runtime cache entries miss any deep-component pushes — and the post-capture
-   re-render can throw `LateHandlePushError` inside `waitUntil`. The same
-   seal/collect reorder that fixes C's build-time gap fixes this.
+1. **Promise/ReactNode handle values were silently corrupted in the Cloudflare
+   cache.** `captureHandles` snapshots raw pushed values including Promises and
+   React elements (`src/cache/handle-snapshot.ts`); the CF persistence sites
+   `JSON.stringify` them (`cf-cache-store.ts:408, 689`), flattening a Promise to
+   `{}` and dropping a `ReactNode` entirely (the Breadcrumbs `content` type). The
+   in-memory store kept them by reference, so it only broke on Cloudflare —
+   works-in-dev / breaks-on-CF. **Fixed** by routing the handle map through the
+   same RSC-Flight codec the segments already use: `handles` is now an encoded
+   string (`encodeHandles`/`decodeHandles` in `cache/handle-snapshot.ts`), with a
+   bounded-timeout encode so a never-resolving handle value can't pin a background
+   cache-write slot. Both stores carry the same string, so memory and CF replay
+   identical decoded values.
 
-There is also a latent prefetch bug worth folding in: a cached payload embeds a
-single-use handles generator, so a _reused_ prefetch entry replays no handles.
-Storing finalized handle data (rather than the generator) on the prefetch entry
-fixes it.
+2. **(Disproved) "Cache capture runs before the segments are drained."** The
+   audit suspected `captureHandles` running before `serializeSegments`
+   (`cache-scope.ts:361` then `:371`) missed deep-component pushes, and that the
+   post-capture re-render could throw `LateHandlePushError`. It cannot: handles
+   are pushed only via `ctx.use(Handle)`, which requires `ctx._currentSegmentId` —
+   set during segment resolution, never during `serializeSegments`. Serialization
+   re-renders components but has no path to `handleStore.push`, so
+   capture-before-serialize cannot miss a render-time push (there are none) and
+   cannot trip the late-push error. No reorder was made.
+
+3. **A reused/dual-consumed prefetch entry dropped its handles.** A
+   `DecodedPrefetch` holds a single-use `metadata.handles` generator. When a
+   navigation adopts an in-flight prefetch it drains that generator, but
+   `storePrefetch` — which resolves _after_ adoption — still published the same
+   entry to the cache map, so a later navigation to the same URL got the exhausted
+   entry and that route's breadcrumbs vanished. **Fixed** by recording adopted
+   keys and skipping their publish in `storePrefetch`
+   (`browser/prefetch/cache.ts`), preserving the one-time-consumption contract.
+   (The tempting `cache.delete` in `consumeInflightPrefetch` is a no-op — at
+   adoption time the entry is not yet cached; `storePrefetch` runs later.)
+
+Still **deferred**: build-time prerender handle persistence
+(`rsc-rendering.ts` `__prerender_collect` / `prerender-match.ts`) `JSON.stringify`s
+handles the same way as bug 1 — the same corruption class on a separate
+persistence layer that PR #556 did not touch. Apply the Flight encoding there too.
 
 ## Recommended sequence
 
@@ -267,9 +293,11 @@ fixes it.
      deep async component via a shared deferred passed as a prop; assert client and
      PE output. If it works, the runtime answer is "small API + docs," which
      reorders everything below it.
-2. **Ship the cheap, direction-independent wins now.** The build-time seal/collect
-   reorder (closes the documented prerender deep-push gap, S-M) and the two cache
-   bugs as one PR. These align with all constraints and the prerender design doc.
+2. **The direction-independent cache fixes shipped (PR #556):** the handle
+   Flight-encoding (bug 1) and the prefetch adoption-suppression (bug 3). Still
+   open: apply the same Flight encoding to build-time prerender handle persistence
+   (the deferred follow-up above) — it `JSON.stringify`s handle values today, the
+   same corruption class as bug 1.
 3. **Settle the runtime tier.** Keep `settled` as the permanent contract,
    re-document `LateHandlePushError` as a contract-violation signal (not a
    window-tuning knob), and ship `deferHandle` ergonomics — plus G's static sugar

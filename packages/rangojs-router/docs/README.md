@@ -55,6 +55,9 @@ that route tree.
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)
 - [`ctx.isAction()` API design](./design/is-action-api-design.md) - typed,
   rename-safe action matching for `revalidate()` (implemented)
+- [Handles completion detection](./design/handles-completion.md) - research &
+  options for detecting RSC render completion to finalize handle collection; why
+  every in-band completion signal is circular, and the cache bugs the audit found
 
 ## Internal Reference
 
