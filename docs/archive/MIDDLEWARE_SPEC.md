@@ -1,3 +1,5 @@
+> **Archived.** Point-in-time middleware implementation review; the tracked fixes have landed. Kept for historical context.
+
 # RSC Router Middleware Implementation Specification
 
 This document provides a deep technical review of the middleware implementation in rsc-router.

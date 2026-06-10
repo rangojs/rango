@@ -1,3 +1,5 @@
+> **Archived.** Investigation log; `clientChunks` shipped. See `packages/rangojs-router/docs/client-chunking.md` for the user guide.
+
 # Build Chunking & Client-Asset Leakage — Research Findings
 
 > Branch: `research/build-chunking-leakage`. Working scratchpad; confirmed facts are

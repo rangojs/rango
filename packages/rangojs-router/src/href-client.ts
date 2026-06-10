@@ -16,7 +16,6 @@
 
 import type { GetRegisteredRoutes } from "./types.js";
 import type { JsonSerialize } from "./serialize.js";
-import type { ResponseEnvelope } from "./urls.js";
 
 /**
  * Parse constraint values into a union type for paths
@@ -163,16 +162,16 @@ type ResponsePayloadForKey<
     }[keyof TRoutes];
 
 /**
- * Public response type for a route, keyed by pattern or concrete path. The
- * payload is wrapped in `JsonSerialize` so it describes the JSON **wire** value a
- * consumer receives from `fetch().then(r => r.json())`, not the handler's raw
- * return type — e.g. a handler returning `{ createdAt: Date }` resolves here to
- * `ResponseEnvelope<{ createdAt: string }>`.
+ * Public response type for a route, keyed by pattern or concrete path. JSON
+ * response routes send the handler's return value verbatim (bare), so the
+ * payload is wrapped only in `JsonSerialize` to describe the JSON **wire** value
+ * a consumer receives from `fetch().then(r => r.json())` — e.g. a handler
+ * returning `{ createdAt: Date }` resolves here to `{ createdAt: string }`.
  */
 export type PathResponse<
   TPath extends string,
   TRoutes = GetRegisteredRoutes,
-> = ResponseEnvelope<JsonSerialize<ResponsePayloadFor<TPath, TRoutes>>>;
+> = JsonSerialize<ResponsePayloadFor<TPath, TRoutes>>;
 
 /**
  * Strip trailing slash from a path (e.g., "/blog/" -> "/blog" | "/blog/")
@@ -256,7 +255,7 @@ declare global {
      *
      * The payload is the JSON **wire** shape (via `Rango.JsonSerialize`), not the
      * handler's raw return — a handler returning `{ createdAt: Date }` resolves
-     * here to `ResponseEnvelope<{ createdAt: string }>`, matching what
+     * here to `{ createdAt: string }` (bare, no envelope), matching what
      * `fetch().then(r => r.json())` actually yields.
      *
      * Only resolves once `Rango.RegisteredRoutes` carries response metadata (the

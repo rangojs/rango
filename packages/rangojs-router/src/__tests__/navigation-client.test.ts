@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkError, ServerRedirect } from "../errors";
+import type { DecodedPrefetch } from "../browser/prefetch/cache";
 
 const {
   getRangoStateMock,
@@ -9,9 +10,9 @@ const {
   buildSourceKeyMock,
 } = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
-  consumePrefetchMock: vi.fn((_key?: string): Response | null => null),
+  consumePrefetchMock: vi.fn((_key?: string): DecodedPrefetch | null => null),
   consumeInflightPrefetchMock: vi.fn(
-    (): Promise<Response | null> | null => null,
+    (): Promise<DecodedPrefetch | null> | null => null,
   ),
   buildPrefetchKeyMock: vi.fn(
     (source: string, target: URL) =>
@@ -22,6 +23,22 @@ const {
       rangoState + "\0" + sourceHref + "\0" + target.pathname + target.search,
   ),
 }));
+
+/**
+ * Build a decoded prefetch entry. Prefetch decodes eagerly, so a warm hit
+ * carries an already-decoded payload; navigation reuses it without calling
+ * createFromFetch again.
+ */
+function makeEntry(
+  payload: unknown,
+  scope: "source" | "wildcard" = "wildcard",
+): DecodedPrefetch {
+  return {
+    payload: Promise.resolve(payload) as Promise<any>,
+    streamComplete: Promise.resolve(),
+    scope,
+  };
+}
 
 vi.mock("../browser/rango-state", () => ({
   getRangoState: getRangoStateMock,
@@ -93,6 +110,68 @@ describe("navigation-client", () => {
     );
 
     await expect(result.streamComplete).resolves.toBeUndefined();
+  });
+
+  it("reloads to the navigation target when the response router id does not match", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 200,
+          headers: { "X-RSC-Router-Id": "other-app" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(async () => ({
+      metadata: { isPartial: true },
+    }));
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    // Client is "client-app"; the response belongs to "other-app" (a stale/edge
+    // cache or proxy mix-up). The integrity check reloads to the target instead
+    // of decoding + applying the foreign payload.
+    client
+      .fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        routerId: "client-app",
+      })
+      .catch(() => {});
+
+    await vi.waitFor(() =>
+      expect((window as any).location.href).toBe("/products"),
+    );
+  });
+
+  it("lets the reload header win over a router-id mismatch (no double reload)", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 200,
+          headers: {
+            "X-RSC-Reload": "http://localhost/reloaded",
+            "X-RSC-Router-Id": "other-app",
+          },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(async () => ({ metadata: {} }));
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    client
+      .fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        routerId: "client-app",
+      })
+      .catch(() => {});
+
+    // The reload header is handled first (ordered before the routerId check),
+    // so we reload to the header's URL, not the navigation target.
+    await vi.waitFor(() =>
+      expect((window as any).location.href).toBe("http://localhost/reloaded"),
+    );
   });
 
   it("wraps network failures as NetworkError", async () => {
@@ -177,47 +256,18 @@ describe("navigation-client", () => {
   });
 
   describe("prefetch cache integration", () => {
-    it("uses completed cache entry without fetching", async () => {
-      const cachedBody = "cached-rsc-payload";
-      consumePrefetchMock.mockReturnValue(new Response(cachedBody));
-
-      const fetchMock = vi.fn();
-      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-
-      const client = createNavigationClient({
-        createFromFetch: async (responsePromise: Promise<Response>) => {
-          const response = await responsePromise;
-          const text = await response.clone().text();
-          return { metadata: { matched: [], diff: [], body: text } };
-        },
-      } as any);
-
-      const result = await client.fetchPartial({
-        targetUrl: "/products",
-        previousUrl: "/current",
-        segmentIds: ["root"],
-      });
-
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
-      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("reuses an in-flight prefetch response without starting a fresh fetch", async () => {
-      consumeInflightPrefetchMock.mockReturnValue(
-        Promise.resolve(new Response("prefetched-stream", { status: 200 })),
+    it("uses the completed cache entry without fetching or re-decoding", async () => {
+      consumePrefetchMock.mockReturnValue(
+        makeEntry({ metadata: { matched: [], diff: [] } }),
       );
 
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
-      const client = createNavigationClient({
-        createFromFetch: async (responsePromise: Promise<Response>) => {
-          const response = await responsePromise;
-          const text = await response.clone().text();
-          return { metadata: { matched: [], diff: [], body: text } };
-        },
-      } as any);
+      // Warm hits reuse the eagerly-decoded payload — createFromFetch (the
+      // decode) must NOT run again on the click.
+      const createFromFetch = vi.fn();
+      const client = createNavigationClient({ createFromFetch } as any);
 
       const result = await client.fetchPartial({
         targetUrl: "/products",
@@ -226,14 +276,34 @@ describe("navigation-client", () => {
       });
 
       expect(fetchMock).not.toHaveBeenCalled();
+      expect(createFromFetch).not.toHaveBeenCalled();
+      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("reuses an in-flight prefetch entry without fetching or re-decoding", async () => {
+      consumeInflightPrefetchMock.mockReturnValue(
+        Promise.resolve(makeEntry({ metadata: { matched: [], diff: [] } })),
+      );
+
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const createFromFetch = vi.fn();
+      const client = createNavigationClient({ createFromFetch } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createFromFetch).not.toHaveBeenCalled();
       // Called twice: exact key (miss) + wildcard key (miss)
       expect(consumePrefetchMock).toHaveBeenCalledTimes(2);
       expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
-      expect(result.payload.metadata).toMatchObject({
-        matched: [],
-        diff: [],
-        body: "prefetched-stream",
-      });
+      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
     });
 
     it("falls back to a fresh fetch when the in-flight prefetch resolves null", async () => {
@@ -244,13 +314,14 @@ describe("navigation-client", () => {
       );
       vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
-      const client = createNavigationClient({
-        createFromFetch: async (responsePromise: Promise<Response>) => {
+      const createFromFetch = vi.fn(
+        async (responsePromise: Promise<Response>) => {
           const response = await responsePromise;
           const text = await response.clone().text();
           return { metadata: { matched: [], diff: [], body: text } };
         },
-      } as any);
+      );
+      const client = createNavigationClient({ createFromFetch } as any);
 
       const result = await client.fetchPartial({
         targetUrl: "/products",
@@ -259,6 +330,7 @@ describe("navigation-client", () => {
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(createFromFetch).toHaveBeenCalledTimes(1);
       // Called twice: exact key (miss) + wildcard key (miss)
       expect(consumePrefetchMock).toHaveBeenCalledTimes(2);
       expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
@@ -269,19 +341,57 @@ describe("navigation-client", () => {
       });
     });
 
+    it("discards a wildcard-adopted inflight that turns out source-scoped, then refetches", async () => {
+      // Miss the source key (2 nulls), adopt the wildcard inflight (1 null).
+      // The resolved entry is source-scoped — built for a different source
+      // page — so it must be dropped in favor of a fresh fetch.
+      consumeInflightPrefetchMock.mockImplementation((key?: string) => {
+        if (!key) return null;
+        let nullCount = 0;
+        for (let i = 0; i < key.length; i++) {
+          if (key.charCodeAt(i) === 0) nullCount++;
+        }
+        return nullCount === 1
+          ? Promise.resolve(makeEntry({ metadata: {} }, "source"))
+          : null;
+      });
+
+      const fetchMock = vi.fn(
+        async () => new Response("fresh", { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const createFromFetch = vi.fn(
+        async (responsePromise: Promise<Response>) => {
+          const response = await responsePromise;
+          return { metadata: { body: await response.clone().text() } };
+        },
+      );
+      const client = createNavigationClient({ createFromFetch } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(createFromFetch).toHaveBeenCalledTimes(1);
+      expect(result.payload.metadata).toMatchObject({ body: "fresh" });
+    });
+
     it("falls back to wildcard key when exact key misses", async () => {
-      const cachedBody = "wildcard-cached";
       // Hit only the wildcard slot (exactly one \0 after the rango state;
       // source-scoped keys insert an extra \0<source>\0 segment).
       consumePrefetchMock.mockImplementation(
-        (key?: string): Response | null => {
+        (key?: string): DecodedPrefetch | null => {
           if (!key) return null;
           let nullCount = 0;
           for (let i = 0; i < key.length; i++) {
             if (key.charCodeAt(i) === 0) nullCount++;
           }
           if (nullCount === 1 && key.startsWith("v1:abc\0")) {
-            return new Response(cachedBody);
+            return makeEntry({ metadata: { body: "wildcard-cached" } });
           }
           return null;
         },
@@ -290,13 +400,8 @@ describe("navigation-client", () => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
-      const client = createNavigationClient({
-        createFromFetch: async (responsePromise: Promise<Response>) => {
-          const response = await responsePromise;
-          const text = await response.clone().text();
-          return { metadata: { matched: [], diff: [], body: text } };
-        },
-      } as any);
+      const createFromFetch = vi.fn();
+      const client = createNavigationClient({ createFromFetch } as any);
 
       const result = await client.fetchPartial({
         targetUrl: "/products",
@@ -305,6 +410,7 @@ describe("navigation-client", () => {
       });
 
       expect(fetchMock).not.toHaveBeenCalled();
+      expect(createFromFetch).not.toHaveBeenCalled();
       expect(consumePrefetchMock).toHaveBeenCalledTimes(2);
       expect(result.payload.metadata).toMatchObject({
         body: "wildcard-cached",

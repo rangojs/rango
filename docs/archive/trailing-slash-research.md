@@ -1,3 +1,5 @@
+> **Archived.** Pre-implementation research; trailing-slash shipped (`TrailingSlashMode`: never|always|ignore).
+
 # Trailing Slash Configuration Research
 
 Research for adding trailing slash handling to rsc-router.

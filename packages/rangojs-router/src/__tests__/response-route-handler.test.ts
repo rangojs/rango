@@ -225,6 +225,47 @@ describe("response-route-handler", () => {
     });
   });
 
+  describe("problem+json status matches ctx.setStatus() override on a thrown error", () => {
+    it("uses the overridden status in BOTH the HTTP response and the problem body", async () => {
+      const handlerCtx = createMockHandlerCtx();
+      const testEnv = createTestEnv();
+      const ctx = createRequestContext(testEnv);
+
+      const preview: ResponseRouteMatch = {
+        responseType: "json",
+        handler: () => {
+          ctx.setStatus(400);
+          throw new Error("boom");
+        },
+        params: {},
+      };
+
+      const response = await runWithRequestContext(ctx, () =>
+        handleResponseRoute(
+          handlerCtx,
+          preview,
+          testEnv.request,
+          testEnv.env,
+          testEnv.url,
+          testEnv.variables,
+        ),
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get("content-type")).toBe(
+        "application/problem+json;charset=utf-8",
+      );
+      const body = await response.json();
+      // The problem body's status/title reflect the overridden 400 — not the
+      // default 500 a plain Error's derived status would have produced.
+      expect(body.status).toBe(400);
+      expect(body.title).toBe("Bad Request");
+      expect(body.detail).toBe("boom"); // dev (NODE_ENV=test) exposes the message
+      expect(body.code).toBe("INTERNAL");
+      expect(body.type).toBeUndefined();
+    });
+  });
+
   describe("onResponse callbacks run on uncached response routes", () => {
     it("fires onResponse callback for uncached response route", async () => {
       const handlerCtx = createMockHandlerCtx();
@@ -357,7 +398,7 @@ describe("response-route-handler", () => {
       // Handler should have been called directly
       expect(handler).toHaveBeenCalled();
       const body = await response.json();
-      expect(body.data).toBe("fresh");
+      expect(body).toBe("fresh");
     });
 
     it("condition() === false skips cache write", async () => {

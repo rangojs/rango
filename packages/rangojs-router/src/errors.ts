@@ -225,7 +225,6 @@ export function isNetworkError(error: unknown): boolean {
 export class RouterError extends Error {
   name = "RouterError" as const;
   code: string;
-  type?: string;
   status: number;
   cause?: unknown;
 
@@ -234,7 +233,6 @@ export class RouterError extends Error {
     message: string,
     options?: {
       status?: number;
-      type?: string;
       cause?: unknown;
     },
   ) {
@@ -242,7 +240,6 @@ export class RouterError extends Error {
     Object.setPrototypeOf(this, RouterError.prototype);
     this.code = code;
     this.status = options?.status ?? 500;
-    this.type = options?.type;
     this.cause = options?.cause;
   }
 }

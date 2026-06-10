@@ -401,14 +401,14 @@ const matrixRows: SemanticMatrixRow[] = [
         request,
         baseUrl("/response-cache/cached-json"),
       );
-      const ts1 = body1.data.ts;
+      const ts1 = body1.ts;
 
       await expect(async () => {
         const body2 = await readResponseJson(
           request,
           baseUrl("/response-cache/cached-json"),
         );
-        expect(body2.data.ts).toBe(ts1);
+        expect(body2.ts).toBe(ts1);
       }).toPass({ timeout: 5000 });
     },
   },
@@ -429,7 +429,7 @@ const matrixRows: SemanticMatrixRow[] = [
         request,
         baseUrl("/response-cache/uncached-json"),
       );
-      expect(body2.data.ts).toBeGreaterThan(body1.data.ts);
+      expect(body2.ts).toBeGreaterThan(body1.ts);
     },
   },
   {

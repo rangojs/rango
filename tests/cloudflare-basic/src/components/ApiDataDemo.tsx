@@ -2,30 +2,53 @@
 
 import { useState, useEffect } from "react";
 import { href } from "@rangojs/router/client";
+import type { ProblemDetails } from "@rangojs/router";
 
+// JSON response routes now send the handler's return value verbatim (bare),
+// so Rango.PathResponse<T> is the success payload directly. Errors arrive as
+// non-2xx problem+json responses, surfaced here via res.ok / problem.detail.
 export function ApiDataDemo() {
   const [health, setHealth] =
     useState<Rango.PathResponse<"/api/health"> | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
   const [products, setProducts] =
     useState<Rango.PathResponse<"/api/products"> | null>(null);
+  const [productsError, setProductsError] = useState<string | null>(null);
   const [product, setProduct] =
     useState<Rango.PathResponse<"/api/products/:id"> | null>(null);
+  const [productError, setProductError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
-      const healthResult: Rango.PathResponse<"/api/health"> = await fetch(
-        href("/api/health"),
-      ).then((r) => r.json());
-      setHealth(healthResult);
+      const healthRes = await fetch(href("/api/health"));
+      if (healthRes.ok) {
+        const healthResult: Rango.PathResponse<"/api/health"> =
+          await healthRes.json();
+        setHealth(healthResult);
+      } else {
+        const problem: ProblemDetails = await healthRes.json();
+        setHealthError(problem.detail);
+      }
 
-      const productsResult: Rango.PathResponse<"/api/products"> = await fetch(
-        href("/api/products"),
-      ).then((r) => r.json());
-      setProducts(productsResult);
+      const productsRes = await fetch(href("/api/products"));
+      if (productsRes.ok) {
+        const productsResult: Rango.PathResponse<"/api/products"> =
+          await productsRes.json();
+        setProducts(productsResult);
+      } else {
+        const problem: ProblemDetails = await productsRes.json();
+        setProductsError(problem.detail);
+      }
 
-      const productResult: Rango.PathResponse<"/api/products/:id"> =
-        await fetch(href("/api/products/1")).then((r) => r.json());
-      setProduct(productResult);
+      const productRes = await fetch(href("/api/products/1"));
+      if (productRes.ok) {
+        const productResult: Rango.PathResponse<"/api/products/:id"> =
+          await productRes.json();
+        setProduct(productResult);
+      } else {
+        const problem: ProblemDetails = await productRes.json();
+        setProductError(problem.detail);
+      }
     }
     load();
   }, []);
@@ -34,17 +57,13 @@ export function ApiDataDemo() {
     <div data-testid="api-demo">
       <h2>API Health</h2>
       <div data-testid="api-health">
-        {health ? (
-          health.error ? (
-            <span data-testid="health-error">{health.error.message}</span>
-          ) : (
-            <>
-              <span data-testid="health-status">{health.data.status}</span>
-              <span data-testid="health-timestamp">
-                {health.data.timestamp}
-              </span>
-            </>
-          )
+        {healthError ? (
+          <span data-testid="health-error">{healthError}</span>
+        ) : health ? (
+          <>
+            <span data-testid="health-status">{health.status}</span>
+            <span data-testid="health-timestamp">{health.timestamp}</span>
+          </>
         ) : (
           <span data-testid="health-loading">Loading...</span>
         )}
@@ -52,18 +71,16 @@ export function ApiDataDemo() {
 
       <h2>Products</h2>
       <div data-testid="api-products">
-        {products ? (
-          products.error ? (
-            <span data-testid="products-error">{products.error.message}</span>
-          ) : (
-            <ul data-testid="products-list">
-              {products.data.map((p) => (
-                <li key={p.id} data-testid={`product-${p.id}`}>
-                  {p.name} - ${p.price}
-                </li>
-              ))}
-            </ul>
-          )
+        {productsError ? (
+          <span data-testid="products-error">{productsError}</span>
+        ) : products ? (
+          <ul data-testid="products-list">
+            {products.map((p) => (
+              <li key={p.id} data-testid={`product-${p.id}`}>
+                {p.name} - ${p.price}
+              </li>
+            ))}
+          </ul>
         ) : (
           <span data-testid="products-loading">Loading...</span>
         )}
@@ -71,21 +88,17 @@ export function ApiDataDemo() {
 
       <h2>Product Detail</h2>
       <div data-testid="api-product-detail">
-        {product ? (
-          product.error ? (
-            <span data-testid="product-error">{product.error.message}</span>
-          ) : (
-            <>
-              <span data-testid="product-detail-id">{product.data.id}</span>
-              <span data-testid="product-detail-name">{product.data.name}</span>
-              <span data-testid="product-detail-price">
-                {product.data.price}
-              </span>
-              <span data-testid="product-detail-description">
-                {product.data.description}
-              </span>
-            </>
-          )
+        {productError ? (
+          <span data-testid="product-error">{productError}</span>
+        ) : product ? (
+          <>
+            <span data-testid="product-detail-id">{product.id}</span>
+            <span data-testid="product-detail-name">{product.name}</span>
+            <span data-testid="product-detail-price">{product.price}</span>
+            <span data-testid="product-detail-description">
+              {product.description}
+            </span>
+          </>
         ) : (
           <span data-testid="product-loading">Loading...</span>
         )}

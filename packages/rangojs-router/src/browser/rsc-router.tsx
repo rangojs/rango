@@ -23,6 +23,7 @@ import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
+import { setPrefetchDecoder } from "./prefetch/fetch.js";
 import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
@@ -116,10 +117,12 @@ export interface BrowserAppContext {
   /** App version for prefetch version mismatch detection */
   version?: string;
   /**
-   * Live app-shell ref. Cross-app navigations replace its contents so the
-   * NavigationProvider and renderSegments pick up the target app's
-   * rootLayout, basename, and version without consumer rerenders. Theme,
-   * warmup, and prefetch TTL are document-lifetime (see AppShell).
+   * App-shell ref, read through on each render so renderSegments and the
+   * NavigationProvider see rootLayout/basename/version without closing over a
+   * stale snapshot. Set once from the initial payload and not swapped within a
+   * session: a cross-app navigation is a full document load (X-RSC-Reload), so
+   * the target app establishes its own shell on load. Theme, warmup, and
+   * prefetch TTL are document-lifetime too (see AppShell).
    */
   appShellRef?: import("./app-shell.js").AppShellRef;
 }
@@ -212,11 +215,11 @@ export async function initBrowserApp(
   // Create composable utilities
   const client = createNavigationClient(deps);
 
-  // Capture the per-router app-shell so cross-app navigations can replace
-  // it atomically. rootLayout, basename, and version live here and are
-  // read through the ref at call time rather than closed over. Theme,
-  // warmup, and prefetch TTL are deliberately excluded — they are
-  // document-lifetime and stay stable across smooth cross-app transitions.
+  // Capture the per-router app-shell. rootLayout, basename, and version live
+  // here and are read through the ref at call time rather than closed over.
+  // It is set once from the initial payload and not swapped within a session:
+  // a cross-app navigation is a full document load (X-RSC-Reload), so the
+  // target app establishes its own shell on load.
   const version = initialPayload.metadata?.version;
   const appShellRef = createAppShellRef({
     routerId: initialPayload.metadata?.routerId,
@@ -238,9 +241,14 @@ export async function initBrowserApp(
     initPrefetchCache(prefetchCacheTTL);
   }
 
-  // Create a bound renderSegments that reads rootLayout through the shell
-  // ref. On app switch the ref is updated before the tree re-renders, so
-  // the new app's Document (rootLayout) replaces the previous one.
+  // Wire the RSC decoder so prefetches decode eagerly and warm the route's
+  // client chunks (same createFromFetch the navigation client uses).
+  setPrefetchDecoder((response) => deps.createFromFetch<RscPayload>(response));
+
+  // Create a bound renderSegments that reads rootLayout through the shell ref.
+  // The shell is set once at init and not swapped within a session (a cross-app
+  // navigation is a full document load), so this always renders this app's
+  // Document; reading through the ref just avoids closing over a stale value.
   const renderSegments = (
     segments: ResolvedSegment[],
     options?: RenderSegmentsOptions,
@@ -280,7 +288,6 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version: version,
-    appShellRef,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)

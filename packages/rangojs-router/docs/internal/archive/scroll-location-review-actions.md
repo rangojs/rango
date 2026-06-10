@@ -1,3 +1,5 @@
+> **Archived.** Scroll/location-state review remediation plan; the fixes have landed.
+
 # Scroll + Location State Review Actions (Non-Test Runtime)
 
 Status: Implemented (polling cleanup in scroll-restoration.ts; sessionStorage

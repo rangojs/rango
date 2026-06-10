@@ -72,9 +72,12 @@ export type LoaderContext<
    * **Experimental.** Wait for all non-loader segments to settle.
    *
    * After the returned promise resolves, handle data is available via
-   * `ctx.use(handle)`. Only supported in DSL loaders on non-streaming
-   * trees (no `loading()`). Throws if called from a handler-invoked
-   * loader or when the tree uses streaming.
+   * `ctx.use(handle)`. Supported in DSL loaders, including on streaming
+   * trees that use `loading()` — the barrier waits for the streaming
+   * handlers to finish pushing before it resolves. Throws if called from a
+   * handler-invoked loader, or if a handler is already awaiting this loader
+   * via `ctx.use()` (that would deadlock — use a loader-to-loader
+   * dependency instead).
    *
    * @example
    * ```typescript

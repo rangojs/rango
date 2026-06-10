@@ -20,8 +20,8 @@ test.describe("response-cache (dev)", () => {
     const res1 = await request.get(f.url("/response-cache/uncached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
-    expect(body1.data.source).toBe("uncached-json");
+    const ts1 = body1.ts;
+    expect(body1.source).toBe("uncached-json");
     expect(typeof ts1).toBe("number");
 
     // Small delay to ensure timestamp differs
@@ -30,7 +30,7 @@ test.describe("response-cache (dev)", () => {
     const res2 = await request.get(f.url("/response-cache/uncached-json"));
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    const ts2 = body2.data.ts;
+    const ts2 = body2.ts;
 
     // Without caching, each call produces a new timestamp
     expect(ts2).toBeGreaterThan(ts1);
@@ -43,8 +43,8 @@ test.describe("response-cache (dev)", () => {
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("application/json");
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
-    expect(body1.data.source).toBe("cached-json");
+    const ts1 = body1.ts;
+    expect(body1.source).toBe("cached-json");
     expect(typeof ts1).toBe("number");
 
     // Poll until async cache write via waitUntil completes
@@ -53,7 +53,7 @@ test.describe("response-cache (dev)", () => {
       expect(res2.status()).toBe(200);
       const body2 = await res2.json();
       // Cached: timestamp must be exactly the same
-      expect(body2.data.ts).toBe(ts1);
+      expect(body2.ts).toBe(ts1);
     }).toPass({ timeout: 5_000 });
   });
 
@@ -139,9 +139,9 @@ test.describe("response-cache (dev)", () => {
     );
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(body1.data.source).toBe("cached-json-query");
-    expect(body1.data.q).toBe("alpha");
-    const ts1 = body1.data.ts;
+    expect(body1.source).toBe("cached-json-query");
+    expect(body1.q).toBe("alpha");
+    const ts1 = body1.ts;
 
     // Poll until async cache write via waitUntil completes for alpha
     await expect(async () => {
@@ -149,7 +149,7 @@ test.describe("response-cache (dev)", () => {
         f.url("/response-cache/cached-json-query?q=alpha"),
       );
       const checkBody = await check.json();
-      expect(checkBody.data.ts).toBe(ts1);
+      expect(checkBody.ts).toBe(ts1);
     }).toPass({ timeout: 5_000 });
 
     const res2 = await request.get(
@@ -157,10 +157,10 @@ test.describe("response-cache (dev)", () => {
     );
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    expect(body2.data.q).toBe("beta");
+    expect(body2.q).toBe("beta");
 
     // Different query string must produce a different cache entry
-    expect(body2.data.ts).not.toBe(ts1);
+    expect(body2.ts).not.toBe(ts1);
   });
 
   test("pre-handler onResponse callback runs on both miss and hit", async ({
@@ -198,7 +198,7 @@ test.describe("response-cache (dev)", () => {
     const routeTs1 = res1.headers()["x-route-callback-ts"];
     expect(routeTs1).toBeTruthy();
     const body1 = await res1.json();
-    const bodyTs1 = body1.data.ts;
+    const bodyTs1 = body1.ts;
 
     // Poll until async cache write via waitUntil completes, then verify
     // route callback header is present with the SAME value (baked into cached response)
@@ -211,7 +211,7 @@ test.describe("response-cache (dev)", () => {
       expect(routeTs2).toBe(routeTs1);
       // Body timestamp should also match (confirming cache hit)
       const body2 = await res2.json();
-      expect(body2.data.ts).toBe(bodyTs1);
+      expect(body2.ts).toBe(bodyTs1);
     }).toPass({ timeout: 5_000 });
   });
 });
@@ -225,8 +225,8 @@ test.describe("response-cache (production)", () => {
     const res1 = await request.get(f.url("/response-cache/uncached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
-    expect(body1.data.source).toBe("uncached-json");
+    const ts1 = body1.ts;
+    expect(body1.source).toBe("uncached-json");
     expect(typeof ts1).toBe("number");
 
     await new Promise((r) => setTimeout(r, 50));
@@ -234,7 +234,7 @@ test.describe("response-cache (production)", () => {
     const res2 = await request.get(f.url("/response-cache/uncached-json"));
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    const ts2 = body2.data.ts;
+    const ts2 = body2.ts;
 
     expect(ts2).toBeGreaterThan(ts1);
   });
@@ -246,8 +246,8 @@ test.describe("response-cache (production)", () => {
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("application/json");
     const body1 = await res1.json();
-    const ts1 = body1.data.ts;
-    expect(body1.data.source).toBe("cached-json");
+    const ts1 = body1.ts;
+    expect(body1.source).toBe("cached-json");
     expect(typeof ts1).toBe("number");
 
     // Poll until async cache write via waitUntil completes
@@ -255,7 +255,7 @@ test.describe("response-cache (production)", () => {
       const res2 = await request.get(f.url("/response-cache/cached-json"));
       expect(res2.status()).toBe(200);
       const body2 = await res2.json();
-      expect(body2.data.ts).toBe(ts1);
+      expect(body2.ts).toBe(ts1);
     }).toPass({ timeout: 5_000 });
   });
 
@@ -339,9 +339,9 @@ test.describe("response-cache (production)", () => {
     );
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(body1.data.source).toBe("cached-json-query");
-    expect(body1.data.q).toBe("alpha");
-    const ts1 = body1.data.ts;
+    expect(body1.source).toBe("cached-json-query");
+    expect(body1.q).toBe("alpha");
+    const ts1 = body1.ts;
 
     // Poll until async cache write via waitUntil completes for alpha
     await expect(async () => {
@@ -349,7 +349,7 @@ test.describe("response-cache (production)", () => {
         f.url("/response-cache/cached-json-query?q=alpha"),
       );
       const checkBody = await check.json();
-      expect(checkBody.data.ts).toBe(ts1);
+      expect(checkBody.ts).toBe(ts1);
     }).toPass({ timeout: 5_000 });
 
     const res2 = await request.get(
@@ -357,10 +357,10 @@ test.describe("response-cache (production)", () => {
     );
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    expect(body2.data.q).toBe("beta");
+    expect(body2.q).toBe("beta");
 
     // Different query string must produce a different cache entry
-    expect(body2.data.ts).not.toBe(ts1);
+    expect(body2.ts).not.toBe(ts1);
   });
 
   test("pre-handler onResponse callback runs on both miss and hit", async ({
@@ -396,7 +396,7 @@ test.describe("response-cache (production)", () => {
     const routeTs1 = res1.headers()["x-route-callback-ts"];
     expect(routeTs1).toBeTruthy();
     const body1 = await res1.json();
-    const bodyTs1 = body1.data.ts;
+    const bodyTs1 = body1.ts;
 
     // Poll until async cache write via waitUntil completes, then verify
     // route callback header is present with the SAME value (baked into cached response)
@@ -409,7 +409,7 @@ test.describe("response-cache (production)", () => {
       expect(routeTs2).toBe(routeTs1);
       // Body timestamp should also match (confirming cache hit)
       const body2 = await res2.json();
-      expect(body2.data.ts).toBe(bodyTs1);
+      expect(body2.ts).toBe(bodyTs1);
     }).toPass({ timeout: 5_000 });
   });
 });

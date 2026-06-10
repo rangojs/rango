@@ -5,6 +5,8 @@ vi.mock("../../server/context", () => ({
   track: () => () => {},
   isInsideLoaderScope: () => false,
   runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+  isInsidePushCallbackScope: () => false,
+  runInsidePushCallbackScope: <T>(fn: () => T): T => fn(),
 }));
 
 vi.mock("../../server/request-context.js", () => ({

@@ -1,3 +1,5 @@
+> **Archived.** RFC fully implemented (`useFetchLoader` shipped). Kept for historical context.
+
 # RFC: useFetchLoader API
 
 ## Problem

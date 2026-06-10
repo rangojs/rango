@@ -25,8 +25,8 @@ Related docs:
 | `./vite`         | Public Vite plugin surface: `rango()`, `poke()`, and plugin option types                                                                                                                                                                                                                                                                                                                                            |
 | `./browser`      | Browser bootstrap: `initBrowserApp`, `Rango`, `InitBrowserAppOptions`                                                                                                                                                                                                                                                                                                                                               |
 | `./rsc`          | Advanced server request-pipeline APIs: `createRSCHandler`, request-context access, RSC handler types                                                                                                                                                                                                                                                                                                                |
-| `./ssr`          | Advanced HTML rendering bridge: `createSSRHandler`, nonce/form-state/streamMode support                                                                                                                                                                                                                                                                                                                             |
-| `./build`        | Manifest and route-type generators: `generateManifest`, `generateManifestFull`, `generateManifestCode`, `writePerModuleRouteTypes`, `generatePerModuleTypesSource`, `extractRoutesFromSource`, `buildRouteTrie`, `createScanFilter`, `hashParams`                                                                                                                                                                   |
+| `./ssr`          | Advanced HTML rendering bridge: `createSSRHandler`, nonce/form-state/streamMode support                                                                                                                                                                                                                                                                             |
+| `./build`        | Manifest and route-type generators: `generateManifest`, `generateManifestFull`, `generateManifestCode`, `writePerModuleRouteTypes`, `generatePerModuleTypesSource`, `extractRoutesFromSource`, `buildRouteTrie`, `buildPerRouterTrie`, `createScanFilter`, `hashParams`                                                                                                                                             |
 | `./cache`        | Segment and response cache APIs: `SegmentCacheStore`, `MemorySegmentCacheStore`, `CFCacheStore` (L1 + optional KV L2), `KVNamespace`, document cache middleware, cache scope utilities                                                                                                                                                                                                                              |
 | `./theme`        | Theming public API: `useTheme`, `ThemeProvider`, `ThemeScript`, theme constants                                                                                                                                                                                                                                                                                                                                     |
 | `./host`         | Host-based multi-app routing: `createHostRouter`, `defineHosts`, host matching types. Route builder splits intent: `.map((request) => Response)` (inline handler) vs `.lazy(() => import("./sub-app"))` (lazy mount)                                                                                                                                                                                                |
@@ -121,13 +121,13 @@ Internal API (`RangoInternal`, not exported):
 ### URL Typing and Generation
 
 - `route()` macro expansion, `href()`, `href.<format>()`, `reverse()`, scoped reverse APIs
-- `ResponseEnvelope` types and response-route type extraction
+- `ProblemDetails` (RFC 9457) error type and response-route type extraction
 
 ### Response Routes
 
 `path.json()`, `path.text()`, `path.html()`, `path.xml()`, `path.md()`, `path.image()`, `path.stream()`, `path.any()`
 
-Response middleware wrapping, automatic content negotiation, typed response envelopes, response error classification.
+Response middleware wrapping, automatic content negotiation, bare-value JSON responses, RFC 9457 (problem+json) error bodies.
 
 ### Match and Execution Pipeline
 

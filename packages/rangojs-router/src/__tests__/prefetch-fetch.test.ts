@@ -5,9 +5,24 @@ vi.mock("../browser/rango-state", () => ({
   invalidateRangoState: vi.fn(),
 }));
 
-import { prefetchDirect, prefetchQueued } from "../browser/prefetch/fetch";
+import {
+  prefetchDirect,
+  prefetchQueued,
+  setPrefetchDecoder,
+} from "../browser/prefetch/fetch";
 import { clearPrefetchCache } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
+
+// Prefetch eagerly decodes the fetched response (createFromFetch) to warm the
+// route's client chunks. The cache stores the decoded entry, not the raw
+// Response. This mock stands in for that decode; tests assert it runs once at
+// prefetch time and is reused (not re-run) on navigation.
+const decodeMock = vi.fn(() => Promise.resolve({} as Record<string, unknown>));
+
+beforeEach(() => {
+  decodeMock.mockClear();
+  setPrefetchDecoder(decodeMock);
+});
 
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
   globalThis,
@@ -158,7 +173,7 @@ describe("prefetch fetch reduced-data behavior", () => {
     expect(headers["X-Rango-Prefetch"]).toBe("1");
   });
 
-  it("stores response in in-memory cache on success", async () => {
+  it("stores the decoded entry in the in-memory cache on success", async () => {
     setupBrowser({ saveData: false, reducedData: false });
     const body = "rsc-payload-data";
     const fetchMock = vi.fn((_url: string | URL) =>
@@ -174,6 +189,85 @@ describe("prefetch fetch reduced-data behavior", () => {
     await vi.waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("eagerly decodes the prefetched response once and reuses it (warms chunks)", async () => {
+    setupBrowser({ saveData: false, reducedData: false });
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    // The decode runs at PREFETCH time — this is what imports the route's
+    // client chunks before any click.
+    await vi.waitFor(() => expect(decodeMock).toHaveBeenCalledTimes(1));
+
+    const { consumePrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const entry = consumePrefetch(wildcardKey);
+    expect(entry).not.toBeNull();
+
+    // Navigation reuses the already-decoded payload — no second decode.
+    expect(await entry!.payload).toEqual({});
+    expect(decodeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not warm (or decode) a response carrying a control header", async () => {
+    setupBrowser({ saveData: false, reducedData: false });
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", {
+          status: 200,
+          headers: { "X-RSC-Reload": "http://localhost:4173/" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // Speculative prefetch must not act on the control header — and must not
+    // cache a stale/redirecting response. Navigation re-fetches to honor it.
+    expect(decodeMock).not.toHaveBeenCalled();
+    const { consumePrefetch } = await import("../browser/prefetch/cache");
+    expect(
+      consumePrefetch(
+        "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1",
+      ),
+    ).toBeNull();
+  });
+
+  it("does not warm (or decode) a response whose router id does not match", async () => {
+    setupBrowser({ saveData: false, reducedData: false });
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", {
+          status: 200,
+          headers: { "X-RSC-Router-Id": "other-app" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+    // This client is router "client-app"; the response belongs to "other-app"
+    // (a stale/edge-cache or proxy mix-up). The foreign payload must be dropped
+    // before decode — never warmed, no chunks imported.
+    prefetchDirect("/blog", ["A0"], "v1", "client-app");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(decodeMock).not.toHaveBeenCalled();
   });
 });
 

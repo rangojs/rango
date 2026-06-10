@@ -5,8 +5,6 @@ import type {
   ResolvedSegment,
 } from "./types.js";
 import { setAppVersion } from "./app-version.js";
-import { setRangoStateLocal } from "./rango-state.js";
-import type { AppShell, AppShellRef } from "./app-shell.js";
 import * as React from "react";
 import { startTransition } from "react";
 import {
@@ -50,13 +48,8 @@ export { createNavigationTransaction };
  */
 export interface NavigationBridgeConfigWithController extends NavigationBridgeConfig {
   eventController: EventController;
-  /** RSC version from initial payload metadata (fallback when appShellRef is not provided) */
+  /** RSC version from initial payload metadata. */
   version?: string;
-  /**
-   * Live app-shell ref. When supplied, the bridge reads version/basename
-   * from this ref so cross-app navigations propagate correctly.
-   */
-  appShellRef?: AppShellRef;
 }
 
 /**
@@ -75,45 +68,8 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
 export function createNavigationBridge(
   config: NavigationBridgeConfigWithController,
 ): NavigationBridge {
-  const {
-    store,
-    client,
-    eventController,
-    onUpdate,
-    renderSegments,
-    appShellRef,
-  } = config;
+  const { store, client, eventController, onUpdate, renderSegments } = config;
   let version = config.version;
-
-  /**
-   * Replace the active app-shell snapshot atomically. Called by the partial
-   * updater when a response's routerId indicates the navigation crossed
-   * into a different app. Runs the local-only side-effects tied to
-   * app-shell fields (app version, rango-state namespace) so the new app
-   * owns them after the swap. Theme, warmup, and prefetch TTL are
-   * document-lifetime and are NOT touched here.
-   */
-  function applyAppShell(next: AppShell): void {
-    if (appShellRef) {
-      appShellRef.update(next);
-    }
-    if (next.version !== undefined) {
-      version = next.version;
-      setAppVersion(next.version);
-      // Use the local-only setter — initRangoState writes the shared
-      // localStorage key and fires a storage event in other tabs still in
-      // the old app. setRangoStateLocal only mutates this tab's in-memory
-      // cache and rebinds it to the target app's routerId-scoped key,
-      // preserving the "local-only, no broadcast/rotation" contract for
-      // smooth app-switch transitions.
-      setRangoStateLocal(next.version, next.routerId);
-    }
-    // Cross-app: prior cache entries belong to a different app's segments.
-    // Drop them locally only — do NOT broadcast invalidation or rotate the
-    // shared X-Rango-State token, since other tabs still in the old app are
-    // unaffected by this tab's transition.
-    store.clearHistoryCacheLocal();
-  }
 
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
@@ -122,7 +78,6 @@ export function createNavigationBridge(
     onUpdate,
     renderSegments,
     getVersion: () => version,
-    applyAppShell,
   });
 
   return {
@@ -715,10 +670,6 @@ export function createNavigationBridge(
       version = newVersion;
       setAppVersion(newVersion);
       store.clearHistoryCache();
-    },
-
-    updateAppShell(next: AppShell): void {
-      applyAppShell(next);
     },
   };
 }

@@ -1,3 +1,5 @@
+> **Archived.** Superseded by `stability-next-steps-plan.md` (in this archive folder).
+
 # Test Quality Full Review and Action Plan
 
 Date: 2026-03-05

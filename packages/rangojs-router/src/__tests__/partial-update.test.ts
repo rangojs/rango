@@ -573,6 +573,92 @@ describe("partial-update", () => {
     });
   });
 
+  describe("router id integrity guard", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("discards a partial response whose routerId does not match the client and reloads", async () => {
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost", href: "http://localhost/" },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      // Defense in depth: the server redirects on a cross-app mismatch, so a
+      // partial whose routerId differs from this client's should never arrive.
+      // If one does (stale/edge cache, proxy mixing apps, server bug), it must
+      // NOT be merged into this document.
+      (store as any).getRouterId = vi.fn(() => "client-app");
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          routerId: "other-app",
+          segments: [seg("R0", { component: "foreign" })],
+          matched: ["R0"],
+          diff: ["R0"],
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      await expect(
+        updater("http://localhost/page", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      // Not merged; reloaded to the target so the server re-establishes the
+      // authoritative document for this URL.
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalled();
+      expect((window as any).location.href).toBe("http://localhost/page");
+    });
+
+    it("applies a partial response whose routerId matches the client", async () => {
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      (store as any).getRouterId = vi.fn(() => "client-app");
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          routerId: "client-app",
+          segments: [seg("R0", { component: "fresh" })],
+          matched: ["R0"],
+          diff: ["R0"],
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await updater("http://localhost/", ["R0"], false, undefined, tx);
+
+      // Matching routerId: the guard must not fire and the update is applied.
+      expect(onUpdate).toHaveBeenCalled();
+    });
+  });
+
   describe("intercept with target cache segments", () => {
     // Regression test for REVIEW #29: The deleted dead-code block attempted to
     // rebuild currentSegmentMap from getCurrentSegmentMap() when an intercept

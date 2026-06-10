@@ -204,11 +204,11 @@ notFoundBoundary(<NotFound />); //        -> app-fallback-*.js
 Two reasons this is the right default, both of which matter most for the
 **root/layout-level** boundaries that wrap large subtrees:
 
-- **Honest chunk names.** Without this, a small fallback (a 1 KB error component is
-  common) can be the alphabetically-first module in a large shared chunk, so
-  rolldown names the whole chunk after it — a 487 KB `ErrorBoundary-*.js` that is
-  really your theme. Pulling the boundary out lets that chunk be named after a real
-  module.
+- **Chunk names that match reality.** Without this, a small fallback (a 1 KB error
+  component is common) can be the alphabetically-first module in a large shared
+  chunk, so rolldown names the whole chunk after it — a 487 KB `ErrorBoundary-*.js`
+  that is really your theme. Pulling the boundary out lets that chunk be named after
+  a real module.
 - **Resilience.** The error UI must not be co-bundled with the very code it exists
   to catch failures for. As its own chunk it is decoupled: a failure in a route
   chunk does not take the fallback down with it.

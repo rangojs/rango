@@ -1,6 +1,6 @@
 # Rendered Barrier (Experimental)
 
-**Status**: Phase 1 — experimental, non-streaming only.
+**Status**: Experimental. Works in DSL loaders, including streaming trees that use `loading()` (the barrier waits for the streaming handlers to settle).
 
 ## Problem
 
@@ -42,7 +42,9 @@ const PricesLoader = createLoader(async (ctx) => {
 ### Supported
 
 - DSL loaders only (registered via `loader()` in `urls()` trees).
-- Non-streaming render trees: no `loading()` on any entry in the matched tree.
+- Streaming trees (`loading()`): the streaming handlers' async execution is
+  tracked in the handle store, so the barrier waits for them to finish pushing
+  before it resolves — the loader then reads complete handle data.
 - Fresh SSR (full and partial match).
 - Cache hit replay (runtime cache): handles are replayed from cache, barrier
   resolves immediately.
@@ -53,8 +55,6 @@ const PricesLoader = createLoader(async (ctx) => {
 
 - Handler-invoked loaders (`ctx.use(Loader)` inside a route/layout handler).
   Calling `rendered()` from a handler-invoked loader throws immediately.
-- Streaming trees: any entry with a `loading()` fallback causes `rendered()`
-  to throw. `loading(false)` (streaming explicitly disabled) is fine.
 - Partial/revalidation special cases: no special handling beyond what falls
   out naturally from the cache-hit path.
 - Nested `rendered()` dependencies (loader A awaits rendered, loader B
@@ -76,13 +76,14 @@ const PricesLoader = createLoader(async (ctx) => {
 
 ## Guard Rules
 
-| Condition                                        | Behavior                       |
-| ------------------------------------------------ | ------------------------------ |
-| `rendered()` in DSL loader, no streaming         | Resolves after handlers settle |
-| `rendered()` in DSL loader, tree has `loading()` | Throws `RenderedBarrierError`  |
-| `rendered()` in handler-invoked loader           | Throws `RenderedBarrierError`  |
-| `ctx.use(handle)` before `await ctx.rendered()`  | Throws                         |
-| `ctx.use(handle)` after `await ctx.rendered()`   | Returns collected handle data  |
+| Condition                                        | Behavior                                              |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| `rendered()` in DSL loader, no streaming         | Resolves after handlers settle                        |
+| `rendered()` in DSL loader, tree has `loading()` | Waits for streaming handlers to settle, then resolves |
+| `rendered()` in handler-invoked loader           | Throws `RenderedBarrierError`                         |
+| `rendered()` while a handler awaits this loader  | Throws (deadlock guard)                               |
+| `ctx.use(handle)` before `await ctx.rendered()`  | Throws                                                |
+| `ctx.use(handle)` after `await ctx.rendered()`   | Returns collected handle data                         |
 
 ## Implementation Notes
 
@@ -90,11 +91,18 @@ const PricesLoader = createLoader(async (ctx) => {
 
 The render barrier is a deferred promise on the request context:
 
-- **Fresh path**: Resolved after `resolveAllSegments()` returns. At that
-  point all handlers have completed (non-streaming guarantee) and all
-  synchronous handle data has been pushed. The HandleStore is NOT sealed
-  here — sealing stays in the existing lifecycle (rsc-rendering.ts,
-  cache-scope.ts). Promise-valued handle pushes may still be unresolved.
+- **Fresh path (non-streaming)**: Resolved after `resolveAllSegments()`
+  returns. At that point all handlers have completed and all synchronous
+  handle data has been pushed.
+- **Fresh path (streaming, `loading()`)**: the barrier still resolves after
+  `resolveAllSegments()`, but `loading()` handlers are still in flight then.
+  Their async execution is tracked in the handle store (`trackHandler` →
+  `store.track`), so `rendered()` additionally seals the store and `await`s
+  `handleStore.settled` before resolving — every tracked handler, streaming
+  included, has finished pushing. `ctx.use(handle)` then builds a fresh,
+  complete snapshot. The loader's own segment streams in after, so this does
+  not block the shell; the deadlock guard keeps a handler from depending on
+  the loader. Promise-valued handle pushes may still be unresolved.
 - **Cache hit path**: Resolved after handle data is replayed from cache.
   Handles are immediately available.
 - **Prerender path**: Resolved after handle data is replayed from build
@@ -109,20 +117,27 @@ function (same as `useHandle()` on the client), producing the same shape.
 Segment order for collection follows the segment resolution order
 (parent → child), captured when the barrier resolves.
 
-### Why Not Streaming (Phase 1)
+### How Streaming Works
 
-In a streaming tree, handlers behind `loading()` may not have settled when
-`resolveAllSegments()` returns — their components are promises that resolve
-during RSC serialization. Handle data from those handlers would be
-incomplete at barrier resolution time.
+In a streaming tree, handlers behind `loading()` have not finished pushing
+when `resolveAllSegments()` returns — only their _rendered output_ streams
+behind Suspense; the handler function itself runs eagerly and its async
+execution (including its `push()` calls) is tracked in the handle store
+(`fresh.ts`: `trackHandler(handler(context))` → `store.track`). So the signal
+"all handlers have pushed" already exists: `handleStore.settled` (sealed AND no
+in-flight tracked promises).
 
-Supporting streaming requires tracking which handles come from settled vs
-unsettled handlers and either:
+`rendered()` uses it. For a streaming tree it does not trust the eager snapshot
+built when the barrier resolves (incomplete — the `loading()` handlers were
+still in flight); instead it seals the store and `await`s `handleStore.settled`,
+then `ctx.use(handle)` builds a fresh, complete snapshot. The seal is safe
+because every handler is tracked during `resolveAllSegments`, so by barrier time
+none is unregistered; pushes happen _within_ those tracked promises (before
+`settled`); and the payload's later `stream()` auto-seal is idempotent.
 
-- Waiting for full settlement (defeating streaming's purpose), or
-- Providing a partial snapshot with explicit "may be incomplete" semantics.
-
-Both add complexity with unclear value. Phase 1 avoids this entirely.
+The one thing this does NOT do is wait for promise _values_ inside pushes (see
+Known Limitations) — `settled` waits for the handler to push, not for a pushed
+`Promise` to resolve.
 
 ## Stop Conditions
 

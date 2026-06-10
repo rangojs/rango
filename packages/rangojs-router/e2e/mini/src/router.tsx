@@ -317,6 +317,26 @@ export const router = createRouter({
             { name: "charts" },
           ),
 
+          // Prefetch warming demo: a page that ships NONE of /widgets' client
+          // code, with a render-strategy prefetch link to it. The prefetch
+          // decodes /widgets' RSC eagerly, which imports its client chunk
+          // up front, so clicking loads no new JS. Nameless on purpose (keeps
+          // the named-routes gen file untouched); reached only by its e2e.
+          path("/warm", (ctx) => {
+            ctx.use(Meta)({ title: "Warm" });
+            return (
+              <div data-testid="warm-page">
+                <Link
+                  prefetch="render"
+                  to="/widgets"
+                  data-testid="warm-to-widgets"
+                >
+                  Widgets
+                </Link>
+              </div>
+            );
+          }),
+
           // Multi-group CSS co-render: a single page that renders client
           // components from TWO different route groups (routes/widgets +
           // routes/charts) at once. This is the case where per-group stylesheet

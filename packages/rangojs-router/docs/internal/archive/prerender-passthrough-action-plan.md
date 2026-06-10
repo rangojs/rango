@@ -1,3 +1,5 @@
+> **Archived.** Superseded by the `Passthrough()` wrapper; see `packages/rangojs-router/docs/prerender-api-design.md`.
+
 # Prerender Passthrough Action Plan
 
 **Status: Superseded**

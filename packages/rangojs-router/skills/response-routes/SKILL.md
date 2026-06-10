@@ -68,16 +68,16 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 
 ## Available Tags
 
-| Tag      | Usage           | Handler returns    | Auto-wrap                |
-| -------- | --------------- | ------------------ | ------------------------ |
-| `json`   | `path.json()`   | plain object/array | `{ data: T }` envelope   |
-| `text`   | `path.text()`   | string             | text/plain Response      |
-| `html`   | `path.html()`   | string             | text/html Response       |
-| `xml`    | `path.xml()`    | string             | application/xml Response |
-| `md`     | `path.md()`     | string             | text/markdown Response   |
-| `image`  | `path.image()`  | Response           | pass-through             |
-| `stream` | `path.stream()` | Response           | pass-through             |
-| `any`    | `path.any()`    | Response           | pass-through             |
+| Tag      | Usage           | Handler returns    | Auto-wrap                     |
+| -------- | --------------- | ------------------ | ----------------------------- |
+| `json`   | `path.json()`   | plain object/array | bare JSON value (no envelope) |
+| `text`   | `path.text()`   | string             | text/plain Response           |
+| `html`   | `path.html()`   | string             | text/html Response            |
+| `xml`    | `path.xml()`    | string             | application/xml Response      |
+| `md`     | `path.md()`     | string             | text/markdown Response        |
+| `image`  | `path.image()`  | Response           | pass-through                  |
+| `stream` | `path.stream()` | Response           | pass-through                  |
+| `any`    | `path.any()`    | Response           | pass-through                  |
 
 ## ResponseHandlerContext
 
@@ -139,22 +139,31 @@ path.json(
 );
 ```
 
-## JSON Envelope
+## JSON Wire Shape
 
-`path.json()` handlers return plain data. The framework auto-wraps it
-in a `ResponseEnvelope<T>` discriminated union:
+`path.json()` handlers return plain data. The framework serializes the handler's
+return value **verbatim** (no envelope) on success, and an RFC 9457 `problem+json`
+body on error. Discriminate with `res.ok` / the HTTP status — there is no in-body
+`data`/`error` union:
 
 ```typescript
-// Success: HTTP 200
-{ "data": { "status": "ok", "timestamp": 1700000000 } }
+// Success: HTTP 200, content-type application/json
+{ "status": "ok", "timestamp": 1700000000 }
 
-// Error: HTTP 404 (or whatever status RouterError specifies)
-{ "error": { "message": "Product 999 not found", "code": "NOT_FOUND" } }
+// Error: HTTP 404 (or whatever status RouterError specifies),
+//        content-type application/problem+json
+{
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Product 999 not found",
+  "code": "NOT_FOUND"
+  // "stack": included in development only
+}
 ```
 
 ### Error Handling with RouterError
 
-Throw `RouterError` to return structured error envelopes:
+Throw `RouterError` to return a structured `problem+json` body:
 
 ```typescript
 import { RouterError } from "@rangojs/router";
@@ -199,25 +208,27 @@ path.json(
 
 ## Client-Side Type Safety
 
-### ResponseEnvelope and isResponseError
+### Discriminating success vs. error with res.ok
+
+Success bodies are the bare value; error bodies are RFC 9457 `ProblemDetails`.
+Branch on `res.ok` (or the HTTP status) — not an in-body union:
 
 ```typescript
 "use client";
-import type { ResponseEnvelope, ResponseError } from "@rangojs/router/client";
-import { isResponseError } from "@rangojs/router/client";
+import type { ProblemDetails } from "@rangojs/router";
 
 // Fetch a typed response
 const res = await fetch("/api/products/1");
-const result: ResponseEnvelope<Product> = await res.json();
 
-if (isResponseError(result)) {
-  // result.error: ResponseError  (message, code?, type?)
-  // result.data: undefined
-  console.error(result.error.message);
+if (!res.ok) {
+  // Error body: application/problem+json
+  const problem: ProblemDetails = await res.json();
+  // problem.detail: string, problem.code: string, problem.status: number
+  console.error(problem.code, problem.detail);
 } else {
-  // result.data: Product
-  // result.error: undefined
-  console.log(result.data.name);
+  // Success body: the bare value (no envelope)
+  const product: Product = await res.json();
+  console.log(product.name);
 }
 ```
 
@@ -230,11 +241,15 @@ import type { RouteResponse } from "@rangojs/router";
 
 // From the apiPatterns module (before include)
 type HealthData = RouteResponse<typeof apiPatterns, "health">;
-// = ResponseEnvelope<{ status: string; timestamp: number }>
+// = { status: string; timestamp: number }
 
 type ProductsData = RouteResponse<typeof apiPatterns, "products">;
-// = ResponseEnvelope<{ id: string; name: string; price: number }[]>
+// = { id: string; name: string; price: number }[]
 ```
+
+`RouteResponse` is the bare success payload (the JSON wire shape) — the same value
+a `fetch().then(r => r.json())` yields on a 2xx. Error bodies are `ProblemDetails`,
+keyed off `res.ok` at runtime, not part of this type.
 
 ### Rango.PathResponse (global lookup by URL pattern or concrete path)
 
@@ -242,8 +257,7 @@ type ProductsData = RouteResponse<typeof apiPatterns, "products">;
 which carries response payload metadata. That surface is **not** auto-wired —
 without the augmentation below, `Rango.PathResponse` falls back to the generated
 path/search map, or to a permissive map when nothing is generated. Either way, it
-has no response payload metadata, so response routes resolve to
-`ResponseEnvelope<never>`:
+has no response payload metadata, so response routes resolve to `never`:
 
 ```typescript
 // router.tsx
@@ -261,11 +275,11 @@ With that in place, look up the response type by URL pattern (ambient, no import
 ```typescript
 // After include("/api", apiPatterns) in main urls
 type Health = Rango.PathResponse<"/api/health">;
-// = ResponseEnvelope<{ status: string; timestamp: number }>
+// = { status: string; timestamp: number }
 
-// RSC routes return ResponseEnvelope<never>
+// RSC routes (no JSON payload) return never
 type Home = Rango.PathResponse<"/">;
-// = ResponseEnvelope<never>
+// = never
 ```
 
 `Rango.PathResponse` also accepts a **concrete path**, so it types a `fetch`
@@ -280,7 +294,7 @@ async function get<T extends Rango.Path>(
   return fetch(href(path)).then((r) => r.json());
 }
 
-const product = await get("/api/products/42"); // ResponseEnvelope<Product>
+const product = await get("/api/products/42"); // Product (bare value)
 ```
 
 Pattern keys (`/:id`) match exactly; a concrete path under a _nested_ dynamic
@@ -288,7 +302,7 @@ route can match several patterns and union their responses.
 
 `Rango.PathResponse` reports the JSON **wire** shape, not the handler's raw
 return: `path.json()` serializes with `JSON.stringify`, so a handler returning
-`{ createdAt: Date }` resolves to `ResponseEnvelope<{ createdAt: string }>`. This
+`{ createdAt: Date }` resolves to the bare `{ createdAt: string }`. This
 runs through the ambient `Rango.JsonSerialize<T>` transform (`Date -> string`,
 honors `toJSON()`, drops functions/`undefined`, `bigint -> never`). The
 `RouteResponse` surface below applies the same `Rango.JsonSerialize` transform, so
@@ -412,13 +426,13 @@ import type { ParamsFor } from "@rangojs/router/client";
 
 // Scoped (before mount) -- use the module directly, no global wiring needed
 type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
-// = ResponseEnvelope<{ views: number; visitors: number }>
+// = { views: number; visitors: number }
 
 // After mounting -- names get prefixed.
 // Rango.PathResponse needs `RegisteredRoutes extends typeof router.routeMap` (see above),
-// otherwise it resolves to ResponseEnvelope<never>.
+// otherwise it resolves to never.
 type BlogStats = Rango.PathResponse<"/blog/api/stats">;
-// = ResponseEnvelope<{ views: number; visitors: number }>
+// = { views: number; visitors: number }
 
 // Params work through nested includes
 type LikesParams = ParamsFor<"blog.api.likes">;
@@ -462,7 +476,11 @@ best-effort basis.
 1. `path.json()` tags the route at the trie level with a MIME type
 2. `coreRequestHandler()` checks the tag before the RSC pipeline
 3. Tagged routes short-circuit: handler runs, Response is returned directly
-4. JSON routes auto-wrap return values in `{ data }` / `{ error }` envelope
+4. JSON routes serialize the return value verbatim (bare) on success; a thrown error becomes an RFC 9457 `problem+json` body (`application/problem+json`)
 5. Client-side navigation to response routes gets `X-RSC-Reload` header, triggering hard navigation
 6. Response types flow through `_responses` phantom type on `UrlPatterns`, propagated by `include()`
 7. When multiple routes share a URL pattern, the trie merges them for content negotiation (see `/mime-routes`)
+
+## Consuming response routes
+
+To call your own response-route JSON APIs from first-party TypeScript with a typed client (typed params, typed payloads inferred from the handler, no `.data`, typed `ProblemDetails` errors), see `/api-client` — a copy-paste recipe over `RouteResponse` + `ExtractParams` + a client-safe path builder. External/third-party consumers use the plain wire directly: bare JSON on success, `application/problem+json` on error.

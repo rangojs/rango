@@ -32,6 +32,7 @@ export const NamedRoutes = {
   documentCache: "/document-cache",
   fast: "/slow/fast",
   featuresDetail: "/features/:slug",
+  filesWildcard: "/files/*",
   "guides.detail": "/guides/:slug",
   "handlerFirst.index": "/handler-first",
   home: "/",

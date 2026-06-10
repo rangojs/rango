@@ -9,7 +9,6 @@ import "./augment.js";
 import type { Handler, RouteParams, RouteSearchParams } from "../index.js";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import { href } from "../href-client.js";
-import type { ResponseEnvelope } from "../urls.js";
 import type { Money, TestBindings } from "./augment.js";
 
 type Expect<T extends true> = T;
@@ -79,13 +78,13 @@ wrappedHref("/not-a-route");
 type _orderWireByPattern = Expect<
   Equal<
     Rango.PathResponse<"/orders/:id">,
-    ResponseEnvelope<{ id: string; total: number; placedAt: string }>
+    { id: string; total: number; placedAt: string }
   >
 >;
 type _orderWireByPath = Expect<
   Equal<
     Rango.PathResponse<"/orders/42">,
-    ResponseEnvelope<{ id: string; total: number; placedAt: string }>
+    { id: string; total: number; placedAt: string }
   >
 >;
 

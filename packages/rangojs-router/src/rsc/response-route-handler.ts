@@ -21,7 +21,7 @@ import {
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { EntryData } from "../server/context.js";
 import type { HandlerContext } from "./handler-context.js";
-import { createResponseErrorPayload } from "./response-error.js";
+import { createProblemDetails } from "./response-error.js";
 import {
   createResponseWithMergedHeaders,
   finalizeResponse,
@@ -131,13 +131,10 @@ export async function handleResponseRoute<TEnv>(
 
       // Handled before the MIME lookup (json is also a RESPONSE_TYPE_MIME key).
       if (preview.responseType === "json") {
-        return createResponseWithMergedHeaders(
-          JSON.stringify({ data: result }),
-          {
-            status: 200,
-            headers: { "content-type": "application/json;charset=utf-8" },
-          },
-        );
+        return createResponseWithMergedHeaders(JSON.stringify(result), {
+          status: 200,
+          headers: { "content-type": "application/json;charset=utf-8" },
+        });
       }
 
       // Object.hasOwn (not truthiness) so prototype names like "toString" are not
@@ -157,16 +154,22 @@ export async function handleResponseRoute<TEnv>(
     } catch (error) {
       handlerCtx.callOnError(error, "handler", errorCtx);
       const isDev = process.env.NODE_ENV !== "production";
-      const status = error instanceof RouterError ? error.status : 500;
+      const derivedStatus = error instanceof RouterError ? error.status : 500;
+      // Resolve the effective status the same way createResponseWithMergedHeaders
+      // will (ctx.res.status override) so the problem body's status/title match
+      // the actual HTTP status — e.g. when a handler called ctx.setStatus()
+      // before throwing.
+      const status =
+        reqCtx.res.status !== 200 ? reqCtx.res.status : derivedStatus;
 
       if (preview.responseType === "json") {
         return createResponseWithMergedHeaders(
-          JSON.stringify({
-            error: createResponseErrorPayload(error, isDev),
-          }),
+          JSON.stringify(createProblemDetails(error, status, isDev)),
           {
             status,
-            headers: { "content-type": "application/json;charset=utf-8" },
+            headers: {
+              "content-type": "application/problem+json;charset=utf-8",
+            },
           },
         );
       }

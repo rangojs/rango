@@ -192,6 +192,7 @@ Grouped by concern — read when you need to…
 | `/host-router`            | Multi-app host routing with domain/subdomain patterns                      |
 | `/links`                  | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
 | `/response-routes`        | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
+| `/api-client`             | Typed client for consuming your own response-route JSON APIs (recipe)      |
 | `/mime-routes`            | Content negotiation — same URL, different response types via Accept header |
 | `/streams-and-websockets` | SSE via `path.stream` and WebSocket upgrades via `path.any`                |
 | `/handler-use`            | Attach default loaders/middleware to a handler via `handler.use`           |
@@ -217,6 +218,7 @@ Grouped by concern — read when you need to…
 | `/theme`            | Light/dark mode with FOUC prevention                                      |
 | `/i18n`             | Locale routing with `:locale?`, resolution chains, react-intl integration |
 | `/fonts`            | Load web fonts with preload hints                                         |
+| `/css`              | Import CSS in the Document `<head>` (`?url` + managed `precedence` links) |
 | `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                |
 | `/view-transitions` | React View Transitions on layouts, routes, and parallel slots             |
 | `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                     |

@@ -1,3 +1,5 @@
+> **Archived.** Prefetch/cache review remediation plan; the fixes have landed.
+
 # Prefetch/Cache Review Actions (Non-Test Runtime)
 
 Status: Implemented (same-origin validation in fetch.ts; cache sanitization

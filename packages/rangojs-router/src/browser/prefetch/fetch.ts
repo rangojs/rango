@@ -3,12 +3,16 @@
  *
  * Fetch-based prefetch logic used by Link (hover/viewport/render strategies)
  * and useRouter().prefetch(). Sends the same headers and segment IDs as a
- * real navigation so the server returns a proper diff. The Response is fully
- * buffered and stored in an in-memory cache for instant consumption on
- * subsequent navigation.
+ * real navigation so the server returns a proper diff. The response is fetched
+ * AND eagerly decoded (createFromFetch) up front: decoding the Flight stream
+ * resolves the route's client references, so the route's JS chunks are imported
+ * during prefetch rather than on click. The decoded payload is stored in an
+ * in-memory cache and reused verbatim by navigation, so a prefetched click
+ * loads no new code.
  *
  * In-flight promises are tracked in the cache so that navigation can reuse
- * a prefetch that is still downloading instead of starting a duplicate request.
+ * a prefetch that is still downloading/decoding instead of starting a
+ * duplicate request.
  */
 
 import {
@@ -20,11 +24,34 @@ import {
   storePrefetch,
   clearPrefetchInflight,
   currentGeneration,
+  type DecodedPrefetch,
 } from "./cache.js";
 import { getRangoState } from "../rango-state.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 import { debugLog } from "../logging.js";
+import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
+import type { RscPayload } from "../types.js";
+
+/**
+ * Decoder injected at app startup (see setPrefetchDecoder). This is
+ * `deps.createFromFetch` — decoupled from the RSC runtime exactly like the
+ * navigation client. Prefetch decodes through it so the route's client chunks
+ * are pulled during the prefetch, not on click.
+ */
+type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
+
+let decoder: PrefetchDecoder | null = null;
+
+/**
+ * Wire the RSC decoder used to eagerly decode prefetched responses. Called
+ * once from initBrowserApp with the same createFromFetch the navigation client
+ * uses. Until set, prefetch warming is inert (prefetches are skipped) — the
+ * browser app always sets it before any Link can fire.
+ */
+export function setPrefetchDecoder(fn: PrefetchDecoder): void {
+  decoder = fn;
+}
 
 /**
  * Check if a URL resolves to the current page (same pathname + search).
@@ -78,39 +105,50 @@ function buildPrefetchUrl(
 }
 
 /**
- * Core prefetch fetch logic. Fetches the response, tees the body, and stores
- * one branch in the in-memory cache. The returned Promise resolves to the
- * sibling navigation branch (or null on failure) so navigation can safely
- * reuse an in-flight prefetch via consumeInflightPrefetch().
+ * Core prefetch fetch logic. Fetches the response, eagerly decodes it, and
+ * stores the decoded payload in the in-memory cache. The returned Promise
+ * resolves to the decoded entry (or null on failure / control header) so
+ * navigation can safely reuse an in-flight prefetch via
+ * consumeInflightPrefetch().
+ *
+ * Eager decode is the warming step: createFromFetch parses the Flight stream,
+ * which resolves the route's client references and imports its JS chunks. The
+ * stored payload is reused as-is by navigation, so the click loads no new code.
+ *
+ * Control headers are NOT acted on here. A speculative prefetch must never
+ * reload the page or throw a redirect — if the response carries X-RSC-Reload
+ * or X-RSC-Redirect, we drop it (resolve null) and let the real navigation
+ * re-fetch and honor it.
  *
  * Inflight + storage key selection:
  *
  * - `forceSourceScope` (Link opted in with `prefetchKey=":source"`): single
- *   inflight registration under `sourceKey`; response stored under
- *   `sourceKey`. No wildcard leak is possible.
+ *   inflight registration under `sourceKey`; entry stored under `sourceKey`.
+ *   No wildcard leak is possible.
  *
  * - Otherwise: dual inflight registration under both `wildcardKey` and
  *   `sourceKey` so same-source navigations adopt directly via their own
  *   source key. Storage key is chosen at response time from the
  *   `X-RSC-Prefetch-Scope` header — `"source"` → `sourceKey` (intercept
- *   modals etc.), anything else → `wildcardKey`. Cross-source navigations
- *   that adopted via `wildcardKey` must bail out in `navigation-client.ts`
- *   if the adopted response turns out to be source-scoped.
+ *   modals etc.), anything else → `wildcardKey`. The entry records its scope
+ *   so cross-source navigations that adopted via `wildcardKey` can bail out
+ *   in `navigation-client.ts` when the adopted entry turns out source-scoped.
  */
 function executePrefetchFetch(
   wildcardKey: string,
   sourceKey: string,
   fetchUrl: string,
   forceSourceScope: boolean,
+  expectedRouterId?: string,
   signal?: AbortSignal,
-): Promise<Response | null> {
+): Promise<DecodedPrefetch | null> {
   const gen = currentGeneration();
   const inflightKeys = forceSourceScope
     ? [sourceKey]
     : [wildcardKey, sourceKey];
   for (const k of inflightKeys) markPrefetchInflight(k);
 
-  const promise: Promise<Response | null> = fetch(fetchUrl, {
+  const promise: Promise<DecodedPrefetch | null> = fetch(fetchUrl, {
     priority: "low" as RequestPriority,
     signal,
     headers: {
@@ -120,25 +158,53 @@ function executePrefetchFetch(
     },
   })
     .then((response) => {
-      if (!response.ok) return null;
-      // Don't buffer with arrayBuffer() — that blocks until the entire
-      // body downloads, defeating streaming for slow loaders.
-      // Tee the body: one branch for navigation, one for cache storage.
-      const [navStream, cacheStream] = response.body!.tee();
-      const responseInit = {
-        headers: response.headers,
-        status: response.status,
-        statusText: response.statusText,
-      };
-      let storageKey: string;
-      if (forceSourceScope) {
-        storageKey = sourceKey;
-      } else {
-        const scope = response.headers.get("x-rsc-prefetch-scope");
-        storageKey = scope === "source" ? sourceKey : wildcardKey;
+      if (!response.ok || !decoder) return null;
+      // Control headers mean this response is stale (reload) or redirecting.
+      // Don't warm it — drop so navigation re-fetches and acts on the header.
+      if (
+        response.headers.has("X-RSC-Reload") ||
+        response.headers.has("X-RSC-Redirect")
+      ) {
+        return null;
       }
-      storePrefetch(storageKey, new Response(cacheStream, responseInit), gen);
-      return new Response(navStream, responseInit);
+      // Integrity check: never warm (or decode/import the chunks of) a foreign
+      // app's payload. A speculative prefetch must never reload — just drop it;
+      // navigation re-fetches and the server steers it.
+      if (isForeignRouterId(response, expectedRouterId)) {
+        return null;
+      }
+
+      const scope: "source" | "wildcard" =
+        forceSourceScope ||
+        response.headers.get("x-rsc-prefetch-scope") === "source"
+          ? "source"
+          : "wildcard";
+      const storageKey = scope === "source" ? sourceKey : wildcardKey;
+
+      // Track stream completion off a tee so navigation's scroll/revalidation
+      // gating matches the fresh-fetch path; decode the other branch.
+      let resolveStreamComplete!: () => void;
+      const streamComplete = new Promise<void>((resolve) => {
+        resolveStreamComplete = resolve;
+      });
+      const tracked = teeWithCompletion(
+        response,
+        () => resolveStreamComplete(),
+        signal,
+        // Speculative prefetch: a never-consumed/aborted stream error is benign.
+        true,
+      );
+
+      // Eager decode: parsing the Flight stream imports the route's client
+      // chunks now, not on click.
+      const payload = decoder(Promise.resolve(tracked));
+      // Mark handled so an unconsumed prefetch decode error stays quiet; the
+      // error is still surfaced to navigation if it consumes the entry.
+      payload.catch(() => {});
+
+      const entry: DecodedPrefetch = { payload, streamComplete, scope };
+      storePrefetch(storageKey, entry, gen);
+      return entry;
     })
     .catch(() => null)
     .finally(() => {
@@ -223,6 +289,7 @@ export function prefetchDirect(
     sourceKey,
     targetUrl.toString(),
     forceSourceScope,
+    routerId,
   );
 }
 
@@ -275,6 +342,7 @@ export function prefetchQueued(
       sourceKey,
       fetchUrlStr,
       forceSourceScope,
+      routerId,
       signal,
     ).then(() => {});
   });

@@ -979,8 +979,8 @@ test.describe("cache-response-type", () => {
     });
     expect(jsonRes1.status()).toBe(200);
     const json1 = await jsonRes1.json();
-    expect(json1.data.type).toBe("json");
-    expect(json1.data.id).toBe("42");
+    expect(json1.type).toBe("json");
+    expect(json1.id).toBe("42");
 
     // Poll until cache write completes and second request returns cached data
     await expect
@@ -990,11 +990,11 @@ test.describe("cache-response-type", () => {
             headers: { Accept: "application/json" },
           });
           const data = await res.json();
-          return data.data.ts;
+          return data.ts;
         },
         { timeout: 15000, message: "Expected cached JSON response for /42" },
       )
-      .toBe(json1.data.ts);
+      .toBe(json1.ts);
 
     // Verify full cache hit (rand should also match)
     const jsonRes2 = await request.get(f.url("/cache-response-type/data/42"), {
@@ -1002,7 +1002,7 @@ test.describe("cache-response-type", () => {
     });
     expect(jsonRes2.status()).toBe(200);
     const json2 = await jsonRes2.json();
-    expect(json2.data.rand).toBe(json1.data.rand);
+    expect(json2.rand).toBe(json1.rand);
 
     // Text response at same URL — cache miss (different responseType key)
     const textRes1 = await request.get(f.url("/cache-response-type/data/42"), {
@@ -1014,7 +1014,7 @@ test.describe("cache-response-type", () => {
 
     // Text value should differ from JSON timestamp (different cache entry)
     const textTs = text1.split(":")[2];
-    expect(textTs).not.toBe(String(json1.data.ts));
+    expect(textTs).not.toBe(String(json1.ts));
   });
 
   test("path.json with different params produce different cache entries", async ({
@@ -1025,7 +1025,7 @@ test.describe("cache-response-type", () => {
     });
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(body1.data.id).toBe("alpha");
+    expect(body1.id).toBe("alpha");
 
     // Poll until cache write completes for alpha
     await expect
@@ -1036,11 +1036,11 @@ test.describe("cache-response-type", () => {
             { headers: { Accept: "application/json" } },
           );
           const data = await res.json();
-          return data.data.ts;
+          return data.ts;
         },
         { timeout: 15000, message: "Expected cached JSON response for /alpha" },
       )
-      .toBe(body1.data.ts);
+      .toBe(body1.ts);
 
     // Different param — cache miss
     const res2 = await request.get(f.url("/cache-response-type/data/beta"), {
@@ -1048,8 +1048,8 @@ test.describe("cache-response-type", () => {
     });
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    expect(body2.data.id).toBe("beta");
-    expect(body2.data.ts).not.toBe(body1.data.ts);
+    expect(body2.id).toBe("beta");
+    expect(body2.ts).not.toBe(body1.ts);
 
     // Same param — cache hit
     const res3 = await request.get(f.url("/cache-response-type/data/alpha"), {
@@ -1057,7 +1057,7 @@ test.describe("cache-response-type", () => {
     });
     expect(res3.status()).toBe(200);
     const body3 = await res3.json();
-    expect(body3.data.ts).toBe(body1.data.ts);
+    expect(body3.ts).toBe(body1.ts);
   });
 });
 
@@ -1159,7 +1159,7 @@ test.describe("cache-no-cache-bypass (production)", () => {
         { headers: { Accept: "application/json" } },
       );
       expect(res.status()).toBe(200);
-      return (await res.json()).data;
+      return await res.json();
     };
 
     // Warm the cache, then poll until a request returns the cached value.
@@ -1345,8 +1345,8 @@ test.describe("cache-response-type (production)", () => {
     });
     expect(jsonRes1.status()).toBe(200);
     const json1 = await jsonRes1.json();
-    expect(json1.data.type).toBe("json");
-    expect(json1.data.id).toBe("42");
+    expect(json1.type).toBe("json");
+    expect(json1.id).toBe("42");
 
     // Poll until cache write completes and second request returns cached data
     await expect
@@ -1356,11 +1356,11 @@ test.describe("cache-response-type (production)", () => {
             headers: { Accept: "application/json" },
           });
           const data = await res.json();
-          return data.data.ts;
+          return data.ts;
         },
         { timeout: 15000, message: "Expected cached JSON response for /42" },
       )
-      .toBe(json1.data.ts);
+      .toBe(json1.ts);
 
     // Verify full cache hit (rand should also match)
     const jsonRes2 = await request.get(f.url("/cache-response-type/data/42"), {
@@ -1368,7 +1368,7 @@ test.describe("cache-response-type (production)", () => {
     });
     expect(jsonRes2.status()).toBe(200);
     const json2 = await jsonRes2.json();
-    expect(json2.data.rand).toBe(json1.data.rand);
+    expect(json2.rand).toBe(json1.rand);
 
     const textRes1 = await request.get(f.url("/cache-response-type/data/42"), {
       headers: { Accept: "text/plain" },
@@ -1378,7 +1378,7 @@ test.describe("cache-response-type (production)", () => {
     expect(text1).toContain("text:42:");
 
     const textTs = text1.split(":")[2];
-    expect(textTs).not.toBe(String(json1.data.ts));
+    expect(textTs).not.toBe(String(json1.ts));
   });
 
   test("path.json with different params produce different cache entries", async ({
@@ -1389,7 +1389,7 @@ test.describe("cache-response-type (production)", () => {
     });
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
-    expect(body1.data.id).toBe("alpha");
+    expect(body1.id).toBe("alpha");
 
     // Poll until cache write completes for alpha
     await expect
@@ -1400,26 +1400,26 @@ test.describe("cache-response-type (production)", () => {
             { headers: { Accept: "application/json" } },
           );
           const data = await res.json();
-          return data.data.ts;
+          return data.ts;
         },
         { timeout: 15000, message: "Expected cached JSON response for /alpha" },
       )
-      .toBe(body1.data.ts);
+      .toBe(body1.ts);
 
     const res2 = await request.get(f.url("/cache-response-type/data/beta"), {
       headers: { Accept: "application/json" },
     });
     expect(res2.status()).toBe(200);
     const body2 = await res2.json();
-    expect(body2.data.id).toBe("beta");
-    expect(body2.data.ts).not.toBe(body1.data.ts);
+    expect(body2.id).toBe("beta");
+    expect(body2.ts).not.toBe(body1.ts);
 
     const res3 = await request.get(f.url("/cache-response-type/data/alpha"), {
       headers: { Accept: "application/json" },
     });
     expect(res3.status()).toBe(200);
     const body3 = await res3.json();
-    expect(body3.data.ts).toBe(body1.data.ts);
+    expect(body3.ts).toBe(body1.ts);
   });
 });
 

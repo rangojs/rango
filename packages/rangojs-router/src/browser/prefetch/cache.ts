@@ -1,8 +1,13 @@
 /**
  * Prefetch Cache
  *
- * In-memory cache storing prefetched Response objects for instant cache hits
- * on subsequent navigation. Two key scopes are in play:
+ * In-memory cache storing eagerly-decoded prefetch payloads for instant,
+ * already-warm cache hits on subsequent navigation. A prefetch fetches the
+ * RSC partial AND decodes it (createFromFetch) up front — decoding the Flight
+ * stream resolves the route's client references, so the route's JS chunks are
+ * imported during prefetch rather than on click. The decoded payload is reused
+ * verbatim by navigation, so a prefetched click loads no new code. Two key
+ * scopes are in play:
  * - Wildcard (default): built by `buildPrefetchKey(rangoState, target)` —
  *   shape `rangoState\0/target?...`. Shared across all source pages and
  *   invalidated automatically when Rango state bumps (deploy or
@@ -17,8 +22,8 @@
  *   from other pages.
  *
  * Also tracks in-flight prefetch promises. Each promise resolves to the
- * navigation branch of a tee'd Response, allowing navigation to adopt a
- * still-downloading prefetch without reparsing or buffering the body. A
+ * decoded prefetch entry (or null), letting navigation adopt a
+ * still-downloading prefetch without issuing a duplicate request. A
  * single promise can be registered under multiple alias keys (see
  * `setInflightPromiseWithAliases`) so same-source navigations adopt via
  * their source key while cross-source ones fall through to the wildcard
@@ -30,6 +35,31 @@
 
 import { abortAllPrefetches } from "./queue.js";
 import { invalidateRangoState } from "../rango-state.js";
+import type { RscPayload } from "../types.js";
+
+/**
+ * A prefetch that has been fetched AND eagerly decoded. Storing the decoded
+ * payload (not the raw Response) is what makes a prefetched navigation "warm":
+ * decoding the Flight stream during prefetch pulls the route's client chunks,
+ * so the click reuses ready elements and loads no new JS.
+ */
+export interface DecodedPrefetch {
+  /** The eagerly-decoded RSC payload. Reused verbatim by navigation. */
+  payload: Promise<RscPayload>;
+  /**
+   * Resolves when the underlying RSC stream finishes draining. Navigation
+   * forwards this as its streamComplete so scroll/revalidation gating is
+   * unchanged from the fresh-fetch path.
+   */
+  streamComplete: Promise<void>;
+  /**
+   * Prefetch scope as tagged by the server via `X-RSC-Prefetch-Scope`.
+   * `"source"` means the response is source-page-sensitive and must not be
+   * reused by a navigation from a different page — navigation enforces this
+   * when it adopted an inflight entry through the wildcard key.
+   */
+  scope: "source" | "wildcard";
+}
 
 // Default TTL: 5 minutes. Overridden by initPrefetchCache() with
 // the server-configured prefetchCacheTTL from router options.
@@ -55,7 +85,7 @@ export function isPrefetchCacheDisabled(): boolean {
 const MAX_PREFETCH_CACHE_SIZE = 50;
 
 interface PrefetchCacheEntry {
-  response: Response;
+  entry: DecodedPrefetch;
   timestamp: number;
 }
 
@@ -63,17 +93,19 @@ const cache = new Map<string, PrefetchCacheEntry>();
 const inflight = new Set<string>();
 
 /**
- * In-flight promise map. When a prefetch fetch is in progress, its
- * Promise<Response | null> is stored here so navigation can await
- * it instead of starting a duplicate request.
+ * In-flight promise map. When a prefetch fetch+decode is in progress, its
+ * Promise<DecodedPrefetch | null> is stored here so navigation can await it
+ * instead of starting a duplicate request. Resolves to null when the prefetch
+ * failed, was aborted, or carried a control header (reload/redirect) that the
+ * navigation must re-fetch to act on.
  */
-const inflightPromises = new Map<string, Promise<Response | null>>();
+const inflightPromises = new Map<string, Promise<DecodedPrefetch | null>>();
 
 /**
  * Alias map for in-flight promises registered under multiple keys (see
  * dual inflight in prefetch/fetch.ts). Records each key's sibling set so
  * that consuming or clearing any one key atomically removes every alias —
- * guaranteeing a single consumer for the shared Response stream.
+ * guaranteeing a single consumer for the shared decode.
  */
 const inflightAliases = new Map<string, string[]>();
 
@@ -152,14 +184,14 @@ export function hasPrefetch(key: string): boolean {
 }
 
 /**
- * Consume a cached prefetch response. Returns null if not found or expired.
- * One-time consumption: the entry is deleted after retrieval.
+ * Consume a cached, eagerly-decoded prefetch. Returns null if not found or
+ * expired. One-time consumption: the entry is deleted after retrieval.
  * Returns null when caching is disabled (TTL <= 0).
  *
  * Does NOT check in-flight prefetches — use consumeInflightPrefetch()
- * for that (returns a Promise instead of a Response).
+ * for that (returns a Promise instead of a resolved entry).
  */
-export function consumePrefetch(key: string): Response | null {
+export function consumePrefetch(key: string): DecodedPrefetch | null {
   if (cacheTTL <= 0) return null;
   const entry = cache.get(key);
   if (!entry) return null;
@@ -168,13 +200,14 @@ export function consumePrefetch(key: string): Response | null {
     return null;
   }
   cache.delete(key);
-  return entry.response;
+  return entry.entry;
 }
 
 /**
  * Consume an in-flight prefetch promise. Returns null if no prefetch is
- * in-flight for this key. The returned Promise resolves to the buffered
- * Response (or null if the fetch failed/was aborted).
+ * in-flight for this key. The returned Promise resolves to the decoded
+ * prefetch entry (or null if the fetch failed/was aborted, or carried a
+ * control header the navigation must re-fetch to honor).
  *
  * One-time consumption: the promise entry is removed (along with any
  * sibling aliases registered via `setInflightPromiseWithAliases`) so a
@@ -188,7 +221,7 @@ export function consumePrefetch(key: string): Response | null {
  */
 export function consumeInflightPrefetch(
   key: string,
-): Promise<Response | null> | null {
+): Promise<DecodedPrefetch | null> | null {
   const promise = inflightPromises.get(key);
   if (!promise) return null;
   // Remove the promise under every alias so a second consumer cannot
@@ -201,16 +234,14 @@ export function consumeInflightPrefetch(
 }
 
 /**
- * Store a prefetch response in the in-memory cache.
- * The response should be a clone() of the original so the caller can
- * still consume the body. The clone's body streams independently.
+ * Store an eagerly-decoded prefetch in the in-memory cache.
  *
  * Skips storage if the generation has changed since the fetch started
  * (a server action invalidated the cache mid-flight).
  */
 export function storePrefetch(
   key: string,
-  response: Response,
+  entry: DecodedPrefetch,
   fetchGeneration: number,
 ): void {
   if (cacheTTL <= 0) return;
@@ -218,8 +249,8 @@ export function storePrefetch(
 
   // Evict expired entries
   const now = Date.now();
-  for (const [k, entry] of cache) {
-    if (now - entry.timestamp > cacheTTL) {
+  for (const [k, cached] of cache) {
+    if (now - cached.timestamp > cacheTTL) {
       cache.delete(k);
     }
   }
@@ -230,7 +261,7 @@ export function storePrefetch(
     if (oldest) cache.delete(oldest);
   }
 
-  cache.set(key, { response, timestamp: now });
+  cache.set(key, { entry, timestamp: now });
 }
 
 /**
@@ -250,7 +281,7 @@ export function markPrefetchInflight(key: string): void {
  */
 export function setInflightPromise(
   key: string,
-  promise: Promise<Response | null>,
+  promise: Promise<DecodedPrefetch | null>,
 ): void {
   inflightPromises.set(key, promise);
 }
@@ -263,7 +294,7 @@ export function setInflightPromise(
  */
 export function setInflightPromiseWithAliases(
   keys: string[],
-  promise: Promise<Response | null>,
+  promise: Promise<DecodedPrefetch | null>,
 ): void {
   for (const k of keys) {
     inflightPromises.set(k, promise);
@@ -295,20 +326,4 @@ export function clearPrefetchCache(): void {
   cache.clear();
   abortAllPrefetches();
   invalidateRangoState();
-}
-
-/**
- * Drop all in-memory prefetch state for this tab without rotating rango-state.
- *
- * Use for local-only invalidations (e.g. app switch in this tab) where
- * other tabs should NOT observe a state rotation. Unlike clearPrefetchCache,
- * does not call invalidateRangoState, so the shared X-Rango-State token
- * stays intact and siblings in the old app keep their prefetches.
- */
-export function clearPrefetchCacheLocal(): void {
-  generation++;
-  inflight.clear();
-  inflightPromises.clear();
-  cache.clear();
-  abortAllPrefetches();
 }

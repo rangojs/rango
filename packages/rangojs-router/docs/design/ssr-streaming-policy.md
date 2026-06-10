@@ -1,5 +1,10 @@
 # SSR Streaming Policy
 
+If you need an SSR response to hold back until everything's ready — a bot that
+wants complete HTML, a route that shouldn't flush a half-built page — this is the
+knob for it, and the reasoning behind why it's a per-request decision you make
+rather than something the router guesses.
+
 ## Summary
 
 `ssr.resolveStreaming` controls whether HTML SSR responses stream

@@ -27,7 +27,7 @@ async function waitForOnError(
           const response = await page.request.get(errorUrl);
           const data = await response.json();
           // The endpoint returns an array of error records (or null)
-          const log = data.data;
+          const log = data;
           if (Array.isArray(log)) {
             const match = log.find(
               (entry: any) => entry.phase === expectedPhase,
@@ -123,7 +123,7 @@ function onErrorTests(f: ReturnType<typeof useFixture>) {
       f.url("/__test/throw-handler-error"),
     );
 
-    // The response route should return a JSON error envelope
+    // The response route should return an RFC 9457 problem+json error body
     expect(response.status()).toBe(500);
 
     const error = await waitForOnError(

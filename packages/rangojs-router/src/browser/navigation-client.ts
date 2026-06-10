@@ -17,12 +17,14 @@ import {
   emptyResponse,
   handleReloadHeader,
   teeWithCompletion,
+  isForeignRouterId,
 } from "./response-adapter.js";
 import {
   buildPrefetchKey,
   buildSourceKey,
   consumeInflightPrefetch,
   consumePrefetch,
+  type DecodedPrefetch,
 } from "./prefetch/cache.js";
 
 /**
@@ -111,26 +113,26 @@ export function createNavigationClient(
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
       const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
 
-      let cachedResponse: Response | null = null;
+      let cachedEntry: DecodedPrefetch | null = null;
       let hitKey: string | null = null;
       if (canUsePrefetch) {
-        cachedResponse = consumePrefetch(cacheKey);
-        if (cachedResponse) {
+        cachedEntry = consumePrefetch(cacheKey);
+        if (cachedEntry) {
           hitKey = cacheKey;
         } else {
-          cachedResponse = consumePrefetch(wildcardKey);
-          if (cachedResponse) hitKey = wildcardKey;
+          cachedEntry = consumePrefetch(wildcardKey);
+          if (cachedEntry) hitKey = wildcardKey;
         }
       }
 
-      let inflightResponsePromise: Promise<Response | null> | null = null;
-      if (canUsePrefetch && !cachedResponse) {
-        inflightResponsePromise = consumeInflightPrefetch(cacheKey);
-        if (inflightResponsePromise) {
+      let inflightEntryPromise: Promise<DecodedPrefetch | null> | null = null;
+      if (canUsePrefetch && !cachedEntry) {
+        inflightEntryPromise = consumeInflightPrefetch(cacheKey);
+        if (inflightEntryPromise) {
           hitKey = cacheKey;
         } else {
-          inflightResponsePromise = consumeInflightPrefetch(wildcardKey);
-          if (inflightResponsePromise) hitKey = wildcardKey;
+          inflightEntryPromise = consumeInflightPrefetch(wildcardKey);
+          if (inflightEntryPromise) hitKey = wildcardKey;
         }
       }
       // Track when the stream completes
@@ -180,6 +182,19 @@ export function createNavigationClient(
           throw new ServerRedirect(redirect.url, undefined);
         }
 
+        // Integrity check (pre-decode): refuse a foreign app's content response
+        // before createFromFetch imports its chunks. Ordered AFTER the reload
+        // and redirect handlers — control responses are never stamped with
+        // X-RSC-Router-Id, so they are steered first and never reach here.
+        if (isForeignRouterId(response, routerId)) {
+          if (tx) {
+            browserDebugLog(tx, `router id mismatch, reloading (${source})`);
+          }
+          resolveStreamComplete();
+          window.location.href = targetUrl;
+          return new Promise<Response>(() => {});
+        }
+
         return response;
       };
 
@@ -217,29 +232,32 @@ export function createNavigationClient(
         });
       };
 
-      let responsePromise: Promise<Response>;
+      // A warm prefetch hit returns its eagerly-decoded payload directly: the
+      // route's chunks were imported during the prefetch, so this click runs
+      // no decode and no network. Only the fresh path runs createFromFetch and
+      // resolves the local streamComplete (via doFreshFetch's teeWithCompletion
+      // and the control-header short-circuits in validateRscHeaders).
+      const freshResult = (): {
+        payload: Promise<RscPayload>;
+        streamComplete: Promise<void>;
+      } => ({
+        payload: deps.createFromFetch<RscPayload>(doFreshFetch()),
+        streamComplete,
+      });
 
-      if (cachedResponse) {
+      let payloadPromise: Promise<RscPayload>;
+      let streamCompletePromise: Promise<void>;
+
+      if (cachedEntry) {
         if (tx) {
-          browserDebugLog(tx, "prefetch cache hit", {
+          browserDebugLog(tx, "prefetch cache hit (warm)", {
             key: hitKey,
             wildcard: hitKey === wildcardKey,
           });
         }
-        responsePromise = Promise.resolve(cachedResponse).then((response) => {
-          const validated = validateRscHeaders(response, "prefetch cache");
-          if (validated instanceof Promise) return validated;
-
-          return teeWithCompletion(
-            validated,
-            () => {
-              if (tx) browserDebugLog(tx, "stream complete (from cache)");
-              resolveStreamComplete();
-            },
-            signal,
-          );
-        });
-      } else if (inflightResponsePromise) {
+        payloadPromise = cachedEntry.payload;
+        streamCompletePromise = cachedEntry.streamComplete;
+      } else if (inflightEntryPromise) {
         if (tx) {
           browserDebugLog(tx, "reusing inflight prefetch", {
             key: hitKey,
@@ -247,51 +265,35 @@ export function createNavigationClient(
           });
         }
         const adoptedViaWildcard = hitKey === wildcardKey;
-        responsePromise = inflightResponsePromise.then(async (response) => {
-          if (!response) {
-            if (tx) {
-              browserDebugLog(tx, "inflight prefetch unavailable, refetching");
-            }
-            return doFreshFetch();
+        const entry = await inflightEntryPromise;
+        if (!entry) {
+          if (tx) {
+            browserDebugLog(tx, "inflight prefetch unavailable, refetching");
           }
-
-          // Cross-source safety: an inflight promise adopted via the
-          // wildcard key may turn out to be source-scoped (server emitted
-          // `X-RSC-Prefetch-Scope: source`), which means it was built for
-          // a different source page. Discard and refetch.
-          if (
-            adoptedViaWildcard &&
-            response.headers.get("x-rsc-prefetch-scope") === "source"
-          ) {
-            if (tx) {
-              browserDebugLog(
-                tx,
-                "wildcard inflight turned out source-scoped, refetching",
-              );
-            }
-            return doFreshFetch();
+          ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
+            freshResult());
+        } else if (adoptedViaWildcard && entry.scope === "source") {
+          // A wildcard-adopted inflight that turned out source-scoped was
+          // built for a different source page. Discard and refetch.
+          if (tx) {
+            browserDebugLog(
+              tx,
+              "wildcard inflight turned out source-scoped, refetching",
+            );
           }
-
-          const validated = validateRscHeaders(response, "inflight prefetch");
-          if (validated instanceof Promise) return validated;
-
-          return teeWithCompletion(
-            validated,
-            () => {
-              if (tx) {
-                browserDebugLog(tx, "stream complete (from inflight prefetch)");
-              }
-              resolveStreamComplete();
-            },
-            signal,
-          );
-        });
+          ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
+            freshResult());
+        } else {
+          payloadPromise = entry.payload;
+          streamCompletePromise = entry.streamComplete;
+        }
       } else {
-        responsePromise = doFreshFetch();
+        ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
+          freshResult());
       }
 
       try {
-        const payload = await deps.createFromFetch<RscPayload>(responsePromise);
+        const payload = await payloadPromise;
 
         if (tx) {
           browserDebugLog(tx, "response received", {
@@ -300,7 +302,7 @@ export function createNavigationClient(
             diffCount: payload.metadata?.diff?.length ?? 0,
           });
         }
-        return { payload, streamComplete };
+        return { payload, streamComplete: streamCompletePromise };
       } catch (error) {
         // Convert network-level errors to NetworkError for proper handling
         if (isNetworkError(error)) {

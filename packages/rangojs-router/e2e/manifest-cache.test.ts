@@ -20,7 +20,7 @@ function manifestCacheTests(f: ReturnType<typeof useFixture>) {
     // Read counter after first request
     const counter1 = await request.get(f.url("/__test/manifest-cache-counter"));
     const data1 = await counter1.json();
-    const firstCount = data1.data.handlerExecutions;
+    const firstCount = data1.handlerExecutions;
     expect(firstCount).toBeGreaterThanOrEqual(1);
 
     // Second and third requests to the same route
@@ -32,7 +32,7 @@ function manifestCacheTests(f: ReturnType<typeof useFixture>) {
     // Counter should not have increased — manifest was cached
     const counter2 = await request.get(f.url("/__test/manifest-cache-counter"));
     const data2 = await counter2.json();
-    expect(data2.data.handlerExecutions).toBe(firstCount);
+    expect(data2.handlerExecutions).toBe(firstCount);
   });
 
   test("cached manifest resolves different routes correctly", async ({
@@ -47,7 +47,7 @@ function manifestCacheTests(f: ReturnType<typeof useFixture>) {
       f.url("/__test/manifest-cache-counter"),
     );
     const dataBefore = await counterBefore.json();
-    const countBefore = dataBefore.data.handlerExecutions;
+    const countBefore = dataBefore.handlerExecutions;
 
     // Now hit completely different routes — they should all resolve
     // from the same cached manifest, not trigger re-evaluation
@@ -66,7 +66,7 @@ function manifestCacheTests(f: ReturnType<typeof useFixture>) {
       f.url("/__test/manifest-cache-counter"),
     );
     const dataAfter = await counterAfter.json();
-    expect(dataAfter.data.handlerExecutions).toBe(countBefore);
+    expect(dataAfter.handlerExecutions).toBe(countBefore);
   });
 }
 

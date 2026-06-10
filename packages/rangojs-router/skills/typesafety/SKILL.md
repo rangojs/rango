@@ -57,7 +57,7 @@ the auto-generated `GeneratedRouteMap`, so **`rango generate` alone gives you
 path-checked `href()`** with no manual augmentation. Response and MIME payload
 inference is the exception: it comes only from `typeof router.routeMap` (via
 `RegisteredRoutes`), because `GeneratedRouteMap` carries paths + search but no
-payloads — so `Rango.PathResponse` resolves to `ResponseEnvelope<never>` until you wire
+payloads — so `Rango.PathResponse` resolves to `never` until you wire
 `RegisteredRoutes`.
 
 Recommended setup:
@@ -237,7 +237,7 @@ async function get<T extends Rango.Path>(
 ): Promise<Rango.PathResponse<T>> {
   return fetch(href(path)).then((r) => r.json());
 }
-const product = await get("/api/products/42"); // ResponseEnvelope<Product>
+const product = await get("/api/products/42"); // Product (bare value)
 ```
 
 Pattern keys (`/:id`) match exactly; a concrete path under a _nested_ dynamic
@@ -245,7 +245,7 @@ route can match several patterns and union their responses.
 
 `Rango.PathResponse` describes the JSON **wire** shape, not the handler's raw
 return. A `path.json()` handler returning `{ createdAt: Date }` resolves here to
-`ResponseEnvelope<{ createdAt: string }>`, matching what `r.json()` yields. This
+`{ createdAt: string }` (bare value), matching what `r.json()` yields. This
 is applied via the ambient `Rango.JsonSerialize<T>` transform (`Date -> string`,
 honors `toJSON()`, drops functions/`undefined`, `bigint -> never`). A separate
 `Rango.FlightSerialize<T>` models the higher-fidelity RSC Flight boundary
