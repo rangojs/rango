@@ -152,7 +152,12 @@ module default-exports a `PrerenderEntry`:
 ```typescript
 interface PrerenderEntry {
   segments: SerializedSegmentData[];
-  handles: Record<string, SegmentHandleData>;
+  // RSC-encoded handle map ("" when none). Encoded via the Flight codec
+  // (handle-snapshot.ts encodeHandles) so Promise/ReactNode handle values
+  // survive the JSON-serialized build artifact / dev wire — the same codec the
+  // runtime cache uses. The producer (matchForPrerender, in the RSC env) encodes;
+  // the node-side build/dev sinks persist the string as-is; cache-lookup decodes.
+  handles: string;
 }
 ```
 

@@ -231,6 +231,7 @@ export const NamedRoutes = {
   "paramsAfterAction.show": "/params-after-action/:postId/section/:section",
   peRedirect: "/pe-redirect",
   "plainProduct.detail": "/plain-product/:id",
+  "prerender-handle": "/prerender-handle",
   "prerender-reverse": "/prerender-reverse",
   "prerenderComplex.detail": "/prerender-complex/:slug",
   "prerenderComplex.index": "/prerender-complex",

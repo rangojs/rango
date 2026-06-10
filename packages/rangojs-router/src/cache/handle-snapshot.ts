@@ -70,14 +70,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: T): Promise<T> {
 export async function encodeHandles(handles: HandleRecord): Promise<string> {
   // No handle was pushed anywhere — store an empty marker (decoded as "skip").
   if (!hasHandleData(handles)) return "";
-  const encoded = await withTimeout(
-    serializeResult(handles),
-    HANDLE_ENCODE_TIMEOUT_MS,
-    null,
-  );
-  // Encode failure/timeout coalesces to empty handles for this entry rather than
-  // hanging or poisoning the whole cache write.
-  return encoded ?? "";
+  return encodeHandleValue(handles);
 }
 
 /**
@@ -86,11 +79,35 @@ export async function encodeHandles(handles: HandleRecord): Promise<string> {
  * version), so the caller can skip handle restore without discarding the
  * otherwise-valid cached segments alongside it.
  */
-export async function decodeHandles(
-  encoded: string,
-): Promise<HandleRecord | null> {
+export function decodeHandles(encoded: string): Promise<HandleRecord | null> {
+  return decodeHandleValue<HandleRecord>(encoded);
+}
+
+/**
+ * Encode an arbitrary handle-data value to a Flight string. Used directly by the
+ * prerender/static pipeline, whose static path holds a single segment's
+ * `SegmentHandleData` (not a segId-keyed map). Bounded by the same timeout as
+ * encodeHandles; failure/timeout coalesces to "". The caller owns the empty
+ * check (an empty value still encodes to a non-empty Flight string, so skip the
+ * call when there is nothing to store).
+ */
+export async function encodeHandleValue(value: unknown): Promise<string> {
+  const encoded = await withTimeout(
+    serializeResult(value),
+    HANDLE_ENCODE_TIMEOUT_MS,
+    null,
+  );
+  return encoded ?? "";
+}
+
+/**
+ * Decode a Flight-encoded handle-data string. Returns null on any decode
+ * failure so the caller can skip handle restore without discarding valid
+ * cached/prerendered segments.
+ */
+export async function decodeHandleValue<T>(encoded: string): Promise<T | null> {
   try {
-    return await deserializeResult<HandleRecord>(encoded);
+    return await deserializeResult<T>(encoded);
   } catch {
     return null;
   }

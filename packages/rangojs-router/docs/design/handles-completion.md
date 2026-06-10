@@ -278,10 +278,26 @@ anything shipped.
    (The tempting `cache.delete` in `consumeInflightPrefetch` is a no-op — at
    adoption time the entry is not yet cached; `storePrefetch` runs later.)
 
-Still **deferred**: build-time prerender handle persistence
-(`rsc-rendering.ts` `__prerender_collect` / `prerender-match.ts`) `JSON.stringify`s
-handles the same way as bug 1 — the same corruption class on a separate
-persistence layer that PR #556 did not touch. Apply the Flight encoding there too.
+4. **Prerender/static handle persistence had the same bug — now fixed.** A
+   defect-class audit found the prerender pipeline (`prerender-match.ts` →
+   `prerender-collection.ts` build artifact, the dev `__rsc_prerender` endpoint,
+   and the static artifact) `JSON.stringify`'d the raw handle map too, flattening
+   Promise/ReactNode handle values exactly like bug 1 — latent because no shipped
+   prerendered route pushed a non-scalar handle. **Fixed in the same PR**: the
+   producers (`matchForPrerender`/`renderStaticSegment`, which run in the RSC env
+   where the codec resolves) now Flight-encode handles via `encodeHandles`/
+   `encodeHandleValue`; the node-side build/dev sinks persist the string as-is;
+   the readers (`cache-lookup.ts`, `static-store.ts`) decode. `PrerenderEntry`/
+   `StaticEntry` `handles` are now encoded strings. The intercept artifact's
+   main+intercept handle merge moved into the producer (you can't spread encoded
+   strings). Covered by a Prerender route pushing a `Promise<ReactNode>`
+   breadcrumb, e2e in dev + production.
+
+The (dead-code) `rsc-rendering.ts` `__prerender_collect` endpoint was confirmed
+unused and left as-is. The systemic guard worth adopting: make every handle
+boundary type a `string` (so a raw map at a `JSON.stringify` site won't
+type-check) and forbid `JSON.stringify` over a `handles`-keyed object outside
+`handle-snapshot.ts`.
 
 ## Recommended sequence
 
