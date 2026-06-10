@@ -37,7 +37,11 @@ export default defineConfig({
 
 ## Document Component
 
-Import the CSS file with `?url` to get a hashed URL, then preload and link it in `<head>`:
+Import the CSS file with `?url` to get a hashed URL, then preload and link it in
+`<head>`. Give the `<link rel="stylesheet">` a `precedence` prop so React 19
+manages it as a resource — de-duped by `href`, ordered, and loaded before paint
+(no flash of unstyled content). See
+[Stylesheets and cross-app navigation](#stylesheets-and-cross-app-navigation):
 
 ```tsx
 // src/document.tsx
@@ -51,8 +55,8 @@ export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <link rel="preload" href={styles} as="style" />
-        <link rel="stylesheet" href={styles} />
+        <link rel="preload" href={styles} as="style" precedence="default" />
+        <link rel="stylesheet" href={styles} precedence="default" />
         <MetaTags />
       </head>
       <body className="font-sans antialiased text-slate-900 bg-slate-50">
@@ -62,6 +66,26 @@ export function Document({ children }: { children: ReactNode }) {
   );
 }
 ```
+
+## Stylesheets and cross-app navigation
+
+The `precedence` prop opts a `<link rel="stylesheet">` into React 19's managed
+stylesheet model — React de-duplicates it by `href`, orders it by precedence, and
+loads it before paint (avoiding a flash of unstyled content). It is the
+recommended way to render a stylesheet link, which is why the example above uses
+it. (A bare side-effect `import "./index.css"` also produces managed CSS via
+`@vitejs/plugin-rsc`, but carries an SSR-streaming caveat — prefer the `?url` +
+`<link precedence>` form for document CSS. See `/css`.)
+
+For **host-router** apps (`/host-router`), a client-side navigation that crosses
+an app boundary is a **full document load**, not a soft swap — the framework
+redirects on an app switch. So each app's document (its stylesheets, theme, meta)
+is always re-established cleanly by the target app's own load; you do not have to
+coordinate stylesheet `href`s or `precedence` across apps. (This replaced an
+earlier soft cross-app swap, under which a stylesheet shared across apps — every
+app's `@import "tailwindcss"` compiles to one hashed asset — could be dropped by
+React's by-`href` resource dedup if the apps disagreed on `precedence`. The full
+reload removes that footgun entirely.)
 
 The `?url` suffix tells Vite to return the processed CSS file's URL instead of injecting it as a side effect. This gives you a stable, hashed asset path that works in both development and production.
 

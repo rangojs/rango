@@ -1,0 +1,11 @@
+/* A stylesheet SHARED across apps — stands in for the real-world case where
+   every app does `@import "tailwindcss"` and @tailwindcss/vite compiles them
+   all to ONE hashed asset (e.g. /assets/index-<hash>.css). The shared href is
+   the trigger: the root (site) app renders it UNMANAGED (no precedence) and the
+   target (app-a) app renders the SAME href MANAGED (precedence). On a soft
+   cross-app switch React 19 dedups stylesheet resources by href, sees the href
+   already present (the source's unmanaged link), declines to insert the managed
+   one, and removes the orphaned unmanaged link -> the shared stylesheet drops. */
+body {
+  background-color: rgb(10, 20, 30);
+}

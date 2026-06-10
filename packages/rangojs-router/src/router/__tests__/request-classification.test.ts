@@ -305,9 +305,45 @@ describe("classifyRequest", () => {
     expect(plan.mode).toBe("partial-render");
   });
 
-  it("downgrades to full render on app switch", async () => {
+  it("forces a document reload on cross-app SPA navigation (app switch)", async () => {
     const { request, url } = makeRequest(
       "http://localhost/page?_rsc_partial=1&_rsc_rid=other-router",
+    );
+    const deps = makeDeps({ routerId: "test-router" });
+
+    const plan = await classifyRequest(request, url, deps);
+
+    // A soft swap can't faithfully re-establish the target app's document
+    // (shared stylesheets dropped by React's resource dedup; theme/warmup/TTL
+    // are document-lifetime), so the client is told to do a full document nav.
+    expect(plan.mode).toBe("app-switch");
+    expect(plan.mode === "app-switch" && plan.reloadUrl).toBe(
+      "http://localhost/page",
+    );
+  });
+
+  it("cross-app SPA navigation to a MISSING target route still reloads (not a 404)", async () => {
+    // The target route doesn't exist in this app. The app-switch check must run
+    // BEFORE route resolution — otherwise resolveRoute throws RouteNotFoundError
+    // and the 404 would render in-place under the SOURCE app's document.
+    // Regression for the cross-app -> target-404 reload bypass.
+    const { request, url } = makeRequest(
+      "http://localhost/missing?_rsc_partial=1&_rsc_rid=other-router",
+    );
+    const deps = makeDeps({ routerId: "test-router", findMatch: () => null });
+
+    const plan = await classifyRequest(request, url, deps);
+
+    expect(plan.mode).toBe("app-switch");
+    expect(plan.mode === "app-switch" && plan.reloadUrl).toBe(
+      "http://localhost/missing",
+    );
+  });
+
+  it("a direct (non-partial) cross-app load is a normal full render, not a reload", async () => {
+    // No _rsc_partial: this request IS the document navigation, so it renders.
+    const { request, url } = makeRequest(
+      "http://localhost/page?_rsc_rid=other-router",
     );
     const deps = makeDeps({ routerId: "test-router" });
 
@@ -339,6 +375,9 @@ describe("classifyRequest", () => {
 
     const plan = await classifyRequest(request, url, deps);
 
+    if (!("route" in plan)) {
+      throw new Error(`expected a plan carrying a route, got ${plan.mode}`);
+    }
     expect(plan.route!.routeKey).toBe("blog");
     expect(plan.route!.params).toEqual({ slug: "hello" });
   });

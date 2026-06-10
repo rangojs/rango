@@ -327,19 +327,3 @@ export function clearPrefetchCache(): void {
   abortAllPrefetches();
   invalidateRangoState();
 }
-
-/**
- * Drop all in-memory prefetch state for this tab without rotating rango-state.
- *
- * Use for local-only invalidations (e.g. app switch in this tab) where
- * other tabs should NOT observe a state rotation. Unlike clearPrefetchCache,
- * does not call invalidateRangoState, so the shared X-Rango-State token
- * stays intact and siblings in the old app keep their prefetches.
- */
-export function clearPrefetchCacheLocal(): void {
-  generation++;
-  inflight.clear();
-  inflightPromises.clear();
-  cache.clear();
-  abortAllPrefetches();
-}

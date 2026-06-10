@@ -3,11 +3,19 @@
 import type { ReactNode } from "react";
 import { MetaTags } from "@rangojs/router/client";
 
+// site is the cross-app SOURCE in the shared-stylesheet repro: it renders the
+// SHARED href UNMANAGED (no precedence), exactly like the real site/document.tsx.
+// This unmanaged link is what React's by-href dedup collides with when the
+// target app renders the same href managed on a soft app-switch.
+import sharedStyles from "../../shared-tailwind.css?url";
+
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
         <MetaTags />
+        <link rel="preload" href={sharedStyles} as="style" />
+        <link rel="stylesheet" href={sharedStyles} />
         <style
           dangerouslySetInnerHTML={{
             __html: `
