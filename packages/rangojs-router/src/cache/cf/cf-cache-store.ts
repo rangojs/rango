@@ -278,7 +278,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * @internal
    */
   private deriveBaseUrl(): string {
-    const fallback = "https://rsc-cache.internal.com/";
+    const fallback = "https://rsc-dummy-host-1.com/";
 
     const ctx = _getRequestContext();
     if (!ctx?.request) {

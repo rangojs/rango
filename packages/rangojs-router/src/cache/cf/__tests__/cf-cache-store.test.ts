@@ -156,7 +156,7 @@ describe("CFCacheStore", () => {
 
       // Uses caches.default by default
       const cache = mockCaches.default;
-      const request = new Request("https://rsc-cache.internal.com/test-key");
+      const request = new Request("https://rsc-dummy-host-1.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=60");
@@ -171,7 +171,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
-      const request = new Request("https://rsc-cache.internal.com/test-key");
+      const request = new Request("https://rsc-dummy-host-1.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe(
@@ -188,7 +188,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
-      const request = new Request("https://rsc-cache.internal.com/test-key");
+      const request = new Request("https://rsc-dummy-host-1.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe(
@@ -208,7 +208,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = await mockCaches.open("custom-cache");
-      const request = new Request("https://rsc-cache.internal.com/test-key");
+      const request = new Request("https://rsc-dummy-host-1.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=60");
@@ -245,7 +245,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
-      const request = new Request("https://rsc-cache.internal.com/test-key");
+      const request = new Request("https://rsc-dummy-host-1.com/test-key");
       const response = await cache.match(request);
 
       const staleAt = Number(response?.headers.get(CACHE_STALE_AT_HEADER));
@@ -263,7 +263,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
-      const request = new Request("https://rsc-cache.internal.com/test-key");
+      const request = new Request("https://rsc-dummy-host-1.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("HIT");
@@ -308,7 +308,7 @@ describe("CFCacheStore", () => {
       // Verify the entry is now marked as REVALIDATING
       const cache = mockCaches.default;
       const request = new Request(
-        "https://rsc-cache.internal.com/" + encodeURIComponent("test-key"),
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("test-key"),
       );
       const response = await cache.match(request);
       expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("REVALIDATING");
@@ -491,7 +491,7 @@ describe("CFCacheStore", () => {
 
       const cache = mockCaches.default;
       const request = new Request(
-        "https://rsc-cache.internal.com/" + encodeURIComponent("fn:fn-ttl"),
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("fn:fn-ttl"),
       );
       const response = await cache.match(request);
 
@@ -512,8 +512,7 @@ describe("CFCacheStore", () => {
 
       const cache = mockCaches.default;
       const request = new Request(
-        "https://rsc-cache.internal.com/" +
-          encodeURIComponent("fn:fn-defaults"),
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("fn:fn-defaults"),
       );
       const response = await cache.match(request);
 
@@ -564,7 +563,7 @@ describe("CFCacheStore", () => {
     // background revalidation that started but never completed.
     const stampAge = async (key: string, age: number) => {
       const reqUrl =
-        "https://rsc-cache.internal.com/" + encodeURIComponent(`fn:${key}`);
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent(`fn:${key}`);
       const stored = await mockCaches.default.match(new Request(reqUrl));
       const stamped = new Response(stored!.body, {
         status: stored!.status,
@@ -640,7 +639,7 @@ describe("CFCacheStore", () => {
       // Verify fn: prefix is used
       const cache = mockCaches.default;
       const request = new Request(
-        "https://rsc-cache.internal.com/" + encodeURIComponent("fn:my-key"),
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("fn:my-key"),
       );
       const response = await cache.match(request);
       expect(response).toBeDefined();
@@ -725,7 +724,7 @@ describe("CFCacheStore", () => {
 
       const cache = mockCaches.default;
       const request = new Request(
-        "https://rsc-cache.internal.com/" + encodeURIComponent("doc:doc-cc"),
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("doc:doc-cc"),
       );
       const response = await cache.match(request);
 
@@ -758,7 +757,7 @@ describe("CFCacheStore", () => {
 
       const cache = mockCaches.default;
       const request = new Request(
-        "https://rsc-cache.internal.com/" + encodeURIComponent("doc:my-doc"),
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("doc:my-doc"),
       );
       const response = await cache.match(request);
       expect(response).toBeDefined();
@@ -823,8 +822,7 @@ describe("CFCacheStore", () => {
       // it across the whole SWR window.
       const stored = await mockCaches.default.match(
         new Request(
-          "https://rsc-cache.internal.com/" +
-            encodeURIComponent("doc:doc-clean"),
+          "https://rsc-dummy-host-1.com/" + encodeURIComponent("doc:doc-clean"),
         ),
       );
       expect(stored?.headers.get("Cache-Control")).toBe("public, max-age=360");
