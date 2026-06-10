@@ -533,6 +533,61 @@ describe("CFCacheStore", () => {
 
       warnSpy.mockRestore();
     });
+
+    it("honors a custom edgeLookupTimeoutMs budget", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockImplementation(() => new Promise<Response>(() => {}));
+
+      const store = new CFCacheStore({
+        ctx: createMockCtx(),
+        edgeLookupTimeoutMs: 50,
+      });
+      const resultPromise = store.get("slow-key");
+
+      // At the default budget (10ms) the custom 50ms budget has not fired.
+      await vi.advanceTimersByTimeAsync(10);
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      // At 50ms it does, and the warning reports the configured budget.
+      await vi.advanceTimersByTimeAsync(40);
+      const result = await resultPromise;
+
+      expect(result).toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("exceeded 50ms"),
+      );
+
+      matchSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it("disables the budget when edgeLookupTimeoutMs <= 0", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockImplementation(() => new Promise<Response>(() => {}));
+
+      const store = new CFCacheStore({
+        ctx: createMockCtx(),
+        edgeLookupTimeoutMs: 0,
+      });
+      let settled = false;
+      void store.get("hang-key").then(() => {
+        settled = true;
+      });
+
+      // Well past any default budget: a disabled budget never abandons the
+      // match, so the read stays pending and nothing is warned.
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(settled).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      matchSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
   });
 
   // ==========================================================================

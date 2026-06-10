@@ -78,6 +78,9 @@ export const MAX_REVALIDATION_INTERVAL = 30;
  * per-colo, so a slow `match` signals a degraded colo; we don't want it adding
  * latency to the request. On timeout the lookup is abandoned, a warning is
  * logged, and the read falls through to its normal miss path (L2/KV or render).
+ *
+ * This is the default; override per store via
+ * `CFCacheStoreOptions.edgeLookupTimeoutMs` (<= 0 disables the budget).
  */
 export const EDGE_LOOKUP_TIMEOUT_MS = 10;
 
@@ -206,6 +209,17 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   version?: string;
 
   /**
+   * Latency budget (ms) for an L1 edge cache (CF Cache API) read. A `match`
+   * slower than this is abandoned and treated as a miss, so a degraded colo
+   * cannot stall the request; the read then falls through to its normal miss
+   * path (L2/KV or render).
+   *
+   * Defaults to {@link EDGE_LOOKUP_TIMEOUT_MS} (10). Set to 0 (or any value
+   * <= 0) to disable the budget and always await `match`.
+   */
+  edgeLookupTimeoutMs?: number;
+
+  /**
    * Custom key generator applied to all cache operations.
    * Receives the full RequestContext (including env) and the default-generated key.
    * Return value becomes the final cache key (unless route overrides with `key` option).
@@ -261,6 +275,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly explicitBaseUrl?: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
+  private readonly edgeLookupTimeoutMs: number;
   private readonly kv?: KVNamespace;
 
   constructor(options: CFCacheStoreOptions<TEnv>) {
@@ -281,6 +296,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.explicitBaseUrl = options.baseUrl;
     this.defaults = options.defaults;
     this.version = options.version ?? VERSION;
+    this.edgeLookupTimeoutMs =
+      options.edgeLookupTimeoutMs ?? EDGE_LOOKUP_TIMEOUT_MS;
     this.keyGenerator = options.keyGenerator;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
@@ -352,23 +369,26 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Read from the L1 edge cache with a latency budget. A `match` that takes
-   * longer than EDGE_LOOKUP_TIMEOUT_MS is abandoned and reported as a miss
-   * (undefined) so a degraded colo cannot stall the request; callers then fall
-   * through to their normal miss path (L2/KV or render). The slow `match` is
-   * left to settle in the background (errors swallowed) rather than aborted,
-   * since the Cache API exposes no cancellation.
+   * longer than the configured budget (edgeLookupTimeoutMs, default
+   * EDGE_LOOKUP_TIMEOUT_MS) is abandoned and reported as a miss (undefined) so a
+   * degraded colo cannot stall the request; callers then fall through to their
+   * normal miss path (L2/KV or render). The slow `match` is left to settle in
+   * the background (errors swallowed) rather than aborted, since the Cache API
+   * exposes no cancellation. A budget <= 0 disables the timeout entirely and
+   * awaits `match` directly.
    * @internal
    */
   private async matchWithTimeout(
     cache: Cache,
     request: Request,
   ): Promise<Response | undefined> {
+    const budget = this.edgeLookupTimeoutMs;
+    if (budget <= 0) {
+      return cache.match(request);
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<{ timedOut: true }>((resolve) => {
-      timer = setTimeout(
-        () => resolve({ timedOut: true }),
-        EDGE_LOOKUP_TIMEOUT_MS,
-      );
+      timer = setTimeout(() => resolve({ timedOut: true }), budget);
     });
     try {
       const matchPromise = cache.match(request);
@@ -384,7 +404,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       ]);
       if (result.timedOut) {
         console.warn(
-          `[CFCacheStore] edge cache lookup exceeded ${EDGE_LOOKUP_TIMEOUT_MS}ms; treating as miss`,
+          `[CFCacheStore] edge cache lookup exceeded ${budget}ms; treating as miss`,
         );
         return undefined;
       }
