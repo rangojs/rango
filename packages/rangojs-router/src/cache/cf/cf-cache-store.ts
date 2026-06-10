@@ -474,8 +474,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // entry's taggedAt against the per-tag KV marker and short-circuits to "not
     // invalidated" when no KV namespace is configured. A consumer who wires the
     // tag machinery (tagCacheTtl for L1 markers, or onRevalidateTag for CDN purge)
-    // but omits kv gets markers written and the purge fired, yet every tagged read
-    // still serves stale data with no other signal. Surface that misconfiguration.
+    // but omits kv gets only the purge fired - marker writes are skipped without
+    // kv - yet every tagged read still serves stale data with no other signal.
+    // Surface that misconfiguration.
     if (!this.kv && (this.tagCacheTtl > 0 || this.onRevalidateTag)) {
       const id = this.namespace ?? "default";
       if (!warnedNoKvReadInvalidation.has(id)) {
@@ -1485,20 +1486,25 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       );
     }
 
-    // Write-through memo + L1 only for tags with a confirmed durable marker (or
-    // for every tag when there is no KV at all - a purge-only/dev config, where
-    // the in-memory write-through is the only invalidation signal there is). The
-    // memo write is synchronous (read-your-own-writes); the L1 Cache API writes
-    // are independent, so fan them out in parallel rather than awaiting each.
-    const l1Writes: Promise<void>[] = [];
-    for (const tag of tags) {
-      if (failedTags.has(tag)) continue;
-      memo?.set(tag, invalidatedAt);
-      if (this.tagCacheTtl > 0) {
-        l1Writes.push(this.putTagMarkerL1(tag, invalidatedAt));
+    // Write-through memo + L1 only for tags with a confirmed durable marker, and
+    // only when KV is configured. Markers are read exclusively through
+    // isGloballyInvalidated(), which short-circuits to "not invalidated" when
+    // !this.kv; writing memo/L1 markers without KV would be dead state no read
+    // path ever consults. The onRevalidateTag purge below still fires regardless
+    // (it is additive and external to the marker cascade). The memo write is
+    // synchronous (read-your-own-writes); the L1 Cache API writes are
+    // independent, so fan them out in parallel rather than awaiting each.
+    if (this.kv) {
+      const l1Writes: Promise<void>[] = [];
+      for (const tag of tags) {
+        if (failedTags.has(tag)) continue;
+        memo?.set(tag, invalidatedAt);
+        if (this.tagCacheTtl > 0) {
+          l1Writes.push(this.putTagMarkerL1(tag, invalidatedAt));
+        }
       }
+      if (l1Writes.length > 0) await Promise.all(l1Writes);
     }
-    if (l1Writes.length > 0) await Promise.all(l1Writes);
 
     // One batched eager purge of the lookup markers for the whole call. Fired
     // regardless of KV write outcome (it is additive and uses pure string ops).

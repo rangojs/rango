@@ -159,7 +159,7 @@ describe("updateTag (read-your-own-writes)", () => {
   });
 });
 
-describe("revalidateTag (background / SWR)", () => {
+describe("revalidateTag (background hard-purge)", () => {
   beforeEach(() => {
     MemorySegmentCacheStore.resetGlobalCache();
   });
@@ -235,5 +235,62 @@ describe("revalidateTag (background / SWR)", () => {
 
     expect(failing.invalidateTags).toHaveBeenCalled();
     expect(reported.some((r) => r.category === "cache-invalidate")).toBe(true);
+  });
+});
+
+describe("outside a request context", () => {
+  beforeEach(() => {
+    MemorySegmentCacheStore.resetGlobalCache();
+  });
+
+  // No runWithRequestContext wrapper: _getRequestContext() returns undefined,
+  // mirroring a Cloudflare queue consumer or scheduled job. The warning must name
+  // the missing context, not point at store configuration.
+
+  it("updateTag warns about the missing context (not store config) and does not throw", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(updateTag("products")).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Called outside a request context"),
+    );
+    // It must NOT misdirect the consumer to store configuration.
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("No tag-capable cache store"),
+    );
+    warn.mockRestore();
+  });
+
+  it("revalidateTag warns about the missing context (not store config) and does not throw", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(() => revalidateTag("products")).not.toThrow();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Called outside a request context"),
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("No tag-capable cache store"),
+    );
+    warn.mockRestore();
+  });
+
+  it("still warns about store config (not context) when a context exists but has no tag-capable store", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ctx = makeCtx({}); // a real request context, but no stores
+
+    await runWithRequestContext(ctx, async () => {
+      await updateTag("products");
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("No tag-capable cache store"),
+    );
+    // The has-context case must not emit the missing-context warning.
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("Called outside a request context"),
+    );
+    warn.mockRestore();
   });
 });

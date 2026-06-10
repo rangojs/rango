@@ -291,6 +291,44 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await store.invalidateTags(["a,b c"]);
       expect(onRevalidateTag).toHaveBeenCalledWith(["rg:default:lk:a%2Cb%20c"]);
     });
+
+    it("writes NO L1 marker and no read-consulted memo when KV is absent (write-through is dead state without KV)", async () => {
+      // Markers are read only through isGloballyInvalidated(), which short-circuits
+      // on !this.kv. With no KV, a memo/L1 marker write would be state no read path
+      // ever consults, so invalidateTags must not emit it - even with tagCacheTtl>0
+      // (which otherwise exercises the L1 marker put) and an onRevalidateTag hook
+      // present so the no-kv-no-hook warning stays silent.
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const putSpy = vi.spyOn(mockCaches._default, "put");
+      const store = new CFCacheStore({
+        ctx: ctx as any,
+        baseUrl: "https://test.internal/",
+        // Unique namespace: the no-kv warning de-dupes once per namespace at the
+        // module level, so reusing "default" would silently consume that slot for
+        // the rest of the process and couple this test to others' ordering.
+        namespace: "no-kv-warn-fixture",
+        tagCacheTtl: 60,
+        onRevalidateTag: async () => {},
+      });
+
+      await runWithRequestContext(makeReqCtx(), async () => {
+        await store.invalidateTags(["t"]);
+
+        // A within-request tagged read must NOT see an invalidation: without KV
+        // there is no marker the read can consult, so the entry survives.
+        await store.setItem("k", "v", { ttl: 300, tags: ["t"] });
+        await ctx.flush();
+        expect(await store.getItem("k")).not.toBeNull();
+      });
+
+      // No L1 Cache API marker put for the __tagmarker__/ key.
+      const markerPut = putSpy.mock.calls.find(([req]) =>
+        decodeURIComponent((req as Request).url).includes("__tagmarker__/t"),
+      );
+      expect(markerPut).toBeUndefined();
+      putSpy.mockRestore();
+      warn.mockRestore();
+    });
   });
 
   describe("per-request marker memo", () => {

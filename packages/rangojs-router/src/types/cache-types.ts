@@ -155,9 +155,9 @@ export interface CacheOptions<TEnv = unknown> {
    *
    * The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag.
    * Invalidate on demand with `updateTag(...tags)` (awaitable, read-your-own-writes;
-   * for server actions) or `revalidateTag(...tags)` (background SWR; for route
-   * handlers / webhooks). For `CFCacheStore`, distributed invalidation requires a
-   * `kv` namespace (markers live in that same namespace).
+   * for server actions) or `revalidateTag(...tags)` (background hard-purge, not
+   * awaited; for route handlers / webhooks). For `CFCacheStore`, distributed
+   * invalidation requires a `kv` namespace (markers live in that same namespace).
    *
    * @example
    * ```typescript

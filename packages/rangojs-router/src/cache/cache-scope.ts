@@ -287,6 +287,12 @@ export class CacheScope {
         return null;
       }
 
+      // A hit serves content that was tagged at write time, so the document
+      // tag union must include this entry's tags for updateTag()/revalidateTag()
+      // to invalidate any full-page entry built on top of it. The write path
+      // records via cacheRoute (resolveCacheTags); the hit path records here.
+      recordRequestTags(cached.tags);
+
       // Replay handle data
       const handleStore = _getRequestContext()?._handleStore;
       if (handleStore) {

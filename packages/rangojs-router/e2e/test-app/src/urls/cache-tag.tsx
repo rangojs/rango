@@ -42,6 +42,10 @@ export const cacheTagPatterns = urls(({ path, cache }) => [
   // Awaitable invalidation endpoint (webhook/route-handler style). updateTag
   // resolves once invalidation has landed, so the next read is deterministically
   // fresh - no polling needed.
+  // Test fixture only: the tag comes from the URL param so the e2e can exercise
+  // arbitrary tags. Never do this in production code - deriving invalidation tags
+  // from untrusted input lets an attacker grow the tag-marker namespace without
+  // bound (see CFCacheStoreOptions.tagInvalidationTtl).
   path.json(
     "/invalidate/:tag",
     async (ctx) => {
@@ -54,6 +58,10 @@ export const cacheTagPatterns = urls(({ path, cache }) => [
   // Background invalidation endpoint. revalidateTag is fire-and-forget via
   // waitUntil, so the response returns BEFORE invalidation lands - the e2e polls
   // for freshness rather than awaiting (unlike updateTag above).
+  // Test fixture only: the tag comes from the URL param so the e2e can exercise
+  // arbitrary tags. Never do this in production code - deriving invalidation tags
+  // from untrusted input lets an attacker grow the tag-marker namespace without
+  // bound (see CFCacheStoreOptions.tagInvalidationTtl).
   path.json(
     "/revalidate/:tag",
     (ctx) => {

@@ -41,11 +41,15 @@ const CACHE_STATUS_HEADER = "x-document-cache-status";
  * Suspense-streamed ones that resolve AFTER the handler-settlement barrier - so
  * the correct barrier is the stream draining (render complete), not _handleStore.
  *
- * Caveat: segment cache({ tags }) DSL tags are recorded inside the deferred
- * cacheRoute waitUntil, which can still run after this snapshot; a document that
- * combines whole-page document caching with segment-DSL tags may miss those (the
- * segment cache entry itself is still correctly tagged and invalidated). Runtime
- * cacheTag()/"use cache" and loader tags are always captured once the body drains.
+ * Caveat: this applies only to the segment cache WRITE path. When a segment is
+ * cached for the first time, its cache({ tags }) DSL tags are recorded inside the
+ * deferred cacheRoute waitUntil, which can still run after this snapshot; a
+ * document that combines whole-page document caching with first-write segment-DSL
+ * tags may miss those (the segment cache entry itself is still correctly tagged
+ * and invalidated). On a segment-cache HIT the entry's tags are recorded
+ * synchronously during lookupRoute, before this snapshot, so they are captured.
+ * Runtime cacheTag()/"use cache" and loader tags are always captured once the
+ * body drains.
  */
 function collectRequestTags(
   requestCtx: RequestContext | undefined,

@@ -33,10 +33,16 @@ import type { SegmentCacheStore } from "./types.js";
  * the app-level store plus all explicit per-scope stores (deduplicated). Splits
  * them into tag-capable (implement invalidateTags()) and not, so callers can
  * warn about configured stores whose tagged entries will NOT be invalidated.
+ *
+ * `hasContext` reports whether an ALS request context existed at all. Without one
+ * (e.g. a queue consumer or cron job calling updateTag/revalidateTag) no stores
+ * are reachable, and the empty-capable case is a missing-context problem, not a
+ * store-config problem - callers branch on this to warn about the right cause.
  */
 function collectStores(): {
   capable: SegmentCacheStore[];
   incapable: number;
+  hasContext: boolean;
 } {
   const ctx = _getRequestContext();
   const stores = new Set<SegmentCacheStore>();
@@ -50,7 +56,7 @@ function collectStores(): {
     if (typeof store.invalidateTags === "function") capable.push(store);
     else incapable++;
   }
-  return { capable, incapable };
+  return { capable, incapable, hasContext: ctx != null };
 }
 
 /**
@@ -64,6 +70,22 @@ function warnNoTagStore(fn: string, tags: string[]): void {
       `[${tags.join(", ")}] were not invalidated. The configured store must ` +
       `implement invalidateTags() (the built-in MemorySegmentCacheStore and ` +
       `CFCacheStore do).`,
+  );
+}
+
+/**
+ * Production-visible warning for the no-request-context case. Distinct from
+ * warnNoTagStore: the stores are not unreachable because they are misconfigured,
+ * but because there is no ALS request context to reach them through (e.g. a queue
+ * consumer or scheduled job). Naming the real cause keeps consumers from chasing
+ * a store-config red herring.
+ */
+function warnNoRequestContext(fn: string, tags: string[]): void {
+  console.warn(
+    `[${fn}] Called outside a request context (e.g. from a queue consumer or ` +
+      `scheduled job); no cache stores are reachable and tags ` +
+      `[${tags.join(", ")}] were not invalidated. Invoke it within a request ` +
+      `(Server Action or route handler).`,
   );
 }
 
@@ -132,9 +154,10 @@ export async function updateTag(...tags: string[]): Promise<void> {
   const valid = normalizeTags(tags);
   if (valid.length === 0) return;
 
-  const { capable, incapable } = collectStores();
+  const { capable, incapable, hasContext } = collectStores();
   if (capable.length === 0) {
-    warnNoTagStore("updateTag", valid);
+    if (hasContext) warnNoTagStore("updateTag", valid);
+    else warnNoRequestContext("updateTag", valid);
     return;
   }
   if (incapable > 0) warnPartialTagStore("updateTag", incapable);
@@ -177,9 +200,10 @@ export function revalidateTag(...tags: string[]): void {
   const valid = normalizeTags(tags);
   if (valid.length === 0) return;
 
-  const { capable, incapable } = collectStores();
+  const { capable, incapable, hasContext } = collectStores();
   if (capable.length === 0) {
-    warnNoTagStore("revalidateTag", valid);
+    if (hasContext) warnNoTagStore("revalidateTag", valid);
+    else warnNoRequestContext("revalidateTag", valid);
     return;
   }
   if (incapable > 0) warnPartialTagStore("revalidateTag", incapable);

@@ -117,6 +117,11 @@ export const urlpatterns = urls(
         name: "testTaggedJsonB",
       }),
     ]),
+    // Test fixture only: the tag comes from the URL param so the e2e can
+    // exercise arbitrary tags. Never do this in production code - deriving
+    // invalidation tags from untrusted input lets an attacker grow the
+    // tag-marker namespace without bound (see
+    // CFCacheStoreOptions.tagInvalidationTtl).
     path.json(
       "/test/invalidate-tag/:tag",
       async (ctx) => {
@@ -126,6 +131,11 @@ export const urlpatterns = urls(
       { name: "testInvalidateTag" },
     ),
     // revalidateTag: fire-and-forget (background via waitUntil), NOT awaited.
+    // Test fixture only: the tag comes from the URL param so the e2e can
+    // exercise arbitrary tags. Never do this in production code - deriving
+    // invalidation tags from untrusted input lets an attacker grow the
+    // tag-marker namespace without bound (see
+    // CFCacheStoreOptions.tagInvalidationTtl).
     path.json(
       "/test/revalidate-tag/:tag",
       (ctx) => {
