@@ -288,6 +288,23 @@ function breadcrumbTests(mode: "dev" | "build") {
       await expect(testId(page, "breadcrumb-async")).toBeVisible();
       await expect(testId(page, "breadcrumbs-skeleton")).not.toBeVisible();
     });
+
+    // EXPERIMENT (handles-completion Q6): the handler DECIDES to push the crumb
+    // synchronously, but a DEEP async component (DeepResolver) produces the
+    // content value ~300ms later during its own render. If the content renders,
+    // "decide-sync, resolve-late" works today on the plain Flight transport.
+    test("deferred handle content resolved by a deep async component still renders", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/breadcrumb-trail/deferred"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "deferred-resolve-page")).toBeVisible();
+      // The deep async component resolved the pushed content late.
+      await expect(
+        page.getByText("resolved-by-deep-component").first(),
+      ).toBeVisible({ timeout: 5000 });
+    });
   });
 }
 

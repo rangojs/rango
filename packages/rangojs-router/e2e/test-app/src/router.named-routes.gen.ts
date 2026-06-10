@@ -16,6 +16,7 @@ export const NamedRoutes = {
   "authBoundary.routeProtected": "/auth-boundary/route-protected",
   "blog.index": "/blog",
   "blog.post": "/blog/:postId",
+  "breadcrumbTrail.deferred": "/breadcrumb-trail/deferred",
   "breadcrumbTrail.docs": "/breadcrumb-trail/docs",
   "breadcrumbTrail.guide": "/breadcrumb-trail/docs/getting-started",
   "breadcrumbTrail.index": "/breadcrumb-trail",
