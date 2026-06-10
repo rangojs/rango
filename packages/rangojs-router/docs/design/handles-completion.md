@@ -202,9 +202,10 @@ looked like it would close a build-time "deep-push gap" for free.
 below — `serializeSegments` re-renders components but cannot push handles (no
 `ctx._currentSegmentId`), so there is no missed-push gap to close, at build time or
 runtime. The build path's _real_ handle defect is the same as bug 1: prerender
-handle persistence `JSON.stringify`s the values, corrupting Promise/ReactNode
-handles. The fix there is the Flight encoding, not a reorder — tracked as the
-deferred follow-up under "Cache bugs found along the way" below.
+handle persistence `JSON.stringify`d the values, corrupting Promise/ReactNode
+handles. The fix was the Flight encoding, not a reorder — **shipped in PR #556**
+(see "Cache bugs found along the way" below); a `prerender()` two-pass is not
+needed for this.
 
 ### G — Static handle declarations
 
@@ -309,11 +310,11 @@ type-check) and forbid `JSON.stringify` over a `handles`-keyed object outside
      deep async component via a shared deferred passed as a prop; assert client and
      PE output. If it works, the runtime answer is "small API + docs," which
      reorders everything below it.
-2. **The direction-independent cache fixes shipped (PR #556):** the handle
-   Flight-encoding (bug 1) and the prefetch adoption-suppression (bug 3). Still
-   open: apply the same Flight encoding to build-time prerender handle persistence
-   (the deferred follow-up above) — it `JSON.stringify`s handle values today, the
-   same corruption class as bug 1.
+2. **The direction-independent serialization fixes all shipped (PR #556):** the
+   runtime-cache handle Flight-encoding (bug 1), the prefetch adoption-suppression
+   (bug 3), the prerender/static handle Flight-encoding (the audit's C1), and the
+   `json()` response-route nested-Promise guard. Nothing serialization-side is
+   left open.
 3. **Settle the runtime tier.** Keep `settled` as the permanent contract,
    re-document `LateHandlePushError` as a contract-violation signal (not a
    window-tuning knob), and ship `deferHandle` ergonomics — plus G's static sugar
@@ -348,8 +349,9 @@ estimates above trim that.
 
 - [Rendered barrier](../internal/rendered-barrier.md) — the `ctx.rendered()` loader
   barrier and the `settled` contract this research builds on
-- [Prerender design](../prerender-api-design.md) — why the build-time fix in option
-  C is the natural home for handle finalization
+- [Prerender design](../prerender-api-design.md) — the build-time cache the
+  prerender/static handle Flight-encoding (PR #556) plugs into; note its
+  `PrerenderEntry.handles` is now an encoded string
 - [Why SSR/RSC streaming uses Web Streams everywhere](../internal/why-web-streams-everywhere.md)
   — the plugin-locked-Flight constraints that bound every option here
 - [SSR streaming policy](./ssr-streaming-policy.md) — stream vs all-ready mode, the
