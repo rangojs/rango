@@ -256,10 +256,12 @@ export class CacheScope {
       // Deserialize segments
       const segments = await deserializeSegments(cached.segments);
 
-      // Replay handle data (decode the Flight-encoded blob first; a decode
-      // failure skips handle restore but keeps the valid cached segments).
+      // Replay handle data. An empty string means the route pushed no handles —
+      // skip the decode entirely (the common case). Otherwise decode the
+      // Flight-encoded blob; a decode failure skips handle restore but keeps the
+      // valid cached segments.
       const handleStore = _getRequestContext()?._handleStore;
-      if (handleStore) {
+      if (handleStore && cached.handles) {
         const handlesRecord = await decodeHandles(cached.handles);
         if (handlesRecord) {
           restoreHandles(handlesRecord, handleStore);

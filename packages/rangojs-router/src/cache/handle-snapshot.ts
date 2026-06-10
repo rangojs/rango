@@ -23,14 +23,16 @@ const HANDLE_ENCODE_TIMEOUT_MS = 5000;
 
 type HandleRecord = Record<string, SegmentHandleData>;
 
-// Encoded form of an empty handle map, computed once. Used as the fallback when
-// encoding times out or fails so the stored field is always a decodable string.
-let emptyEncodedHandles: string | null = null;
-async function encodeEmptyHandles(): Promise<string> {
-  if (emptyEncodedHandles === null) {
-    emptyEncodedHandles = (await serializeResult({})) ?? "";
+// captureHandles builds a per-segment map keyed by every cached segment id, even
+// segments that pushed nothing (their entry is an empty object). "No handle data"
+// means no segment has any handle, in which case we skip the Flight encode and
+// store an empty string — so the common handle-free route pays neither an encode
+// on write nor a decode on every cache hit.
+function hasHandleData(handles: HandleRecord): boolean {
+  for (const segId in handles) {
+    for (const _ in handles[segId]) return true;
   }
-  return emptyEncodedHandles;
+  return false;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: T): Promise<T> {
@@ -66,12 +68,16 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: T): Promise<T> {
  * identical decoded values.
  */
 export async function encodeHandles(handles: HandleRecord): Promise<string> {
+  // No handle was pushed anywhere — store an empty marker (decoded as "skip").
+  if (!hasHandleData(handles)) return "";
   const encoded = await withTimeout(
     serializeResult(handles),
     HANDLE_ENCODE_TIMEOUT_MS,
     null,
   );
-  return encoded ?? (await encodeEmptyHandles());
+  // Encode failure/timeout coalesces to empty handles for this entry rather than
+  // hanging or poisoning the whole cache write.
+  return encoded ?? "";
 }
 
 /**
