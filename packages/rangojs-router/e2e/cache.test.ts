@@ -1811,7 +1811,7 @@ test.describe("cache-tag invalidation", () => {
     const res = await request.get(f.url(path), {
       headers: { Accept: "application/json" },
     });
-    return (await res.json()).data.ts;
+    return (await res.json()).ts;
   }
 
   test('"use cache" + cacheTag: entries are cached and invalidated by tag', async ({
@@ -1972,7 +1972,7 @@ test.describe("cache-tag invalidation (production)", () => {
     const res = await request.get(f.url(path), {
       headers: { Accept: "application/json" },
     });
-    return (await res.json()).data.ts;
+    return (await res.json()).ts;
   }
 
   test('"use cache" + cacheTag: entries are cached and invalidated by tag', async ({

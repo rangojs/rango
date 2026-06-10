@@ -24,8 +24,8 @@ async function getTaggedItem(id: string): Promise<{ ts: number; id: string }> {
 
 export const cacheTagPatterns = urls(({ path, cache }) => [
   // Runtime tagging: the response is not cached, but the "use cache" function
-  // holds the tagged value, so json.data.ts is stable until invalidation.
-  // path.json wraps the returned value as { data: ... }.
+  // holds the tagged value, so json.ts is stable until invalidation.
+  // path.json serializes the returned value verbatim (no { data } envelope).
   path.json("/item/:id", (ctx) => getTaggedItem(ctx.params.id), {
     name: "cacheTagItem",
   }),

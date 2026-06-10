@@ -19,7 +19,7 @@ function defineTaggedTests(f: Fixture) {
   async function ts(request: APIRequestContext, path: string): Promise<number> {
     const res = await request.get(f.url(path));
     expect(res.status()).toBe(200);
-    return (await res.json()).data.ts;
+    return (await res.json()).ts;
   }
 
   test("cache() tags: a tagged CF entry is invalidated by updateTag", async ({
