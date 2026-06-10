@@ -114,7 +114,7 @@ const createTestData = (tags?: string[]): CachedEntryData => ({
       },
     },
   ],
-  handles: {},
+  handles: "",
   expiresAt: Date.now() + 60_000,
   tags,
 });

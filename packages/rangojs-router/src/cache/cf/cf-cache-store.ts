@@ -220,8 +220,8 @@ interface KVSegmentEnvelope {
 interface KVItemEnvelope {
   /** RSC-serialized return value */
   v: string;
-  /** Handle data */
-  h?: Record<string, Record<string, unknown[]>>;
+  /** RSC-encoded handle data (see handle-snapshot.ts encodeHandles) */
+  h?: string;
   /** When entry becomes stale (ms epoch) */
   s: number;
   /** When entry hard-expires (ms epoch) */
@@ -963,12 +963,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       const data = await this.parseOrEvict<{
         value: string;
-        handles?: Record<string, Record<string, unknown[]>>;
+        handles?: string;
       }>(
         () =>
           response.json() as Promise<{
             value: string;
-            handles?: Record<string, Record<string, unknown[]>>;
+            handles?: string;
           }>,
         () => cache.delete(request),
         "getItem",

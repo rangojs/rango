@@ -19,7 +19,12 @@ import {
 import { recordRequestTags } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
-import { captureHandles, restoreHandles } from "./handle-snapshot.js";
+import {
+  captureHandles,
+  restoreHandles,
+  encodeHandles,
+  decodeHandles,
+} from "./handle-snapshot.js";
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
@@ -293,10 +298,16 @@ export class CacheScope {
       // records via cacheRoute (resolveCacheTags); the hit path records here.
       recordRequestTags(cached.tags);
 
-      // Replay handle data
+      // Replay handle data. An empty string means the route pushed no handles —
+      // skip the decode entirely (the common case). Otherwise decode the
+      // Flight-encoded blob; a decode failure skips handle restore but keeps the
+      // valid cached segments.
       const handleStore = _getRequestContext()?._handleStore;
-      if (handleStore) {
-        restoreHandles(cached.handles, handleStore);
+      if (handleStore && cached.handles) {
+        const handlesRecord = await decodeHandles(cached.handles);
+        if (handlesRecord) {
+          restoreHandles(handlesRecord, handleStore);
+        }
       }
 
       if (INTERNAL_RANGO_DEBUG) {
@@ -413,12 +424,17 @@ export class CacheScope {
           );
         }
 
-        // Serialize non-loader segments only
-        const serializedSegments = await serializeSegments(nonLoaderSegments);
+        // Serialize segments and Flight-encode handles in parallel. Handles go
+        // through the codec (not raw into the entry) so Promise/ReactNode handle
+        // values survive a JSON-serializing store — see encodeHandles.
+        const [serializedSegments, encodedHandles] = await Promise.all([
+          serializeSegments(nonLoaderSegments),
+          encodeHandles(handles),
+        ]);
 
         const data: CachedEntryData = {
           segments: serializedSegments,
-          handles,
+          handles: encodedHandles,
           expiresAt: Date.now() + ttl * 1000,
           tags,
         };

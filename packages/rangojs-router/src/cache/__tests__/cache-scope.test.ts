@@ -307,7 +307,7 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
     const segments = await serializeSegments([makeSegment()]);
     const data: CachedEntryData = {
       segments,
-      handles: {},
+      handles: "",
       expiresAt: Date.now() + 60_000,
       tags,
     };

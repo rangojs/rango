@@ -16,6 +16,7 @@ export const NamedRoutes = {
   "buildSkip.article": "/build-skip/:slug",
   "buildSkip.staticSkip": "/build-skip/static-skip",
   "buildSkip.workingStatic": "/build-skip/working-static",
+  cachedHandles: "/cached-handles",
   catchAll: "/*",
   "composition.detail": "/composition/detail",
   "composition.index": "/composition",

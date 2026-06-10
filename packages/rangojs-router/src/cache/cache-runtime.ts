@@ -32,7 +32,11 @@ import {
 export { isCachedFunction };
 import { serializeResult, deserializeResult } from "./segment-codec.js";
 import { createHandleStore } from "../server/handle-store.js";
-import { restoreHandles } from "./handle-snapshot.js";
+import {
+  restoreHandles,
+  encodeHandles,
+  decodeHandles,
+} from "./handle-snapshot.js";
 import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 import { sortedSearchString } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
@@ -189,7 +193,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (cached.handles && hasTaintedArgs) {
           const handleStore = requestCtx?._handleStore;
           if (handleStore) {
-            restoreHandles(cached.handles, handleStore);
+            const r = await decodeHandles(cached.handles);
+            if (r) restoreHandles(r, handleStore);
           }
         }
         // Surface the hit's tags to the request set so a document built from a
@@ -216,7 +221,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (cached.handles && hasTaintedArgs) {
           const handleStore = requestCtx?._handleStore;
           if (handleStore) {
-            restoreHandles(cached.handles, handleStore);
+            const r = await decodeHandles(cached.handles);
+            if (r) restoreHandles(r, handleStore);
           }
         }
         // Tag the request with the stale entry's tags (see fresh-hit note).
@@ -284,8 +290,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             recordRequestTags(freshTags, requestCtx);
             const serialized = await serializeResult(freshResult);
             if (serialized !== null) {
+              const encodedHandles = bgCapture?.data
+                ? await encodeHandles(bgCapture.data)
+                : undefined;
               await store.setItem!(cacheKey, serialized, {
-                handles: bgCapture?.data,
+                handles: encodedHandles,
                 ttl: profile.ttl,
                 swr: profile.swr,
                 tags: freshTags.length > 0 ? freshTags : undefined,
@@ -383,8 +392,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       try {
         const serialized = await serializeResult(result);
         if (serialized !== null) {
+          const encodedHandles = capture?.data
+            ? await encodeHandles(capture.data)
+            : undefined;
           await store.setItem!(cacheKey, serialized, {
-            handles: capture?.data,
+            handles: encodedHandles,
             ttl: profile.ttl,
             swr: profile.swr,
             tags: allTags.length > 0 ? allTags : undefined,

@@ -753,3 +753,57 @@ test.describe("resolveId-plugin parity (production build)", () => {
     );
   });
 });
+
+// Regression for the prerender handle-serialization bug: a Prerender handler
+// pushes a breadcrumb whose `content` is a Promise<ReactNode>. Before the fix the
+// prerender pipeline JSON.stringify'd the raw handle map, flattening the Promise
+// to {} (and dropping any ReactNode), so the restored breadcrumb content was
+// empty. After the fix the handle map is Flight-encoded (encodeHandles), so the
+// content survives the build artifact (production) and the dev wire, and
+// TrailBreadcrumbs renders it. Runs in BOTH dev and production — in production
+// the Prerender handler is evicted, so the content can ONLY come from the
+// (decoded) artifact.
+test.describe("prerender handle content (dev mode)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("Promise<ReactNode> breadcrumb content survives the prerender store", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-handle"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="prerender-handle-title"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('[data-testid="prerender-handle-content"]'),
+    ).toHaveText("async-crumb-content");
+  });
+});
+
+test.describe("prerender handle content (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("Promise<ReactNode> breadcrumb content survives the prerender artifact", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-handle"));
+    await waitForHydration(page);
+
+    // The Prerender handler is evicted in production — the content can only come
+    // from the decoded build artifact. Empty/missing here is the bug.
+    await expect(
+      page.locator('[data-testid="prerender-handle-content"]'),
+    ).toHaveText("async-crumb-content");
+  });
+});

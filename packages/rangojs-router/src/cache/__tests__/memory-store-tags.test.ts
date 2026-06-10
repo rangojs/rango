@@ -43,7 +43,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "seg-key1",
         {
           segments: [],
-          handles: {},
+          handles: "",
           expiresAt: Date.now() + 60000,
           tags: ["page"],
         },
@@ -53,7 +53,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "seg-key2",
         {
           segments: [],
-          handles: {},
+          handles: "",
           expiresAt: Date.now() + 60000,
         },
         60,
@@ -90,7 +90,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "seg-key",
         {
           segments: [],
-          handles: {},
+          handles: "",
           expiresAt: Date.now() + 60000,
           tags: ["shared-tag"],
         },
@@ -151,7 +151,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "seg-key",
         {
           segments: [],
-          handles: {},
+          handles: "",
           expiresAt: Date.now() + 60000,
           tags: ["old"],
         },
@@ -161,7 +161,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "seg-key",
         {
           segments: [],
-          handles: {},
+          handles: "",
           expiresAt: Date.now() + 60000,
           tags: ["new"],
         },
@@ -212,7 +212,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "seg-key",
         {
           segments: [],
-          handles: {},
+          handles: "",
           expiresAt: Date.now() + 60000,
           tags: ["old"],
         },
@@ -220,7 +220,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
       );
       await store.set(
         "seg-key",
-        { segments: [], handles: {}, expiresAt: Date.now() + 60000 },
+        { segments: [], handles: "", expiresAt: Date.now() + 60000 },
         60,
       );
 
@@ -245,7 +245,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "seg-key",
         {
           segments: [],
-          handles: {},
+          handles: "",
           expiresAt: Date.now() + 60000,
           tags: ["tag-a"],
         },
@@ -256,7 +256,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
       // Write a new untagged entry under the same key
       await store.set(
         "seg-key",
-        { segments: [], handles: {}, expiresAt: Date.now() + 60000 },
+        { segments: [], handles: "", expiresAt: Date.now() + 60000 },
         60,
       );
 

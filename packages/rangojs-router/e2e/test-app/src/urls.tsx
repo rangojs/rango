@@ -1176,6 +1176,14 @@ export const urlpatterns = urls(
         },
         { name: "responseWrapJsonHeaders" },
       ),
+      path.json(
+        "/response-wrap/nested-promise",
+        // Regression: an object with a nested UNAWAITED Promise (the
+        // forgotten-await footgun, e.g. `{ user: db.getUser(id) }`). The runtime
+        // guard must throw (-> 500) instead of silently emitting {"value":{}}.
+        () => ({ value: Promise.resolve("resolved-late") }),
+        { name: "responseWrapNestedPromise" },
+      ),
       path.text(
         "/response-wrap/text",
         (ctx) => {

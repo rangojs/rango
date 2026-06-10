@@ -189,6 +189,20 @@ test.describe("response-handler", () => {
       expect(body).not.toContain("<div");
     });
   });
+
+  test.describe("json serialization guard", () => {
+    test("a json() route returning a nested unawaited Promise fails loudly (not a silent {})", async ({
+      request,
+    }) => {
+      // Regression: JSON.stringify would flatten the Promise to {"value":{}} and
+      // return 200. The runtime guard throws instead, so the forgotten await
+      // surfaces as an error rather than silently shipping empty data.
+      const res = await request.get(f.url("/response-wrap/nested-promise"));
+      expect(res.status()).toBe(500);
+      const body = await res.text();
+      expect(body).not.toContain('"value":{}');
+    });
+  });
 });
 
 // ============================================================================
@@ -380,6 +394,19 @@ test.describe("response-handler (production)", () => {
       expect(body).toBe("# MD in Layout");
       expect(body).not.toContain("LAYOUT");
       expect(body).not.toContain("<div");
+    });
+  });
+
+  test.describe("json serialization guard", () => {
+    test("a json() route returning a nested unawaited Promise fails loudly (not a silent {})", async ({
+      request,
+    }) => {
+      const res = await request.get(
+        fBuild.url("/response-wrap/nested-promise"),
+      );
+      expect(res.status()).toBe(500);
+      const body = await res.text();
+      expect(body).not.toContain('"value":{}');
     });
   });
 });

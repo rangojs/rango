@@ -83,9 +83,17 @@ const createTestData = (): CachedEntryData => ({
       },
     },
   ],
-  handles: {},
+  handles: "",
   expiresAt: Date.now() + 60000,
 });
+
+// A handle blob is now an opaque RSC-Flight-encoded STRING (handle-snapshot.ts
+// encodeHandles), not a raw Record — Promise/ReactNode handle values would be
+// destroyed by JSON.stringify if persisted raw. The store must round-trip the
+// string verbatim through L1/L2/KV. Includes quotes/newlines/unicode so the
+// JSON-serializing paths are exercised against a non-trivial payload.
+const ENCODED_HANDLES =
+  '1:{"seg1":{"breadcrumbs":["Home","Caf\\u00e9"]}}\n2:"x"';
 
 // ============================================================================
 // Tests
@@ -458,18 +466,20 @@ describe("CFCacheStore", () => {
       expect(result!.shouldRevalidate).toBe(false);
     });
 
-    it("should persist handles alongside value", async () => {
+    it("should persist the encoded handle string losslessly alongside value", async () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
 
-      const handles = {
-        seg1: { breadcrumbs: ["Home", "Products"] },
-      };
-      await store.setItem("fn-handles", "value", { ttl: 60, handles });
+      await store.setItem("fn-handles", "value", {
+        ttl: 60,
+        handles: ENCODED_HANDLES,
+      });
       await mockCtx.waitUntil.mock.results[0].value;
 
       const result = await store.getItem("fn-handles");
-      expect(result!.handles).toEqual(handles);
+      // The encoded blob must survive the JSON-serializing L1 path byte-for-byte
+      // (a raw Record with a Promise/ReactNode value would not).
+      expect(result!.handles).toBe(ENCODED_HANDLES);
     });
 
     it("should set Cache-Control with TTL + SWR", async () => {
@@ -1069,11 +1079,10 @@ describe("CFCacheStore", () => {
         const mockCtx = createMockCtx();
         const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
 
-        const handles = { seg1: { breadcrumbs: ["Home"] } };
         await store.setItem("fn-key", "serialized-value", {
           ttl: 60,
           swr: 300,
-          handles,
+          handles: ENCODED_HANDLES,
         });
         for (const result of mockCtx.waitUntil.mock.results) {
           await result.value;
@@ -1083,7 +1092,8 @@ describe("CFCacheStore", () => {
         expect(kvEntry).toBeDefined();
         const envelope = JSON.parse(kvEntry!.value);
         expect(envelope.v).toBe("serialized-value");
-        expect(envelope.h).toEqual(handles);
+        // The KV envelope stores the encoded string verbatim (h field).
+        expect(envelope.h).toBe(ENCODED_HANDLES);
       });
 
       it("should fall back to KV on L1 miss for getItem()", async () => {

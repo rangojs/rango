@@ -59,11 +59,16 @@ export async function matchForPrerender<TEnv = any>(
   devMode?: boolean,
 ): Promise<{
   segments: SerializedSegmentData[];
-  handles: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle map ("" when none) — see handle-snapshot.ts. Encoded in
+   *  the producer (where the Flight codec resolves) so the node-side build/dev
+   *  sinks can persist it without touching the codec. */
+  handles: string;
   routeName: string;
   params: Record<string, string>;
   interceptSegments?: SerializedSegmentData[];
-  interceptHandles?: Record<string, SegmentHandleData>;
+  /** RSC-encoded MERGED (main + intercept) handle map for the intercept artifact;
+   *  the sinks store it as-is (no longer merge raw records). */
+  interceptHandles?: string;
   passthrough?: true;
 } | null> {
   // 1. Find the matching route entry
@@ -142,7 +147,7 @@ export async function matchForPrerender<TEnv = any>(
           if (!isKnown) {
             return {
               segments: [],
-              handles: {},
+              handles: "",
               routeName: matched.routeKey,
               params: matchedParams,
               passthrough: true as const,
@@ -162,7 +167,7 @@ export async function matchForPrerender<TEnv = any>(
           if (err?.name === "Skip") {
             return {
               segments: [],
-              handles: {},
+              handles: "",
               routeName: matched.routeKey,
               params: matchedParams,
               passthrough: true as const,
@@ -262,7 +267,7 @@ export async function matchForPrerender<TEnv = any>(
         if (isPrerenderPassthrough(seg.component)) {
           return {
             segments: [],
-            handles: {},
+            handles: "",
             routeName: matched.routeKey,
             params: matchedParams,
             passthrough: true as const,
@@ -279,16 +284,22 @@ export async function matchForPrerender<TEnv = any>(
 
       // 12. Serialize segments using the cache serializer
       const { serializeSegments } = await import("../cache/segment-codec.js");
+      const { encodeHandles } = await import("../cache/handle-snapshot.js");
       const serializedSegments = await serializeSegments(nonLoaderSegments);
 
-      // 13. Collect handle data per segment (skip segments with no handle data)
-      const handles: Record<string, SegmentHandleData> = {};
+      // 13. Collect handle data per segment (skip segments with no handle data).
+      // Encoded through the Flight codec (not stored raw) so Promise/ReactNode
+      // handle values survive the JSON-serialized build artifact / dev wire —
+      // the same fix the runtime cache uses. Encode happens here, in the RSC
+      // environment where the codec resolves; the node-side sinks only persist.
+      const handlesRecord: Record<string, SegmentHandleData> = {};
       for (const seg of nonLoaderSegments) {
         const segHandles = handleStore.getDataForSegment(seg.id);
         if (Object.keys(segHandles).length > 0) {
-          handles[seg.id] = segHandles;
+          handlesRecord[seg.id] = segHandles;
         }
       }
+      const handles = await encodeHandles(handlesRecord);
 
       // Use the trie-level route key (e.g., "docs", "docs.article")
       const routeName = matched.routeKey;
@@ -298,7 +309,7 @@ export async function matchForPrerender<TEnv = any>(
       //     evaluation -- we pre-render all intercepts unconditionally and let
       //     runtime matching decide which to serve.
       let interceptSegments: SerializedSegmentData[] | undefined;
-      let interceptHandles: Record<string, SegmentHandleData> | undefined;
+      let interceptHandles: string | undefined;
 
       const foundIntercepts: {
         intercept: InterceptEntry;
@@ -380,13 +391,20 @@ export async function matchForPrerender<TEnv = any>(
           interceptSegments = await serializeSegments(
             interceptResolvedSegments,
           );
-          interceptHandles = {};
+          const interceptHandlesRecord: Record<string, SegmentHandleData> = {};
           for (const seg of interceptResolvedSegments) {
             const segHandles = handleStore.getDataForSegment(seg.id);
             if (Object.keys(segHandles).length > 0) {
-              interceptHandles[seg.id] = segHandles;
+              interceptHandlesRecord[seg.id] = segHandles;
             }
           }
+          // The intercept artifact serves main + intercept segments together, so
+          // encode the MERGED handle map here (the sinks no longer merge raw
+          // records — they store this pre-encoded string as-is).
+          interceptHandles = await encodeHandles({
+            ...handlesRecord,
+            ...interceptHandlesRecord,
+          });
         }
       }
 
@@ -415,7 +433,7 @@ export async function renderStaticSegment<TEnv = any>(
   routeName?: string,
   buildEnv?: TEnv,
   devMode?: boolean,
-): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
+): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
 
@@ -494,10 +512,17 @@ export async function renderStaticSegment<TEnv = any>(
     };
 
     const { serializeSegments } = await import("../cache/segment-codec.js");
+    const { encodeHandleValue } = await import("../cache/handle-snapshot.js");
     const [serialized] = await serializeSegments([segment]);
 
-    // Collect handle data pushed during rendering
-    const handles = handleStore.getDataForSegment(handlerId);
+    // Collect handle data pushed during rendering and Flight-encode it (so
+    // Promise/ReactNode handle values survive the JSON build artifact). "" when
+    // nothing was pushed.
+    const segHandles = handleStore.getDataForSegment(handlerId);
+    const handles =
+      Object.keys(segHandles).length > 0
+        ? await encodeHandleValue(segHandles)
+        : "";
 
     return { encoded: serialized.encoded, handles };
   });

@@ -26,9 +26,15 @@ describe("MemorySegmentCacheStore", () => {
         },
       },
     ],
-    handles: {},
+    handles: "",
     expiresAt: Date.now() + 60000,
   });
+
+  // Handles are stored as an opaque RSC-Flight-encoded string (see
+  // handle-snapshot.ts encodeHandles), not a raw Record — the memory store keeps
+  // the same encoded string by reference, identical to the JSON-serializing
+  // stores, so both backends replay identical decoded values.
+  const ENCODED_HANDLES = '1:{"layout":{"title":["My App"]}}';
 
   describe("constructor", () => {
     it("should create store without options", () => {
@@ -293,18 +299,18 @@ describe("MemorySegmentCacheStore", () => {
       expect(stats.size).toBe(1);
     });
 
-    it("should handle empty handles object", async () => {
+    it("should handle empty handles string", async () => {
       const store = new MemorySegmentCacheStore();
       const data: CachedEntryData = {
         segments: [],
-        handles: {},
+        handles: "",
         expiresAt: Date.now() + 60000,
       };
 
       await store.set("key", data, 60);
       const result = await store.get("key");
 
-      expect(result!.data.handles).toEqual({});
+      expect(result!.data.handles).toBe("");
     });
 
     it("should handle complex segment data", async () => {
@@ -332,10 +338,7 @@ describe("MemorySegmentCacheStore", () => {
             },
           },
         ],
-        handles: {
-          layout: { title: ["My App"] },
-          page: { meta: [{ description: "Product page" }] },
-        },
+        handles: ENCODED_HANDLES,
         expiresAt: Date.now() + 60000,
       };
 
@@ -343,7 +346,7 @@ describe("MemorySegmentCacheStore", () => {
       const result = await store.get("key");
 
       expect(result!.data.segments).toHaveLength(2);
-      expect(result!.data.handles).toEqual(data.handles);
+      expect(result!.data.handles).toBe(ENCODED_HANDLES);
     });
 
     it("should handle TTL of 0 (immediate expiration)", async () => {
@@ -382,7 +385,7 @@ describe("MemorySegmentCacheStore", () => {
             params: { index: String(i) },
           },
         })),
-        handles: {},
+        handles: "",
         expiresAt: Date.now() + 60000,
       };
 
@@ -408,9 +411,7 @@ describe("MemorySegmentCacheStore", () => {
             },
           },
         ],
-        handles: {
-          "日本語-segment": { title: ["こんにちは"] },
-        },
+        handles: '1:{"日本語-segment":{"title":["こんにちは"]}}',
         expiresAt: Date.now() + 60000,
       };
 
@@ -418,9 +419,10 @@ describe("MemorySegmentCacheStore", () => {
       const result = await store.get("key");
 
       expect(result!.data.segments[0].metadata.id).toBe("日本語-segment");
-      expect(result!.data.handles["日本語-segment"]).toEqual({
-        title: ["こんにちは"],
-      });
+      // The encoded handle string (unicode included) round-trips verbatim.
+      expect(result!.data.handles).toBe(
+        '1:{"日本語-segment":{"title":["こんにちは"]}}',
+      );
     });
 
     it("should handle segments with all metadata fields", async () => {
@@ -448,7 +450,7 @@ describe("MemorySegmentCacheStore", () => {
             },
           },
         ],
-        handles: {},
+        handles: "",
         expiresAt: Date.now() + 60000,
       };
 
@@ -515,7 +517,7 @@ describe("MemorySegmentCacheStore", () => {
       const store = new MemorySegmentCacheStore();
       const data: CachedEntryData = {
         segments: [],
-        handles: {},
+        handles: "",
         expiresAt: Date.now() + 60000,
       };
 
@@ -547,17 +549,15 @@ describe("MemorySegmentCacheStore", () => {
       expect(result!.shouldRevalidate).toBe(false);
     });
 
-    it("should persist handles alongside value", async () => {
+    it("should persist the encoded handle string alongside value", async () => {
       const store = new MemorySegmentCacheStore();
-      const handles = {
-        seg1: { breadcrumbs: ["Home", "Products"] },
-        seg2: { meta: [{ title: "Page" }] },
-      };
 
-      await store.setItem("fn:with-handles", "value", { handles });
+      await store.setItem("fn:with-handles", "value", {
+        handles: ENCODED_HANDLES,
+      });
       const result = await store.getItem("fn:with-handles");
 
-      expect(result!.handles).toEqual(handles);
+      expect(result!.handles).toBe(ENCODED_HANDLES);
     });
 
     it("should use explicit TTL", async () => {

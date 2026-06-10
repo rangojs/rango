@@ -208,4 +208,36 @@ describe("HandleStore settlement", () => {
     store.seal();
     store.seal(); // should not throw
   });
+
+  // The cache codec (handle-snapshot.ts encodeHandles) relies on the store
+  // handing back handle VALUES untouched so Flight can serialize them. If the
+  // store ever mangled non-scalar values (e.g. coerced through JSON), the cache
+  // would silently corrupt Promise/ReactNode handles before the codec ran.
+  describe("non-scalar handle values pass through by reference", () => {
+    it("getDataForSegment preserves a Promise and a ReactNode value by reference", () => {
+      const store = createHandleStore();
+      const promiseValue = Promise.resolve("late");
+      promiseValue.catch(() => {});
+      // A minimal React element shape (the kind Breadcrumbs `content` produces).
+      const elementValue = { $$typeof: Symbol.for("react.element"), type: "b" };
+
+      store.push("crumbs", "seg1", promiseValue);
+      store.push("crumbs", "seg1", elementValue);
+
+      const data = store.getDataForSegment("seg1");
+      // Same references, not coerced/cloned — the codec receives them intact.
+      expect(data.crumbs[0]).toBe(promiseValue);
+      expect(data.crumbs[1]).toBe(elementValue);
+    });
+
+    it("replaySegmentData restores values by reference", () => {
+      const store = createHandleStore();
+      const promiseValue = Promise.resolve("restored");
+      promiseValue.catch(() => {});
+
+      store.replaySegmentData("seg1", { crumbs: [promiseValue] });
+
+      expect(store.getDataForSegment("seg1").crumbs[0]).toBe(promiseValue);
+    });
+  });
 });
