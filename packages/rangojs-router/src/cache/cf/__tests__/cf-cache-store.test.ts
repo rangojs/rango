@@ -6,6 +6,7 @@ import {
   MAX_REVALIDATION_INTERVAL,
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
+import { runWithRequestContext } from "../../../server/request-context";
 
 // ============================================================================
 // Mock Cloudflare Cache API
@@ -439,6 +440,55 @@ describe("CFCacheStore", () => {
       const result = await store.get("fallback-key");
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
+    });
+
+    it("should resolve the request host lazily for a production domain", async () => {
+      // Regression: the store is constructed before the per-request context
+      // ALS is entered (the cache factory runs ahead of runWithRequestContext
+      // in the handler), so deriving the host eagerly in the constructor always
+      // missed the request and produced the internal fallback host even in
+      // production. The base URL must be resolved per operation, inside the
+      // request context, so a real domain becomes the Cache API key host.
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+      const data = createTestData();
+
+      const requestCtx = {
+        request: new Request("https://shop.acme.com/products"),
+      } as any;
+
+      await runWithRequestContext(requestCtx, async () => {
+        await store.set("prod-key", data, 60);
+      });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const keys = [...(mockCaches.default as any).store.keys()] as string[];
+      expect(keys.length).toBeGreaterThan(0);
+      expect(keys.every((k) => k.startsWith("https://shop.acme.com/"))).toBe(
+        true,
+      );
+      expect(keys.some((k) => k.includes("rsc-dummy-host-1.com"))).toBe(false);
+    });
+
+    it("should use the internal fallback host on *.workers.dev preview", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+      const data = createTestData();
+
+      const requestCtx = {
+        request: new Request("https://preview.my-app.workers.dev/products"),
+      } as any;
+
+      await runWithRequestContext(requestCtx, async () => {
+        await store.set("preview-key", data, 60);
+      });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const keys = [...(mockCaches.default as any).store.keys()] as string[];
+      expect(keys.length).toBeGreaterThan(0);
+      expect(
+        keys.every((k) => k.startsWith("https://rsc-dummy-host-1.com/")),
+      ).toBe(true);
     });
   });
 

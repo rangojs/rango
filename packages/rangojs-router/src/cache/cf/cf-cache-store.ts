@@ -249,7 +249,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   ) => string | Promise<string>;
 
   private readonly namespace?: string;
-  private readonly baseUrl: string;
+  private readonly explicitBaseUrl?: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
   private readonly kv?: KVNamespace;
@@ -264,7 +264,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
 
     this.namespace = options.namespace;
-    this.baseUrl = options.baseUrl ?? this.deriveBaseUrl();
+    // Base URL is resolved lazily per cache operation (see resolveBaseUrl).
+    // The store is constructed before the per-request context ALS is entered
+    // (the cache factory runs ahead of runWithRequestContext in the handler),
+    // so deriving the host here would always miss the request and fall back to
+    // the internal host. Only the explicit override can be captured eagerly.
+    this.explicitBaseUrl = options.baseUrl;
     this.defaults = options.defaults;
     this.version = options.version ?? VERSION;
     this.keyGenerator = options.keyGenerator;
@@ -273,8 +278,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
+   * Resolve the cache-key base URL for the current cache operation.
+   * Prefers an explicit `baseUrl` option; otherwise derives it from the live
+   * request. Called per operation (from keyToRequest), which runs inside the
+   * request-context ALS, so deriveBaseUrl sees the request and can use the
+   * production host instead of the internal fallback.
+   * @internal
+   */
+  private resolveBaseUrl(): string {
+    return this.explicitBaseUrl ?? this.deriveBaseUrl();
+  }
+
+  /**
    * Derive base URL from request hostname via requestContext.
    * Uses internal fallback for dev/preview environments and untrusted hostnames.
+   * Must run inside the request context (invoked lazily via resolveBaseUrl).
    * @internal
    */
   private deriveBaseUrl(): string {
@@ -743,7 +761,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const encodedKey = encodeURIComponent(key);
     // Include version in URL path to invalidate cache when version changes
     const versionPath = this.version ? `v/${this.version}/` : "";
-    return new Request(`${this.baseUrl}${versionPath}${encodedKey}`, {
+    return new Request(`${this.resolveBaseUrl()}${versionPath}${encodedKey}`, {
       method: "GET",
     });
   }
