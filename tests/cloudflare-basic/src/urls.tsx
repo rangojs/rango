@@ -1,4 +1,10 @@
-import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";
+import {
+  urls,
+  cookies,
+  updateTag,
+  revalidateTag,
+  type ResponseHandlerContext,
+} from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
@@ -25,6 +31,8 @@ import {
   ProactiveCacheItemBPage,
 } from "./pages/proactive-cache.js";
 import { DocumentCachePage } from "./pages/document-cache.js";
+import { TaggedDocumentPage } from "./pages/tagged-document.js";
+import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { ThemePage } from "./pages/theme.js";
@@ -94,6 +102,49 @@ export const urlpatterns = urls(
         });
       },
       { name: "robots" },
+    ),
+
+    // Tag-based invalidation against the real CFCacheStore (KV-backed markers).
+    // The tagged route caches a ts; the invalidate route awaits updateTag so the
+    // next read is fresh (read-your-own-writes).
+    cache({ ttl: 600, tags: ["cf-items"] }, () => [
+      path.json("/test/tagged-json", () => ({ ts: Date.now() }), {
+        name: "testTaggedJson",
+      }),
+    ]),
+    // Second tagged route under a DIFFERENT tag, to prove cross-tag isolation:
+    // invalidating "cf-items" must leave "cf-items-b" entries intact.
+    cache({ ttl: 600, tags: ["cf-items-b"] }, () => [
+      path.json("/test/tagged-json-b", () => ({ ts: Date.now() }), {
+        name: "testTaggedJsonB",
+      }),
+    ]),
+    // Test fixture only: the tag comes from the URL param so the e2e can
+    // exercise arbitrary tags. Never do this in production code - deriving
+    // invalidation tags from untrusted input lets an attacker grow the
+    // tag-marker namespace without bound (see
+    // CFCacheStoreOptions.tagInvalidationTtl).
+    path.json(
+      "/test/invalidate-tag/:tag",
+      async (ctx) => {
+        await updateTag(ctx.params.tag);
+        return { ok: true, tag: ctx.params.tag };
+      },
+      { name: "testInvalidateTag" },
+    ),
+    // revalidateTag: fire-and-forget (background via waitUntil), NOT awaited.
+    // Test fixture only: the tag comes from the URL param so the e2e can
+    // exercise arbitrary tags. Never do this in production code - deriving
+    // invalidation tags from untrusted input lets an attacker grow the
+    // tag-marker namespace without bound (see
+    // CFCacheStoreOptions.tagInvalidationTtl).
+    path.json(
+      "/test/revalidate-tag/:tag",
+      (ctx) => {
+        revalidateTag(ctx.params.tag);
+        return { ok: true, tag: ctx.params.tag };
+      },
+      { name: "testRevalidateTag" },
     ),
 
     // Cached response routes: test cache() with CFCacheStore across MIME types
@@ -325,6 +376,21 @@ export const urlpatterns = urls(
         ]),
         // Document cache route
         path("/document-cache", DocumentCachePage, { name: "documentCache" }),
+
+        // Tagged document cache route: the full-page response is document-cached
+        // AND tagged (via a "use cache" + cacheTag), so updateTag("doc-page")
+        // invalidates the whole-page entry (exercises document-level tag flow).
+        path("/tagged-document", TaggedDocumentPage, {
+          name: "taggedDocument",
+        }),
+
+        // Like /tagged-document, but the cacheTag fires inside a Suspense
+        // boundary (resolves during the stream, after handler settlement), so it
+        // pins the document tag snapshot to the render-complete (stream-drain)
+        // barrier rather than the handler-settlement barrier.
+        path("/streamed-document", StreamedDocumentPage, {
+          name: "streamedDocument",
+        }),
 
         // Slow cache route
         cache({ ttl: 60, swr: 300 }, () => [

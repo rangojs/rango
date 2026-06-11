@@ -18,7 +18,10 @@ export {
   type KVNamespace,
 } from "./cf-cache-store.js";
 
-// Header constants for debugging and inspection
+// Header constants for debugging and inspection. The tag headers
+// (x-edge-cache-tags / x-edge-cache-tagged-at) are intentionally NOT re-exported:
+// they are an internal encoding detail of the store's tag-invalidation check, not
+// a consumer-inspectable contract.
 export {
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,

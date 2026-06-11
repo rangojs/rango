@@ -12,10 +12,14 @@
  */
 
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
-import { getRequestContext } from "../server/request-context.js";
+import {
+  getRequestContext,
+  type RequestContext,
+} from "../server/request-context.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { sortedSearchString } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
+import { reportCacheError } from "./cache-error.js";
 
 // ============================================================================
 // Constants
@@ -23,6 +27,36 @@ import { runBackground } from "./background-task.js";
 
 /** Header indicating cache status for debugging */
 const CACHE_STATUS_HEADER = "x-document-cache-status";
+
+/**
+ * Snapshot the request-scoped tag union for a document cache write. The full-page
+ * entry is tagged with every cache tag its content resolved (runtime cacheTag(),
+ * "use cache" profile tags, and loader cache tags) so updateTag()/revalidateTag()
+ * can invalidate it. Returns undefined when no tags were used, keeping untagged
+ * document entries header-free.
+ *
+ * This is a plain synchronous snapshot. The CALLER must drain the rendered body
+ * first (see the cache-write closures): runtime cacheTag()/"use cache" and loader
+ * tags are recorded synchronously as each value resolves during render, including
+ * Suspense-streamed ones that resolve AFTER the handler-settlement barrier - so
+ * the correct barrier is the stream draining (render complete), not _handleStore.
+ *
+ * Caveat: this applies only to the segment cache WRITE path. When a segment is
+ * cached for the first time, its cache({ tags }) DSL tags are recorded inside the
+ * deferred cacheRoute waitUntil, which can still run after this snapshot; a
+ * document that combines whole-page document caching with first-write segment-DSL
+ * tags may miss those (the segment cache entry itself is still correctly tagged
+ * and invalidated). On a segment-cache HIT the entry's tags are recorded
+ * synchronously during lookupRoute, before this snapshot, so they are captured.
+ * Runtime cacheTag()/"use cache" and loader tags are always captured once the
+ * body drains.
+ */
+function collectRequestTags(
+  requestCtx: RequestContext | undefined,
+): string[] | undefined {
+  const tags = requestCtx?._requestTags;
+  return tags && tags.size > 0 ? [...tags] : undefined;
+}
 
 /**
  * Simple hash function for segment IDs.
@@ -303,17 +337,26 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             const fresh = await next();
             const directives = shouldCacheResponse(fresh);
 
-            if (directives) {
+            if (directives && fresh.body) {
+              // Background revalidation: nothing streams to a client, so drain
+              // the fresh render fully before snapshotting tags (same
+              // render-complete barrier as the miss path).
+              const body = await new Response(fresh.body).arrayBuffer();
               await store.putResponse!(
                 cacheKey,
-                fresh,
+                new Response(body, fresh),
                 directives.sMaxAge!,
                 directives.staleWhileRevalidate,
+                collectRequestTags(requestCtx),
               );
               log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
             }
           } catch (error) {
-            console.error(`[DocumentCache] Revalidation failed:`, error);
+            reportCacheError(
+              error,
+              "cache-write",
+              "[DocumentCache] revalidation",
+            );
           }
         });
 
@@ -346,14 +389,27 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         // Clone response for caching (non-blocking)
         runBackground(requestCtx, async () => {
           try {
+            // Drain the cache copy fully BEFORE snapshotting tags. Tags from
+            // Suspense-streamed "use cache"/cacheTag and loaders are recorded as
+            // each value resolves during the RSC/HTML render, which completes
+            // only when the stream ends - the handler-settlement barrier is too
+            // early. Buffering the body (the client streams the other tee branch,
+            // unaffected) is the render-complete barrier that keeps the cached
+            // body and its tag set consistent.
+            const body = await new Response(cacheStream).arrayBuffer();
             await store.putResponse!(
               cacheKey,
-              new Response(cacheStream, originalResponse),
+              new Response(body, originalResponse),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
+              collectRequestTags(requestCtx),
             );
           } catch (error) {
-            console.error(`[DocumentCache] Cache write failed:`, error);
+            reportCacheError(
+              error,
+              "cache-write",
+              "[DocumentCache] cache write",
+            );
           }
         });
 
@@ -366,7 +422,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // No cache headers - pass through
       return originalResponse;
     } catch (error) {
-      console.error(`[DocumentCache] Error:`, error);
+      reportCacheError(error, "cache-read", "[DocumentCache] middleware");
       if (handlerCalled) {
         // Post-handler failure (e.g. body.tee()): do not call next() again
         // as that would re-run handler side effects.

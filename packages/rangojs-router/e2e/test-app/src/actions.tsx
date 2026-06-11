@@ -1,7 +1,12 @@
 "use server";
 
 import { ReactNode } from "react";
-import { cookies, getRequestContext, redirect } from "@rangojs/router";
+import {
+  cookies,
+  getRequestContext,
+  redirect,
+  updateTag,
+} from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
 import {
   getCurrentCart,
@@ -466,3 +471,18 @@ export async function authBoundaryFormAction(
  */
 export async function isActionTargetAction(): Promise<void> {}
 export async function isActionDecoyAction(): Promise<void> {}
+
+/**
+ * Server action that invalidates a cache tag (read-your-own-writes).
+ * Awaits updateTag so cached entries are gone before the action returns,
+ * making the subsequent render fresh. Used by InvalidateTagButton.
+ */
+export async function invalidateTagAction(
+  _prev: { tag: string } | null,
+  formData: FormData,
+): Promise<{ tag: string }> {
+  "use server";
+  const tag = String(formData.get("tag") ?? "");
+  await updateTag(tag);
+  return { tag };
+}

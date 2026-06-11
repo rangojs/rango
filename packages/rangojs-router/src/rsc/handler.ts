@@ -57,6 +57,7 @@ import {
   getRouterTrie,
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
+import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
@@ -149,6 +150,13 @@ export function createRSCHandler<
   TRoutes extends Record<string, string> = Record<string, string>,
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
   const { router, version = VERSION, nonce: nonceProvider } = options;
+
+  // Handler-owned registry of explicit per-scope stores from cache({ store }).
+  // Lives in the closure so it is scoped per handler (multi-router deployments
+  // get separate registries) and accumulates every explicit store this handler
+  // resolves across requests. updateTag()/revalidateTag() iterate it to reach
+  // stores not covered by the app-level ctx._cacheStore.
+  const explicitTaggedStores = new Set<SegmentCacheStore>();
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -441,6 +449,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      explicitTaggedStores,
       cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
@@ -453,7 +462,7 @@ export function createRSCHandler<
     // can surface non-fatal errors through the router's onError callback.
     requestContext._reportBackgroundError = (
       error: unknown,
-      category: string,
+      category: CacheErrorCategory,
     ) => {
       callOnError(error, "cache", {
         request,

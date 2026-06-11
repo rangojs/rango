@@ -435,3 +435,52 @@ describe("route cache condition enforcement", () => {
     expect(store.get).not.toHaveBeenCalled();
   });
 });
+
+describe("segment self-heal (corrupt cached segments via CacheScope)", () => {
+  let CacheScope: typeof import("../cache-scope.js").CacheScope;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const mod = await import("../cache-scope.js");
+    CacheScope = mod.CacheScope;
+  });
+
+  it("evicts and reports a corrupt cached entry as cache-corrupt, degrading to a miss (non-CF self-heal)", async () => {
+    const reported: Array<{ error: unknown; category: string }> = [];
+    const url = new URL("http://localhost/test");
+    const reqCtx = {
+      url,
+      originalUrl: new URL(url),
+      searchParams: url.searchParams,
+      _cacheStore: null,
+      _handleStore: null,
+      _reportBackgroundError: (error: unknown, category: string) =>
+        reported.push({ error, category }),
+    };
+    mockGetRequestContext.mockReturnValue(reqCtx);
+    mock_getRequestContext.mockReturnValue(reqCtx);
+
+    const store = {
+      get: vi.fn().mockResolvedValue({
+        data: { segments: ["truncated"], handles: {} },
+        shouldRevalidate: false,
+      }),
+      set: vi.fn(),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+
+    // deserializeSegments is mocked at the module top; make it reject to
+    // simulate a corrupt/partial stored payload.
+    const { deserializeSegments } = await import("../segment-codec.js");
+    vi.mocked(deserializeSegments).mockRejectedValueOnce(
+      new Error("truncated segment payload"),
+    );
+
+    const scope = new CacheScope({ store } as any);
+    const result = await scope.lookupRoute("/test", {});
+
+    expect(result).toBeNull(); // degrade to a miss
+    expect(store.delete).toHaveBeenCalled(); // faulty entry self-healed
+    expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+  });
+});
