@@ -295,7 +295,7 @@ a request behind it:
 | --------------------- | ------- | ----------------------------------- |
 | `edgeLookupTimeoutMs` | `10`    | L1 `cache.match` (the lookup)       |
 | `edgeReadTimeoutMs`   | `20`    | L1 body read (CF streams it lazily) |
-| `kvReadTimeoutMs`     | `50`    | L2 / KV read                        |
+| `kvReadTimeoutMs`     | `170`   | L2 / KV read                        |
 
 Set any to `0` (or a negative value) to disable that budget and always await the
 read. A non-finite value (e.g. `Number(env.UNSET)`) falls back to the default.
@@ -310,7 +310,7 @@ new CFCacheStore({
   // Raise a budget only if your HEALTHY reads legitimately run slower (large
   // Flight payloads, far-from-colo regions); measure the p99 first. These are
   // degradation guard-rails, not tuning levers for "slow is normal here".
-  kvReadTimeoutMs: 80,
+  kvReadTimeoutMs: 250,
 });
 ```
 

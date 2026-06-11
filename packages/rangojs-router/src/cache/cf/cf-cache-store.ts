@@ -283,16 +283,18 @@ export const EDGE_READ_TIMEOUT_MS = 20;
  * to seconds. KV is the LAST cache tier before a full render, so an unbounded
  * read here pins the whole request behind a degraded global lookup.
  *
- * The default (50ms) is aggressive -- it sits right at the documented healthy
- * read, trading headroom for a tight bound on the tail. A deployment whose
- * healthy KV reads legitimately run slower (large payloads, far-from-colo
- * regions) will false-miss into a render and should raise this: measure the KV
- * read p99 (Workers Analytics) and add margin. It is a degradation guard-rail,
- * not a tuning lever for "slow KV is normal here".
+ * The default (170ms) sits a few multiples above the documented ~50ms healthy
+ * read, leaving headroom for legitimate latency tails (larger payloads,
+ * far-from-colo regions) so a healthy-but-slow read does not false-miss into a
+ * render, while still abandoning a genuinely degraded namespace well before its
+ * multi-second tail can pin the request. A deployment with a tighter SLA can
+ * lower it, and one whose healthy p99 runs higher should raise it: measure the
+ * KV read p99 (Workers Analytics) and add margin. It is a degradation
+ * guard-rail, not a tuning lever for "slow KV is normal here".
  *
  * Override per store via `CFCacheStoreOptions.kvReadTimeoutMs` (<= 0 disables).
  */
-export const KV_READ_TIMEOUT_MS = 50;
+export const KV_READ_TIMEOUT_MS = 170;
 
 /**
  * Compute the Cache-Control directive for a stale-path REVALIDATING re-put from
@@ -653,10 +655,12 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * this bounds it so a slow namespace cannot pin the request. On timeout the
    * read is treated as a miss (no L1 promote) and falls through to render.
    *
-   * Defaults to {@link KV_READ_TIMEOUT_MS} (50) -- aggressive, right at the
-   * healthy read, so raise it if your deployment's healthy KV reads run slower
-   * (large payloads / far regions); it is a degradation guard-rail, not a
-   * tuning lever. Set to 0 (or any value <= 0) to disable and always await KV.
+   * Defaults to {@link KV_READ_TIMEOUT_MS} (170) -- a few multiples above the
+   * ~50ms healthy read, with headroom for legitimate tails (large payloads / far
+   * regions) yet still well under a degraded namespace's multi-second tail.
+   * Lower it for a tighter SLA, raise it if your healthy KV p99 runs higher; it
+   * is a degradation guard-rail, not a tuning lever. Set to 0 (or any value
+   * <= 0) to disable and always await KV.
    */
   kvReadTimeoutMs?: number;
 
