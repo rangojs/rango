@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { CFCacheStore } from "../cf-cache-store";
+import { CFCacheStore, KV_READ_TIMEOUT_MS } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 import {
   createRequestContext,
@@ -124,6 +124,10 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
   let kv: MockKV;
 
   beforeEach(() => {
+    // Restore spies between tests so a persistent mock (e.g. a mockRejectedValue
+    // on cache.put from a write-failure test) cannot leak into later tests and
+    // silently drop L1 writes. Mirrors the cf-cache-store.test.ts beforeEach.
+    vi.restoreAllMocks();
     mockCaches.clear();
     kv = new MockKV();
     ctx = createMockCtx();
@@ -690,10 +694,14 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       return { reqCtx, reported };
     }
 
-    it("reports a read infra error via onError and degrades to a miss (does not throw)", async () => {
+    it("reports a read infra error via onError and degrades (does not throw)", async () => {
       const store = makeStore();
       await store.set("k", createTestData(), 300);
       await ctx.flush();
+      // Isolate the L1 tier: clear KV so the L1 match error has no L2 copy to
+      // fall through to, and the read resolves to a clean miss. The resilient
+      // case (L1 error but KV still serves the entry) is covered separately.
+      kv.clear();
 
       vi.spyOn(mockCaches._default, "match").mockRejectedValueOnce(
         new Error("cache api unavailable"),
@@ -702,7 +710,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       const { reqCtx, reported } = ctxWithReporter();
       const result = await runWithRequestContext(reqCtx, () => store.get("k"));
 
-      expect(result).toBeNull(); // degraded to a miss, no throw
+      expect(result).toBeNull(); // L1 error -> L2 (empty) -> miss, no throw
       expect(reported.some((r) => r.category === "cache-read")).toBe(true);
       // A transient L1 error must NOT be mistaken for corruption: the entry is
       // left intact (no eviction), unlike the cache-corrupt self-heal path.
@@ -758,12 +766,16 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         }),
         expiresAt: entry.expiresAt,
       });
+      // Isolate the L1 tier: clear KV so the corrupt-L1 read has no L2 copy to
+      // fall through to and resolves to a miss. The resilient case (corrupt L1
+      // but KV still serves) is covered separately.
+      kv.clear();
 
       const delSpy = vi.spyOn(mockCaches._default, "delete");
       const { reqCtx, reported } = ctxWithReporter();
       const result = await runWithRequestContext(reqCtx, () => store.get("k"));
 
-      expect(result).toBeNull(); // degrade
+      expect(result).toBeNull(); // corrupt L1 -> evict -> L2 (empty) -> miss
       expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
       expect(delSpy).toHaveBeenCalled(); // faulty L1 entry evicted
     });
@@ -796,6 +808,158 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await ctx.flush();
 
       expect(reported.some((r) => r.category === "cache-write")).toBe(true);
+    });
+  });
+
+  // The unified read contract: an L1 problem (transient match error or a corrupt
+  // body) is REPORTED (onError) and self-heals, but the read still falls through
+  // to L2/KV and serves a good cross-colo copy rather than forcing a render.
+  // These pin the resilient path (vs the L1-isolated "degrades to a miss" tests
+  // above) and the no-false-evict fix (a corrupt-L1 evict must not race the
+  // same-key promote-put that the KV fall-through schedules).
+  describe("resilient L1 degradation (fall through to L2, report, no false evict)", () => {
+    function ctxWithReporter() {
+      const reported: Array<{ error: unknown; category: string }> = [];
+      const reqCtx = makeReqCtx();
+      (reqCtx as any)._reportBackgroundError = (
+        error: unknown,
+        category: string,
+      ) => reported.push({ error, category });
+      return { reqCtx, reported };
+    }
+
+    it("a transient L1 match error with a good KV copy serves from L2 (not a miss), reports cache-read, no evict", async () => {
+      const store = makeStore();
+      const data = createTestData();
+      await store.set("k", data, 300);
+      await ctx.flush(); // L1 + KV both populated
+
+      vi.spyOn(mockCaches._default, "match").mockRejectedValueOnce(
+        new Error("cache api blip"),
+      );
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+
+      expect(result).not.toBeNull(); // served from L2/KV, not a forced render
+      expect(result!.data).toEqual(data);
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(false);
+      expect(delSpy).not.toHaveBeenCalled(); // a match error never evicts
+    });
+
+    it("a corrupt L1 body with a good KV copy serves from L2 (not a miss), reports cache-corrupt, and does NOT evict (no race with the promote)", async () => {
+      const store = makeStore();
+      const data = createTestData();
+      await store.set("k", data, 300);
+      await ctx.flush();
+      expect(await store.get("k")).not.toBeNull();
+
+      // Corrupt the L1 body in place, keeping valid headers so the read reaches
+      // response.json() and fails there.
+      const internal = (mockCaches._default as any).store as Map<
+        string,
+        { response: Response; expiresAt: number }
+      >;
+      const [url, entry] = [...internal.entries()][0]!;
+      internal.set(url, {
+        response: new Response("{ truncated json", {
+          headers: entry.response.headers,
+        }),
+        expiresAt: entry.expiresAt,
+      });
+
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+
+      expect(result).not.toBeNull(); // good KV copy served, not a forced render
+      expect(result!.data).toEqual(data);
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+      // The fix: KV had a copy to promote, so the corrupt L1 entry is NOT eagerly
+      // deleted -- that delete would race the same-key promote-put.
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("a corrupt L1 function body with a good KV copy serves from L2, reports cache-corrupt, no evict (getItem)", async () => {
+      const store = makeStore();
+      await store.setItem("k", "kv-value", { ttl: 300 });
+      await ctx.flush();
+      expect(await store.getItem("k")).not.toBeNull();
+
+      const internal = (mockCaches._default as any).store as Map<
+        string,
+        { response: Response; expiresAt: number }
+      >;
+      const [url, entry] = [...internal.entries()][0]!;
+      internal.set(url, {
+        response: new Response("{ truncated", {
+          headers: entry.response.headers,
+        }),
+        expiresAt: entry.expiresAt,
+      });
+
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () =>
+        store.getItem("k"),
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.value).toBe("kv-value");
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("a transient L1 match error on the document path reports cache-read and degrades (no throw)", async () => {
+      const store = makeStore();
+      await store.putResponse!(
+        "k",
+        new Response("doc-body", {
+          headers: { "Content-Type": "text/html" },
+        }),
+        300,
+      );
+      await ctx.flush();
+      // Isolate: clear KV so the degraded document read resolves to a clean miss.
+      kv.clear();
+
+      vi.spyOn(mockCaches._default, "match").mockRejectedValueOnce(
+        new Error("cache api blip"),
+      );
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () =>
+        store.getResponse!("k"),
+      );
+
+      expect(result).toBeNull(); // L1 error -> L2 (empty) -> miss, no throw
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("a tag-marker KV read that exceeds the budget fails OPEN (entry served, not treated as invalidated)", async () => {
+      const store = makeStore();
+      await store.set("k", createTestData(["t"]), 300);
+      await ctx.flush(); // fresh, tagged entry in L1 (+ KV)
+
+      // The entry read is an L1 hit, so the only KV read is the tag marker.
+      // Make that marker read hang so the kvReadTimeoutMs budget fires.
+      vi.spyOn(kv, "get").mockImplementation((key: string) =>
+        key.includes("__tag__")
+          ? new Promise<string>(() => {})
+          : Promise.resolve(null),
+      );
+
+      const { reqCtx } = ctxWithReporter();
+      const resultPromise = runWithRequestContext(reqCtx, () => store.get("k"));
+      // Advance past the KV budget so the marker read times out and fails open.
+      await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS);
+      const result = await resultPromise;
+
+      // Fail-open: a marker read that cannot complete must not turn a good hit
+      // into a wrongful invalidation; the entry is served.
+      expect(result).not.toBeNull();
     });
   });
 

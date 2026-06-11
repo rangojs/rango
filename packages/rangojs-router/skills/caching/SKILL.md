@@ -284,6 +284,72 @@ const router = createRouter<AppBindings>({
 KV entries require `expirationTtl >= 60s`. Short-lived entries (< 60s total TTL)
 are only cached in L1.
 
+### Resilience & latency budgets
+
+Every cache read is **fail-safe**: a degraded tier never stalls or fails the
+request — it degrades to the next tier (L1 → L2 → render). Three optional latency
+budgets (milliseconds) bound each tier so a slow colo or KV namespace cannot pin
+a request behind it:
+
+| Option                | Default | Bounds                              |
+| --------------------- | ------- | ----------------------------------- |
+| `edgeLookupTimeoutMs` | `10`    | L1 `cache.match` (the lookup)       |
+| `edgeReadTimeoutMs`   | `20`    | L1 body read (CF streams it lazily) |
+| `kvReadTimeoutMs`     | `50`    | L2 / KV read                        |
+
+Set any to `0` (or a negative value) to disable that budget and always await the
+read. A non-finite value (e.g. `Number(env.UNSET)`) falls back to the default.
+The tag-invalidation marker reads inherit these same budgets and **fail open** on
+a KV timeout — the entry is served rather than wrongly treated as invalidated.
+
+```typescript
+new CFCacheStore({
+  ctx,
+  kv: env.CACHE_KV,
+  defaults: { ttl: 60, swr: 300 },
+  // Raise a budget only if your HEALTHY reads legitimately run slower (large
+  // Flight payloads, far-from-colo regions); measure the p99 first. These are
+  // degradation guard-rails, not tuning levers for "slow is normal here".
+  kvReadTimeoutMs: 80,
+});
+```
+
+Failure handling, by kind — none of these fail the request:
+
+| Failure                         | Behavior                                           |
+| ------------------------------- | -------------------------------------------------- |
+| Transient read error (5xx/blip) | Degrade to the next tier; entry left intact        |
+| Read budget exceeded (timeout)  | Abandon the read, degrade to the next tier         |
+| Corrupt / unparseable entry     | Evict it (self-heal) + re-render; reported corrupt |
+| Write failure                   | No-op (entry simply not cached); never throws      |
+
+Each is surfaced to the router's `onError` callback (phase `"cache"`, with
+`metadata.category` one of `cache-read`, `cache-corrupt`, `cache-write`,
+`cache-delete`, `cache-invalidate`, `stale-revalidation`) so you can observe
+cache health without affecting users.
+
+### Validating cache behavior with `debug`
+
+Pass `debug` to emit one structured event per L1 read — use it to confirm on a
+real deployment (via `wrangler tail`) that the store behaves as expected before
+relying on it. It is intended for validation, not steady-state production.
+
+```typescript
+new CFCacheStore({
+  ctx,
+  kv: env.CACHE_KV,
+  debug: true, // logs each CFCacheReadDebugEvent to the console
+  // ...or capture programmatically:
+  // debug: (event) => myTelemetry.record(event),
+});
+```
+
+Each event reports which tier answered and why (`outcome`: `l1-fresh`,
+`l1-stale-revalidate`, `match-timeout`, `body-timeout`, `body-error`, `non-200`,
+`tag-invalidated`, `kv-fresh`, `kv-stale`, `kv-timeout`, `kv-miss`, `error`, …),
+the staleness / revalidating timestamps, and the measured match / body-read
+durations (where the latency tail shows up).
+
 ## Cache purity & tainted objects
 
 A `cache()` boundary caches everything except loaders, so anything read inside a
