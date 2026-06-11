@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   CFCacheStore,
   CACHE_STALE_AT_HEADER,
@@ -113,6 +113,12 @@ describe("CFCacheStore", () => {
     vi.restoreAllMocks();
     mockCaches.clear();
     vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    // Restore real timers so a fake-timer install cannot leak past this file if
+    // vitest's per-file isolation is ever relaxed.
+    vi.useRealTimers();
   });
 
   describe("constructor", () => {

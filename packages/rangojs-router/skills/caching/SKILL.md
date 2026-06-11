@@ -316,12 +316,13 @@ new CFCacheStore({
 
 Failure handling, by kind — none of these fail the request:
 
-| Failure                         | Behavior                                           |
-| ------------------------------- | -------------------------------------------------- |
-| Transient read error (5xx/blip) | Degrade to the next tier; entry left intact        |
-| Read budget exceeded (timeout)  | Abandon the read, degrade to the next tier         |
-| Corrupt / unparseable entry     | Evict it (self-heal) + re-render; reported corrupt |
-| Write failure                   | No-op (entry simply not cached); never throws      |
+| Failure                         | Behavior                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transient read error (5xx/blip) | Degrade to the next tier; entry left intact                                                                                                       |
+| Read budget exceeded (timeout)  | Abandon the read, degrade to the next tier                                                                                                        |
+| Corrupt / unparseable L1 entry  | Reported corrupt; degrade to L2 (served if present). The L1 entry is evicted ONLY when L2 has no copy — so the evict can't race the L2→L1 promote |
+| Corrupt / unparseable KV entry  | Reported corrupt; evicted (self-heal) + render (no tier below it)                                                                                 |
+| Write failure                   | No-op (entry simply not cached); never throws                                                                                                     |
 
 Each is surfaced to the router's `onError` callback (phase `"cache"`, with
 `metadata.category` one of `cache-read`, `cache-corrupt`, `cache-write`,

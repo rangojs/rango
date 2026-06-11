@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { CFCacheStore, KV_READ_TIMEOUT_MS } from "../cf-cache-store";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  CFCacheStore,
+  KV_READ_TIMEOUT_MS,
+  TAG_MARKER_PREFIX,
+} from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 import {
   createRequestContext,
@@ -70,7 +74,11 @@ class MockKV {
     if (raw === undefined) return null;
     return options?.type === "json" ? JSON.parse(raw) : raw;
   }
-  async put(key: string, value: string): Promise<void> {
+  async put(
+    key: string,
+    value: string,
+    _options?: { expirationTtl?: number },
+  ): Promise<void> {
     this.store.set(key, value);
   }
   async delete(key: string): Promise<void> {
@@ -132,6 +140,12 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
     kv = new MockKV();
     ctx = createMockCtx();
     vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    // Restore real timers so a fake-timer install can never leak past this file
+    // if vitest's per-file isolation is ever relaxed (e.g. a shared pool).
+    vi.useRealTimers();
   });
 
   function makeStore(overrides: Record<string, unknown> = {}) {
@@ -879,6 +893,15 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       // The fix: KV had a copy to promote, so the corrupt L1 entry is NOT eagerly
       // deleted -- that delete would race the same-key promote-put.
       expect(delSpy).not.toHaveBeenCalled();
+
+      // The heal-by-overwrite must actually LAND: flush the promote, clear KV,
+      // and re-read. Serving now (KV empty) proves the KV->L1 promote overwrote
+      // the poison entry -- the property that makes skipping the eager evict safe.
+      await ctx.flush();
+      kv.clear();
+      const reread = await runWithRequestContext(reqCtx, () => store.get("k"));
+      expect(reread).not.toBeNull();
+      expect(reread!.data).toEqual(data);
     });
 
     it("a corrupt L1 function body with a good KV copy serves from L2, reports cache-corrupt, no evict (getItem)", async () => {
@@ -909,6 +932,16 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(result!.value).toBe("kv-value");
       expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
       expect(delSpy).not.toHaveBeenCalled();
+
+      // The KV->L1 promote must land: clear KV and re-read; serving from the
+      // promoted (overwritten) L1 entry is what makes skipping the evict safe.
+      await ctx.flush();
+      kv.clear();
+      const reread = await runWithRequestContext(reqCtx, () =>
+        store.getItem("k"),
+      );
+      expect(reread).not.toBeNull();
+      expect(reread!.value).toBe("kv-value");
     });
 
     it("a transient L1 match error on the document path reports cache-read and degrades (no throw)", async () => {
@@ -946,10 +979,15 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       // The entry read is an L1 hit, so the only KV read is the tag marker.
       // Make that marker read hang so the kvReadTimeoutMs budget fires.
       vi.spyOn(kv, "get").mockImplementation((key: string) =>
-        key.includes("__tag__")
+        // Key on the exported prefix constant, not a "__tag__" literal, so a
+        // prefix rename keeps hanging the marker read (and exercising the
+        // timeout) instead of silently passing this test vacuously.
+        key.includes(TAG_MARKER_PREFIX)
           ? new Promise<string>(() => {})
           : Promise.resolve(null),
       );
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const kvDelSpy = vi.spyOn(kv, "delete");
 
       const { reqCtx } = ctxWithReporter();
       const resultPromise = runWithRequestContext(reqCtx, () => store.get("k"));
@@ -958,8 +996,12 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       const result = await resultPromise;
 
       // Fail-open: a marker read that cannot complete must not turn a good hit
-      // into a wrongful invalidation; the entry is served.
+      // into a wrongful invalidation. Not vacuous: the SAME tagged entry (with
+      // its tag) is served, and the fail-open evicts neither L1 nor KV.
       expect(result).not.toBeNull();
+      expect(result!.data.tags).toEqual(["t"]);
+      expect(delSpy).not.toHaveBeenCalled();
+      expect(kvDelSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -1056,6 +1098,408 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(reported.some((r) => r.category === "cache-write")).toBe(true);
       expect(reported.some((r) => r.category === "cache-read")).toBe(true);
       expect(reported.some((r) => r.category === "cache-delete")).toBe(true);
+    });
+  });
+
+  // Reconcile hardening (review follow-ups). Each `it` pins a specific fix from
+  // the post-merge adversarial review; the bug-fix cases are red without the fix
+  // and green with it (see the PR description's red-before-green note).
+  describe("reconcile hardening (review follow-ups)", () => {
+    function ctxWithReporter() {
+      const reported: Array<{ error: unknown; category: string }> = [];
+      const reqCtx = makeReqCtx();
+      (reqCtx as any)._reportBackgroundError = (
+        error: unknown,
+        category: string,
+      ) => reported.push({ error, category });
+      return { reqCtx, reported };
+    }
+
+    // F1: a marker read that is in flight when a concurrent updateTag() writes
+    // the memo must not clobber that write when it resolves (read-your-own-writes
+    // for the rest of the request).
+    it("an in-flight marker read does not clobber a concurrent invalidate's memo write (RYW)", async () => {
+      const store = makeStore(); // tagCacheTtl=0 -> straight to KV marker read
+      await store.setItem("k", "v", { ttl: 300, tags: ["catalog"] });
+      await ctx.flush();
+
+      let releaseMarker!: (v: string | null) => void;
+      let markerGetStarted!: () => void;
+      const started = new Promise<void>((res) => (markerGetStarted = res));
+      const gate = new Promise<string | null>((res) => (releaseMarker = res));
+      vi.spyOn(kv, "get").mockImplementation((key: string, opts?: any) => {
+        if (String(key).includes("__tag__/catalog")) {
+          markerGetStarted();
+          return gate as any;
+        }
+        const raw = kv.store.get(key);
+        if (raw === undefined) return Promise.resolve(null);
+        return Promise.resolve(opts?.type === "json" ? JSON.parse(raw) : raw);
+      });
+
+      const { reqCtx } = ctxWithReporter();
+      await runWithRequestContext(reqCtx, async () => {
+        const inflightRead = store.getItem("k"); // parks on the gated marker read
+        await started; // guarantee the read passed memo.has -> reached KV
+        vi.advanceTimersByTime(10);
+        await store.invalidateTags(["catalog"]); // memo[catalog]=invalidatedAt
+        releaseMarker(null); // resolve with the PRE-invalidation value
+        await inflightRead; // must NOT overwrite the memo back to null
+        // The subsequent read must still see the invalidation.
+        expect(await store.getItem("k")).toBeNull();
+      });
+    });
+
+    // F2: a KV body that parses to a primitive ('null') must be treated as
+    // corruption (evicted), not sent to the outer catch as a transient cache-read
+    // by a validator that throws dereferencing null.
+    it("treats a KV body that parses to a primitive ('null') as corrupt (evicts), not a transient read error", async () => {
+      const store = makeStore();
+      kv.store.set("v/v1/k", "null"); // parses fine; validate(null) would throw
+
+      const delSpy = vi.spyOn(kv, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      await ctx.flush(); // eviction is now background (F6)
+
+      expect(result).toBeNull();
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+      expect(reported.some((r) => r.category === "cache-read")).toBe(false);
+      expect(delSpy).toHaveBeenCalledWith("v/v1/k");
+    });
+
+    // F6: the corrupt-entry KV eviction must be scheduled in the background
+    // (waitUntil), never AWAITED on the read path (an unbounded kv.delete would
+    // re-introduce exactly the stall the read budgets prevent). Pinned with a
+    // deferred delete: get() must resolve while the delete is still pending.
+    // With the old awaited evict, the get() await below would never resolve
+    // (the test would time out) -- hence the tight per-test timeout.
+    it(
+      "evicts a corrupt KV entry in the BACKGROUND, not awaited on the read path",
+      { timeout: 2000 },
+      async () => {
+        const store = makeStore();
+        kv.store.set("v/v1/k", "{ not valid json");
+
+        let deleteResolved = false;
+        let releaseDelete!: () => void;
+        const deleteGate = new Promise<void>((res) => {
+          releaseDelete = () => {
+            deleteResolved = true;
+            res();
+          };
+        });
+        const delSpy = vi
+          .spyOn(kv, "delete")
+          .mockReturnValue(deleteGate as Promise<void>);
+
+        const result = await runWithRequestContext(makeReqCtx(), () =>
+          store.get("k"),
+        );
+        // get() returned while the (still-pending) delete has not resolved: it was
+        // scheduled, not awaited. An awaited evict would have parked get() here.
+        expect(result).toBeNull();
+        expect(delSpy).toHaveBeenCalledWith("v/v1/k");
+        expect(deleteResolved).toBe(false);
+
+        releaseDelete();
+        await ctx.flush();
+      },
+    );
+
+    // F7: two stores in one request with different KV bindings (and versions)
+    // must not cross-pollute the per-request marker memo.
+    it("two stores in one request do not cross-pollute the tag-marker memo", async () => {
+      const kvA = new MockKV();
+      const kvB = new MockKV();
+      const storeA = new CFCacheStore({
+        ctx: ctx as any,
+        kv: kvA as any,
+        baseUrl: "https://test.internal/",
+        version: "vA",
+      });
+      const storeB = new CFCacheStore({
+        ctx: ctx as any,
+        kv: kvB as any,
+        baseUrl: "https://test.internal/",
+        version: "vB",
+      });
+
+      // A: tag then invalidate -> A's entry is invalidated (marker only in kvA).
+      await storeA.set("k", createTestData(["t"]), 300);
+      await ctx.flush();
+      vi.advanceTimersByTime(10);
+      await storeA.invalidateTags(["t"]); // outside a request ctx: no memo write
+
+      // B: a fresh entry tagged "t" with NO marker in kvB -> a valid hit.
+      await storeB.set("k", createTestData(["t"]), 300);
+      await ctx.flush();
+
+      await runWithRequestContext(makeReqCtx(), async () => {
+        // B reads first and (in the buggy shared-memo) memoizes "t" -> null.
+        expect(await storeB.get("k")).not.toBeNull();
+        // A must consult kvA's marker (invalidated), NOT B's memoized null.
+        expect(await storeA.get("k")).toBeNull();
+      });
+    });
+
+    // F9: a transient L1 tag-marker match error must be reported as cache-read
+    // (like the data read paths), not silently discarded at the destructuring.
+    it("reports a transient L1 tag-marker match error as cache-read (still serves via KV)", async () => {
+      const store = makeStore({ tagCacheTtl: 60 });
+      await store.set("k", createTestData(["shared"]), 300);
+      await ctx.flush();
+
+      const realMatch = mockCaches._default.match.bind(mockCaches._default);
+      vi.spyOn(mockCaches._default, "match").mockImplementation(
+        async (req: Request) => {
+          if (decodeURIComponent(req.url).includes("__tagmarker__/shared")) {
+            throw new Error("marker match blip");
+          }
+          return realMatch(req);
+        },
+      );
+
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+
+      // Served (marker match error falls through to the KV marker, which is
+      // absent -> not invalidated), and the match error reached onError.
+      expect(result).not.toBeNull();
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+    });
+
+    // F10: a non-array tags value (direct store misuse) must be cached untagged
+    // and never throw `.map` on the read path (mis-reported as cache-read).
+    it("a non-array tags value is cached untagged and never throws on read", async () => {
+      const store = makeStore();
+      const { reqCtx, reported } = ctxWithReporter();
+      await runWithRequestContext(reqCtx, () =>
+        store.setItem("k", "v", { ttl: 300, tags: "products" as any }),
+      );
+      await ctx.flush();
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        store.getItem("k"),
+      );
+      expect(result).not.toBeNull();
+      expect(result!.value).toBe("v");
+      expect(reported.some((r) => r.category === "cache-read")).toBe(false);
+    });
+
+    describe("tag TTL option sanitization (F5)", () => {
+      it("raises a tagInvalidationTtl below KV's 60s floor (invalidation still works, warns once)", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const store = makeStore({
+          namespace: "ttl-floor-fixture",
+          tagInvalidationTtl: 30,
+        });
+        const putSpy = vi.spyOn(kv, "put");
+
+        await store.invalidateTags(["t"]);
+
+        const markerPut = putSpy.mock.calls.find(([key]) =>
+          String(key).includes("__tag__/t"),
+        );
+        expect(markerPut).toBeDefined();
+        // Floored to 60 so CF KV does not reject the write (which would make
+        // EVERY invalidation throw); raw 30 would have been passed unchanged.
+        expect(
+          (markerPut![2] as { expirationTtl?: number } | undefined)
+            ?.expirationTtl,
+        ).toBe(60);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("below Cloudflare KV"),
+        );
+        putSpy.mockRestore();
+        warn.mockRestore();
+      });
+
+      it("treats a non-finite tagCacheTtl (Infinity) as disabled, not 'max-age=Infinity'", async () => {
+        const store = makeStore({ tagCacheTtl: Infinity });
+        await store.set("k", createTestData(["shared"]), 300);
+        await ctx.flush();
+
+        const putSpy = vi.spyOn(mockCaches._default, "put");
+        await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+        await ctx.flush();
+
+        // Disabled (sanitized to 0): no L1 marker entry written, so no invalid
+        // Cache-Control: max-age=Infinity. Infinity>0 would have enabled it.
+        const markerPut = putSpy.mock.calls.find(([req]) =>
+          decodeURIComponent((req as Request).url).includes(
+            "__tagmarker__/shared",
+          ),
+        );
+        expect(markerPut).toBeUndefined();
+        putSpy.mockRestore();
+      });
+    });
+
+    describe("L1 marker write-through failure (F3)", () => {
+      it("surfaces a failed L1 marker write-through on invalidate (reports + evicts the stale marker)", async () => {
+        const store = makeStore({ tagCacheTtl: 60 });
+        // Prime the colo L1 with the ABSENT sentinel for "shared".
+        await store.set("k", createTestData(["shared"]), 300);
+        await ctx.flush();
+        await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+        await ctx.flush();
+
+        // Fail the L1 marker write-through; allow its compensating delete.
+        const putSpy = vi
+          .spyOn(mockCaches._default, "put")
+          .mockImplementation(async (req: Request) => {
+            if (decodeURIComponent(req.url).includes("__tagmarker__/shared")) {
+              throw new Error("L1 marker put failed");
+            }
+          });
+        const delSpy = vi.spyOn(mockCaches._default, "delete");
+        const { reqCtx, reported } = ctxWithReporter();
+
+        vi.advanceTimersByTime(10);
+        await runWithRequestContext(reqCtx, () =>
+          store.invalidateTags(["shared"]),
+        );
+
+        // The swallowed failure is now surfaced (cache-invalidate), and the
+        // stale L1 marker is evicted so the next read re-reads the fresh KV
+        // marker instead of serving the stale ABSENT sentinel for tagCacheTtl.
+        expect(reported.some((r) => r.category === "cache-invalidate")).toBe(
+          true,
+        );
+        const markerDelete = delSpy.mock.calls.find(([req]) =>
+          decodeURIComponent((req as Request).url).includes(
+            "__tagmarker__/shared",
+          ),
+        );
+        expect(markerDelete).toBeDefined();
+        putSpy.mockRestore();
+        delSpy.mockRestore();
+      });
+    });
+
+    describe("stale tagged entries: REVALIDATING x tags (F11)", () => {
+      it("keeps tags across the REVALIDATING re-put so a stale entry stays invalidatable", async () => {
+        const store = makeStore();
+        // ttl=1s, swr=60s: goes stale fast but stays in L1 across the SWR window.
+        await store.set("k", createTestData(["products"]), 1, 60);
+        await ctx.flush();
+
+        // Go stale, then read once -> marks REVALIDATING (re-put must carry tags).
+        vi.advanceTimersByTime(1500);
+        const stale = await store.get("k");
+        expect(stale).not.toBeNull();
+        expect(stale!.shouldRevalidate).toBe(true);
+        await ctx.flush(); // markRevalidating re-put lands
+
+        // Invalidate the tag; the REVALIDATING entry's tag check must run first
+        // and treat it as a miss (its tags survived the re-put).
+        vi.advanceTimersByTime(10);
+        await store.invalidateTags(["products"]);
+        expect(await store.get("k")).toBeNull();
+      });
+    });
+
+    describe("KV->L1 promotion preserves tags (F13)", () => {
+      it("segment tier: a promoted segment stays invalidatable", async () => {
+        const store = makeStore();
+        await store.set("k", createTestData(["products"]), 300);
+        await ctx.flush();
+        mockCaches.clear(); // L1 gone, KV holds it
+
+        expect(await store.get("k")).not.toBeNull(); // KV serve + promote
+        await ctx.flush();
+
+        vi.advanceTimersByTime(10);
+        await store.invalidateTags(["products"]);
+        // The promoted L1 entry must still carry tags (L1 hit, KV not consulted).
+        expect(await store.get("k")).toBeNull();
+      });
+
+      it("document tier: a promoted response stays invalidatable", async () => {
+        const store = makeStore();
+        await store.putResponse!(
+          "k",
+          new Response("body", { status: 200 }),
+          300,
+          0,
+          ["page"],
+        );
+        await ctx.flush();
+        mockCaches.clear();
+
+        expect(await store.getResponse!("k")).not.toBeNull(); // KV serve + promote
+        await ctx.flush();
+
+        vi.advanceTimersByTime(10);
+        await store.invalidateTags(["page"]);
+        expect(await store.getResponse!("k")).toBeNull();
+      });
+    });
+
+    describe("debug observability (markerMs, match-error)", () => {
+      it("emits markerMs on a tagged read so the marker-resolution tail is visible", async () => {
+        const events: Array<Record<string, unknown>> = [];
+        const store = makeStore({
+          debug: (e: Record<string, unknown>) => events.push(e),
+        });
+        await store.set("k", createTestData(["shared"]), 300);
+        await ctx.flush();
+
+        await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+
+        // The l1-fresh event for a TAGGED entry carries a measured markerMs (the
+        // serial memo->L1->KV marker read that was previously invisible).
+        const fresh = events.find((e) => e.outcome === "l1-fresh");
+        expect(fresh).toBeDefined();
+        expect(typeof fresh!.markerMs).toBe("number");
+      });
+
+      it("emits a match-error outcome when the L1 match rejects (distinct from l1-miss)", async () => {
+        const events: Array<Record<string, unknown>> = [];
+        const store = makeStore({
+          debug: (e: Record<string, unknown>) => events.push(e),
+        });
+        await store.set("k", createTestData(), 300);
+        await ctx.flush();
+        kv.clear(); // no L2 fallback -> a clean miss after the match error
+
+        vi.spyOn(mockCaches._default, "match").mockRejectedValueOnce(
+          new Error("match blip"),
+        );
+        await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+
+        // A match rejection is reported as match-error in debug, agreeing with
+        // the cache-read routed to onError -- not masquerading as l1-miss.
+        expect(events.some((e) => e.outcome === "match-error")).toBe(true);
+        expect(events.some((e) => e.outcome === "l1-miss")).toBe(false);
+      });
+    });
+
+    // F13c: the resilient document path (L1 match error WITH a good KV copy)
+    // must serve from L2 rather than forcing a render.
+    it("a document-path L1 match error with a good KV copy serves from L2 (not a miss)", async () => {
+      const store = makeStore();
+      await store.putResponse!(
+        "k",
+        new Response("doc-body", { headers: { "Content-Type": "text/html" } }),
+        300,
+      );
+      await ctx.flush(); // L1 + KV both populated
+
+      vi.spyOn(mockCaches._default, "match").mockRejectedValueOnce(
+        new Error("cache api blip"),
+      );
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () =>
+        store.getResponse!("k"),
+      );
+
+      expect(result).not.toBeNull(); // served from KV, not a forced render
+      expect(await result!.response.text()).toBe("doc-body");
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+      expect(delSpy).not.toHaveBeenCalled();
     });
   });
 });

@@ -17,6 +17,11 @@ export type {
   CachedEntryData,
   CachedEntryResult,
   CacheGetResult,
+  // The getItem()/setItem() signature types on SegmentCacheStore. Exported
+  // alongside CacheGetResult so a consumer implementing a custom store can name
+  // every type its interface methods use, not just the segment-read result.
+  CacheItemResult,
+  CacheItemOptions,
   SerializedSegmentData,
   SegmentHandleData,
   CacheConfig,
