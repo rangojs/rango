@@ -346,10 +346,17 @@ new CFCacheStore({
 ```
 
 Each event reports which tier answered and why (`outcome`: `l1-fresh`,
-`l1-stale-revalidate`, `match-timeout`, `body-timeout`, `body-error`, `non-200`,
-`tag-invalidated`, `kv-fresh`, `kv-stale`, `kv-timeout`, `kv-miss`, `error`, …),
-the staleness / revalidating timestamps, and the measured match / body-read
-durations (where the latency tail shows up).
+`l1-stale-revalidate`, `l1-revalidating-guarded`, `match-timeout`, `match-error`,
+`body-timeout`, `body-error`, `non-200`, `tag-invalidated`, `l1-miss`, `kv-fresh`,
+`kv-stale`, `kv-stale-suppressed`, `kv-miss`, `kv-timeout`, `error`), the
+staleness / revalidating timestamps, and the measured per-tier durations:
+`matchMs` (the L1 `match`), `markerMs` (the tag-marker resolution tail for a
+tagged entry, between `matchMs` and `bodyReadMs`; absent or 0 for an untagged
+entry or a per-request memo hit), and `bodyReadMs` (the L1 body read). A
+persistently large `markerMs` signals a degraded KV namespace; on a healthy
+deployment KV keeps markers hot in its per-colo edge cache, so it stays a few
+milliseconds. `match-error` (a transient `cache.match` rejection that falls
+through to L2) is kept distinct from a plain `l1-miss`.
 
 ## Cache purity & tainted objects
 

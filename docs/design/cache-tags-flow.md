@@ -139,3 +139,42 @@ comma-delimited `Cache-Tag` header. `onRevalidateTag` is handed the
 
 > The purge API call cannot be exercised in miniflare; it is unit-tested with a
 > mock purge client and needs deployed-worker verification.
+
+## Tag-marker read latency, and why there is no in-isolate marker cache
+
+The marker check is on the **serial path of every tagged hit**: a tagged read is
+`match → await marker → await body` (`cf-cache-store.ts`, `get`/`getItem`). A
+degraded namespace can pin the marker read up to `kvReadTimeoutMs` (default
+170 ms) before it **fails open** — treats the marker as absent so the entry is
+served — so one slow tag never turns a hit into a wrongful invalidation.
+
+Measured on a real Cloudflare zone (`debug: true`, `tagCacheTtl: 0`, i.e. the
+least-cached cascade memo → KV):
+
+| condition                                             | `markerMs`           |
+| ----------------------------------------------------- | -------------------- |
+| warm — KV's per-colo edge cache serving the marker    | 1–6 ms (median ~2–3) |
+| cold — genuine first touch, KV marker edge-cache cold | ~73 ms (n=1)         |
+
+The cold blip is rare and sticky-warm — an 80 s idle did not re-cool it (KV's
+per-colo edge cache outlives a minute).
+
+**Rejected: an in-isolate module-level marker `Map`** (an L0 in front of the
+cascade). It only speeds _warm-isolate repeats_, which are already the 1–6 ms
+reads, and is cold exactly when reads are slow — a cold isolate starts with a
+cold Map and still pays the full first read. `tagCacheTtl` (the per-colo Cache
+API tier already in the cascade) is strictly better for that case: colo-shared
+and surviving isolate churn, so one warm-up shields every isolate in the colo,
+and during a transient KV slowdown at most ~1 KV read per `tagCacheTtl` window
+per colo is exposed instead of one per request. The in-isolate layer is also not
+cheap to get right — binding-keyed module state, write-through from
+`invalidateTags`, a no-downgrade-on-settle guard, bounded eviction — correctness
+work for a sub-3 ms warm-path win it mostly cannot deliver.
+
+**If marker latency ever needs to drop further**, in order: (1) enable
+`tagCacheTtl` (1–5 s) and re-measure `markerMs` _and_ `bodyReadMs` under
+`debug: true` — the lever for the cold/slow tail; (2) only past that, parallelize
+`marker ∥ body` so the hit path is `match + max(marker, body)` instead of
+`match + marker + body` — worth the critical-path churn only if `bodyReadMs` on
+tagged hits is large enough to be worth overlapping. The in-isolate Map is not on
+this list.
