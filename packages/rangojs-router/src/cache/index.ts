@@ -29,9 +29,15 @@ export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 export {
   CFCacheStore,
   type CFCacheStoreOptions,
+  type CFCacheDebug,
+  type CFCacheReadDebugEvent,
   type KVNamespace,
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
+  CACHE_REVALIDATING_AT_HEADER,
+  EDGE_LOOKUP_TIMEOUT_MS,
+  EDGE_READ_TIMEOUT_MS,
+  KV_READ_TIMEOUT_MS,
 } from "./cf/index.js";
 
 // Cache scope
