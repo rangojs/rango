@@ -15,8 +15,7 @@ import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import {
   KEEP_CACHE_HEADER,
-  decodeStateValue,
-  encodeStateValue,
+  mintStateValue,
   serializeStateCookie,
 } from "../browser/cookie-name.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
@@ -795,10 +794,9 @@ export function createRequestContext<TEnv>(
       // divergence observer silent.
       const prevRaw =
         request.headers.get("x-rango-state") ??
-        getParsedCookies()[stateCookieName];
-      const prevTs = prevRaw ? (decodeStateValue(prevRaw)?.timestamp ?? 0) : 0;
-      const ts = Math.max(Date.now(), prevTs + 1);
-      const value = encodeStateValue(stateVersion ?? "0", ts);
+        getParsedCookies()[stateCookieName] ??
+        null;
+      const value = mintStateValue(stateVersion ?? "0", prevRaw);
       stubResponse.headers.append(
         "Set-Cookie",
         serializeStateCookie(stateCookieName, value, url.protocol === "https:"),

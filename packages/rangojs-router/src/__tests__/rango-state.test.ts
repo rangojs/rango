@@ -1,34 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-// A minimal document.cookie jar: stores name->value, ignores attributes.
-// Our values are token-safe (version is percent-encoded), so a single `=`
-// split is sufficient.
-function makeJar(initial: Record<string, string> = {}) {
-  const store: Record<string, string> = { ...initial };
-  const jar = {
-    get cookie(): string {
-      return Object.entries(store)
-        .map(([k, v]) => `${k}=${v}`)
-        .join("; ");
-    },
-    set cookie(str: string) {
-      const segment = str.split(";")[0];
-      const eq = segment.indexOf("=");
-      if (eq < 0) return;
-      store[segment.slice(0, eq).trim()] = segment.slice(eq + 1);
-    },
-  };
-  return {
-    jar,
-    set: (k: string, v: string) => {
-      store[k] = v;
-    },
-    del: (k: string) => {
-      delete store[k];
-    },
-    store,
-  };
-}
+import { makeJar } from "./cookie-jar-mock.js";
 
 function makeLocalStorage(data: Record<string, string>) {
   return {

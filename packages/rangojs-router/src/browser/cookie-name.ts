@@ -30,6 +30,11 @@ export function isPerClientSignalHeader(name: string): boolean {
   return lower === "set-cookie" || lower === KEEP_CACHE_HEADER;
 }
 
+/** True if `headers` carries any per-client signal (see isPerClientSignalHeader). */
+export function hasPerClientSignal(headers: Headers): boolean {
+  return headers.has("set-cookie") || headers.has(KEEP_CACHE_HEADER);
+}
+
 /**
  * Encode a state value for the wire: `encodeURIComponent(version):timestamp`.
  * Only the build-derived version is encoded (it is arbitrary); the `:`
@@ -65,6 +70,22 @@ export function decodeStateValue(raw: string): StateValue | null {
     return null;
   }
   return { version, timestamp };
+}
+
+/**
+ * Mint a fresh state value whose timestamp is strictly greater than the previous
+ * one, so a re-mint inside the same millisecond (or a backward clock step) still
+ * differs from the current value. `prevRaw` is the current wire value (the
+ * client's in-memory mirror, or the server's inbound header/cookie) or null; its
+ * timestamp is the floor. Shared by both seats so the monotonic guard lives once.
+ */
+export function mintStateValue(
+  version: string,
+  prevRaw: string | null,
+): string {
+  const prevTs = prevRaw ? (decodeStateValue(prevRaw)?.timestamp ?? 0) : 0;
+  const ts = Math.max(Date.now(), prevTs + 1);
+  return encodeStateValue(version, ts);
 }
 
 /**

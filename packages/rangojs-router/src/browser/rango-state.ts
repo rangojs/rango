@@ -27,7 +27,7 @@
 import {
   DEFAULT_STATE_COOKIE_PREFIX,
   decodeStateValue,
-  encodeStateValue,
+  mintStateValue,
   serializeStateCookie,
 } from "./cookie-name.js";
 
@@ -102,13 +102,10 @@ function writeCookie(name: string, value: string): void {
 }
 
 // Mint a fresh value: same version, a timestamp strictly greater than the
-// current one. max(now, prev+1) guarantees the new value differs from the
-// current one even for two mints inside the same millisecond.
+// current one (the in-memory mirror is the previous value). The monotonic guard
+// lives in mintStateValue, shared with the server seat.
 function mintValue(): string {
-  const prev = mirror ? decodeStateValue(mirror) : null;
-  const prevTs = prev?.timestamp ?? 0;
-  const ts = Math.max(Date.now(), prevTs + 1);
-  return encodeStateValue(currentVersion, ts);
+  return mintStateValue(currentVersion, mirror);
 }
 
 /**

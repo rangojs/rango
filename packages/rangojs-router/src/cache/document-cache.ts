@@ -12,7 +12,7 @@
  */
 
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
-import { KEEP_CACHE_HEADER } from "../browser/cookie-name.js";
+import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {
   getRequestContext,
   type RequestContext,
@@ -128,10 +128,7 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
   // one value and even rolling a rotated client back to a prior one. The
   // x-rango-keep-cache directive header is the mirror image: a replayed "keep"
   // would suppress invalidation for every replayed client. Refuse both.
-  if (
-    response.headers.has("Set-Cookie") ||
-    response.headers.has(KEEP_CACHE_HEADER)
-  ) {
+  if (hasPerClientSignal(response.headers)) {
     return null;
   }
 

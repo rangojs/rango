@@ -41,10 +41,8 @@ describe("keepClientCache() (server seat)", () => {
       keepClientCache();
       keepClientCache();
     });
-    // `.set` keeps a single header; getSetCookie is unrelated, so assert the
-    // header value is the single "1".
+    // `.set` (not `.append`) keeps a single header regardless of call count.
     expect(directive(ctx)).toBe("1");
-    expect(ctx.res.headers.get("x-rango-keep-cache")).toBe("1");
   });
 
   it("throws inside a cache-exec boundary (the cookies() guard)", () => {

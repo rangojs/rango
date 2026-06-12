@@ -1,27 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NavigationStore } from "../browser/types.js";
-
-function makeJar(initial: Record<string, string> = {}) {
-  const store: Record<string, string> = { ...initial };
-  return {
-    jar: {
-      get cookie(): string {
-        return Object.entries(store)
-          .map(([k, v]) => `${k}=${v}`)
-          .join("; ");
-      },
-      set cookie(str: string) {
-        const seg = str.split(";")[0];
-        const eq = seg.indexOf("=");
-        if (eq < 0) return;
-        store[seg.slice(0, eq).trim()] = seg.slice(eq + 1);
-      },
-    },
-    set: (k: string, v: string) => {
-      store[k] = v;
-    },
-  };
-}
+import { makeJar } from "./cookie-jar-mock.js";
 
 const NAME = "rango-state_router_0";
 
