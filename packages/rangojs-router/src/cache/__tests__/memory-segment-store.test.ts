@@ -780,4 +780,28 @@ describe("MemorySegmentCacheStore", () => {
       expect(await store.getResponse("doc:clear-test")).toBeNull();
     });
   });
+
+  describe("putResponse strips per-client signals (Finding #3)", () => {
+    it("does not persist Set-Cookie or x-rango-keep-cache, but keeps other headers", async () => {
+      const store = new MemorySegmentCacheStore();
+      const response = new Response("body", {
+        headers: {
+          "Content-Type": "text/x-component",
+          "Set-Cookie": "rango-state_router_0=v1:123; Path=/",
+          "x-rango-keep-cache": "1",
+        },
+      });
+
+      await store.putResponse("doc:strip-test", response, 60);
+      const cached = await store.getResponse("doc:strip-test");
+
+      expect(cached).not.toBeNull();
+      expect(cached!.response.headers.getSetCookie()).toEqual([]);
+      expect(cached!.response.headers.has("x-rango-keep-cache")).toBe(false);
+      // Unrelated headers survive.
+      expect(cached!.response.headers.get("content-type")).toBe(
+        "text/x-component",
+      );
+    });
+  });
 });

@@ -121,6 +121,19 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
     return null;
   }
 
+  // Never cache a per-client signal into a SHARED response store. A Set-Cookie
+  // (e.g. a rango state rotation from invalidateClientCache(), or any cookie a
+  // loader set) would be replayed to every client on a hit — pinning them to
+  // one value and even rolling a rotated client back to a prior one. The
+  // x-rango-keep-cache directive header is the mirror image: a replayed "keep"
+  // would suppress invalidation for every replayed client. Refuse both.
+  if (
+    response.headers.has("Set-Cookie") ||
+    response.headers.has("x-rango-keep-cache")
+  ) {
+    return null;
+  }
+
   const cacheControl = response.headers.get("Cache-Control");
   return parseCacheControl(cacheControl);
 }

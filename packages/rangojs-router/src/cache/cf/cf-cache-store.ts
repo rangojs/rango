@@ -1688,8 +1688,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // L2: persist to KV (KV requires expirationTtl >= 60s)
       if (this.kv && this.waitUntil && totalTtl >= 60) {
         const kvKey = this.toKVKey(`doc:${key}`);
+        // Defense-in-depth (Finding #3): the KV envelope is replayed raw to
+        // every client, so never persist a per-client signal (a Set-Cookie
+        // rotation, or the x-rango-keep-cache directive) into it.
         const headersArray: [string, string][] = [];
-        response.headers.forEach((v, k) => headersArray.push([k, v]));
+        response.headers.forEach((v, k) => {
+          const lower = k.toLowerCase();
+          if (lower === "set-cookie" || lower === "x-rango-keep-cache") return;
+          headersArray.push([k, v]);
+        });
         // Read body as ArrayBuffer and encode to base64 to preserve binary payloads
         const bodyBuf = kvBody
           ? await new Response(kvBody).arrayBuffer()

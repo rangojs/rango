@@ -292,8 +292,14 @@ export class MemorySegmentCacheStore<
       // failure must degrade to a no-op (entry simply not cached), never throw
       // up and fail the request.
       const body = await response.clone().arrayBuffer();
+      // Defense-in-depth (Finding #3): never persist a per-client signal into a
+      // shared store. The document-cache chokepoint already refuses these, but
+      // putResponse is public and reachable directly (e.g. tag-revalidation
+      // re-puts), so strip them here too.
       const headers: [string, string][] = [];
       response.headers.forEach((value, name) => {
+        const lower = name.toLowerCase();
+        if (lower === "set-cookie" || lower === "x-rango-keep-cache") return;
         headers.push([name, value]);
       });
 
