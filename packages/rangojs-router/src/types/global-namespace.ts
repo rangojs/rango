@@ -97,7 +97,17 @@ export type DefaultHandlerRouteMap = keyof Rango.GeneratedRouteMap extends never
 export type DefaultEnv = keyof Rango.Env extends never ? unknown : Rango.Env;
 
 /**
- * Default variables type - uses global augmentation if available, Record<string, any> otherwise
+ * Variables type backing the string-key `ctx.get` / `ctx.set` overloads.
+ *
+ * Uses `Rango.Vars` augmentation when present; otherwise falls back to
+ * `Record<string, any>` so an un-augmented app can use string-key vars with
+ * zero config -- at the cost of a typo'd key being silently `any`.
+ *
+ * This `any` fallback is deliberate (see #561) and is an intentional asymmetry
+ * with `DefaultEnv` above, which falls back to `unknown`: env bindings are
+ * platform-critical and should be registered, so a forgotten binding is made a
+ * compile error; vars are ad-hoc and middleware-set, so the zero-config path
+ * wins. Augment `Rango.Vars` for type-safe keys.
  */
 export type DefaultVars = keyof Rango.Vars extends never
   ? Record<string, any>
