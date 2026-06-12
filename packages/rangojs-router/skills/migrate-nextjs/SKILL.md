@@ -317,9 +317,11 @@ NOT cache invalidation — it is `revalidate()`, controlling which segments
 re-rendering:
 
 ```typescript
+import { updateBlog } from "./actions/blog";
+
 // Re-run this layout when a blog action fires
 layout(BlogLayout, () => [
-  revalidate(({ actionId }) => actionId?.includes("updateBlog") || undefined),
+  revalidate((ctx) => ctx.isAction(updateBlog) || undefined),
   path("/blog/:slug", BlogPost, { name: "blogPost" }),
 ]);
 

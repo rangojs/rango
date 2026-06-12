@@ -246,10 +246,12 @@ the producer route and the consumer child segments.
 
 ```typescript
 // revalidation-contracts.ts
+import * as CheckoutActions from "./actions/checkout";
+
 // Defer (|| undefined), not ?? false: a hard `false` short-circuits the chain,
 // so when the same segment composes multiple contracts the later ones never run.
-export const revalidateCheckoutData = ({ actionId }) =>
-  actionId?.includes("src/actions/checkout.ts#") || undefined;
+export const revalidateCheckoutData = (ctx) =>
+  ctx.isAction(CheckoutActions) || undefined;
 
 path("/checkout", CheckoutPage, { name: "checkout" }, () => [
   revalidate(revalidateCheckoutData), // producer (route handler) reruns
