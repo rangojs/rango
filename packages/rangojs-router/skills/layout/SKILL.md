@@ -202,8 +202,10 @@ layout(<ShopLayout />, () => [
 ])
 
 // Or revalidate based on conditions
+import * as CartActions from "./actions/cart";
+
 layout(<CartLayout />, () => [
-  revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
 
   path("/cart", CartPage, { name: "cart" }),
 ])
@@ -221,8 +223,9 @@ them on both producer and consumer segments:
 
 ```typescript
 // revalidation-contracts.ts
-export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#addToCart") || undefined;
+import { addToCart } from "./actions/cart";
+
+export const revalidateCartData = (ctx) => ctx.isAction(addToCart) || undefined;
 ```
 
 ```typescript
@@ -242,9 +245,10 @@ You can also package them as importable handoff helpers:
 ```typescript
 // revalidation-contracts.ts
 import { revalidate } from "@rangojs/router";
+import * as AuthActions from "./actions/auth";
 
-export const revalidateAuthData = ({ actionId }) =>
-  actionId?.includes("src/actions/auth.ts#") || undefined;
+export const revalidateAuthData = (ctx) =>
+  ctx.isAction(AuthActions) || undefined;
 export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 ```
 
@@ -262,6 +266,7 @@ layout(<ShellLayout />, () => [
 ```typescript
 import { urls } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+import * as CartActions from "./actions/cart";
 
 function ShopLayout() {
   return (
@@ -291,7 +296,7 @@ export const shopPatterns = urls(({ path, layout, parallel, loader, revalidate }
   }, () => [
     // Layout loaders
     loader(CartLoader, () => [
-      revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
     ]),
 
     // Parallel routes

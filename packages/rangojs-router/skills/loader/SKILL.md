@@ -249,6 +249,8 @@ export const OrderLoader = createLoader(async (ctx) => {
 Add caching or revalidation to specific loaders:
 
 ```typescript
+import * as CartActions from "./actions/cart";
+
 path("/product/:slug", ProductPage, { name: "product" }, () => [
   // Cached loader
   loader(ProductLoader, () => [cache({ ttl: 300 })]),
@@ -261,7 +263,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
   // Loader that revalidates after cart actions (defer otherwise — keeps the
   // permissive loader defaults for navigation and other actions intact)
   loader(CartLoader, () => [
-    revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
   ]),
 ]);
 ```
@@ -781,10 +783,12 @@ export const CartLoader = createLoader(async (ctx) => {
 });
 
 // urls.tsx — register loaders in the DSL
+import * as CartActions from "./actions/cart";
+
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [
     loader(CartLoader, () => [
-      revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
     ]),
 
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [

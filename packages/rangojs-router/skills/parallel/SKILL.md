@@ -330,6 +330,8 @@ parallel({
 Control when parallel routes revalidate:
 
 ```typescript
+import * as CartActions from "./actions/cart";
+
 parallel(
   {
     "@cart": () => <CartSummary />,
@@ -337,7 +339,7 @@ parallel(
   () => [
     loader(CartLoader),
     // Revalidate when cart actions occur
-    revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
   ]
 )
 ```
@@ -360,8 +362,10 @@ the parallel consumer:
 
 ```typescript
 // revalidation-contracts.ts
-export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#") || undefined;
+import * as CartActions from "./actions/cart";
+
+export const revalidateCartData = (ctx) =>
+  ctx.isAction(CartActions) || undefined;
 
 layout(CartLayout, () => [
   revalidate(revalidateCartData), // producer reruns
@@ -429,6 +433,7 @@ function MyLayout() {
 ```typescript
 import { urls } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+import * as CartActions from "./actions/cart";
 
 function ShopLayout() {
   return (
@@ -479,7 +484,7 @@ export const shopPatterns = urls(({
       () => [
         loader(CartLoader),
         loading(<CartSkeleton />),
-        revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
       ]
     ),
 

@@ -471,6 +471,7 @@ cache({ store: checkoutCache }, () => [
 ```typescript
 import { urls } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import * as CartActions from "./actions/cart";
 
 // Custom store for checkout (short TTL)
 const checkoutCache = new MemorySegmentCacheStore({
@@ -499,7 +500,7 @@ export const urlpatterns = urls(({ path, layout, cache, loader, revalidate }) =>
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
       loader(ProductLoader, () => [cache({ ttl: 120 })]),
       loader(CartLoader, () => [
-        revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
       ]),
     ]),
   ]),
