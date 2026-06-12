@@ -160,6 +160,20 @@ export function createServerActionBridge(
     // Whether the action's response carried the keepClientCache() directive.
     // Set when the response arrives; gates the deferred invalidation below.
     let keepCache = false;
+    // Single deferred invalidation + fence release, run exactly ONCE however the
+    // action terminates (normal, redirect, error, abort, intercept, concurrent).
+    // This replaces main's eager clear at action start: every directive-free
+    // action invalidates once; keepClientCache() suppresses only the automatic
+    // invalidation, so a concurrent directive-free action still invalidates via
+    // its own latch. Latched so the finally AND the early SPA-redirect returns
+    // (whose Flight stream never settles) can both call it safely.
+    let actionFinalized = false;
+    const finalizeAction = (): void => {
+      if (actionFinalized) return;
+      actionFinalized = true;
+      if (!keepCache) store.markCacheAsStaleAndBroadcast();
+      exitActionFence();
+    };
     try {
       const segmentState = store.getSegmentState();
 
@@ -265,6 +279,10 @@ export function createServerActionBridge(
         if (redirect && redirect !== "blocked" && !handle.signal.aborted) {
           log("action simple redirect", { url: redirect.url });
           handle.complete(undefined);
+          // This path returns a never-settling promise, so the finally never
+          // runs: invalidate + release the fence here (the mutation committed
+          // and we're navigating away). Latched, so the finally is a no-op.
+          finalizeAction();
           await dispatchRedirect(redirect.url);
           return new Promise<Response>(() => {});
         }
@@ -289,6 +307,9 @@ export function createServerActionBridge(
           log("action router id mismatch, reloading to re-sync");
           handle.complete(undefined);
           resolveStreamComplete();
+          // Never-settling return: release the fence before the reload (the
+          // reload resets module state anyway, but stay balanced). Latched.
+          finalizeAction();
           window.location.reload();
           return new Promise<Response>(() => {});
         }
@@ -554,8 +575,9 @@ export function createServerActionBridge(
           handle.clearConsolidation();
 
           if (scenario.historyKeyChanged) {
+            // Invalidation is deferred to finalizeAction(); here we only trigger
+            // the revalidation refetch of the new route (suppressed on keep).
             if (!scenario.onInterceptRoute && !keepCache) {
-              store.markCacheAsStaleAndBroadcast();
               refetchRoute().catch((error) => {
                 if (isBackgroundSuppressible(error)) return;
                 console.error(
@@ -567,9 +589,10 @@ export function createServerActionBridge(
             break;
           }
 
-          // Same history key but different pathname - safe to refetch current route
+          // Same history key but different pathname - safe to refetch current
+          // route. Invalidation is deferred to finalizeAction(); here we only
+          // trigger the revalidation refetch (suppressed on keep).
           if (!keepCache) {
-            store.markCacheAsStaleAndBroadcast();
             await refetchRoute({
               interceptSourceUrl: store.getInterceptSourceUrl(),
             });
@@ -582,7 +605,7 @@ export function createServerActionBridge(
             `[Browser] Missing segments after action (HMR detected), refetching...`,
           );
           await refetchRoute({ interceptSourceUrl });
-          if (!keepCache) store.broadcastCacheInvalidation();
+          // Invalidation (incl. broadcast) deferred to finalizeAction().
           break;
         }
 
@@ -603,7 +626,7 @@ export function createServerActionBridge(
             segments: segmentsToSend,
             interceptSourceUrl,
           });
-          if (!keepCache) store.broadcastCacheInvalidation();
+          // Invalidation (incl. broadcast) deferred to finalizeAction().
           break;
         }
 
@@ -667,9 +690,9 @@ export function createServerActionBridge(
             fullSegments,
             currentHandleData,
           );
-          // Deferred invalidation: reproduces the old post-commit broadcast,
-          // suppressed when the action called keepClientCache().
-          if (!keepCache) store.markCacheAsStaleAndBroadcast();
+          // Invalidation deferred to finalizeAction() (runs after this caches
+          // the fresh segments), suppressed when the action called
+          // keepClientCache().
           break;
         }
       }
@@ -677,9 +700,11 @@ export function createServerActionBridge(
       handle.complete(returnData);
       return returnData;
     } finally {
-      // Lower this action's fence reference. The fence stays up until every
-      // concurrent action has resolved (refcount hits zero).
-      exitActionFence();
+      // The single deferred invalidation + fence release for this action. Runs
+      // for every terminal that settles (normal, navigated-away, error, abort,
+      // intercept, concurrent); the SPA-redirect paths above already ran it.
+      // Latched, so it fires exactly once.
+      finalizeAction();
       handle[Symbol.dispose]();
     }
   }
