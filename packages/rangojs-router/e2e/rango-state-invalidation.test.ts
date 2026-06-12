@@ -215,6 +215,68 @@ async function testClientSeatRotatesState(
   expect(Number(afterTimestamp)).toBeGreaterThan(Number(initialTimestamp));
 }
 
+async function testCookieClearedMintsFreshAndMisses(
+  page: Page,
+  url: (path: string) => string,
+) {
+  await page.goto(url("/loader-cookie/action-sets-cookie"));
+  await waitForHydration(page);
+
+  const initialState = await readRangoState(page);
+  expect(initialState).toBeTruthy();
+  const [initialVersion, initialTimestamp] = initialState!.split(":");
+
+  // A confirming read: navigate once so getRangoState observes the cookie
+  // present and marks it cookie-backed. Only then is a later external clear
+  // detectable (present -> absent). This mirrors real usage, where the app
+  // reads the value on every navigation/prefetch.
+  await page.click('[data-testid="nav-home"]');
+  await expect(page).toHaveURL(/\/$/);
+
+  // The session cookie is cleared mid-session (the user wipes site data, or a
+  // privacy tool drops it). Expire whichever rango-state cookie the app wrote.
+  await page.evaluate(() => {
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      const eq = trimmed.indexOf("=");
+      const key = eq >= 0 ? trimmed.slice(0, eq) : trimmed;
+      if (key.startsWith("rango-state")) {
+        document.cookie = `${key}=; Path=/; Max-Age=0`;
+      }
+    }
+  });
+
+  // The popstate revalidation must fetch the RESTORED route with the freshly
+  // minted value (the old Vary key is a miss). Scope to that route's partial
+  // request so a stray hover/viewport prefetch can't win the race, and bound the
+  // wait so a revalidation regression fails fast instead of hanging the suite.
+  const revalidation = page.waitForRequest(
+    (req) =>
+      req.url().includes("/loader-cookie/action-sets-cookie") &&
+      req.url().includes("_rsc_partial"),
+    { timeout: 10000 },
+  );
+
+  // Back to the prior route. The popstate restore reads getRangoState first,
+  // which detects the clear, mints fresh, writes the cookie, and (via the
+  // jar-divergence observer) marks the history cache stale -> SWR revalidates.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/loader-cookie\/action-sets-cookie$/);
+
+  // present -> absent forces a fresh mint: a new value (so every Vary-keyed
+  // cache entry misses), the same build version, a strictly newer timestamp.
+  const mintedState = await readRangoState(page);
+  expect(mintedState).toBeTruthy();
+  expect(mintedState).not.toBe(initialState);
+  const [mintedVersion, mintedTimestamp] = mintedState!.split(":");
+  expect(mintedVersion).toBe(initialVersion);
+  expect(Number(mintedTimestamp)).toBeGreaterThan(Number(initialTimestamp));
+
+  // The revalidation carried the minted value, not the cleared one.
+  const sentHeader = (await revalidation).headers()["x-rango-state"];
+  expect(sentHeader).toBe(mintedState);
+}
+
 test.describe("rango-state invalidation lifecycle (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -253,6 +315,12 @@ test.describe("rango-state invalidation lifecycle (dev)", () => {
     page,
   }) => {
     await testClientSeatRotatesState(page, f.url);
+  });
+
+  test("clearing the rango-state cookie mid-session mints fresh and misses", async ({
+    page,
+  }) => {
+    await testCookieClearedMintsFreshAndMisses(page, f.url);
   });
 });
 
@@ -296,5 +364,11 @@ test.describe("rango-state invalidation lifecycle (production)", () => {
     page,
   }) => {
     await testClientSeatRotatesState(page, f.url);
+  });
+
+  test("clearing the rango-state cookie mid-session mints fresh and misses", async ({
+    page,
+  }) => {
+    await testCookieClearedMintsFreshAndMisses(page, f.url);
   });
 });

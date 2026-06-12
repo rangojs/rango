@@ -27,6 +27,7 @@
 import {
   DEFAULT_STATE_COOKIE_PREFIX,
   decodeStateValue,
+  getRawCookieValue,
   mintStateValue,
   serializeStateCookie,
 } from "./cookie-name.js";
@@ -80,14 +81,8 @@ function readCookie(name: string): CookieRead {
   } catch {
     return { readable: false, value: null };
   }
-  const target = name + "=";
-  for (const part of raw.split(";")) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith(target)) {
-      return { readable: true, value: trimmed.slice(target.length) };
-    }
-  }
-  return { readable: true, value: null };
+  // Shared parser with the server seat so both read the same jar entry.
+  return { readable: true, value: getRawCookieValue(raw, name) };
 }
 
 function writeCookie(name: string, value: string): void {

@@ -412,20 +412,42 @@ client-side. The actual conclusion: the eager _clear_ must become an eager
   per-response and independent of fence _lifetime_: a concurrent directive-free
   action still performs its own full invalidation, which overrides a sibling's
   keep — see the Case table.
+  - _Two repair refetches are exempt from "no revalidation refetch."_ The
+    `hmr-missing` and `consolidation-needed` terminals refetch **ungated on
+    keepCache**: they repair a missing/partial segment tree rather than
+    revalidate, and a keep action that resolves last must discharge a
+    directive-free sibling's consolidation duty (gating would break the
+    keep-overlapping-directive-free row). The accepted edge: an _all-keep_
+    concurrent batch still consolidates here with no directive-free sibling, a
+    refetch the directives nominally said to skip. It is bounded (one repair),
+    never serves stale UI, and is preferred over dropping a real sibling's
+    consolidation.
+  - _End-state delta on three rare terminals._ For `navigated-away`
+    (same-key), `hmr-missing`, and `consolidation-needed`, the awaited
+    `refetchRoute` caches fresh segments and the latched `finalizeAction` then
+    re-marks them stale, where main left those entries fresh. The cost is at
+    most one redundant background SWR refetch on the next popstate to a
+    rarely-hit entry — never a stale view. The single-latch shape structurally
+    forces this ordering; it is accepted over reordering the fence release
+    around each awaited refetch.
 
 **Every terminal, not just the happy path.** Main's eager clear ran for _every_
 action at start, so the guarantee was "however an action ends, it has already
 invalidated." Deferring to the response must preserve that across _all_ exits —
 not only the `normal` and `navigated-away` terminals, but redirect (both the
 Flight `metadata.redirect` and the `X-RSC-Redirect` simple-redirect, whose
-Flight stream never settles so a finally after the await never runs), error,
+Flight stream never settles so a finally after the await never runs), the
+`X-RSC-Reload` version-mismatch terminal (`handleReloadHeader` navigates away
+via the same never-settling promise — the third terminal whose finally never
+runs, so finalizeAction must be called in its `onReload` callback), error,
 abort, the intercept `navigated-away` branch, and `concurrent-skip` /
 `consolidation`. Implement it as **one latched finalization** — invalidate once
 unless keep, then release the fence — invoked from the action's `finally` _and_
-explicitly before the never-settling SPA-redirect returns. A per-branch gate at
+explicitly before each never-settling navigate-away return (simple-redirect,
+router-id mismatch, version-mismatch reload). A per-branch gate at
 each terminal (the shape that first shipped) silently drops the redirect/error/
-abort/intercept/concurrent paths and leaks the fence on simple-redirect; the
-single latch is the only shape that holds the invariant.
+abort/intercept/concurrent paths and leaks the fence on the never-settling
+terminals; the single latch is the only shape that holds the invariant.
 
 The deferral is not merely neutral — it removes a transient pre-commit refresh.
 Be accurate about today's behavior, because it broadcasts _twice_, not once:
@@ -444,14 +466,14 @@ segments are cached, then rotate and broadcast). In-flight prefetches, aborted
 today, may instead complete under the fence; they are kept or discarded by the
 response decision and never served before it.
 
-| Case                                                                | Behavior                                                                                                                                                                                                                                                                     |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Action without the directive                                        | full invalidation at response — same end state as today                                                                                                                                                                                                                      |
-| Action calls `keepClientCache()`                                    | no rotation, no wipe, no broadcast, no revalidation refetch; this action's fence reference is dropped                                                                                                                                                                        |
-| Action calls both `keepClientCache()` and `invalidateClientCache()` | invalidation wins, with no special-casing: the directive suppresses only the _automatic_ invalidation, while the explicit `Set-Cookie` still lands in the jar and the divergence observer does the rest                                                                      |
-| `keepClientCache()` action overlapping a directive-free action      | the directive-free action's full invalidation still fires at _its_ response; keep protects against this action's own automatic invalidation, not against a concurrent real mutation. The keep row's "no rotation/wipe/broadcast" is a per-action guarantee, not a global one |
-| `keepClientCache()` outside an action request                       | inert no-op (dev warning): there is no automatic invalidation to suppress                                                                                                                                                                                                    |
-| Progressive-enhancement form post (no JS)                           | inert: the response is a fresh full document; no client cache machinery is in play                                                                                                                                                                                           |
+| Case                                                                | Behavior                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Action without the directive                                        | full invalidation at response — same end state as today                                                                                                                                                                                                                                                                                                                      |
+| Action calls `keepClientCache()`                                    | no rotation, no wipe, no broadcast, no _revalidation_ refetch; this action's fence reference is dropped. Exception: the `hmr-missing`/`consolidation-needed` _repair_ refetches stay ungated on keep (they fix a missing/partial tree, and a keep action resolving last must discharge a directive-free sibling's consolidation) — see the keep bullet under fence-and-defer |
+| Action calls both `keepClientCache()` and `invalidateClientCache()` | invalidation wins, with no special-casing: the directive suppresses only the _automatic_ invalidation, while the explicit `Set-Cookie` still lands in the jar and the divergence observer does the rest                                                                                                                                                                      |
+| `keepClientCache()` action overlapping a directive-free action      | the directive-free action's full invalidation still fires at _its_ response; keep protects against this action's own automatic invalidation, not against a concurrent real mutation. The keep row's "no rotation/wipe/broadcast" is a per-action guarantee, not a global one                                                                                                 |
+| `keepClientCache()` outside an action request                       | inert no-op (dev warning): there is no automatic invalidation to suppress                                                                                                                                                                                                                                                                                                    |
+| Progressive-enhancement form post (no JS)                           | inert: the response is a fresh full document; no client cache machinery is in play                                                                                                                                                                                                                                                                                           |
 
 This touches action execution semantics, so it is **semantic-matrix
 territory**: the matrix must stay green for directive-free actions (the
@@ -714,8 +736,10 @@ The resulting matrix — every row at least as strong as today:
 | Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                   |
 
 Two boundaries to keep the claims precise: the observer is pull-based (it
-fires at a tab's next fetch, not instantly — same as the value sync it
-replaces), and it marks stale without refreshing the current view; the
+fires at a tab's next jar read — a navigation/prefetch fetch or a popstate
+restore, which reads `getRangoState()` before the stale check — not instantly,
+same as the value sync it replaces), and it marks stale without refreshing the
+current view; the
 immediate-auto-refresh behavior remains exclusive to the `BroadcastChannel`
 path and its `crossTabAutoRefresh` gate. Neither is a regression — today's
 `storage` event refreshed nothing either.
@@ -800,13 +824,24 @@ too short and rested on an unverified platform claim:
   entry and replay it: (1) `MemorySegmentCacheStore` — the built-in store for
   Node/non-CF apps — copies headers via `response.headers.forEach`
   (`memory-segment-store.ts:295-297`); (2) the CF **KV/L2** envelope captures all
-  headers (`cf-cache-store.ts:1691-1692`) and `kvGetResponse` replays them raw
-  with no strip (`:2852`); (3) the CF **L1** (the user-space Workers Cache API)
+  headers, so `putResponse` filters per-client signals out of the envelope on
+  the write side; (3) the CF **L1** (the user-space Workers Cache API)
   `cache.put` is _believed_ to throw on a `Set-Cookie` response, so an L1 entry
   fails to store — but that is **platform behavior assumed, not verified
   in-repo**, so don't lean on it. Make the in-repo strip the canonical guarantee
   for all three; don't make Cloudflare correctness depend on the runtime
   declining `Set-Cookie`.
+- **Read side: anything found on read is contamination.** Because every write
+  both refuses (`shouldCacheResponse`) and strips, no _legitimate_ stored entry
+  carries a per-client signal — so any a read encounters came from a pre-fix
+  build or a consumer-pinned `version` namespace that outlived the write fix.
+  Two CF read chokepoints strip defensively so such an entry can never replay
+  one client's `Set-Cookie` to another: `toClientResponse` (the L1 serve path)
+  and the `kvGetResponse` `hd` filter (which also cleans the array
+  `promoteResponseToL1` re-seeds L1 from). The `hd` filter lives _inside_ the
+  corrupt-envelope `try`, so a malformed `hd` evicts rather than throwing
+  through. All sites share `stripPerClientSignals`/`isPerClientSignalHeader`
+  from `cookie-name.ts` (one `PER_CLIENT_SIGNAL_HEADERS` source).
 
 ## Degradation: same-tab experience never degrades
 
