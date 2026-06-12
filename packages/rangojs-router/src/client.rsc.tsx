@@ -50,7 +50,7 @@ export { href } from "./href-client.js";
 // Mount context re-exports (useMount is client-only, but MountContext can be referenced)
 export { MountContext } from "./browser/react/mount-context.js";
 
-// Note: useNavigation, useAction, useClientCache are NOT re-exported here
+// Note: useNavigation and useAction are NOT re-exported here
 // because they use client-side state and should only be used in client components
 
 // Handle API - for accumulating data across route segments

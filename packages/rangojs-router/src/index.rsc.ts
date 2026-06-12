@@ -184,6 +184,7 @@ export const getRequestContext: <
 export {
   cookies,
   headers,
+  invalidateClientCache,
   type CookieStore,
   type Cookie,
   type ReadonlyHeaders,

@@ -683,31 +683,42 @@ ProductState.delete();
 | `.write()`  | yes (replace this slot) | no                                | throws              |
 | `.delete()` | yes (remove this slot)  | no                                | throws              |
 
-## Cache Hooks
+## Cache Control
 
-### useClientCache()
+### invalidateClientCache()
 
-Manually control client-side navigation cache:
+Force the client's caches to miss after a mutation the router can't see (a REST
+call, a WebSocket push, a login). It is a plain function, not a hook, so it works
+from module-level callbacks too. Imported from the root entry `@rangojs/router`,
+it is selected by export conditions: in a client component it marks the caches
+stale immediately; from a handler/server component it writes a rotated
+`Set-Cookie` for the responding client.
 
 ```tsx
 "use client";
-import { useClientCache } from "@rangojs/router/client";
+import { invalidateClientCache } from "@rangojs/router";
 
 function SaveButton() {
-  const { clear } = useClientCache();
-
   const handleSave = async () => {
     await fetch("/api/data", {
       method: "POST",
       body: JSON.stringify(data),
     });
 
-    // Invalidate cache after mutation
-    clear();
+    // Invalidate the client's caches after the mutation
+    invalidateClientCache();
   };
 
   return <button onClick={handleSave}>Save</button>;
 }
+```
+
+A module-level subscription works the same way (no component needed):
+
+```ts
+import { invalidateClientCache } from "@rangojs/router";
+
+socket.on("catalog-updated", () => invalidateClientCache());
 ```
 
 **Use cases**: REST API mutations, WebSocket updates, non-RSC data changes.
@@ -892,22 +903,22 @@ See `/links` for the full URL generation guide. `ctx.reverse()` is server-only; 
 
 ## Hook Summary
 
-| Hook                  | Purpose                           | Returns                                                            |
-| --------------------- | --------------------------------- | ------------------------------------------------------------------ |
-| `useParams()`         | Route params                      | `Readonly<T>` (default `Record<string, string>`) or selected value |
-| `usePathname()`       | Current pathname                  | `string`                                                           |
-| `useSearchParams()`   | URL search params                 | `ReadonlyURLSearchParams`                                          |
-| `useHref()`           | Mount-aware href                  | `(path) => string`                                                 |
-| `useMount()`          | Current include() mount path      | `string`                                                           |
-| `useReverse()`        | Local reverse for imported routes | `(name, params?, search?) => string`                               |
-| `useNavigation()`     | Reactive navigation state         | state, location, isStreaming                                       |
-| `useRouter()`         | Stable router actions             | push, replace, refresh, prefetch, back, forward                    |
-| `useSegments()`       | URL path & segment IDs            | path, segmentIds, location                                         |
-| `useLinkStatus()`     | Link pending state                | { pending }                                                        |
-| `useLoader()`         | Loader data (strict)              | data, isLoading, error                                             |
-| `useFetchLoader()`    | Loader with on-demand fetch       | data, load, isLoading                                              |
-| `useRefreshLoaders()` | Refresh cross-loader group(s)     | `() => (groups: string \| string[]) => Promise<void>`              |
-| `useHandle()`         | Accumulated handle data           | T (handle type)                                                    |
-| `useAction()`         | Server action state               | state, error, result                                               |
-| `useLocationState()`  | History state (persists or flash) | T \| undefined                                                     |
-| `useClientCache()`    | Cache control                     | { clear }                                                          |
+| Hook                      | Purpose                                                        | Returns                                                            |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `useParams()`             | Route params                                                   | `Readonly<T>` (default `Record<string, string>`) or selected value |
+| `usePathname()`           | Current pathname                                               | `string`                                                           |
+| `useSearchParams()`       | URL search params                                              | `ReadonlyURLSearchParams`                                          |
+| `useHref()`               | Mount-aware href                                               | `(path) => string`                                                 |
+| `useMount()`              | Current include() mount path                                   | `string`                                                           |
+| `useReverse()`            | Local reverse for imported routes                              | `(name, params?, search?) => string`                               |
+| `useNavigation()`         | Reactive navigation state                                      | state, location, isStreaming                                       |
+| `useRouter()`             | Stable router actions                                          | push, replace, refresh, prefetch, back, forward                    |
+| `useSegments()`           | URL path & segment IDs                                         | path, segmentIds, location                                         |
+| `useLinkStatus()`         | Link pending state                                             | { pending }                                                        |
+| `useLoader()`             | Loader data (strict)                                           | data, isLoading, error                                             |
+| `useFetchLoader()`        | Loader with on-demand fetch                                    | data, load, isLoading                                              |
+| `useRefreshLoaders()`     | Refresh cross-loader group(s)                                  | `() => (groups: string \| string[]) => Promise<void>`              |
+| `useHandle()`             | Accumulated handle data                                        | T (handle type)                                                    |
+| `useAction()`             | Server action state                                            | state, error, result                                               |
+| `useLocationState()`      | History state (persists or flash)                              | T \| undefined                                                     |
+| `invalidateClientCache()` | Force client caches to miss (function, not a hook; root entry) | `void`                                                             |

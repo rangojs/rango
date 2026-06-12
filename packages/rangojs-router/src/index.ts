@@ -218,6 +218,14 @@ export function headers(): never {
 }
 
 /**
+ * Client implementation of `invalidateClientCache()`. Unlike the server-only
+ * stubs above this is a REAL function under the `default` condition (it marks
+ * the client's caches stale); the `react-server` condition (index.rsc.ts)
+ * selects the server implementation that writes a rotated `Set-Cookie`.
+ */
+export { invalidateClientCache } from "./browser/invalidate-client-cache.js";
+
+/**
  * Error-throwing stub for server-only `createReverse` function.
  */
 export function createReverse(): never {

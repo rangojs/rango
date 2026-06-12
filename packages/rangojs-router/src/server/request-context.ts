@@ -13,6 +13,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
+import {
+  decodeStateValue,
+  encodeStateValue,
+  serializeStateCookie,
+} from "../browser/cookie-name.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type {
@@ -103,6 +108,8 @@ export interface RequestContext<
   setStatus(status: number): void;
   /** @internal Set status bypassing cache-exec guard (for framework error handling) */
   _setStatus(status: number): void;
+  /** @internal Rotate the rango state cookie (server seat of invalidateClientCache). */
+  _rotateStateCookie(): void;
 
   /**
    * Access loader data or push handle data.
@@ -401,6 +408,7 @@ export type PublicRequestContext<
   | "_metricsStore"
   | "_basename"
   | "_setStatus"
+  | "_rotateStateCookie"
   | "_variables"
   | "_classifiedRoute"
   | "res"
@@ -540,6 +548,10 @@ export interface CreateRequestContextOptions<TEnv> {
   executionContext?: ExecutionContext;
   /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */
   themeConfig?: ResolvedThemeConfig | null;
+  /** Resolved rango state cookie name, for the server seat of invalidateClientCache(). */
+  stateCookieName?: string;
+  /** Build version, used as the prefix of a server-rotated rango state value. */
+  version?: string;
 }
 
 /**
@@ -564,8 +576,12 @@ export function createRequestContext<TEnv>(
     cacheProfiles,
     executionContext,
     themeConfig,
+    stateCookieName,
+    version: stateVersion,
   } = options;
   const cookieHeader = request.headers.get("Cookie");
+  // One Set-Cookie per request no matter how many invalidateClientCache() calls.
+  let rangoStateRotated = false;
   let parsedCookies: Record<string, string> | null = null;
 
   // Create stub response for collecting headers/cookies.
@@ -753,6 +769,28 @@ export function createRequestContext<TEnv>(
       assertNotInsideCacheExec(ctx, "header");
       assertNotInsideCacheScopeALS("header");
       stubResponse.headers.set(name, value);
+    },
+
+    // Rotate the rango state cookie for the responding client (the server seat
+    // of invalidateClientCache). Writes ONE Set-Cookie per request with the
+    // value {version}:{timestamp}; the `:` stays raw (the cookie-name.ts
+    // serializer), not the URL-encoded form serializeCookieValue would produce.
+    // The timestamp is strictly greater than the client's current one (inbound
+    // X-Rango-State), so a same-millisecond server rotation still differs from
+    // the client value and the divergence observer fires.
+    _rotateStateCookie(): void {
+      if (rangoStateRotated) return;
+      rangoStateRotated = true;
+      if (!stateCookieName) return;
+      const inbound = request.headers.get("x-rango-state");
+      const prevTs = inbound ? (decodeStateValue(inbound)?.timestamp ?? 0) : 0;
+      const ts = Math.max(Date.now(), prevTs + 1);
+      const value = encodeStateValue(stateVersion ?? "0", ts);
+      stubResponse.headers.append(
+        "Set-Cookie",
+        serializeStateCookie(stateCookieName, value, url.protocol === "https:"),
+      );
+      invalidateResponseCookieCache();
     },
 
     setStatus(status: number): void {

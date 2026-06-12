@@ -453,6 +453,8 @@ export function createRSCHandler<
       cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
+      stateCookieName: router.resolvedStateCookieName,
+      version,
     });
     if (earlyMetricsStore) {
       requestContext._debugPerformance = true;

@@ -130,14 +130,14 @@ export interface NavigationStoreConfig {
 
   /**
    * Enable cross-tab cache invalidation via BroadcastChannel (default: true)
-   * When cache is cleared (via server actions or useClientCache().clear()),
+   * When cache is cleared (via server actions or invalidateClientCache()),
    * other tabs will also clear their cache
    */
   crossTabSync?: boolean;
 
   /**
    * Auto-refresh when another tab mutates data on the same path (default: true)
-   * Triggered when cache is cleared via server actions or useClientCache().clear()
+   * Triggered when cache is cleared via server actions or invalidateClientCache()
    * Requires crossTabSync to be enabled
    */
   crossTabAutoRefresh?: boolean;
