@@ -9,6 +9,7 @@ import { ActionSetCookieButton } from "../components/ActionSetCookieButton.js";
 import {
   ActionKeepCacheButton,
   ActionKeepThenInvalidateButton,
+  InvalidateClientCacheButton,
 } from "../components/ActionKeepCacheButton.js";
 
 const MwSession = createVar<string | null>();
@@ -96,6 +97,7 @@ export const loaderCookiePatterns = urls(({ path, loader, middleware }) => [
           <ActionSetCookieButton />
           <ActionKeepCacheButton />
           <ActionKeepThenInvalidateButton />
+          <InvalidateClientCacheButton />
           <span data-testid="mw-session-value">
             {data.session ?? "no-session"}
           </span>

@@ -190,6 +190,31 @@ async function testKeepThenInvalidateStillRotates(
   expect(Number(afterTimestamp)).toBeGreaterThan(Number(initialTimestamp));
 }
 
+async function testClientSeatRotatesState(
+  page: Page,
+  url: (path: string) => string,
+) {
+  await page.goto(url("/loader-cookie/action-sets-cookie"));
+  await waitForHydration(page);
+
+  const initialState = await readRangoState(page);
+  expect(initialState).toBeTruthy();
+  const [initialVersion, initialTimestamp] = initialState!.split(":");
+
+  // invalidateClientCache() from browser code (client seat) rotates the state
+  // via markCacheAsStaleAndBroadcast -> clearPrefetchCache -> invalidateRangoState.
+  await page.click('[data-testid="invalidate-client-btn"]');
+
+  await expect
+    .poll(async () => await readRangoState(page))
+    .not.toBe(initialState);
+
+  const afterState = await readRangoState(page);
+  const [afterVersion, afterTimestamp] = afterState!.split(":");
+  expect(afterVersion).toBe(initialVersion);
+  expect(Number(afterTimestamp)).toBeGreaterThan(Number(initialTimestamp));
+}
+
 test.describe("rango-state invalidation lifecycle (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -222,6 +247,12 @@ test.describe("rango-state invalidation lifecycle (dev)", () => {
     page,
   }) => {
     await testKeepThenInvalidateStillRotates(page, f.url);
+  });
+
+  test("invalidateClientCache() client seat rotates the state", async ({
+    page,
+  }) => {
+    await testClientSeatRotatesState(page, f.url);
   });
 });
 
@@ -259,5 +290,11 @@ test.describe("rango-state invalidation lifecycle (production)", () => {
     page,
   }) => {
     await testKeepThenInvalidateStillRotates(page, f.url);
+  });
+
+  test("invalidateClientCache() client seat rotates the state", async ({
+    page,
+  }) => {
+    await testClientSeatRotatesState(page, f.url);
   });
 });

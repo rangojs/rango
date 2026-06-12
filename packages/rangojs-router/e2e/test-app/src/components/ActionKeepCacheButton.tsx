@@ -1,7 +1,20 @@
 "use client";
 
 import { useTransition } from "react";
+import { invalidateClientCache } from "@rangojs/router";
 import { actionKeepCache, actionKeepThenInvalidate } from "../actions.jsx";
+
+export function InvalidateClientCacheButton() {
+  // Client seat: a mutation the router can't see (e.g. a REST/WebSocket push).
+  return (
+    <button
+      data-testid="invalidate-client-btn"
+      onClick={() => invalidateClientCache()}
+    >
+      Invalidate (client seat)
+    </button>
+  );
+}
 
 export function ActionKeepCacheButton() {
   const [isPending, startTransition] = useTransition();
