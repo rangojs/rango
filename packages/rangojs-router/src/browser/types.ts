@@ -72,6 +72,12 @@ export interface RscMetadata {
    */
   prefetchCacheTTL?: number;
   /**
+   * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
+   * reads it verbatim and binds the rango state cookie to it; composition
+   * happens only server-side.
+   */
+  stateCookieName?: string;
+  /**
    * Theme configuration from router.
    * Included when theme is enabled in router config.
    */

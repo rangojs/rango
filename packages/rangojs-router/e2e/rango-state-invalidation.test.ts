@@ -6,7 +6,7 @@ import { waitForHydration } from "./helper";
  * Rango-state invalidation lifecycle tests.
  *
  * Verifies the full cycle:
- *   1. App initializes rango-state in localStorage
+ *   1. App initializes the rango state session cookie
  *   2. Server action triggers invalidateRangoState() (timestamp rotation)
  *   3. Subsequent navigation sends the rotated X-Rango-State header
  *
@@ -14,16 +14,18 @@ import { waitForHydration } from "./helper";
  * (keyed by the old X-Rango-State via Vary) will miss, forcing fresh data.
  */
 
-// rango-state is stored under a per-router namespaced localStorage key
-// (`rango-state:{routerId}`) so sibling apps on the same origin don't
-// collide. Legacy single-app setups still use the unnamespaced key. The
-// helper locates whichever key the app wrote.
+// rango state lives in a session cookie named `{prefix}_{routerId}` (default
+// prefix `rango-state`, or the bare default when metadata lacks the name) so
+// sibling apps on the same origin don't collide. The helper locates whichever
+// `rango-state...` cookie the app wrote and returns its `{version}:{timestamp}`
+// value.
 async function readRangoState(page: Page): Promise<string | null> {
   return await page.evaluate(() => {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key === "rango-state" || key?.startsWith("rango-state:")) {
-        return localStorage.getItem(key);
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed.startsWith("rango-state")) {
+        const eq = trimmed.indexOf("=");
+        return eq >= 0 ? trimmed.slice(eq + 1) : null;
       }
     }
     return null;
@@ -47,7 +49,7 @@ async function testRangoStateRotatesAfterAction(
 
   // Click the server action button — this triggers:
   //   actionSetSessionCookie() → server action bridge → markCacheAsStaleAndBroadcast()
-  //   → clearPrefetchCache() → invalidateRangoState() → localStorage update
+  //   → clearPrefetchCache() → invalidateRangoState() → cookie rotation
   await page.click('[data-testid="action-set-cookie-btn"]');
 
   // Wait for the action to complete (button text changes back from "Setting...")

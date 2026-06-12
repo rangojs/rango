@@ -228,10 +228,11 @@ export async function initBrowserApp(
     version,
   });
 
-  // Initialize the localStorage state key for cache invalidation.
-  // The build version busts cached prefetches on deploy; the routerId
-  // namespaces the key so sibling apps on the same origin don't collide.
-  initRangoState(version ?? "0", initialPayload.metadata?.routerId);
+  // Initialize the rango state cookie for cache invalidation. The build version
+  // busts cached prefetches on deploy; the server-resolved cookie name
+  // namespaces the cookie so sibling apps on the same origin don't collide
+  // (falls back to the bare default prefix if metadata lacks the name).
+  initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
   setAppVersion(version);
 
   // Initialize the in-memory prefetch cache TTL from server config.
