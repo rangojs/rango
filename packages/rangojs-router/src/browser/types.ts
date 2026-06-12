@@ -439,6 +439,7 @@ export interface NavigationStore {
   hasHistoryCache(historyKey: string): boolean;
   updateCacheHandleData(historyKey: string, handleData: HandleData): void;
   markCacheAsStale(): void;
+  markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
   broadcastCacheInvalidation(): void;

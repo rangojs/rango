@@ -335,12 +335,24 @@ export function createNavigationStore(
   }
 
   /**
-   * Mark all cache entries as stale (internal - does not broadcast)
+   * Mark every history entry stale WITHOUT touching the prefetch caches or the
+   * rango state. Used by the jar-divergence observer: an external rotation has
+   * already changed the state value (so prefetch/HTTP entries strand under the
+   * retired key), and this tab must NOT re-rotate — only the history cache,
+   * which is not state-keyed, needs marking.
    */
-  function markCacheAsStaleInternal(): void {
+  function markHistoryStale(): void {
     for (let i = 0; i < historyCache.length; i++) {
       historyCache[i][2] = true;
     }
+  }
+
+  /**
+   * Mark all cache entries as stale (internal - does not broadcast). Also
+   * clears the prefetch caches, which rotates the rango state.
+   */
+  function markCacheAsStaleInternal(): void {
+    markHistoryStale();
     clearPrefetchCache();
   }
 
@@ -657,6 +669,16 @@ export function createNavigationStore(
      */
     markCacheAsStale(): void {
       markCacheAsStaleInternal();
+    },
+
+    /**
+     * Mark every history entry stale WITHOUT clearing the prefetch caches or
+     * rotating the rango state. The jar-divergence observer calls this after an
+     * external rotation has already changed the state value, so re-rotating
+     * here would ping-pong with the tab that rotated.
+     */
+    markHistoryCacheStale(): void {
+      markHistoryStale();
     },
 
     /**
