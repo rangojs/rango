@@ -40,7 +40,7 @@ async function testRangoStateRotatesAfterAction(
   await page.goto(url("/loader-cookie/action-sets-cookie"));
   await waitForHydration(page);
 
-  // Read the initial rango-state from localStorage
+  // Read the initial rango-state from the cookie
   const initialState = await readRangoState(page);
   expect(initialState).toBeTruthy();
   const [initialVersion, initialTimestamp] = initialState!.split(":");
