@@ -41,8 +41,8 @@ import {
 } from "../../server/request-context.js";
 import { VERSION } from "@rangojs/router:version";
 import {
-  KEEP_CACHE_HEADER,
   isPerClientSignalHeader,
+  stripPerClientSignals,
 } from "../../browser/cookie-name.js";
 import {
   resolveTtl,
@@ -1615,6 +1615,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     headers.delete(CACHE_STATUS_HEADER);
     headers.delete(CACHE_TAGS_HEADER);
     headers.delete(CACHE_TAGGED_AT_HEADER);
+    // Finding #3 (read side): strip per-client signals a pre-fix or
+    // pinned-version L1 entry may carry. See the read-side note in the design doc.
+    stripPerClientSignals(headers);
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -1655,13 +1658,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // replaced with a long max-age so the CF Cache API holds the entry across
       // the SWR window; getResponse restores the original before serving.
       const headers = new Headers(response.headers);
-      // Defense-in-depth (Finding #3): the L1 entry is replayed to every client,
-      // so never persist a per-client signal. The Workers Cache API is believed
-      // to reject Set-Cookie, but that is an unverified platform assumption and
-      // it does nothing about the custom x-rango-keep-cache directive — strip
-      // both here so the in-repo guarantee does not depend on the platform.
-      headers.delete("set-cookie");
-      headers.delete(KEEP_CACHE_HEADER);
+      // Finding #3: never persist a per-client signal in the shared L1 entry
+      // (the platform's Set-Cookie rejection is unverified and ignores the
+      // directive anyway). See stripPerClientSignals.
+      stripPerClientSignals(headers);
       const originalCacheControl = response.headers.get("Cache-Control");
       if (originalCacheControl !== null) {
         headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
@@ -1699,9 +1699,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // L2: persist to KV (KV requires expirationTtl >= 60s)
       if (this.kv && this.waitUntil && totalTtl >= 60) {
         const kvKey = this.toKVKey(`doc:${key}`);
-        // Defense-in-depth (Finding #3): the KV envelope is replayed raw to
-        // every client, so never persist a per-client signal (a Set-Cookie
-        // rotation, or the x-rango-keep-cache directive) into it.
+        // Finding #3: never persist a per-client signal in the KV envelope.
         const headersArray: [string, string][] = [];
         response.headers.forEach((v, k) => {
           if (isPerClientSignalHeader(k)) return;
@@ -2865,6 +2863,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // so evict it and miss rather than re-failing every read until TTL.
       let response: Response;
       try {
+        // Finding #3 (read side): strip per-client signals a stale envelope may
+        // carry. Inside the try so a malformed `hd` evicts (not throws through);
+        // mutates `hd` in place so promoteResponseToL1 re-seeds from it too.
+        envelope.hd = envelope.hd.filter(
+          ([name]) => !isPerClientSignalHeader(name),
+        );
         const bodyBuffer = base64ToBuffer(envelope.b);
         const headers = new Headers(envelope.hd);
         response = new Response(bodyBuffer, {

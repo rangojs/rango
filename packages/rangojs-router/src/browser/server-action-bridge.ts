@@ -169,11 +169,19 @@ export function createServerActionBridge(
     // its own latch. Latched so the finally AND the early SPA-redirect returns
     // (whose Flight stream never settles) can both call it safely.
     let actionFinalized = false;
-    const finalizeAction = (): void => {
+    // skipInvalidation: the version-mismatch reload terminal released nothing
+    // server-side, so it releases the fence without invalidating.
+    const finalizeAction = (skipInvalidation = false): void => {
       if (actionFinalized) return;
       actionFinalized = true;
-      if (!keepCache) store.markCacheAsStaleAndBroadcast();
-      exitActionFence();
+      // finally so a throw in invalidation cannot leak the fence (latch is set).
+      try {
+        if (!keepCache && !skipInvalidation) {
+          store.markCacheAsStaleAndBroadcast();
+        }
+      } finally {
+        exitActionFence();
+      }
     };
     try {
       const segmentState = store.getSegmentState();
@@ -267,8 +275,14 @@ export function createServerActionBridge(
         // Check for version mismatch - server wants us to reload
         const reloadResult = handleReloadHeader(response, {
           onBlocked: resolveStreamComplete,
-          onReload: (url) =>
-            log("version mismatch on action, reloading", { reloadUrl: url }),
+          onReload: (url) => {
+            log("version mismatch on action, reloading", { reloadUrl: url });
+            // Never-settling terminal (navigates away), so the finally never
+            // runs: release the fence here. skipInvalidation — the mismatch
+            // short-circuits the action server-side, so nothing mutated and a
+            // broadcast would only risk hard-reloading a sibling mid-task.
+            finalizeAction(true);
+          },
         });
         if (reloadResult) return reloadResult;
 
@@ -605,8 +619,11 @@ export function createServerActionBridge(
           console.warn(
             `[Browser] Missing segments after action (HMR detected), refetching...`,
           );
+          // Repair (not revalidation), so ungated on keepCache: a keep action
+          // resolving last must discharge a directive-free sibling's repair.
+          // See the keep row in docs/design/rango-state-cookie.md (the all-keep
+          // edge, and the benign re-mark-stale-after-refetch end-state delta).
           await refetchRoute({ interceptSourceUrl });
-          // Invalidation (incl. broadcast) deferred to finalizeAction().
           break;
         }
 
@@ -623,11 +640,11 @@ export function createServerActionBridge(
           // Clear consolidation tracking before fetch
           handle.clearConsolidation();
 
+          // Ungated on keepCache, same as hmr-missing above (see the keep row).
           await refetchRoute({
             segments: segmentsToSend,
             interceptSourceUrl,
           });
-          // Invalidation (incl. broadcast) deferred to finalizeAction().
           break;
         }
 

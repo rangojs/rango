@@ -12,6 +12,7 @@ import {
 } from "../browser/prefetch/fetch";
 import { clearPrefetchCache } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
+import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
 // Prefetch eagerly decodes the fetched response (createFromFetch) to warm the
 // route's client chunks. The cache stores the decoded entry, not the raw
@@ -690,6 +691,50 @@ describe('prefetchKey=":source" opt-out', () => {
     resolveFetch!(
       new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
     );
+  });
+});
+
+describe("prefetch fetch options (credentials + action fence)", () => {
+  beforeEach(() => {
+    setupBrowser();
+    __resetActionFence();
+  });
+
+  afterEach(() => {
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    __resetActionFence();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  function prefetchInit(): RequestInit {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    return fetchMock.mock.calls[0]![1]!;
+  }
+
+  it("does not set credentials to omit (the rango-state Set-Cookie must apply)", () => {
+    const init = prefetchInit();
+    expect(init.credentials).toBeUndefined();
+  });
+
+  it("uses cache:no-store while an action fence is active", () => {
+    // Bypass the Vary-keyed HTTP cache so a prefetch during an action's flight
+    // fetches fresh rather than warming the map with soon-to-be-stale bytes.
+    enterActionFence();
+    const init = prefetchInit();
+    expect(init.cache).toBe("no-store");
+  });
+
+  it("does not override the cache mode when no action fence is active", () => {
+    const init = prefetchInit();
+    expect(init.cache).toBeUndefined();
   });
 });
 

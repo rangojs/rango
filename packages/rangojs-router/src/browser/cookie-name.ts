@@ -17,22 +17,54 @@ export const DEFAULT_STATE_COOKIE_PREFIX = "rango-state";
 /** Internal response header carrying the keepClientCache() directive. */
 export const KEEP_CACHE_HEADER = "x-rango-keep-cache";
 
-/**
- * True for a per-client signal that must never be stored in a SHARED response
- * cache (Finding #3): a `Set-Cookie` (a rango state rotation, or any cookie a
- * loader set) or the keepClientCache() directive header. Strip-all-Set-Cookie
- * is deliberate — a shared store has no request context and cannot know the
- * resolved cookie name, and a cacheable document carrying any per-client cookie
- * is the hazard regardless of which cookie it is.
- */
+// Per-client signal headers (lower-case) that a SHARED response cache must never
+// store or replay (Finding #3): a `Set-Cookie` (rango state rotation, or any
+// cookie a loader set) and the keepClientCache() directive. Strip-all-Set-Cookie
+// is deliberate — a shared store can't know the resolved cookie name, and any
+// per-client cookie in a cacheable document is the hazard. Single source for the
+// predicate, presence check, and strip below.
+const PER_CLIENT_SIGNAL_HEADERS: readonly string[] = [
+  "set-cookie",
+  KEEP_CACHE_HEADER,
+];
+
+/** True for a per-client signal header. */
 export function isPerClientSignalHeader(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower === "set-cookie" || lower === KEEP_CACHE_HEADER;
+  return PER_CLIENT_SIGNAL_HEADERS.includes(name.toLowerCase());
 }
 
-/** True if `headers` carries any per-client signal (see isPerClientSignalHeader). */
+/** True if `headers` carries any per-client signal. */
 export function hasPerClientSignal(headers: Headers): boolean {
-  return headers.has("set-cookie") || headers.has(KEEP_CACHE_HEADER);
+  return PER_CLIENT_SIGNAL_HEADERS.some((name) => headers.has(name));
+}
+
+/** Remove every per-client signal header from `headers` in place. */
+export function stripPerClientSignals(headers: Headers): void {
+  for (const name of PER_CLIENT_SIGNAL_HEADERS) headers.delete(name);
+}
+
+/**
+ * Read the raw, UNDECODED value of a single cookie from a cookie string (a
+ * `document.cookie` jar or a request `Cookie` header). Shared by both seats so
+ * the client mirror and the server monotonic-guard read the SAME jar entry —
+ * their agreement is the guard's contract. First match wins (the entry the
+ * client's mirror holds); exact name boundary via the `=`; an empty value
+ * (`name=`) returns null (treated as absent, not a usable prior value).
+ */
+export function getRawCookieValue(
+  cookieString: string | null,
+  name: string,
+): string | null {
+  if (!cookieString) return null;
+  const target = name + "=";
+  for (const part of cookieString.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(target)) {
+      const value = trimmed.slice(target.length);
+      return value === "" ? null : value;
+    }
+  }
+  return null;
 }
 
 /**

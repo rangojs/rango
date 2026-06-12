@@ -15,6 +15,7 @@ import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import {
   KEEP_CACHE_HEADER,
+  getRawCookieValue,
   mintStateValue,
   serializeStateCookie,
 } from "../browser/cookie-name.js";
@@ -787,15 +788,17 @@ export function createRequestContext<TEnv>(
       if (!stateCookieName) return;
       // The client's current value, for the monotonic guard: prefer the
       // X-Rango-State header (router navigation/prefetch fetches send it), but
-      // fall back to the request's rango state cookie — the mutation flows the
-      // server seat targets (action POSTs, plain app fetch()) carry no router
-      // header yet DO send the cookie. Without this, prevTs stays 0 and a
-      // same-millisecond mint can equal the client's value, leaving the
-      // divergence observer silent.
+      // fall back to the request's rango state cookie — action POSTs / plain
+      // app fetch()s carry no router header yet DO send the cookie. Without the
+      // fallback, prevTs stays 0 and a same-ms mint can equal the client value,
+      // leaving the divergence observer silent. `|| null` so an empty header
+      // ('' from proxy normalization) falls through instead of short-circuiting.
+      // getRawCookieValue reads the cookie undecoded (the wire value
+      // decodeStateValue decodes exactly once) AND is the same parser the client
+      // mirror uses, so both seats read the same jar entry.
       const prevRaw =
-        request.headers.get("x-rango-state") ??
-        getParsedCookies()[stateCookieName] ??
-        null;
+        (request.headers.get("x-rango-state") || null) ??
+        getRawCookieValue(cookieHeader, stateCookieName);
       const value = mintStateValue(stateVersion ?? "0", prevRaw);
       stubResponse.headers.append(
         "Set-Cookie",

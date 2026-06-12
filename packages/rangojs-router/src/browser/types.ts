@@ -442,7 +442,6 @@ export interface NavigationStore {
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
-  broadcastCacheInvalidation(): void;
 
   // Cross-tab refresh callback (set by navigation bridge)
   setCrossTabRefreshCallback(callback: () => void): void;

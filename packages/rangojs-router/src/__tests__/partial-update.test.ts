@@ -82,7 +82,6 @@ function createMockStore(opts?: {
     markCacheAsStale: vi.fn(),
     clearHistoryCache: vi.fn(),
     markCacheAsStaleAndBroadcast: vi.fn(),
-    broadcastCacheInvalidation: vi.fn(),
     setCrossTabRefreshCallback: vi.fn(),
     addInflightAction: vi.fn(),
     removeInflightAction: vi.fn(),

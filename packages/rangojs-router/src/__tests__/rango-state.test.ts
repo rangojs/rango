@@ -212,6 +212,30 @@ describe("rango-state (cookie)", () => {
       expect(observer).toHaveBeenCalledTimes(1);
     });
 
+    it("does not fire when an external write matches the current mirror value", async () => {
+      // Same-millisecond cross-boundary case: a server mint (or sibling write)
+      // can land on the exact value this tab already holds. The cookie did not
+      // change, so the divergence observer must stay silent — firing here would
+      // mark history stale for nothing.
+      const j = makeJar({ [NAME]: "v1:100" });
+      vi.stubGlobal("document", j.jar);
+
+      const { initRangoState, getRangoState, setRangoStateObserver } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+      // Establish the mirror at v1:100.
+      expect(getRangoState()).toBe("v1:100");
+
+      const observer = vi.fn();
+      setRangoStateObserver(observer);
+
+      // External actor rewrites the cookie to the identical value.
+      j.set(NAME, "v1:100");
+      expect(getRangoState()).toBe("v1:100");
+
+      expect(observer).not.toHaveBeenCalled();
+    });
+
     it("ignores a different app's cookie name (multi-app isolation)", async () => {
       const j = makeJar({ [NAME]: "v1:100" });
       vi.stubGlobal("document", j.jar);

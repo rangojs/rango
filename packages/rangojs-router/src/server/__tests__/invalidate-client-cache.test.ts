@@ -20,7 +20,7 @@ function makeCtx(
   } = {},
 ) {
   const headers: Record<string, string> = {};
-  if (opts.inbound) headers["X-Rango-State"] = opts.inbound;
+  if (opts.inbound !== undefined) headers["X-Rango-State"] = opts.inbound;
   if (opts.cookie) headers["Cookie"] = opts.cookie;
   return createRequestContext({
     env: {},
@@ -96,6 +96,59 @@ describe("invalidateClientCache() (server seat)", () => {
 
     expect(setCookies(ctx)).toEqual([
       "rango-state_router_0=v1:1001; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("falls back to the cookie when the X-Rango-State header is present but empty", () => {
+    // Proxy normalization (or a client bug) can send an empty header. '' is not
+    // nullish, so it must not short-circuit the cookie fallback — otherwise
+    // prevTs falls to 0 on exactly the requests the fallback exists for.
+    const ctx = makeCtx({
+      stateCookieName: "rango-state_router_0",
+      version: "v1",
+      inbound: "",
+      cookie: "rango-state_router_0=v1:1000",
+    });
+    vi.spyOn(Date, "now").mockReturnValue(500); // behind the client
+    runWithRequestContext(ctx, () => invalidateClientCache());
+
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=v1:1001; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("treats an empty rango-state cookie as absent (no usable prior value)", () => {
+    const ctx = makeCtx({
+      stateCookieName: "rango-state_router_0",
+      version: "v1",
+      cookie: "rango-state_router_0=",
+    });
+    vi.spyOn(Date, "now").mockReturnValue(777);
+    runWithRequestContext(ctx, () => invalidateClientCache());
+
+    // No usable prior value -> prevTs floor 0 -> mints straight from Date.now().
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=v1:777; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("reads a percent-encoded version from the cookie without double-decoding (monotonic guard holds)", () => {
+    // The client writes the value as encodeURIComponent(version):timestamp, so a
+    // version that encodes to a percent-escape ("a:b" -> "a%3Ab") arrives in the
+    // Cookie header still escaped. The server must NOT route it through the
+    // decoding cookie parser: decoding "a%3Ab:1000" to "a:b:1000" makes
+    // decodeStateValue split on the wrong colon, prevTs falls to 0, and a server
+    // clock behind the client mints a colliding timestamp the observer can't see.
+    const ctx = makeCtx({
+      stateCookieName: "rango-state_router_0",
+      version: "a:b",
+      cookie: "rango-state_router_0=a%3Ab:1000",
+    });
+    vi.spyOn(Date, "now").mockReturnValue(500); // behind the client
+    runWithRequestContext(ctx, () => invalidateClientCache());
+
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=a%3Ab:1001; Path=/; SameSite=Lax; Secure",
     ]);
   });
 

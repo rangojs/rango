@@ -698,14 +698,6 @@ export function createNavigationStore(
     },
 
     /**
-     * Broadcast cache invalidation to other tabs without clearing local cache
-     * Used after consolidation fetch where local cache has fresh data
-     */
-    broadcastCacheInvalidation(): void {
-      broadcastInvalidation();
-    },
-
-    /**
      * Set the callback to invoke when cross-tab refresh is triggered
      * Called by navigation bridge during initialization
      */
