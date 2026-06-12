@@ -291,6 +291,13 @@ export interface RangoInternal<
   readonly prefetchCacheTTL: number;
 
   /**
+   * Resolved rango state cookie name (`{prefix}_{routerId}`), composed once at
+   * router init and shipped to the client in payload metadata. The server-side
+   * cookie writer reads it from here; the client reads it from metadata.
+   */
+  readonly resolvedStateCookieName: string;
+
+  /**
    * Whether connection warmup is enabled.
    * When true, the client sends HEAD /?_rsc_warmup after idle periods
    * and the server responds with 204 No Content.
