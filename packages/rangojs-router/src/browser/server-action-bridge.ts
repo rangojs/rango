@@ -4,6 +4,7 @@ import type {
   RscPayload,
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
+import { enterActionFence, exitActionFence } from "./action-fence.js";
 import { createNavigationTransaction } from "./navigation-transaction.js";
 import {
   reconcileSegments,
@@ -156,12 +157,18 @@ export function createServerActionBridge(
 
     // Start action in event controller - handles lifecycle tracking
     const handle = eventController.startAction(id, args);
+    // Whether the action's response carried the keepClientCache() directive.
+    // Set when the response arrives; gates the deferred invalidation below.
+    let keepCache = false;
     try {
       const segmentState = store.getSegmentState();
 
-      // Mark cache as stale immediately when action starts
-      // This ensures SWR pattern kicks in if user navigates away during action
-      store.markCacheAsStaleAndBroadcast();
+      // Raise the action fence (replaces the old eager clear). Nothing is wiped,
+      // rotated, or broadcast yet: navigations during the flight fetch fresh
+      // (no-store) and popstate is treated as SWR, but the decision to
+      // invalidate is deferred to the response so a no-op action (keepClientCache)
+      // can leave the caches and the jar untouched.
+      enterActionFence();
 
       // Create temporary references for serialization
       const temporaryReferences = deps.createTemporaryReferenceSet();
@@ -236,6 +243,11 @@ export function createServerActionBridge(
         // Response arrived — disconnect fetch abort from handle abort so
         // abortAllActions() doesn't disrupt the in-progress Flight stream.
         handle.signal.removeEventListener("abort", onHandleAbort);
+
+        // Did the action call keepClientCache()? If so the deferred invalidation
+        // below is suppressed for THIS action (a concurrent directive-free
+        // action still invalidates via its own response).
+        keepCache = response.headers.get("x-rango-keep-cache") === "1";
 
         // Check for version mismatch - server wants us to reload
         const reloadResult = handleReloadHeader(response, {
@@ -542,7 +554,7 @@ export function createServerActionBridge(
           handle.clearConsolidation();
 
           if (scenario.historyKeyChanged) {
-            if (!scenario.onInterceptRoute) {
+            if (!scenario.onInterceptRoute && !keepCache) {
               store.markCacheAsStaleAndBroadcast();
               refetchRoute().catch((error) => {
                 if (isBackgroundSuppressible(error)) return;
@@ -556,10 +568,12 @@ export function createServerActionBridge(
           }
 
           // Same history key but different pathname - safe to refetch current route
-          store.markCacheAsStaleAndBroadcast();
-          await refetchRoute({
-            interceptSourceUrl: store.getInterceptSourceUrl(),
-          });
+          if (!keepCache) {
+            store.markCacheAsStaleAndBroadcast();
+            await refetchRoute({
+              interceptSourceUrl: store.getInterceptSourceUrl(),
+            });
+          }
           break;
         }
 
@@ -568,7 +582,7 @@ export function createServerActionBridge(
             `[Browser] Missing segments after action (HMR detected), refetching...`,
           );
           await refetchRoute({ interceptSourceUrl });
-          store.broadcastCacheInvalidation();
+          if (!keepCache) store.broadcastCacheInvalidation();
           break;
         }
 
@@ -589,7 +603,7 @@ export function createServerActionBridge(
             segments: segmentsToSend,
             interceptSourceUrl,
           });
-          store.broadcastCacheInvalidation();
+          if (!keepCache) store.broadcastCacheInvalidation();
           break;
         }
 
@@ -653,7 +667,9 @@ export function createServerActionBridge(
             fullSegments,
             currentHandleData,
           );
-          store.markCacheAsStaleAndBroadcast();
+          // Deferred invalidation: reproduces the old post-commit broadcast,
+          // suppressed when the action called keepClientCache().
+          if (!keepCache) store.markCacheAsStaleAndBroadcast();
           break;
         }
       }
@@ -661,6 +677,9 @@ export function createServerActionBridge(
       handle.complete(returnData);
       return returnData;
     } finally {
+      // Lower this action's fence reference. The fence stays up until every
+      // concurrent action has resolved (refcount hits zero).
+      exitActionFence();
       handle[Symbol.dispose]();
     }
   }

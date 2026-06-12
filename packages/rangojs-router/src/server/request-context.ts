@@ -110,6 +110,8 @@ export interface RequestContext<
   _setStatus(status: number): void;
   /** @internal Rotate the rango state cookie (server seat of invalidateClientCache). */
   _rotateStateCookie(): void;
+  /** @internal Set the keepClientCache() directive header on the response. */
+  _setKeepCacheDirective(): void;
 
   /**
    * Access loader data or push handle data.
@@ -409,6 +411,7 @@ export type PublicRequestContext<
   | "_basename"
   | "_setStatus"
   | "_rotateStateCookie"
+  | "_setKeepCacheDirective"
   | "_variables"
   | "_classifiedRoute"
   | "res"
@@ -791,6 +794,13 @@ export function createRequestContext<TEnv>(
         serializeStateCookie(stateCookieName, value, url.protocol === "https:"),
       );
       invalidateResponseCookieCache();
+    },
+
+    // Set the keepClientCache() directive header. The action bridge reads it on
+    // the response and suppresses its automatic invalidation. `.set` makes this
+    // idempotent (one header regardless of call count).
+    _setKeepCacheDirective(): void {
+      stubResponse.headers.set("x-rango-keep-cache", "1");
     },
 
     setStatus(status: number): void {

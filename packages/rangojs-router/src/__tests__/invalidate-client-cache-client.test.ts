@@ -4,7 +4,10 @@
  * fallback.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { invalidateClientCache } from "../browser/invalidate-client-cache.js";
+import {
+  invalidateClientCache,
+  keepClientCache,
+} from "../browser/invalidate-client-cache.js";
 import { getRegisteredStore } from "../browser/navigation-store-handle.js";
 import { clearPrefetchCache } from "../browser/prefetch/cache.js";
 
@@ -52,5 +55,14 @@ describe("invalidateClientCache() (client seat)", () => {
     invalidateClientCache();
 
     expect(mockedClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("keepClientCache() is a client no-op (warns, touches no caches)", () => {
+    vi.stubGlobal("document", {});
+    mockedGetStore.mockReturnValue(null);
+
+    expect(() => keepClientCache()).not.toThrow();
+    expect(mockedGetStore).not.toHaveBeenCalled();
+    expect(mockedClear).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,7 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
+import { isActionFenceActive } from "./action-fence.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
@@ -108,7 +109,14 @@ export function createNavigationClient(
       // server-action invalidation) auto-invalidates both scopes.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
-      const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
+      // Suspend prefetch consumption while an action is in flight: a queued
+      // prefetch holds pre-mutation data and must not be served until the
+      // action's response decides whether anything changed.
+      const canUsePrefetch =
+        !staleRevalidation &&
+        !hmr &&
+        !interceptSourceUrl &&
+        !isActionFenceActive();
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
       const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
@@ -207,6 +215,11 @@ export function createNavigationClient(
         }
 
         return fetch(fetchUrl, {
+          // During an action's flight the state is not rotated, so the old
+          // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
+          // it so a genuine mid-action navigation fetches fresh instead of being
+          // served the stale prefetched bytes.
+          ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
           headers: {
             "X-RSC-Router-Client-Path": previousUrl,
             "X-Rango-State": getRangoState(),

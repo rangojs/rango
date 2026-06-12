@@ -41,6 +41,7 @@ const canonicalImportPaths: Record<string, string> = {
   createRSCHandler: "@rangojs/router/rsc",
   createSSRHandler: "@rangojs/router/ssr",
   invalidateClientCache: "@rangojs/router",
+  keepClientCache: "@rangojs/router",
   useAction: "@rangojs/router/client",
   useFetchLoader: "@rangojs/router/client",
   useHandle: "@rangojs/router/client",

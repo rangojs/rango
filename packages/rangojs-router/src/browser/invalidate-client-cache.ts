@@ -36,3 +36,17 @@ export function invalidateClientCache(): void {
   // sibling state worth broadcasting.
   clearPrefetchCache();
 }
+
+/**
+ * Client no-op for `keepClientCache()`. It is a server action directive (the
+ * `react-server` condition sets a response header the action bridge reads);
+ * there is nothing to suppress from the client side.
+ */
+export function keepClientCache(): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(
+      "[rango] keepClientCache() has no effect on the client; it is a server " +
+        "action directive. Call it from inside a server action.",
+    );
+  }
+}

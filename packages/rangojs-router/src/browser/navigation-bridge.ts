@@ -5,6 +5,7 @@ import type {
   ResolvedSegment,
 } from "./types.js";
 import { setAppVersion } from "./app-version.js";
+import { isActionFenceActive } from "./action-fence.js";
 import * as React from "react";
 import { startTransition } from "react";
 import {
@@ -450,7 +451,10 @@ export function createNavigationBridge(
       const cached = store.getCachedSegments(historyKey);
       const cachedSegments = cached?.segments;
       const cachedHandleData = cached?.handleData;
-      const isStale = cached?.stale ?? false;
+      // While an action is in flight the fence persists no stale flag, so OR it
+      // in here: a popstate during the flight serves the cached entry AND
+      // revalidates (SWR) instead of serving it as fresh.
+      const isStale = (cached?.stale ?? false) || isActionFenceActive();
 
       if (cachedSegments && cachedSegments.length > 0) {
         // Update store to point to this history entry

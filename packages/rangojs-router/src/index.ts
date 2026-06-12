@@ -223,7 +223,10 @@ export function headers(): never {
  * the client's caches stale); the `react-server` condition (index.rsc.ts)
  * selects the server implementation that writes a rotated `Set-Cookie`.
  */
-export { invalidateClientCache } from "./browser/invalidate-client-cache.js";
+export {
+  invalidateClientCache,
+  keepClientCache,
+} from "./browser/invalidate-client-cache.js";
 
 /**
  * Error-throwing stub for server-only `createReverse` function.

@@ -195,6 +195,31 @@ export function invalidateClientCache(): void {
 }
 
 /**
+ * Suppress a server action's automatic client-cache invalidation: tell the
+ * action bridge this action changed nothing a route renders, so it should leave
+ * the client's state and caches alone (no rotation, no prefetch wipe, no
+ * broadcast, no revalidation refetch). Per-response, not per-action-definition —
+ * only the execution knows whether anything changed.
+ *
+ * Sets an internal response header the bridge reads. Idempotent within a
+ * request. Inert (a dev warning) outside a request context — there is no
+ * automatic invalidation to suppress.
+ */
+export function keepClientCache(): void {
+  const ctx = _getRequestContext();
+  if (!ctx) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "[rango] keepClientCache() was called outside a request context; ignored.",
+      );
+    }
+    return;
+  }
+  assertNotInsideCacheContext(ctx, "keepClientCache");
+  ctx._setKeepCacheDirective();
+}
+
+/**
  * Create a CookieStore backed by a RequestContext.
  * @internal Shared between cookies() shorthand and context methods.
  */
