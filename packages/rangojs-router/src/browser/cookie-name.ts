@@ -14,6 +14,22 @@
 /** Default prefix when `stateCookiePrefix` is unset or empty after sanitization. */
 export const DEFAULT_STATE_COOKIE_PREFIX = "rango-state";
 
+/** Internal response header carrying the keepClientCache() directive. */
+export const KEEP_CACHE_HEADER = "x-rango-keep-cache";
+
+/**
+ * True for a per-client signal that must never be stored in a SHARED response
+ * cache (Finding #3): a `Set-Cookie` (a rango state rotation, or any cookie a
+ * loader set) or the keepClientCache() directive header. Strip-all-Set-Cookie
+ * is deliberate — a shared store has no request context and cannot know the
+ * resolved cookie name, and a cacheable document carrying any per-client cookie
+ * is the hazard regardless of which cookie it is.
+ */
+export function isPerClientSignalHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower === "set-cookie" || lower === KEEP_CACHE_HEADER;
+}
+
 /**
  * Encode a state value for the wire: `encodeURIComponent(version):timestamp`.
  * Only the build-derived version is encoded (it is arbitrary); the `:`
@@ -40,7 +56,15 @@ export function decodeStateValue(raw: string): StateValue | null {
   if (colon <= 0) return null;
   const timestamp = Number(raw.slice(colon + 1));
   if (!Number.isFinite(timestamp)) return null;
-  return { version: decodeURIComponent(raw.slice(0, colon)), timestamp };
+  let version: string;
+  try {
+    version = decodeURIComponent(raw.slice(0, colon));
+  } catch {
+    // A malformed percent-escape (e.g. "%:1") must mint fresh, not throw —
+    // a thrown URIError here would 500 the server seat or fail client boot.
+    return null;
+  }
+  return { version, timestamp };
 }
 
 /**

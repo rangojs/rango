@@ -12,6 +12,7 @@
  */
 
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
+import { KEEP_CACHE_HEADER } from "../browser/cookie-name.js";
 import {
   getRequestContext,
   type RequestContext,
@@ -129,7 +130,7 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
   // would suppress invalidation for every replayed client. Refuse both.
   if (
     response.headers.has("Set-Cookie") ||
-    response.headers.has("x-rango-keep-cache")
+    response.headers.has(KEEP_CACHE_HEADER)
   ) {
     return null;
   }

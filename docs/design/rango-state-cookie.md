@@ -413,6 +413,20 @@ client-side. The actual conclusion: the eager _clear_ must become an eager
   action still performs its own full invalidation, which overrides a sibling's
   keep — see the Case table.
 
+**Every terminal, not just the happy path.** Main's eager clear ran for _every_
+action at start, so the guarantee was "however an action ends, it has already
+invalidated." Deferring to the response must preserve that across _all_ exits —
+not only the `normal` and `navigated-away` terminals, but redirect (both the
+Flight `metadata.redirect` and the `X-RSC-Redirect` simple-redirect, whose
+Flight stream never settles so a finally after the await never runs), error,
+abort, the intercept `navigated-away` branch, and `concurrent-skip` /
+`consolidation`. Implement it as **one latched finalization** — invalidate once
+unless keep, then release the fence — invoked from the action's `finally` _and_
+explicitly before the never-settling SPA-redirect returns. A per-branch gate at
+each terminal (the shape that first shipped) silently drops the redirect/error/
+abort/intercept/concurrent paths and leaks the fence on simple-redirect; the
+single latch is the only shape that holds the invariant.
+
 The deferral is not merely neutral — it removes a transient pre-commit refresh.
 Be accurate about today's behavior, because it broadcasts _twice_, not once:
 eagerly at action start (`server-action-bridge.ts:164`, pre-commit) **and**
@@ -973,13 +987,16 @@ review while leaving a hole.
   `default`. Positive export-surface contract: `documentation-imports.test.ts`
   resolves both new names from `@rangojs/router` (not just the absence of
   `useClientCache`).
-- Unit (response-cache strip, Finding #3): `shouldCacheResponse` refuses (or
-  strips) a response carrying the rango-state `Set-Cookie`, and the
-  `putResponse` strip drops it in the CF KV envelope and
-  `MemorySegmentCacheStore` too, while leaving an _unrelated_ `Set-Cookie`
-  untouched (specify the match rule); the internal `keepClientCache()` directive
-  header is request-scoped, emitted at most once, and stripped / never cached
-  (the mirror-image-of-Finding-#3 guard).
+- Unit (response-cache strip, Finding #3): `shouldCacheResponse` refuses a
+  response carrying **any** `Set-Cookie` (or the directive header), and the
+  `putResponse` strip drops `Set-Cookie` in the CF L1 headers, the CF KV
+  envelope, and `MemorySegmentCacheStore`. The match rule is **strip-all**, not
+  rango-state-name-specific: a shared store has no request context and cannot
+  know the resolved cookie name, and a cacheable document carrying any
+  per-client cookie is the hazard regardless of which cookie it is (shared via
+  the `isPerClientSignalHeader()` helper). The internal `keepClientCache()`
+  directive header is request-scoped, emitted at most once, and stripped / never
+  cached (the mirror-image-of-Finding-#3 guard).
 - Unit (credentials invariant): the navigation, action, and prefetch fetch
   inits carry no `credentials: "omit"` (inspect the `RequestInit`), so the
   server seat's auto-applied `Set-Cookie` keeps working — the canonical

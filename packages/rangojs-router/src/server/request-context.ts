@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import {
+  KEEP_CACHE_HEADER,
   decodeStateValue,
   encodeStateValue,
   serializeStateCookie,
@@ -785,8 +786,17 @@ export function createRequestContext<TEnv>(
       if (rangoStateRotated) return;
       rangoStateRotated = true;
       if (!stateCookieName) return;
-      const inbound = request.headers.get("x-rango-state");
-      const prevTs = inbound ? (decodeStateValue(inbound)?.timestamp ?? 0) : 0;
+      // The client's current value, for the monotonic guard: prefer the
+      // X-Rango-State header (router navigation/prefetch fetches send it), but
+      // fall back to the request's rango state cookie — the mutation flows the
+      // server seat targets (action POSTs, plain app fetch()) carry no router
+      // header yet DO send the cookie. Without this, prevTs stays 0 and a
+      // same-millisecond mint can equal the client's value, leaving the
+      // divergence observer silent.
+      const prevRaw =
+        request.headers.get("x-rango-state") ??
+        getParsedCookies()[stateCookieName];
+      const prevTs = prevRaw ? (decodeStateValue(prevRaw)?.timestamp ?? 0) : 0;
       const ts = Math.max(Date.now(), prevTs + 1);
       const value = encodeStateValue(stateVersion ?? "0", ts);
       stubResponse.headers.append(
@@ -800,7 +810,7 @@ export function createRequestContext<TEnv>(
     // the response and suppresses its automatic invalidation. `.set` makes this
     // idempotent (one header regardless of call count).
     _setKeepCacheDirective(): void {
-      stubResponse.headers.set("x-rango-keep-cache", "1");
+      stubResponse.headers.set(KEEP_CACHE_HEADER, "1");
     },
 
     setStatus(status: number): void {

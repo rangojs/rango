@@ -14,6 +14,7 @@ import type {
   CacheItemOptions,
 } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
+import { isPerClientSignalHeader } from "../browser/cookie-name.js";
 import {
   resolveTtl,
   resolveSwrWindow,
@@ -298,8 +299,7 @@ export class MemorySegmentCacheStore<
       // re-puts), so strip them here too.
       const headers: [string, string][] = [];
       response.headers.forEach((value, name) => {
-        const lower = name.toLowerCase();
-        if (lower === "set-cookie" || lower === "x-rango-keep-cache") return;
+        if (isPerClientSignalHeader(name)) return;
         headers.push([name, value]);
       });
 

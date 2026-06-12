@@ -5,6 +5,7 @@ import type {
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { enterActionFence, exitActionFence } from "./action-fence.js";
+import { KEEP_CACHE_HEADER } from "./cookie-name.js";
 import { createNavigationTransaction } from "./navigation-transaction.js";
 import {
   reconcileSegments,
@@ -261,7 +262,7 @@ export function createServerActionBridge(
         // Did the action call keepClientCache()? If so the deferred invalidation
         // below is suppressed for THIS action (a concurrent directive-free
         // action still invalidates via its own response).
-        keepCache = response.headers.get("x-rango-keep-cache") === "1";
+        keepCache = response.headers.get(KEEP_CACHE_HEADER) === "1";
 
         // Check for version mismatch - server wants us to reload
         const reloadResult = handleReloadHeader(response, {

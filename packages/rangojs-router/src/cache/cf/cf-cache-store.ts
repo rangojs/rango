@@ -41,6 +41,10 @@ import {
 } from "../../server/request-context.js";
 import { VERSION } from "@rangojs/router:version";
 import {
+  KEEP_CACHE_HEADER,
+  isPerClientSignalHeader,
+} from "../../browser/cookie-name.js";
+import {
   resolveTtl,
   resolveSwrWindow,
   DEFAULT_FUNCTION_TTL,
@@ -1651,6 +1655,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // replaced with a long max-age so the CF Cache API holds the entry across
       // the SWR window; getResponse restores the original before serving.
       const headers = new Headers(response.headers);
+      // Defense-in-depth (Finding #3): the L1 entry is replayed to every client,
+      // so never persist a per-client signal. The Workers Cache API is believed
+      // to reject Set-Cookie, but that is an unverified platform assumption and
+      // it does nothing about the custom x-rango-keep-cache directive — strip
+      // both here so the in-repo guarantee does not depend on the platform.
+      headers.delete("set-cookie");
+      headers.delete(KEEP_CACHE_HEADER);
       const originalCacheControl = response.headers.get("Cache-Control");
       if (originalCacheControl !== null) {
         headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
@@ -1693,8 +1704,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         // rotation, or the x-rango-keep-cache directive) into it.
         const headersArray: [string, string][] = [];
         response.headers.forEach((v, k) => {
-          const lower = k.toLowerCase();
-          if (lower === "set-cookie" || lower === "x-rango-keep-cache") return;
+          if (isPerClientSignalHeader(k)) return;
           headersArray.push([k, v]);
         });
         // Read body as ArrayBuffer and encode to base64 to preserve binary payloads

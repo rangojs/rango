@@ -12,10 +12,16 @@ import { invalidateClientCache } from "../cookie-store.js";
 import { INSIDE_CACHE_EXEC } from "../../cache/taint.js";
 
 function makeCtx(
-  opts: { stateCookieName?: string; version?: string; inbound?: string } = {},
+  opts: {
+    stateCookieName?: string;
+    version?: string;
+    inbound?: string;
+    cookie?: string;
+  } = {},
 ) {
   const headers: Record<string, string> = {};
   if (opts.inbound) headers["X-Rango-State"] = opts.inbound;
+  if (opts.cookie) headers["Cookie"] = opts.cookie;
   return createRequestContext({
     env: {},
     request: new Request("https://example.com", { headers }),
@@ -70,6 +76,22 @@ describe("invalidateClientCache() (server seat)", () => {
       inbound: "v1:1000",
     });
     vi.spyOn(Date, "now").mockReturnValue(500); // server clock behind the client
+    runWithRequestContext(ctx, () => invalidateClientCache());
+
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=v1:1001; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("mints from the request cookie when the X-Rango-State header is absent", () => {
+    // Action POSTs and plain app fetch()s carry no router header but DO send the
+    // cookie; the monotonic guard must read it so the rotation can't collide.
+    const ctx = makeCtx({
+      stateCookieName: "rango-state_router_0",
+      version: "v1",
+      cookie: "rango-state_router_0=v1:1000",
+    });
+    vi.spyOn(Date, "now").mockReturnValue(500); // behind the client
     runWithRequestContext(ctx, () => invalidateClientCache());
 
     expect(setCookies(ctx)).toEqual([

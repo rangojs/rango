@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 import { setAppVersion } from "./app-version.js";
 import { isActionFenceActive } from "./action-fence.js";
+import { getRangoState } from "./rango-state.js";
 import * as React from "react";
 import { startTransition } from "react";
 import {
@@ -446,6 +447,14 @@ export function createNavigationBridge(
 
       // Helper to check if streaming is in progress
       const isStreaming = () => eventController.getState().isStreaming;
+
+      // Surface any external rotation of the rango state cookie (a server
+      // Set-Cookie, a sibling tab, a cookie clear) BEFORE reading the stale bit.
+      // The divergence observer only runs inside getRangoState() — fetch-time —
+      // so a popstate-first interaction would otherwise serve a pre-mutation
+      // page as fresh and never fetch to trigger the observer. Reading here lets
+      // the observer mark the history cache stale so getCachedSegments sees it.
+      getRangoState();
 
       // Check if we can restore from history cache
       const cached = store.getCachedSegments(historyKey);

@@ -1081,6 +1081,7 @@ export function createRSCHandler<
               rootLayout: router.rootLayout,
               handles: handleStore.stream(),
               version,
+              stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
               initialTheme: requireRequestContext().theme,

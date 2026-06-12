@@ -43,6 +43,12 @@ describe("cookie-name", () => {
     it("returns null for a non-numeric timestamp", () => {
       expect(decodeStateValue("v1:abc")).toBeNull();
     });
+
+    it("returns null (does not throw) on a malformed percent-escape", () => {
+      // decodeURIComponent("%") throws URIError; the codec must absorb it.
+      expect(decodeStateValue("%:1")).toBeNull();
+      expect(decodeStateValue("%E0%A4%A:5")).toBeNull();
+    });
   });
 
   describe("stateCookieAttributes", () => {
