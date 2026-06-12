@@ -13,6 +13,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
+import {
+  KEEP_CACHE_HEADER,
+  getRawCookieValue,
+  mintStateValue,
+  serializeStateCookie,
+} from "../browser/cookie-name.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type {
@@ -103,6 +109,10 @@ export interface RequestContext<
   setStatus(status: number): void;
   /** @internal Set status bypassing cache-exec guard (for framework error handling) */
   _setStatus(status: number): void;
+  /** @internal Rotate the rango state cookie (server seat of invalidateClientCache). */
+  _rotateStateCookie(): void;
+  /** @internal Set the keepClientCache() directive header on the response. */
+  _setKeepCacheDirective(): void;
 
   /**
    * Access loader data or push handle data.
@@ -401,6 +411,8 @@ export type PublicRequestContext<
   | "_metricsStore"
   | "_basename"
   | "_setStatus"
+  | "_rotateStateCookie"
+  | "_setKeepCacheDirective"
   | "_variables"
   | "_classifiedRoute"
   | "res"
@@ -540,6 +552,10 @@ export interface CreateRequestContextOptions<TEnv> {
   executionContext?: ExecutionContext;
   /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */
   themeConfig?: ResolvedThemeConfig | null;
+  /** Resolved rango state cookie name, for the server seat of invalidateClientCache(). */
+  stateCookieName?: string;
+  /** Build version, used as the prefix of a server-rotated rango state value. */
+  version?: string;
 }
 
 /**
@@ -564,8 +580,12 @@ export function createRequestContext<TEnv>(
     cacheProfiles,
     executionContext,
     themeConfig,
+    stateCookieName,
+    version: stateVersion,
   } = options;
   const cookieHeader = request.headers.get("Cookie");
+  // One Set-Cookie per request no matter how many invalidateClientCache() calls.
+  let rangoStateRotated = false;
   let parsedCookies: Record<string, string> | null = null;
 
   // Create stub response for collecting headers/cookies.
@@ -753,6 +773,45 @@ export function createRequestContext<TEnv>(
       assertNotInsideCacheExec(ctx, "header");
       assertNotInsideCacheScopeALS("header");
       stubResponse.headers.set(name, value);
+    },
+
+    // Rotate the rango state cookie for the responding client (the server seat
+    // of invalidateClientCache). Writes ONE Set-Cookie per request with the
+    // value {version}:{timestamp}; the `:` stays raw (the cookie-name.ts
+    // serializer), not the URL-encoded form serializeCookieValue would produce.
+    // The timestamp is strictly greater than the client's current one (inbound
+    // X-Rango-State), so a same-millisecond server rotation still differs from
+    // the client value and the divergence observer fires.
+    _rotateStateCookie(): void {
+      if (rangoStateRotated) return;
+      rangoStateRotated = true;
+      if (!stateCookieName) return;
+      // The client's current value, for the monotonic guard: prefer the
+      // X-Rango-State header (router navigation/prefetch fetches send it), but
+      // fall back to the request's rango state cookie — action POSTs / plain
+      // app fetch()s carry no router header yet DO send the cookie. Without the
+      // fallback, prevTs stays 0 and a same-ms mint can equal the client value,
+      // leaving the divergence observer silent. `|| null` so an empty header
+      // ('' from proxy normalization) falls through instead of short-circuiting.
+      // getRawCookieValue reads the cookie undecoded (the wire value
+      // decodeStateValue decodes exactly once) AND is the same parser the client
+      // mirror uses, so both seats read the same jar entry.
+      const prevRaw =
+        (request.headers.get("x-rango-state") || null) ??
+        getRawCookieValue(cookieHeader, stateCookieName);
+      const value = mintStateValue(stateVersion ?? "0", prevRaw);
+      stubResponse.headers.append(
+        "Set-Cookie",
+        serializeStateCookie(stateCookieName, value, url.protocol === "https:"),
+      );
+      invalidateResponseCookieCache();
+    },
+
+    // Set the keepClientCache() directive header. The action bridge reads it on
+    // the response and suppresses its automatic invalidation. `.set` makes this
+    // idempotent (one header regardless of call count).
+    _setKeepCacheDirective(): void {
+      stubResponse.headers.set(KEEP_CACHE_HEADER, "1");
     },
 
     setStatus(status: number): void {

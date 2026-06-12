@@ -453,6 +453,8 @@ export function createRSCHandler<
       cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
+      stateCookieName: router.resolvedStateCookieName,
+      version,
     });
     if (earlyMetricsStore) {
       requestContext._debugPerformance = true;
@@ -1079,6 +1081,7 @@ export function createRSCHandler<
               rootLayout: router.rootLayout,
               handles: handleStore.stream(),
               version,
+              stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
               initialTheme: requireRequestContext().theme,

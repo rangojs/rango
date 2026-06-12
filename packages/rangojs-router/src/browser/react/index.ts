@@ -23,12 +23,6 @@ export { useHandle } from "./use-handle.js";
 // Mount-aware reverse hook
 export { useReverse } from "./use-reverse.js";
 
-// Client cache controls hook
-export {
-  useClientCache,
-  type ClientCacheControls,
-} from "./use-client-cache.js";
-
 // Provider
 export {
   NavigationProvider,

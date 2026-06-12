@@ -12,6 +12,7 @@
  */
 
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
+import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {
   getRequestContext,
   type RequestContext,
@@ -118,6 +119,16 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
 function shouldCacheResponse(response: Response): CacheDirectives | null {
   // Only cache successful responses
   if (response.status !== 200) {
+    return null;
+  }
+
+  // Never cache a per-client signal into a SHARED response store. A Set-Cookie
+  // (e.g. a rango state rotation from invalidateClientCache(), or any cookie a
+  // loader set) would be replayed to every client on a hit — pinning them to
+  // one value and even rolling a rotated client back to a prior one. The
+  // x-rango-keep-cache directive header is the mirror image: a replayed "keep"
+  // would suppress invalidation for every replayed client. Refuse both.
+  if (hasPerClientSignal(response.headers)) {
     return null;
   }
 

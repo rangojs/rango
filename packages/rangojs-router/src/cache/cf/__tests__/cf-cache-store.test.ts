@@ -1698,6 +1698,41 @@ describe("CFCacheStore", () => {
       expect(stored?.headers.get("Cache-Control")).toBe("public, max-age=360");
     });
 
+    it("strips a per-client signal from a contaminated L1 entry on serve (Finding #3, L1 read side)", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse(
+        "l1-leak",
+        new Response("body", { headers: { "X-Custom": "keep" } }),
+        60,
+        300,
+      );
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Simulate a pre-fix L1 entry: re-seed the cached entry WITH a Set-Cookie
+      // the write-side strip would have removed, then serve it.
+      const l1Key = new Request(
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("doc:l1-leak"),
+      );
+      const cached = (await mockCaches.default.match(l1Key))!;
+      const tampered = new Headers(cached.headers);
+      tampered.set("set-cookie", "session=clientA");
+      await mockCaches.default.put(
+        l1Key,
+        new Response(await cached.arrayBuffer(), {
+          status: cached.status,
+          headers: tampered,
+        }),
+      );
+
+      const result = await store.getResponse("l1-leak");
+      expect(result).not.toBeNull();
+      // toClientResponse strips the per-client signal on serve.
+      expect(result!.response.headers.has("set-cookie")).toBe(false);
+      expect(result!.response.headers.get("X-Custom")).toBe("keep");
+    });
+
     it("drops the synthetic Cache-Control when the response carried none", async () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
@@ -2211,6 +2246,74 @@ describe("CFCacheStore", () => {
 
         const result = await store.getResponse("doc-headers");
         expect(result!.response.headers.get("X-Custom")).toBe("preserved");
+      });
+
+      it("strips per-client signals replayed from a pre-fix KV envelope on read (Finding #3)", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.putResponse(
+          "leaky-doc",
+          new Response("body", { headers: { "X-Custom": "keep" } }),
+          60,
+          300,
+        );
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Simulate an envelope written before the write-side strip shipped (or
+        // persisted under a pinned `version`): inject per-client signals into
+        // the stored headers. The read path must not replay them cross-client.
+        const kvEntry = mockKV.store.get("doc:leaky-doc")!;
+        const envelope = JSON.parse(kvEntry.value);
+        envelope.hd.push(["set-cookie", "session=clientA"]);
+        envelope.hd.push(["x-rango-keep-cache", "1"]);
+        kvEntry.value = JSON.stringify(envelope);
+
+        // Serve from KV (L1 cleared) to a different client.
+        mockCaches.clear();
+        const result = await store.getResponse("leaky-doc");
+        expect(result).not.toBeNull();
+        expect(result!.response.headers.has("set-cookie")).toBe(false);
+        expect(result!.response.headers.has("x-rango-keep-cache")).toBe(false);
+        // Unrelated headers still pass through.
+        expect(result!.response.headers.get("X-Custom")).toBe("keep");
+      });
+
+      it("evicts (not generic-errors) a KV envelope with a malformed hd element on read", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.putResponse("bad-hd", new Response("body"), 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // hd passes the Array.isArray validation but holds a non-pair element,
+        // which throws when the read-side strip destructures it. The strip lives
+        // INSIDE the corrupt-envelope try, so the throw evicts the poisoned entry
+        // rather than surfacing as a generic cache-read that leaves it to re-fail
+        // every read until TTL.
+        const kvEntry = mockKV.store.get("doc:bad-hd")!;
+        const envelope = JSON.parse(kvEntry.value);
+        envelope.hd.push(42);
+        kvEntry.value = JSON.stringify(envelope);
+
+        mockCaches.clear();
+        mockCtx.waitUntil.mockClear();
+
+        const result = await store.getResponse("bad-hd");
+        expect(result).toBeNull();
+        // Drain the scheduled eviction and confirm the poisoned key is gone.
+        for (const r of mockCtx.waitUntil.mock.results) {
+          await r.value;
+        }
+        expect(mockKV.store.has("doc:bad-hd")).toBe(false);
       });
 
       it("should preserve binary body through KV round-trip", async () => {

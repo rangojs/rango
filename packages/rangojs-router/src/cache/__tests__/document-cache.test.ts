@@ -280,6 +280,62 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.has("x-document-cache-status")).toBe(false);
       expect(mockStore.cache.size).toBe(0);
     });
+
+    it("should not cache a response carrying Set-Cookie (Finding #3)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // s-maxage says cacheable, but the per-client Set-Cookie must veto it: a
+      // shared store would replay the cookie to every client on a hit.
+      const next = vi.fn().mockResolvedValue(
+        new Response("per-client", {
+          headers: {
+            "Cache-Control": "s-maxage=60",
+            "Set-Cookie": "rango-state_router_0=v1:123; Path=/",
+          },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.cache.size).toBe(0);
+    });
+
+    it("should not cache a response carrying x-rango-keep-cache (Finding #3 mirror)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      const next = vi.fn().mockResolvedValue(
+        new Response("keep", {
+          headers: {
+            "Cache-Control": "s-maxage=60",
+            "x-rango-keep-cache": "1",
+          },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.cache.size).toBe(0);
+    });
   });
 
   describe("cache hit", () => {

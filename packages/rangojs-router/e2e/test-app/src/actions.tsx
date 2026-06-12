@@ -4,6 +4,8 @@ import { ReactNode } from "react";
 import {
   cookies,
   getRequestContext,
+  invalidateClientCache,
+  keepClientCache,
   redirect,
   updateTag,
 } from "@rangojs/router";
@@ -295,6 +297,24 @@ export async function actionSetSessionCookie(): Promise<void> {
     path: "/",
     maxAge: 86400,
   });
+}
+
+/**
+ * Action that explicitly suppresses the bridge's automatic cache invalidation
+ * via keepClientCache(). Used to verify the rango state value is NOT rotated.
+ */
+export async function actionKeepCache(): Promise<void> {
+  keepClientCache();
+}
+
+/**
+ * Action that explicitly forces invalidation via invalidateClientCache() in
+ * addition to keepClientCache(): invalidation must still win (the explicit
+ * Set-Cookie lands regardless of the suppressed automatic path).
+ */
+export async function actionKeepThenInvalidate(): Promise<void> {
+  keepClientCache();
+  invalidateClientCache();
 }
 
 /**

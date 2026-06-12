@@ -58,6 +58,9 @@ that route tree.
 - [Handles completion detection](./design/handles-completion.md) - research &
   options for detecting RSC render completion to finalize handle collection; why
   every in-band completion signal is circular, and the cache bugs the audit found
+- [Rango state cookie storage & single invalidation API](../../../docs/design/rango-state-cookie.md) -
+  moving the rango state from localStorage to a session cookie and collapsing
+  cache invalidation to `invalidateClientCache()` / `keepClientCache()`
 
 ## Internal Reference
 

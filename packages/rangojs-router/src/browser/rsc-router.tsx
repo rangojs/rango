@@ -22,6 +22,7 @@ import type {
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
+import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
 import { setPrefetchDecoder } from "./prefetch/fetch.js";
 import { setAppVersion } from "./app-version.js";
@@ -175,6 +176,12 @@ export async function initBrowserApp(
     ...(storeOptions?.cacheSize && { cacheSize: storeOptions.cacheSize }),
   });
 
+  // Register the active store on the module-level handle and wire the
+  // jar-divergence observer before any getRangoState() read can detect a
+  // cross-tab/server rotation. The real boot path never populates the
+  // getNavigationStore() singleton, so this handle is the live reference.
+  registerNavigationStore(store);
+
   // Seed router identity from the initial SSR payload so the first
   // cross-app SPA navigation can detect the app switch.
   if (initialPayload.metadata?.routerId) {
@@ -228,10 +235,11 @@ export async function initBrowserApp(
     version,
   });
 
-  // Initialize the localStorage state key for cache invalidation.
-  // The build version busts cached prefetches on deploy; the routerId
-  // namespaces the key so sibling apps on the same origin don't collide.
-  initRangoState(version ?? "0", initialPayload.metadata?.routerId);
+  // Initialize the rango state cookie for cache invalidation. The build version
+  // busts cached prefetches on deploy; the server-resolved cookie name
+  // namespaces the cookie so sibling apps on the same origin don't collide
+  // (falls back to the bare default prefix if metadata lacks the name).
+  initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
   setAppVersion(version);
 
   // Initialize the in-memory prefetch cache TTL from server config.

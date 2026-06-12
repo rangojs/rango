@@ -211,6 +211,8 @@ export async function matchForPrerender<TEnv = any>(
       header: () => {},
       setStatus: () => {},
       _setStatus: () => {},
+      _rotateStateCookie: () => {},
+      _setKeepCacheDirective: () => {},
       use: (() => {
         throw new Error("use() not available during pre-rendering");
       }) as any,
@@ -461,6 +463,8 @@ export async function renderStaticSegment<TEnv = any>(
     header: () => {},
     setStatus: () => {},
     _setStatus: () => {},
+    _rotateStateCookie: () => {},
+    _setKeepCacheDirective: () => {},
     use: (() => {
       throw new Error("use() not available during static pre-rendering");
     }) as any,
