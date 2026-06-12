@@ -143,6 +143,53 @@ async function testInvalidatedStateSurvivesRefresh(
   expect(sentHeader).toBe(rotatedState);
 }
 
+async function testKeepCacheLeavesStateUnchanged(
+  page: Page,
+  url: (path: string) => string,
+) {
+  await page.goto(url("/loader-cookie/action-sets-cookie"));
+  await waitForHydration(page);
+
+  const initialState = await readRangoState(page);
+  expect(initialState).toBeTruthy();
+
+  // An action that calls keepClientCache() suppresses the bridge's automatic
+  // invalidation, so the rango state value must NOT rotate.
+  await page.click('[data-testid="action-keep-cache-btn"]');
+  await page.waitForSelector(
+    '[data-testid="action-keep-cache-btn"]:not([disabled])',
+  );
+
+  const afterState = await readRangoState(page);
+  expect(afterState).toBe(initialState);
+}
+
+async function testKeepThenInvalidateStillRotates(
+  page: Page,
+  url: (path: string) => string,
+) {
+  await page.goto(url("/loader-cookie/action-sets-cookie"));
+  await waitForHydration(page);
+
+  const initialState = await readRangoState(page);
+  expect(initialState).toBeTruthy();
+  const [initialVersion, initialTimestamp] = initialState!.split(":");
+
+  // An action that calls BOTH keepClientCache() and invalidateClientCache():
+  // invalidation wins — the explicit Set-Cookie rotates the state even though
+  // the automatic path was suppressed.
+  await page.click('[data-testid="action-keep-then-invalidate-btn"]');
+  await page.waitForSelector(
+    '[data-testid="action-keep-then-invalidate-btn"]:not([disabled])',
+  );
+
+  const afterState = await readRangoState(page);
+  expect(afterState).not.toBe(initialState);
+  const [afterVersion, afterTimestamp] = afterState!.split(":");
+  expect(afterVersion).toBe(initialVersion);
+  expect(Number(afterTimestamp)).toBeGreaterThan(Number(initialTimestamp));
+}
+
 test.describe("rango-state invalidation lifecycle (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -163,6 +210,18 @@ test.describe("rango-state invalidation lifecycle (dev)", () => {
     page,
   }) => {
     await testInvalidatedStateSurvivesRefresh(page, f.url);
+  });
+
+  test("keepClientCache() leaves the rango-state unchanged", async ({
+    page,
+  }) => {
+    await testKeepCacheLeavesStateUnchanged(page, f.url);
+  });
+
+  test("keepClientCache() + invalidateClientCache() still rotates", async ({
+    page,
+  }) => {
+    await testKeepThenInvalidateStillRotates(page, f.url);
   });
 });
 
@@ -188,5 +247,17 @@ test.describe("rango-state invalidation lifecycle (production)", () => {
     page,
   }) => {
     await testInvalidatedStateSurvivesRefresh(page, f.url);
+  });
+
+  test("keepClientCache() leaves the rango-state unchanged", async ({
+    page,
+  }) => {
+    await testKeepCacheLeavesStateUnchanged(page, f.url);
+  });
+
+  test("keepClientCache() + invalidateClientCache() still rotates", async ({
+    page,
+  }) => {
+    await testKeepThenInvalidateStillRotates(page, f.url);
   });
 });
