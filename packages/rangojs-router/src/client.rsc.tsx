@@ -63,5 +63,8 @@ export { useHref } from "./browser/react/use-href.js";
 export { useReverse } from "./browser/react/use-reverse.js";
 
 export { useHandle } from "./browser/react/use-handle.js";
+// Type a deferred-aware consumer narrows: an accumulated entry may be a Promise
+// (a `ctx.use(Handle).defer()` slot) until it resolves.
+export type { DeferredHandleEntry } from "./defer.js";
 
 export { useLocationState } from "./browser/react/location-state.js";

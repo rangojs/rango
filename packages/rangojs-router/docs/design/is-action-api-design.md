@@ -72,6 +72,8 @@ Semantics:
 
 - Resolves each `ActionRef`'s injected id and compares it to `actionId`.
 - Returns `false` when there is no action (plain navigation) or no match.
+- Bare `ctx.isAction()` (no arguments) answers "is this request an action at
+  all?" — `true` during any in-flight action, `false` on plain navigation.
 - Variadic: `ctx.isAction(CartAdd, CartRemove)`.
 - **Module form** (replaces the file-path-prefix idiom):
   `ctx.isAction(CartActions)` where `import * as CartActions` → `true` if

@@ -42,6 +42,14 @@ Reliable recipe:
 - **Pre-release rule**: No deprecated public API in main before first stable external adoption. Remove transitional types and functions instead of marking them deprecated.
 - Treat examples as part of the API surface. If an example uses an old pattern, it reads as endorsed. Example cleanup is API cleanup.
 
+## Userland test coverage for features
+
+Treat a feature's **testability** as part of its API surface, the same way examples are. Every router feature a consumer can touch — a new `ctx.*` method, a hook, a DSL primitive, a handle behavior, a middleware semantic — MUST ship unit-test coverage that exercises it **through the public `@rangojs/router/testing` primitives** (`renderHandler`, `runLoader`, `runMiddleware`, `renderRoute`, `dispatch`, `flight`), not only an internal white-box test of the implementation module. The reason is the dogfood guarantee: if we can't test the feature with the primitives we hand consumers, neither can they, and we won't find out until someone files an issue. This is **in addition to** the internal unit tests and the dev+prod e2e mandate, not a replacement.
+
+- If a testing primitive can't yet reach the feature, **extend the primitive in the same PR** — don't special-case the test. Scar tissue: `ctx.use(Handle).defer()` returns a push carrying a `.defer()` method in production (wired by `withDefer` in `request-context.ts` / `loader-resolution.ts`), but `renderHandler` stubbed `ctx.use` with a bare recording push that lacked `.defer()`, so the feature was unreachable from the harness. The fix was to wrap the stub with the same `withDefer` production uses (`src/testing/render-handler.ts`), then add the userland test. Wrap the stub to match production; don't fake the method.
+- Put the userland test where `pnpm run test:unit:all` runs it: next to the primitive's own suite (`packages/rangojs-router/src/testing/__tests__/`) and/or a consumer dogfood suite (`packages/rangojs-router/e2e/mini/test/*`, `tests/cloudflare-basic/**`), so a consumer app's harness usage is covered too — not only the router's.
+- The PR test-plan checklist (see Pull Request Descriptions) must name the userland test and the consumer-visible contract it pins.
+
 ## Pull Request Descriptions
 
 PR descriptions must tell the **consumer-side story** alongside the code change. A reviewer should be able to read the PR and understand: what does a consumer write differently, what do they see differently, and what happens if they don't adopt the change. Code-level mechanics are necessary but not sufficient — if the PR changes anything a consumer can touch (public API, middleware semantics, error shapes, HTTP responses, generated types, DX defaults), the description must show it from the consumer's seat. Do **not** trim code-change details to make room — add the consumer narrative on top. Short chore/version-bump PRs are exempt.

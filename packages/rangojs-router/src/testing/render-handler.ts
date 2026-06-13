@@ -31,6 +31,7 @@ import {
 import { createHandlerContext } from "../router/handler-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { isHandle, type Handle } from "../handle.js";
+import { withDefer } from "../defer.js";
 import type { HandlerContext } from "../types/handler-context.js";
 import type { LoaderDefinition } from "../types.js";
 import {
@@ -236,7 +237,8 @@ export async function renderHandler<TEnv = any>(
     (hctx as { use: unknown }).use = (item: unknown) => {
       if (isHandle(item)) {
         const handle = item as Handle<any, any>;
-        return (dataOrFn: unknown) => {
+        // withDefer attaches .defer() so the harness mirrors production's push.
+        return withDefer((dataOrFn: unknown) => {
           const value =
             typeof dataOrFn === "function"
               ? (dataOrFn as () => unknown)()
@@ -244,7 +246,7 @@ export async function renderHandler<TEnv = any>(
           const pushed = handlePushes.get(handle) ?? [];
           pushed.push(value);
           handlePushes.set(handle, pushed);
-        };
+        });
       }
       if (loaderSeeds.has(item)) return loaderSeeds.get(item);
       throw new RenderHandlerSetupError(

@@ -100,6 +100,21 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 `createLoader`, `createHandle`, `isHandle`, `createLocationState`, `href()`
 
+### Deferred handle values — `ctx.use(Handle).defer()`
+
+The push function returned by `ctx.use(Handle)` (typed `HandlePush<TData>`) carries
+a `.defer(options?: DeferOptions<TData>)` method for the "decide-sync, resolve-late"
+handle pattern. `.defer({ timeoutMs, else })` reserves the handle's slot synchronously
+(so the decision lands before the stream seals) and returns a **push-equal resolver** —
+same argument shapes as the push (value / `Promise` / thunk), same behavior — that a
+deep async component calls later. The always-on timeout (`timeoutMs`, default
+`DEFAULT_DEFER_TIMEOUT_MS`, 10s) auto-resolves the slot to `else` if the resolver is
+never called, so a forgotten resolve cannot hang the Flight stream / response. A
+deferred-aware consumer reads such slots as `DeferredHandleEntry<TData>` (a value or a
+pending `Promise`). Exported types: `HandlePush`, `HandlePushFn`, `DeferOptions`,
+`DeferredHandleEntry`; exported value: `DEFAULT_DEFER_TIMEOUT_MS`. `createDeferred` is
+internal (the `withDefer` building block), not a public export.
+
 ---
 
 ## Feature Map by Capability
@@ -201,7 +216,9 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 - `ctx.isAction(...refs)` on the revalidate predicate context — typed,
   rename-safe action matching by reference (single, variadic, or `import * as`
   namespace); resolves the same id (`$id ?? $$id`) as the action boundary, so it
-  matches in dev and production. Public type: `ActionRef` (exported from root).
+  matches in dev and production. Called with no arguments it answers "is this an
+  action at all?" — true for any in-flight action, false on plain navigation.
+  Public type: `ActionRef` (exported from root).
 
 ### Progressive Enhancement
 

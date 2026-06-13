@@ -1,11 +1,10 @@
-// renderHandler: run a REAL route handler (a pure function `(ctx) => rsc`, what
-// you pass to path(...)) with a seeded HandlerContext, then assert the RSC it
-// renders + the effects it produced. Runs in the rsc project (react-server).
+// Tests renderHandler: run real route handlers with seeded context and assert RSC output + effects.
 import { describe, expect, test } from "vitest";
 import { findClientBoundaries, renderHandler } from "../flight.entry.js";
 import { createVar } from "../../context-var.js";
 import { createLoader } from "../../loader.js";
 import { Meta } from "../../handles/meta.js";
+import { Breadcrumbs } from "../../handles/breadcrumbs.js";
 import { redirect } from "../../route-definition/redirect.js";
 import {
   invalidateClientCache,
@@ -20,7 +19,6 @@ const ProductLoader = createLoader(async () => ({ name: "Wine", price: 9 }));
 
 describe("renderHandler", () => {
   test("runs a real handler: params + ctx.use(Loader) + ctx.get + renders RSC", async () => {
-    // The handler is a pure function (ctx) => rsc — exactly as authored for path().
     async function ProductPage(ctx: HandlerContext<{ slug: string }>) {
       const product = await ctx.use(ProductLoader);
       const tenant = ctx.get(Tenant);
@@ -109,10 +107,6 @@ describe("renderHandler", () => {
   });
 
   test("rethrows an actionable error when the handler hits the server-only stub (missing rsc alias)", async () => {
-    // Simulate the out-of-react-server stub throw a handler would hit if the
-    // vitest.rsc.config.ts resolve.alias does not map bare @rangojs/router to
-    // index.rsc.ts. renderHandler must surface it LOUDLY (not swallow it into
-    // result.thrown as an opaque tree:undefined).
     function Page(): never {
       throw new Error(
         `cookies() is only available from "@rangojs/router" in a react-server/RSC environment.`,
@@ -122,8 +116,6 @@ describe("renderHandler", () => {
   });
 
   test("a normal handler throw is captured on result.thrown, NOT reclassified as setup", async () => {
-    // Control: an ordinary Error must stay observable on result.thrown (no
-    // false-positive from the server-only-stub guard).
     const boom = new Error("boom from handler");
     function Page(): never {
       throw boom;
@@ -134,10 +126,6 @@ describe("renderHandler", () => {
   });
 
   test("a handler that RETURNS a Response preserves its body (response route)", async () => {
-    // The documented response-route case: a handler returns
-    // `new Response(JSON.stringify(...))`. Pre-fix buildResponse rewrapped to
-    // `new Response(null, ...)` and the body was lost; now it is carried over so
-    // `await result.response.text()`/`.json()` works.
     function Health(): Response {
       return new Response(JSON.stringify({ ok: true, count: 2 }), {
         status: 200,
@@ -307,5 +295,100 @@ describe("renderHandler: invalidateClientCache / keepClientCache", () => {
     expect(response.status).toBe(202);
     expect(await response.text()).toBe("done");
     expect(stateCookies(response)).toHaveLength(1);
+  });
+});
+
+describe("renderHandler: ctx.use(Handle).defer()", () => {
+  // The push returned by ctx.use(Handle) carries `.defer()` in production
+  // (request-context.ts / loader-resolution.ts wrap it with withDefer). The
+  // harness wraps its recording push the same way, so a consumer can unit-test
+  // the deferred-handle feature without an e2e. The reserved slot is recorded as
+  // the pending Promise; settling/timeout is observable by awaiting it.
+  test("exposes .defer() on the push, matching the production shape", async () => {
+    // Capture the push and assert AFTER renderHandler resolves: an expect()
+    // thrown inside the handler is captured on result.thrown, not re-thrown, so
+    // an in-handler assertion would pass vacuously.
+    let crumb: { defer?: unknown } | undefined;
+    function Page(ctx: HandlerContext) {
+      crumb = ctx.use(Breadcrumbs);
+      return <main>ok</main>;
+    }
+    await renderHandler(Page);
+    expect(typeof crumb?.defer).toBe("function");
+  });
+
+  test("a deep async component resolves the reserved slot (decide-sync, resolve-late)", async () => {
+    function Page(ctx: HandlerContext) {
+      // Decide to push now (slot reserved before render); resolve from a deep
+      // async child via the push-equal resolver.
+      const resolve = ctx
+        .use(Breadcrumbs)
+        .defer({ timeoutMs: 5000, else: null });
+      async function Deep() {
+        await Promise.resolve();
+        resolve({ label: "Deferred", href: "/deferred" });
+        return <span>deep-done</span>;
+      }
+      return (
+        <main>
+          <Deep />
+        </main>
+      );
+    }
+    const { handles, tree } = await renderHandler(Page);
+    // The deep component rendered (the resolver ran during serialization).
+    expect(JSON.stringify(tree)).toContain("deep-done");
+    // The reserved slot was recorded as a Promise and settled to the deep value.
+    const [slot] = handles.get(Breadcrumbs) ?? [];
+    expect(slot).toBeInstanceOf(Promise);
+    expect(await slot).toEqual({ label: "Deferred", href: "/deferred" });
+  });
+
+  test("the resolver is push-equal: accepts a Promise argument", async () => {
+    function Page(ctx: HandlerContext) {
+      const resolve = ctx.use(Breadcrumbs).defer();
+      resolve(Promise.resolve({ label: "Async", href: "/async" }));
+      return <main>ok</main>;
+    }
+    const { handles } = await renderHandler(Page);
+    const [slot] = handles.get(Breadcrumbs) ?? [];
+    expect(await slot).toEqual({ label: "Async", href: "/async" });
+  });
+
+  test("the resolver is push-equal: invokes a thunk immediately", async () => {
+    let called = false;
+    function Page(ctx: HandlerContext) {
+      const resolve = ctx.use(Breadcrumbs).defer();
+      resolve(() => {
+        called = true;
+        return Promise.resolve({ label: "Thunk", href: "/thunk" });
+      });
+      return <main>ok</main>;
+    }
+    const { handles } = await renderHandler(Page);
+    expect(called).toBe(true);
+    const [slot] = handles.get(Breadcrumbs) ?? [];
+    expect(await slot).toEqual({ label: "Thunk", href: "/thunk" });
+  });
+
+  test("a never-resolved slot falls back to `else` on the timeout (no hang)", async () => {
+    // The safety net: a reserved slot whose resolver is never called must
+    // auto-resolve to `else` so the response can flush instead of hanging on the
+    // open Flight row. renderHandler returning at all proves no hang. (The dev
+    // warn is environment-dependent and pinned in defer.test.ts; the rsc project
+    // runs NODE_ENV=production, so only the fallback resolution is asserted here.)
+    function Page(ctx: HandlerContext) {
+      ctx.use(Breadcrumbs).defer({
+        timeoutMs: 10,
+        else: { label: "Forgotten", href: "/forgotten" },
+      });
+      // Resolver intentionally never called.
+      return <main>ok</main>;
+    }
+    const { handles, tree } = await renderHandler(Page);
+    expect(JSON.stringify(tree)).toContain("ok");
+    const [slot] = handles.get(Breadcrumbs) ?? [];
+    expect(slot).toBeInstanceOf(Promise);
+    expect(await slot).toEqual({ label: "Forgotten", href: "/forgotten" });
   });
 });

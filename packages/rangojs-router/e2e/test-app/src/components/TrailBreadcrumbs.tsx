@@ -1,7 +1,14 @@
 "use client";
 
-import { useHandle, Breadcrumbs } from "@rangojs/router/client";
-import { Fragment, Suspense, use, type ReactNode } from "react";
+import {
+  useHandle,
+  Breadcrumbs,
+  type BreadcrumbItem,
+  type DeferredHandleEntry,
+} from "@rangojs/router/client";
+import { Fragment, Suspense, use } from "react";
+import { AsyncContent } from "./AsyncContent.js";
+import { isThenable } from "./thenable.js";
 
 /**
  * User-land breadcrumb component using the built-in Breadcrumbs handle.
@@ -39,11 +46,46 @@ export function TrailBreadcrumbs() {
   );
 }
 
-function AsyncContent({
-  content,
+/**
+ * Deferred-aware renderer: unwraps Promise-wrapped breadcrumb items (from `.defer()`)
+ * using React's `use()` hook inside Suspense. Separate from TrailBreadcrumbs
+ * so existing tests are unaffected.
+ */
+export function DeferredTrailBreadcrumbs() {
+  const breadcrumbs = useHandle(Breadcrumbs) as Array<
+    DeferredHandleEntry<BreadcrumbItem>
+  >;
+
+  if (!breadcrumbs.length) return null;
+
+  return (
+    <nav aria-label="DeferredTrail">
+      <ol>
+        {breadcrumbs.map((crumb, index) => (
+          <li key={index}>
+            <Suspense>
+              <DeferredCrumb crumb={crumb} />
+            </Suspense>
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
+
+function DeferredCrumb({
+  crumb,
 }: {
-  content: ReactNode | Promise<ReactNode>;
+  crumb: DeferredHandleEntry<BreadcrumbItem>;
 }) {
-  if (!(content instanceof Promise)) return <>{content}</>;
-  return <>{use(content)}</>;
+  const item = isThenable<BreadcrumbItem | null | undefined>(crumb)
+    ? use(crumb)
+    : crumb;
+  if (!item) return null; // deferred slot timed out with else: null / undefined
+  return (
+    <>
+      <span>{item.label}</span>
+      {item.content != null && <AsyncContent content={item.content} />}
+    </>
+  );
 }

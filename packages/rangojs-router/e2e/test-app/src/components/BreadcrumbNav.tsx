@@ -1,7 +1,9 @@
 "use client";
 
 import { Link, useHandle, Breadcrumbs } from "@rangojs/router/client";
-import { Fragment, ReactNode, Suspense, use } from "react";
+import { Fragment, Suspense } from "react";
+import { AsyncContent } from "./AsyncContent.js";
+import { isThenable } from "./thenable.js";
 
 /**
  * BreadcrumbNav - displays breadcrumb navigation from accumulated handle data.
@@ -10,7 +12,10 @@ import { Fragment, ReactNode, Suspense, use } from "react";
 export function BreadcrumbNav({ testId }: { testId?: string }) {
   const breadcrumbs = useHandle(Breadcrumbs);
 
-  if (!breadcrumbs.length) return null;
+  // Skip deferred (thenable) entries; deferred-aware rendering is in page-level components.
+  const renderable = breadcrumbs.filter((crumb) => !isThenable(crumb));
+
+  if (!renderable.length) return null;
 
   return (
     <nav
@@ -31,7 +36,7 @@ export function BreadcrumbNav({ testId }: { testId?: string }) {
           padding: 0,
         }}
       >
-        {breadcrumbs.map((crumb, index) => (
+        {renderable.map((crumb, index) => (
           <Fragment key={crumb.href}>
             <li
               style={{
@@ -45,7 +50,7 @@ export function BreadcrumbNav({ testId }: { testId?: string }) {
                   /
                 </span>
               )}
-              {index === breadcrumbs.length - 1 ? (
+              {index === renderable.length - 1 ? (
                 <span
                   data-testid={testId ? `${testId}-current` : undefined}
                   style={{ color: "#666" }}
@@ -69,7 +74,7 @@ export function BreadcrumbNav({ testId }: { testId?: string }) {
             {crumb.content ? (
               <li data-testid={testId ? `${testId}-content` : undefined}>
                 <Suspense fallback={<BreadcrumbSkeleton testId={testId} />}>
-                  <PromiseComponent content={crumb.content} />
+                  <AsyncContent content={crumb.content} />
                 </Suspense>
               </li>
             ) : null}
@@ -95,16 +100,4 @@ function BreadcrumbSkeleton({ testId }: { testId?: string }) {
       }}
     />
   );
-}
-
-function PromiseComponent({
-  content,
-}: {
-  content: Promise<ReactNode> | ReactNode;
-}) {
-  if (!(content instanceof Promise)) {
-    return <>{content}</>;
-  }
-  const component = use(content);
-  return <>{component}</>;
 }

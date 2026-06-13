@@ -114,6 +114,13 @@ export type {
 
 // Handle API
 export { createHandle, isHandle, type Handle } from "./handle.js";
+export {
+  DEFAULT_DEFER_TIMEOUT_MS,
+  type DeferOptions,
+  type DeferredHandleEntry,
+  type HandlePush,
+  type HandlePushFn,
+} from "./defer.js";
 
 // Context variable API (typed ctx.set/ctx.get tokens)
 export { createVar, type ContextVar } from "./context-var.js";

@@ -2,11 +2,7 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
 
-/**
- * Asserts exact breadcrumb trail: order, content, AND count.
- * Selects only label <li> elements (excludes async-content <li> which
- * carries data-testid="breadcrumbs-content").
- */
+// Asserts exact breadcrumb order and count (excludes async-content <li>).
 async function expectBreadcrumbOrder(
   container: ReturnType<typeof testId> extends infer T ? T : never,
   labels: string[],
@@ -287,6 +283,55 @@ function breadcrumbTests(mode: "dev" | "build") {
       // Async content should still be visible, skeleton should not reappear
       await expect(testId(page, "breadcrumb-async")).toBeVisible();
       await expect(testId(page, "breadcrumbs-skeleton")).not.toBeVisible();
+    });
+
+    // EXPERIMENT (handles-completion Q6): the handler DECIDES to push the crumb
+    // synchronously, but a DEEP async component (DeepResolver) produces the
+    // content value ~300ms later during its own render. If the content renders,
+    // "decide-sync, resolve-late" works today on the plain Flight transport.
+    test("deferred handle content resolved by a deep async component still renders", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/breadcrumb-trail/deferred"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "deferred-resolve-page")).toBeVisible();
+      // The deep async component resolved the pushed content late.
+      await expect(
+        page.getByText("resolved-by-deep-component").first(),
+      ).toBeVisible({ timeout: 5000 });
+    });
+
+    // The .defer() safety net: a reserved slot whose resolver is never called
+    // must auto-resolve to `else` (short timeout) so the response flushes
+    // instead of hanging on the open Flight row.
+    test("a deferred handle value that is never resolved falls back on timeout (no hang)", async ({
+      page,
+    }) => {
+      // page.goto resolving at all proves the response flushed (no hang).
+      await page.goto(f.url("/breadcrumb-trail/deferred-timeout"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "deferred-timeout-page")).toBeVisible();
+      await expect(page.getByText("fallback-content").first()).toBeVisible({
+        timeout: 5000,
+      });
+    });
+
+    // .defer() with NO `else`: the never-resolved slot auto-resolves to undefined
+    // on timeout. The page must still flush (no hang) and the deferred-aware
+    // renderer drops the undefined item rather than crashing on it.
+    test("a deferred handle value with no else resolves to undefined on timeout (no hang, no crash)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/breadcrumb-trail/deferred-timeout-undefined"));
+      await waitForHydration(page);
+
+      // The marker rendering at all proves the response flushed (no hang) and the
+      // deferred-aware renderer dropped the undefined slot without crashing.
+      await expect(
+        testId(page, "deferred-timeout-undefined-marker"),
+      ).toHaveText("flushed", { timeout: 5000 });
     });
   });
 }

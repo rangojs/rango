@@ -33,16 +33,21 @@ function resolveActionRefId(ref: unknown): string | undefined {
 }
 
 /**
- * Build the `isAction()` helper bound to the current action's id. Matches a
- * single imported action reference, several (variadic), or any export of a
- * namespace import (`import * as Mod`). Returns `false` when there is no action
- * (plain navigation) or nothing matches.
+ * Build the `isAction()` helper bound to the current action's id. Called with no
+ * arguments it answers "is this request an action at all?" (any action) — `true`
+ * during action handling, `false` on plain navigation. Called with one or more
+ * action references it narrows to those: a single imported action, several
+ * (variadic), or any export of a namespace import (`import * as Mod`). Returns
+ * `false` when there is no action (plain navigation) or nothing matches.
  */
 function makeIsAction(
   currentActionId: string | undefined,
 ): (...actions: ActionRef[]) => boolean {
   return (...actions: ActionRef[]): boolean => {
     if (!currentActionId) return false;
+    // Bare isAction(): an action is in flight (currentActionId is set) and the
+    // caller did not narrow to a specific action, so this is "any action".
+    if (actions.length === 0) return true;
     for (const action of actions) {
       if (typeof action === "function") {
         if (resolveActionRefId(action) === currentActionId) return true;

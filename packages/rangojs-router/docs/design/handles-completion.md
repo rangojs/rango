@@ -317,8 +317,13 @@ type-check) and forbid `JSON.stringify` over a `handles`-keyed object outside
    left open.
 3. **Settle the runtime tier.** Keep `settled` as the permanent contract,
    re-document `LateHandlePushError` as a contract-violation signal (not a
-   window-tuning knob), and ship `deferHandle` ergonomics — plus G's static sugar
-   if the usage ratio justifies it.
+   window-tuning knob). **`ctx.use(Handle).defer()` shipped** (Experiment 2 below
+   confirmed the deep-async-resolve pattern works today, dev + production): the
+   handler calls `.defer({ timeoutMs, else })` to reserve the handle's slot
+   synchronously and gets back a push-equal resolver; a deep async component calls
+   it later with the same value it would have pushed, with a mandatory timeout so a
+   forgotten resolve can't hang the response. Still optional: G's
+   static-declaration sugar, if the usage ratio justifies it.
 4. **Reserve option A** — scoped to partial/action responses only, where its
    streaming story is genuinely full — for the day a consumer demonstrably needs
    autonomous deep-component pushes. File the React `onAllReady` issue in parallel
@@ -328,8 +333,12 @@ type-check) and forbid `JSON.stringify` over a `handles`-keyed object outside
 
 - **How big is `(Flight EOF − settled)` on realistic routes?** Decides A's real
   TTFB cost. (Experiment 1 above.)
-- **Does the deferred-resolver pattern already work end-to-end today?** Decides
-  whether the runtime tier needs any mechanism at all. (Experiment 2 above.)
+- **Does the deferred-resolver pattern already work end-to-end today?**
+  **ANSWERED: yes** — a handle whose value is a `Promise` resolved by a deep async
+  component renders in both dev and production on the plain Flight transport (see
+  `e2e/test-app/src/urls/breadcrumb-trail.tsx` `DeferredResolvePage` and the
+  `handle-breadcrumbs` e2e). So the runtime tier needs no new mechanism, only the
+  shipped `ctx.use(Handle).defer()` ergonomics + its forgotten-resolve timeout.
 - **Is calling `renderToReadableStream` twice per request safe under
   `plugin-rsc` on `workerd`?** A's secondary handles stream and C's pass two both
   assume yes; believed stateless-per-call but not exercised. Test a minimal route

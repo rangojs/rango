@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach } from "vitest";
+import { Suspense, use } from "react";
 import { cleanup } from "@testing-library/react";
 import { Outlet } from "../../client.js";
+import { Breadcrumbs, type BreadcrumbItem } from "../../handles/breadcrumbs.js";
+import type { DeferredHandleEntry } from "../../defer.js";
 import { useParams } from "../../browser/react/use-params.js";
 import { useReverse } from "../../browser/react/use-reverse.js";
 import { useHref } from "../../browser/react/use-href.js";
@@ -75,6 +78,84 @@ describe("renderRoute handles seeding runs the real collect", () => {
 
     expect(getByTestId("id").textContent).toBe("bob");
     expect(getByTestId("crumbs").textContent).toBe("Home > Users");
+  });
+});
+
+// The client-read half of ctx.use(Handle).defer(): a deferred slot arrives in the
+// accumulated handle data as a Promise (a DeferredHandleEntry) that a
+// deferred-aware component use()s inside Suspense. renderRoute settles that
+// Suspense within act (see the awaited-act render), so a deferred handle renders
+// and is assertable from the resolved DOM exactly like a sync one — no e2e
+// needed. (The server-push half is covered by renderHandler's .defer() tests.)
+function isThenable(v: unknown): v is Promise<unknown> {
+  return v != null && typeof (v as { then?: unknown }).then === "function";
+}
+
+function DeferredCrumb({ c }: { c: DeferredHandleEntry<BreadcrumbItem> }) {
+  const item = isThenable(c) ? (use(c) as BreadcrumbItem) : c;
+  return <span data-testid="crumb">{item.label}</span>;
+}
+
+function DeferredCrumbs() {
+  const crumbs = useHandle(Breadcrumbs) as Array<
+    DeferredHandleEntry<BreadcrumbItem>
+  >;
+  return (
+    <div>
+      {crumbs.map((c, i) => (
+        <Suspense key={i} fallback={<span data-testid="crumb-pending" />}>
+          <DeferredCrumb c={c} />
+        </Suspense>
+      ))}
+    </div>
+  );
+}
+
+describe("renderRoute deferred handle entries (.defer())", () => {
+  it("renders a deferred (Promise) entry once it resolves, alongside sync ones", async () => {
+    const { getAllByTestId } = await renderRoute(
+      [{ path: "/", Component: DeferredCrumbs }],
+      {
+        request: "/",
+        handles: [
+          [
+            Breadcrumbs,
+            [
+              { label: "Home", href: "/" },
+              Promise.resolve({ label: "Deferred", href: "/d" }),
+            ],
+          ],
+        ],
+      },
+    );
+    expect(getAllByTestId("crumb").map((e) => e.textContent)).toEqual([
+      "Home",
+      "Deferred",
+    ]);
+  });
+
+  it("renders multiple concurrent deferred entries without collapsing them (collectBreadcrumbs href dedup)", async () => {
+    // Before the deferred-aware collect, both pending Promises hashed to href
+    // `undefined` and the dedup kept only the last. Both must render.
+    const { getAllByTestId } = await renderRoute(
+      [{ path: "/", Component: DeferredCrumbs }],
+      {
+        request: "/",
+        handles: [
+          [
+            Breadcrumbs,
+            [
+              Promise.resolve({ label: "First", href: "/1" }),
+              Promise.resolve({ label: "Second", href: "/2" }),
+            ],
+          ],
+        ],
+      },
+    );
+    expect(getAllByTestId("crumb").map((e) => e.textContent)).toEqual([
+      "First",
+      "Second",
+    ]);
   });
 });
 

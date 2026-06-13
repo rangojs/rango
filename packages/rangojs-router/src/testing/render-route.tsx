@@ -465,18 +465,26 @@ export async function renderRoute(
   );
   const initialTree = await renderSegments(initialSegments);
 
-  const result = render(
-    <NavigationProvider
-      store={store}
-      eventController={eventController}
-      initialPayload={{ root: initialTree, metadata: initialMetadata }}
-      bridge={bridge}
-      basename={normalizeBasename(options.basename)}
-      themeConfig={
-        options.theme === undefined ? null : resolveThemeConfig(options.theme)
-      }
-    />,
-  );
+  // Wrap render in an awaited async act so a tree that suspends (async loaders,
+  // loading states, deferred handle entries that arrive as a Promise) settles its
+  // Suspense within act — otherwise React orphans the resolution ("a component
+  // suspended inside an act scope, but the act call was not awaited") and the
+  // resolved content never reaches the asserted DOM.
+  let result!: Awaited<ReturnType<typeof render>>;
+  await act(async () => {
+    result = render(
+      <NavigationProvider
+        store={store}
+        eventController={eventController}
+        initialPayload={{ root: initialTree, metadata: initialMetadata }}
+        bridge={bridge}
+        basename={normalizeBasename(options.basename)}
+        themeConfig={
+          options.theme === undefined ? null : resolveThemeConfig(options.theme)
+        }
+      />,
+    );
+  });
 
   const router: TestRouterHandle = {
     navigate,

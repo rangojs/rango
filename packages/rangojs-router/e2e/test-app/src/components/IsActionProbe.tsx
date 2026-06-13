@@ -2,16 +2,18 @@
 
 import { useActionState } from "react";
 import { useLoader } from "@rangojs/router/client";
-import { IsActionProbeLoader } from "../loaders.js";
+import { IsActionProbeLoader, IsActionAnyLoader } from "../loaders.js";
 import { isActionTargetAction, isActionDecoyAction } from "../actions.js";
 
 /**
- * Displays the probe loader's run counter and two buttons that fire the target
- * and decoy actions. The target action re-runs the loader (ctx.isAction match);
- * the decoy does not. The test reads `is-action-runs` before/after each click.
+ * Displays the probe loaders' run counters and two buttons that fire the target
+ * and decoy actions. The target-gated loader (`is-action-runs`) re-runs only on
+ * the target action; the bare-isAction()-gated loader (`is-action-any-runs`)
+ * re-runs on ANY action. The test reads both counters before/after each click.
  */
 export function IsActionProbe() {
   const { data } = useLoader(IsActionProbeLoader);
+  const { data: anyData } = useLoader(IsActionAnyLoader);
 
   const [, fireTarget, targetPending] = useActionState(async () => {
     await isActionTargetAction();
@@ -26,6 +28,7 @@ export function IsActionProbe() {
   return (
     <div>
       <span data-testid="is-action-runs">{data.runs}</span>
+      <span data-testid="is-action-any-runs">{anyData.runs}</span>
       <form action={fireTarget}>
         <button
           type="submit"

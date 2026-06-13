@@ -40,6 +40,7 @@ import {
   type HandleData,
 } from "./handle-store.js";
 import { isHandle } from "../handle.js";
+import { withDefer } from "../defer.js";
 import { track, type MetricsStore } from "./context.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
@@ -1037,16 +1038,16 @@ export function createUseFunction<TEnv>(
         );
       }
 
-      return (
-        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
-      ) => {
-        const valueOrPromise =
-          typeof dataOrFn === "function"
-            ? (dataOrFn as () => Promise<unknown>)()
-            : dataOrFn;
+      return withDefer(
+        (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+          const valueOrPromise =
+            typeof dataOrFn === "function"
+              ? (dataOrFn as () => Promise<unknown>)()
+              : dataOrFn;
 
-        handleStore.push(handle.$$id, segmentId, valueOrPromise);
-      };
+          handleStore.push(handle.$$id, segmentId, valueOrPromise);
+        },
+      );
     }
 
     const loader = item as LoaderDefinition<any, any>;
