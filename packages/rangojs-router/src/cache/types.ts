@@ -12,10 +12,6 @@
 import type { ResolvedSegment } from "../types.js";
 import type { RequestContext } from "../server/request-context.js";
 
-// ============================================================================
-// Segment Cache Store (low-level storage interface)
-// ============================================================================
-
 /**
  * Result from cache get() including data and revalidation status
  */
@@ -116,12 +112,6 @@ export interface SegmentCacheStore<TEnv = unknown> {
    */
   clear?(): Promise<void>;
 
-  // ============================================================================
-  // Document Cache Methods (optional)
-  // ============================================================================
-  // These methods are for caching full HTTP responses (document-level caching).
-  // Stores that support response caching should implement these methods.
-
   /**
    * Get a cached Response by key.
    * Returns the response and whether it should be revalidated (SWR).
@@ -146,12 +136,6 @@ export interface SegmentCacheStore<TEnv = unknown> {
     tags?: string[],
   ): Promise<void>;
 
-  // ============================================================================
-  // Function Cache Methods (optional, for "use cache" directive)
-  // ============================================================================
-  // These methods cache individual function/component return values.
-  // Stores that support "use cache" should implement these methods.
-
   /**
    * Get a cached function result by key.
    * Returns the serialized value, optional handle data, and staleness flag.
@@ -169,10 +153,6 @@ export interface SegmentCacheStore<TEnv = unknown> {
     value: string,
     options?: CacheItemOptions,
   ): Promise<void>;
-
-  // ============================================================================
-  // Tag-based Invalidation (optional)
-  // ============================================================================
 
   /**
    * Invalidate every cache entry (segment, response, item) tagged with any of
@@ -264,10 +244,6 @@ export interface CachedEntryData {
   taggedAt?: number;
 }
 
-// ============================================================================
-// Cache Configuration
-// ============================================================================
-
 /**
  * Default cache options applied to all cache() boundaries.
  * Individual cache() calls can override any of these values.
@@ -291,10 +267,6 @@ export interface CacheDefaults {
    */
   swr?: number;
 }
-
-// ============================================================================
-// Segment Cache Results (request-level shapes)
-// ============================================================================
 
 /**
  * Handle data for a single segment

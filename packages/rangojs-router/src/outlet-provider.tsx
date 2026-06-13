@@ -5,11 +5,7 @@ import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { ResolvedSegment } from "./types.js";
 
 /**
- * Provider for outlet content - used internally by renderSegments
- *
- * Stores a reference to parent context so useLoader can walk up the chain
- * to find loader data from parent layouts. If this segment defines a loading
- * component, Outlet will wrap content with Suspense using that as fallback.
+ * Outlet content provider — stores parent context for useLoader chain walking.
  */
 export function OutletProvider({
   content,

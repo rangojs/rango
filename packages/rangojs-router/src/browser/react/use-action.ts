@@ -154,7 +154,6 @@ export function useAction<T>(
   });
   const prevSelected = useRef(baseState);
   prevSelected.current = baseState;
-  // useOptimistic allows immediate updates during transitions/actions
   const [optimisticState, setOptimisticState] = useOptimistic<
     T | TrackedActionState
   >(null!);

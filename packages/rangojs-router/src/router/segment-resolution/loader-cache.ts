@@ -139,14 +139,8 @@ export function resolveLoaderData<TEnv>(
   const swrWindow = resolveSwrWindow(options.swr, store.defaults);
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
-  // Loader tags are config-derived, so they are the complete set whether this is
-  // a cache hit or miss; record them every time so a document built from this
-  // loader is tagged for invalidation.
   recordRequestTags(tags);
 
-  // Wrap ctx.use() so cache HIT primes the handler's memoization map.
-  // ctx.use() closes over the match context's loaderPromises (not request context's).
-  // By intercepting ctx.use(), we inject cached data into the correct map.
   const originalUse = ctx.use;
   const dataPromise = (async () => {
     const codec = await getCodec();
@@ -174,10 +168,6 @@ export function resolveLoaderData<TEnv>(
     });
   })();
 
-  // Temporarily replace ctx.use() so the handler's call returns cached data.
-  // This is needed because ctx.use() closes over the match context's loaderPromises
-  // map which is separate from the request context. By wrapping use(), we intercept
-  // the handler's call and return the shared dataPromise.
   const wrappedUse = ((item: any) => {
     if (item === loaderEntry.loader || item?.$$id === loaderId) {
       return dataPromise;

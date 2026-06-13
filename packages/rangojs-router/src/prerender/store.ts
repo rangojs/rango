@@ -1,11 +1,7 @@
 /**
- * Prerender Store
- *
- * Reads pre-rendered segment data from the worker bundle at build time.
- * The manifest module is lazily loaded via globalThis.__loadPrerenderManifestModule,
- * a function injected into the RSC entry that returns the manifest module
- * containing a key-to-specifier map and a `loadPrerenderAsset` function
- * that anchors import() resolution relative to the manifest file.
+ * Prerender Store — reads pre-rendered segment data from the worker bundle.
+ * Manifest module (injected via globalThis.__loadPrerenderManifestModule)
+ * contains key-to-specifier map and loadPrerenderAsset for import() resolution.
  */
 
 import type { SerializedSegmentData } from "../cache/types.js";

@@ -37,10 +37,8 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
     if (!item) continue;
 
     if (item.type === "include") {
-      // All includes are lazy; the router expands them on first matching request.
       result.push(item);
     } else if (item.type === "layout" && (item as any).uses) {
-      // Process nested items in layout
       const layoutItem = item as any;
       layoutItem.uses = processItems(layoutItem.uses);
       result.push(layoutItem);
@@ -141,8 +139,6 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
           ? (parentRootScoped ?? false)
           : parentRootScoped;
 
-    // All includes are lazy - patterns are evaluated on first matching request
-    // This improves cold start time significantly for large route sets
     return {
       type: "include",
       name,
