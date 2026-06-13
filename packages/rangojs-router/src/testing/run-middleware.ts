@@ -28,6 +28,7 @@ import {
   snapshotRunEffects,
   type CreateTestContextOptions,
   type VarsInit,
+  type StateCookieSeed,
 } from "./internal/context.js";
 import type { ThemeConfig } from "../theme/types.js";
 import type { SegmentCacheStore } from "../cache/types.js";
@@ -77,6 +78,13 @@ export interface RunMiddlewareOptions<TEnv = any> {
   cacheStore?: SegmentCacheStore;
   /** Cache profiles (the `createRouter({ cacheProfiles })` shape). */
   cacheProfiles?: Record<string, CacheProfile>;
+  /**
+   * Customize the rango state cookie a middleware that calls
+   * `invalidateClientCache()` rotates (the name is always seeded — default
+   * `rango-state_router_0` — so it rotates like production). Assert via the
+   * `Set-Cookie` on `result.response` / `result.cookies`.
+   */
+  stateCookie?: StateCookieSeed;
 }
 
 /**
@@ -149,6 +157,7 @@ export async function runMiddleware<TEnv = any>(
     theme: opts.theme,
     cacheStore: opts.cacheStore,
     cacheProfiles: opts.cacheProfiles,
+    stateCookie: opts.stateCookie,
   };
 
   const {

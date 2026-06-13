@@ -47,27 +47,27 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 
 ## The testing surface, mapped to the API
 
-| You ship / consume…                              | Test that…                                                         | Layer               | Primitive                                                                               | Skill                                    |
-| ------------------------------------------------ | ------------------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile                        | unit + types        | call directly; `@ts-expect-error`                                                       | `/typesafety`, `/links`                  |
-| a `loader()` body                                | data logic given params/env/vars/search                            | unit (node)         | `runLoader` (handle or raw fn)                                                          | `/loader`                                |
-| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                       | unit (node)         | `runMiddleware`                                                                         | `/middleware`                            |
-| a client component reading router context        | it renders given params/loaderData/Outlet                          | unit (DOM)          | `renderRoute`                                                                           | `/hooks`                                 |
-| a component reading `useLocationState`           | it renders the seeded location-state value                         | unit (DOM)          | `renderRoute` (`locationState` option)                                                  | `/hooks`                                 |
-| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                | unit (DOM)          | `renderRoute` (`handles` option)                                                        | `/breadcrumbs`                           |
-| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                | unit (node)         | `collectHandle`                                                                         | `/breadcrumbs`                           |
-| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix               | unit (DOM)          | `renderRoute` (`mount` option)                                                          | `/composability`                         |
-| a server action's cookie / header / flash output | `Set-Cookie`, response headers, flash — even on `throw redirect()` | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState }`) | `/server-actions`                        |
-| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation                    | integration         | `dispatch`                                                                              | `/response-routes`, `/mime-routes`       |
-| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                               | integration         | `dispatch`                                                                              | `/middleware`, `/route`                  |
-| an async Server Component                        | real Flight output / serialization shape                           | RSC unit            | `renderToFlightString` + `toMatchFlight`                                                | `/route`                                 |
-| a client island's props across the boundary      | typed prop fidelity (`Date`/`Map`), inlined-vs-island              | RSC unit            | `renderServerTree` + `findClientBoundaries`                                             | `/route`                                 |
-| a real route **handler** `(ctx) => rsc`          | what it renders given params/loaders/vars; its effects             | RSC unit            | `renderHandler` (seeded `HandlerContext`)                                               | `/route`                                 |
-| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS                    | e2e                 | `parityDescribe` + `expectParity`                                                       | `/server-actions`                        |
-| navigation / hydration / view transitions        | no reload, no page error, correct pathname                         | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                          | `/hooks`, `/view-transitions`            |
-| `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                                 | e2e + signal        | `assertCacheStatus` / telemetry sink                                                    | `/caching`, `/use-cache`, `/cache-guide` |
-| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                    | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                 | `/prerender`                             |
-| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)                     | unit (node)         | `assertGeneratedRoutesMatch`                                                            | `/typesafety`                            |
+| You ship / consume…                              | Test that…                                                         | Layer               | Primitive                                                                                                | Skill                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------ | ------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile                        | unit + types        | call directly; `@ts-expect-error`                                                                        | `/typesafety`, `/links`                  |
+| a `loader()` body                                | data logic given params/env/vars/search                            | unit (node)         | `runLoader` (handle or raw fn)                                                                           | `/loader`                                |
+| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                       | unit (node)         | `runMiddleware`                                                                                          | `/middleware`                            |
+| a client component reading router context        | it renders given params/loaderData/Outlet                          | unit (DOM)          | `renderRoute`                                                                                            | `/hooks`                                 |
+| a component reading `useLocationState`           | it renders the seeded location-state value                         | unit (DOM)          | `renderRoute` (`locationState` option)                                                                   | `/hooks`                                 |
+| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                | unit (DOM)          | `renderRoute` (`handles` option)                                                                         | `/breadcrumbs`                           |
+| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                | unit (node)         | `collectHandle`                                                                                          | `/breadcrumbs`                           |
+| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix               | unit (DOM)          | `renderRoute` (`mount` option)                                                                           | `/composability`                         |
+| a server action's cookie / header / flash output | `Set-Cookie`, response headers, flash — even on `throw redirect()` | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`) | `/server-actions`                        |
+| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation                    | integration         | `dispatch`                                                                                               | `/response-routes`, `/mime-routes`       |
+| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                               | integration         | `dispatch`                                                                                               | `/middleware`, `/route`                  |
+| an async Server Component                        | real Flight output / serialization shape                           | RSC unit            | `renderToFlightString` + `toMatchFlight`                                                                 | `/route`                                 |
+| a client island's props across the boundary      | typed prop fidelity (`Date`/`Map`), inlined-vs-island              | RSC unit            | `renderServerTree` + `findClientBoundaries`                                                              | `/route`                                 |
+| a real route **handler** `(ctx) => rsc`          | what it renders given params/loaders/vars; its effects             | RSC unit            | `renderHandler` (seeded `HandlerContext`)                                                                | `/route`                                 |
+| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS                    | e2e                 | `parityDescribe` + `expectParity`                                                                        | `/server-actions`                        |
+| navigation / hydration / view transitions        | no reload, no page error, correct pathname                         | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                                           | `/hooks`, `/view-transitions`            |
+| `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                                 | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                     | `/caching`, `/use-cache`, `/cache-guide` |
+| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                    | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                  | `/prerender`                             |
+| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)                     | unit (node)         | `assertGeneratedRoutesMatch`                                                                             | `/typesafety`                            |
 
 ## What these primitives deliberately don't cover
 
@@ -91,6 +91,20 @@ nothing. Know these traps, and the seeds that close the easy ones:
 | `"use cache"` / `cache()` hit/miss/stale in a loader or `dispatch`                                                                          | Without `cacheStore`/`cacheProfiles` seeded, `registerCachedFunction` **bypasses** — the fn runs **uncached**, so taint/profile/invalidation never fire and a green test proves nothing about caching                                                                                                                                                 | Real hit/miss/stale is **e2e + cache signal** (`assertCacheStatus`); seed `cacheStore`/`cacheProfiles` only to exercise the request-scope (NOCACHE) guard                                                   |
 | importing your real **whole router file** (`import { router }`) into a bare test                                                            | the file's page modules may pull their own deps or plugin `virtual:` modules that need the rango plugin. (Handler `$$id` is NOT the blocker — `Prerender()` / `createLoader()` / `Static()` all construct via a runtime fallback id.)                                                                                                                 | Build the router from a focused **importable include** (e.g. your API routes) for `dispatch` / `assertGeneratedRoutesMatch`; run whole-router checks at **e2e** (see Setup → "Resolving `@rangojs/router`") |
 | a loader that `await`s `ctx.rendered()` then reads accumulated handles                                                                      | `runLoader` seeds handle pushes directly — it does **not** run the real push→accumulate→barrier chain, so a loader that crashes on **empty** post-barrier handles can pass when seeded but still fail in prod                                                                                                                                         | Seed the expected `rendered`/`handles` on `runLoader`; assert the full barrier wiring at **e2e**                                                                                                            |
+
+The rango **cache-invalidation directives** are an exception worth calling out,
+because they used to look like a trap and no longer are. A handler/action/loader
+that calls `invalidateClientCache()` or `keepClientCache()` now produces its REAL
+server-side effect under the primitives — the rotation `Set-Cookie` (the state
+cookie name is seeded by default, customizable via the **`stateCookie`** option
+and surfaced as `result.stateCookieName`) and the `x-rango-keep-cache` directive
+header — assertable on `result.response` / `result.headers` (see `renderHandler`
+/ `runInRequestContext`). Likewise server-side **cache-tag invalidation**
+(`updateTag()`) evicts a tagged entry in-process against a
+`MemorySegmentCacheStore` seeded via `cacheStore`, so read-your-own-writes is
+unit-assertable. What stays e2e is whether the CLIENT bridge ACTS on these
+signals (the prefetch wipe / SWR refetch / cross-tab broadcast) and the
+distributed CDN/KV tag purge that needs `CFCacheStore`.
 
 The **real wiring** is e2e by construction and intentionally out of scope here:
 server actions + revalidation, `cache()` hit/miss/stale over real requests,
@@ -720,14 +734,15 @@ const { result, thrown, response, cookies, headers, locationState } =
   });
 ```
 
-| Field           | What it holds                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `result`        | `fn`'s awaited return, or `undefined` if it threw                                                                                                |
-| `thrown`        | what `fn` threw (a redirect/`notFound` `Response` on the success path) — captured, **not** re-thrown; assert on it                               |
-| `response`      | the merged `Response` (status + headers + Set-Cookie); a thrown redirect's `Location` merged with the accumulated cookies                        |
-| `cookies`       | effective `{ name: value }` cookie view (request cookies + run mutations, last-write-wins)                                                       |
-| `headers`       | response headers as `{ name: value }`, **excluding** `set-cookie` (that's `cookies`), including a thrown redirect's `Location`; names lowercased |
-| `locationState` | the flash the handler set (`ctx.setLocationState()` / `redirect({ state })`), as the `{ key: value }` the client reads                           |
+| Field             | What it holds                                                                                                                                                                                                        |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `result`          | `fn`'s awaited return, or `undefined` if it threw                                                                                                                                                                    |
+| `thrown`          | what `fn` threw (a redirect/`notFound` `Response` on the success path) — captured, **not** re-thrown; assert on it                                                                                                   |
+| `response`        | the merged `Response` (status + headers + Set-Cookie); a thrown redirect's `Location` merged with the accumulated cookies                                                                                            |
+| `cookies`         | effective `{ name: value }` cookie view (request cookies + run mutations, last-write-wins)                                                                                                                           |
+| `headers`         | response headers as `{ name: value }`, **excluding** `set-cookie` (that's `cookies`), including a thrown redirect's `Location`; names lowercased. A `keepClientCache()` call shows here as `x-rango-keep-cache: "1"` |
+| `locationState`   | the flash the handler set (`ctx.setLocationState()` / `redirect({ state })`), as the `{ key: value }` the client reads                                                                                               |
+| `stateCookieName` | the resolved rango state cookie name seeded for the run (default `rango-state_router_0`, or composed from `opts.stateCookie`); assert an `invalidateClientCache()` rotation against it without recomputing           |
 
 ```ts
 expect(cookies.session).toBe("new-token"); // Set-Cookie, parsed
@@ -952,7 +967,7 @@ it("renders the product page for a tenant", async () => {
 });
 ```
 
-Result: `{ tree, flight, thrown, response, cookies, headers, locationState, handles }`.
+Result: `{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }`.
 The handler's **effects** are surfaced (cookies/headers/flash) and a
 `throw redirect(...)` is captured on `thrown` (with `tree` undefined, since it
 produced a `Response`) — exactly like `runInRequestContext`, plus the rendered
@@ -1174,8 +1189,8 @@ renderToFlightString(element, opts?: { request?: Request|string, headers?, env?,
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
 renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
-renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents? }):
-  Promise<{ tree, flight, thrown, response, cookies, headers, locationState, handles }>;
+renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie? }):
+  Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }>;
 findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,children,element}[] (props excludes children); [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
 textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)
@@ -1219,7 +1234,8 @@ runInRequestContext<T>(fn: (ctx) => T | Promise<T>, opts?):
   // result = fn's return (undefined if it threw); thrown = what it threw (a redirect Response on the
   // success path — captured, NOT re-thrown); response = Set-Cookie/headers/status (a thrown redirect's
   // Location merged with the cookies); cookies = effective cookie view; headers = response headers as a
-  // plain object (excl. set-cookie; incl. a redirect Location); locationState = the flash.
+  // plain object (excl. set-cookie; incl. a redirect Location); locationState = the flash;
+  // stateCookieName = the resolved rango state cookie name (assert an invalidateClientCache rotation against it).
 runWithRequestContext(ctx, fn);                     // low-level: enter a ctx you already built
 createTestRequestContext(opts); toRequest(...); seedVariables(...);
 // const { cookies, response, thrown } = await runInRequestContext(() => loginAction(input), // sets cookie, throw redirect("/app")

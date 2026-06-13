@@ -8,17 +8,18 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 
 ### Options — `RenderHandlerOptions`
 
-| Field              | Type                                                  | Meaning                                                                                                                                            |
-| ------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `params`           | `Record<string, string>`                              | Route params surfaced as `ctx.params`.                                                                                                             |
-| `env`              | `TEnv`                                                | Environment bindings surfaced as `ctx.env`.                                                                                                        |
-| `request`          | `Request \| string`                                   | Backing Request (string or `Request`); defaults to a localhost GET.                                                                                |
-| `headers`          | `HeadersInit`                                         | Request headers (e.g. `Cookie`) the handler reads via `cookies()`.                                                                                 |
-| `vars`             | `VarsInit` (object or `[[Var, value]]` tuples)        | Variables a prior middleware set, read via `ctx.get(...)`.                                                                                         |
-| `routeName`        | `string`                                              | Matched route name (drives `ctx.routeName` and scoped reverse).                                                                                    |
-| `routeMap`         | `Record<string, string>`                              | Route name -> pattern map enabling `ctx.reverse()`.                                                                                                |
-| `loaders`          | `ReadonlyArray<readonly [LoaderDefinition, unknown]>` | Seed the data `ctx.use(SomeLoader)` returns. Matched by loader reference; NO real loader runs.                                                     |
-| `clientComponents` | `Record<string, unknown>`                             | `"use client"` components in the handler's RSC, so they serialize as real boundaries when `rangoUseClientTransform()` is not wired. Keyed by name. |
+| Field              | Type                                                   | Meaning                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `params`           | `Record<string, string>`                               | Route params surfaced as `ctx.params`.                                                                                                                                                                                                                                                                                                                                               |
+| `env`              | `TEnv`                                                 | Environment bindings surfaced as `ctx.env`.                                                                                                                                                                                                                                                                                                                                          |
+| `request`          | `Request \| string`                                    | Backing Request (string or `Request`); defaults to a localhost GET.                                                                                                                                                                                                                                                                                                                  |
+| `headers`          | `HeadersInit`                                          | Request headers (e.g. `Cookie`) the handler reads via `cookies()`.                                                                                                                                                                                                                                                                                                                   |
+| `vars`             | `VarsInit` (object or `[[Var, value]]` tuples)         | Variables a prior middleware set, read via `ctx.get(...)`.                                                                                                                                                                                                                                                                                                                           |
+| `routeName`        | `string`                                               | Matched route name (drives `ctx.routeName` and scoped reverse).                                                                                                                                                                                                                                                                                                                      |
+| `routeMap`         | `Record<string, string>`                               | Route name -> pattern map enabling `ctx.reverse()`.                                                                                                                                                                                                                                                                                                                                  |
+| `loaders`          | `ReadonlyArray<readonly [LoaderDefinition, unknown]>`  | Seed the data `ctx.use(SomeLoader)` returns. Matched by loader reference; NO real loader runs.                                                                                                                                                                                                                                                                                       |
+| `clientComponents` | `Record<string, unknown>`                              | `"use client"` components in the handler's RSC, so they serialize as real boundaries when `rangoUseClientTransform()` is not wired. Keyed by name.                                                                                                                                                                                                                                   |
+| `stateCookie`      | `StateCookieSeed` (`{ prefix?, routerId?, version? }`) | Customize the rango state cookie a handler calling `invalidateClientCache()` rotates. The name is ALWAYS seeded (default `rango-state_router_0`) so the rotation `Set-Cookie` fires like production rather than no-opping; override `prefix`/`routerId` to match your `createRouter({ stateCookiePrefix, id })`, or `version` (the value is `{version}:{timestamp}`, default `"0"`). |
 
 ### Context — `HandlerContext` (what your handler receives)
 
@@ -40,16 +41,17 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 
 ### Returns — `RenderHandlerResult`
 
-| Field           | Type                      | Meaning                                                                                                                      |
-| --------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `tree`          | `unknown`                 | Deserialized RSC the handler returned; `undefined` when it returned/threw a `Response`. Inspect with `findClientBoundaries`. |
-| `flight`        | `string \| undefined`     | Raw Flight wire string; `undefined` on a `Response`.                                                                         |
-| `thrown`        | `unknown`                 | The value the handler THREW (a `redirect()`/`notFound()` Response), captured not re-thrown.                                  |
-| `response`      | `Response`                | Merged Response (status + headers + Set-Cookie), folding a thrown/returned redirect with accumulated effects.                |
-| `cookies`       | `Record<string, string>`  | Effective cookie view after the handler ran.                                                                                 |
-| `headers`       | `Record<string, string>`  | Response headers (excludes set-cookie; includes a redirect `Location`).                                                      |
-| `locationState` | `Record<string, unknown>` | Location state the handler set (`ctx.setLocationState`/`redirect({ state })`).                                               |
-| `handles`       | `Map<Handle, unknown[]>`  | What the handler pushed via `ctx.use(Handle)(...)` (e.g. `Meta`, `Breadcrumbs`), keyed by handle.                            |
+| Field             | Type                      | Meaning                                                                                                                                                             |
+| ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tree`            | `unknown`                 | Deserialized RSC the handler returned; `undefined` when it returned/threw a `Response`. Inspect with `findClientBoundaries`.                                        |
+| `flight`          | `string \| undefined`     | Raw Flight wire string; `undefined` on a `Response`.                                                                                                                |
+| `thrown`          | `unknown`                 | The value the handler THREW (a `redirect()`/`notFound()` Response), captured not re-thrown.                                                                         |
+| `response`        | `Response`                | Merged Response (status + headers + Set-Cookie), folding a thrown/returned redirect with accumulated effects.                                                       |
+| `cookies`         | `Record<string, string>`  | Effective cookie view after the handler ran.                                                                                                                        |
+| `headers`         | `Record<string, string>`  | Response headers (excludes set-cookie; includes a redirect `Location`). The `keepClientCache()` directive shows here as `x-rango-keep-cache: "1"`.                  |
+| `stateCookieName` | `string`                  | The resolved rango state cookie name this run seeded (default `rango-state_router_0`). Assert an `invalidateClientCache()` rotation against it without recomputing. |
+| `locationState`   | `Record<string, unknown>` | Location state the handler set (`ctx.setLocationState`/`redirect({ state })`).                                                                                      |
+| `handles`         | `Map<Handle, unknown[]>`  | What the handler pushed via `ctx.use(Handle)(...)` (e.g. `Meta`, `Breadcrumbs`), keyed by handle.                                                                   |
 
 ## Recipe
 
@@ -84,6 +86,20 @@ it("captures a guarded redirect", async () => {
 
   expect(thrown).toBeInstanceOf(Response); // throw redirect() is captured, not re-thrown
   expect(response.status).toBe(302);
+});
+
+it("asserts the client-cache directives", async () => {
+  // invalidateClientCache() rotates the state cookie -> a Set-Cookie on response.
+  const { response, stateCookieName } = await renderHandler(LogoutPage);
+  expect(
+    response.headers
+      .getSetCookie()
+      .some((c) => c.startsWith(stateCookieName + "=")),
+  ).toBe(true);
+
+  // keepClientCache() sets the suppression directive header (no cookie).
+  const { headers } = await renderHandler(QuietPage);
+  expect(headers["x-rango-keep-cache"]).toBe("1");
 });
 ```
 

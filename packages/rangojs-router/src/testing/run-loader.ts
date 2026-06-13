@@ -50,6 +50,7 @@ import {
   createTestRequestContext,
   type CreateTestContextOptions,
   type VarsInit,
+  type StateCookieSeed,
 } from "./internal/context.js";
 
 /**
@@ -142,6 +143,13 @@ export interface RunLoaderOptions<TEnv = any> {
   cacheStore?: SegmentCacheStore;
   /** Cache profiles (the `createRouter({ cacheProfiles })` shape). */
   cacheProfiles?: Record<string, CacheProfile>;
+  /**
+   * Customize the rango state cookie a loader that calls
+   * `invalidateClientCache()` rotates (the name is always seeded — default
+   * `rango-state_router_0` — so it rotates like production). Assert via the
+   * `Set-Cookie` on the request context's response.
+   */
+  stateCookie?: StateCookieSeed;
   /**
    * Mock the `ctx.rendered()` render barrier so a loader that does
    * `await ctx.rendered()` (to read handle data pushed during render) can be
@@ -263,6 +271,7 @@ export async function runLoader<T>(
     theme: opts.theme,
     cacheStore: opts.cacheStore,
     cacheProfiles: opts.cacheProfiles,
+    stateCookie: opts.stateCookie,
   };
 
   const { ctx } = createTestRequestContext(ctxOpts);

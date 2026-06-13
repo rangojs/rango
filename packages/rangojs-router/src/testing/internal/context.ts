@@ -15,7 +15,12 @@ import {
 import { resolveLocationStateEntries } from "../../browser/react/location-state-shared.js";
 import { createReverseFunction } from "../../router/handler-context.js";
 import { normalizeBasename } from "../../router/basename.js";
-import { seedVariables, type VarsInit } from "./seed-vars.js";
+import {
+  seedVariables,
+  resolveSeededStateCookieName,
+  type VarsInit,
+  type StateCookieSeed,
+} from "./seed-vars.js";
 import type { ThemeConfig } from "../../theme/types.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
 import type { SegmentCacheStore } from "../../cache/types.js";
@@ -25,7 +30,7 @@ const DEFAULT_ORIGIN = "http://localhost/";
 
 // VarsInit + seedVariables live in ./seed-vars.js (react-server-safe) so the
 // Flight tier can seed vars too; re-exported here for existing importers.
-export type { VarsInit };
+export type { VarsInit, StateCookieSeed };
 export { seedVariables };
 
 /** Normalize a Request | string | undefined into a concrete Request. */
@@ -81,6 +86,18 @@ export interface CreateTestContextOptions<TEnv> {
    * `{ themes: [...] }`) to exercise a handler that reads them.
    */
   theme?: ThemeConfig | true;
+  /**
+   * Customize the rango state cookie that `invalidateClientCache()` rotates.
+   * The name is ALWAYS seeded (default `rango-state_router_0`) so a call to
+   * `invalidateClientCache()` rotates and emits the `Set-Cookie` exactly as in
+   * production, rather than silently no-opping. Override `prefix`/`routerId` to
+   * match your `createRouter({ stateCookiePrefix, id })` so the test asserts the
+   * same name, or `version` (the build identifier prefixed to the rotated
+   * `{version}:{timestamp}` value, default `"0"`). Assert
+   * `response.headers.getSetCookie()` against the resolved `stateCookieName`
+   * (returned by `runInRequestContext`).
+   */
+  stateCookie?: StateCookieSeed;
 }
 
 export interface TestRequestContext<TEnv> {
@@ -88,6 +105,12 @@ export interface TestRequestContext<TEnv> {
   request: Request;
   url: URL;
   variables: Record<string, unknown>;
+  /**
+   * The resolved rango state cookie name seeded into the context (default
+   * `rango-state_router_0`, or composed from `opts.stateCookie`). The name a
+   * call to `invalidateClientCache()` rotates.
+   */
+  stateCookieName: string;
 }
 
 /**
@@ -105,6 +128,11 @@ export function createTestRequestContext<TEnv>(
   const request = toRequest(opts.request, opts.requestInit);
   const url = new URL(request.url);
   const variables = seedVariables(opts.variables ?? {}, opts.vars);
+  // Always seed a resolved name so invalidateClientCache() rotates (and emits
+  // the Set-Cookie) like production instead of no-opping; opts.stateCookie
+  // customizes the name/version. Surfaced on the result so a consumer asserts
+  // the rotation against the same name without recomputing it.
+  const stateCookieName = resolveSeededStateCookieName(opts.stateCookie);
   const ctx = createRequestContext<TEnv>({
     env: (opts.env ?? {}) as TEnv,
     request,
@@ -114,6 +142,8 @@ export function createTestRequestContext<TEnv>(
       opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
     cacheStore: opts.cacheStore,
     cacheProfiles: opts.cacheProfiles,
+    stateCookieName,
+    version: opts.stateCookie?.version,
   });
   if (opts.basename !== undefined)
     ctx._basename = normalizeBasename(opts.basename);
@@ -126,7 +156,7 @@ export function createTestRequestContext<TEnv>(
       opts.params ?? {},
     ) as RequestContext<TEnv>["reverse"];
   }
-  return { ctx, request, url, variables };
+  return { ctx, request, url, variables, stateCookieName };
 }
 
 /**
@@ -179,6 +209,13 @@ export interface RunInRequestContextResult<T> {
    * is assertable at the unit layer.
    */
   locationState: Record<string, unknown>;
+  /**
+   * The resolved rango state cookie name seeded into the run (default
+   * `rango-state_router_0`, or composed from `opts.stateCookie`). Assert an
+   * action's `invalidateClientCache()` rotation against it without recomputing:
+   * `response.headers.getSetCookie().some((c) => c.startsWith(stateCookieName + "="))`.
+   */
+  stateCookieName: string;
 }
 
 /**
@@ -285,7 +322,7 @@ export async function runInRequestContext<T, TEnv = unknown>(
   fn: (ctx: RequestContext<TEnv>) => T | Promise<T>,
   opts: CreateTestContextOptions<TEnv> = {},
 ): Promise<RunInRequestContextResult<T>> {
-  const { ctx } = createTestRequestContext<TEnv>(opts);
+  const { ctx, stateCookieName } = createTestRequestContext<TEnv>(opts);
   let result: T | undefined;
   let thrown: unknown;
   let didThrow = false;
@@ -300,5 +337,13 @@ export async function runInRequestContext<T, TEnv = unknown>(
   const { cookies, locationState } = snapshotRunEffects(ctx);
   const response = buildRunResponse(ctx, didThrow ? thrown : undefined);
   const headers = headersToObject(response.headers);
-  return { result, thrown, response, cookies, headers, locationState };
+  return {
+    result,
+    thrown,
+    response,
+    cookies,
+    headers,
+    locationState,
+    stateCookieName,
+  };
 }

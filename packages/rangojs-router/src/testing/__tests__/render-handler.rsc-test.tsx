@@ -7,6 +7,11 @@ import { createVar } from "../../context-var.js";
 import { createLoader } from "../../loader.js";
 import { Meta } from "../../handles/meta.js";
 import { redirect } from "../../route-definition/redirect.js";
+import {
+  invalidateClientCache,
+  keepClientCache,
+} from "../../server/cookie-store.js";
+import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { Counter } from "./fixtures/Counter.js";
 import type { HandlerContext } from "../../types/handler-context.js";
 
@@ -190,5 +195,117 @@ describe("renderHandler", () => {
       // @ts-expect-error legacy option removed; runtime guard catches it.
       renderHandler(Page, { url: "/legacy" }),
     ).rejects.toThrow(/`url` option was renamed to `request`/);
+  });
+});
+
+describe("renderHandler: invalidateClientCache / keepClientCache", () => {
+  // The state cookie name is always seeded (default rango-state_router_0), so a
+  // handler that calls invalidateClientCache() rotates and emits the Set-Cookie
+  // exactly like production instead of silently no-opping. These pin that the
+  // rotation is assertable through result.response / result.headers.
+  // The default request is http://localhost/, so the regex deliberately has NO
+  // `; Secure` (the https case is covered in run-in-request-context.test.ts).
+  const STATE_RE = /^rango-state_router_0=0:\d+; Path=\/; SameSite=Lax$/;
+  const stateCookies = (res: Response) =>
+    res.headers.getSetCookie().filter((c) => c.startsWith("rango-state_"));
+
+  test("a handler calling invalidateClientCache() emits one rotation Set-Cookie", async () => {
+    function Page() {
+      invalidateClientCache();
+      return <main>ok</main>;
+    }
+    const { response, tree, stateCookieName } = await renderHandler(Page);
+    expect(JSON.stringify(tree)).toContain("ok");
+    // result.stateCookieName surfaces the resolved name (assert without recomputing).
+    expect(stateCookieName).toBe("rango-state_router_0");
+    const cookies = stateCookies(response);
+    expect(cookies).toHaveLength(1);
+    expect(cookies[0]).toMatch(STATE_RE);
+    expect(cookies[0].startsWith(stateCookieName + "=")).toBe(true);
+  });
+
+  test("invalidateClientCache() is idempotent within a request (one Set-Cookie even if called twice)", async () => {
+    function Page() {
+      invalidateClientCache();
+      invalidateClientCache();
+      return <main>ok</main>;
+    }
+    const { response } = await renderHandler(Page);
+    expect(stateCookies(response)).toHaveLength(1);
+  });
+
+  test("a handler that does NOT invalidate emits no rango-state Set-Cookie (seeding alone never rotates)", async () => {
+    function Page() {
+      return <main>ok</main>;
+    }
+    const { response } = await renderHandler(Page);
+    expect(stateCookies(response)).toHaveLength(0);
+  });
+
+  test("stateCookie seed customizes the rotated cookie's name and version", async () => {
+    function Page() {
+      invalidateClientCache();
+      return <main>ok</main>;
+    }
+    const { response, stateCookieName } = await renderHandler(Page, {
+      stateCookie: { prefix: "myapp", routerId: "shop", version: "v3" },
+    });
+    expect(stateCookieName).toBe("myapp_shop");
+    const [cookie] = response.headers
+      .getSetCookie()
+      .filter((c) => c.startsWith("myapp_shop="));
+    expect(cookie).toBeDefined();
+    expect(cookie).toMatch(/^myapp_shop=v3:\d+; Path=\/; SameSite=Lax$/);
+  });
+
+  test("keepClientCache() sets the x-rango-keep-cache directive header and no cookie", async () => {
+    function Page() {
+      keepClientCache();
+      return <main>ok</main>;
+    }
+    const { headers, response } = await renderHandler(Page);
+    expect(headers[KEEP_CACHE_HEADER]).toBe("1");
+    expect(stateCookies(response)).toHaveLength(0);
+  });
+
+  test("keepClientCache() is idempotent within a request (one directive header even if called twice)", async () => {
+    // _setKeepCacheDirective uses Headers.set (not append), so repeated calls
+    // collapse to one value — mirror the invalidateClientCache idempotency pin.
+    function Page() {
+      keepClientCache();
+      keepClientCache();
+      return <main>ok</main>;
+    }
+    const { headers, response } = await renderHandler(Page);
+    expect(headers[KEEP_CACHE_HEADER]).toBe("1");
+    // No duplicate header value (a plain object collapses, so check the raw header).
+    expect(response.headers.get(KEEP_CACHE_HEADER)).toBe("1");
+  });
+
+  test("keepClientCache() then invalidateClientCache(): the directive AND the rotation both land", async () => {
+    // The keep directive and an explicit rotation are independent server-side
+    // effects (the bridge resolves precedence on the client). Both must be
+    // observable so a consumer can pin the action wrote both.
+    function Page() {
+      keepClientCache();
+      invalidateClientCache();
+      return <main>ok</main>;
+    }
+    const { headers, response } = await renderHandler(Page);
+    expect(headers[KEEP_CACHE_HEADER]).toBe("1");
+    expect(stateCookies(response)).toHaveLength(1);
+  });
+
+  test("a handler returning a Response while invalidating: the rotation Set-Cookie merges onto it", async () => {
+    // A response route (returns a Response) can still rotate; buildResponse must
+    // carry the stub's Set-Cookie onto the returned Response (and its body).
+    function Page(): Response {
+      invalidateClientCache();
+      return new Response("done", { status: 202 });
+    }
+    const { response } = await renderHandler(Page);
+    expect(response.status).toBe(202);
+    expect(await response.text()).toBe("done");
+    expect(stateCookies(response)).toHaveLength(1);
   });
 });

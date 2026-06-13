@@ -93,6 +93,7 @@ export type {
   TestRequestContext,
   RunInRequestContextResult,
   VarsInit,
+  StateCookieSeed,
 } from "./internal/context.js";
 
 // The low-level context runner that enters a RequestContext (the same one the

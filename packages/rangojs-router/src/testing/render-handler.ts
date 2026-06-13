@@ -33,7 +33,14 @@ import { resolveLocationStateEntries } from "../browser/react/location-state-sha
 import { isHandle, type Handle } from "../handle.js";
 import type { HandlerContext } from "../types/handler-context.js";
 import type { LoaderDefinition } from "../types.js";
-import { seedVariables, type VarsInit } from "./internal/seed-vars.js";
+import {
+  seedVariables,
+  resolveSeededStateCookieName,
+  type VarsInit,
+  type StateCookieSeed,
+} from "./internal/seed-vars.js";
+
+export type { StateCookieSeed } from "./internal/seed-vars.js";
 import { assertNoLegacyUrlOption, serializeNodeToFlight } from "./flight.js";
 import {
   deserializeFlight,
@@ -76,6 +83,17 @@ export interface RenderHandlerOptions<TEnv = any> {
    * renderServerTree's `clientComponents`.
    */
   clientComponents?: Record<string, unknown>;
+  /**
+   * Customize the rango state cookie a handler that calls
+   * `invalidateClientCache()` rotates. The name is ALWAYS seeded (default
+   * `rango-state_router_0`) so the rotation `Set-Cookie` is emitted like
+   * production rather than no-opping; override `prefix`/`routerId` to match your
+   * `createRouter({ stateCookiePrefix, id })`, or `version` (the build
+   * identifier prefixed to the rotated `{version}:{timestamp}` value, default
+   * `"0"`). Assert via `result.response.headers.getSetCookie()` against
+   * `result.stateCookieName`.
+   */
+  stateCookie?: StateCookieSeed;
 }
 
 /** Result of {@link renderHandler}. */
@@ -96,6 +114,13 @@ export interface RenderHandlerResult {
   cookies: Record<string, string>;
   /** Response headers as `{ name: value }` (excludes set-cookie; includes a redirect Location). */
   headers: Record<string, string>;
+  /**
+   * The resolved rango state cookie name this run seeded (default
+   * `rango-state_router_0`, or composed from `opts.stateCookie`). Assert the
+   * `invalidateClientCache()` rotation against it without recomputing:
+   * `response.headers.getSetCookie().some((c) => c.startsWith(stateCookieName + "="))`.
+   */
+  stateCookieName: string;
   /** Location state the handler set (`ctx.setLocationState`/`redirect({ state })`), as `{ key: value }`. */
   locationState: Record<string, unknown>;
   /** What the handler pushed via `ctx.use(Handle)(...)` (e.g. Meta, Breadcrumbs), keyed by handle. */
@@ -201,11 +226,17 @@ export async function renderHandler<TEnv = any>(
   if (opts.clientComponents) registerClientComponents(opts.clientComponents);
   const request = toRequest(opts.request, opts.headers);
   const url = new URL(request.url);
+  // Seed a resolved name so a handler calling invalidateClientCache() rotates
+  // (emits the Set-Cookie) like production; opts.stateCookie customizes it. Also
+  // surfaced on the result so a consumer asserts the rotation without recomputing.
+  const stateCookieName = resolveSeededStateCookieName(opts.stateCookie);
   const reqCtx = createRequestContext<TEnv>({
     env: (opts.env ?? {}) as TEnv,
     request,
     url,
     variables: seedVariables({}, opts.vars),
+    stateCookieName,
+    version: opts.stateCookie?.version,
   });
 
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
@@ -317,6 +348,7 @@ export async function renderHandler<TEnv = any>(
     response,
     cookies,
     headers,
+    stateCookieName,
     locationState,
     handles: handlePushes,
   };

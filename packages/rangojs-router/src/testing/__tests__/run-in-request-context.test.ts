@@ -5,7 +5,12 @@ import {
   createTestRequestContext,
 } from "../index.js";
 import { getRequestContext } from "../../server/request-context.js";
-import { cookies } from "../../server/cookie-store.js";
+import {
+  cookies,
+  invalidateClientCache,
+  keepClientCache,
+} from "../../server/cookie-store.js";
+import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { redirect } from "../../route-definition/redirect.js";
 import { createVar } from "../../context-var.js";
 
@@ -221,6 +226,88 @@ describe("runInRequestContext", () => {
   it("does not leak the context outside the runner", async () => {
     await runInRequestContext(() => getRequestContext().method);
     expect(() => getRequestContext()).toThrow();
+  });
+});
+
+describe("runInRequestContext: invalidateClientCache / keepClientCache (action)", () => {
+  // A server action is the canonical caller: invalidateClientCache() forces the
+  // client's caches to miss (rotates the rango state cookie), keepClientCache()
+  // suppresses the bridge's automatic invalidation (sets a directive header).
+  // The state cookie name is always seeded, so the rotation fires like
+  // production. These pin both as assertable through the run result.
+  const stateCookies = (res: Response) =>
+    res.headers.getSetCookie().filter((c) => c.startsWith("rango-state_"));
+
+  it("an action calling invalidateClientCache() rotates the state cookie (one Set-Cookie, idempotent)", async () => {
+    const { response, stateCookieName } = await runInRequestContext(() => {
+      invalidateClientCache();
+      invalidateClientCache();
+      return "ok";
+    });
+    // result.stateCookieName surfaces the resolved name (assert without recomputing).
+    expect(stateCookieName).toBe("rango-state_router_0");
+    const cookies = stateCookies(response);
+    expect(cookies).toHaveLength(1);
+    expect(cookies[0]).toMatch(
+      /^rango-state_router_0=0:\d+; Path=\/; SameSite=Lax$/,
+    );
+    expect(cookies[0].startsWith(stateCookieName + "=")).toBe(true);
+  });
+
+  it("an action calling keepClientCache() sets the directive header and no cookie (idempotent)", async () => {
+    const { headers, response } = await runInRequestContext(() => {
+      keepClientCache();
+      keepClientCache();
+      return "ok";
+    });
+    expect(headers[KEEP_CACHE_HEADER]).toBe("1");
+    // Headers.set (not append) -> one value even after two calls.
+    expect(response.headers.get(KEEP_CACHE_HEADER)).toBe("1");
+    expect(stateCookies(response)).toHaveLength(0);
+  });
+
+  it("keepClientCache() then invalidateClientCache(): the directive AND the rotation both land", async () => {
+    // Mirrors the test-app's actionKeepThenInvalidate: an explicit invalidate
+    // must still write its Set-Cookie even though keep was requested first.
+    const { headers, response } = await runInRequestContext(() => {
+      keepClientCache();
+      invalidateClientCache();
+      return "ok";
+    });
+    expect(headers[KEEP_CACHE_HEADER]).toBe("1");
+    expect(stateCookies(response)).toHaveLength(1);
+  });
+
+  it("the stateCookie seed customizes the rotated name/version and the https Secure flag", async () => {
+    const { response } = await runInRequestContext(
+      () => {
+        invalidateClientCache();
+        return "ok";
+      },
+      {
+        request: "https://app.test/checkout",
+        stateCookie: { prefix: "myapp", routerId: "shop", version: "v9" },
+      },
+    );
+    const [cookie] = response.headers
+      .getSetCookie()
+      .filter((c) => c.startsWith("myapp_shop="));
+    // https request -> the Secure attribute is present.
+    expect(cookie).toMatch(
+      /^myapp_shop=v9:\d+; Path=\/; SameSite=Lax; Secure$/,
+    );
+  });
+
+  it("merges the rotation Set-Cookie onto a thrown redirect (action success path)", async () => {
+    // The dominant action shape: mutate, invalidate, then `throw redirect(...)`.
+    // The redirect response must carry the rotation cookie.
+    const { thrown, response } = await runInRequestContext(() => {
+      invalidateClientCache();
+      throw redirect("/app");
+    });
+    expect((thrown as Response).headers.get("Location")).toBe("/app");
+    expect(response.headers.get("Location")).toBe("/app");
+    expect(stateCookies(response)).toHaveLength(1);
   });
 });
 

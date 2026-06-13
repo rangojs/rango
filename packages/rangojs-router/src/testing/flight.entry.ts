@@ -48,4 +48,5 @@ export type {
   TestableHandler,
   RenderHandlerOptions,
   RenderHandlerResult,
+  StateCookieSeed,
 } from "./render-handler.js";
