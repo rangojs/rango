@@ -2,11 +2,7 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
 
-/**
- * Asserts exact breadcrumb trail: order, content, AND count.
- * Selects only label <li> elements (excludes async-content <li> which
- * carries data-testid="breadcrumbs-content").
- */
+// Asserts exact breadcrumb order and count (excludes async-content <li>).
 async function expectBreadcrumbOrder(
   container: ReturnType<typeof testId> extends infer T ? T : never,
   labels: string[],
@@ -320,6 +316,22 @@ function breadcrumbTests(mode: "dev" | "build") {
       await expect(page.getByText("fallback-content").first()).toBeVisible({
         timeout: 5000,
       });
+    });
+
+    // .defer() with NO `else`: the never-resolved slot auto-resolves to undefined
+    // on timeout. The page must still flush (no hang) and the deferred-aware
+    // renderer drops the undefined item rather than crashing on it.
+    test("a deferred handle value with no else resolves to undefined on timeout (no hang, no crash)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/breadcrumb-trail/deferred-timeout-undefined"));
+      await waitForHydration(page);
+
+      // The marker rendering at all proves the response flushed (no hang) and the
+      // deferred-aware renderer dropped the undefined slot without crashing.
+      await expect(
+        testId(page, "deferred-timeout-undefined-marker"),
+      ).toHaveText("flushed", { timeout: 5000 });
     });
   });
 }

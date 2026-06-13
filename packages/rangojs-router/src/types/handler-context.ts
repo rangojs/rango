@@ -283,6 +283,8 @@ export type HandlerContext<
    * For handles: Returns a push function to add data for this segment.
    * Handle data accumulates across all matched route segments.
    * Push accepts: direct value, Promise, or async callback (executed immediately).
+   * Or call `.defer()` to reserve the slot now and resolve it later (e.g. from a
+   * deep async component), with a timeout safety net — see {@link HandlePush}.
    *
    * @example
    * ```typescript
@@ -315,6 +317,13 @@ export type HandlerContext<
    *     return { label: product.name, href: `/product/${product.id}` };
    *   });
    *   return <ProductPage />;
+   * });
+   *
+   * // Handle usage - deferred (reserve the slot now, resolve from a deep component)
+   * route("product", (ctx) => {
+   *   const resolve = ctx.use(Breadcrumbs).defer({ timeoutMs: 5000, else: null });
+   *   loadCrumb(ctx.params.id).then(resolve); // resolver is push-equal
+   *   return <ProductPage />;                 // auto-resolves to `else` on timeout
    * });
    * ```
    */
@@ -622,6 +631,10 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * namespace import (`import * as CartActions`), any export of that module —
    * and `false` otherwise (including plain navigation with no action).
    *
+   * Called with NO arguments it answers "is this request an action at all?":
+   * `true` for any action, `false` on plain navigation. Use the bare form when
+   * you want to revalidate on every action regardless of which one fired.
+   *
    * Prefer this over hand-written `actionId` substring matches: it resolves the
    * action's stable `path#export` id from the imported reference, so a rename is
    * a type error in one place instead of silent drift across consumers. It
@@ -636,6 +649,7 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * import { addToCart, removeFromCart } from "./actions/cart";
    * import * as CartActions from "./actions/cart";
    *
+   * revalidate((ctx) => ctx.isAction() || undefined); // any action
    * revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
    * revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
    * revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any in the module

@@ -64,13 +64,14 @@ describe("createDeferred", () => {
   });
 
   // P2: without a fallback the timeout resolves to undefined, and the promise
-  // type reflects that (Deferred<T | undefined>) — no `as T` lie.
+  // type reflects that (Deferred<T | null | undefined>, since `else` may be null)
+  // — no `as T` lie.
   it("without a fallback the timeout resolves to undefined", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const d = createDeferred<string>({ timeoutMs: 100 });
     vi.advanceTimersByTime(100);
-    const value: string | undefined = await d.promise;
+    const value: string | null | undefined = await d.promise;
     expect(value).toBeUndefined();
   });
 
@@ -158,7 +159,7 @@ describe("withDefer — .defer() resolver is push-equal", () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { handle, pushed } = setup<string>();
-    handle.defer({ within: 1000, else: "fallback" });
+    handle.defer({ timeoutMs: 1000, else: "fallback" });
     vi.advanceTimersByTime(1000);
     await expect(pushed[0] as Promise<string>).resolves.toBe("fallback");
   });
@@ -167,7 +168,7 @@ describe("withDefer — .defer() resolver is push-equal", () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { handle, pushed } = setup<string>();
-    const resolve = handle.defer({ within: 1000, else: "fallback" });
+    const resolve = handle.defer({ timeoutMs: 1000, else: "fallback" });
 
     // The resolver IS called (with a still-pending promise) before the timeout,
     // so the timeout is disarmed even though the value lands later.
@@ -182,5 +183,36 @@ describe("withDefer — .defer() resolver is push-equal", () => {
 
     await expect(pushed[0] as Promise<string>).resolves.toBe("slow-real");
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  // Pin the rejection/throw paths: the resolver is push-equal, so a rejecting
+  // value behaves exactly like a rejecting direct push (the slot rejects; the
+  // consumer's use()/Suspense boundary handles it). The timeout net does NOT
+  // turn a rejection into the fallback — a rejection means the resolver WAS
+  // called, so the timeout is already disarmed.
+  it("adopting a rejecting Promise rejects the reserved slot (push-equal)", async () => {
+    const { handle, pushed } = setup<string>();
+    const resolve = handle.defer();
+    const err = new Error("boom");
+    resolve(Promise.reject(err));
+    await expect(pushed[0] as Promise<string>).rejects.toBe(err);
+  });
+
+  it("a thunk that throws synchronously propagates; the slot is left to the timeout", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { handle, pushed } = setup<string>();
+    const resolve = handle.defer({ timeoutMs: 1000, else: "fallback" });
+    const err = new Error("thunk boom");
+    // The thunk runs inside the resolver; throwing propagates to the caller and
+    // the slot is never settled by it.
+    expect(() =>
+      resolve(() => {
+        throw err;
+      }),
+    ).toThrow(err);
+    // The slot was not settled, so the safety-net timeout still rescues it.
+    vi.advanceTimersByTime(1000);
+    await expect(pushed[0] as Promise<string>).resolves.toBe("fallback");
   });
 });

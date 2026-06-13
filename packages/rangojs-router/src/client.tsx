@@ -388,6 +388,9 @@ export {
 // Handle data hook (client-side only — createHandle/isHandle are server APIs from the root export)
 export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
+// Type a deferred-aware consumer narrows: an accumulated entry may be a Promise
+// (a `ctx.use(Handle).defer()` slot) until it resolves.
+export type { DeferredHandleEntry } from "./defer.js";
 
 // Built-in handles
 export { Meta } from "./handles/meta.js";

@@ -319,7 +319,7 @@ type-check) and forbid `JSON.stringify` over a `handles`-keyed object outside
    re-document `LateHandlePushError` as a contract-violation signal (not a
    window-tuning knob). **`ctx.use(Handle).defer()` shipped** (Experiment 2 below
    confirmed the deep-async-resolve pattern works today, dev + production): the
-   handler calls `.defer({ within, else })` to reserve the handle's slot
+   handler calls `.defer({ timeoutMs, else })` to reserve the handle's slot
    synchronously and gets back a push-equal resolver; a deep async component calls
    it later with the same value it would have pushed, with a mandatory timeout so a
    forgotten resolve can't hang the response. Still optional: G's

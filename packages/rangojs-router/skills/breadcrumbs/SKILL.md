@@ -92,42 +92,54 @@ later, anywhere in the render, with the same argument you'd have passed to the
 push (a value, a `Promise`, or a thunk). The only added behavior is a timeout, so a
 forgotten resolve can't hold the Flight stream (and the HTTP response) open forever.
 
+Reserve the slot in the handler, then resolve it from a nested async component
+that closes over the resolver — no extra wiring (the resolver is a plain closure,
+not outlet context):
+
 ```tsx
 import { Breadcrumbs } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+import { Suspense } from "react";
 
 function DocsLayout(ctx) {
   const breadcrumb = ctx.use(Breadcrumbs);
   // Decide now (the slot is reserved before the stream seals); resolve later.
-  const resolve = breadcrumb.defer({ within: 5000, else: null });
-  return <Outlet context={{ resolveCrumb: resolve }} />;
-}
+  const resolveCrumb = breadcrumb.defer({ timeoutMs: 5000, else: null });
 
-// Deep, async, far from the handler — never touches ctx:
-async function LiveBadge() {
-  const n = await countOpenIssues();
+  // Deep, async, far from the handler — closes over the resolver, never touches ctx.
   // Same call shape as breadcrumb({ ... }), just deferred:
-  useOutletContext().resolveCrumb({
-    label: "Docs",
-    href: "/docs",
-    content: <span>{n}</span>,
-  });
-  return null;
+  async function LiveCrumb() {
+    const n = await countOpenIssues();
+    resolveCrumb({ label: "Docs", href: "/docs", content: <span>{n}</span> });
+    return null;
+  }
+
+  return (
+    <>
+      <Suspense>
+        <LiveCrumb />
+      </Suspense>
+      <Outlet />
+    </>
+  );
 }
 ```
 
-If the resolver is never called, the slot auto-resolves to `else` after `within`
-ms (default 10s) and warns in dev — graceful degradation instead of a hung
-request. `within: 0` or `Infinity` disable the timeout intentionally; any other
-non-finite or negative value falls back to the default rather than silently
+If the resolver is never called, the slot auto-resolves to `else` after
+`timeoutMs` (default 10s) and warns in dev — graceful degradation instead of a
+hung request. `timeoutMs: 0` or `Infinity` disable the timeout intentionally; any
+other non-finite or negative value falls back to the default rather than silently
 disabling the safety net.
 
 **Consumer note:** because `.defer()` reserves the slot for the WHOLE item, a
 client reading the handle (`useHandle(Breadcrumbs)`) sees that entry as a
-`Promise` until it resolves. A deferred-aware consumer should `use()` thenable
-entries inside `<Suspense>`; a simple one can skip them (`typeof entry.then ===
-"function"`). Use `.defer()` only when even `label`/`href` are unknown at handler
-time — if you know them and only the `content` is async, push a concrete item with
-a `Promise` `content` field instead (no `.defer()` needed).
+`Promise` until it resolves. Type such reads with the exported
+`DeferredHandleEntry<BreadcrumbItem>` (from `@rangojs/router/client`); a
+deferred-aware consumer should `use()` thenable entries inside `<Suspense>`, while
+a simple one can skip them (`typeof entry.then === "function"`). Use `.defer()`
+only when even `label`/`href` are unknown at handler time — if you know them and
+only the `content` is async, push a concrete item with a `Promise` `content` field
+instead (no `.defer()` needed).
 
 ## Consuming Breadcrumbs (Client)
 

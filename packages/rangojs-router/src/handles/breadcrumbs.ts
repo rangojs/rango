@@ -39,18 +39,29 @@ export interface BreadcrumbItem {
 /**
  * Collect function for Breadcrumbs handle.
  * Flattens segments in parent-to-child order with deduplication by href
- * (last item for each href wins).
+ * (last item for each href wins). Deferred slots (`ctx.use(Breadcrumbs).defer()`)
+ * arrive as pending Promise entries with no href yet; they are passed through by
+ * identity and excluded from the href dedup so concurrent deferred crumbs do not
+ * all collapse under a single `undefined` href.
  */
 function collectBreadcrumbs(segments: BreadcrumbItem[][]): BreadcrumbItem[] {
   const all = segments.flat();
-  const seen = new Map<string, number>();
 
+  const isResolvedItem = (item: unknown): item is BreadcrumbItem =>
+    item != null &&
+    typeof item === "object" &&
+    typeof (item as { then?: unknown }).then !== "function" &&
+    typeof (item as { href?: unknown }).href === "string";
+
+  const seen = new Map<string, number>();
   for (let i = 0; i < all.length; i++) {
-    seen.set(all[i].href, i);
+    if (isResolvedItem(all[i])) seen.set(all[i].href, i);
   }
 
-  // Return items in order, keeping only the last occurrence per href
-  return all.filter((item, index) => seen.get(item.href) === index);
+  // Deferred items bypass dedup (excluded via !isResolvedItem check).
+  return all.filter(
+    (item, index) => !isResolvedItem(item) || seen.get(item.href) === index,
+  );
 }
 
 /**

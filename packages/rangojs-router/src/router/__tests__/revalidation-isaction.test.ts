@@ -1,9 +1,4 @@
-/**
- * Tests that evaluateRevalidation exposes ctx.isAction() to revalidate
- * predicates, resolving an imported action reference's id the same way the
- * action boundary derives actionId ($id ?? $$id) so matching is form-agnostic
- * across dev and production.
- */
+// Tests ctx.isAction() resolves action ids ($id ?? $$id) for dev/prod parity.
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../logging.js", () => ({
@@ -45,10 +40,7 @@ function makeContext(): any {
 
 const ACTION_ID = "src/actions/cart.tsx#addToCart";
 
-/**
- * Run evaluateRevalidation with an optional action and capture the predicate
- * arg object so tests can call args.isAction(...) directly.
- */
+// Capture revalidation predicate args to test isAction() directly.
 async function captureArgs(actionId?: string): Promise<any> {
   let captured: any;
   await evaluateRevalidation({
@@ -129,6 +121,16 @@ describe("ctx.isAction()", () => {
     const args = await captureArgs(undefined);
     expect(args.isAction(addToCart)).toBe(false);
     expect(args.isAction()).toBe(false);
+  });
+
+  it("bare isAction() is true during any action (no specific reference needed)", async () => {
+    // Called with no arguments while an action is in flight, isAction() answers
+    // "is this request an action at all?" — true regardless of which action.
+    const args = await captureArgs(ACTION_ID);
+    expect(args.isAction()).toBe(true);
+    // A non-matching reference still narrows to false, so the bare form is the
+    // only way to ask "any action".
+    expect(args.isAction(removeFromCart)).toBe(false);
   });
 
   it("returns false for a reference with no resolvable id", async () => {

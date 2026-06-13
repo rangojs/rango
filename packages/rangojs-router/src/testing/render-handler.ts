@@ -31,6 +31,7 @@ import {
 import { createHandlerContext } from "../router/handler-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { isHandle, type Handle } from "../handle.js";
+import { withDefer } from "../defer.js";
 import type { HandlerContext } from "../types/handler-context.js";
 import type { LoaderDefinition } from "../types.js";
 import {
@@ -134,11 +135,8 @@ export interface RenderHandlerResult {
  */
 class RenderHandlerSetupError extends Error {}
 
-// Local copy (not imported from internal/context.ts): that module is the NODE
-// tier and is deliberately NOT react-server-safe (the reason seed-vars.ts was
-// split out), and render-handler ships from the react-server ./testing/flight
-// entry. A 6-line pure projection is cheaper to duplicate than to route a
-// shared util across that boundary.
+// Duplicated from internal/context.ts: that module is NODE-only and not
+// react-server-safe; this is react-server-exported, so duplication avoids the cross-boundary import.
 function headersToObject(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, name) => {
@@ -264,17 +262,12 @@ export async function renderHandler<TEnv = any>(
       opts.routeMap ?? {},
       opts.routeName,
     );
-    // Seed ctx.use: a handle returns a push fn that RECORDS (so ctx.use(Meta)
-    // doesn't crash and pushes are assertable); a loader returns its seeded data
-    // (no real loader run).
     (hctx as { use: unknown }).use = (item: unknown) => {
       if (isHandle(item)) {
         const handle = item as Handle<any, any>;
-        return (dataOrFn: unknown) => {
-          // Mirror production's push fn (loader-resolution.ts): a FUNCTION arg
-          // (ctx.use(Meta)(() => fetchMeta())) is CALLED and its result is
-          // recorded, not the function itself. An async callback records the
-          // promise it returns, same as production (which does not await it).
+        // Attach .defer() so handlers can reserve slots and test deferred resolution.
+        return withDefer((dataOrFn: unknown) => {
+          // Thunk arg is called immediately; result is recorded like production.
           const value =
             typeof dataOrFn === "function"
               ? (dataOrFn as () => unknown)()
@@ -282,7 +275,7 @@ export async function renderHandler<TEnv = any>(
           const pushed = handlePushes.get(handle) ?? [];
           pushed.push(value);
           handlePushes.set(handle, pushed);
-        };
+        });
       }
       if (loaderSeeds.has(item)) return loaderSeeds.get(item);
       throw new RenderHandlerSetupError(

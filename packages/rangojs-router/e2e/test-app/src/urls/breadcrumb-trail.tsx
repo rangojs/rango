@@ -88,10 +88,8 @@ function TrailDocsGuide(ctx: any) {
 // redesign (option A).
 function DeferredResolvePage(ctx: any) {
   const breadcrumb = ctx.use(Breadcrumbs);
-  // Decide to push the crumb now (slot reserved before the stream seals); a deep
-  // async component resolves the WHOLE item later via the resolver — the same
-  // call shape as breadcrumb({...}).
-  const resolveCrumb = breadcrumb.defer({ within: 5000, else: null });
+  // Reserve the slot now; a deep component resolves it later with the same call shape.
+  const resolveCrumb = breadcrumb.defer({ timeoutMs: 5000, else: null });
 
   async function DeepResolver() {
     await new Promise((r) => setTimeout(r, 300));
@@ -115,23 +113,33 @@ function DeferredResolvePage(ctx: any) {
   );
 }
 
-// Safety net: a deferred slot whose resolver is NEVER called. The short timeout
-// must auto-resolve the slot to `else` so the response flushes instead of
-// hanging forever on the open Flight row.
+// Safety net: deferred slot with timeout, else fallback. Tests that slot auto-resolves to `else` instead of hanging.
 function DeferredTimeoutPage(ctx: any) {
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb.defer({
-    within: 300,
+    timeoutMs: 300,
     else: {
       label: "Forgotten",
       href: "/breadcrumb-trail/deferred-timeout",
       content: <span data-testid="deferred-fallback">fallback-content</span>,
     },
   });
-  // Resolver intentionally never called.
 
   return (
     <div data-testid="deferred-timeout-page">
+      <DeferredTrailBreadcrumbs />
+    </div>
+  );
+}
+
+// Safety net: timeout with no else. Tests that slot resolves to undefined and is skipped by renderer.
+function DeferredTimeoutUndefinedPage(ctx: any) {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  breadcrumb.defer({ timeoutMs: 300 });
+
+  return (
+    <div data-testid="deferred-timeout-undefined-page">
+      <span data-testid="deferred-timeout-undefined-marker">flushed</span>
       <DeferredTrailBreadcrumbs />
     </div>
   );
@@ -144,6 +152,11 @@ export const breadcrumbTrailPatterns = urls(({ path, layout }) => [
   path("/breadcrumb-trail/deferred-timeout", DeferredTimeoutPage, {
     name: "breadcrumbTrail.deferredTimeout",
   }),
+  path(
+    "/breadcrumb-trail/deferred-timeout-undefined",
+    DeferredTimeoutUndefinedPage,
+    { name: "breadcrumbTrail.deferredTimeoutUndefined" },
+  ),
   layout(TrailLayout, () => [
     path("/breadcrumb-trail", TrailIndex, { name: "breadcrumbTrail.index" }),
     path("/breadcrumb-trail/docs", TrailDocs, {

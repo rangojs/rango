@@ -10,15 +10,17 @@
  * value you would have passed to the push.
  *
  *   const breadcrumb = ctx.use(Breadcrumbs);   // (item) => void  &  .defer()
- *   const resolve = breadcrumb.defer({ within: 5000, else: null });
+ *   const resolve = breadcrumb.defer({ timeoutMs: 5000, else: null });
  *   // deep async component, far from ctx:
  *   resolve({ label, href, content });          // identical call, just deferred
  *
  * Under the hood the reserved slot is a Promise the renderer `use()`s; RSC Flight
- * streams it as a late row. The hazard that guards against bugs: a deferred slot
- * whose resolver is never called would keep the Flight stream — and the HTTP
- * response — open forever. So a deferred auto-resolves to `else` after `within`
- * ms (default {@link DEFAULT_DEFER_TIMEOUT_MS}) if the resolver is never called,
+ * streams it as a late row, so a deferred-aware consumer reading the handle
+ * (`useHandle`) sees that entry as a `Promise` until it resolves (see
+ * {@link DeferredHandleEntry}). The hazard that guards against bugs: a deferred
+ * slot whose resolver is never called would keep the Flight stream — and the HTTP
+ * response — open forever. So a deferred auto-resolves to `else` after `timeoutMs`
+ * (default {@link DEFAULT_DEFER_TIMEOUT_MS}) if the resolver is never called,
  * degrading gracefully (and warning in dev) instead of hanging the request.
  */
 
@@ -35,14 +37,16 @@ export interface DeferOptions<TData> {
    * `Infinity` disable the timeout intentionally (not recommended on a request
    * path). Any other non-finite or negative value is treated as a mistake and
    * falls back to the default rather than silently disabling the safety net.
+   * Named `timeoutMs` to match the router's `*Ms` duration convention.
    */
-  within?: number;
+  timeoutMs?: number;
   /**
    * Value the slot resolves to if the timeout fires before the resolver is
    * called. Defaults to `undefined` (the deferred item is skipped/empty). For
-   * renderable handle content, `null` is the usual graceful fallback.
+   * renderable handle content, `null` is the usual graceful fallback, so the
+   * type admits `null` even when `TData` does not.
    */
-  else?: TData;
+  else?: TData | null;
 }
 
 /**
@@ -63,34 +67,50 @@ export type HandlePush<TData> = HandlePushFn<TData> & {
   /**
    * Reserve this handle's slot synchronously and return a resolver that is
    * push-equal: it takes the same argument shapes as the push (value, Promise, or
-   * thunk) and behaves identically. The one added behavior is the timeout: if the
-   * resolver is never called, the slot auto-resolves to `options.else` after
-   * `options.within` ms. Calling the resolver cancels the timeout.
+   * thunk) and behaves identically. Two things the resolver adds over a direct
+   * push: a timeout (if the resolver is never called, the slot auto-resolves to
+   * `options.else` after `options.timeoutMs`; calling the resolver cancels it),
+   * and — on the action/revalidation path only — a thunk it runs does NOT
+   * re-enter the deadlock-guard push-callback scope a direct push thunk gets,
+   * because a deferred resolver fires after the handler phase has closed.
+   *
+   * The reserved slot appears in the accumulated handle data as a pending
+   * `Promise` until it resolves (see {@link DeferredHandleEntry}); a
+   * deferred-aware consumer narrows thenable entries (`use()`/`await` + null
+   * check) before dereferencing.
    */
   defer(options?: DeferOptions<TData>): HandlePushFn<TData>;
 };
 
-interface InternalDeferred<T> {
-  promise: Promise<T | undefined>;
-  resolve: (value: T | undefined) => void;
-}
+/**
+ * A handle entry a deferred-aware consumer may read from `useHandle`: either a
+ * resolved value, or a pending `Promise` that resolves to the value, to `else`,
+ * or (when no `else` was given) `undefined` on timeout. Reading code should treat
+ * thenable entries as such and narrow before dereferencing.
+ */
+export type DeferredHandleEntry<TData> =
+  | TData
+  | Promise<TData | null | undefined>;
 
 // Internal: a timeout-bounded { promise, resolve }. Not part of the public API
 // (the public surface is `ctx.use(Handle).defer()`); exported for `withDefer`
-// and unit tests only.
+// and unit tests only. Resolves to `T`, the `else` fallback, or `undefined`.
 export function createDeferred<T>(options?: {
   timeoutMs?: number;
-  fallback?: T;
-}): InternalDeferred<T> {
-  let resolveInner!: (value: T | undefined) => void;
+  fallback?: T | null;
+}): {
+  promise: Promise<T | null | undefined>;
+  resolve: (value: T | null | undefined) => void;
+} {
+  let resolveInner!: (value: T | null | undefined) => void;
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const promise = new Promise<T | undefined>((resolve) => {
+  const promise = new Promise<T | null | undefined>((resolve) => {
     resolveInner = resolve;
   });
 
-  const finish = (value: T | undefined): void => {
+  const finish = (value: T | null | undefined): void => {
     if (settled) return;
     settled = true;
     if (timer !== undefined) {
@@ -127,7 +147,7 @@ export function createDeferred<T>(options?: {
         console.warn(
           `[rango] A deferred handle value was not resolved within ${ms}ms; ` +
             `resolving to the fallback so the response can flush. Call the ` +
-            `resolver from the component that produces the value, or raise within.`,
+            `resolver from the component that produces the value, or raise timeoutMs.`,
         );
       }
       finish(options?.fallback);
@@ -146,9 +166,12 @@ export function createDeferred<T>(options?: {
  */
 export function withDefer<TData>(push: HandlePushFn<TData>): HandlePush<TData> {
   const handlePush = push as HandlePush<TData>;
+  // Safe to mutate push in place: each ctx.use(Handle) call (request-context.ts,
+  // loader-resolution.ts) builds a fresh closure, so .defer never leaks across
+  // handles or requests.
   handlePush.defer = (options) => {
     const deferred = createDeferred<TData>({
-      timeoutMs: options?.within,
+      timeoutMs: options?.timeoutMs,
       fallback: options?.else,
     });
     // Reserve the slot now by pushing the pending promise (the renderer use()s it).
@@ -160,6 +183,10 @@ export function withDefer<TData>(push: HandlePushFn<TData>): HandlePush<TData> {
       value: TData | Promise<TData>,
     ) => void;
     return (data) => {
+      // The thunk runs without re-entering the push-callback scope a direct push
+      // thunk gets on the action/revalidation path (loader-resolution.ts): a
+      // deferred resolver fires from a deep component after the handler phase has
+      // closed, so there is no live deadlock-guard window to exempt.
       resolveSlot(
         typeof data === "function" ? (data as () => Promise<TData>)() : data,
       );

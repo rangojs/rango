@@ -742,6 +742,16 @@ export const IsActionProbeLoader = createLoader(async () => {
   return { runs: isActionProbeRuns };
 });
 
+// Bare isAction() e2e probe: gated by revalidate(({ isAction }) => isAction())
+// (no specific action), so it re-runs on ANY action — including the decoy that
+// does NOT match the target. Its own run counter lets the test tell it apart.
+let isActionAnyRuns = 0;
+export const IsActionAnyLoader = createLoader(async () => {
+  "use server";
+  isActionAnyRuns += 1;
+  return { runs: isActionAnyRuns };
+});
+
 // ============================================================================
 // Action ctx.set → loader ctx.get test
 // Reads context variables set by an action to verify loaders see them
