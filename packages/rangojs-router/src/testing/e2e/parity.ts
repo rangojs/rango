@@ -6,6 +6,7 @@
 
 import type { Expect, Page, TestType } from "@playwright/test";
 import type { Fixture, FixtureOptions } from "./fixture.js";
+import { DEFAULT_STATE_COOKIE_PREFIX } from "../../browser/cookie-name.js";
 
 export interface ParityDescribeOptions extends Partial<
   Omit<FixtureOptions, "mode">
@@ -30,6 +31,15 @@ export interface ExpectParityOptions {
    * transport being snapshotted.
    */
   waitFor?: (page: Page) => Promise<void>;
+  /**
+   * Cookie NAMES to exclude from the JS-vs-no-JS jar comparison, matched exactly
+   * (string) or by pattern (RegExp). The rango state cookie (default prefix
+   * `rango-state`) is ALWAYS excluded — it is written/rotated only by the client
+   * runtime, so it is JS-only by design and never appears in the no-JS jar. Use
+   * this for a custom `stateCookiePrefix` (e.g. `[/^myapp-state_/]`) or any other
+   * volatile/JS-only cookie (analytics, CSRF) that should not break parity.
+   */
+  ignoreCookies?: ReadonlyArray<string | RegExp>;
 }
 
 export interface Parity {
@@ -96,6 +106,11 @@ export interface Parity {
    *   mismatch — expectParity compares jars, not the per-submit cookie delta.
    *   Keep the JS context's pre-intent cookie state minimal, or assert the
    *   specific Set-Cookie elsewhere.
+   * - RANGO STATE COOKIE: the rango state cookie (default prefix `rango-state`)
+   *   is written/rotated only by the client runtime, so it is JS-only by design
+   *   and would always diverge — it is excluded from the comparison
+   *   automatically. A custom `stateCookiePrefix` (or any other volatile/JS-only
+   *   cookie) is excluded via `opts.ignoreCookies`.
    */
   expectParity: (
     page: Page,
@@ -217,6 +232,35 @@ async function snapshot(
   };
 }
 
+// Reduce a `document.cookie` string to the cookies that should match across the
+// JS and no-JS transports. The rango state cookie (default prefix `rango-state`)
+// is always dropped — it is written/rotated only by the client runtime, so it
+// exists in the JS jar but never the no-JS one. `ignore` drops additional names
+// (a custom stateCookiePrefix, or other JS-only/volatile cookies) by exact
+// string or RegExp match. Returns a normalized, sorted `name=value; ...` string.
+function parityCookies(
+  cookieString: string,
+  ignore: ReadonlyArray<string | RegExp>,
+): string {
+  const isIgnored = (name: string): boolean => {
+    if (name.startsWith(DEFAULT_STATE_COOKIE_PREFIX)) return true;
+    return ignore.some((m) =>
+      typeof m === "string" ? m === name : m.test(name),
+    );
+  };
+  return cookieString
+    .split(";")
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0)
+    .filter((c) => {
+      const eq = c.indexOf("=");
+      const name = eq === -1 ? c : c.slice(0, eq);
+      return !isIgnored(name);
+    })
+    .sort()
+    .join("; ");
+}
+
 export function createParity({
   test: _test,
   expect,
@@ -316,7 +360,10 @@ export function createParity({
         return url.pathname + url.search + url.hash;
       };
       expect(locationOf(noJsSnapshot.url)).toEqual(locationOf(jsSnapshot.url));
-      expect(noJsSnapshot.cookies).toEqual(jsSnapshot.cookies);
+      const ignore = opts.ignoreCookies ?? [];
+      expect(parityCookies(noJsSnapshot.cookies, ignore)).toEqual(
+        parityCookies(jsSnapshot.cookies, ignore),
+      );
     } finally {
       await noJsContext.close();
     }
