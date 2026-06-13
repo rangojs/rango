@@ -76,6 +76,7 @@ import { parallelMetaStalePatterns } from "./urls/parallel-meta-stale.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
+import { colocatedFastRefreshPatterns } from "./urls/colocated-fast-refresh.js";
 import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
 import { parallelRevalAfterActionPatterns } from "./urls/parallel-reval-after-action.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
@@ -1360,6 +1361,12 @@ export const urlpatterns = urls(
       // Colocated loader + handle + prerender in same file (client import test)
       include("/colocated-lp", colocatedLoaderPrerenderPatterns, {
         name: "colocatedLp",
+      }),
+
+      // Non-"use client" file in both rsc + client graphs (Fast Refresh
+      // regression guard for vite-plugin-react#1248)
+      include("/colocated-fr", colocatedFastRefreshPatterns, {
+        name: "colocatedFr",
       }),
 
       ...(import.meta.env.DEV

@@ -70,6 +70,7 @@ export const NamedRoutes = {
   "cacheTest.useLoaderDetail": "/cache-test/useloader/:itemId",
   "cacheTest.useLoaderIndex": "/cache-test/useloader",
   changelog: "/changelog",
+  "colocatedFr.index": "/colocated-fr",
   "colocatedLp.fresh": "/colocated-lp/fresh",
   "colocatedLp.prerender": "/colocated-lp/prerender",
   "colocatedLp.static": "/colocated-lp/static",
