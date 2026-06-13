@@ -19,6 +19,7 @@ import type {
   LoaderFn,
 } from "./types.js";
 import { missingInjectedIdError } from "./missing-id-error.js";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
@@ -46,8 +47,21 @@ export function createLoader<T>(
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   const loaderId = __injectedId || "";
 
-  if (!loaderId && process.env.NODE_ENV === "development") {
-    throw missingInjectedIdError("Loader", "createLoader");
+  // Client/SSR build of createLoader. Under a test runner it needs no id
+  // (loaderId stays ""; the react-server build in loader.rsc.ts adds the runtime
+  // fallback for whole-router construction). Otherwise (dev or a real build) a
+  // missing id means an UNSUPPORTED shape the plugin skipped — fail loud rather
+  // than ship `$$id: ""` (which would make a client useLoader read the wrong
+  // key). The rich diagnostic stays behind the NODE_ENV check so production folds
+  // it away and ships the small throw. isUnderTestRunner() is runtime-safe.
+  if (!loaderId && !isUnderTestRunner()) {
+    if (process.env.NODE_ENV !== "production") {
+      throw missingInjectedIdError("Loader", "createLoader");
+    }
+    throw new Error(
+      "[rango] Loader is missing $$id — the build plugin did not inject one. " +
+        "Export it as `export const X = createLoader(...)`.",
+    );
   }
 
   return {

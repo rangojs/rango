@@ -133,6 +133,21 @@ export interface RangoOptions<TEnv = any> {
   allowDebugManifest?: boolean;
 
   /**
+   * DEVELOPMENT/TEST ONLY. Emit an `X-Rango-Cache` response header describing
+   * the cache status of the matched route, for use by testing primitives such
+   * as `assertCacheStatus`.
+   *
+   * Defaults to `false`. When neither this option nor the
+   * `RANGO_TEST_SIGNALS=1` environment flag is set, NO header is emitted and
+   * router output is byte-identical to the default.
+   *
+   * The header encodes per-segment (v1: coarse route-level) status keyed by the
+   * route NAME, e.g. `X-Rango-Cache: product.detail=hit`. Do NOT enable in
+   * production — it exposes internal cache decisions.
+   */
+  debugCacheSignal?: boolean;
+
+  /**
    * Document component that wraps the entire application.
    *
    * This component provides the HTML structure for your app and wraps
@@ -480,6 +495,21 @@ export interface RangoOptions<TEnv = any> {
    * @default 300 (5 minutes)
    */
   prefetchCacheTTL?: number | false;
+
+  /**
+   * Prefix for the rango state cookie name. The resolved name is
+   * `{prefix}_{routerId}`; the prefix is sanitized to cookie-name-safe
+   * characters (`[A-Za-z0-9-]`) and an empty result falls back to the default.
+   *
+   * The rango state cookie keys the client's prefetch / HTTP caches. Overriding
+   * the prefix lets you align it with cookie-naming policies or consent-manager
+   * classification lists, or avoid colliding with an existing `rango-state`
+   * cookie. It is not a full-name override: the `_{routerId}` suffix is what
+   * keeps sibling apps on one origin from clobbering each other's state.
+   *
+   * @default "rango-state"
+   */
+  stateCookiePrefix?: string;
 
   /**
    * Enable connection warmup to keep TCP+TLS alive after idle periods.

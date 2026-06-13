@@ -9,13 +9,16 @@ import type { MiddlewareContext } from "../../router/middleware.js";
 interface MockCacheEntry {
   response: Response;
   staleAt: number;
+  tags?: string[];
 }
 
 function createMockCacheStore() {
   const cache = new Map<string, MockCacheEntry>();
+  const putResponseTags: (string[] | undefined)[] = [];
 
   return {
     cache,
+    putResponseTags,
     async getResponse(key: string) {
       const entry = cache.get(key);
       if (!entry) return null;
@@ -31,10 +34,13 @@ function createMockCacheStore() {
       response: Response,
       ttl: number,
       _swr?: number,
+      tags?: string[],
     ) {
+      putResponseTags.push(tags);
       cache.set(key, {
         response: response.clone(),
         staleAt: Date.now() + ttl * 1000,
+        tags,
       });
     },
   };
@@ -50,6 +56,10 @@ function createMockRequestContext(
   return {
     _cacheStore: store,
     _onResponseCallbacks: [] as Array<(r: Response) => Response>,
+    // Mirror production: a settled render barrier and the request-scoped tag set
+    // the document cache snapshots for tag invalidation.
+    _handleStore: { settled: Promise.resolve() },
+    _requestTags: new Set<string>(),
     waitUntil: vi.fn((fn: () => Promise<void>) => {
       fn().catch(() => {});
     }),
@@ -156,6 +166,66 @@ describe("createDocumentCacheMiddleware", () => {
       expect(mockStore.cache.has("/page:html")).toBe(true);
     });
 
+    it("tags the document entry with the request-scoped tag union (#1)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // Simulate cache()/cacheTag()/loader recordRequestTags() having run during
+      // render: the request-scoped set holds the page's tags before settle.
+      mockRequestCtx._requestTags.add("products");
+      mockRequestCtx._requestTags.add("nav");
+
+      const next = vi.fn().mockResolvedValue(
+        new Response("Tagged", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
+      // putResponse received the tag union as its 5th argument, so updateTag()
+      // can invalidate the full-page entry.
+      expect(mockStore.putResponseTags).toHaveLength(1);
+      expect(mockStore.putResponseTags[0]).toEqual(["products", "nav"]);
+      expect(mockStore.cache.get("/page:html")?.tags).toEqual([
+        "products",
+        "nav",
+      ]);
+    });
+
+    it("passes undefined tags for an untagged document (header-free)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      const next = vi.fn().mockResolvedValue(
+        new Response("Untagged", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.putResponseTags[0]).toBeUndefined();
+    });
+
     it("should handle cacheable response with null body without throwing", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
@@ -208,6 +278,62 @@ describe("createDocumentCacheMiddleware", () => {
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
+      expect(mockStore.cache.size).toBe(0);
+    });
+
+    it("should not cache a response carrying Set-Cookie (Finding #3)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // s-maxage says cacheable, but the per-client Set-Cookie must veto it: a
+      // shared store would replay the cookie to every client on a hit.
+      const next = vi.fn().mockResolvedValue(
+        new Response("per-client", {
+          headers: {
+            "Cache-Control": "s-maxage=60",
+            "Set-Cookie": "rango-state_router_0=v1:123; Path=/",
+          },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.cache.size).toBe(0);
+    });
+
+    it("should not cache a response carrying x-rango-keep-cache (Finding #3 mirror)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      const next = vi.fn().mockResolvedValue(
+        new Response("keep", {
+          headers: {
+            "Cache-Control": "s-maxage=60",
+            "x-rango-keep-cache": "1",
+          },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
       expect(mockStore.cache.size).toBe(0);
     });
   });
@@ -516,6 +642,9 @@ describe("createDocumentCacheMiddleware", () => {
       );
 
       const response = (await middleware(htmlCtx, htmlNext)) as Response;
+      // The document write is a background task (now gated on the render barrier
+      // before snapshotting tags), so flush before asserting it landed.
+      await vi.runAllTimersAsync();
 
       expect(htmlNext).toHaveBeenCalledTimes(1);
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");

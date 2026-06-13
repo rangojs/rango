@@ -1,4 +1,5 @@
 import { missingInjectedIdError } from "./missing-id-error.js";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 /**
  * Handle definition for accumulating data across route segments.
@@ -44,6 +45,11 @@ function defaultCollect<T>(segments: T[][]): T[] {
 // Populated when createHandle() runs (both server and client).
 // Used by useHandle() to recover collect when handle is deserialized from RSC prop.
 const collectRegistry = new Map<string, (segments: unknown[][]) => unknown>();
+
+// Monotonic counter for runtime fallback ids (see createHandle). Module-scoped
+// and deterministic, so each createHandle() call gets a stable, unique id within
+// the process. Only used when no build id was injected (a bare unit test).
+let runtimeHandleIdCounter = 0;
 
 /**
  * Look up a collect function from the registry by handle $$id.
@@ -95,10 +101,26 @@ export function createHandle<TData, TAccumulated = TData[]>(
   collect?: (segments: TData[][]) => TAccumulated,
   __injectedId?: string,
 ): Handle<TData, TAccumulated> {
-  const handleId = __injectedId ?? "";
+  let handleId = __injectedId ?? "";
 
-  if (!handleId && process.env.NODE_ENV === "development") {
-    throw missingInjectedIdError("Handle", "createHandle");
+  // No build-injected id. Under a test runner: fall back to a synthetic id so the
+  // collect registers below and the handle is exercisable in tests (useHandle,
+  // collectHandle, renderRoute's `handles` run the REAL collect). Otherwise (dev
+  // or a real build) it means an UNSUPPORTED handler shape the plugin skipped —
+  // fail loud. The rich, stack-parsing diagnostic stays behind the NODE_ENV check
+  // so a production build folds it away and tree-shakes missing-id-error.ts out,
+  // shipping the small throw instead. isUnderTestRunner() is runtime-safe.
+  if (!handleId) {
+    if (isUnderTestRunner()) {
+      handleId = `__rango_runtime_handle_${runtimeHandleIdCounter++}`;
+    } else if (process.env.NODE_ENV !== "production") {
+      throw missingInjectedIdError("Handle", "createHandle");
+    } else {
+      throw new Error(
+        "[rango] Handle is missing $$id — the build plugin did not inject one. " +
+          "Export it as `export const X = createHandle(...)`.",
+      );
+    }
   }
 
   const collectFn =
@@ -107,12 +129,10 @@ export function createHandle<TData, TAccumulated = TData[]>(
 
   // Register collect in module-level registry so useHandle() can recover it
   // when the handle is deserialized from RSC props (toJSON strips collect).
-  if (handleId) {
-    collectRegistry.set(
-      handleId,
-      collectFn as (segments: unknown[][]) => unknown,
-    );
-  }
+  collectRegistry.set(
+    handleId,
+    collectFn as (segments: unknown[][]) => unknown,
+  );
 
   return {
     __brand: "handle" as const,

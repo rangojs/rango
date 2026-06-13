@@ -40,6 +40,12 @@ import {
 import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 import { sortedSearchString } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
+import {
+  normalizeTags,
+  recordRequestTags,
+  runWithCacheTagScope,
+} from "./cache-tag.js";
+import { reportCacheError } from "./cache-error.js";
 
 /**
  * Convert encodeReply result to a stable string key.
@@ -74,9 +80,17 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const store = requestCtx?._cacheStore;
     const resolvedProfileName = profileName || "default";
 
-    // Bypass: no store or no getItem support
+    // Bypass: no store or no getItem support. Still run inside a tag scope so a
+    // cacheTag() call inside the function degrades to a no-op rather than
+    // throwing "must be called inside a use cache function" - adopting cacheTag()
+    // must not hard-fail in apps/tests without an item-capable cache configured.
     if (!store?.getItem) {
-      return fn.apply(this, args);
+      const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+      const result = await scoped.result;
+      // Still record the runtime tags into the request set so a cacheTag() in an
+      // uncached function tags the document, even with no item-capable store.
+      recordRequestTags(scoped.tags, requestCtx);
+      return result;
     }
 
     // Resolve profile strictly from request-scoped config (set by the
@@ -159,8 +173,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         cacheKey = `use-cache:${id}`;
       }
     } catch {
-      // Non-serializable args: run uncached
-      return fn.apply(this, args);
+      // Non-serializable args: run uncached (within a tag scope so cacheTag()
+      // still does not throw). Record runtime tags so the document union still
+      // sees them even though this call is not itself cached.
+      const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+      const result = await scoped.result;
+      recordRequestTags(scoped.tags, requestCtx);
+      return result;
     }
 
     // Cache lookup
@@ -178,9 +197,20 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             if (r) restoreHandles(r, handleStore);
           }
         }
+        // Surface the hit's tags to the request set so a document built from a
+        // cached item is still tagged (the function did not re-run, so its
+        // runtime cacheTag() tags are only available from the stored entry).
+        recordRequestTags(cached.tags, requestCtx);
         return result;
-      } catch {
-        // Deserialization failed, fall through to fresh execution
+      } catch (error) {
+        // The stored value is corrupt/partial (failed RSC deserialize). Report
+        // it, then fall through to fresh execution - the miss path below re-runs
+        // and setItem() overwrites the faulty entry under the same key (self-heal).
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          `[use cache] "${id}" fresh-hit`,
+        );
       }
     }
 
@@ -195,6 +225,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             if (r) restoreHandles(r, handleStore);
           }
         }
+        // Tag the request with the stale entry's tags (see fresh-hit note).
+        recordRequestTags(cached.tags, requestCtx);
         // Background revalidation — must capture handles if tainted args present.
         // Use an isolated handle store so background pushes don't pollute the
         // live response or throw LateHandlePushError on the completed store.
@@ -244,8 +276,18 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           }
 
           try {
-            const freshResult = await fn.apply(this, args);
+            const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+            const freshResult = await scoped.result;
             bgStopCapture?.();
+            // Merge profile/DSL tags with runtime cacheTag() tags, read after
+            // awaiting so post-await cacheTag() calls are included. Normalize
+            // (drops empty profile tags, matching the invalidate path) + dedupe.
+            const freshTags = [
+              ...new Set(
+                normalizeTags([...(profile.tags ?? []), ...scoped.tags]),
+              ),
+            ];
+            recordRequestTags(freshTags, requestCtx);
             const serialized = await serializeResult(freshResult);
             if (serialized !== null) {
               const encodedHandles = bgCapture?.data
@@ -255,12 +297,20 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                 handles: encodedHandles,
                 ttl: profile.ttl,
                 swr: profile.swr,
-                tags: profile.tags,
+                tags: freshTags.length > 0 ? freshTags : undefined,
               });
             }
           } catch (bgError) {
             bgStopCapture?.();
-            requestCtx?._reportBackgroundError?.(bgError, "stale-revalidation");
+            // Pass requestCtx explicitly: this runs in a detached background
+            // task where the ALS context is gone, so onError can only fire if
+            // we hand it the context captured up front.
+            reportCacheError(
+              bgError,
+              "stale-revalidation",
+              "[use cache] background revalidation failed",
+              requestCtx,
+            );
           } finally {
             for (const arg of bgTaintedArgs) {
               unstampCacheExec(arg as object);
@@ -272,8 +322,14 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           }
         });
         return result;
-      } catch {
-        // Deserialization of stale value failed, fall through
+      } catch (error) {
+        // Stale value is corrupt/partial; report and fall through to a fresh
+        // execution, which overwrites the faulty entry under the same key.
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          `[use cache] "${id}" stale-hit`,
+        );
       }
     }
 
@@ -306,8 +362,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     let result: any;
+    let scoped: ReturnType<typeof runWithCacheTagScope>;
     try {
-      result = await fn.apply(this, args);
+      scoped = runWithCacheTagScope(() => fn.apply(this, args));
+      result = await scoped.result;
     } finally {
       // Decrement ref count; symbol is deleted when it reaches zero
       for (const arg of taintedArgs) {
@@ -319,6 +377,14 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Remove this capture token (order-independent, safe for concurrent use)
       stopCapture?.();
     }
+
+    // Merge profile/DSL tags with runtime cacheTag() tags. Read scoped.tags
+    // after awaiting result so post-await cacheTag() calls are included.
+    // Normalize (drops empty profile tags, matching the invalidate path) + dedupe.
+    const allTags = [
+      ...new Set(normalizeTags([...(profile.tags ?? []), ...scoped!.tags])),
+    ];
+    recordRequestTags(allTags, requestCtx);
 
     // Serialize and store — fully non-blocking when waitUntil is available.
     // The response does not need to wait for serialization or the store write.
@@ -333,7 +399,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             handles: encodedHandles,
             ttl: profile.ttl,
             swr: profile.swr,
-            tags: profile.tags,
+            tags: allTags.length > 0 ? allTags : undefined,
           });
         }
       } catch (writeError) {

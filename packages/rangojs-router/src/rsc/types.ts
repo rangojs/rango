@@ -43,6 +43,8 @@ export interface RscPayload {
     version?: string;
     /** TTL in milliseconds for the client-side in-memory prefetch cache */
     prefetchCacheTTL?: number;
+    /** Server-resolved rango state cookie name; the client reads it verbatim. */
+    stateCookieName?: string;
     /** Theme configuration for FOUC prevention */
     themeConfig?: ResolvedThemeConfig | null;
     /** Initial theme from cookie (for SSR hydration) */

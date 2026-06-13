@@ -38,6 +38,7 @@ import type { ReverseFunction } from "./reverse.js";
 import type { DefaultReverseRouteMap } from "./types/global-namespace.js";
 import type { UseItems, HandlerUseItem } from "./route-types.js";
 import { isCachedFunction } from "./cache/taint.js";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 // -- Named route resolution types -------------------------------------------
 
@@ -273,6 +274,11 @@ export interface PrerenderHandlerDefinition<
   use?: () => UseItems<HandlerUseItem>;
 }
 
+// Process-stable fallback id counter (mirrors createHandle / createLoader). Only
+// assigned in a bare unit test where the Vite plugin did not inject an id; never
+// fires in a real build (the plugin always injects).
+let runtimePrerenderIdCounter = 0;
+
 // -- Overloads --------------------------------------------------------------
 //
 // T accepts: named route string (global or .local) OR explicit param object.
@@ -376,11 +382,26 @@ export function Prerender<TParams extends Record<string, any>>(
     );
   }
 
-  if (!id) {
+  // Throw unless under a test runner. The plugin always injects $$id for a
+  // supported `export const` Prerender on every build, so a missing id means
+  // either no plugin (a bare test — fall back below) or an UNSUPPORTED shape the
+  // plugin silently skipped (dev OR a real build — fail loud; a synthetic id
+  // would degrade to a silent prerender miss). The message is already small (no
+  // stack-parsing diagnostic), so it ships as-is. isUnderTestRunner() is
+  // runtime-safe — never a bare `process.env` access.
+  if (!id && !isUnderTestRunner()) {
     throw new Error(
-      "[rango] Prerender: missing $$id. " +
-        "Ensure the exposeInternalIds Vite plugin is configured.",
+      "[rango] Prerender: missing $$id. Use `export const X = Prerender(...)` " +
+        "and ensure the exposeInternalIds Vite plugin is configured.",
     );
+  }
+  // Under vitest with no plugin id: assign a process-stable runtime id so a
+  // whole-app router with Prerender routes constructs in a bare test (for
+  // dispatch / assertGeneratedRoutesMatch). Never reached in a real build (the
+  // throw above fires there); prerender storage/lookup keys on routeName +
+  // paramHash, never $$id (mirrors createHandle / createLoader).
+  if (!id) {
+    id = `__rango_runtime_prerender_${runtimePrerenderIdCounter++}`;
   }
 
   return {

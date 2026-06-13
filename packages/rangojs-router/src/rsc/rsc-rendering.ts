@@ -53,6 +53,7 @@ export async function handleRscRendering<TEnv>(
       handles: handleStore.stream(),
       version: ctx.version,
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+      stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       initialTheme: reqCtx.theme,
     },
@@ -99,6 +100,7 @@ export async function handleRscRendering<TEnv>(
           handles: handleStore.stream(),
           version: ctx.version,
           prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+          stateCookieName: ctx.router.resolvedStateCookieName,
         },
       };
     }

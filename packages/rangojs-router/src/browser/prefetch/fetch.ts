@@ -27,6 +27,7 @@ import {
   type DecodedPrefetch,
 } from "./cache.js";
 import { getRangoState } from "../rango-state.js";
+import { isActionFenceActive } from "../action-fence.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 import { debugLog } from "../logging.js";
@@ -150,6 +151,12 @@ function executePrefetchFetch(
 
   const promise: Promise<DecodedPrefetch | null> = fetch(fetchUrl, {
     priority: "low" as RequestPriority,
+    // During an action's flight the state is not rotated, so the old
+    // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass it so
+    // a prefetch fetches fresh rather than warming the map with stale bytes (the
+    // fence's HTTP-cache-bypass requirement applies to prefetch as well as
+    // navigation fetches).
+    ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
     signal,
     headers: {
       "X-Rango-State": getRangoState(),

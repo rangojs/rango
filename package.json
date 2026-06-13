@@ -22,6 +22,8 @@
     "test": "pnpm test:clean-vite && pnpm --filter @rangojs/router build && pnpm run typecheck && pnpm test:unit && pnpm test:e2e",
     "test:clean-vite": "find . -name '.vite' -type d -prune -exec rm -rf {} + && git checkout -- packages/rangojs-router/e2e/test-app/src/router.named-routes.gen.ts 2>/dev/null || true",
     "test:unit": "pnpm -r --if-present run test:unit",
+    "test:unit:rsc": "pnpm -r --if-present run test:unit:rsc",
+    "test:unit:all": "pnpm run test:unit && pnpm run test:unit:rsc",
     "test:e2e": "pnpm --filter @rangojs/router test && pnpm --filter vite-rsc-demo test:full && pnpm --filter cloudflare-basic test:e2e && pnpm --filter cloudflare-basic-nonce test:e2e && pnpm --filter cloudflare-multi-router test:e2e && pnpm --filter react-experimental test:e2e && pnpm --filter no-typescript test:e2e",
     "test:hmr-local": "pnpm --filter @rangojs/router build && pnpm --filter @rangojs/router run test:hmr-local && pnpm --filter cloudflare-basic run test:e2e:hmr-local",
     "build-router": "pnpm --filter @rangojs/router build",

@@ -72,6 +72,12 @@ export interface RscMetadata {
    */
   prefetchCacheTTL?: number;
   /**
+   * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
+   * reads it verbatim and binds the rango state cookie to it; composition
+   * happens only server-side.
+   */
+  stateCookieName?: string;
+  /**
    * Theme configuration from router.
    * Included when theme is enabled in router config.
    */
@@ -433,9 +439,9 @@ export interface NavigationStore {
   hasHistoryCache(historyKey: string): boolean;
   updateCacheHandleData(historyKey: string, handleData: HandleData): void;
   markCacheAsStale(): void;
+  markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
-  broadcastCacheInvalidation(): void;
 
   // Cross-tab refresh callback (set by navigation bridge)
   setCrossTabRefreshCallback(callback: () => void): void;

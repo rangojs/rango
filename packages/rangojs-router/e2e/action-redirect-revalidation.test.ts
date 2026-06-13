@@ -1,6 +1,43 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
+
+/**
+ * Finding #1 guard: a mutate-then-redirect action must mark the history cache
+ * stale, so pressing Back to the pre-mutation entry revalidates (SWR) against
+ * the now-set cookie instead of replaying the stale pre-mutation snapshot as
+ * fresh. The redirect replaces the /login entry, so Back lands on the original
+ * guest entry. Design contract: rango-state-cookie.md lines 1005, 1011.
+ */
+async function runBackAfterRedirectShowsFresh(
+  page: Page,
+  url: (path: string) => string,
+) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/action-redirect-revalidation"));
+  await waitForHydration(page);
+  await expect(page.locator('[data-testid="auth-guest"]')).toBeVisible();
+
+  await page.locator('[data-testid="go-to-login"]').click();
+  await expect(
+    page.locator('[data-testid="action-redirect-login-page"]'),
+  ).toBeVisible();
+  await page.locator('[data-testid="login-email"]').fill("back@test.com");
+  await page.locator('[data-testid="login-submit"]').click();
+
+  await expect(page).toHaveURL(/\/action-redirect-revalidation$/);
+  await expect(page.locator('[data-testid="auth-user"]')).toBeVisible();
+
+  // Back to the pre-mutation guest entry: it was marked stale, so it
+  // revalidates against the now-set auth cookie rather than serving the cached
+  // guest snapshot as fresh.
+  await page.goBack();
+  await expect(page.locator('[data-testid="auth-user"]')).toBeVisible();
+  await expect(page.locator('[data-testid="auth-user"]')).toHaveText(
+    "Logged in as: back@test.com",
+  );
+}
 
 /**
  * Action redirect revalidation tests.
@@ -100,6 +137,12 @@ test.describe("action-redirect-revalidation", () => {
     // Should send empty segments so server renders everything fresh
     expect(redirectNavRequest!.segments).toBe("");
   });
+
+  test("Back after the redirect revalidates the pre-mutation page (no stale Back button)", async ({
+    page,
+  }) => {
+    await runBackAfterRedirectShowsFresh(page, f.url);
+  });
 });
 
 /**
@@ -181,5 +224,11 @@ test.describe("action-redirect-revalidation (production)", () => {
     expect(redirectNavRequest).toBeTruthy();
     expect(redirectNavRequest!.hasStale).toBe(true);
     expect(redirectNavRequest!.segments).toBe("");
+  });
+
+  test("Back after the redirect revalidates the pre-mutation page in production", async ({
+    page,
+  }) => {
+    await runBackAfterRedirectShowsFresh(page, f.url);
   });
 });

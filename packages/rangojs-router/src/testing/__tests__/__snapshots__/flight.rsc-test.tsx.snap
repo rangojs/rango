@@ -1,0 +1,7 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderToFlightString (Flight RSC) > matches a normalized Flight snapshot 1`] = `
+"0:{"metadata":{"pathname":"/","segments":[{"id":"test","namespace":"","type":"route","index":0,"component":"$L1"}],"version":"test"}}
+1:["$","div",null,{"children":["Hello ","World","!"]}]
+"
+`;

@@ -67,8 +67,10 @@ For shared segment data, use named revalidation contracts on both the producer
 and consumer segments, even when middleware is present in the chain.
 
 ```typescript
-export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#") || undefined;
+import * as CartActions from "./actions/cart";
+
+export const revalidateCartData = (ctx) =>
+  ctx.isAction(CartActions) || undefined;
 
 layout(CartLayout, () => [
   middleware(cartRenderMiddleware),

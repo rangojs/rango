@@ -199,7 +199,7 @@ Caching is active in development (backed by `MemorySegmentCacheStore`). This mat
 
 All three write to the same `SegmentCacheStore`.
 
-**Tags**: `CacheProfile.tags` and `CacheOptions.tags` are accepted and passed through to `setItem`/`setItem` options, but built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do not index or invalidate by tag. Tags are a forward-looking API — actual tag-based invalidation requires a store implementation that supports it (e.g., a future KV/Redis adapter with secondary indices).
+**Tags**: `CacheProfile.tags`, `CacheOptions.tags`, and runtime `cacheTag(...tags)` inside a `"use cache"` function all tag the stored entry. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes; server actions) or `revalidateTag(...tags)` (background, non-blocking; route handlers/webhooks). Both hard-purge — the only difference is awaitability; neither serves stale. For `CFCacheStore` the markers live in its own KV namespace.
 
 ## Remaining / Future
 

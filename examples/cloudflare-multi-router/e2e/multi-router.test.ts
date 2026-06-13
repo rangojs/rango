@@ -10,15 +10,16 @@ import {
 
 test.describe.configure({ mode: "serial" });
 
-// rango-state is stored under `rango-state:{routerId}` so sibling apps on
-// the same origin don't collide. Find the namespaced key without hard-coding
-// the router id.
+// rango state lives in a session cookie named `{prefix}_{routerId}` (default
+// prefix `rango-state`) so sibling apps on the same origin don't collide. Find
+// the namespaced cookie name without hard-coding the router id.
 async function findRangoStateKey(page: Page): Promise<string> {
   return await page.evaluate(() => {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key === "rango-state" || key?.startsWith("rango-state:")) {
-        return key;
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      const eq = trimmed.indexOf("=");
+      if (eq > 0 && trimmed.slice(0, eq).startsWith("rango-state")) {
+        return trimmed.slice(0, eq);
       }
     }
     return "rango-state";
@@ -27,9 +28,15 @@ async function findRangoStateKey(page: Page): Promise<string> {
 
 async function readRangoStateAt(
   page: Page,
-  key: string,
+  name: string,
 ): Promise<string | null> {
-  return await page.evaluate((k) => localStorage.getItem(k), key);
+  return await page.evaluate((n) => {
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed.startsWith(n + "=")) return trimmed.slice(n.length + 1);
+    }
+    return null;
+  }, name);
 }
 
 // ----- DEV MODE -----
@@ -559,12 +566,12 @@ test.describe("multi-router (dev)", () => {
     test("cross-tab app isolation: tab2 invalidating A does not clobber tab1's B state", async ({
       context,
     }) => {
-      // Two tabs in the same origin share localStorage. Tab 1 navigates A → B
+      // Two tabs in the same origin share the cookie jar. Tab 1 navigates A → B
       // (a full document reload across the app boundary); tab 2 stays in A and
-      // simulates a server-action invalidation (writes a rotated A token to app
-      // A's namespaced key). rango-state keys are namespaced per app, so tab 1
-      // (now app B) must ignore tab 2's app-A rotation — its next SPA request
-      // must send B's token, not the rotated A token.
+      // simulates a server-action invalidation (rotates app A's rango state
+      // cookie). rango state cookies are namespaced per app, so tab 1 (now app
+      // B, watching its own cookie name) must ignore tab 2's app-A rotation —
+      // its next SPA request must send B's token, not the rotated A token.
       const tab1 = await context.newPage();
       const tab2 = await context.newPage();
       try {
@@ -574,7 +581,7 @@ test.describe("multi-router (dev)", () => {
         await waitForHydration(tab2);
 
         const appAKey = await findRangoStateKey(tab2);
-        expect(appAKey).toMatch(/^rango-state:/);
+        expect(appAKey).toMatch(/^rango-state_/);
         const appAInitial = await readRangoStateAt(tab2, appAKey);
         expect(appAInitial).toBeTruthy();
 
@@ -601,12 +608,15 @@ test.describe("multi-router (dev)", () => {
           });
         });
 
-        // Tab 2 (still in A) writes a rotated A token — simulating a
-        // server action invalidation. This fires a `storage` event in tab 1,
-        // but the key is app A's namespace, which tab 1 ignores.
+        // Tab 2 (still in A) rotates app A's rango state cookie — simulating a
+        // server action invalidation. The jar is shared, but the cookie name is
+        // app A's namespace, so tab 1 (app B, watching its own cookie name)
+        // ignores it.
         const rotatedAState = `${appAInitial!.split(":")[0]}:${Date.now() + 999999}`;
         await tab2.evaluate(
-          ([key, val]) => localStorage.setItem(key, val),
+          ([name, val]) => {
+            document.cookie = `${name}=${val}; Path=/; SameSite=Lax`;
+          },
           [appAKey, rotatedAState],
         );
         await tab1.waitForTimeout(150);
@@ -1134,7 +1144,7 @@ test.describe("multi-router (production)", () => {
         await waitForHydration(tab2);
 
         const appAKey = await findRangoStateKey(tab2);
-        expect(appAKey).toMatch(/^rango-state:/);
+        expect(appAKey).toMatch(/^rango-state_/);
         const appAInitial = await readRangoStateAt(tab2, appAKey);
         expect(appAInitial).toBeTruthy();
 
@@ -1162,7 +1172,9 @@ test.describe("multi-router (production)", () => {
 
         const rotatedAState = `${appAInitial!.split(":")[0]}:${Date.now() + 999999}`;
         await tab2.evaluate(
-          ([key, val]) => localStorage.setItem(key, val),
+          ([name, val]) => {
+            document.cookie = `${name}=${val}; Path=/; SameSite=Lax`;
+          },
           [appAKey, rotatedAState],
         );
         await tab1.waitForTimeout(150);

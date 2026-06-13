@@ -1,7 +1,14 @@
 "use server";
 
 import { ReactNode } from "react";
-import { cookies, getRequestContext, redirect } from "@rangojs/router";
+import {
+  cookies,
+  getRequestContext,
+  invalidateClientCache,
+  keepClientCache,
+  redirect,
+  updateTag,
+} from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
 import {
   getCurrentCart,
@@ -142,6 +149,24 @@ export async function submitNameAction(formData: FormData): Promise<void> {
 
 export async function getLastSubmittedName(): Promise<string | null> {
   return lastSubmittedName;
+}
+
+/**
+ * Session-scoped counter action for the consumer e2e harness submit-parity
+ * exercise. Reads the current `parity-count` cookie, increments it by the
+ * submitted `amount`, and writes it back. Because the count lives in a cookie,
+ * each browser context observes only its own increments — this is what lets the
+ * harness run the intent twice (JS context, then a fresh no-JS context) against
+ * the one shared server and still see identical state on both transports.
+ */
+export async function parityCounterAction(formData: FormData): Promise<void> {
+  await delay(50);
+  const amount = parseInt((formData.get("amount") as string) || "1", 10);
+  const current = parseInt(cookies().get("parity-count")?.value ?? "0", 10);
+  cookies().set("parity-count", String(current + amount), {
+    path: "/",
+    maxAge: 60,
+  });
 }
 
 export async function resetLastSubmittedName(): Promise<void> {
@@ -290,6 +315,24 @@ export async function actionSetSessionCookie(): Promise<void> {
     path: "/",
     maxAge: 86400,
   });
+}
+
+/**
+ * Action that explicitly suppresses the bridge's automatic cache invalidation
+ * via keepClientCache(). Used to verify the rango state value is NOT rotated.
+ */
+export async function actionKeepCache(): Promise<void> {
+  keepClientCache();
+}
+
+/**
+ * Action that explicitly forces invalidation via invalidateClientCache() in
+ * addition to keepClientCache(): invalidation must still win (the explicit
+ * Set-Cookie lands regardless of the suppressed automatic path).
+ */
+export async function actionKeepThenInvalidate(): Promise<void> {
+  keepClientCache();
+  invalidateClientCache();
 }
 
 /**
@@ -466,3 +509,18 @@ export async function authBoundaryFormAction(
  */
 export async function isActionTargetAction(): Promise<void> {}
 export async function isActionDecoyAction(): Promise<void> {}
+
+/**
+ * Server action that invalidates a cache tag (read-your-own-writes).
+ * Awaits updateTag so cached entries are gone before the action returns,
+ * making the subsequent render fresh. Used by InvalidateTagButton.
+ */
+export async function invalidateTagAction(
+  _prev: { tag: string } | null,
+  formData: FormData,
+): Promise<{ tag: string }> {
+  "use server";
+  const tag = String(formData.get("tag") ?? "");
+  await updateTag(tag);
+  return { tag };
+}

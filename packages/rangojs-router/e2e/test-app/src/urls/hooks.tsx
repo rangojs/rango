@@ -10,6 +10,7 @@ import {
   LoaderCompositionHandler,
   InlineActionHandler,
   ProgressiveEnhancementHandler,
+  ParityCounterHandler,
   PeRedirectHandler,
   UseRouterHandler,
   UseRouterTargetAHandler,
@@ -49,6 +50,9 @@ export const hooksPatterns = urls(({ path, loader }) => [
   path("/inline-action", InlineActionHandler, { name: "inlineAction" }),
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",
+  }),
+  path("/parity-counter", ParityCounterHandler, {
+    name: "parityCounter",
   }),
   path("/pe-redirect", PeRedirectHandler, {
     name: "peRedirect",

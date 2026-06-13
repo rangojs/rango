@@ -6,6 +6,11 @@ import {
 } from "../loaders.js";
 import { RequestContextReverseClient } from "../components/RequestContextReverseClient.js";
 import { ActionSetCookieButton } from "../components/ActionSetCookieButton.js";
+import {
+  ActionKeepCacheButton,
+  ActionKeepThenInvalidateButton,
+  InvalidateClientCacheButton,
+} from "../components/ActionKeepCacheButton.js";
 
 const MwSession = createVar<string | null>();
 
@@ -90,6 +95,9 @@ export const loaderCookiePatterns = urls(({ path, loader, middleware }) => [
         <div data-testid="action-sets-cookie-page">
           <h1>Action Sets Cookie</h1>
           <ActionSetCookieButton />
+          <ActionKeepCacheButton />
+          <ActionKeepThenInvalidateButton />
+          <InvalidateClientCacheButton />
           <span data-testid="mw-session-value">
             {data.session ?? "no-session"}
           </span>

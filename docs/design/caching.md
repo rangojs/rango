@@ -26,7 +26,7 @@ lives.
 ### 🚧 Remaining
 
 - **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) is shipped from `@rangojs/router/cache`. Redis and other adapters are still future work.
-- **Cache invalidation API** - `cache()` and cache profiles accept an optional `tags` field, but the built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do **not** index or invalidate by tag. Tag-based invalidation (`revalidateTag`) is forward-looking and requires a custom store with secondary indices; today entries expire by TTL/SWR. A manual purge API is also still future work.
+- **Cache invalidation API** - ✅ Shipped. `cache()` / cache profiles accept `tags`, and `cacheTag(...tags)` tags entries at runtime inside `"use cache"`. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag and invalidate via the store-level `invalidateTags()` primitive (it receives the whole tag batch in one call). Consumers call `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or `revalidateTag(...tags)` (background, non-blocking; for webhooks/route handlers). Both hard-purge — the only difference is awaitability; neither serves stale content. The CF store keeps its tag-invalidation markers in its own KV namespace (no separate store). A manual whole-store purge API is still future work.
 - **Proactive caching** - Render null-component segments in background for complete cache entries
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 
@@ -771,6 +771,8 @@ cache(
 
 ### Tags for Invalidation
 
+> Flow diagrams (write / read / invalidate) for human review: [cache-tags-flow.md](./cache-tags-flow.md).
+
 ```typescript
 cache(
   {
@@ -781,7 +783,14 @@ cache(
 );
 ```
 
-The `tags` field is accepted today and passed to the store, but the built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do **not** index or invalidate by tag. Tag-based invalidation (`revalidateTag`) is forward-looking: it requires a custom store that maintains secondary indices from tag to cache key. There is no shipped `invalidateCache()` / `revalidateTag()` function; today entries expire by TTL/SWR. Note that the separate `revalidate()` export is a client-update axis (which segments re-render on a navigation or action), not a cache bust.
+Tags can be attached three ways: statically via `cache({ tags: [...] })`, dynamically via `cache({ tags: (ctx) => [...] })`, or at runtime inside a `"use cache"` function via `cacheTag(...tags)`. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag and invalidate them.
+
+To invalidate on demand, call one of (both variadic, server-only, exported from `@rangojs/router`):
+
+- `updateTag(...tags): Promise<void>` - **read-your-own-writes**. Resolves once in-process invalidation across every configured store completes, so awaiting it inside a server action makes the action's own re-render fresh.
+- `revalidateTag(...tags): void` - **background (non-blocking)**. Runs invalidation in the background (`waitUntil`); use it in route handlers / webhooks. NOT stale-while-revalidate: like `updateTag` it hard-purges, so the next read after the invalidation lands is a fresh miss. The only difference from `updateTag` is awaitability.
+
+Both fan out across the app-level store (`ctx._cacheStore`) and any explicit `cache({ store })` stores the handler resolved, calling the store-level `invalidateTags()` primitive (passing the whole tag batch in one call). The CF store records tag-invalidation markers in its own KV namespace and compares each entry's `taggedAt` against them on read - there is no separate tag-invalidation store. Note that the separate `revalidate()` export is a client-update axis (which segments re-render on a navigation or action), not a cache bust.
 
 ---
 
@@ -789,12 +798,15 @@ The `tags` field is accepted today and passed to the store, but the built-in sto
 
 ### Invalidation
 
-Today, cache entries expire by TTL/SWR only. Other mechanisms remain forward-looking:
+Shipped invalidation mechanisms:
 
 - TTL-based expiration (shipped)
-- Tag-based invalidation (`revalidateTag`) - not shipped; `tags` are accepted in config but built-in stores do not index by them, so this needs a custom store with secondary indices
-- Manual purge API (not shipped)
-- Server action integration (not shipped)
+- Tag-based invalidation - shipped; built-in stores index by tag, invalidated via `updateTag()` / `revalidateTag()` (see "Tags for Invalidation" above)
+- Server action integration - shipped; `await updateTag(...)` inside a server action gives read-your-own-writes
+
+Still future work:
+
+- Manual whole-store purge API (not shipped)
 
 ### Handle Data with Promises
 

@@ -308,6 +308,17 @@ describe("navigation-store", () => {
       expect(store.getCachedSegments("/p2")!.stale).toBe(true);
     });
 
+    it("markHistoryCacheStale marks every entry stale (history-only)", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/p1", []);
+      store.cacheSegmentsForHistory("/p2", []);
+
+      store.markHistoryCacheStale();
+
+      expect(store.getCachedSegments("/p1")!.stale).toBe(true);
+      expect(store.getCachedSegments("/p2")!.stale).toBe(true);
+    });
+
     it("re-caching a stale entry makes it fresh", () => {
       const store = createTestStore();
       store.cacheSegmentsForHistory("/page", []);

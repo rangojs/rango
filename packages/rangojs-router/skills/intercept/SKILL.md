@@ -107,8 +107,10 @@ Use named revalidation contracts on both the outer producer and the intercept
 consumer when they share `ctx.set()` data:
 
 ```typescript
-export const revalidateProductShell = ({ actionId }) =>
-  actionId?.includes("src/actions/product.ts#") || undefined;
+import * as ProductActions from "./actions/product";
+
+export const revalidateProductShell = (ctx) =>
+  ctx.isAction(ProductActions) || undefined;
 
 layout(ProductLayout, () => [
   revalidate(revalidateProductShell), // producer reruns

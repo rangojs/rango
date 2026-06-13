@@ -11,7 +11,14 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
+import {
+  KEEP_CACHE_HEADER,
+  getRawCookieValue,
+  mintStateValue,
+  serializeStateCookie,
+} from "../browser/cookie-name.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type {
@@ -103,6 +110,10 @@ export interface RequestContext<
   setStatus(status: number): void;
   /** @internal Set status bypassing cache-exec guard (for framework error handling) */
   _setStatus(status: number): void;
+  /** @internal Rotate the rango state cookie (server seat of invalidateClientCache). */
+  _rotateStateCookie(): void;
+  /** @internal Set the keepClientCache() directive header on the response. */
+  _setKeepCacheDirective(): void;
 
   /**
    * Access loader data or push handle data.
@@ -140,6 +151,25 @@ export interface RequestContext<
 
   /** @internal Cache store for segment caching (optional, used by CacheScope) */
   _cacheStore?: SegmentCacheStore;
+
+  /**
+   * @internal Handler-owned registry of explicit per-scope stores from
+   * cache({ store }). Created once per createRSCHandler() and threaded into
+   * every request context, so it accumulates every explicit store the handler
+   * resolves. updateTag()/revalidateTag() iterate this set plus _cacheStore to
+   * reach every store that may hold tagged entries. The app-level store is not
+   * added here (it is always reachable via _cacheStore).
+   */
+  _explicitTaggedStores?: Set<SegmentCacheStore>;
+
+  /**
+   * @internal Union of every cache tag resolved while producing this request's
+   * response (from cache({ tags }), runtime cacheTag(), and loader cache tags).
+   * Populated at the tag-resolution sites via recordRequestTags(). Read by the
+   * document cache middleware so a full-page entry is tagged with everything its
+   * content used and can therefore be invalidated by updateTag()/revalidateTag().
+   */
+  _requestTags: Set<string>;
 
   /** @internal Cache profiles for "use cache" profile resolution (per-router) */
   _cacheProfiles?: Record<
@@ -319,9 +349,13 @@ export interface RequestContext<
    * @internal Report a non-fatal background error through the router's
    * onError callback. Wired by the RSC handler / router during request
    * creation. Cache-runtime and other subsystems call this to surface
-   * errors without failing the response.
+   * errors without failing the response. `category` is surfaced to consumers as
+   * `metadata.category` on the onError context (phase `cache`).
    */
-  _reportBackgroundError?: (error: unknown, category: string) => void;
+  _reportBackgroundError?: (
+    error: unknown,
+    category: CacheErrorCategory,
+  ) => void;
 
   /** @internal Per-request debug performance override (set via ctx.debugPerformance()) */
   _debugPerformance?: boolean;
@@ -337,6 +371,15 @@ export interface RequestContext<
    * to avoid a second resolveRoute call. Cleared on HMR invalidation.
    */
   _classifiedRoute?: import("../router/route-snapshot.js").RouteSnapshot;
+
+  /**
+   * @internal Coarse route-level cache signal for the X-Rango-Cache debug
+   * header. Populated by match/matchPartial only when the debug cache signal
+   * gate is enabled (debugCacheSignal option or RANGO_TEST_SIGNALS=1). Read by
+   * the response-finalization path (createResponseWithMergedHeaders). Undefined
+   * when the gate is off, so no header is emitted.
+   */
+  _cacheSignal?: import("../router/telemetry.js").CacheSegmentSignal[];
 }
 
 /**
@@ -356,6 +399,8 @@ export type PublicRequestContext<
   | "deleteCookie"
   | "_handleStore"
   | "_cacheStore"
+  | "_explicitTaggedStores"
+  | "_requestTags"
   | "_cacheProfiles"
   | "_onResponseCallbacks"
   | "_themeConfig"
@@ -376,8 +421,11 @@ export type PublicRequestContext<
   | "_metricsStore"
   | "_basename"
   | "_setStatus"
+  | "_rotateStateCookie"
+  | "_setKeepCacheDirective"
   | "_variables"
   | "_classifiedRoute"
+  | "_cacheSignal"
   | "res"
 >;
 
@@ -501,6 +549,11 @@ export interface CreateRequestContextOptions<TEnv> {
   initialResponse?: Response;
   /** Optional cache store for segment caching (used by CacheScope) */
   cacheStore?: SegmentCacheStore;
+  /**
+   * Handler-owned registry of explicit per-scope stores for cross-store tag
+   * invalidation. Created once per handler, reused across requests.
+   */
+  explicitTaggedStores?: Set<SegmentCacheStore>;
   /** Optional cache profiles for "use cache" resolution (per-router) */
   cacheProfiles?: Record<
     string,
@@ -510,6 +563,10 @@ export interface CreateRequestContextOptions<TEnv> {
   executionContext?: ExecutionContext;
   /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */
   themeConfig?: ResolvedThemeConfig | null;
+  /** Resolved rango state cookie name, for the server seat of invalidateClientCache(). */
+  stateCookieName?: string;
+  /** Build version, used as the prefix of a server-rotated rango state value. */
+  version?: string;
 }
 
 /**
@@ -530,11 +587,16 @@ export function createRequestContext<TEnv>(
     variables,
     initialResponse,
     cacheStore,
+    explicitTaggedStores,
     cacheProfiles,
     executionContext,
     themeConfig,
+    stateCookieName,
+    version: stateVersion,
   } = options;
   const cookieHeader = request.headers.get("Cookie");
+  // One Set-Cookie per request no matter how many invalidateClientCache() calls.
+  let rangoStateRotated = false;
   let parsedCookies: Record<string, string> | null = null;
 
   // Create stub response for collecting headers/cookies.
@@ -724,6 +786,45 @@ export function createRequestContext<TEnv>(
       stubResponse.headers.set(name, value);
     },
 
+    // Rotate the rango state cookie for the responding client (the server seat
+    // of invalidateClientCache). Writes ONE Set-Cookie per request with the
+    // value {version}:{timestamp}; the `:` stays raw (the cookie-name.ts
+    // serializer), not the URL-encoded form serializeCookieValue would produce.
+    // The timestamp is strictly greater than the client's current one (inbound
+    // X-Rango-State), so a same-millisecond server rotation still differs from
+    // the client value and the divergence observer fires.
+    _rotateStateCookie(): void {
+      if (rangoStateRotated) return;
+      rangoStateRotated = true;
+      if (!stateCookieName) return;
+      // The client's current value, for the monotonic guard: prefer the
+      // X-Rango-State header (router navigation/prefetch fetches send it), but
+      // fall back to the request's rango state cookie — action POSTs / plain
+      // app fetch()s carry no router header yet DO send the cookie. Without the
+      // fallback, prevTs stays 0 and a same-ms mint can equal the client value,
+      // leaving the divergence observer silent. `|| null` so an empty header
+      // ('' from proxy normalization) falls through instead of short-circuiting.
+      // getRawCookieValue reads the cookie undecoded (the wire value
+      // decodeStateValue decodes exactly once) AND is the same parser the client
+      // mirror uses, so both seats read the same jar entry.
+      const prevRaw =
+        (request.headers.get("x-rango-state") || null) ??
+        getRawCookieValue(cookieHeader, stateCookieName);
+      const value = mintStateValue(stateVersion ?? "0", prevRaw);
+      stubResponse.headers.append(
+        "Set-Cookie",
+        serializeStateCookie(stateCookieName, value, url.protocol === "https:"),
+      );
+      invalidateResponseCookieCache();
+    },
+
+    // Set the keepClientCache() directive header. The action bridge reads it on
+    // the response and suppresses its automatic invalidation. `.set` makes this
+    // idempotent (one header regardless of call count).
+    _setKeepCacheDirective(): void {
+      stubResponse.headers.set(KEEP_CACHE_HEADER, "1");
+    },
+
     setStatus(status: number): void {
       assertNotInsideCacheExec(ctx, "setStatus");
       assertNotInsideCacheScopeALS("setStatus");
@@ -747,6 +848,8 @@ export function createRequestContext<TEnv>(
 
     _handleStore: handleStore,
     _cacheStore: cacheStore,
+    _explicitTaggedStores: explicitTaggedStores,
+    _requestTags: new Set<string>(),
     _cacheProfiles: cacheProfiles,
 
     waitUntil(fn: () => Promise<void>): void {

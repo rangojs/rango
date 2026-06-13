@@ -190,10 +190,19 @@ export const getRequestContext: <
 export {
   cookies,
   headers,
+  invalidateClientCache,
+  keepClientCache,
   type CookieStore,
   type Cookie,
   type ReadonlyHeaders,
 } from "./server/cookie-store.js";
+
+// Cache tag APIs (server-only)
+// cacheTag: tag the current "use cache" entry at runtime.
+// updateTag: read-your-own-writes invalidation (awaitable, for Server Actions).
+// revalidateTag: background hard-purge invalidation (not awaited, for route handlers / webhooks).
+export { cacheTag } from "./cache/cache-tag.js";
+export { updateTag, revalidateTag } from "./cache/tag-invalidation.js";
 
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
@@ -234,7 +243,26 @@ export {
 export { createConsoleSink } from "./router/telemetry.js";
 export { createOTelSink } from "./router/telemetry-otel.js";
 export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
-export type { TelemetrySink, TelemetryEvent } from "./router/telemetry.js";
+// The full TelemetryEvent union PLUS its member types, so a consumer writing a
+// TelemetrySink can annotate a per-`type` handler (or construct an event literal
+// in a test) instead of only narrowing the opaque union.
+export type {
+  TelemetrySink,
+  TelemetryEvent,
+  RequestStartEvent,
+  RequestEndEvent,
+  RequestErrorEvent,
+  LoaderStartEvent,
+  LoaderEndEvent,
+  LoaderErrorEvent,
+  HandlerErrorEvent,
+  CacheSegmentStatus,
+  CacheSegmentSignal,
+  CacheDecisionEvent,
+  RevalidationDecisionEvent,
+  RequestTimeoutEvent,
+  OriginCheckRejectedEvent,
+} from "./router/telemetry.js";
 
 // Timeout types and error class
 export { RouterTimeoutError } from "./router/timeout.js";

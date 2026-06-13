@@ -328,13 +328,15 @@ export async function getProducts() {
 Writes to the same `SegmentCacheStore` as `cache()` DSL, `Static()`, and `Prerender()`.
 One store, one configuration.
 
-Cache entries (and `cacheProfiles`) accept an optional `tags` field, but the
-built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do not yet index or
-invalidate by tag -- tags are passed through to the store and otherwise ignored.
-Tag-based invalidation (`revalidateTag`) is a forward-looking API that requires a
-custom store with secondary indices. Today entries expire by TTL/SWR. The separate
-`revalidate()` export is the client-update axis (which segments re-render on a
-navigation or action), not a cache bust.
+Cache entries (and `cacheProfiles`) can be tagged via `cache({ tags })` or, inside
+a `"use cache"` function, runtime `cacheTag(...tags)`. The built-in
+`MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate on demand
+with `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or
+`revalidateTag(...tags)` (background, non-blocking; for route handlers/webhooks).
+Both hard-purge; the difference is awaitability, not stale-serving. For
+`CFCacheStore`, distributed invalidation needs a `kv` namespace (markers live in
+that same namespace). The separate `revalidate()` export is the client-update axis
+(which segments re-render on a navigation or action), not a cache bust.
 
 ## Interaction with Other Caching
 

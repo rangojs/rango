@@ -9,16 +9,17 @@ import { useFixture } from "./fixture";
 
 type ExpectLike = typeof expect;
 
-// rango-state is stored under `rango-state:{routerId}` so sibling apps on
-// the same origin don't collide. Single-app setups may still use the
-// legacy unnamespaced `rango-state` key. Locate whichever key the app
-// wrote without hard-coding the router id.
+// rango state lives in a session cookie named `{prefix}_{routerId}` (default
+// prefix `rango-state`) so sibling apps on the same origin don't collide.
+// Locate whichever `rango-state...` cookie the app wrote and return its
+// `{version}:{timestamp}` value, without hard-coding the router id.
 async function readRangoState(page: Page): Promise<string | null> {
   return await page.evaluate(() => {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key === "rango-state" || key?.startsWith("rango-state:")) {
-        return localStorage.getItem(key);
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed.startsWith("rango-state")) {
+        const eq = trimmed.indexOf("=");
+        return eq >= 0 ? trimmed.slice(eq + 1) : null;
       }
     }
     return null;
@@ -48,7 +49,7 @@ async function expectCountToRemain(
  * Prefetch on hover tests (router mode — default)
  *
  * Verifies that prefetch="hover" on Link components triggers a fetch() request
- * to the RSC partial URL on mouseenter, with X-Rango-State header from localStorage.
+ * to the RSC partial URL on mouseenter, with the X-Rango-State header from the cookie.
  * Both prefetch and navigation send the same X-Rango-State value so the browser
  * HTTP cache can serve the prefetch response for navigation.
  */
@@ -361,7 +362,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     expect(prefetchStates[0]).not.toBe(prefetchStates[1]);
   });
 
-  test("should persist rango-state in localStorage across refresh", async ({
+  test("should persist rango-state across refresh", async ({
     page,
     devServerURL,
   }) => {
@@ -370,7 +371,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
-    // Read the initial state key from localStorage
+    // Read the initial state value from the cookie
     const initialState = await readRangoState(page);
     expect(initialState).toBeDefined();
     expect(initialState).toContain(":");
@@ -387,7 +388,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await page.locator('nav a:has-text("Blog")').hover();
     await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
 
-    // Verify prefetch used the localStorage state key
+    // Verify prefetch used the cookie's state value
     expect(prefetchRequests[0]!.headers["x-rango-state"]).toBe(initialState);
 
     // Reload the page
@@ -408,7 +409,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
-    // Read the state key from localStorage
+    // Read the state value from the cookie
     const stateKey = await readRangoState(page);
     expect(stateKey).toBeDefined();
 
@@ -646,45 +647,42 @@ base.describe("prefetch-on-hover (production)", () => {
     },
   );
 
-  base(
-    "should persist rango-state in localStorage across refresh",
-    async ({ page }) => {
-      await page.goto(f.url("/"));
-      await waitForHydration(page);
+  base("should persist rango-state across refresh", async ({ page }) => {
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
 
-      // Read initial state key
-      const initialState = await readRangoState(page);
-      baseExpect(initialState).toBeDefined();
-      baseExpect(initialState).toContain(":");
+    // Read initial state key
+    const initialState = await readRangoState(page);
+    baseExpect(initialState).toBeDefined();
+    baseExpect(initialState).toContain(":");
 
-      // Trigger a prefetch
-      const prefetchRequests: { headers: Record<string, string> }[] = [];
-      page.on("request", (request) => {
-        const url = request.url();
-        if (url.includes("_rsc_partial") && url.includes("/blog")) {
-          prefetchRequests.push({ headers: request.headers() });
-        }
-      });
+    // Trigger a prefetch
+    const prefetchRequests: { headers: Record<string, string> }[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/blog")) {
+        prefetchRequests.push({ headers: request.headers() });
+      }
+    });
 
-      await page.locator('nav a:has-text("Blog")').hover();
-      await baseExpect
-        .poll(() => prefetchRequests.length, { timeout: 5000 })
-        .toBe(1);
+    await page.locator('nav a:has-text("Blog")').hover();
+    await baseExpect
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
+      .toBe(1);
 
-      // Verify prefetch used the localStorage state key
-      baseExpect(prefetchRequests[0]!.headers["x-rango-state"]).toBe(
-        initialState,
-      );
+    // Verify prefetch used the cookie's state value
+    baseExpect(prefetchRequests[0]!.headers["x-rango-state"]).toBe(
+      initialState,
+    );
 
-      // Reload the page
-      await page.reload();
-      await waitForHydration(page);
+    // Reload the page
+    await page.reload();
+    await waitForHydration(page);
 
-      // State key should persist
-      const stateAfterReload = await readRangoState(page);
-      baseExpect(stateAfterReload).toBe(initialState);
-    },
-  );
+    // State key should persist
+    const stateAfterReload = await readRangoState(page);
+    baseExpect(stateAfterReload).toBe(initialState);
+  });
 
   base("should include version in rango-state key", async ({ page }) => {
     await page.goto(f.url("/"));

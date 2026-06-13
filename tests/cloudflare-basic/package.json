@@ -9,10 +9,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:hmr-local": "playwright test --project=hmr --no-deps --workers=1"
+    "test:e2e:hmr-local": "playwright test --project=hmr --no-deps --workers=1",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:unit:rsc": "vitest run --config vitest.rsc.config.ts"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",
@@ -28,14 +31,18 @@
     "@playwright/test": "^1.49.1",
     "@rolldown/plugin-babel": "catalog:",
     "@shared/e2e": "workspace:*",
+    "@testing-library/react": "^16.3.2",
     "@types/babel__core": "catalog:",
+    "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "babel-plugin-react-compiler": "catalog:",
+    "happy-dom": "^20.10.1",
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
+    "vitest": "^4.0.0",
     "wrangler": "^4.94.0"
   }
 }

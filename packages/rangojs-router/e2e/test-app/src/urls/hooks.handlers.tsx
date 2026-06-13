@@ -1,4 +1,5 @@
 import type { Handler } from "@rangojs/router";
+import { cookies } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import {
   FetchableTestLoader,
@@ -301,6 +302,48 @@ export const ProgressiveEnhancementHandler: Handler<
           </p>
         </div>
       )}
+    </div>
+  );
+};
+
+/**
+ * Submit-parity fixture for the consumer e2e harness
+ * (@rangojs/router/testing/e2e expectParity({ submit })). The form posts an
+ * `amount` to parityCounterAction, which reads/increments/writes the
+ * `parity-count` cookie. The handler renders that cookie into
+ * `parity-counter-value`. State is cookie-scoped, so the JS context and the
+ * fresh no-JS context each start at 0 and reach the same value after their own
+ * submit — satisfying the harness's double-execution requirement. With JS the
+ * router enhances the submit in place; without JS the browser performs a native
+ * POST the action handles, then re-renders the count.
+ */
+export const ParityCounterHandler: Handler<"parityCounter"> = async () => {
+  const { parityCounterAction } = await import("../actions.js");
+  const count = parseInt(cookies().get("parity-count")?.value ?? "0", 10);
+
+  return (
+    <div data-testid="parity-counter-page">
+      <Link to="/" data-testid="back-link">
+        ← Back to Home
+      </Link>
+      <h1 data-testid="page-title">Parity Counter</h1>
+      <p>
+        Count: <span data-testid="parity-counter-value">{count}</span>
+      </p>
+
+      <form action={parityCounterAction} data-testid="parity-counter-form">
+        <label htmlFor="amount">Amount:</label>
+        <input
+          type="text"
+          id="amount"
+          name="amount"
+          defaultValue="1"
+          data-testid="parity-counter-amount"
+        />
+        <button type="submit" data-testid="parity-counter-submit">
+          Add
+        </button>
+      </form>
     </div>
   );
 };

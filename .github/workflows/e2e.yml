@@ -152,8 +152,11 @@ jobs:
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
 
-      - name: Run unit tests
-        run: pnpm --filter @rangojs/router test:unit
+      - name: Run unit tests (router + consumer apps)
+        run: pnpm run test:unit
+
+      - name: Run RSC/Flight unit tests (router + consumer apps)
+        run: pnpm run test:unit:rsc
 
   vite-rsc-demo-e2e:
     needs: [install-playwright]

@@ -74,20 +74,56 @@ import { createLoader, createRouter } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { createHostRouter } from "@rangojs/router/host";
+import {
+  createTestRequest,
+  testPattern,
+  matchesHost,
+} from "@rangojs/router/host/testing";
 import { useTheme } from "@rangojs/router/theme";
 import { rango, type RangoOptions } from "@rangojs/router/vite";
 import { createRSCHandler } from "@rangojs/router/rsc";
 import { createSSRHandler } from "@rangojs/router/ssr";
+import {
+  runLoader,
+  runLoaderResult,
+  dispatch,
+  createTestRequestContext,
+  runInRequestContext,
+  runWithRequestContext,
+} from "@rangojs/router/testing";
+import {
+  rangoTestAliases,
+  rangoTestConfig,
+} from "@rangojs/router/testing/vitest";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { createRangoE2E } from "@rangojs/router/testing/e2e";
+import { renderToFlightString } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 void createLoader;
 void createRouter;
 void Link;
 void MemorySegmentCacheStore;
 void createHostRouter;
+void createTestRequest;
+void testPattern;
+void matchesHost;
 void useTheme;
 void rango;
 void createRSCHandler;
 void createSSRHandler;
+void runLoader;
+void runLoaderResult;
+void rangoTestAliases;
+void rangoTestConfig;
+void createTestRequestContext;
+void runInRequestContext;
+void runWithRequestContext;
+void dispatch;
+void renderRoute;
+void createRangoE2E;
+void renderToFlightString;
+void flightMatchers;
 
 const options: RangoOptions = { preset: "cloudflare" };
 void options;

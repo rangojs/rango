@@ -57,6 +57,7 @@ import { buildDebugManifest } from "./router/debug-manifest.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
 import { createHandlerContext } from "./router/handler-context.js";
+import { normalizeBasename } from "./router/basename.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
@@ -110,6 +111,7 @@ import {
   matchForPrerender as _matchForPrerender,
   renderStaticSegment as _renderStaticSegment,
 } from "./router/prerender-match.js";
+import { resolveStateCookieName } from "./router/state-cookie-name.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -149,6 +151,7 @@ export function createRouter<TEnv = any>(
     nonce,
     version,
     prefetchCacheTTL: prefetchCacheTTLOption,
+    stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
@@ -158,14 +161,22 @@ export function createRouter<TEnv = any>(
     onTimeout,
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
+    debugCacheSignal: debugCacheSignalOption = false,
   } = options;
 
+  // Debug cache signal gate (DEVELOPMENT/TEST ONLY). Enabled by the
+  // debugCacheSignal option OR the RANGO_TEST_SIGNALS=1 env flag. When off,
+  // no X-Rango-Cache header is emitted and output is byte-identical.
+  const cacheSignalEnabled =
+    debugCacheSignalOption ||
+    (typeof process !== "undefined" &&
+      (process as { env?: Record<string, string | undefined> }).env
+        ?.RANGO_TEST_SIGNALS === "1");
+
   // Normalize basename: ensure leading slash, strip trailing slash.
-  // A bare "/" is equivalent to no basename.
-  const basename =
-    basenameOption && basenameOption.replace(/^\/+|\/+$/g, "")
-      ? "/" + basenameOption.replace(/^\/+|\/+$/g, "")
-      : undefined;
+  // A bare "/" is equivalent to no basename. Shared with the testing
+  // primitives via normalizeBasename so they can never drift.
+  const basename = normalizeBasename(basenameOption);
 
   // Resolve telemetry sink (no-op when not configured)
   const telemetry = resolveSink(telemetrySink);
@@ -208,6 +219,14 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+
+  // Resolve the rango state cookie name once, here, so the two cookie writers
+  // (the client document.cookie writer and the server Set-Cookie writer)
+  // consume one pre-composed name and cannot drift.
+  const resolvedStateCookieName = resolveStateCookieName(
+    stateCookiePrefixOption,
+    routerId,
+  );
 
   // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes)
   // Clamp to a non-negative integer for valid Cache-Control max-age.
@@ -255,9 +274,14 @@ export function createRouter<TEnv = any>(
     invokeOnError(onError, error, phase, context, "Router");
   }
 
-  // Validate document is a client component
+  // Validate document is a client component. Under a test runner the "use
+  // client" transform has not run, so a real exported document has no marker;
+  // allowServerInTest lets the router construct in a bare unit test (for
+  // dispatch / assertGeneratedRoutesMatch) while a real build still throws.
   if (documentOption !== undefined) {
-    assertClientComponent(documentOption, "document");
+    assertClientComponent(documentOption, "document", {
+      allowServerInTest: true,
+    });
   }
 
   // Use default document if none provided (keeps internal name as rootLayout)
@@ -667,6 +691,7 @@ export function createRouter<TEnv = any>(
     findMatch,
     findInterceptForRoute,
     telemetry: telemetrySink,
+    cacheSignalEnabled,
   });
 
   const { match, matchPartial, matchError, previewMatch } = matchHandlers;
@@ -937,6 +962,10 @@ export function createRouter<TEnv = any>(
     // Expose prefetch cache settings
     prefetchCacheControl,
     prefetchCacheTTL,
+
+    // Expose the resolved rango state cookie name for the server-side writer
+    // (invalidateClientCache) and for shipping to the client in metadata.
+    resolvedStateCookieName,
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
