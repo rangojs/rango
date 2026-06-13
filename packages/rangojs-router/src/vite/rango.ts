@@ -428,6 +428,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       enableBuildPrerender: prerenderEnabled,
       buildEnv: options?.buildEnv,
       preset,
+      discovery: options?.discovery,
       clientChunkCtx,
     }),
   );

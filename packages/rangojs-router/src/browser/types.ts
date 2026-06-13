@@ -193,6 +193,15 @@ export interface TrackedActionState {
 }
 
 /**
+ * The value returned by {@link useAction} when called without a selector.
+ *
+ * This is the stable, public name for the action-state shape; consumers can
+ * name it in their own signatures (e.g. a wrapper hook). It aliases the
+ * internal {@link TrackedActionState}.
+ */
+export type ActionState = TrackedActionState;
+
+/**
  * Listener for action state changes
  *
  * @internal This type is an implementation detail and may change without notice.
@@ -329,8 +338,14 @@ export interface RouterInstance {
   replace(url: string, options?: RouterNavigateOptions): Promise<void>;
   /** Refresh the current route (re-fetch server data, preserve client state) */
   refresh(): Promise<void>;
-  /** Prefetch a URL for faster client-side transition */
-  prefetch(url: string): void;
+  /**
+   * Prefetch a URL for faster client-side transition.
+   *
+   * Pass `{ key: ":source" }` to source-scope the prefetch cache entry (parity
+   * with `<Link prefetchKey=":source">`) when the target's response can differ
+   * by source page.
+   */
+  prefetch(url: string, options?: { key?: ":source" }): void;
   /** Go back in browser history */
   back(): void;
   /** Go forward in browser history */

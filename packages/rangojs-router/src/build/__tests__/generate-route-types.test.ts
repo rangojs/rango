@@ -25,6 +25,7 @@ import {
   extractBasenameFromRouter,
   findNestedRouterConflict,
   findRouterFiles,
+  createScanFilter,
 } from "../generate-route-types";
 
 // Helper: create a minimal urls module that the static parser can extract routes from.
@@ -86,6 +87,43 @@ describe("writeCombinedRouteTypes", () => {
 
     expect(discovered).toEqual([adminRouter, appRouter].sort());
     expect(discovered).not.toContain(nestedRouter);
+  });
+
+  // The rango() `discovery: { include, exclude }` option compiles to this
+  // scanFilter via createScanFilter and is applied here in findRouterFiles
+  // (the same path the Vite plugin populates state.scanFilter for).
+  it("discovery.include restricts router discovery to matching files", () => {
+    const routesDir = join(tempDir, "src", "routes");
+    const legacyDir = join(tempDir, "src", "legacy");
+    mkdirSync(routesDir, { recursive: true });
+    mkdirSync(legacyDir, { recursive: true });
+    const kept = join(routesDir, "router.ts");
+    const dropped = join(legacyDir, "router.ts");
+    writeFileSync(kept, routerSource("./urls.js"));
+    writeFileSync(dropped, routerSource("./urls.js"));
+
+    const filter = createScanFilter(tempDir, { include: ["src/routes/**"] });
+    const discovered = findRouterFiles(tempDir, filter);
+
+    expect(discovered).toContain(kept);
+    expect(discovered).not.toContain(dropped);
+  });
+
+  it("discovery.exclude removes matching files from router discovery", () => {
+    const appDir = join(tempDir, "src", "app");
+    const draftDir = join(tempDir, "src", "draft");
+    mkdirSync(appDir, { recursive: true });
+    mkdirSync(draftDir, { recursive: true });
+    const kept = join(appDir, "router.ts");
+    const dropped = join(draftDir, "router.ts");
+    writeFileSync(kept, routerSource("./urls.js"));
+    writeFileSync(dropped, routerSource("./urls.js"));
+
+    const filter = createScanFilter(tempDir, { exclude: ["src/draft/**"] });
+    const discovered = findRouterFiles(tempDir, filter);
+
+    expect(discovered).toContain(kept);
+    expect(discovered).not.toContain(dropped);
   });
 
   it("ignores a createRouter( mention inside a comment or string literal", () => {

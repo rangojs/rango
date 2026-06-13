@@ -8,9 +8,11 @@ import {
 import {
   parsePattern as parseMiddlewarePattern,
   extractParams,
-  parseCookies,
-  serializeCookie,
 } from "../router/middleware.js";
+import {
+  parseCookiesFromHeader as parseCookies,
+  serializeCookieValue as serializeCookie,
+} from "../server/request-context.js";
 import { createReverse } from "../reverse.js";
 import type { RouteEntry, TrailingSlashMode } from "../types.js";
 

@@ -465,7 +465,10 @@ See `/middleware` for the full cross-segment revalidation contract.
 
 `redirect()` works inside actions. Both `return redirect(...)` and
 `throw redirect(...)` are supported and behave the same way for the
-client. Throwing is clearer when the redirect is conditional.
+client. Throwing is clearer when the redirect is conditional, and it keeps
+the action's return type narrow (e.g. `Promise<void>`) — `redirect()` returns
+a `Response`, so the `return` form needs `Promise<Response>` in the signature.
+Prefer `throw redirect(...)`; never cast with `as any`.
 
 ```typescript
 "use server";

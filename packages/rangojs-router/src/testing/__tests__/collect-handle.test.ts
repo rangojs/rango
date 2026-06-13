@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { collectHandle } from "../collect-handle.js";
 import { createHandle } from "../../handle.js";
-import { Meta, Breadcrumbs } from "../../handles/index.js";
+import { Meta } from "../../handles/meta.js";
+import { Breadcrumbs } from "../../handles/breadcrumbs.js";
 
 // collectHandle runs a handle's REAL registered collect on per-segment values.
 // createHandle() with no injected id still registers its collect (via the runtime

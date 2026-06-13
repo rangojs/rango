@@ -344,6 +344,8 @@ export type {
   RouterInstance,
   RouterNavigateOptions,
   ReadonlyURLSearchParams,
+  ActionState,
+  ActionLifecycleState,
 } from "./browser/types.js";
 
 export {

@@ -205,16 +205,16 @@ export const StreamingAction = async (_data: FormData) => {
  * Tests that server actions can use redirect() with location state.
  */
 export async function saveAndRedirect(): Promise<void> {
-  return redirect("/location-state", {
+  throw redirect("/location-state", {
     state: FlashMessage({ text: "Action saved successfully!" }),
-  }) as any;
+  });
 }
 
 /**
  * Action that redirects without state (pure redirect from action).
  */
 export async function actionSimpleRedirect(): Promise<void> {
-  return redirect("/location-state/target") as any;
+  throw redirect("/location-state/target");
 }
 
 /**
@@ -381,6 +381,11 @@ export async function mwChainAction(): Promise<void> {
  * These are form-compatible (accept FormData) so they work with native HTML forms.
  */
 export async function peReturnRedirect(_formData: FormData): Promise<void> {
+  // Bound to a <form action> whose type is (formData) => void | Promise<void>.
+  // This action deliberately RETURNS a redirect to exercise the runtime path
+  // that follows a returned Response in PE mode; React's form-action type can't
+  // express a Response return, so the cast is intrinsic here. Consumers should
+  // prefer `throw redirect(...)` (see peThrowRedirect), which keeps a void return.
   return redirect("/progressive-enhancement") as any;
 }
 

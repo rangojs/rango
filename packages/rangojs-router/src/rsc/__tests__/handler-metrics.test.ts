@@ -144,7 +144,6 @@ describe("handler metrics finalization", () => {
           regex: null,
           paramNames: [],
           handler: slowPost,
-          mountPrefix: null,
         },
       ],
     });
@@ -181,7 +180,6 @@ describe("handler metrics finalization", () => {
           regex: null,
           paramNames: [],
           handler: redirectMw,
-          mountPrefix: null,
         },
       ],
     });
@@ -213,7 +211,6 @@ describe("handler metrics finalization", () => {
           regex: null,
           paramNames: [],
           handler: enablePerf,
-          mountPrefix: null,
         },
       ],
     });
@@ -259,7 +256,6 @@ describe("handler metrics finalization", () => {
           regex: null,
           paramNames: [],
           handler: lateEnable,
-          mountPrefix: null,
         },
       ],
     });

@@ -22,7 +22,6 @@ function entry(handler: MiddlewareFn): {
       regex: null,
       paramNames: [],
       handler,
-      mountPrefix: null,
     },
     params: {},
   };

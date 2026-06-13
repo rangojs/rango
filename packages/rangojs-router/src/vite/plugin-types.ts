@@ -127,16 +127,18 @@ interface RangoBaseOptions {
   clientChunks?: ClientChunks;
 
   /**
-   * Environment bindings available to Prerender and Static handlers at build
-   * time via `ctx.env`. Applies to both production build and dev on-demand
-   * prerender (`/__rsc_prerender`).
+   * Filter which files route discovery scans, by glob. Paths are matched
+   * root-relative (e.g. `src/routes/**`). `include` restricts discovery to
+   * matching files; `exclude` removes matches (the defaults cover tests, dist,
+   * coverage, etc.). Mirrors the CLI's `--include`/`--exclude`.
    *
-   * This is the build-time env supplied by the Vite plugin, not the live
-   * request env. It is shared across all prerender invocations for the build.
-   *
-   * @default false
+   * @example
+   * rango({ discovery: { include: ["src/routes/**"] } })
    */
-  buildEnv?: BuildEnvOption;
+  discovery?: {
+    include?: string[];
+    exclude?: string[];
+  };
 }
 
 /**
@@ -147,6 +149,17 @@ export interface RangoNodeOptions extends RangoBaseOptions {
    * Deployment preset. Defaults to 'node' when not specified.
    */
   preset?: "node";
+
+  /**
+   * Environment bindings available to Prerender and Static handlers at build
+   * time via `ctx.env`. Shared across all prerender invocations for the build.
+   *
+   * `"auto"` is Cloudflare-only (it resolves the wrangler platform proxy), so it
+   * is not accepted on the Node preset — pass an object or a factory instead.
+   *
+   * @default false
+   */
+  buildEnv?: Exclude<BuildEnvOption, "auto">;
 }
 
 /**
@@ -164,6 +177,17 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
    * - Build-time manifest generation is auto-detected from the resolved RSC environment config
    */
   preset: "cloudflare";
+
+  /**
+   * Environment bindings available to Prerender and Static handlers at build
+   * time via `ctx.env`. Shared across all prerender invocations for the build.
+   *
+   * `"auto"` resolves the Cloudflare platform proxy via wrangler
+   * `getPlatformProxy()`.
+   *
+   * @default false
+   */
+  buildEnv?: BuildEnvOption;
 }
 
 /**

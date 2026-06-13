@@ -5,7 +5,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
-import { contextGet, contextSet } from "../context-var.js";
+import { contextGet, contextSet, hasContextVars } from "../context-var.js";
 import {
   createPrerenderContext,
   createStaticContext,
@@ -159,10 +159,7 @@ export async function matchForPrerender<TEnv = any>(
             return passthroughResult();
           }
           // Preserve vars set by getParams() for the render context
-          if (
-            Object.keys(probeBuildVars).length > 0 ||
-            Object.getOwnPropertySymbols(probeBuildVars).length > 0
-          ) {
+          if (hasContextVars(probeBuildVars)) {
             devProbeBuildVars = probeBuildVars;
           }
         } catch (err: any) {
@@ -488,6 +485,18 @@ export async function renderStaticSegment<TEnv = any>(
     setupBuildUse(buildCtx);
 
     const raw = await handler(buildCtx);
+
+    // Static handlers must return a ReactNode. A returned Response (e.g. an
+    // accidental redirect()) would otherwise be serialized as a corrupt build
+    // artifact; fail loudly instead. The fresh/revalidation paths route handler
+    // results through handleHandlerResult, which throws Responses; the static
+    // build path bypasses that, so guard here.
+    if (raw instanceof Response) {
+      throw new TypeError(
+        `Static handler "${routeName}" returned a Response. Static handlers must return a ReactNode; ` +
+          `Responses (redirects, file responses) are not supported during static pre-rendering.`,
+      );
+    }
 
     const segment: ResolvedSegment = {
       id: handlerId,

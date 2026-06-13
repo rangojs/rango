@@ -17,15 +17,13 @@ import { appendMetric, createMetricsStore } from "./metrics.js";
 import { stripInternalParams } from "./handler-context.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 
-// Re-export types and cookie utilities consumed through this module's path.
+// Re-export types consumed through this module's path.
 export type {
   CookieOptions,
-  MiddlewareCollectableEntry,
   MiddlewareContext,
   MiddlewareEntry,
   MiddlewareFn,
 } from "./middleware-types.js";
-export { parseCookies, serializeCookie } from "./middleware-cookies.js";
 
 const MIDDLEWARE_METRIC_DEPTH = 1;
 const POST_METRIC_MIN_DURATION_MS = 0.01;
@@ -238,9 +236,13 @@ export function createMiddlewareContext<TEnv>(
 
     reverse:
       reverse ??
-      ((name: string) => {
+      ((
+        name: string,
+        _params?: Record<string, string>,
+        _search?: Record<string, unknown>,
+      ) => {
         throw new Error(
-          `ctx.reverse() is not available - route map was not provided to middleware context`,
+          `ctx.reverse(${JSON.stringify(name)}) is not available: no route map is bound to this middleware context.`,
         );
       }),
 
@@ -684,7 +686,6 @@ export async function executeLoaderMiddleware<TEnv>(
       regex: null,
       paramNames: [],
       handler,
-      mountPrefix: null,
     } as MiddlewareEntry<TEnv>,
     params,
   }));

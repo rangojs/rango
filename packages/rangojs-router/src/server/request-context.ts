@@ -969,7 +969,10 @@ function parseResponseCookies(response: Response): Map<string, string | null> {
   return result;
 }
 
-function parseCookiesFromHeader(
+// Exported for unit tests; the canonical cookie parse/serialize lives here
+// (a duplicate copy in middleware-cookies.ts was removed). Not part of the
+// public export surface.
+export function parseCookiesFromHeader(
   cookieHeader: string | null,
 ): Record<string, string> {
   if (!cookieHeader) return {};
@@ -993,7 +996,7 @@ function parseCookiesFromHeader(
   return cookies;
 }
 
-function serializeCookieValue(
+export function serializeCookieValue(
   name: string,
   value: string,
   options: CookieOptions = {},

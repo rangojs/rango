@@ -1,9 +1,6 @@
 import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
-import {
-  setCacheProfiles,
-  resolveCacheProfiles,
-} from "./cache/profile-registry.js";
+import { resolveCacheProfiles } from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
@@ -181,11 +178,10 @@ export function createRouter<TEnv = any>(
   // Resolve telemetry sink (no-op when not configured)
   const telemetry = resolveSink(telemetrySink);
 
-  // Resolve cache profiles: merge user config with guaranteed default profile.
-  // This resolved map is both stored on the router (for per-request context)
-  // and written to the global registry (for DSL-time cache("profileName")).
+  // Resolve cache profiles: merge user config with the guaranteed default
+  // profile. This resolved map is threaded onto each request context; the
+  // "use cache: <profile>" runtime path reads it request-scoped.
   const resolvedCacheProfiles = resolveCacheProfiles(cacheProfilesOption);
-  setCacheProfiles(resolvedCacheProfiles);
 
   // Source file: prefer Vite-injected path (zero cost), fall back to
   // stack trace parsing for non-Vite environments (e.g. tests).
@@ -355,7 +351,6 @@ export function createRouter<TEnv = any>(
       regex,
       paramNames,
       handler,
-      mountPrefix,
     });
   }
 
