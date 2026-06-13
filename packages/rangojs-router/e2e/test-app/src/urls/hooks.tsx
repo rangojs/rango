@@ -9,6 +9,7 @@ import {
   HookTestsFormActionHandler,
   LoaderCompositionHandler,
   InlineActionHandler,
+  InlineBoundActionHandler,
   ProgressiveEnhancementHandler,
   ParityCounterHandler,
   PeRedirectHandler,
@@ -48,6 +49,9 @@ export const hooksPatterns = urls(({ path, loader }) => [
     name: "loaderComposition",
   }),
   path("/inline-action", InlineActionHandler, { name: "inlineAction" }),
+  path("/inline-bound-action", InlineBoundActionHandler, {
+    name: "inlineBoundAction",
+  }),
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",
   }),

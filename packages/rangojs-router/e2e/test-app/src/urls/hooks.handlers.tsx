@@ -14,6 +14,7 @@ import {
   ComposingFetchableUsesNonFetchable,
 } from "../loaders.js";
 import { FetchLoaderTest } from "../components/FetchLoaderTest.js";
+import { InlineBoundActionForm } from "../components/InlineBoundActionForm.js";
 import {
   UseLoaderTest,
   UseFetchLoaderPreloadedTest,
@@ -259,6 +260,37 @@ export const InlineActionHandler: Handler<"inlineAction"> = () => {
           Submit Inline Action
         </button>
       </form>
+    </div>
+  );
+};
+
+export const InlineBoundActionHandler: Handler<"inlineBoundAction"> = () => {
+  // Render-scope value computed on the server. The inline action below closes
+  // over it, so plugin-rsc treats it as a bound argument (encrypted in
+  // production via encryptActionBoundArgs / decrypted via
+  // decryptActionBoundArgs). The client can never see or reconstruct this
+  // value, so a correct round-trip proves bound-arg serialization works.
+  const captured = `server-token-${Date.now().toString(36)}`;
+
+  async function inlineBoundAction(
+    _prev: { captured: string; submitted: string } | null,
+    formData: FormData,
+  ): Promise<{ captured: string; submitted: string }> {
+    "use server";
+    const submitted = String(formData.get("submitted") ?? "");
+    return { captured, submitted };
+  }
+
+  return (
+    <div data-testid="inline-bound-action-page">
+      <Link to="/" data-testid="back-link">
+        Back to Home
+      </Link>
+      <h1 data-testid="inline-bound-action-title">Inline Bound Action Test</h1>
+      <p data-testid="inline-bound-action-rendered-captured">
+        rendered:{captured}
+      </p>
+      <InlineBoundActionForm boundAction={inlineBoundAction} />
     </div>
   );
 };

@@ -146,6 +146,7 @@ export const NamedRoutes = {
   "includeMw.index": "/include-mw-test",
   index: "/",
   inlineAction: "/inline-action",
+  inlineBoundAction: "/inline-bound-action",
   "isAction.index": "/is-action",
   keyRefreshDistinct: "/key-refresh-distinct",
   keyRefreshError: "/key-refresh-error",
