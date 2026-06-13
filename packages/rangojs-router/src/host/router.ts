@@ -314,9 +314,8 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
       return createRouteBuilder([], true);
     },
 
-    test(hostname: string): HostMatchResult | null {
+    test(hostname: string, pathname = "/"): HostMatchResult | null {
       const parts = hostname.split(".");
-      const pathname = "/";
 
       for (const route of routes) {
         for (const pattern of route.patterns) {

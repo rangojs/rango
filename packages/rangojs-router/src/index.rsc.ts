@@ -127,7 +127,11 @@ export {
 } from "./prerender.js";
 
 // Static handler API
-export { Static, type StaticHandlerDefinition } from "./static-handler.js";
+export {
+  Static,
+  type StaticHandlerDefinition,
+  type StaticHandlerOptions,
+} from "./static-handler.js";
 
 // Django-style URL patterns (RSC/server context)
 export {

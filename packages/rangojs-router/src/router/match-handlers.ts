@@ -89,20 +89,6 @@ export interface MatchHandlers<TEnv = any> {
     negotiated?: boolean;
     manifestEntry?: EntryData;
   } | null>;
-  createMatchContextForFull: (
-    request: Request,
-    env: TEnv,
-  ) => Promise<MatchContext<TEnv> | { type: "redirect"; redirectUrl: string }>;
-  createMatchContextForPartial: (
-    request: Request,
-    env: TEnv,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
-  ) => Promise<MatchContext<TEnv> | null>;
 }
 
 /**
@@ -477,7 +463,5 @@ export function createMatchHandlers<TEnv = any>(
     matchPartial: matchPartial,
     matchError: matchError,
     previewMatch: previewMatch,
-    createMatchContextForFull: createMatchContextForFull,
-    createMatchContextForPartial: createMatchContextForPartial,
   };
 }

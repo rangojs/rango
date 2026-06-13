@@ -102,8 +102,58 @@ interface WalkResult {
 }
 
 /**
- * Walk the trie by segments with priority: static > param > wildcard.
- * Uses backtracking to try all possible matches.
+ * Check a leaf's constraints (leaf.cv) against already-resolved named params.
+ * Empty/undefined values are exempt (optional params that were not bound).
+ */
+function constraintsSatisfied(
+  leaf: TrieLeaf,
+  params: Record<string, string>,
+): boolean {
+  if (!leaf.cv) return true;
+  for (const paramName in leaf.cv) {
+    const allowed = leaf.cv[paramName]!;
+    const value = params[paramName];
+    if (value !== undefined && value !== "" && !allowed.includes(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Constraint check for a candidate terminal DURING the walk. Builds the named
+ * params from positional walk values (decoded the same way validateAndBuild
+ * does) and validates leaf.cv. Returning false lets walkTrie unwind to a
+ * lower-priority sibling instead of committing to a leaf that would only be
+ * rejected post-walk — that post-walk rejection is what forced the regex
+ * fallback (and its false "trie gap" R3 warning) for perfectly valid configs.
+ */
+function leafConstraintsPass(
+  leaf: TrieLeaf,
+  paramValues: string[],
+  wildcardValue: string | undefined,
+): boolean {
+  if (!leaf.cv) return true;
+  const params: Record<string, string> = {};
+  if (leaf.pa) {
+    for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
+      params[leaf.pa[i]] = safeDecodeURIComponent(paramValues[i]);
+    }
+  }
+  if (wildcardValue !== undefined && "pn" in leaf) {
+    params[(leaf as TrieLeaf & { pn: string }).pn] =
+      safeDecodeURIComponent(wildcardValue);
+  }
+  return constraintsSatisfied(leaf, params);
+}
+
+/**
+ * Walk the trie by segments with priority: static > suffix-param > param >
+ * wildcard (Priority 1-4 below; matches the canonical M4 ordering in
+ * docs/internal/matching-and-lazy-discovery.md).
+ * Uses backtracking to try all possible matches. Per-leaf constraints are
+ * enforced at each candidate terminal so a constraint miss backtracks to a
+ * lower-priority sibling rather than aborting the whole match.
  */
 function walkTrie(
   node: TrieNode,
@@ -113,7 +163,7 @@ function walkTrie(
 ): WalkResult | null {
   // All segments consumed: check for terminal
   if (index === segments.length) {
-    if (node.r) {
+    if (node.r && leafConstraintsPass(node.r, paramValues, undefined)) {
       return { leaf: node.r, paramValues: [...paramValues] };
     }
     // A wildcard at this node matches the bare prefix with an empty remainder
@@ -122,7 +172,7 @@ function walkTrie(
     // so without this a request to the wildcard's own prefix misses the trie
     // and the regex fallback emits a corrupt redirect. A static terminal
     // (node.r) still wins.
-    if (node.w) {
+    if (node.w && leafConstraintsPass(node.w, paramValues, "")) {
       return { leaf: node.w, paramValues: [...paramValues], wildcardValue: "" };
     }
     return null;
@@ -166,11 +216,13 @@ function walkTrie(
   // Priority 4: Wildcard match (consumes rest)
   if (node.w) {
     const rest = joinRemainingSegments(segments, index);
-    return {
-      leaf: node.w,
-      paramValues: [...paramValues],
-      wildcardValue: rest,
-    };
+    if (leafConstraintsPass(node.w, paramValues, rest)) {
+      return {
+        leaf: node.w,
+        paramValues: [...paramValues],
+        wildcardValue: rest,
+      };
+    }
   }
 
   return null;
@@ -214,15 +266,11 @@ function validateAndBuild(
   }
 
   // Validate constraints against decoded values so constraint lists can be
-  // written in decoded form (e.g. ["en-GB", "en US"]).
-  if (leaf.cv) {
-    for (const paramName in leaf.cv) {
-      const allowed = leaf.cv[paramName]!;
-      const value = params[paramName];
-      if (value !== undefined && value !== "" && !allowed.includes(value)) {
-        return null;
-      }
-    }
+  // written in decoded form (e.g. ["en-GB", "en US"]). walkTrie already enforces
+  // constraints during the walk (so a miss backtracks to a sibling); this is a
+  // backstop on the final resolved params.
+  if (!constraintsSatisfied(leaf, params)) {
+    return null;
   }
 
   // Optional params that weren't matched are left absent from `params` so

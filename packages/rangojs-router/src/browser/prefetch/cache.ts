@@ -31,6 +31,12 @@
  *
  * Replaces the previous browser HTTP cache approach which was unreliable
  * due to response draining race conditions and browser inconsistencies.
+ *
+ * State here lives in module-level singletons (cache, inflight, generation,
+ * cacheTTL, etc.) rather than a per-instance factory. This is correct because
+ * exactly one router is live per document — an SPA navigation crossing a
+ * host-router boundary forces a full document reload — so the singletons are
+ * effectively per-document. Unit tests reset them via clearPrefetchCache().
  */
 
 import { abortAllPrefetches } from "./queue.js";

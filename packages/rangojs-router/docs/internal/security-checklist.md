@@ -70,12 +70,18 @@ transport behavior, or request/response ownership.
 
 The `originCheck` option (default: `true`) rejects cross-origin requests to
 server actions, loader fetches, and PE form submissions. The guard compares
-the `Origin` header (or `Referer` fallback) against `Host` /
-`X-Forwarded-Host`. Requests without either header are allowed (same-origin
-navigations, non-browser clients).
+the `Origin` header (or `Referer` fallback) against the `Host` header (falling
+back to the request URL host) plus `url.protocol`. `X-Forwarded-Host` and
+`X-Forwarded-Proto` are deliberately NOT trusted — they are client-controllable
+unless a trusted proxy strips them; honoring them on a non-standard proxy setup
+requires the `originCheck` function escape hatch. Requests without either
+`Origin` or `Referer` header are allowed (same-origin navigations, non-browser
+clients).
 
 Implementation: `src/rsc/origin-guard.ts`, integrated in `src/rsc/handler.ts`
-at the top of `coreRequestHandler()`.
+in `coreRequestHandler()` after request classification and the
+redirect/version-mismatch/app-switch terminal short-circuits, gated to
+action/loader/PE-form modes via `ORIGIN_CHECK_PHASE_BY_MODE` (`origin-guard.ts`).
 
 Covered by:
 

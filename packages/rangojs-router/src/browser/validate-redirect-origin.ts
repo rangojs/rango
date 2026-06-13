@@ -17,11 +17,10 @@ export function validateRedirectOrigin(
       );
       return null;
     }
-    // Return pathname+search+hash for relative inputs, full href for absolute.
-    // This normalizes protocol-relative and other ambiguous forms.
-    return target.href.startsWith(currentOrigin)
-      ? target.href
-      : target.pathname + target.search + target.hash;
+    // Origin matched above, so target.href is same-origin: return the
+    // canonical full href. This normalizes protocol-relative and other
+    // ambiguous forms.
+    return target.href;
   } catch {
     console.error(`[rango] Redirect blocked: invalid URL "${url}"`);
     return null;

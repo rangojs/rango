@@ -35,9 +35,3 @@ export {
   EDGE_READ_TIMEOUT_MS,
   KV_READ_TIMEOUT_MS,
 } from "./cf-cache-store.js";
-
-// Internal exports (re-exported for backwards compatibility, marked @internal in source)
-export {
-  type CacheStatus,
-  MAX_REVALIDATION_INTERVAL,
-} from "./cf-cache-store.js";

@@ -100,9 +100,6 @@ export function clientRefDedup(): Plugin {
       // Only handle absolute node_modules paths
       if (!source.includes("/node_modules/")) return;
 
-      // Must have an importer
-      if (!importer) return;
-
       const packageName = extractPackageName(source);
       if (!packageName) return;
 

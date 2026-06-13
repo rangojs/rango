@@ -94,7 +94,6 @@ export type { SegmentHandleData } from "./cache/types.js";
  */
 export type {
   CachedEntryData,
-  CachedEntryResult,
   CacheGetResult,
   SerializedSegmentData,
   CacheDefaults,

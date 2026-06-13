@@ -23,15 +23,6 @@ import type {
 } from "../types";
 
 /**
- * Result of resolving loaders with revalidation
- * Contains both segments to render and all matched segment IDs
- */
-export interface LoaderRevalidationResult {
-  segments: ResolvedSegment[];
-  matchedIds: string[];
-}
-
-/**
  * Result of resolving segments with revalidation
  * Contains both segments to render and all matched segment IDs
  */
@@ -49,19 +40,6 @@ export type ActionContext = {
   actionResult?: any;
   formData?: FormData;
 };
-
-/**
- * Dependencies passed to segment resolution functions
- * These are created within createRouter and passed to extracted utilities
- */
-export interface RouterDependencies<TEnv> {
-  findNearestErrorBoundary: (
-    entry: EntryData | null,
-  ) => ReactNode | ErrorBoundaryHandler | null;
-  findNearestNotFoundBoundary: (
-    entry: EntryData | null,
-  ) => ReactNode | NotFoundBoundaryHandler | null;
-}
 
 /**
  * Dependencies injected from createRouter closure into extracted segment resolution functions.
@@ -106,18 +84,6 @@ export interface SegmentResolutionDeps<TEnv = any> {
    * Undefined is treated as "auto" (wrap).
    */
   viewTransitionDefault?: "auto" | false;
-}
-
-/**
- * Dependencies injected from createRouter closure into extracted intercept resolution functions.
- */
-export interface InterceptResolutionDeps<TEnv = any> {
-  wrapLoaderPromise: SegmentResolutionDeps<TEnv>["wrapLoaderPromise"];
-  evaluateInterceptWhen: (
-    intercept: InterceptEntry,
-    selectorContext: InterceptSelectorContext | null,
-    isAction: boolean,
-  ) => boolean;
 }
 
 /**

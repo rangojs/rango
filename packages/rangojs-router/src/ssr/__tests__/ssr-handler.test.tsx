@@ -380,6 +380,11 @@ describe("createSSRHandler", () => {
       expect(mockedRenderSegments).toHaveBeenCalledWith(fakeSegments, {
         rootLayout: undefined,
       });
+      // renderSegments must run exactly once per initial document render.
+      // It is async, so React.use() on a fresh promise would suspend and replay
+      // SsrRoot, re-running the entire segment-tree build a second time unless
+      // the promise is memoized like the sibling payload/handles promises.
+      expect(mockedRenderSegments).toHaveBeenCalledTimes(1);
     });
 
     it("SSR event controller throws on navigation attempt", async () => {

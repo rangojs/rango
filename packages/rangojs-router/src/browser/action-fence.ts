@@ -15,6 +15,16 @@
  * keeps a sibling tab from seeing a pre-commit signal. Refcounted so concurrent
  * actions compose: each action raises and lowers its own reference, and the
  * fence is down only when the count reaches zero.
+ *
+ * The refcount is a single module-level counter, not keyed by routerId.
+ * Consumers (navigation-client.ts, prefetch/fetch.ts, navigation-bridge.ts)
+ * read it unscoped, so an action in one router would suppress another router's
+ * navigation/prefetch caches. This is correct only because two routers cannot
+ * coexist in one live document: an SPA navigation crossing a host-router
+ * boundary forces a full document reload (src/router/request-classification.ts
+ * app-switch terminal), so there is always exactly one live router per
+ * document. A future multi-router-in-one-document feature must not silently
+ * inherit this global, cross-router cache suppression.
  */
 
 let fenceCount = 0;

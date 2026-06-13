@@ -39,3 +39,17 @@ export function warnNonRedirectPeResponse(): void {
       `ignored — the page will re-render at the current URL instead.`,
   );
 }
+
+/**
+ * Warn when a non-redirect Response is returned (not thrown) from an action
+ * on the JS (fetch) path. A raw Response cannot be serialized into Flight, so
+ * it is discarded — mirroring the PE path. Use `throw redirect('/path')` for
+ * redirects.
+ */
+export function warnNonRedirectActionResponse(actionId: string): void {
+  console.warn(
+    `[@rangojs/router] Server action "${actionId}" returned a Response ` +
+      `that is not a redirect. Non-redirect Responses cannot be serialized ` +
+      `and are ignored. Use \`throw redirect('/path')\` for redirects.`,
+  );
+}

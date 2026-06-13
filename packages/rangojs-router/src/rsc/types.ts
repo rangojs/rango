@@ -59,7 +59,6 @@ export interface RscPayload {
     locationState?: Record<string, unknown>;
   };
   returnValue?: { ok: boolean; data: unknown };
-  formState?: unknown;
 }
 
 /**

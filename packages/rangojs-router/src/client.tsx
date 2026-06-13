@@ -111,6 +111,11 @@ function useSlotSegment(
  * the parallel segment with that slot name instead of the default content.
  * This is used for parallel routes and intercepting routes.
  *
+ * For a named slot, `<Outlet name="@x" />` is equivalent to
+ * `<ParallelOutlet name="@x" />` — both run the same resolution + wrapping
+ * pipeline. Convention: use bare `<Outlet />` for default content and
+ * `<ParallelOutlet name="@x" />` for named slots.
+ *
  * @param name - Optional slot name for parallel/intercept content (must start with @)
  *
  * @example
@@ -162,6 +167,9 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
  * If the parallel segment defines a loading component, the content
  * is wrapped in Suspense with the loading component as fallback.
  * This enables streaming and navigation loading states for parallels.
+ *
+ * Equivalent to `<Outlet name="@x" />` for a named slot; ParallelOutlet
+ * requires `name` and is named-slot-only, which reads clearer at the call site.
  *
  * @param name - The slot name (must start with @, e.g., "@modal", "@sidebar")
  *
@@ -370,6 +378,7 @@ export {
   type LinkProps,
   type PrefetchStrategy,
   type StateOrGetter,
+  type LinkState,
 } from "./browser/react/Link.js";
 
 // Link status hook

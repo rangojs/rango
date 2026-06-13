@@ -158,6 +158,20 @@ export function findNearestNotFoundBoundary(
       // Return the last notFound boundary (most recently defined takes precedence)
       return current.notFoundBoundary[current.notFoundBoundary.length - 1];
     }
+
+    // Check orphan layouts for notFound boundaries, mirroring
+    // findNearestErrorBoundary. notFoundBoundary attaches identically to
+    // errorBoundary (onto parent.notFoundBoundary), and an orphan layout gets
+    // parent=null, so an orphan-hosted boundary is reachable only via this scan.
+    // Check from first to last (first sibling is the "outer" wrapper).
+    if (current.layout && current.layout.length > 0) {
+      for (const orphan of current.layout) {
+        if (orphan.notFoundBoundary && orphan.notFoundBoundary.length > 0) {
+          return orphan.notFoundBoundary[orphan.notFoundBoundary.length - 1];
+        }
+      }
+    }
+
     current = current.parent;
   }
 

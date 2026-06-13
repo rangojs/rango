@@ -89,8 +89,8 @@ import { useSegments } from "@rangojs/router/client";
 function Breadcrumbs() {
   const { path, segmentIds, location } = useSegments();
 
-  // path: ["/shop", "products", "123"]
-  // segmentIds: ["shop-layout", "products-route"]
+  // path: ["shop", "products", "123"] (split on "/", no leading slash on any element)
+  // segmentIds: ["L0", "L0L1", "L0L1R0"] (opaque internal short-codes, not route names)
   // location: URL object
 
   return <nav>{path.join(" > ")}</nav>;

@@ -26,15 +26,13 @@ import { appendMetric, createMetricsStore } from "./metrics.js";
 import { stripInternalParams } from "./handler-context.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 
-// Re-export types and cookie utilities for backward compatibility
+// Re-export types and cookie utilities consumed through this module's path.
 export type {
   CookieOptions,
-  CollectedMiddleware,
   MiddlewareCollectableEntry,
   MiddlewareContext,
   MiddlewareEntry,
   MiddlewareFn,
-  ResponseHolder,
 } from "./middleware-types.js";
 export { parseCookies, serializeCookie } from "./middleware-cookies.js";
 
@@ -42,7 +40,7 @@ const MIDDLEWARE_METRIC_DEPTH = 1;
 /** Ignore post-next() durations below this threshold (measurement noise). */
 const POST_METRIC_MIN_DURATION_MS = 0.01;
 
-function getMiddlewareMetricBase<TEnv>(
+function getMiddlewareMetricLabel<TEnv>(
   entry: MiddlewareEntry<TEnv>,
   ordinal: number,
 ): string {
@@ -50,17 +48,10 @@ function getMiddlewareMetricBase<TEnv>(
   const scope = entry.pattern ?? "*";
 
   if (handlerName) {
-    return `${handlerName}@${scope}`;
+    return `middleware:${handlerName}@${scope}`;
   }
 
-  return `${scope}#${ordinal + 1}`;
-}
-
-function getMiddlewareMetricLabel<TEnv>(
-  entry: MiddlewareEntry<TEnv>,
-  ordinal: number,
-): string {
-  return `middleware:${getMiddlewareMetricBase(entry, ordinal)}`;
+  return `middleware:${scope}#${ordinal + 1}`;
 }
 
 /**
@@ -355,7 +346,7 @@ function mergeReqCtxStub(
  * - `ctx.headers` available before and after `await next()`
  * - `ctx.header()` shorthand for setting a single header
  * - Forgiving: if middleware doesn't return, uses the downstream response
- * - Short-circuit: return Response to stop chain
+ * - Short-circuit: return OR throw a Response to stop chain
  * - Error catching: try/catch around `next()` works
  */
 export async function executeMiddleware<TEnv>(
@@ -490,7 +481,7 @@ export async function executeMiddleware<TEnv>(
 
     // Explicit return takes precedence (middleware short-circuit).
     // Merge stub headers (from ctx.header before this point) and
-    // RequestContext stub headers (from ctx.setCookie) into the
+    // RequestContext stub headers (from cookies().set()) into the
     // returned Response so they are not lost.
     if (result instanceof Response) {
       if (isWebSocketUpgradeResponse(result)) {
@@ -564,7 +555,7 @@ export async function executeMiddleware<TEnv>(
  *
  * Intercepts use a shared stubResponse from the request context. This function:
  * - Runs middleware in sequence with a simple next() chain
- * - Returns Response if any middleware short-circuits (returns Response or redirects BEFORE next())
+ * - Returns Response if any middleware short-circuits (returns OR throws a Response, or redirects, BEFORE next())
  * - Returns null if all middleware calls next() - headers set after next() remain on stubResponse
  *
  * @param middlewares - Array of middleware functions

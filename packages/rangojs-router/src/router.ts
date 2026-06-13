@@ -1058,8 +1058,10 @@ export function createRouter<TEnv = any>(
         if (!handler) {
           // Lazy import deferred to first request to avoid dev mode issues
           const { createRSCHandler } = await import("./rsc/handler.js");
-          // Cast: handler.ts still accepts (request, env) — will be updated
-          // separately to accept RouterRequestInput.
+          // Cast: createRSCHandler receives `router as any`, which erases TEnv
+          // and infers its handler as RouterRequestInput<unknown>. Re-narrow the
+          // returned handler to RouterRequestInput<TEnv> so the call below stays
+          // typed. (The handler already accepts (request, RouterRequestInput).)
           handler = createRSCHandler({
             router: router as any,
             cache,

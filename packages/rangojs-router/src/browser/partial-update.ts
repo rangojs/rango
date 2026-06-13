@@ -169,9 +169,7 @@ export function createPartialUpdater(
       const currentSegments = segmentIds ?? segmentState.currentSegmentIds;
       const currentCached = getCurrentCachedSegments();
       const interceptIds = new Set(
-        currentCached
-          .filter((s) => s.namespace?.startsWith("intercept:"))
-          .map((s) => s.id),
+        currentCached.filter(isInterceptSegment).map((s) => s.id),
       );
       segments = currentSegments.filter((id) => !interceptIds.has(id));
       debugLog(

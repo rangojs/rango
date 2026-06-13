@@ -52,6 +52,34 @@ export function handleHandlerResult(
   return result;
 }
 
+/**
+ * Dev-only: warn when a handler on a route that declares loading() resolves or
+ * rejects with a Response (e.g. redirect()).
+ *
+ * On a non-loading route a returned/thrown Response short-circuits to an HTTP
+ * redirect. But when the route declares loading(), the handler result is
+ * streamed (not awaited at the resolution boundary), so the Response surfaces
+ * only during RSC serialization and is rendered into the stream instead of
+ * becoming a 302/308 — a silent failure mode. Issue redirects from middleware,
+ * a loader, or a synchronous handler return instead. Compiled out in production.
+ */
+export function warnOnStreamedResponse(
+  result: Promise<unknown>,
+  entryId: string,
+): void {
+  if (process.env.NODE_ENV === "production") return;
+  result.catch((thrown) => {
+    if (thrown instanceof Response) {
+      console.warn(
+        `[rango] Handler on route "${entryId}" returned a Response (e.g. ` +
+          `redirect()), but the route declares loading(): the Response is ` +
+          `rendered into the RSC stream, NOT sent as an HTTP redirect. Issue ` +
+          `redirects from middleware, a loader, or a synchronous handler return.`,
+      );
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Static handler interception
 // ---------------------------------------------------------------------------

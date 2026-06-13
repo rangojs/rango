@@ -12,6 +12,13 @@
  * - `**.example.com` - any depth subdomain
  * - `admin.*` - admin subdomain of any apex
  * - `example.com/admin` - specific domain with path prefix
+ *
+ * Apex vs subdomain is classified purely by dot-part COUNT (apex == exactly 2
+ * parts) — there is no Public Suffix List. A registrable domain under a
+ * multi-label public suffix (example.co.uk, shop.com.au) has 3+ parts and is
+ * therefore treated as a SUBDOMAIN, not an apex: `.`/`*` will NOT match it and
+ * `*.` WILL. If registrable-domain accuracy matters for a host-router consumer,
+ * supply an explicit apex/host hint rather than relying on the part count.
  */
 
 import { InvalidPatternError } from "./errors.js";
@@ -57,7 +64,11 @@ function getSubdomainLevel(parts: string[]): number {
 }
 
 /**
- * Check if hostname is an apex domain (no subdomains)
+ * Check if hostname is an apex domain (no subdomains).
+ *
+ * Heuristic: exactly 2 dot-parts. No Public Suffix List, so a host under a
+ * two-label public suffix (e.g. example.co.uk, which is 3 parts) is NOT
+ * detected as apex. See the module header.
  */
 function isApexDomain(parts: string[]): boolean {
   return parts.length === 2;

@@ -296,6 +296,12 @@ path("/old-page", () => redirect("/new-page"), { name: "oldPage" });
 path("/moved", () => redirect("/new-location", 301), { name: "moved" });
 ```
 
+> **Redirecting from a route with `loading()`:** an `async` handler that returns
+> a `Response`/`redirect()` on a route that also declares `loading()` is streamed,
+> so the redirect is rendered into the RSC stream instead of becoming an HTTP
+> redirect. Issue the redirect from `middleware`, a loader, or a **synchronous**
+> handler return instead. (Dev logs a warning if this is hit.)
+
 ### Redirect with location state
 
 Carry typed state through redirects (e.g. flash messages):

@@ -71,7 +71,7 @@ export interface SSRRenderOptions {
  */
 export interface SSRDependencies<TEnv = unknown> {
   /**
-   * createFromReadableStream from @vitejs/plugin-rsc/ssr
+   * createFromReadableStream from @rangojs/router/internal/deps/ssr
    */
   createFromReadableStream: <T>(
     stream: ReadableStream<Uint8Array>,
@@ -86,7 +86,7 @@ export interface SSRDependencies<TEnv = unknown> {
   ) => Promise<ReactDOMReadableStream>;
 
   /**
-   * injectRSCPayload from rsc-html-stream/server
+   * injectRSCPayload from @rangojs/router/internal/deps/html-stream-server
    */
   injectRSCPayload: (
     rscStream: ReadableStream<Uint8Array>,
@@ -218,10 +218,10 @@ function createSsrEventController(opts: {
  *
  * @example
  * ```tsx
- * import { createSSRHandler } from "rsc-router/ssr";
- * import { createFromReadableStream } from "@vitejs/plugin-rsc/ssr";
+ * import { createSSRHandler } from "@rangojs/router/ssr";
+ * import { createFromReadableStream } from "@rangojs/router/internal/deps/ssr";
  * import { renderToReadableStream } from "react-dom/server.edge";
- * import { injectRSCPayload } from "rsc-html-stream/server";
+ * import { injectRSCPayload } from "@rangojs/router/internal/deps/html-stream-server";
  *
  * export const renderHTML = createSSRHandler({
  *   createFromReadableStream,
@@ -263,6 +263,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       let payload: Promise<RscPayload> | undefined;
       let handlesPromise: Promise<HandleData> | undefined;
       let ssrContextValue: NavigationStoreContextValue | undefined;
+      let rootPromise: Promise<React.ReactNode> | undefined;
       function SsrRoot() {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
@@ -296,17 +297,16 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         };
 
         // Build content tree from segments.
-        // Order must match NavigationProvider: NavigationStoreContext > ThemeProvider > content
-        const reconstructedRoot = renderSegments(
-          resolved.metadata?.segments ?? [],
-          {
+        // Order must match NavigationProvider: NavigationStoreContext > NonceContext > ThemeProvider > content
+        // Memoize like payload/handles above: renderSegments is async, so
+        // React.use() on a fresh promise suspends and replays SsrRoot, which
+        // would re-run the entire segment-tree build on every initial render.
+        rootPromise ??= Promise.resolve(
+          renderSegments(resolved.metadata?.segments ?? [], {
             rootLayout: resolved.metadata?.rootLayout,
-          },
+          }),
         );
-        let content: React.ReactNode =
-          reconstructedRoot instanceof Promise
-            ? React.use(reconstructedRoot)
-            : reconstructedRoot;
+        let content: React.ReactNode = React.use(rootPromise);
 
         // Wrap content with ThemeProvider if theme is enabled
         if (themeConfig) {

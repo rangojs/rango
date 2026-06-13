@@ -11,12 +11,24 @@ import {
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
-import { getMemoizedLoaderPromise } from "./segment-loader-promise.js";
+import {
+  buildLoaderPromise,
+  getMemoizedLoaderPromise,
+} from "./segment-loader-promise.js";
 
 // ViewTransition is only available in React experimental.
 // Access via namespace import to avoid compile-time errors on stable React.
 const ReactViewTransition: any =
   "ViewTransition" in React ? (React as any).ViewTransition : null;
+
+// A loading skeleton is renderable only when it is a real ReactNode value.
+// `false` is treated as "not renderable" here. This is the three-term gate;
+// the distinct two-term gate at the LoaderBoundary site deliberately treats
+// `false` as "create a boundary without a RouteContentWrapper"
+// (tree-structure.md), so it must NOT use this helper.
+function isRenderableLoading(loading: ReactNode): boolean {
+  return loading !== undefined && loading !== null && loading !== false;
+}
 
 function restoreParallelLoaderMarkers(
   segments: ResolvedSegment[],
@@ -28,12 +40,7 @@ function restoreParallelLoaderMarkers(
     const segment = segments[i];
 
     if (segment.type === "parallel") {
-      if (
-        segment.namespace &&
-        segment.loading !== undefined &&
-        segment.loading !== null &&
-        segment.loading !== false
-      ) {
+      if (segment.namespace && isRenderableLoading(segment.loading)) {
         parallelLoadingByNamespace.set(segment.namespace, segment.loading);
       }
       continue;
@@ -142,8 +149,14 @@ function wrapDefaultOutletContent(
 /**
  * Render segments into a React tree with proper layout nesting
  *
- * Layouts nest using OutletProvider, while route + parallel + error + notFound segments
- * render as siblings in a Fragment.
+ * Layouts nest using OutletProvider; a layout receives the inner content via
+ * its `<Outlet />`. Parallel segments do NOT render as inline Fragment siblings
+ * — they flow through OutletContext.parallel and are resolved where a layout
+ * places `<ParallelOutlet name="@sidebar" />` (or `<Outlet name="@sidebar" />`).
+ *
+ * The result is always wrapped in RootErrorBoundary so unhandled errors never
+ * blank the screen. When `options.rootLayout` is provided it wraps the error
+ * boundary at the OUTERMOST level (so the app shell survives errors).
  *
  * Error segments are treated like route segments - they render their fallback
  * component in place of the failed segment. When an error occurs in a handler,
@@ -155,27 +168,30 @@ function wrapDefaultOutletContent(
  * notFoundBoundary's fallback component.
  *
  * @param segments - Array of resolved segments to render
- * @returns ReactNode representing the component tree
+ * @returns Promise resolving to the ReactNode tree (the function is async)
  *
  * @example
  * ```typescript
  * const segments = [
- *   { id: 'L0.0', type: 'layout', component: <RootLayout /> },
- *   { id: 'L1.0', type: 'layout', component: <BlogLayout /> },
- *   { id: 'R2.0', type: 'route', component: <BlogPost /> },
- *   { id: 'P3.0', type: 'parallel', component: <Sidebar />, slot: '@sidebar' }
+ *   { id: 'L0.0', type: 'layout', component: <BlogLayout /> },
+ *   { id: 'L0R1', type: 'route', component: <BlogPost /> },
+ *   { id: 'L0R1.@sidebar', type: 'parallel', component: <Sidebar />, slot: '@sidebar' }
  * ];
  *
- * const tree = renderSegments(segments);
- * // Results in:
- * // <OutletProvider><RootLayout>
- * //   <OutletProvider><BlogLayout>
- * //     <><BlogPost /><Sidebar /></>
- * //   </BlogLayout></OutletProvider>
- * // </RootLayout></OutletProvider>
+ * // BlogLayout renders <Outlet /> for the route and
+ * // <ParallelOutlet name="@sidebar" /> for the parallel slot.
+ * const tree = await renderSegments(segments, { rootLayout: RootLayout });
+ * // Results in (outermost first):
+ * // <RootLayout>
+ * //   <RootErrorBoundary>
+ * //     <OutletProvider segment={BlogLayout} parallel={[Sidebar]}>
+ * //       <BlogPost />
+ * //     </OutletProvider>
+ * //   </RootErrorBoundary>
+ * // </RootLayout>
  *
  * // For server actions, pass isAction to await components:
- * const tree = renderSegments(segments, { isAction: true });
+ * const tree = await renderSegments(segments, { isAction: true });
  * ```
  */
 export async function renderSegments(
@@ -283,7 +299,7 @@ export async function renderSegments(
             .map(([k, v]) => `${k}=${v}`)
             .join(",")
         : "";
-    const key = `${paramStr ? `${id}-${paramStr}` : id}`;
+    const key = paramStr ? `${id}-${paramStr}` : id;
 
     // Get loader entries for this node
     const loaderEntries = node.loaders.filter(
@@ -299,15 +315,14 @@ export async function renderSegments(
       resolvedComponent = await component;
     }
 
-    let nodeContent: ReactNode =
-      loading !== null && loading !== undefined && loading !== false
-        ? createElement(RouteContentWrapper, {
-            key: `suspense-loading-${id}`,
-            content: getMemoizedContentPromise(resolvedComponent),
-            fallback: loading,
-            segmentId: id,
-          })
-        : registerLazyRef(resolvedComponent);
+    let nodeContent: ReactNode = isRenderableLoading(loading)
+      ? createElement(RouteContentWrapper, {
+          key: `suspense-loading-${id}`,
+          content: getMemoizedContentPromise(resolvedComponent),
+          fallback: loading,
+          segmentId: id,
+        })
+      : registerLazyRef(resolvedComponent);
 
     // Wrap with <ViewTransition> if transition config exists (React experimental only).
     // An empty config ({}) creates a bare <ViewTransition> boundary that participates
@@ -389,19 +404,11 @@ export async function renderSegments(
         (l) => !!l.parallelLoading,
       );
 
-      // Await only layout-owned loaders
+      // Await only layout-owned loaders. buildLoaderPromise (not the memoizing
+      // getMemoizedLoaderPromise) is the right primitive here: the result is
+      // awaited immediately below, so a fresh per-call Promise is required.
       const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
-      const layoutLoaderDataPromise =
-        layoutLoaders.length > 0
-          ? Promise.all(
-              layoutLoaders.map((l) =>
-                l.loaderData instanceof Promise
-                  ? l.loaderData
-                  : Promise.resolve(l.loaderData),
-              ),
-            )
-          : Promise.resolve([]);
-      const resolvedData = await layoutLoaderDataPromise;
+      const resolvedData = await buildLoaderPromise(layoutLoaders);
       const { loaderData, errorFallback } = decodeLoaderResults(
         resolvedData,
         layoutLoaderIds,
@@ -516,6 +523,28 @@ export async function renderSegments(
  * @param segments - Main segments from the route tree
  * @param interceptSegments - Optional intercept segments to inject
  */
+// Loader segment ids have the grammar `${parentId}D${index}.${loaderId}`.
+// parentId is the parent shortCode (M/L/P/R/C + digits, never "D") for normal
+// loaders, or `${shortCode}.${slotName}` for intercept-slot loaders, where the
+// slot name is user-controlled (`@${string}`) and may contain an uppercase "D"
+// (e.g. "@Detail"). Strip from the first `D<index>.` separator so the slot name
+// is preserved; splitting on a bare "D" mis-cut "@Detail" to "@" and silently
+// dropped the loader's data.
+function loaderParentId(loaderSegmentId: string): string {
+  return loaderSegmentId.replace(/D\d+\..*$/, "");
+}
+
+// Append a value to the array stored under `key`, creating the array on first
+// use. Single Map lookup (vs the has/get!().push double-lookup idiom).
+function pushToGroup<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const arr = map.get(key);
+  if (arr) {
+    arr.push(value);
+  } else {
+    map.set(key, [value]);
+  }
+}
+
 function* segmentTreeWalk(
   segments: ResolvedSegment[],
   interceptSegments?: ResolvedSegment[],
@@ -536,19 +565,12 @@ function* segmentTreeWalk(
       // Extract parent ID from parallel ID
       // Example: "L0R1L0.@sidebar" → "L0R1L0"
       const parentId = segment.id.split(".")[0];
-      if (!parallelsByParent.has(parentId)) {
-        parallelsByParent.set(parentId, []);
-      }
-      parallelsByParent.get(parentId)!.push(segment);
+      pushToGroup(parallelsByParent, parentId, segment);
     } else if (segment.type === "loader") {
       // Extract parent ID from loader ID
-      // Example: "L0D0.cart" → "L0"
-      // Loader ID format: {parentShortCode}D{index}.{loaderId}
-      const parentId = segment.id.split("D")[0];
-      if (!loadersByParent.has(parentId)) {
-        loadersByParent.set(parentId, []);
-      }
-      loadersByParent.get(parentId)!.push(segment);
+      // Example: "L0D0.cart" → "L0"; "L0.@DetailD0.x" → "L0.@Detail"
+      const parentId = loaderParentId(segment.id);
+      pushToGroup(loadersByParent, parentId, segment);
     } else {
       // Layout, route, error, and notFound segments are all rendered in the tree
       // Error/notFound segments replace the failed segment with fallback UI
@@ -563,17 +585,11 @@ function* segmentTreeWalk(
       if (intercept.type === "parallel" && intercept.slot) {
         // Extract parent ID from intercept ID (e.g., "M4L0L0L2.@modal" → "M4L0L0L2")
         const parentId = intercept.id.split(".")[0];
-        if (!parallelsByParent.has(parentId)) {
-          parallelsByParent.set(parentId, []);
-        }
-        parallelsByParent.get(parentId)!.push(intercept);
+        pushToGroup(parallelsByParent, parentId, intercept);
       } else if (intercept.type === "loader") {
-        // Intercept loaders - extract parent from loader ID
-        const parentId = intercept.id.split("D")[0];
-        if (!loadersByParent.has(parentId)) {
-          loadersByParent.set(parentId, []);
-        }
-        loadersByParent.get(parentId)!.push(intercept);
+        // Intercept loaders - extract parent from loader ID (slot name preserved)
+        const parentId = loaderParentId(intercept.id);
+        pushToGroup(loadersByParent, parentId, intercept);
       }
     }
   }

@@ -9,9 +9,7 @@
 import {
   requireRequestContext,
   setRequestContextParams,
-  getLocationState,
 } from "../server/request-context.js";
-import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { appendMetric } from "../router/metrics.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
@@ -19,6 +17,7 @@ import type { MatchResult } from "../types.js";
 import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
+  attachLocationStateIfPresent,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
@@ -155,11 +154,7 @@ export async function handleRscRendering<TEnv>(
   // SSR (full page) requests ignore location state since there's no history.state
   // to write to on a fresh page load.
   if (isPartial && payload.metadata) {
-    const locationState = getLocationState();
-    if (locationState) {
-      payload.metadata.locationState =
-        resolveLocationStateEntries(locationState);
-    }
+    attachLocationStateIfPresent(payload);
   }
 
   const metricsStore = reqCtx._metricsStore;

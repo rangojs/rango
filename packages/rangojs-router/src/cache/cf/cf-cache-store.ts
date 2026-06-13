@@ -218,6 +218,19 @@ function getTagMarkerInflight(
   return inflight;
 }
 
+/**
+ * Per-request memo of the derived cache-key base URL.
+ *
+ * deriveBaseUrl() is a pure function of the live request URL, but keyToRequest
+ * calls it on EVERY cache operation (each segment/item get/set/delete, each
+ * KV->L1 promote, each tag-marker read), so a page composed of many cached
+ * entries re-parses the same request.url and re-runs the host validation tens
+ * of times. Keying by the request-context object collapses that to one derive
+ * per request. Keyed by ctx alone (not by store) because the derived value
+ * depends only on the request URL, not on which store asked.
+ */
+const derivedBaseUrlMemo = new WeakMap<object, string>();
+
 /** KV key byte-length ceiling. Cloudflare KV rejects keys larger than this. */
 const KV_MAX_KEY_BYTES = 512;
 
@@ -323,10 +336,9 @@ function remainingCacheControl(headers: Headers, now: number): string {
 // Types
 // ============================================================================
 
-// Re-exported from the canonical home so cf-cache-store consumers keep
-// importing `ExecutionContext` from this module without a second interface
-// drifting over time.
-export type { ExecutionContext } from "../../types/request-scope.js";
+// Imported from the canonical home (also publicly exported from src/index.ts /
+// src/index.rsc.ts) so this module shares the one interface rather than
+// declaring a second that could drift.
 import type { ExecutionContext } from "../../types/request-scope.js";
 
 /**
@@ -717,12 +729,6 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   ) => string | Promise<string>;
 }
 
-/**
- * Cache status values for the x-edge-cache-status header.
- * @internal
- */
-export type CacheStatus = "HIT" | "REVALIDATING";
-
 // ============================================================================
 // CFCacheStore Implementation
 // ============================================================================
@@ -810,13 +816,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // tagCacheTtl gates the L1 marker cache via `> 0`. A non-finite value (NaN
     // from `Number(env.UNSET)`) is not null/undefined, so `?? 0` would let it
     // through and silently disable the cache while reading as "configured".
-    // Coerce any non-finite/non-positive value to the documented 0 = disabled.
-    this.tagCacheTtl =
-      typeof options.tagCacheTtl === "number" &&
-      Number.isFinite(options.tagCacheTtl) &&
-      options.tagCacheTtl > 0
-        ? options.tagCacheTtl
-        : 0;
+    // finiteBudget coerces non-finite/null/undefined to 0; the `> 0` guard then
+    // collapses a finite non-positive value to the documented 0 = disabled.
+    const tagCacheTtl = finiteBudget(options.tagCacheTtl, 0);
+    this.tagCacheTtl = tagCacheTtl > 0 ? tagCacheTtl : 0;
 
     // Read-side tag invalidation requires KV: isGloballyInvalidated() compares an
     // entry's taggedAt against the per-tag KV marker and short-circuits to "not
@@ -909,31 +912,43 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       return fallback;
     }
 
-    try {
-      const url = new URL(ctx.request.url);
-      const hostname = url.hostname;
-
-      // Use fallback for dev/preview environments
-      if (
-        hostname === "localhost" ||
-        hostname === "127.0.0.1" ||
-        hostname.endsWith(".workers.dev") ||
-        hostname.endsWith(".pages.dev")
-      ) {
-        return fallback;
-      }
-
-      // Validate hostname: must be a valid domain (alphanumeric, hyphens, dots)
-      // to prevent host header injection into cache keys
-      if (!/^[a-zA-Z0-9.-]+$/.test(hostname) || hostname.length > 253) {
-        return fallback;
-      }
-
-      // Use actual hostname for production
-      return `https://${hostname}/`;
-    } catch {
-      return fallback;
+    // The result is deterministic per request, but keyToRequest calls this on
+    // every cache operation; memoize per request context (see derivedBaseUrlMemo).
+    const memoized = derivedBaseUrlMemo.get(ctx);
+    if (memoized !== undefined) {
+      return memoized;
     }
+
+    const derived = ((): string => {
+      try {
+        const url = new URL(ctx.request.url);
+        const hostname = url.hostname;
+
+        // Use fallback for dev/preview environments
+        if (
+          hostname === "localhost" ||
+          hostname === "127.0.0.1" ||
+          hostname.endsWith(".workers.dev") ||
+          hostname.endsWith(".pages.dev")
+        ) {
+          return fallback;
+        }
+
+        // Validate hostname: must be a valid domain (alphanumeric, hyphens, dots)
+        // to prevent host header injection into cache keys
+        if (!/^[a-zA-Z0-9.-]+$/.test(hostname) || hostname.length > 253) {
+          return fallback;
+        }
+
+        // Use actual hostname for production
+        return `https://${hostname}/`;
+      } catch {
+        return fallback;
+      }
+    })();
+
+    derivedBaseUrlMemo.set(ctx, derived);
+    return derived;
   }
 
   /**
@@ -1669,10 +1684,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       headers.set("Cache-Control", `public, max-age=${totalTtl}`);
       headers.set(CACHE_STALE_AT_HEADER, String(staleAt));
       // Internal tag headers (stripped by toClientResponse before serving).
-      const tagHeaders = this.tagHeaderEntries(tags, taggedAt);
-      for (const [name, value] of Object.entries(tagHeaders)) {
-        headers.set(name, value);
-      }
+      this.setTagHeaders(headers, tags, taggedAt);
 
       const toCache = new Response(l1Body, {
         status: response.status,
@@ -2162,6 +2174,24 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       [CACHE_TAGS_HEADER]: encodeURIComponent(JSON.stringify(tags)),
       [CACHE_TAGGED_AT_HEADER]: String(taggedAt),
     };
+  }
+
+  /**
+   * Merge the internal tag headers onto an existing Headers instance. The
+   * from-scratch paths spread tagHeaderEntries() into an object-literal init;
+   * the document put/promote paths build a Headers first, so they .set() each
+   * entry instead.
+   */
+  private setTagHeaders(
+    headers: Headers,
+    tags: string[] | undefined,
+    taggedAt: number | undefined,
+  ): void {
+    for (const [name, value] of Object.entries(
+      this.tagHeaderEntries(tags, taggedAt),
+    )) {
+      headers.set(name, value);
+    }
   }
 
   /** Read an entry's tags/taggedAt back from its headers. */
@@ -2924,10 +2954,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           // Re-attach the internal tag headers (envelope.hd is client-facing
           // and intentionally excludes them) so the promoted entry stays
           // invalidatable.
-          const tagHeaders = this.tagHeaderEntries(envelope.t, envelope.ta);
-          for (const [name, value] of Object.entries(tagHeaders)) {
-            headers.set(name, value);
-          }
+          this.setTagHeaders(headers, envelope.t, envelope.ta);
 
           const bodyBuffer = base64ToBuffer(envelope.b);
           const response = new Response(bodyBuffer, {

@@ -103,6 +103,7 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../../server/request-context.js";
+import { paramsEqual } from "../params-util.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -123,22 +124,6 @@ let _hashParams:
 let _lazyGetRequestContext:
   | typeof import("../../server/request-context.js").getRequestContext
   | undefined;
-
-function paramsEqual(
-  a: Record<string, string>,
-  b: Record<string, string>,
-): boolean {
-  if (a === b) return true;
-
-  const keysA = Object.keys(a);
-  if (keysA.length !== Object.keys(b).length) return false;
-
-  for (const key of keysA) {
-    if (a[key] !== b[key]) return false;
-  }
-
-  return true;
-}
 
 async function ensurePrerenderDeps() {
   if (!_deserializeSegments) {

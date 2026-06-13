@@ -259,7 +259,6 @@ export async function handleProgressiveEnhancement<TEnv>(
         warmupEnabled: ctx.router.warmupEnabled,
         initialTheme: requireRequestContext().theme,
       },
-      formState: actionResult,
     };
 
     const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
@@ -277,6 +276,8 @@ export async function handleProgressiveEnhancement<TEnv>(
       url,
       undefined,
     );
+    // reactFormState carries the useActionState payload via the SSR-option path
+    // (renderToReadableStream({ formState })); it does NOT travel on RscPayload.
     const htmlStream = await ssrModule.renderHTML(rscStream, {
       formState: reactFormState,
       nonce,

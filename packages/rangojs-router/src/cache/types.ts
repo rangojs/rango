@@ -292,25 +292,8 @@ export interface CacheDefaults {
   swr?: number;
 }
 
-/**
- * Cache configuration for RSC handler
- */
-export interface CacheConfig {
-  /** Cache store implementation (includes defaults) */
-  store: SegmentCacheStore;
-  /** Enable/disable caching (default: true) */
-  enabled?: boolean;
-}
-
-/**
- * Cache configuration - can be static or a function receiving env
- */
-export type CacheConfigOrFactory<TEnv> =
-  | CacheConfig
-  | ((env: TEnv) => CacheConfig);
-
 // ============================================================================
-// Segment Cache Provider (request-level interface)
+// Segment Cache Results (request-level shapes)
 // ============================================================================
 
 /**
@@ -318,56 +301,3 @@ export type CacheConfigOrFactory<TEnv> =
  * Structure: { handleName: [values...] }
  */
 export type SegmentHandleData = Record<string, unknown[]>;
-
-/**
- * Result from cache get() including segments and their handle data
- * Each entry can produce multiple segments (main + parallels)
- */
-export interface CachedEntryResult {
-  /** All segments for this entry (main segment + parallels) */
-  segments: ResolvedSegment[];
-  /** Handle data keyed by segment ID */
-  handles: Record<string, SegmentHandleData>;
-}
-
-/**
- * Segment cache provider interface
- *
- * Used by router to check/store segment cache during matching.
- * Accessed via request context - if not present, caching is disabled.
- *
- * @internal Not currently implemented - CacheScope is used directly.
- * Reserved for future extensibility.
- */
-export interface SegmentCacheProvider {
-  /** Whether caching is enabled for this request */
-  readonly enabled: boolean;
-
-  /**
-   * Get cached segments and restore handles/loaders.
-   *
-   * Combines cache get with handle replay and loader data restoration.
-   * Returns tuple of [segments, segmentIds] if cache hit, null if miss or disabled.
-   *
-   * @param cacheKey - Cache key to look up
-   * @param params - Route params for cache key generation
-   * @param loaderPromises - Map to restore loader data into
-   * @returns Tuple of [segments, segmentIds] or null if miss
-   */
-  restore(
-    cacheKey: string,
-    params: Record<string, string>,
-    loaderPromises: Map<string, Promise<any>>,
-  ): Promise<[ResolvedSegment[], string[]] | null>;
-
-  /**
-   * Cache entry with automatic handle collection (non-blocking).
-   *
-   * Schedules caching via waitUntil - handles are collected after they settle.
-   * Validates segments have actual components before caching.
-   *
-   * @param cacheKey - The cache key to store under
-   * @param segments - All resolved segments for this entry
-   */
-  cacheEntry(cacheKey: string, segments: ResolvedSegment[]): void;
-}

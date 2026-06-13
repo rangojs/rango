@@ -13,7 +13,7 @@ lives.
 ### ✅ Completed
 
 - **Router-level cache integration** - Cache check before handler execution in `match()` and `matchPartial()`
-- **Cache provider in request context** - `SegmentCacheProvider` interface via AsyncLocalStorage
+- **Cache provider in request context** - `CacheScope` via AsyncLocalStorage
 - **Handle data caching** - Handles cached with segments, replayed on cache hit
 - **Parallel segment support** - All segments per entry (main + parallels) cached together
 - **In-memory store** - `MemorySegmentCacheStore` with TTL, survives HMR via `globalThis`
@@ -327,22 +327,16 @@ For `"use cache"` functions, cache keys follow the format `use-cache:{functionId
 
 ## Storage Backend
 
-Pluggable `SegmentCacheStore` interface configured at handler level:
-
-```typescript
-interface SegmentCacheStore {
-  get(key: string): Promise<CachedEntryData | null>;
-  set(key: string, data: CachedEntryData, ttl: number): Promise<void>;
-  delete(key: string): Promise<boolean>;
-  clear?(): Promise<void>;
-}
-
-interface CachedEntryData {
-  segments: SerializedSegmentData[]; // RSC-encoded components
-  handles: Record<string, SegmentHandleData>;
-  expiresAt: number;
-}
-```
+Pluggable `SegmentCacheStore` interface configured at handler level. The
+shapes sketched in this historical narrative predate the shipped types; for the
+authoritative, copy-pasteable definitions see `src/cache/types.ts`
+(`SegmentCacheStore`, `CacheGetResult`, `CachedEntryData`). In brief, the
+shipped store returns a `CacheGetResult` (data + `shouldRevalidate`) from
+`get()`, takes an optional `swr` on `set()`, and carries a larger optional
+surface (`getResponse`/`putResponse`, `getItem`/`setItem`, `invalidateTags`,
+`keyGenerator`, `defaults`); the shipped `CachedEntryData` is
+`{ segments, handles: string, expiresAt, tags?, taggedAt? }` (`handles` is a
+single Flight-encoded string, not a per-segment record).
 
 ### Handler Configuration
 
@@ -487,7 +481,15 @@ Action:   |  serve   | serve+reval   |  miss       |
 
 ### Data Structures
 
+This POC sketch carried `createdAt`/`staleAt`/`revalidationContext` and a
+per-segment `handles` record. The shipped `CachedEntryData`
+(`src/cache/types.ts`) is leaner — `{ segments, handles: string, expiresAt,
+tags?, taggedAt? }` — and staleness/revalidation is decided by the store
+(`CacheGetResult.shouldRevalidate`) rather than by fields on the entry. Treat
+the snippet below as the original reasoning, not the current type.
+
 ```typescript
+// Historical POC shape (see src/cache/types.ts for the shipped type)
 interface CachedEntryData {
   segments: SerializedSegmentData[];
   handles: Record<string, SegmentHandleData>;
@@ -657,13 +659,11 @@ cache({ ttl: 60 }, () => [
 // All signatures supported:
 function cache(children: () => RouteChildren[]): RouteChild;
 function cache(
-  profileName: string,
-  children?: () => RouteChildren[],
-): RouteChild;
-function cache(
   options: CacheOptions | false,
   children?: () => RouteChildren[],
 ): RouteChild;
+// Named profiles are applied via the "use cache: <profile>" directive,
+// not a cache("profileName") form in the route tree.
 
 interface CacheOptions {
   // Time-to-live in seconds (optional if store has defaults)
@@ -689,8 +689,18 @@ interface SegmentCacheStore {
   // Store-level defaults inherited by cache() boundaries
   readonly defaults?: { ttl?: number; swr?: number };
 
-  get(key: string): Promise<CachedEntryData | null>;
-  set(key: string, data: CachedEntryData, ttl: number): Promise<void>;
+  // get() returns a CacheGetResult ({ data, shouldRevalidate }), not the raw
+  // entry; set() takes an optional swr window. See src/cache/types.ts for the
+  // full shipped interface, including the optional response-cache
+  // (getResponse/putResponse), "use cache" item (getItem/setItem),
+  // invalidateTags, and keyGenerator surface.
+  get(key: string): Promise<CacheGetResult | null>;
+  set(
+    key: string,
+    data: CachedEntryData,
+    ttl: number,
+    swr?: number,
+  ): Promise<void>;
   delete(key: string): Promise<boolean>;
   clear?(): Promise<void>;
 }

@@ -42,53 +42,12 @@ import {
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
+import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
   RangoContext,
   runInsideLoaderScope,
 } from "../../server/context.js";
-
-// ---------------------------------------------------------------------------
-// Telemetry helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Attach a fire-and-forget rejection observer to a streamed handler promise.
- * Silently no-ops when called outside RouterContext (e.g. in unit tests).
- */
-function observeStreamedHandler(
-  promise: Promise<ReactNode>,
-  segmentId: string,
-  segmentType: string,
-  pathname?: string,
-  routeKey?: string,
-  params?: Record<string, string>,
-): void {
-  let routerCtx;
-  try {
-    routerCtx = getRouterContext();
-  } catch {
-    return;
-  }
-  if (!routerCtx?.telemetry) return;
-  const sink = resolveSink(routerCtx.telemetry);
-  const reqId = routerCtx.requestId;
-  promise.catch((err: unknown) => {
-    const errorObj = err instanceof Error ? err : new Error(String(err));
-    safeEmit(sink, {
-      type: "handler.error",
-      timestamp: performance.now(),
-      requestId: reqId,
-      segmentId,
-      segmentType,
-      error: errorObj,
-      handledByBoundary: true,
-      pathname,
-      routeKey,
-      params,
-    });
-  });
-}
 
 /**
  * Trace a parallel slot that's being force-rendered on a full refetch (client

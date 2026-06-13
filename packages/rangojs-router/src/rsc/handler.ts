@@ -1017,10 +1017,19 @@ export function createRSCHandler<
       } catch (error) {
         // Check if middleware/handler returned Response
         if (error instanceof Response) {
+          // An action revalidation render is delivered to the client over the
+          // same Flight-parsing path as a partial navigation, so a Response
+          // thrown during it must be converted exactly like a partial one
+          // (raw 200 -> hard-nav hint, 3xx -> Flight redirect). Without this,
+          // the no-middleware path returns the raw Response (the with-middleware
+          // path is already covered by the isPartial || actionContinuation
+          // guard below).
+          const treatAsPartial = isPartial || actionContinuation != null;
+
           // During partial (client-side navigation), a 200 Response from a handler
           // means the route serves raw content (JSON, text, etc.), not JSX.
           // Signal the browser to hard-navigate so it renders the raw response.
-          if (isPartial && error.status === 200) {
+          if (treatAsPartial && error.status === 200) {
             console.warn(
               `[RSC] Route handler at ${url.pathname} returned a Response during client-side navigation. ` +
                 `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
@@ -1034,7 +1043,7 @@ export function createRSCHandler<
             });
           }
 
-          if (isPartial) {
+          if (treatAsPartial) {
             const intercepted = interceptRedirectForPartial(
               error,
               createRedirectFlightResponse,

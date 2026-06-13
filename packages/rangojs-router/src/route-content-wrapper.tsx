@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import { Suspense, use, useId } from "react";
+import { Suspense, use } from "react";
 import { invariant } from "./errors";
 import { OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
@@ -36,37 +36,6 @@ export function RouteContentWrapper({
   );
 }
 
-export function RouteContentWrapperCallback<T>({
-  resolve,
-  fallback,
-  children,
-}: {
-  resolve: Promise<T> | T;
-  fallback?: ReactNode;
-  children: (data: T) => ReactNode;
-}): ReactNode {
-  const id = useId();
-  invariant(children, "RouteContentWrapperCallback requires children");
-  invariant(
-    typeof children === "function",
-    "RouteContentWrapperCallback requires children to be a function",
-  );
-  invariant(
-    resolve !== undefined,
-    "RouteContentWrapperCallback requires resolve",
-  );
-  return (
-    <Suspense
-      fallback={fallback ?? null}
-      key={"route-content-suspense-callback-" + id}
-    >
-      <SuspenderCallback resolve={resolve} key={id}>
-        {children}
-      </SuspenderCallback>
-    </Suspense>
-  );
-}
-
 const Suspender = ({
   content,
 }: {
@@ -75,18 +44,6 @@ const Suspender = ({
   invariant(content instanceof Promise, "Suspender expects a Promise content");
 
   return use(content);
-};
-
-const SuspenderCallback = <T,>({
-  resolve,
-  children,
-}: {
-  resolve: Promise<T> | T;
-  children: (data: T) => ReactNode;
-}): ReactNode => {
-  return resolve instanceof Promise
-    ? children(use(resolve))
-    : children(resolve);
 };
 
 /**

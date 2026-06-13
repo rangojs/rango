@@ -13,9 +13,7 @@
 // Segment cache store types and implementations
 export type {
   SegmentCacheStore,
-  SegmentCacheProvider,
   CachedEntryData,
-  CachedEntryResult,
   CacheGetResult,
   // The getItem()/setItem() signature types on SegmentCacheStore. Exported
   // alongside CacheGetResult so a consumer implementing a custom store can name
@@ -24,8 +22,6 @@ export type {
   CacheItemOptions,
   SerializedSegmentData,
   SegmentHandleData,
-  CacheConfig,
-  CacheConfigOrFactory,
 } from "./types.js";
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";

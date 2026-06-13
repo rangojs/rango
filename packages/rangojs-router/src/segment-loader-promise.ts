@@ -26,7 +26,10 @@ const IS_BROWSER = typeof window !== "undefined";
 
 interface LoaderCacheEntry {
   sources: any[];
-  promise: Promise<any[]> | any[];
+  // buildLoaderPromise always returns a Promise, so the cached value is never a
+  // bare array. The public getMemoizedLoaderPromise return type stays broader
+  // (Promise<any[]> | any[]) to mirror its siblings.
+  promise: Promise<any[]>;
 }
 
 const objectLoaderCache = IS_BROWSER
@@ -56,7 +59,16 @@ function hasSameReferences(a: any[], b: any[]): boolean {
   return true;
 }
 
-function buildLoaderPromise(loaders: ResolvedSegment[]): Promise<any[]> {
+/**
+ * Build a fresh aggregate Promise.all over the loaders' resolved data refs.
+ * Unlike getMemoizedLoaderPromise this never caches, so each call yields a new
+ * Promise — correct for sites that await the result immediately (a shared,
+ * already-resolved promise would leak React's `.status` across server requests
+ * and skip the Suspense fallback).
+ *
+ * @internal
+ */
+export function buildLoaderPromise(loaders: ResolvedSegment[]): Promise<any[]> {
   if (loaders.length === 0) {
     return Promise.resolve([]);
   }

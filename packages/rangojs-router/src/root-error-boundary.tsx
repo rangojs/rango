@@ -16,7 +16,6 @@ function isNetworkError(error: Error): boolean {
  */
 function NetworkErrorFallback({
   error,
-  reset,
 }: ClientErrorBoundaryFallbackProps): ReactNode {
   const [isRetrying, setIsRetrying] = useState(false);
 

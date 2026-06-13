@@ -127,7 +127,9 @@ IS caching, just at build time instead of runtime.
 
 ### Production (`__loadPrerenderManifestModule`)
 
-Injected by the Vite `closeBundle` hook. The RSC entry sets a lazy loader:
+Injected by the Vite `closeBundle` hook (in `src/vite/router-discovery.ts`,
+with manifest staging + `__loadPrerenderManifestModule` injection in
+`src/vite/discovery/bundle-postprocess.ts`). The RSC entry sets a lazy loader:
 
 ```javascript
 globalThis.__loadPrerenderManifestModule = () =>
@@ -138,13 +140,18 @@ The manifest module (`__prerender-manifest.js`) exports:
 
 ```javascript
 // Key→specifier map, parsed from JSON for fast startup
-const m = JSON.parse('{"blog.post/a1b2c3":"./assets/__pr-a1b2c3.js",...}');
+const m = JSON.parse('{"blog.post/a1b2c3":"./assets/__pr-7f3e0c91.js",...}');
 // Asset loader anchored at manifest file location for correct relative resolution
 export function loadPrerenderAsset(s) {
   return import(s);
 }
 export default m;
 ```
+
+The two hashes are unrelated: the map key embeds the DJB2 param hash
+(`hashParams`, `src/prerender/param-hash.ts`), while the asset filename is a
+sha256 content hash of the serialized payload (`__pr-<sha256(exportValue)[0:8]>.js`),
+so identical payloads dedupe to the same file.
 
 The manifest is loaded lazily on first prerender store `get()`. Each asset
 module default-exports a `PrerenderEntry`:
@@ -161,18 +168,41 @@ interface PrerenderEntry {
 }
 ```
 
+The store interface is:
+
+```typescript
+interface PrerenderStore {
+  get(
+    routeName: string,
+    paramHash: string,
+    meta?: { pathname: string; isPassthroughRoute?: boolean },
+  ): PrerenderEntry | null | Promise<PrerenderEntry | null>;
+}
+```
+
+`meta` is dev-required and production-ignored: the dev store reconstructs the
+on-demand fetch URL from `meta.pathname` (returns `null` without it) and toggles
+`passthrough=1` from `meta.isPassthroughRoute`, while the production store keys
+solely off `routeName`/`paramHash`. This is a known leaky seam — the `get()`
+type advertises a `meta` contract only the dev implementation honors.
+
 ### Dev Mode (`__PRERENDER_DEV_URL`)
 
 Set by the Vite plugin for non-Node.js RSC runtimes (workerd, Deno). The
 prerender store fetches on-demand from the Vite dev server:
 
 ```
-GET /__rsc_prerender?pathname=/blog/hello-world
-GET /__rsc_prerender?pathname=/blog/hello-world&intercept=1
+GET /__rsc_prerender?pathname=/blog/hello-world&routeName=blog.post
+GET /__rsc_prerender?pathname=/blog/hello-world&routeName=blog.post&intercept=1
+GET /__rsc_prerender?pathname=/blog/hello-world&routeName=blog.post&passthrough=1
 ```
 
 The endpoint calls `matchForPrerender()` in the Node.js dev environment where
-`node:fs` and other Node APIs work.
+`node:fs` and other Node APIs work. The dev store always sends `routeName`
+(the endpoint rejects a match from the wrong router when multiple routers share
+a pathname) and adds `passthrough=1` for `Passthrough()` routes so unknown
+params defer to the live handler in dev, mirroring production. `intercept=1`
+requests the intercept (modal slot) variant.
 
 In Node.js dev mode, `__PRERENDER_DEV_URL` is undefined and handlers run
 in-process.
@@ -397,12 +427,12 @@ At runtime, the cache-lookup middleware uses these flags:
 
 ## Key Files
 
-| File                                                  | Role                                                   |
-| ----------------------------------------------------- | ------------------------------------------------------ |
-| `src/router.ts` (`matchForPrerender`)                 | Build-time segment resolution + intercept resolution   |
-| `src/router/match-middleware/cache-lookup.ts`         | Runtime prerender store lookup                         |
-| `src/prerender/store.ts`                              | PrerenderStore interface + dev/prod implementations    |
-| `src/prerender/param-hash.ts`                         | Deterministic param hashing for store keys             |
-| `src/cache/cache-scope.ts`                            | RSC serialize/deserialize for segments                 |
-| `src/vite/index.ts` (`closeBundle`)                   | Collects prerender data + writes manifest              |
-| `src/router/match-middleware/intercept-resolution.ts` | Runtime intercept handling (`handleCacheHitIntercept`) |
+| File                                                                                                                                                                 | Role                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                              |
+| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                        |
+| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                   |
+| `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                            |
+| `src/cache/cache-scope.ts`                                                                                                                                           | RSC serialize/deserialize for segments                                                                                                                |
+| `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel) |
+| `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                |
