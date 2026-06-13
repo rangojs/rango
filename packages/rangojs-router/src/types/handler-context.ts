@@ -535,13 +535,24 @@ export type ActionRef =
  * downstream revalidators, or nothing (`void` / `null` / `undefined`) to defer
  * to the current suggestion without changing it.
  *
+ * Two idioms cover almost every case; they differ only in what an _unrelated_
+ * action does. Match actions by reference with `ctx.isAction()` (rename-safe)
+ * rather than `actionId?.includes("...")` (a renamed or moved action silently
+ * stops matching). Because `isAction` returns a raw boolean, combine it with
+ * `|| undefined` to defer or leave it bare to suppress.
+ *
  * @example
  * ```ts
- * // Re-render when a cart action happened or the browser signals staleness;
- * // defer otherwise (|| undefined) so the segment default still applies
- * revalidate(({ actionId, stale }) =>
- *   actionId?.includes("cart") || stale || undefined
- * )
+ * import * as CartActions from "./actions/cart";
+ *
+ * // Idiom A — "mine, else defer": re-render on my actions, otherwise return
+ * // undefined so the segment's default decision still applies (and downstream
+ * // revalidators get a say).
+ * revalidate((ctx) => ctx.isAction(CartActions) || undefined)
+ *
+ * // Idiom B — "mine only": re-render on my actions and suppress everything
+ * // else (isAction returns a raw boolean, so an unrelated action yields false).
+ * revalidate((ctx) => ctx.isAction(CartActions))
  *
  * // Always re-render when params change (default behavior made explicit)
  * revalidate(({ defaultShouldRevalidate }) => defaultShouldRevalidate)
