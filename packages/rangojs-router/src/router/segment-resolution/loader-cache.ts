@@ -19,7 +19,7 @@
  */
 
 import type { LoaderEntry } from "../../server/context.js";
-import type { HandlerContext } from "../../types.js";
+import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
@@ -148,7 +148,28 @@ export function resolveLoaderData<TEnv>(
   const tags = resolveTags(loaderEntry);
   recordRequestTags(tags);
 
-  const originalUse = ctx.use;
+  // A handler that later awaits this same loader via ctx.use(loader) must get
+  // THIS memoized promise, not a fresh execution. Rather than rebind ctx.use
+  // once per cached loader (O(N) chained wrappers + a synchronous
+  // capture-before-overwrite invariant), install a single stable interceptor on
+  // the first cached loader that consults a per-ctx override table, then just
+  // prime the table for each subsequent cached loader. The captured pre-
+  // interceptor `originalUse` (whatever setup mode installed it) runs the
+  // cache-miss execute, so a loader never awaits its own in-flight promise.
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  let overrides = internal._loaderCacheOverrides;
+  if (!overrides) {
+    overrides = internal._loaderCacheOverrides = new Map();
+    const originalUse = ctx.use;
+    internal._loaderCacheOriginalUse = originalUse;
+    ctx.use = ((item: any) => {
+      const cached = overrides!.get(item?.$$id);
+      if (cached) return cached;
+      return originalUse(item);
+    }) as typeof ctx.use;
+  }
+  const runMiss = internal._loaderCacheOriginalUse!;
+
   const dataPromise = (async () => {
     const codec = await getCodec();
     const key = await resolveLoaderKey(
@@ -163,7 +184,7 @@ export function resolveLoaderData<TEnv>(
       getItem: (k) => store.getItem!(k),
       setItem: (k, v, o) => store.setItem!(k, v, o),
       key,
-      execute: () => originalUse(loaderEntry.loader),
+      execute: () => runMiss(loaderEntry.loader),
       serialize: (d) => codec.serializeResult(d),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
@@ -175,13 +196,7 @@ export function resolveLoaderData<TEnv>(
     });
   })();
 
-  const wrappedUse = ((item: any) => {
-    if (item === loaderEntry.loader || item?.$$id === loaderId) {
-      return dataPromise;
-    }
-    return originalUse(item);
-  }) as typeof ctx.use;
-  ctx.use = wrappedUse;
+  overrides.set(loaderId, dataPromise);
 
   return dataPromise;
 }

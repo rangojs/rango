@@ -646,5 +646,42 @@ describe("loader-cache", () => {
       const result = await ctx.use(loader2);
       expect(result).toEqual({ other: true });
     });
+
+    it("accumulates multiple cached loaders behind one stable interceptor (no O(N) chain)", async () => {
+      const loaderA = createMockLoader("loader-a", { data: "A" });
+      const loaderB = createMockLoader("loader-b", { data: "B" });
+      const loaderC = createMockLoader("loader-c", { data: "C" }); // not cached
+      const entryA = createLoaderEntry(loaderA, { store: createMockStore() });
+      const entryB = createLoaderEntry(loaderB, { store: createMockStore() });
+      const ctx = createMockCtx();
+      const originalUse = ctx.use;
+
+      const pA = resolveLoaderData(entryA, ctx, "/a");
+      const interceptorAfterA = ctx.use;
+      const pB = resolveLoaderData(entryB, ctx, "/b");
+
+      // The interceptor is installed exactly ONCE: the 2nd cached loader primes
+      // the override table, it does NOT re-wrap ctx.use (the old O(N) chain).
+      expect(ctx.use).not.toBe(originalUse);
+      expect(ctx.use).toBe(interceptorAfterA);
+
+      await Promise.all([pA, pB]);
+      // Each loader executed exactly once (cache miss -> captured originalUse).
+      expect(loaderA).toHaveBeenCalledTimes(1);
+      expect(loaderB).toHaveBeenCalledTimes(1);
+
+      // A handler awaiting either loader gets ITS OWN memoized promise (the
+      // override), never the other's, and never a re-execution.
+      expect(ctx.use(loaderA)).toBe(pA);
+      expect(ctx.use(loaderB)).toBe(pB);
+      await expect(ctx.use(loaderA)).resolves.toEqual({ data: "A" });
+      await expect(ctx.use(loaderB)).resolves.toEqual({ data: "B" });
+      expect(loaderA).toHaveBeenCalledTimes(1);
+      expect(loaderB).toHaveBeenCalledTimes(1);
+
+      // A non-cached loader still passes through to the original ctx.use.
+      await expect(ctx.use(loaderC)).resolves.toEqual({ data: "C" });
+      expect(loaderC).toHaveBeenCalledTimes(1);
+    });
   });
 });
