@@ -79,6 +79,9 @@ import {
   ProductCartLoader,
 } from "../handlers/shop/loaders/index.js";
 
+// Actions (referenced by revalidate predicates via ctx.isAction — rename-safe)
+import * as ShopActions from "../handlers/shop/actions/shop.actions.js";
+
 // Checkout-specific cache with shorter TTL
 const checkoutCacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 10 },
@@ -121,9 +124,7 @@ export const shopPatterns = urls(
 
     // Global loaders
     loader(UserLoader),
-    loader(CartLoader, () => [
-      revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
-    ]),
+    loader(CartLoader, () => [revalidate((ctx) => ctx.isAction(ShopActions))]),
     loader(CategoriesLoader),
     loader(FeaturedProductsLoader),
 
@@ -159,8 +160,11 @@ export const shopPatterns = urls(
             loader(ProductLoader, () => [cache()]),
             loader(ProductCartLoader, () => [revalidate(() => true)]),
             loader(ModalRecommendationsLoader, () => [
-              revalidate(
-                ({ actionId }) => actionId?.includes("addToCart") ?? false,
+              revalidate((ctx) =>
+                ctx.isAction(
+                  ShopActions.addToCart,
+                  ShopActions.addToCartWithResult,
+                ),
               ),
             ]),
           ],

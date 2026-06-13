@@ -1,9 +1,4 @@
-import {
-  urls,
-  updateTag,
-  revalidateTag,
-  type ResponseHandlerContext,
-} from "@rangojs/router";
+import { urls, updateTag, revalidateTag } from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
@@ -96,7 +91,7 @@ export const urlpatterns = urls(
     // robots.txt (response route)
     path.text(
       "/robots.txt",
-      (ctx: ResponseHandlerContext) => {
+      (ctx) => {
         return new Response("User-agent: *\nAllow: /\nDisallow: /api/\n", {
           headers: { "Content-Type": "text/plain" },
         });
