@@ -45,10 +45,6 @@ function createLateHandlePushError(
   return error;
 }
 
-/**
- * Deep clone handle data to create a snapshot.
- * @internal
- */
 function cloneHandleData(data: HandleData): HandleData {
   const clone: HandleData = {};
   for (const handleName in data) {
@@ -205,11 +201,9 @@ export function createHandleStore(): HandleStore {
   return {
     track<T>(promise: Promise<T>): Promise<T> {
       inflightCount++;
-      // Use .then(onSettle, onSettle) instead of .finally() to avoid
-      // creating an unhandled rejection branch when the tracked promise
-      // rejects (e.g. error route handlers). .finally() re-throws the
-      // rejection on a new branch that nobody catches, which can crash
-      // the server process.
+      // Use .then() instead of .finally() to avoid creating an unhandled rejection
+      // branch when the promise rejects. .finally() re-throws on a new branch that
+      // can crash the process if not caught.
       const onSettle = () => {
         inflightCount--;
         notifyDrain();
@@ -255,42 +249,32 @@ export function createHandleStore(): HandleStore {
     },
 
     async *stream(): AsyncGenerator<HandleData, void, unknown> {
-      // Auto-seal: stream() is called after all track() registrations.
       sealInternal();
 
-      // Set up completion handler
       this.settled.then(() => {
         completed = true;
         signalEmission();
       });
 
-      // Initial small delay to batch rapid synchronous pushes
-      // This allows multiple handles pushing in quick succession to be batched
+      // Batch rapid synchronous pushes with initial delay
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      // If we already have data, yield the accumulated state
       if (Object.keys(data).length > 0) {
-        // Clear pending emissions since we're yielding current state
         pendingEmissions = [];
         const snapshot = cloneHandleData(data);
         yield snapshot;
       }
 
-      // Continue streaming on each push
       while (!completed) {
         await waitForEmission();
 
-        // Yield all pending emissions (yield latest only)
         if (pendingEmissions.length > 0) {
-          // Skip intermediate states, yield the latest
           const latest = pendingEmissions[pendingEmissions.length - 1];
           pendingEmissions = [];
           yield latest;
         }
       }
 
-      // Final yield only if there are pending emissions that weren't yielded
-      // (handles that pushed after our last yield but before completion)
       if (pendingEmissions.length > 0) {
         yield cloneHandleData(data);
       }
@@ -314,12 +298,11 @@ export function createHandleStore(): HandleStore {
         if (!data[handleName]) {
           data[handleName] = {};
         }
-        // Replace with replayed data (not append) to avoid handle bleeding between routes.
-        // When a cached segment is restored, its handles should replace any existing data
-        // for that segment, not accumulate on top of data from a different route.
+        // Replace (not append) to avoid handle bleeding between routes.
+        // Cached segment restoration should replace existing data for that
+        // segment, not accumulate on top of data from a different route.
         data[handleName][segmentId] = [...segmentHandles[handleName]];
       }
-      // Trigger emission for streaming
       pendingEmissions.push(cloneHandleData(data));
       signalEmission();
     },

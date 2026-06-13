@@ -32,15 +32,11 @@ export function transformRouter(
     const callStart = match.index;
     const parenPos = match.index + match[0].length - 1;
 
-    // Scope the $$id check to within this call's arguments only,
-    // not the entire remaining file.
     const closeParen = findMatchingParen(code, parenPos + 1);
     const callArgs = code.slice(parenPos + 1, closeParen);
 
-    // Skip if $$id is already present in this call
     if (callArgs.includes("$$id")) continue;
 
-    // Compute line number for this call
     const lineNumber = code.slice(0, callStart).split("\n").length;
     const hash = createHash("sha256")
       .update(`${filePath}:${lineNumber}`)
@@ -48,9 +44,6 @@ export function transformRouter(
       .slice(0, 8);
 
     changed = true;
-    // $$sourceFile uses the absolute path so that downstream consumers
-    // (virtual-module-codegen, runtime-discovery) can resolve gen file
-    // imports correctly via path.dirname / path.join.
     const sourceFilePath = absolutePath ?? filePath;
     const injected = ` $$id: "${hash}", $$sourceFile: "${sourceFilePath}", $$routeNames: ${routeNamesVar},`;
 
@@ -65,8 +58,6 @@ export function transformRouter(
 
   if (!changed) return null;
 
-  // Prepend the static import as the first line. MagicString tracks the
-  // offset so all downstream source maps remain correct.
   s.prepend(
     `import { NamedRoutes as ${routeNamesVar} } from "${routeNamesImport}";\n`,
   );
@@ -96,10 +87,6 @@ export function exposeRouterId(): Plugin {
     },
     transform(code, id) {
       if (!code.includes("createRouter")) return null;
-      // Accepts both @rangojs/router and @rangojs/router/server subpath.
-      // NOTE: detectImports in expose-id-utils has a stricter check that
-      // excludes /server for its router flag -- that's intentional since
-      // detectImports is only used in exposeInternalIds, not here.
       if (
         !/import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router(?:\/server)?["']/.test(
           code,

@@ -9,18 +9,10 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
-/**
- * Escape special RegExp characters in a string for safe interpolation
- * into new RegExp() patterns.
- */
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Encode route param values for path interpolation while preserving path
- * separators for wildcard params (splat-style values can include `/`).
- */
 export function encodePathParam(value: unknown): string {
   return String(value)
     .split("/")
@@ -28,11 +20,6 @@ export function encodePathParam(value: unknown): string {
     .join("/");
 }
 
-/**
- * Substitute route params into a pattern, stripping constraint and optional
- * syntax (:param(a|b)? -> value). Also handles wildcard params (*key).
- * Optional params not present in `params` are removed from the output.
- */
 export function substituteRouteParams(
   pattern: string,
   params: Record<string, string>,
@@ -41,17 +28,9 @@ export function substituteRouteParams(
   let result = pattern;
   let hadOmittedOptional = false;
 
-  // First pass: substitute provided params.
-  // Empty string on an optional placeholder is treated as omitted —
-  // caller-supplied params or `getParams()` shapes may pass `""` for an
-  // absent optional, so letting the second pass strip them keeps slash
-  // cleanup consistent. Empty string on required `:key` or wildcard
-  // `*key` still substitutes, matching prior behaviour.
   for (const [key, value] of Object.entries(params)) {
     const escaped = escapeRegExp(key);
     if (value === "") {
-      // Only replace required placeholders (negative lookahead for `?`);
-      // leave `:key?` for the second pass.
       result = result.replace(
         new RegExp(`:${escaped}(\\([^)]*\\))?(?!\\?)`),
         "",
@@ -66,13 +45,11 @@ export function substituteRouteParams(
     }
   }
 
-  // Second pass: strip remaining optional param placeholders not in params
   result = result.replace(/:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?\?/g, () => {
     hadOmittedOptional = true;
     return "";
   });
 
-  // Clean up slashes from omitted optional segments
   if (hadOmittedOptional) {
     const hadTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
     result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
@@ -82,10 +59,6 @@ export function substituteRouteParams(
   return result;
 }
 
-/**
- * Run an async function over items with bounded concurrency.
- * Errors propagate immediately and abort remaining work.
- */
 export async function runWithConcurrency<T>(
   items: T[],
   concurrency: number,
@@ -106,10 +79,6 @@ export async function runWithConcurrency<T>(
   await Promise.all(Array.from({ length: limit }, () => worker()));
 }
 
-/**
- * Group prerender entries by their concurrency setting so each group
- * can be rendered with the appropriate parallelism.
- */
 export function groupByConcurrency<T extends { concurrency: number }>(
   entries: T[],
 ): { concurrency: number; entries: T[] }[] {
@@ -129,10 +98,6 @@ export function groupByConcurrency<T extends { concurrency: number }>(
   }));
 }
 
-/**
- * Notify all routers' onError callbacks about a build-time error.
- * Uses a synthetic request since there is no real request during build.
- */
 export function notifyOnError(
   registry: Map<string, any>,
   error: unknown,

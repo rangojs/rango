@@ -1,9 +1,3 @@
-/**
- * Router Manifest Loading
- *
- * Handles lazy loading and validation of route manifests.
- */
-
 import { invariant, RouteNotFoundError } from "../errors";
 import { createRouteHelpers } from "../route-definition";
 import {
@@ -37,14 +31,6 @@ import { VERSION } from "@rangojs/router:version";
 // When VERSION changes, this module re-evaluates and the cache is recreated empty.
 const manifestModuleCache = new Map<string, Map<string, EntryData>>();
 
-/**
- * Load manifest from route entry with AsyncLocalStorage context
- * Handles lazy imports, unwrapping, and validation
- *
- * Results are cached at module level after first execution. Subsequent calls
- * for the same (routerId, mountIndex, routeKey, isSSR) within the same isolate
- * return cached data without re-executing the DSL handler.
- */
 /**
  * Clear the module-level manifest cache.
  * Called on HMR to ensure stale handler references are discarded.
@@ -98,20 +84,15 @@ export async function loadManifest(
   const storeSetupStart = performance.now();
   const Store = getContext().getOrCreateStore(routeKey);
 
-  // Set mount index in store for unique shortCode prefixes
   Store.mountIndex = mountIndex;
-
-  // Set isSSR flag so loading() can check if we're in SSR
   Store.isSSR = isSSR;
 
-  // Attach metrics store to context if provided
   if (metricsStore) {
     Store.metrics = metricsStore;
   }
 
   pushMetric?.("manifest:store-setup", storeSetupStart);
 
-  // Clear manifest before rebuilding to prevent stale entry mutations
   const clearStart = performance.now();
   Store.manifest.clear();
   pushMetric?.("manifest:clear", clearStart);
@@ -199,20 +180,16 @@ export async function loadManifest(
           return lazyPatterns.handler();
         }
 
-        // Wrap handler execution in root layout so routes get correct parent
-        // This ensures all routes are registered with the layout as their parent
         let promiseResult: Promise<any> | null = null;
         const wrappedItems = helpers.layout(MapRootLayout, () => {
           const result = entry.handler();
           if (result instanceof Promise) {
-            // Lazy handler detected - capture promise for async handling
             promiseResult = result;
-            return []; // Return empty, we'll discard this wrapped result
+            return [];
           }
           return result;
         });
 
-        // Handle lazy (Promise-based) handlers
         if (promiseResult !== null) {
           const load = await (promiseResult as Promise<any>);
           if (
@@ -246,7 +223,6 @@ export async function loadManifest(
           );
         }
 
-        // Inline handler - routes were registered with correct parent inside layout
         return [wrappedItems].flat(3);
       },
     );

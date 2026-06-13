@@ -71,10 +71,13 @@ function scheduleDrain(): void {
       Promise.race([waitForViewportImages(), wait(IMAGE_WAIT_TIMEOUT)]),
     )
     .then(() => {
-      drainScheduled = false;
-      // Stale drain: a cancel/abort happened while we were waiting.
-      // A fresh scheduleDrain will be called by whatever enqueues next.
+      // Stale drain: a cancel/abort happened while we were waiting, and a fresh
+      // scheduleDrain may already own drainScheduled for the new generation.
+      // Bail WITHOUT clearing the flag so we don't clobber the live wait's
+      // single-in-flight-drain coalescing (clearing it here would let the next
+      // enqueue start a third overlapping wait).
       if (gen !== drainGeneration) return;
+      drainScheduled = false;
       if (queue.length > 0) drain();
     });
 }

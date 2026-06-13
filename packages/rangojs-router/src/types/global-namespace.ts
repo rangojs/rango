@@ -20,26 +20,16 @@
 declare global {
   namespace Rango {
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
-    interface Env {
-      // Empty by default - users augment with their bindings (e.g., { DB: D1Database })
-    }
+    interface Env {}
 
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
-    interface Vars {
-      // Empty by default - users augment with their variables (e.g., { user?: User })
-    }
+    interface Vars {}
 
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
-    interface RegisteredRoutes {
-      // Empty by default - users augment with their merged route maps for type-safe href()
-      // Values are string (pattern) for RSC routes, or { path: string; response: T } for response routes
-    }
+    interface RegisteredRoutes {}
 
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
-    interface GeneratedRouteMap {
-      // Empty by default - populated by generated named-routes.gen.ts
-      // Maps route names to URL pattern strings for Handler<"routeName"> support
-    }
+    interface GeneratedRouteMap {}
   }
 }
 

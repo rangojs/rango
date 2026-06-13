@@ -14,18 +14,6 @@ export interface CreateTestRequestOptions {
   headers?: Record<string, string>;
 }
 
-/**
- * Create a test request with specific host and cookies
- *
- * @example
- * ```ts
- * const request = createTestRequest({
- *   host: 'admin.example.com',
- *   path: '/dashboard',
- *   cookies: { 'x-requested-host': 'api.example.com' }
- * });
- * ```
- */
 export function createTestRequest(options: CreateTestRequestOptions): Request {
   const {
     host,
@@ -38,7 +26,6 @@ export function createTestRequest(options: CreateTestRequestOptions): Request {
   const url = `http://${host}${path}`;
   const requestHeaders = new Headers(headers);
 
-  // Add cookies if provided
   if (Object.keys(cookies).length > 0) {
     const cookieString = Object.entries(cookies)
       .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
@@ -52,9 +39,6 @@ export function createTestRequest(options: CreateTestRequestOptions): Request {
   });
 }
 
-// Try each pattern (a single pattern or any in an array) against the already
-// parsed host + path. Shared by testPattern and matchesHost so the
-// normalize-and-loop lives once.
 function matchPatterns(
   pattern: string | string[],
   hostname: string,

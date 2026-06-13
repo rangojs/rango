@@ -237,10 +237,6 @@ export interface EventController {
   hadAnyConcurrentActions(): boolean;
 }
 
-// ============================================================================
-// Default States
-// ============================================================================
-
 const DEFAULT_ACTION_STATE: TrackedActionState = {
   state: "idle",
   actionId: null,
@@ -261,16 +257,12 @@ function matchesActionId(
   entryActionId: string,
 ): boolean {
   if (subscriptionId.includes("#")) {
-    // Full ID: exact match
     return subscriptionId === entryActionId;
   }
-  // Action name only: suffix match (matches "anything#actionName")
   return entryActionId.endsWith(`#${subscriptionId}`);
 }
 
-// Coalesce rapid notifications into one microtask-deferred fan-out; the
-// setTimeout(0) batching prevents render storms. Each notifier owns its timer
-// so listener kinds coalesce independently.
+// Batch rapid notifications into one microtask to prevent render storms
 function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   return () => {
@@ -282,13 +274,6 @@ function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
   };
 }
 
-// ============================================================================
-// Implementation
-// ============================================================================
-
-/**
- * Configuration for creating an event controller
- */
 export interface EventControllerConfig {
   initialLocation?: NavigationLocation;
 }
@@ -306,43 +291,27 @@ export interface EventControllerConfig {
 export function createEventController(
   config?: EventControllerConfig,
 ): EventController {
-  // ========================================================================
-  // Source of Truth
-  // ========================================================================
-
-  // Current navigation in progress (null = idle)
   let currentNavigation: NavigationEntry | null = null;
 
-  // All in-flight actions (keyed by unique instance ID)
   const inflightActions = new Map<string, ActionEntry>();
 
-  // Committed location (updated when navigation completes)
   let location: NavigationLocation =
     config?.initialLocation ??
     (typeof window !== "undefined"
       ? new URL(window.location.href)
       : new URL("/", "http://localhost"));
 
-  // Track if any concurrent actions occurred (for consolidation)
   let hadAnyConcurrentActions = false;
 
-  // Track segments revalidated by concurrent actions
   const concurrentRevalidatedSegments = new Set<string>();
 
-  // Active streaming count (independent of navigation/action lifecycle)
   let activeStreamCount = 0;
 
-  // Handle data from RSC payload
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
   let routeSegmentIds: string[] = [];
 
-  // Merged route params from current match
   let routeParams: Record<string, string> = {};
-
-  // ========================================================================
-  // Listeners
-  // ========================================================================
 
   const stateListeners = new Set<StateListener>();
   const actionListeners = new Map<string, Set<ActionStateListener>>();
@@ -350,7 +319,6 @@ export function createEventController(
 
   const notify = makeDebouncedNotifier(stateListeners);
 
-  // Debounce per-action notifications
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
   function notifyAction(actionId: string) {
@@ -362,8 +330,6 @@ export function createEventController(
       actionId,
       setTimeout(() => {
         actionNotifyTimeouts.delete(actionId);
-        // Notify all listeners whose subscription ID matches this action
-        // This includes exact matches and suffix matches (e.g., "addToCart" matches "hash#addToCart")
         for (const [subscriptionId, listeners] of actionListeners) {
           if (matchesActionId(subscriptionId, actionId)) {
             const state = getActionState(subscriptionId);
@@ -376,12 +342,7 @@ export function createEventController(
 
   const notifyHandles = makeDebouncedNotifier(handleListeners);
 
-  // ========================================================================
-  // Derived State
-  // ========================================================================
-
   function getState(): DerivedNavigationState {
-    // Build inflight actions list (for compatibility with existing API)
     const inflightActionsList: InflightAction[] = [...inflightActions.values()]
       .filter((a) => a.phase !== "settling")
       .map((a) => ({
@@ -391,15 +352,12 @@ export function createEventController(
         startedAt: a.startedAt,
       }));
 
-    // State: loading if navigation OR actions are in progress
-    // Background revalidations (skipLoadingState) don't affect visible state
     const hasActiveActions = inflightActionsList.length > 0;
     const isVisibleNavigation =
       currentNavigation !== null &&
       !currentNavigation.options?.skipLoadingState;
     const state = isVisibleNavigation || hasActiveActions ? "loading" : "idle";
 
-    // Streaming: true if any active streams (navigation or action) or loading
     const isStreaming = activeStreamCount > 0 || state === "loading";
 
     return {
@@ -421,8 +379,6 @@ export function createEventController(
   }
 
   function getActionState(actionId: string): TrackedActionState {
-    // Prefer the most-recent non-settling entry; fall back to most-recent
-    // settling so a just-settled action's result/error stays readable.
     const entry = [...inflightActions.values()]
       .filter((a) => matchesActionId(actionId, a.actionId))
       .reduce<ActionEntry | undefined>((best, a) => {
@@ -437,7 +393,6 @@ export function createEventController(
       return { ...DEFAULT_ACTION_STATE };
     }
 
-    // Derive state from phase
     let state: ActionLifecycleState;
     switch (entry.phase) {
       case "fetching":
@@ -880,41 +835,4 @@ export function createEventController(
     getInflightActions: () => inflightActions,
     hadAnyConcurrentActions: () => hadAnyConcurrentActions,
   };
-}
-
-// ============================================================================
-// Singleton
-// ============================================================================
-
-let controllerInstance: EventController | null = null;
-
-/**
- * Initialize the global event controller
- */
-export function initEventController(
-  config?: EventControllerConfig,
-): EventController {
-  if (!controllerInstance) {
-    controllerInstance = createEventController(config);
-  }
-  return controllerInstance;
-}
-
-/**
- * Get the global event controller
- */
-export function getEventController(): EventController {
-  if (!controllerInstance) {
-    throw new Error(
-      "Event controller not initialized. Call initEventController first.",
-    );
-  }
-  return controllerInstance;
-}
-
-/**
- * Reset the controller instance (for testing)
- */
-export function resetEventController(): void {
-  controllerInstance = null;
 }

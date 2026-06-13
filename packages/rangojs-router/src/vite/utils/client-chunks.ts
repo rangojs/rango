@@ -1,9 +1,3 @@
-// Resolution of the public `clientChunks` option into the callback shape that
-// @vitejs/plugin-rsc expects. See plugin-types.ts (ClientChunks) and
-// docs/client-chunking.md for the contract. The mechanism: a distinct returned
-// name yields a distinct, dynamically-imported client chunk, independent of how
-// the RSC/server build chunked the importing modules.
-
 import type { ClientChunkMeta, ClientChunks } from "../plugin-types.js";
 import { createRangoDebugger, NS } from "../debug.js";
 import { hashRefKey } from "../plugins/client-ref-hashing.js";

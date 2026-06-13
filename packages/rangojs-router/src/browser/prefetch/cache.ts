@@ -31,6 +31,12 @@
  *
  * Replaces the previous browser HTTP cache approach which was unreliable
  * due to response draining race conditions and browser inconsistencies.
+ *
+ * State here lives in module-level singletons (cache, inflight, generation,
+ * cacheTTL, etc.) rather than a per-instance factory. This is correct because
+ * exactly one router is live per document — an SPA navigation crossing a
+ * host-router boundary forces a full document reload — so the singletons are
+ * effectively per-document. Unit tests reset them via clearPrefetchCache().
  */
 
 import { abortAllPrefetches } from "./queue.js";
@@ -61,9 +67,6 @@ export interface DecodedPrefetch {
   scope: "source" | "wildcard";
 }
 
-// Default TTL: 5 minutes. Overridden by initPrefetchCache() with
-// the server-configured prefetchCacheTTL from router options.
-// 0 disables the in-memory cache entirely.
 let cacheTTL = 300_000;
 
 /**
@@ -92,41 +95,12 @@ interface PrefetchCacheEntry {
 const cache = new Map<string, PrefetchCacheEntry>();
 const inflight = new Set<string>();
 
-/**
- * In-flight promise map. When a prefetch fetch+decode is in progress, its
- * Promise<DecodedPrefetch | null> is stored here so navigation can await it
- * instead of starting a duplicate request. Resolves to null when the prefetch
- * failed, was aborted, or carried a control header (reload/redirect) that the
- * navigation must re-fetch to act on.
- */
 const inflightPromises = new Map<string, Promise<DecodedPrefetch | null>>();
 
-/**
- * Alias map for in-flight promises registered under multiple keys (see
- * dual inflight in prefetch/fetch.ts). Records each key's sibling set so
- * that consuming or clearing any one key atomically removes every alias —
- * guaranteeing a single consumer for the shared decode.
- */
 const inflightAliases = new Map<string, string[]>();
 
-/**
- * Keys whose in-flight prefetch promise was adopted by a navigation (via
- * `consumeInflightPrefetch`). A `DecodedPrefetch` carries a single-use
- * `metadata.handles` async generator; the adopter drains it. The same entry is
- * also published to the `cache` map by `storePrefetch` when the fetch resolves
- * — which runs AFTER adoption (adoption only succeeds while the fetch is still
- * in flight, so the entry is not yet cached). Without this guard the adopted,
- * now-drained entry would be left in the cache and served to a later navigation
- * whose handle generator yields nothing, silently dropping that route's
- * breadcrumbs. Recording the adopted keys lets `storePrefetch` skip publishing
- * them, keeping the existing one-time-consumption contract (a consumed prefetch
- * is gone; the next navigation re-fetches).
- */
 const adoptedKeys = new Set<string>();
 
-// Generation counter incremented on each clearPrefetchCache(). Fetches that
-// started before a clear carry a stale generation and must not store their
-// response (the data may be stale due to a server action invalidation).
 let generation = 0;
 
 /**
@@ -306,9 +280,6 @@ export function markPrefetchInflight(key: string): void {
   inflight.add(key);
 }
 
-/**
- * Store the in-flight Promise for a prefetch so navigation can reuse it.
- */
 export function setInflightPromise(
   key: string,
   promise: Promise<DecodedPrefetch | null>,
@@ -337,20 +308,10 @@ export function clearPrefetchInflight(key: string): void {
     inflight.delete(k);
     inflightPromises.delete(k);
     inflightAliases.delete(k);
-    // Clear any adopted marker too, so a fetch that failed before storePrefetch
-    // (the marker's normal consumer) does not strand it across the next prefetch.
     adoptedKeys.delete(k);
   });
 }
 
-/**
- * Invalidate all prefetch state. Called when server actions mutate data.
- * Clears the in-memory cache, cancels in-flight prefetches, and rotates
- * the Rango state key so CDN-cached responses are also invalidated.
- *
- * Uses abortAllPrefetches (hard cancel) because in-flight responses
- * may contain stale data after a mutation.
- */
 export function clearPrefetchCache(): void {
   generation++;
   inflight.clear();

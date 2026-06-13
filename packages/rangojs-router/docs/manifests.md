@@ -19,7 +19,9 @@ virtual:rsc-router/routes-manifest (load hook)
   |-- imports each .named-routes.gen.js
   |-- calls setCachedManifest(__flat(merged))
   |-- calls setRouterManifest(routerId, __flat(perRouter))
-  |-- inlines trie, precomputed entries, loader registrations
+  |-- registers a lazy per-router loader (registerRouterManifestLoader)
+  |     -> import("virtual:rsc-router/routes-manifest/<routerId>")
+  |        lazily supplies trie + precomputed entries (NOT inlined here)
   |
   v
 Runtime: getGlobalRouteMap() / getRouterManifest(id) -> reverse()
@@ -87,11 +89,20 @@ function __flat(r) {
   return o;
 }
 
+clearAllRouterData();
 setCachedManifest(__flat(_r0));
 setRouterManifest("router_abc123", __flat(_r0));
-setPrecomputedEntries([...]);   // inlined, don't change during HMR
-setRouteTrie({...});            // inlined, don't change during HMR
+// Trie + precomputed entries are NOT inlined in this eager module
+// (Bundle Hygiene rule #1). A lazy per-router chunk supplies them on demand:
+registerRouterManifestLoader("router_abc123", () =>
+  import("virtual:rsc-router/routes-manifest/router_abc123"));
 ```
+
+The eager module carries only the flat route maps (for `reverse()`); the trie and
+precomputed match entries live in the lazy `virtual:rsc-router/routes-manifest/<routerId>`
+chunk, populated via `await ensureRouterManifest(routerId)` before any matching.
+Keeping that data in exactly one (lazy) chunk is a hard constraint — see CLAUDE.md
+"Bundle Hygiene" rule #1; do not add `setRouteTrie`/`setPrecomputedEntries` here.
 
 The `import` of the gen file creates a dependency in Vite's module graph.
 When the gen file changes, Vite invalidates the virtual module automatically.

@@ -1,4 +1,3 @@
-// Response types and symbols
 export {
   RESPONSE_TYPE,
   type ResponseHandler,
@@ -8,7 +7,6 @@ export {
   type ResponseHandlerContext,
 } from "./response-types.js";
 
-// Pattern types
 export type {
   UnnamedRoute,
   LocalOnlyInclude,
@@ -17,7 +15,6 @@ export type {
   IncludeOptions,
 } from "./pattern-types.js";
 
-// Type extraction utilities
 export type {
   ExtractRoutes,
   ExtractResponses,
@@ -25,7 +22,6 @@ export type {
   RouteResponse,
 } from "./type-extraction.js";
 
-// Path helper types
 export type {
   PathFn,
   ResponsePathFn,
@@ -35,10 +31,8 @@ export type {
   PathHelpers,
 } from "./path-helper-types.js";
 
-// Main entry point
 export { urls } from "./urls-function.js";
 
-// Re-exports from route-types
 export type {
   AllUseItems,
   IncludeItem,

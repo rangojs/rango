@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readThroughItem } from "../read-through-swr.js";
 import type { CacheItemResult, CacheItemOptions } from "../types.js";
+import type { CacheErrorCategory } from "../cache-error.js";
 
 function createMockStore(cached: CacheItemResult | null = null) {
   return {
@@ -15,6 +16,17 @@ const execute = vi.fn(async () => "fresh-data");
 const storeOptions: CacheItemOptions = { ttl: 60, swr: 300 };
 
 describe("readThroughItem", () => {
+  // The engine is LOUD-but-non-fatal: degradation paths report via console and
+  // the host reporter. Suppress console noise here; the reporter is asserted
+  // explicitly in the "error observability" block.
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    errSpy.mockRestore();
+  });
+
   describe("fresh hit", () => {
     it("returns deserialized cached data", async () => {
       const store = createMockStore({
@@ -176,7 +188,7 @@ describe("readThroughItem", () => {
       expect(onStale).toHaveBeenCalledWith(cached);
     });
 
-    it("silently handles background revalidation errors", async () => {
+    it("does not throw when background revalidation fails", async () => {
       const store = createMockStore({
         value: "ser:stale-data",
         shouldRevalidate: true,
@@ -332,7 +344,7 @@ describe("readThroughItem", () => {
       expect(onCached).not.toHaveBeenCalled();
     });
 
-    it("silently handles cache write errors", async () => {
+    it("does not throw when the cache write fails", async () => {
       const store = createMockStore(null);
       store.setItem.mockRejectedValue(new Error("write failed"));
 
@@ -406,6 +418,92 @@ describe("readThroughItem", () => {
       });
 
       expect(result).toBe("fallback-data");
+    });
+  });
+
+  describe("error observability (LOUD)", () => {
+    // Degradation paths must report through the host's CacheErrorReporter so
+    // consumers observe loader-cache degradation via onError (the package-wide
+    // "cache errors are LOUD" contract). Each path still degrades gracefully.
+    function reporterHost(extra?: {
+      waitUntil?: (fn: () => Promise<void>) => void;
+    }) {
+      const reported: CacheErrorCategory[] = [];
+      return {
+        reported,
+        host: {
+          ...extra,
+          _reportBackgroundError: (_e: unknown, category: CacheErrorCategory) =>
+            reported.push(category),
+        },
+      };
+    }
+
+    it("reports cache-corrupt when a stored entry fails to deserialize", async () => {
+      const store = createMockStore({
+        value: "corrupt",
+        shouldRevalidate: false,
+      });
+      const failDeserialize = vi.fn().mockRejectedValue(new Error("bad data"));
+      const { host, reported } = reporterHost();
+
+      const result = await readThroughItem({
+        ...store,
+        key: "k",
+        execute: vi.fn(async () => "fresh-data"),
+        serialize,
+        deserialize: failDeserialize,
+        storeOptions,
+        host,
+      });
+
+      expect(result).toBe("fresh-data"); // still degrades to fresh
+      expect(reported).toEqual(["cache-corrupt"]);
+    });
+
+    it("reports stale-revalidation when the background refresh fails", async () => {
+      const store = createMockStore({
+        value: "ser:stale-data",
+        shouldRevalidate: true,
+      });
+      const bgTasks: Array<() => Promise<void>> = [];
+      const { host, reported } = reporterHost({
+        waitUntil: (fn) => bgTasks.push(fn),
+      });
+
+      const result = await readThroughItem({
+        ...store,
+        key: "k",
+        execute: vi.fn().mockRejectedValue(new Error("boom")),
+        serialize,
+        deserialize,
+        storeOptions,
+        host,
+      });
+
+      expect(result).toBe("stale-data");
+      expect(reported).toEqual([]); // not yet — refresh runs in background
+      await bgTasks[0]();
+      expect(reported).toEqual(["stale-revalidation"]);
+    });
+
+    it("reports cache-write when the miss-path write fails", async () => {
+      const store = createMockStore(null);
+      store.setItem.mockRejectedValue(new Error("write failed"));
+      const { host, reported } = reporterHost();
+
+      const result = await readThroughItem({
+        ...store,
+        key: "k",
+        execute: vi.fn(async () => "fresh-data"),
+        serialize,
+        deserialize,
+        storeOptions,
+        host,
+      });
+
+      expect(result).toBe("fresh-data");
+      expect(reported).toEqual(["cache-write"]);
     });
   });
 });

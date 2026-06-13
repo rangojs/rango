@@ -441,10 +441,8 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   cache: {
     (): CacheItem;
     (children: () => UseItems<AllUseItems>): CacheItem;
-    (profileName: string): CacheItem;
-    (profileName: string, use: () => UseItems<AllUseItems>): CacheItem;
     (
-      options: PartialCacheOptions | false,
+      options: PartialCacheOptions<TEnv> | false,
       use?: () => UseItems<AllUseItems>,
     ): CacheItem;
   };
@@ -497,6 +495,8 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param children - Optional callback returning child routes to wrap
    */
   transition: {
+    (): TransitionItem;
+    (children: () => UseItems<AllUseItems>): TransitionItem;
     (config: TransitionConfig): TransitionItem;
     (
       config: TransitionConfig,

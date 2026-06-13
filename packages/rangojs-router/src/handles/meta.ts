@@ -35,9 +35,6 @@ import type {
   UnsetDescriptor,
 } from "../router/types.js";
 
-/**
- * Type guard for unset descriptor
- */
 function isUnsetDescriptor(
   descriptor: MetaDescriptor,
 ): descriptor is UnsetDescriptor {
@@ -49,9 +46,6 @@ function isUnsetDescriptor(
   );
 }
 
-/**
- * Type guard for title descriptor (any form)
- */
 function isTitleDescriptor(
   descriptor: MetaDescriptor,
 ): descriptor is { title: TitleDescriptor } {
@@ -62,9 +56,6 @@ function isTitleDescriptor(
   );
 }
 
-/**
- * Type guard for title template descriptor
- */
 function isTitleTemplate(
   title: TitleDescriptor,
 ): title is { template: string; default: string } {
@@ -76,21 +67,13 @@ function isTitleTemplate(
   );
 }
 
-/**
- * Type guard for absolute title descriptor
- */
 function isAbsoluteTitle(
   title: TitleDescriptor,
 ): title is { absolute: string } {
   return typeof title === "object" && title !== null && "absolute" in title;
 }
 
-/**
- * Get a unique key for a meta descriptor for deduplication.
- * Returns undefined for descriptors that shouldn't be deduplicated.
- */
 function getMetaKey(descriptor: MetaDescriptor): string | undefined {
-  // Skip unset descriptors - they are processed separately
   if (isUnsetDescriptor(descriptor)) {
     return undefined;
   }
@@ -110,13 +93,10 @@ function getMetaKey(descriptor: MetaDescriptor): string | undefined {
     return `httpEquiv:${descriptor.httpEquiv}`;
   }
   if ("script:ld+json" in descriptor) {
-    // JSON-LD scripts can have multiple, don't dedupe by default
     return undefined;
   }
   if ("tagName" in descriptor) {
-    // For link tags, dedupe by rel if present
     if (descriptor.tagName === "link" && "rel" in descriptor) {
-      // Some link rels should be unique (canonical), others not (stylesheet)
       const uniqueRels = ["canonical", "icon", "apple-touch-icon"];
       if (uniqueRels.includes(descriptor.rel as string)) {
         return `link:${descriptor.rel}`;
@@ -136,9 +116,6 @@ const defaultMetaDescriptors: MetaDescriptor[] = [
   { name: "viewport", content: "width=device-width, initial-scale=1" },
 ];
 
-/**
- * Helper to add or replace a descriptor in the result array
- */
 function addOrReplace(
   result: MetaDescriptor[],
   keyToIndex: Map<string, number>,
@@ -155,9 +132,6 @@ function addOrReplace(
   }
 }
 
-/**
- * Helper to update indices after removing an element
- */
 function updateIndicesAfterRemoval(
   keyToIndex: Map<string, number>,
   removedIndex: number,
@@ -169,17 +143,11 @@ function updateIndicesAfterRemoval(
   }
 }
 
-/**
- * Collect function for Meta handle.
- * Includes default meta descriptors, then deduplicates by key with later routes overriding earlier ones.
- * Supports title templates, absolute titles, and unset descriptors.
- */
 function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
   const result: MetaDescriptor[] = [];
   const keyToIndex = new Map<string, number>();
   let titleTemplate: string | undefined;
 
-  // Add defaults first so they can be overridden
   for (const descriptor of defaultMetaDescriptors) {
     const key = getMetaKey(descriptor);
     if (key !== undefined) {
@@ -190,7 +158,6 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
 
   for (const descriptors of segments) {
     for (const descriptor of descriptors) {
-      // Handle unset descriptors
       if (isUnsetDescriptor(descriptor)) {
         const keyToRemove = descriptor.unset;
         if (keyToIndex.has(keyToRemove)) {
@@ -202,14 +169,11 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
         continue;
       }
 
-      // Handle title descriptors with template/absolute support
       if (isTitleDescriptor(descriptor)) {
         const titleValue = descriptor.title;
 
         if (isTitleTemplate(titleValue)) {
-          // Store template for subsequent title descriptors in child segments
           titleTemplate = titleValue.template;
-          // Set the default title
           addOrReplace(
             result,
             keyToIndex,
@@ -220,7 +184,6 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
         }
 
         if (isAbsoluteTitle(titleValue)) {
-          // Absolute title bypasses any template
           addOrReplace(
             result,
             keyToIndex,
@@ -230,7 +193,6 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
           continue;
         }
 
-        // String title - apply template if one exists
         const finalTitle = titleTemplate
           ? titleTemplate.replace("%s", titleValue as string)
           : titleValue;
@@ -243,7 +205,6 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
         continue;
       }
 
-      // Handle all other descriptors
       const key = getMetaKey(descriptor);
       addOrReplace(result, keyToIndex, descriptor, key);
     }

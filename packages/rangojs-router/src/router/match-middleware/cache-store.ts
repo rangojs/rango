@@ -123,21 +123,14 @@ export function withCacheStore<TEnv>(
   ): AsyncGenerator<ResolvedSegment> {
     const ms = ctx.metricsStore;
 
-    // Collect all segments while passing them through
     const allSegments: ResolvedSegment[] = [];
     for await (const segment of source) {
       allSegments.push(segment);
       yield segment;
     }
 
-    // Measure own work only (after source iteration completes)
     const ownStart = performance.now();
 
-    // Skip caching if:
-    // 1. Cache miss but cache scope is disabled
-    // 2. This is an action (actions don't cache)
-    // 3. Cache was already hit (no need to re-cache)
-    // 4. Non-GET request (only cache GET requests)
     if (
       !ctx.cacheScope?.enabled ||
       ctx.isAction ||
@@ -162,13 +155,8 @@ export function withCacheStore<TEnv>(
       createHandleStore,
     } = getRouterContext<TEnv>();
 
-    // Combine main segments with intercept segments
     const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
 
-    // Check if any non-loader segments have null components from revalidation
-    // skip (client already had them). Segments where the handler intentionally
-    // returned null are not revalidation skips — re-rendering them will still
-    // produce null, so proactive caching would be wasted work.
     const hasNullComponents = allSegmentsToCache.some(
       (s) =>
         s.component === null &&
@@ -184,10 +172,7 @@ export function withCacheStore<TEnv>(
       ? getOrCreateRequestId(ctx.request)
       : undefined;
 
-    // Register onResponse callback to skip caching for non-200 responses
-    // Note: error/notFound status codes are set elsewhere (not caching-specific)
     requestCtx.onResponse((response) => {
-      // Only cache successful responses
       if (response.status !== 200) {
         debugLog("cacheStore", "skipping cache for non-200 response", {
           status: response.status,
@@ -197,10 +182,7 @@ export function withCacheStore<TEnv>(
       }
 
       if (hasNullComponents) {
-        // Proactive caching: render all segments fresh in background
-        // This ensures cache has complete components for future requests
         requestCtx.waitUntil(async () => {
-          // Prevent background metrics from polluting foreground timeline.
           const savedMetrics = ctx.Store.metrics;
           ctx.Store.metrics = undefined;
 
@@ -208,15 +190,9 @@ export function withCacheStore<TEnv>(
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
           });
-          // Swap to a fresh HandleStore so handle.push() calls from
-          // proactive resolution are captured (not silenced). The original
-          // store's stream is already sent by waitUntil time.
-          // cacheRoute reads from requestCtx._handleStore, so this ensures
-          // complete handle data (e.g. breadcrumbs) is cached.
           const originalHandleStore = requestCtx._handleStore;
           requestCtx._handleStore = createHandleStore();
           try {
-            // Create fresh context for proactive caching
             const proactiveHandlerContext = createHandlerContext(
               ctx.matched.params,
               ctx.request,
@@ -231,12 +207,8 @@ export function withCacheStore<TEnv>(
             );
             const proactiveLoaderPromises = new Map<string, Promise<any>>();
 
-            // Use normal loader access so handle data is captured
             setupLoaderAccess(proactiveHandlerContext, proactiveLoaderPromises);
 
-            // Re-resolve ALL segments without revalidation.
-            // Skip DSL loaders — they are never cached (cacheRoute filters them)
-            // and are always resolved fresh on each request.
             const Store = ctx.Store;
             const freshSegments = await Store.run(() =>
               resolveAllSegments(
@@ -249,7 +221,6 @@ export function withCacheStore<TEnv>(
               ),
             );
 
-            // Also resolve intercept segments fresh if applicable
             let freshInterceptSegments: ResolvedSegment[] = [];
             if (ctx.interceptResult) {
               freshInterceptSegments = await Store.run(() =>
@@ -301,8 +272,6 @@ export function withCacheStore<TEnv>(
           }
         });
       } else {
-        // All segments have components - cache directly
-        // Schedule caching in waitUntil since cacheRoute is now async (key resolution)
         if (INTERNAL_RANGO_DEBUG) {
           console.log(
             `[RSC CacheStore][req:${reqId}] Direct cache path: scheduling cacheRoute for ${ctx.pathname} (${allSegmentsToCache.length} segments, hasNullComponents=${hasNullComponents})`,

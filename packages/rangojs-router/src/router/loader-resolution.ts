@@ -19,7 +19,6 @@ import type {
   ErrorBoundaryFallbackProps,
   ErrorInfo,
 } from "../types";
-import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, collectHandleData, type Handle } from "../handle.js";
 import { withDefer } from "../defer.js";
 import { buildHandleSnapshot } from "../server/handle-store.js";
@@ -72,7 +71,9 @@ export function wrapLoaderWithErrorHandling<T>(
   ) => ErrorInfo,
   onError?: LoaderErrorCallback,
 ): Promise<LoaderDataResult<T>> {
-  // Extract loader name from segmentId (format: "M1L0D0.loaderName")
+  // Extract the trailing token from segmentId (format: "<shortCode>D<i>.<loaderId>").
+  // The token is the loader's $$id (hash#export in prod, pathfrag#export in dev),
+  // not a clean display name.
   const loaderName = segmentId.split(".").pop() || "unknown";
 
   return Promise.resolve(promise)

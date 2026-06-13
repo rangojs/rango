@@ -243,20 +243,19 @@ export async function discoverRouters(
     // Flatten prefix tree leaf nodes into precomputed entries.
     // Leaf nodes (no children) can have their routes used directly by
     // evaluateLazyEntry() without running the handler at runtime.
-    flattenLeafEntries(
-      manifest.prefixTree,
-      manifest.routeManifest,
-      newMergedPrecomputedEntries,
-    );
-
-    // Store per-router manifest and precomputed entries for isolated virtual modules.
-    newPerRouterManifestDataMap.set(id, manifest.routeManifest);
+    // Walk once into a per-router array, then fold it into the merged array;
+    // the merged and per-router entries are identical, so a second walk is
+    // redundant. Append order is preserved within and across routers.
     const routerPrecomputed: PrecomputedEntry[] = [];
     flattenLeafEntries(
       manifest.prefixTree,
       manifest.routeManifest,
       routerPrecomputed,
     );
+    newMergedPrecomputedEntries.push(...routerPrecomputed);
+
+    // Store per-router manifest and precomputed entries for isolated virtual modules.
+    newPerRouterManifestDataMap.set(id, manifest.routeManifest);
     newPerRouterPrecomputedMap.set(id, routerPrecomputed);
 
     console.log(

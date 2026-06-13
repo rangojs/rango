@@ -85,9 +85,19 @@ export function redirect(
   }
 
   // Auto-prefix root-relative URLs with basename for app-local redirects.
+  // Treat the URL as already-prefixed when the basename is followed by a path
+  // separator, a query, a fragment, or end-of-string, so "/admin?tab=x" and
+  // "/admin#frag" are not double-prefixed into "/admin/admin?tab=x".
   const bn = _getRequestContext()?._basename;
   let resolvedUrl = url;
-  if (bn && url.startsWith("/") && !url.startsWith(bn + "/") && url !== bn) {
+  if (
+    bn &&
+    url.startsWith("/") &&
+    url !== bn &&
+    !url.startsWith(bn + "/") &&
+    !url.startsWith(bn + "?") &&
+    !url.startsWith(bn + "#")
+  ) {
     resolvedUrl = url === "/" ? bn : bn + url;
   }
 

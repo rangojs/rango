@@ -184,6 +184,16 @@ ${lazyImports.join(",\n")}
     async buildStart() {
       if (!isBuild) return;
 
+      // The loader pre-scan walks and reads the entire project, but the
+      // loaderRegistry it populates is consumed only by the RSC loader-manifest
+      // virtual module (and the transform hook already gates its registry writes
+      // with isRscEnv). plugin-rsc runs ~5 build passes (rsc-scan, ssr-scan, rsc,
+      // client, ssr) over this single shared plugin instance; without this gate
+      // the full-tree I/O ran on every pass with no consumer on the non-RSC
+      // ones. Skip only when the environment is known and not RSC, so an
+      // unavailable environment still falls through (no empty registry).
+      if (this.environment && this.environment.name !== "rsc") return;
+
       const fs = await import("node:fs/promises");
 
       const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage"]);

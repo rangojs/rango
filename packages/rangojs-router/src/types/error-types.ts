@@ -14,19 +14,19 @@
  * - "unknown": Fallback for unclassified errors (not currently invoked)
  */
 export type ErrorPhase =
-  | "routing" // During route matching
-  | "manifest" // During manifest loading (reserved, not currently invoked)
-  | "middleware" // During middleware execution (errors propagate to handler phase)
-  | "loader" // During loader execution
-  | "handler" // During route/layout handler execution
-  | "rendering" // During RSC/SSR rendering (SSR handler uses separate callback)
-  | "action" // During server action execution
-  | "revalidation" // During revalidation evaluation
-  | "cache" // During "use cache" background operations (stale revalidation, async cache writes)
-  | "prerender" // During build-time pre-rendering (Vite closeBundle)
-  | "static" // During build-time static handler rendering (Vite closeBundle)
-  | "origin" // During cross-origin request validation (CSRF protection)
-  | "unknown"; // Fallback for unclassified errors
+  | "routing"
+  | "manifest"
+  | "middleware"
+  | "loader"
+  | "handler"
+  | "rendering"
+  | "action"
+  | "revalidation"
+  | "cache"
+  | "prerender"
+  | "static"
+  | "origin"
+  | "unknown";
 
 /**
  * Comprehensive context passed to onError callback
@@ -59,99 +59,35 @@ export type ErrorPhase =
  * ```
  */
 export interface OnErrorContext<TEnv = any> {
-  /**
-   * The error that occurred
-   */
   error: Error;
-
-  /**
-   * Phase where the error occurred
-   */
   phase: ErrorPhase;
-
-  /**
-   * The original request
-   */
   request: Request;
-
-  /**
-   * Parsed URL from the request
-   */
   url: URL;
-
-  /**
-   * Request pathname
-   */
   pathname: string;
-
-  /**
-   * HTTP method
-   */
   method: string;
-
-  /**
-   * Matched route key (if available)
-   * e.g., "shop.products.detail"
-   */
+  /** Matched route key (if available) e.g., "shop.products.detail" */
   routeKey?: string;
-
-  /**
-   * Route params (if available)
-   * e.g., { slug: "headphones" }
-   */
+  /** Route params (if available) e.g., { slug: "headphones" } */
   params?: Record<string, string>;
-
-  /**
-   * Segment ID where error occurred (if available)
-   * e.g., "M1L0" for a layout, "M1R0" for a route
-   */
+  /** Segment ID where error occurred (if available) e.g., "M1L0" for a layout, "M1R0" for a route */
   segmentId?: string;
-
-  /**
-   * Segment type where error occurred (if available)
-   */
+  /** Segment type where error occurred (if available) */
   segmentType?: "layout" | "route" | "parallel" | "loader" | "middleware";
-
-  /**
-   * Loader name (if error occurred in a loader)
-   */
+  /** Loader name (if error occurred in a loader) */
   loaderName?: string;
-
-  /**
-   * Middleware name/id (if error occurred in middleware)
-   */
+  /** Middleware name/id (if error occurred in middleware) */
   middlewareId?: string;
-
-  /**
-   * Action ID (if error occurred during server action)
-   * e.g., "src/actions.ts#addToCart"
-   */
+  /** Action ID (if error occurred during server action) e.g., "src/actions.ts#addToCart" */
   actionId?: string;
-
-  /**
-   * Environment/bindings (platform context)
-   */
+  /** Environment/bindings (platform context) */
   env?: TEnv;
-
-  /**
-   * Duration from request start to error (milliseconds)
-   */
+  /** Duration from request start to error (milliseconds) */
   duration?: number;
-
-  /**
-   * Whether this is a partial/navigation request
-   */
+  /** Whether this is a partial/navigation request */
   isPartial?: boolean;
-
-  /**
-   * Whether an error boundary caught the error
-   * If true, the error was handled and a fallback UI was rendered
-   */
+  /** Whether an error boundary caught the error */
   handledByBoundary?: boolean;
-
-  /**
-   * Stack trace (if available)
-   */
+  /** Stack trace (if available) */
   stack?: string;
 
   /**

@@ -75,6 +75,13 @@ export type {
   ResolveStreamingContext,
 } from "./router.js";
 
+// Origin-check callback types (referenced by the RangoOptions.originCheck JSDoc)
+export type {
+  OriginCheckConfig,
+  OriginCheckContext,
+  OriginCheckPhase,
+} from "./rsc/origin-guard.js";
+
 // Server-side createLoader and redirect
 export {
   createLoader,
@@ -131,10 +138,15 @@ export {
   type BuildContext,
   type StaticBuildContext,
   type GetParamsContext,
+  type PrerenderPassthroughResult,
 } from "./prerender.js";
 
 // Static handler API
-export { Static, type StaticHandlerDefinition } from "./static-handler.js";
+export {
+  Static,
+  type StaticHandlerDefinition,
+  type StaticHandlerOptions,
+} from "./static-handler.js";
 
 // Django-style URL patterns (RSC/server context)
 export {
@@ -209,7 +221,13 @@ export { updateTag, revalidateTag } from "./cache/tag-invalidation.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Middleware context types
-export type { MiddlewareContext, CookieOptions } from "./router/middleware.js";
+export type {
+  MiddlewareContext,
+  CookieOptions,
+  // The function type of a middleware. Public so the documented "extract the
+  // middleware and unit-test it with runMiddleware" pattern has a nameable type.
+  MiddlewareFn,
+} from "./router/middleware.js";
 
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
 export type {

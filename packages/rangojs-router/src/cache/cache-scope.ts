@@ -34,12 +34,6 @@ import {
 } from "./cache-policy.js";
 import type { RequestContext } from "../server/request-context.js";
 
-/**
- * Resolve tags for a cache() boundary from its config (static array or
- * function of ctx). Thin wrapper over the shared resolveTagsOption so the
- * cache() DSL and loader caching resolve tags identically.
- * @internal
- */
 export function resolveCacheTags(
   config: PartialCacheOptions | false,
   ctx: RequestContext | undefined,
@@ -54,17 +48,6 @@ function debugCacheLog(message: string): void {
   }
 }
 
-// ============================================================================
-// Key Generation (internal)
-// ============================================================================
-
-/**
- * Generate cache key base from host, pathname, route params, and search params.
- * Host is included to prevent cross-host cache collisions on shared stores.
- * Route params and search params are sorted alphabetically for deterministic keys.
- * Internal _rsc* and __* query params are excluded.
- * @internal
- */
 function getCacheKeyBase(
   host: string,
   pathname: string,
@@ -80,16 +63,6 @@ function getCacheKeyBase(
   return key;
 }
 
-/**
- * Generate default cache key for a route request.
- * Includes pathname, route params, and user-facing search params for
- * correct scoping. Internal _rsc* params are excluded.
- * Includes request type prefix since they produce different segment sets:
- * - doc: document requests (full page load)
- * - partial: navigation requests (client-side navigation)
- * - intercept: intercept navigation (modal/overlay routes)
- * @internal
- */
 function getDefaultRouteCacheKey(
   pathname: string,
   params?: Record<string, string>,

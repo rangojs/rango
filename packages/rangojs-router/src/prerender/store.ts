@@ -1,11 +1,7 @@
 /**
- * Prerender Store
- *
- * Reads pre-rendered segment data from the worker bundle at build time.
- * The manifest module is lazily loaded via globalThis.__loadPrerenderManifestModule,
- * a function injected into the RSC entry that returns the manifest module
- * containing a key-to-specifier map and a `loadPrerenderAsset` function
- * that anchors import() resolution relative to the manifest file.
+ * Prerender Store — reads pre-rendered segment data from the worker bundle.
+ * Manifest module (injected via globalThis.__loadPrerenderManifestModule)
+ * contains key-to-specifier map and loadPrerenderAsset for import() resolution.
  */
 
 import type { SerializedSegmentData } from "../cache/types.js";
@@ -101,13 +97,20 @@ export function createPrerenderStore(): PrerenderStore | null {
   if (!globalThis.__loadPrerenderManifestModule) return null;
 
   const cache = new Map<string, Promise<PrerenderEntry | null>>();
-  let manifestModulePromise: Promise<PrerenderManifestModule | null> | null =
-    null;
+  let manifestModulePromise: Promise<PrerenderManifestModule> | null = null;
 
-  function loadManifestModule(): Promise<PrerenderManifestModule | null> {
+  function loadManifestModule(): Promise<PrerenderManifestModule> {
     if (!manifestModulePromise) {
+      // Do not cache a failed manifest-module load: clear the memoized promise
+      // on rejection so the next get() retries, and let the error propagate
+      // (consistent with the per-asset load policy below) instead of caching a
+      // null for the isolate lifetime, which would silently degrade every
+      // prerendered route to a miss after one transient failure.
       manifestModulePromise = globalThis.__loadPrerenderManifestModule!().catch(
-        () => null,
+        (err) => {
+          manifestModulePromise = null;
+          throw err;
+        },
       );
     }
     return manifestModulePromise;
@@ -120,7 +123,6 @@ export function createPrerenderStore(): PrerenderStore | null {
       if (cached) return cached;
 
       const promise = loadManifestModule().then((mod) => {
-        if (!mod) return null;
         const specifier = mod.default[key];
         if (!specifier) return null;
         // Let asset load errors propagate — a missing/corrupted artifact
@@ -129,27 +131,18 @@ export function createPrerenderStore(): PrerenderStore | null {
         // (which the handler stub would misreport as a 404).
         return mod.loadPrerenderAsset(specifier).then((asset) => asset.default);
       });
-      cache.set(key, promise);
+      // Only memoize once the manifest module resolved: a manifest-load
+      // rejection must not poison the per-key cache, or the retry above is moot.
+      cache.set(
+        key,
+        promise.catch((err) => {
+          cache.delete(key);
+          throw err;
+        }),
+      );
       return promise;
     },
   };
-}
-
-/**
- * Load the prerender manifest index for test introspection.
- * Returns the key→specifier map or null if unavailable.
- */
-export async function loadPrerenderManifestIndex(): Promise<Record<
-  string,
-  string
-> | null> {
-  if (!globalThis.__loadPrerenderManifestModule) return null;
-  try {
-    const mod = await globalThis.__loadPrerenderManifestModule();
-    return mod.default;
-  } catch {
-    return null;
-  }
 }
 
 /**

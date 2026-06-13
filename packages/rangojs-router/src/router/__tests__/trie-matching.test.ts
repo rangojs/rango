@@ -362,4 +362,39 @@ describe("tryTrieMatch", () => {
       });
     });
   });
+
+  // M5: a failed param/suffix-param constraint must unwind to a lower-priority
+  // structural sibling instead of returning null. Before the fix, constraint
+  // validation ran only AFTER the walk, so the walk committed to the constrained
+  // branch and returned null on a miss (forcing the regex fallback + a false R3
+  // "trie gap" dev warning, and definition-order precedence in production).
+  describe("constraint backtracking to a structural sibling", () => {
+    it("backtracks from a failed param constraint to a sibling wildcard", () => {
+      const trie = buildTestTrie({
+        "blog.locale": "/:locale(en|gb)/blog",
+        "catch.all": "/*",
+      });
+
+      // satisfies the constraint -> constrained route wins
+      expect(tryTrieMatch(trie, "/en/blog")?.routeKey).toBe("blog.locale");
+      // violates locale(en|gb) -> must fall back to the wildcard sibling
+      const de = tryTrieMatch(trie, "/de/blog");
+      expect(de?.routeKey).toBe("catch.all");
+      expect(de?.params).toEqual({ "*": "de/blog" });
+    });
+
+    it("backtracks from a failed suffix-param constraint to a plain-param sibling", () => {
+      const trie = buildTestTrie({
+        "p.html": "/p/:id(1|2).html",
+        "p.slug": "/p/:slug",
+      });
+
+      // satisfies the constraint -> suffix route wins
+      expect(tryTrieMatch(trie, "/p/1.html")?.routeKey).toBe("p.html");
+      // violates id(1|2) -> must fall back to the plain :slug sibling
+      const nine = tryTrieMatch(trie, "/p/9.html");
+      expect(nine?.routeKey).toBe("p.slug");
+      expect(nine?.params).toEqual({ slug: "9.html" });
+    });
+  });
 });

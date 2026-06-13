@@ -1,22 +1,12 @@
 import type { ReactNode } from "react";
 
-/**
- * Error information passed to error boundary fallback components
- */
 export interface ErrorInfo {
-  /** Error message (always available) */
   message: string;
-  /** Error name/type (e.g., "RouteNotFoundError", "MiddlewareError") */
   name: string;
-  /** Optional error code for programmatic handling */
   code?: string;
-  /** Stack trace (only in development) */
   stack?: string;
-  /** Original error cause if available */
   cause?: unknown;
-  /** Segment ID where the error occurred */
   segmentId: string;
-  /** Segment type where the error occurred */
   segmentType:
     | "layout"
     | "route"
@@ -46,13 +36,9 @@ export interface ErrorInfo {
  * ```
  */
 export interface ErrorBoundaryFallbackProps {
-  /** Error information */
   error: ErrorInfo;
 }
 
-/**
- * Error boundary handler - receives error info and returns fallback UI
- */
 export type ErrorBoundaryHandler = (
   props: ErrorBoundaryFallbackProps,
 ) => ReactNode;
@@ -77,17 +63,10 @@ export type ErrorBoundaryHandler = (
  * ```
  */
 export interface ClientErrorBoundaryFallbackProps {
-  /** Error information */
   error: ErrorInfo;
-  /** Function to reset error state and retry rendering */
   reset: () => void;
 }
 
-/**
- * Wrapped loader data result for deferred resolution with error handling.
- * When loaders are deferred to client-side resolution, errors need to be
- * wrapped so the client can handle them appropriately.
- */
 export type LoaderDataResult<T = unknown> =
   | { __loaderResult: true; ok: true; data: T }
   | {
@@ -97,9 +76,6 @@ export type LoaderDataResult<T = unknown> =
       fallback: ReactNode | null;
     };
 
-/**
- * Type guard to check if a value is a wrapped loader result
- */
 export function isLoaderDataResult(value: unknown): value is LoaderDataResult {
   return (
     typeof value === "object" &&
@@ -109,15 +85,9 @@ export function isLoaderDataResult(value: unknown): value is LoaderDataResult {
   );
 }
 
-/**
- * Not found information passed to notFound boundary fallback components
- */
 export interface NotFoundInfo {
-  /** Not found message */
   message: string;
-  /** Segment ID where notFound was thrown */
   segmentId: string;
-  /** Segment type where notFound was thrown */
   segmentType:
     | "layout"
     | "route"
@@ -125,7 +95,6 @@ export interface NotFoundInfo {
     | "loader"
     | "middleware"
     | "cache";
-  /** The pathname that triggered the not found */
   pathname?: string;
 }
 
@@ -146,13 +115,9 @@ export interface NotFoundInfo {
  * ```
  */
 export interface NotFoundBoundaryFallbackProps {
-  /** Not found information */
   notFound: NotFoundInfo;
 }
 
-/**
- * NotFound boundary handler - receives not found info and returns fallback UI
- */
 export type NotFoundBoundaryHandler = (
   props: NotFoundBoundaryFallbackProps,
 ) => ReactNode;

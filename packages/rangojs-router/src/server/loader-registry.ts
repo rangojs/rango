@@ -11,17 +11,10 @@ import {
   type LoaderRegistryEntry,
 } from "./fetchable-loader-store.js";
 
-// Server-side cache - maps loader $$id to function and middleware
-// This is a CACHE populated by getLoaderLazy() when loaders are first accessed.
-// The source of truth is fetchableLoaderRegistry in loader.ts, which is populated
-// when createLoader() runs. This cache exists to:
-// 1. Avoid repeated lookups/imports for the same loader
-// 2. Support lazy loading in production (loaders imported on-demand)
-// 3. Provide a stable reference for the RSC handler
+// Cache populated by getLoaderLazy() when loaders are first accessed.
+// Source of truth is fetchableLoaderRegistry in loader.ts (populated on createLoader).
 const loaderRegistry = new Map<string, LoaderRegistryEntry>();
 
-// Lazy import map - set by the loader manifest
-// Maps loader $$id to a function that imports the loader module
 type LazyLoaderImport = () => Promise<{ $$id: string }>;
 let lazyLoaderImports: Map<string, LazyLoaderImport> | null = null;
 
@@ -44,30 +37,25 @@ export function setLoaderImports(
 export async function getLoaderLazy(
   id: string,
 ): Promise<LoaderRegistryEntry | undefined> {
-  // Always check fetchableLoaderRegistry first — it's the source of truth.
-  // createLoader() updates it during module re-evaluation (HMR), so checking
-  // here ensures we pick up the fresh function after a loader file change.
+  // Check fetchableLoaderRegistry first — it's the source of truth.
+  // createLoader() updates it on HMR, ensuring fresh functions after file changes.
   const fetchable = getFetchableLoader(id);
   if (fetchable) {
     loaderRegistry.set(id, fetchable);
     return fetchable;
   }
 
-  // Fall back to local cache (populated by previous lazy imports in production)
   const existing = loaderRegistry.get(id);
   if (existing) {
     return existing;
   }
 
-  // Try to lazy load from the import map (production mode)
   if (lazyLoaderImports && lazyLoaderImports.size > 0) {
     const lazyImport = lazyLoaderImports.get(id);
     if (lazyImport) {
       try {
-        // Import the loader module - this triggers createLoader which registers fn
         await lazyImport();
 
-        // Now try to get from fetchable registry (createLoader registered it)
         const registered = getFetchableLoader(id);
         if (registered) {
           loaderRegistry.set(id, registered);
@@ -79,18 +67,14 @@ export async function getLoaderLazy(
     }
   }
 
-  // Dev mode fallback: parse the ID and use Vite's dynamic import
-  // ID format in dev: "src/path/to/file.ts#ExportName"
+  // Dev fallback: parse ID (format: "src/path/to/file.ts#ExportName") and import
   const hashIndex = id.indexOf("#");
   if (hashIndex !== -1) {
     const filePath = id.slice(0, hashIndex);
 
     try {
-      // In dev mode, Vite handles dynamic imports
-      // Just importing the module triggers createLoader which registers the fn
       await import(/* @vite-ignore */ `/${filePath}`);
 
-      // Now try to get from fetchable registry
       const registered = getFetchableLoader(id);
       if (registered) {
         loaderRegistry.set(id, registered);
@@ -115,15 +99,12 @@ export function registerLoaderById(loader: {
   if (!loader.$$id) {
     return;
   }
-  // For fetchable loaders, fn is stored in the fetchable registry by $$id.
-  // Always re-check the fetchable registry so HMR picks up the new function.
   const fetchable = getFetchableLoader(loader.$$id);
   if (fetchable) {
     loaderRegistry.set(loader.$$id, fetchable);
     return;
   }
 
-  // Fall back to using fn from the loader object (non-fetchable loaders)
   if (loader.fn) {
     loaderRegistry.set(loader.$$id, {
       fn: loader.fn,

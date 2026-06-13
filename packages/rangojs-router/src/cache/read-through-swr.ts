@@ -13,10 +13,15 @@
 
 import type { CacheItemResult, CacheItemOptions } from "./types.js";
 import { runBackground } from "./background-task.js";
+import { reportCacheError } from "./cache-error.js";
+import type { CacheErrorReporter } from "./cache-error.js";
 
-interface WaitUntilHost {
+// The host carries both the optional waitUntil (for background scheduling) and
+// the CacheErrorReporter seam (for routing degradation errors through onError).
+// loader-cache.ts passes the request context, which provides both.
+type WaitUntilHost = {
   waitUntil?: (fn: () => Promise<void>) => void;
-}
+} & CacheErrorReporter;
 
 export interface ReadThroughItemConfig<T> {
   /** Retrieve a cached item by key */
@@ -74,11 +79,20 @@ export async function readThroughItem<T>(
     host,
   } = config;
 
-  // Cache lookup
+  // Cache lookup. An infra read failure (getItem) is reported by the store
+  // itself, so here we just degrade to a miss. A deserialize failure is a
+  // corrupt/truncated stored entry, which this layer owns: report it LOUD as
+  // cache-corrupt, then fall through to a fresh execution (the miss-path write
+  // self-heals the bad entry).
+  let cached: CacheItemResult | null = null;
   try {
-    const cached = await getItem(key);
+    cached = await getItem(key);
+  } catch {
+    cached = null;
+  }
 
-    if (cached) {
+  if (cached) {
+    try {
       const data = await deserialize(cached.value);
 
       if (!cached.shouldRevalidate) {
@@ -97,16 +111,27 @@ export async function readThroughItem<T>(
             if (serialized !== null) {
               await setItem(key, serialized, storeOptions);
             }
-          } catch {
-            // Background revalidation failed silently
+          } catch (error) {
+            reportCacheError(
+              error,
+              "stale-revalidation",
+              "[read-through] background revalidation",
+              host ?? undefined,
+            );
           }
         },
         true,
       );
       return data;
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-corrupt",
+        "[read-through] deserialize stored entry",
+        host ?? undefined,
+      );
+      // fall through to fresh execution
     }
-  } catch {
-    // Cache lookup failed, fall through to fresh execution
   }
 
   // Cache miss
@@ -123,8 +148,13 @@ export async function readThroughItem<T>(
           await setItem(key, serialized, storeOptions);
           onCached?.();
         }
-      } catch {
-        // Cache write failed silently
+      } catch (error) {
+        reportCacheError(
+          error,
+          "cache-write",
+          "[read-through] cache write",
+          host ?? undefined,
+        );
       }
     },
     true,

@@ -23,10 +23,6 @@ import { negotiateRoute } from "./content-negotiation.js";
 import { stripInternalParams } from "./handler-context.js";
 import { resolveRoute, type RouteSnapshot } from "./route-snapshot.js";
 
-// ---------------------------------------------------------------------------
-// RequestPlan — discriminated union
-// ---------------------------------------------------------------------------
-
 interface RedirectPlan<TEnv = any> {
   mode: "redirect";
   route: RouteSnapshot<TEnv>;
@@ -124,10 +120,6 @@ export type {
   PartialRenderPlan,
 };
 
-// ---------------------------------------------------------------------------
-// classifyRequest — the single authoritative classification step
-// ---------------------------------------------------------------------------
-
 export interface ClassifyRequestDeps<TEnv = any> {
   findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
   routerVersion: string;
@@ -157,15 +149,12 @@ export async function classifyRequest<TEnv = any>(
   const isAction =
     request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
 
-  // Version mismatch — runs BEFORE route resolution so stale clients
-  // requesting removed routes get a reload, not a 404.
   const clientVersion = url.searchParams.get("_rsc_v");
   if (
     deps.routerVersion &&
     clientVersion &&
     clientVersion !== deps.routerVersion
   ) {
-    // Strip internal _rsc_* params so the browser reloads to a clean URL
     let reloadUrl = stripInternalParams(url).toString();
     if (isAction) {
       const referer = request.headers.get("referer");
@@ -175,9 +164,7 @@ export async function classifyRequest<TEnv = any>(
           if (refererUrl.origin === url.origin) {
             reloadUrl = referer;
           }
-        } catch {
-          // Malformed referer, fall back to stripped url
-        }
+        } catch {}
       }
     }
 
@@ -187,18 +174,6 @@ export async function classifyRequest<TEnv = any>(
     };
   }
 
-  // App switch — also runs BEFORE route resolution (like version-mismatch
-  // above), and for the same reason: a cross-app SPA navigation must reload
-  // even when the target route does NOT exist in the target app. If we resolved
-  // first, a missing route would throw RouteNotFoundError and the 404 would
-  // render in-place under the SOURCE app's document — violating the invariant
-  // that crossing a host-router app boundary is always a full document load.
-  // A mismatched routerId (_rsc_rid) means the navigation crossed an app
-  // boundary; force a real document navigation. A soft swap can't faithfully
-  // re-establish the target app's document (stylesheets shared across apps are
-  // dropped by React 19's by-href dedup; theme/warmup/prefetch-TTL are
-  // document-lifetime — see browser/app-shell.ts). Only SPA (`_rsc_partial`)
-  // requests need this; a direct full load already IS the document navigation.
   const clientRouterId = url.searchParams.get("_rsc_rid");
   if (
     clientRouterId &&
@@ -211,9 +186,6 @@ export async function classifyRequest<TEnv = any>(
     };
   }
 
-  // No metricsStore — classification is a lightweight gating step.
-  // Route-matching and manifest-loading metrics belong in the match path
-  // (createMatchContextForFull/Partial) which runs the authoritative resolution.
   const result = await resolveRoute<TEnv>(pathname, {
     findMatch: deps.findMatch,
     lite: true,
@@ -225,7 +197,6 @@ export async function classifyRequest<TEnv = any>(
     });
   }
 
-  // Redirect
   if (result.type === "redirect") {
     const snapshot: RouteSnapshot<TEnv> = {
       matched: result as any,
@@ -247,7 +218,6 @@ export async function classifyRequest<TEnv = any>(
 
   const snapshot = result.snapshot;
 
-  // Response route — non-RSC short-circuit (JSON, streaming, etc.)
   const responseResult = await classifyResponseRoute(
     request,
     pathname,
@@ -257,7 +227,6 @@ export async function classifyRequest<TEnv = any>(
     return responseResult;
   }
 
-  // Mode detection from request signals
   const actionId =
     request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
   const isLoaderFetch = url.searchParams.has("_rsc_loader");
@@ -275,7 +244,6 @@ export async function classifyRequest<TEnv = any>(
     return { mode: "loader", route: snapshot };
   }
 
-  // PE detection: POST with form content-type, but not a server action
   const contentType = request.headers.get("content-type") || "";
   const isFormSubmission =
     contentType.includes("multipart/form-data") ||
@@ -291,10 +259,6 @@ export async function classifyRequest<TEnv = any>(
   return { mode: "full-render", route: snapshot, negotiated };
 }
 
-// ---------------------------------------------------------------------------
-// Content negotiation for response routes
-// ---------------------------------------------------------------------------
-
 /**
  * Check if the route is a response route and perform content negotiation
  * if negotiate variants exist. Returns a ResponseRoutePlan if the route
@@ -305,7 +269,6 @@ async function classifyResponseRoute<TEnv>(
   pathname: string,
   snapshot: RouteSnapshot<TEnv>,
 ): Promise<ResponseRoutePlan<TEnv> | null> {
-  // negotiateRoute returns the response plan (variant or plain) or null for RSC.
   const negotiation = await negotiateRoute(request, pathname, snapshot);
   return negotiation
     ? { mode: "response", route: snapshot, ...negotiation }

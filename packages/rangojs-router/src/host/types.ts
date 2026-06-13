@@ -110,9 +110,13 @@ export interface HostRouter {
   fallback(): HostRouteBuilder;
 
   /**
-   * Test which handler would match a hostname
+   * Test which handler would match a hostname (and optional pathname).
+   *
+   * `pathname` defaults to `"/"`. Pass it to probe path-prefixed patterns
+   * such as `host(["example.com/admin"])`, which only match when the request
+   * path is under the prefix.
    */
-  test(hostname: string): HostMatchResult | null;
+  test(hostname: string, pathname?: string): HostMatchResult | null;
 }
 
 /**

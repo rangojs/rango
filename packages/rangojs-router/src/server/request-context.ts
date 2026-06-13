@@ -595,12 +595,9 @@ export function createRequestContext<TEnv>(
     version: stateVersion,
   } = options;
   const cookieHeader = request.headers.get("Cookie");
-  // One Set-Cookie per request no matter how many invalidateClientCache() calls.
   let rangoStateRotated = false;
   let parsedCookies: Record<string, string> | null = null;
 
-  // Create stub response for collecting headers/cookies.
-  // All cookie/header mutations go here; cookie reads derive from it.
   let stubResponse = initialResponse
     ? new Response(null, {
         status: initialResponse.status,
@@ -609,11 +606,9 @@ export function createRequestContext<TEnv>(
       })
     : new Response(null, { status: 200 });
 
-  // Create handle store and loader memoization for this request
   const handleStore = createHandleStore();
   const loaderPromises = new Map<string, Promise<any>>();
 
-  // Lazy parse cookies from the original Cookie header
   const getParsedCookies = (): Record<string, string> => {
     if (!parsedCookies) {
       parsedCookies = parseCookiesFromHeader(cookieHeader);
@@ -621,7 +616,6 @@ export function createRequestContext<TEnv>(
     return parsedCookies;
   };
 
-  // Cached response cookie mutations — invalidated on setCookie/deleteCookie/setTheme
   let responseCookieCache: Map<string, string | null> | null = null;
   const getResponseCookies = (): Map<string, string | null> => {
     if (!responseCookieCache) {
@@ -633,8 +627,6 @@ export function createRequestContext<TEnv>(
     responseCookieCache = null;
   };
 
-  // Guard: throw if a response-level side effect is called inside a cache() scope.
-  // Uses ALS to detect the scope (set during segment resolution).
   function assertNotInsideCacheScopeALS(methodName: string): void {
     if (isInsideCacheScope()) {
       throw new Error(
@@ -645,8 +637,7 @@ export function createRequestContext<TEnv>(
     }
   }
 
-  // Effective cookie read: response stub Set-Cookie wins, then original header.
-  // The stub IS the source of truth for same-request mutations.
+  // Response stub Set-Cookie wins, then original header (source of truth for mutations).
   const effectiveCookie = (name: string): string | undefined => {
     const mutations = getResponseCookies();
     if (mutations.has(name)) {
@@ -656,14 +647,11 @@ export function createRequestContext<TEnv>(
     return getParsedCookies()[name];
   };
 
-  // Theme helpers (only used when themeConfig is provided)
   const getTheme = (): Theme | undefined => {
     if (!themeConfig) return undefined;
 
-    // Use overlay-aware read so setTheme() in the same request is reflected
     const stored = effectiveCookie(themeConfig.storageKey);
     if (stored) {
-      // Validate stored value
       if (stored === "system" && themeConfig.enableSystem) {
         return "system";
       }
@@ -677,7 +665,6 @@ export function createRequestContext<TEnv>(
   const setTheme = (theme: Theme): void => {
     if (!themeConfig) return;
 
-    // Validate theme value
     if (theme !== "system" && !themeConfig.themes.includes(theme)) {
       console.warn(
         `[Theme] Invalid theme value: "${theme}". Valid values: system, ${themeConfig.themes.join(", ")}`,
@@ -685,7 +672,6 @@ export function createRequestContext<TEnv>(
       return;
     }
 
-    // Write to stub — effectiveCookie() will pick it up on next read
     stubResponse.headers.append(
       "Set-Cookie",
       serializeCookieValue(themeConfig.storageKey, theme, {
@@ -697,10 +683,8 @@ export function createRequestContext<TEnv>(
     invalidateResponseCookieCache();
   };
 
-  // Strip internal _rsc* params so userland sees a clean URL.
   const cleanUrl = stripInternalParams(url);
 
-  // Build the context object first (without use), then add use
   const ctx: RequestContext<TEnv> = {
     env,
     request,
@@ -841,7 +825,6 @@ export function createRequestContext<TEnv>(
       });
     },
 
-    // Placeholder - will be replaced below
     use: null as any,
 
     method: request.method,
@@ -870,7 +853,6 @@ export function createRequestContext<TEnv>(
       this._onResponseCallbacks.push(callback);
     },
 
-    // Theme properties (only set when themeConfig is provided)
     get theme() {
       return themeConfig ? getTheme() : undefined;
     },
@@ -894,19 +876,17 @@ export function createRequestContext<TEnv>(
     _reportedErrors: new WeakSet<object>(),
     _metricsStore: undefined,
 
-    // Render barrier: deferred promise resolved after non-loader segments settle.
-    _renderBarrier: null as any, // set below
-    _resolveRenderBarrier: null as any, // set below
+    _renderBarrier: null as any,
+    _resolveRenderBarrier: null as any,
     _renderBarrierSegmentOrder: undefined,
 
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
   };
 
-  // Lazy render barrier: only allocate the Promise when a loader actually
-  // calls rendered(). Requests that don't use rendered() pay zero cost.
+  // Lazy allocation: only create Promise when a loader calls rendered().
   let barrierResolved = false;
   let resolveBarrier: (() => void) | undefined;
-  ctx._renderBarrier = null as any; // lazy — created on first access
+  ctx._renderBarrier = null as any;
   ctx._resolveRenderBarrier = (
     segments: Array<{ type: string; id: string }>,
   ) => {
@@ -917,9 +897,6 @@ export function createRequestContext<TEnv>(
       .map((s) => s.id);
     ctx._renderBarrierSegmentOrder = segOrder;
 
-    // Closing the guard window means no handler can still form a deadlock cycle
-    // with a rendered() loader: drop the dependency-tracking state and mark it
-    // closed. WHEN this runs is the only streaming/non-streaming difference.
     const closeGuard = () => {
       ctx._renderBarrierWaiters = undefined;
       ctx._handlerLoaderDeps = undefined;
@@ -927,20 +904,8 @@ export function createRequestContext<TEnv>(
     };
 
     if (ctx._treeHasStreaming) {
-      // Streaming: rendered() keeps waiting on handleStore.settled past this
-      // point, and loading() handlers are still in flight. The eager snapshot
-      // here would be incomplete, so leave it unset — rendered() builds and
-      // caches the complete one after settled. Keep the guard window OPEN so a
-      // handler that resumes and awaits a still-waiting rendered() loader is
-      // still caught; close it once settled (every tracked handler has finished
-      // then, so none can await a loader anymore). settled resolves after
-      // rendered() seals; if no loader used rendered(), nothing seals and the
-      // (empty) guard state is simply GC'd at request end.
       handleStore.settled.then(closeGuard);
     } else {
-      // Non-streaming: all handlers have settled by now. Build and cache the
-      // snapshot so loader ctx.use(handle) calls don't rebuild it, and close the
-      // guard window immediately.
       ctx._renderBarrierHandleSnapshot = buildHandleSnapshot(
         handleStore,
         segOrder,
@@ -951,9 +916,6 @@ export function createRequestContext<TEnv>(
   };
   Object.defineProperty(ctx, "_renderBarrier", {
     get() {
-      // Barrier already resolved (cache/prerender hit) or first lazy access.
-      // Either way, replace the getter with a concrete value to avoid
-      // repeated Promise.resolve() allocations on subsequent reads.
       const p = barrierResolved
         ? Promise.resolve()
         : new Promise<void>((resolve) => {
@@ -969,24 +931,16 @@ export function createRequestContext<TEnv>(
     configurable: true,
   });
 
-  // Now create use() with access to ctx
   ctx.use = createUseFunction({
     handleStore,
     loaderPromises,
     getContext: () => ctx,
   });
 
-  // Brand with taint symbol so "use cache" excludes ctx from cache keys
   (ctx as any)[NOCACHE_SYMBOL] = true;
   return ctx;
 }
 
-/**
- * Parse Set-Cookie headers from a response into effective cookie state.
- * Returns a map of cookie name -> value (string) or name -> null (deleted).
- * Last-write-wins: later Set-Cookie entries for the same name overwrite earlier ones.
- * Max-Age=0 is treated as a delete.
- */
 const MAX_AGE_ZERO_RE = /;\s*Max-Age\s*=\s*0/i;
 
 function parseResponseCookies(response: Response): Map<string, string | null> {
@@ -994,7 +948,6 @@ function parseResponseCookies(response: Response): Map<string, string | null> {
   const setCookies = response.headers.getSetCookie();
 
   for (const header of setCookies) {
-    // First segment before ';' is the name=value pair
     const semiIdx = header.indexOf(";");
     const pair = semiIdx === -1 ? header : header.substring(0, semiIdx);
     const eqIdx = pair.indexOf("=");
@@ -1006,11 +959,9 @@ function parseResponseCookies(response: Response): Map<string, string | null> {
       name = decodeURIComponent(pair.substring(0, eqIdx).trim());
       value = decodeURIComponent(pair.substring(eqIdx + 1).trim());
     } catch {
-      // Malformed encoding — skip this entry
       continue;
     }
 
-    // Max-Age=0 means the cookie is being deleted
     const isDeleted = MAX_AGE_ZERO_RE.test(header);
     result.set(name, isDeleted ? null : value);
   }
@@ -1018,9 +969,6 @@ function parseResponseCookies(response: Response): Map<string, string | null> {
   return result;
 }
 
-/**
- * Parse cookies from Cookie header
- */
 function parseCookiesFromHeader(
   cookieHeader: string | null,
 ): Record<string, string> {
@@ -1036,7 +984,7 @@ function parseCookiesFromHeader(
       try {
         cookies[name] = decodeURIComponent(raw);
       } catch {
-        // Malformed percent-encoded value (e.g. %zz, %2) - fall back to raw value
+        // Malformed percent-encoding: fall back to raw value
         cookies[name] = raw;
       }
     }
@@ -1045,9 +993,6 @@ function parseCookiesFromHeader(
   return cookies;
 }
 
-/**
- * Serialize a cookie for Set-Cookie header
- */
 function serializeCookieValue(
   name: string,
   value: string,
@@ -1075,20 +1020,12 @@ export interface CreateUseFunctionOptions<TEnv> {
   getContext: () => RequestContext<TEnv>;
 }
 
-/**
- * Create the use() function for loader and handle composition.
- *
- * This is the unified implementation used by both RequestContext and HandlerContext.
- * - For loaders: executes and memoizes loader functions
- * - For handles: returns a push function to add handle data
- */
 export function createUseFunction<TEnv>(
   options: CreateUseFunctionOptions<TEnv>,
 ): RequestContext["use"] {
   const { handleStore, loaderPromises, getContext } = options;
 
   return ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
-    // Handle case: return a push function
     if (isHandle(item)) {
       const handle = item;
       const ctx = getContext();
@@ -1101,30 +1038,24 @@ export function createUseFunction<TEnv>(
         );
       }
 
-      // Return a push function bound to this handle and segment
       return withDefer(
         (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
-          // If it's a function, call it immediately to get the promise
           const valueOrPromise =
             typeof dataOrFn === "function"
               ? (dataOrFn as () => Promise<unknown>)()
               : dataOrFn;
 
-          // Push directly - promises will be serialized by RSC and streamed
           handleStore.push(handle.$$id, segmentId, valueOrPromise);
         },
       );
     }
 
-    // Loader case
     const loader = item as LoaderDefinition<any, any>;
 
-    // Return cached promise if already started
     if (loaderPromises.has(loader.$$id)) {
       return loaderPromises.get(loader.$$id);
     }
 
-    // Get loader function - either from loader object or fetchable registry
     let loaderFn = loader.fn;
     if (!loaderFn) {
       const fetchable = getFetchableLoader(loader.$$id);
@@ -1141,7 +1072,6 @@ export function createUseFunction<TEnv>(
 
     const ctx = getContext();
 
-    // Create loader context with recursive use() support
     const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
       params: ctx.params,
       routeParams: (ctx.params ?? {}) as Record<string, string>,
@@ -1158,7 +1088,6 @@ export function createUseFunction<TEnv>(
       use: (<TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {
-        // Recursive call - will start dep loader if not already started
         return ctx.use(dep);
       }) as LoaderContext["use"],
       method: "GET",
@@ -1182,7 +1111,6 @@ export function createUseFunction<TEnv>(
       doneLoader();
     });
 
-    // Memoize for subsequent calls
     loaderPromises.set(loader.$$id, promise);
 
     return promise;

@@ -41,14 +41,6 @@ export interface TransitionConfig {
 /**
  * Resolved segment with component
  *
- * Segment types:
- * - layout: Wraps child content via <Outlet />
- * - route: The leaf content for a URL
- * - parallel: Named slots rendered via <ParallelOutlet name="@slot" />
- * - loader: Data segment (no visual rendering, carries loaderData)
- * - error: Error fallback segment (replaces failed segment with error UI)
- * - notFound: Not found fallback segment (replaces segment when data not found)
- *
  * @internal This type is an implementation detail and may change without notice.
  */
 export interface ResolvedSegment {
@@ -89,11 +81,6 @@ export interface ResolvedSegment {
   _handlerRan?: boolean;
 }
 
-/**
- * Segment metadata (without component)
- *
- * @internal This type is an implementation detail and may change without notice.
- */
 export interface SegmentMetadata {
   id: string;
   type: "layout" | "route" | "parallel" | "loader" | "error" | "notFound";

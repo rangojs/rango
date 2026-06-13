@@ -26,8 +26,7 @@ import { isUnderTestRunner } from "./runtime-env.js";
 
 export { getFetchableLoader };
 
-// Counter for runtime-fallback loader ids assigned only in a bare unit test
-// (no Vite plugin to inject one). Process-stable; never reached in a real build.
+// Runtime-fallback counter for bare unit tests (no Vite plugin); process-stable.
 let runtimeLoaderIdCounter = 0;
 
 // Overload 1: With function only (not fetchable)
@@ -54,17 +53,10 @@ export function createLoader<T>(
   // Hidden parameter injected by Vite exposeInternalIds plugin
   __injectedId?: string,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
-  // The $$id will be set on the returned object by Vite plugin
-  // For fetchable loaders, __injectedId is also passed as a parameter
   let loaderId = __injectedId || "";
 
-  // No build-injected id. Under a test runner: fall back to a synthetic id so the
-  // fn registers below and the loader is exercisable via runLoader(loaderHandle)
-  // (it recovers the fn from the registry by $$id). Otherwise (dev or a real
-  // build) it means an UNSUPPORTED shape (e.g. a namespace import
-  // `rango.createLoader(...)`) the plugin skipped — fail loud. The rich
-  // diagnostic stays behind the NODE_ENV check so production folds it away and
-  // ships the small throw. isUnderTestRunner() is runtime-safe. Mirrors createHandle.
+  // Under test runner, fall back to synthetic id (recovers fn from registry by $$id).
+  // Otherwise (dev or prod), missing id means unsupported shape — fail loud.
   if (!loaderId) {
     if (isUnderTestRunner()) {
       loaderId = `__rango_runtime_loader_${runtimeLoaderIdCounter++}`;
@@ -90,12 +82,9 @@ export function createLoader<T>(
     };
   }
 
-  // Fetchable loader - store fn in registry and return a serializable object
+  // Fetchable loader - store fn in registry and return a serializable object.
   const middleware: MiddlewareFn[] =
     fetchable === true ? [] : fetchable?.middleware || [];
-
-  // Register the function in the internal registry by $$id (server-side only)
-  // The loader fetch handler looks it up by $$id when load() is called from the client.
   if (fn && loaderId) {
     registerFetchableLoader(loaderId, fn, middleware, true);
   }

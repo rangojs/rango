@@ -64,9 +64,13 @@ export function setCacheProfiles(profiles: Record<string, CacheProfile>): void {
 }
 
 /**
- * Get a cache profile by name from the global registry.
- * Used only at DSL-time (cache("profileName") inside urls() evaluation).
- * Runtime code uses request-scoped profiles instead.
+ * Read a profile out of the global registry by name.
+ *
+ * There is currently no production reader: the "use cache: <profile>" runtime
+ * path resolves from the request-scoped _cacheProfiles map (see
+ * cache-runtime.ts), and the route DSL has no cache("profileName") form (see
+ * dsl-helpers.ts). This accessor exists so tests can assert what
+ * setCacheProfiles() wrote into the global registry.
  */
 export function getCacheProfile(name: string): CacheProfile | undefined {
   return _profiles[name];

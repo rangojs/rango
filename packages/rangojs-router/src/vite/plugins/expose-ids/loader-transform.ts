@@ -9,18 +9,6 @@ export function hasCreateLoaderImport(code: string): boolean {
   );
 }
 
-/**
- * Generate lightweight client stubs for loader files.
- *
- * When a loader file is imported from a client component (e.g., for useLoader()),
- * the client only needs { __brand: "loader", $$id: "..." } objects.
- * This function replaces the entire file contents with just those stub exports,
- * preventing server-only data (constants, DB queries, etc.) from leaking into
- * the client bundle.
- *
- * Only applies when ALL named exports are createLoader() calls (plus type exports
- * which are erased at compile time). Files with mixed exports are left untouched.
- */
 export function generateClientLoaderStubs(
   bindings: CreateExportBinding[],
   code: string,
@@ -56,9 +44,6 @@ export function transformLoaders(
 
     const loaderId = makeStubId(filePath, exportName, isBuild);
 
-    // Inject $$id as hidden third parameter.
-    // createLoader(fn) -> createLoader(fn, undefined, "id")
-    // createLoader(fn, true) -> createLoader(fn, true, "id")
     const paramInjection =
       binding.argCount === 1 ? `, undefined, "${loaderId}"` : `, "${loaderId}"`;
     s.appendLeft(binding.callCloseParenPos, paramInjection);

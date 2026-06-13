@@ -18,9 +18,7 @@
 import {
   requireRequestContext,
   setRequestContextParams,
-  getLocationState,
 } from "../server/request-context.js";
-import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { appendMetric } from "../router/metrics.js";
 import type { RscPayload } from "./types.js";
 import {
@@ -28,20 +26,10 @@ import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   interceptRedirectForPartial,
+  attachLocationStateIfPresent,
 } from "./helpers.js";
+import { warnNonRedirectActionResponse } from "./runtime-warnings.js";
 import type { HandlerContext } from "./handler-context.js";
-
-/**
- * Attach location state set during the action to a payload's metadata.
- * No-op if no location state was set.
- */
-function attachLocationState(payload: RscPayload): void {
-  const locationState = getLocationState();
-  if (locationState) {
-    payload.metadata!.locationState =
-      resolveLocationStateEntries(locationState);
-  }
-}
 
 /**
  * Data flowing from action execution to the revalidation phase.
@@ -109,7 +97,7 @@ export async function executeServerAction<TEnv>(
 
   try {
     loadedAction = await ctx.loadServerAction(actionId);
-    const data = await loadedAction!.apply(null, args);
+    let data = await loadedAction!.apply(null, args);
 
     // Intercept redirect Responses: serializing one as the action returnValue
     // would fail, and revalidation would run needlessly.
@@ -119,6 +107,14 @@ export async function executeServerAction<TEnv>(
         ctx.createRedirectFlightResponse,
       );
       if (intercepted) return intercepted;
+
+      // Non-redirect Response returned (not thrown): a raw Response cannot be
+      // serialized into Flight. Discard it and re-render — mirroring the PE
+      // path (progressive-enhancement.ts) so JS and no-JS behave identically.
+      if (process.env.NODE_ENV !== "production") {
+        warnNonRedirectActionResponse(actionId);
+      }
+      data = undefined;
     }
 
     returnValue = { ok: true, data };
@@ -224,18 +220,21 @@ export async function executeServerAction<TEnv>(
   }
 
   // Build continuation for the revalidation phase
-  const resolvedActionId =
-    (loadedAction as { $id?: string; $$id?: string } | undefined)?.$id ??
-    (loadedAction as { $$id?: string } | undefined)?.$$id ??
-    actionId;
+  const actionMeta = loadedAction as
+    | { $id?: string; $$id?: string }
+    | undefined;
+  const resolvedActionId = actionMeta?.$id ?? actionMeta?.$$id ?? actionId;
 
   return {
     returnValue,
     actionStatus,
     temporaryReferences,
     actionContext: {
+      // Defensive copy of the already-parsed url (avoids re-parsing
+      // request.url). actionUrl is persisted into the continuation and later
+      // flows into matchPartial, so it must not alias the handler's live url.
       actionId: resolvedActionId,
-      actionUrl: new URL(request.url),
+      actionUrl: new URL(url),
       actionResult: returnValue.data,
       formData: actionFormData,
     },
@@ -274,8 +273,8 @@ export async function revalidateAfterAction<TEnv>(
   );
 
   if (!matchResult) {
-    // matchPartial returns null when the route is a redirect or the request
-    // is missing required headers (previousUrl). Check for redirect first.
+    // matchPartial returns null when the route is a redirect or no previous-URL
+    // context could be resolved. Check for redirect first.
     const fullMatch = await ctx.router.match(request, { env });
     setRequestContextParams(fullMatch.params, fullMatch.routeName);
 
@@ -286,14 +285,17 @@ export async function revalidateAfterAction<TEnv>(
       return createSimpleRedirectResponse(fullMatch.redirect);
     }
 
-    // Non-redirect: this branch is only reachable when the action request
-    // is missing the X-RSC-Router-Client-Path header (defensive). The
-    // client requires isPartial for action responses, so producing a full
-    // payload here would be rejected. Return 500 instead.
+    // Non-redirect: this branch is only reachable when no previous URL could
+    // be resolved (neither X-RSC-Router-Client-Path nor a usable Referer), or
+    // the previous URL was unparseable (defensive). The client requires
+    // isPartial for action responses, so producing a full payload here would
+    // be rejected. Return 500 instead.
     throw new Error(
       `[RSC] matchPartial returned null for a non-redirect route ` +
         `during action revalidation (${url.pathname}). This indicates ` +
-        `a malformed action request (missing X-RSC-Router-Client-Path header).`,
+        `a malformed action request: no previous-URL context could be ` +
+        `resolved (neither X-RSC-Router-Client-Path nor a usable Referer), ` +
+        `or the previous URL was unparseable.`,
     );
   }
 
@@ -319,7 +321,7 @@ export async function revalidateAfterAction<TEnv>(
     returnValue,
   };
 
-  attachLocationState(payload);
+  attachLocationStateIfPresent(payload);
 
   const renderStart = performance.now();
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {

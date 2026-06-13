@@ -1,22 +1,3 @@
-/**
- * RequestScope: the fields every user-facing context shares.
- *
- * A handler, middleware, loader, response handler, and the ALS-bound
- * RequestContext are all different phases of the same request, and they
- * all carry the same set of request-scoped capabilities: the raw Request,
- * the parsed URL pair (`url` is cleaned of internal `_rsc*` params,
- * `originalUrl` retains them), pathname/searchParams, platform bindings
- * (`env`), and two escape hatches for work that outlives the response
- * (`waitUntil`) or needs the raw Cloudflare runtime object
- * (`executionContext`).
- *
- * Each public context type intersects `RequestScope<TEnv>` with its own
- * phase-specific fields (e.g. `params`/`reverse` on HandlerContext,
- * `headers`/`header()` on MiddlewareContext). That keeps platform surface
- * in one place and lets the next runtime escape hatch we need land in
- * one file instead of four.
- */
-
 import type { DefaultEnv } from "./global-namespace.js";
 
 /**

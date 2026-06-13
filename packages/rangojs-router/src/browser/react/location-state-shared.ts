@@ -1,8 +1,3 @@
-/**
- * Shared location state utilities - works in both RSC and client contexts
- * No "use client" directive so it can be imported from RSC
- */
-
 import type { ReactElement } from "react";
 
 /**
@@ -26,16 +21,8 @@ export interface LocationStateOptions {
 
 type LocationStateUnsafeFn = (...args: never[]) => unknown;
 
-// Broadest constructor signature (`abstract` covers both abstract and concrete
-// classes). A class passed as state has a `new` signature, not a call signature,
-// so it slips past LocationStateUnsafeFn; at runtime the lazy-getter path
-// (`typeof value === "function"`) then mistakes it for a getter and throws.
 type LocationStateUnsafeCtor = abstract new (...args: never[]) => unknown;
 
-// `unknown` cannot be verified serializable, so it is rejected (callers must
-// supply a concrete type). `any` deliberately defeats type checking and is NOT
-// guardable — it is assignable to the branded error too, so the check always
-// passes; it remains an explicit escape hatch.
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type IsUnknown<T> =
   IsAny<T> extends true ? false : unknown extends T ? true : false;

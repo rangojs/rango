@@ -117,16 +117,10 @@ export function findNearestErrorBoundary(
   let current: EntryData | null = entry;
 
   while (current) {
-    // Check if this entry has error boundaries defined
     if (current.errorBoundary && current.errorBoundary.length > 0) {
-      // Return the last error boundary (most recently defined takes precedence)
       return current.errorBoundary[current.errorBoundary.length - 1];
     }
 
-    // Check orphan layouts for error boundaries
-    // Orphan layouts are siblings that render alongside the main route chain
-    // They can define error boundaries that catch errors from routes in the same route group
-    // Check from first to last (first sibling takes precedence as the "outer" wrapper)
     if (current.layout && current.layout.length > 0) {
       for (const orphan of current.layout) {
         if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
@@ -153,11 +147,21 @@ export function findNearestNotFoundBoundary(
   let current: EntryData | null = entry;
 
   while (current) {
-    // Check if this entry has notFound boundaries defined
     if (current.notFoundBoundary && current.notFoundBoundary.length > 0) {
-      // Return the last notFound boundary (most recently defined takes precedence)
       return current.notFoundBoundary[current.notFoundBoundary.length - 1];
     }
+
+    // Check orphan layouts mirroring findNearestErrorBoundary: notFoundBoundary
+    // attaches identically (onto parent.notFoundBoundary), and an orphan layout
+    // (parent=null) is reachable only via this scan. First sibling is "outer".
+    if (current.layout && current.layout.length > 0) {
+      for (const orphan of current.layout) {
+        if (orphan.notFoundBoundary && orphan.notFoundBoundary.length > 0) {
+          return orphan.notFoundBoundary[orphan.notFoundBoundary.length - 1];
+        }
+      }
+    }
+
     current = current.parent;
   }
 
@@ -207,22 +211,17 @@ export function createErrorSegment(
   entry: EntryData,
   params: Record<string, string>,
 ): ResolvedSegment {
-  // Determine the component to render
   let component: ReactNode;
 
   if (typeof fallback === "function") {
-    // ErrorBoundaryHandler - call with error info
     const props: ErrorBoundaryFallbackProps = {
       error: errorInfo,
     };
     component = fallback(props);
   } else {
-    // Static ReactNode fallback
     component = fallback;
   }
 
-  // Error segment uses the same ID as the layout that has the error boundary
-  // The error boundary content replaces the layout's outlet content
   return {
     id: entry.shortCode,
     namespace: entry.id,
@@ -261,17 +260,14 @@ export function createNotFoundSegment(
   entry: EntryData,
   params: Record<string, string>,
 ): ResolvedSegment {
-  // Determine the component to render
   let component: ReactNode;
 
   if (typeof fallback === "function") {
-    // NotFoundBoundaryHandler - call with props
     const props: NotFoundBoundaryFallbackProps = {
       notFound: notFoundInfo,
     };
     component = fallback(props);
   } else {
-    // Static ReactNode fallback
     component = fallback;
   }
 

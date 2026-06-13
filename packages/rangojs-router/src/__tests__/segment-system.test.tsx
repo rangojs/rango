@@ -20,7 +20,7 @@ function MockRootErrorBoundary(props: any) {
   return props.children;
 }
 
-vi.mock("../client.js", () => ({
+vi.mock("../outlet-provider.js", () => ({
   OutletProvider: MockOutletProvider,
 }));
 
@@ -602,6 +602,37 @@ describe("segment-system", () => {
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         expect(layoutOutlet.props.loaderData).toEqual({
           "modal-loader": { modal: true },
+        });
+      });
+
+      it("attaches an intercept slot loader whose slot name contains an uppercase 'D'", async () => {
+        // Regression: parent extraction used segment.id.split("D")[0], which cut
+        // the loader id at the first bare 'D'. For an intercept slot loader
+        // `${parent}.${slotName}D${i}.${loaderId}`, a slot name containing an
+        // uppercase 'D' (e.g. @Detail) cut inside the slot name, so the loader
+        // matched no parent and its data was silently dropped.
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const interceptSegments: ResolvedSegment[] = [
+          seg({ id: "L0.@Detail", type: "parallel", slot: "@Detail" }),
+          seg({
+            id: "L0.@DetailD0.detail-data",
+            type: "loader",
+            loaderId: "detail-loader",
+            loaderData: { detail: true },
+          }),
+        ];
+
+        const result = await renderSegments(segments, { interceptSegments });
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        expect(layoutOutlet.props.loaderData).toEqual({
+          "detail-loader": { detail: true },
         });
       });
 

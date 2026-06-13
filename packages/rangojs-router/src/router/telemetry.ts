@@ -14,10 +14,6 @@
  *   - revalidation.decision          (revalidation evaluation)
  */
 
-// ---------------------------------------------------------------------------
-// Event types
-// ---------------------------------------------------------------------------
-
 interface BaseEvent {
   /** Monotonic timestamp from performance.now() */
   timestamp: number;
@@ -239,10 +235,6 @@ export function formatCacheSignalHeader(
   return segments.map((s) => `${s.id}=${s.cacheStatus}`).join(", ");
 }
 
-// ---------------------------------------------------------------------------
-// Sink interface
-// ---------------------------------------------------------------------------
-
 /**
  * Telemetry sink receives structured lifecycle events from the router.
  * Implement this interface to integrate with any observability backend.
@@ -252,10 +244,6 @@ export function formatCacheSignalHeader(
 export interface TelemetrySink {
   emit(event: TelemetryEvent): void;
 }
-
-// ---------------------------------------------------------------------------
-// No-op singleton (zero-cost disabled state)
-// ---------------------------------------------------------------------------
 
 const noopSink: TelemetrySink = {
   emit() {},
@@ -284,12 +272,6 @@ export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Request ID extraction (for span correlation)
-// ---------------------------------------------------------------------------
-
-// Per-request memoization so the same Request object always maps to the
-// same ID. WeakMap allows GC when the Request is no longer referenced.
 const requestIds = new WeakMap<Request, string>();
 let telemetryRequestCounter = 0;
 
@@ -322,10 +304,6 @@ export function getRequestId(request: Request): string {
   requestIds.set(request, id);
   return id;
 }
-
-// ---------------------------------------------------------------------------
-// Console sink (built-in, replaces ad-hoc console.log debug traces)
-// ---------------------------------------------------------------------------
 
 /**
  * Built-in console sink that logs events in a structured format.

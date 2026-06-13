@@ -30,11 +30,6 @@ const CACHE_RUNTIME_IMPORT = "@rangojs/router/cache-runtime";
 // and should not be wrapped (children can't be cache-keyed).
 const LAYOUT_TEMPLATE_PATTERN = /\/(layout|template)\.(tsx?|jsx?)$/;
 
-/**
- * Grammar for a valid function-level directive: `use cache` optionally followed
- * by `: <profile-name>`. The single source of truth for both the transform and
- * the near-miss validator below.
- */
 export const USE_CACHE_DIRECTIVE_RE: RegExp = /^use cache(:\s*[\w-]+)?$/;
 
 export function useCacheTransform(): Plugin {
@@ -72,7 +67,6 @@ export function useCacheTransform(): Plugin {
 
       const start = counter ? performance.now() : 0;
       try {
-        // Lazy-load transform helpers
         if (!rscTransforms) {
           try {
             rscTransforms = await import("@vitejs/plugin-rsc/transforms");
@@ -87,7 +81,6 @@ export function useCacheTransform(): Plugin {
           transformHoistInlineDirective,
         } = rscTransforms;
 
-        // Parse AST
         let ast: any;
         try {
           const { parseAst } = await import("vite");
@@ -99,7 +92,6 @@ export function useCacheTransform(): Plugin {
         const filePath = normalizePath(path.relative(projectRoot, id));
         const isLayoutOrTemplate = LAYOUT_TEMPLATE_PATTERN.test(id);
 
-        // Check for file-level "use cache"
         if (hasDirective(ast.body, "use cache")) {
           return transformFileLevelUseCache(
             code,
@@ -112,8 +104,6 @@ export function useCacheTransform(): Plugin {
           );
         }
 
-        // Check for function-level "use cache" / "use cache: profileName"
-        // (only if there's no file-level directive but code still contains the string)
         const functionResult = transformFunctionLevelUseCache(
           code,
           ast,
@@ -123,9 +113,6 @@ export function useCacheTransform(): Plugin {
           transformHoistInlineDirective,
         );
 
-        // Check for near-miss directives on the function-level path. The
-        // file-level branch above returns earlier (it wraps every export
-        // regardless), so this runs only when there is no file-level directive.
         warnOnNearMissDirectives(ast, id, this.warn.bind(this));
 
         if (functionResult) return functionResult;
@@ -145,7 +132,6 @@ function transformFileLevelUseCache(
   isLayoutOrTemplate: boolean,
   transformWrapExport: (typeof import("@vitejs/plugin-rsc/transforms"))["transformWrapExport"],
 ) {
-  // Collect non-function exports to report after wrapping
   const nonFunctionExports: string[] = [];
 
   const { exportNames, output } = transformWrapExport(code, ast, {
@@ -155,9 +141,7 @@ function transformFileLevelUseCache(
     },
     rejectNonAsyncFunction: false,
     filter: (name: string, meta: { isFunction?: boolean }) => {
-      // Skip default export of layout/template files (they receive children)
       if (name === "default" && isLayoutOrTemplate) return false;
-      // Non-function exports cannot be wrapped with registerCachedFunction
       if (meta.isFunction === false) {
         nonFunctionExports.push(name);
         return false;
@@ -178,7 +162,6 @@ function transformFileLevelUseCache(
   }
 
   if (exportNames.length === 0) {
-    // Even if no exports were wrapped, strip the directive
     const s = new MagicString(code);
     const directive = findFileLevelDirective(ast);
     if (directive) {
@@ -195,12 +178,10 @@ function transformFileLevelUseCache(
     return;
   }
 
-  // Prepend the import
   output.prepend(
     `import { registerCachedFunction as __rango_registerCachedFunction } from ${JSON.stringify(CACHE_RUNTIME_IMPORT)};\n`,
   );
 
-  // Replace the directive with a comment
   const directive = findFileLevelDirective(ast);
   if (directive) {
     output.overwrite(
@@ -244,9 +225,6 @@ function transformFunctionLevelUseCache(
 
     if (names.length === 0) return;
 
-    // Use a top-level import instead of await import() — the hoisted wrapper
-    // may be placed in a non-async context (e.g., inside a synchronous
-    // urls() callback) where await is not allowed.
     output.prepend(
       `import { registerCachedFunction as __rango_registerCachedFunction } from ${JSON.stringify(CACHE_RUNTIME_IMPORT)};\n`,
     );
@@ -261,9 +239,6 @@ function transformFunctionLevelUseCache(
   }
 }
 
-/**
- * Find the file-level "use cache" directive AST node for removal.
- */
 function findFileLevelDirective(
   ast: any,
 ): { start: number; end: number } | null {
@@ -280,18 +255,8 @@ function findFileLevelDirective(
   return null;
 }
 
-/**
- * Regex for near-miss: starts with "use cache:" but has invalid tokens.
- */
 const NEAR_MISS_RE = /^use cache:\s*.+$/;
 
-/**
- * Walk the AST looking for string literals that look like malformed
- * "use cache" directives and emit a Vite warning for each.
- *
- * This catches cases like `"use cache: bad.name"` or `"use cache: "`
- * that the transform regex silently ignores.
- */
 function warnOnNearMissDirectives(
   ast: any,
   fileId: string,
@@ -319,7 +284,6 @@ function warnOnNearMissDirectives(
       }
     }
 
-    // Walk into function bodies where directives appear
     for (const key of Object.keys(node)) {
       const child = node[key];
       if (Array.isArray(child)) {

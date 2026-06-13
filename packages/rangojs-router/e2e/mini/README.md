@@ -136,10 +136,9 @@ default document.
   spurious "Multiple routers found" error or "Unsupported shape" warning. (This
   was previously a footgun — both `actions.tsx` and `shared.tsx` here mention
   these tokens in comments freely.)
-- **Named cache profiles work only via the `"use cache: <profile>"` directive**,
-  not `cache("name", …)` in the route tree (which fails build-time manifest gen
-  with "unknown cache profile"). In-tree segment caching uses explicit
-  `cache({ ttl, swr }, …)`.
+- **Named cache profiles are applied via the `"use cache: <profile>"` directive.**
+  There is no `cache("name", …)` form in the route tree (the string overload was
+  removed); in-tree segment caching uses explicit `cache({ ttl, swr }, …)`.
 - **`useRefreshLoaders` group refresh re-fetches via the GET loader endpoint**,
   so grouped loaders must be **fetchable** (`createLoader(fn, true)`) or the
   refetch rejects into an unhandled error.

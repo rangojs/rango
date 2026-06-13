@@ -1,18 +1,10 @@
 /**
  * Deterministic param hashing for prerender storage keys.
- *
- * Used at build time (child process) to generate filenames and at
- * runtime (worker) to look up pre-rendered data. Both environments
- * must produce identical hashes for the same params.
- *
- * Uses a simple DJB2-based hash that works in all JS environments
- * (Node.js, Cloudflare Workers, browsers) without crypto imports.
+ * Used at build time and runtime; both must produce identical hashes.
+ * DJB2-based; works in all JS environments without crypto imports.
  */
 
-/**
- * Compute a deterministic hash string from route params.
- * For static routes (no params), returns "_".
- */
+// For static routes (no params), returns "_".
 export function hashParams(params: Record<string, string>): string {
   const entries = Object.entries(params);
   if (entries.length === 0) return "_";
@@ -27,6 +19,13 @@ export function hashParams(params: Record<string, string>): string {
 /**
  * DJB2 hash returning an 8-char hex string.
  * Deterministic across all JS runtimes.
+ *
+ * 32-bit output: per-route collision probability hits ~50% near ~77k distinct
+ * param sets (birthday bound). The production store keys solely on
+ * routeName/paramHash and does not verify the canonical param string, so a
+ * collision serves the surviving entry for both param sets. Benign for typical
+ * catalogs; revisit (wider hash or stored-param verification) before
+ * pre-rendering hundreds of thousands of pages per route.
  */
 function djb2Hex(str: string): string {
   let hash = 5381;

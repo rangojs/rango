@@ -23,16 +23,10 @@
  * ```
  */
 
-// Main hook for accessing theme
 export { useTheme } from "./use-theme.js";
-
-// Provider (typically auto-included via NavigationProvider when theme is enabled)
 export { ThemeProvider } from "./ThemeProvider.js";
-
-// Script component for FOUC prevention (use in document head)
 export { ThemeScript, type ThemeScriptProps } from "./ThemeScript.js";
 
-// Types
 export type {
   Theme,
   ResolvedTheme,
@@ -44,5 +38,4 @@ export type {
   ThemeContextValue,
 } from "./types.js";
 
-// Constants
 export { THEME_DEFAULTS, THEME_COOKIE } from "./constants.js";

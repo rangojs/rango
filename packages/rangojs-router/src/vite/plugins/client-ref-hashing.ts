@@ -5,7 +5,6 @@ import { createRangoDebugger, createCounter, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.transform);
 
-// Dev-mode client-reference key prefixes emitted by @vitejs/plugin-rsc
 const CLIENT_PKG_PROXY_PREFIX =
   "/@id/__x00__virtual:vite-rsc/client-package-proxy/";
 const CLIENT_IN_SERVER_PKG_PROXY_PREFIX =
@@ -40,32 +39,24 @@ export function computeProductionHash(
   let toHash: string;
 
   if (refKey.startsWith(CLIENT_PKG_PROXY_PREFIX)) {
-    // /@id/__x00__virtual:vite-rsc/client-package-proxy/<pkg> -> hash("<pkg>")
     toHash = refKey.slice(CLIENT_PKG_PROXY_PREFIX.length);
   } else if (refKey.startsWith(CLIENT_IN_SERVER_PKG_PROXY_PREFIX)) {
-    // /@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/<encodedAbsPath>
     const absPath = decodeURIComponent(
       refKey.slice(CLIENT_IN_SERVER_PKG_PROXY_PREFIX.length),
     );
     toHash = relative(projectRoot, absPath).replaceAll("\\", "/");
   } else if (refKey.startsWith(FS_PREFIX)) {
-    // /@fs/abs/path.tsx -> hash(relative(root, "/abs/path.tsx"))
     const absPath = refKey.slice(FS_PREFIX.length - 1); // keep leading /
     toHash = relative(projectRoot, absPath).replaceAll("\\", "/");
   } else if (refKey.startsWith("/")) {
-    // /src/Button.tsx -> hash("src/Button.tsx")
     toHash = refKey.slice(1);
   } else {
-    // Already hashed or unknown format — return unchanged
     return refKey;
   }
 
   return hashRefKey(toHash);
 }
 
-// Regex to match registerClientReference() calls as emitted by @vitejs/plugin-rsc.
-// Captures the reference key (second argument) from the call.
-// Handles two proxy forms: parenthesized expression `(expr)` and arrow-throw `() => { ... }`.
 const REGISTER_CLIENT_REF_RE =
   /registerClientReference\(\s*(?:(?:\([^)]*\))|(?:\(\)[\s\S]*?\}))\s*,\s*"([^"]+)"\s*,\s*"[^"]+"\s*\)/g;
 
@@ -106,7 +97,6 @@ export function hashClientRefs(projectRoot: string): Plugin {
   const counter = createCounter(debug, "hash-client-refs");
   return {
     name: "@rangojs/router:hash-client-refs",
-    // Run after the RSC plugin's transform (default enforce is normal)
     enforce: "post",
     applyToEnvironment(env) {
       return env.name === "rsc";

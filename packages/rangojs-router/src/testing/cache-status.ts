@@ -37,18 +37,6 @@ export type ExpectedCacheStatus = CacheSegmentStatus;
 /** A target carrying response headers (a Response or a `{ headers }` object). */
 export type CacheStatusTarget = Response | { headers: Headers };
 
-/**
- * Parse an `X-Rango-Cache` header value into a `{ routeKey: status }` map.
- *
- * Header format: `<routeKey>=<status>, <routeKey2>=<status2>`. The key is the
- * route NAME (ctx.routeKey, e.g. `product.detail`), NOT the URL pattern —
- * see assertCacheStatus. Whitespace around entries and the `=` is tolerated.
- * Entries without a status are ignored.
- *
- * @example
- * parseCacheHeader("product.detail=hit, shop.layout=stale")
- * // => { "product.detail": "hit", "shop.layout": "stale" }
- */
 export function parseCacheHeader(
   headerValue: string | null | undefined,
 ): Record<string, string> {
@@ -71,25 +59,6 @@ function getHeaders(target: CacheStatusTarget): Headers {
   return target.headers;
 }
 
-/**
- * Assert that the `X-Rango-Cache` header reports `expected` status for the
- * given route. Throws a descriptive error when the header is missing (gate
- * off), the route is absent, or the status differs.
- *
- * `routeKey` is the route NAME (e.g. `product.detail`), the same id the header
- * carries — NOT the URL pattern (`/products/:id`). The signal is built from
- * ctx.routeKey (telemetry.ts), so a pattern-shaped key never matches.
- *
- * The header is produced by the RSC render pipeline, so get the Response from
- * the router's real fetch path (`router.fetch(...)`), with the debug cache
- * signal gate enabled (`debugCacheSignal: true` or `RANGO_TEST_SIGNALS=1`).
- * NOTE: `dispatch()` is the non-RSC primitive and never emits this header.
- *
- * @example
- * // debugCacheSignal must be enabled on the router under test.
- * const res = await router.fetch(new Request("https://app/products/42"));
- * assertCacheStatus(res, "product.detail", "hit");
- */
 export function assertCacheStatus(
   target: CacheStatusTarget,
   segment: string,
@@ -131,19 +100,6 @@ export interface CacheSink {
   events: TelemetryEvent[];
 }
 
-/**
- * Create a capturing telemetry sink for asserting on `cache.decision` events.
- *
- * This is the ZERO-production-surface path: no response header is emitted, the
- * consumer just inspects the captured events.
- *
- * @example
- * const { sink, events } = createCacheSink();
- * const router = createRouter({ telemetry: sink, ... });
- * // ...send a request through the router's RSC fetch path...
- * const decisions = filterCacheDecisions(events);
- * expect(decisions[0].segments?.[0].cacheStatus).toBe("hit");
- */
 export function createCacheSink(): CacheSink {
   const events: TelemetryEvent[] = [];
   const sink: TelemetrySink = {
@@ -154,9 +110,6 @@ export function createCacheSink(): CacheSink {
   return { sink, events };
 }
 
-/**
- * Filter captured telemetry events down to `cache.decision` events.
- */
 export function filterCacheDecisions(
   events: readonly TelemetryEvent[],
 ): CacheDecisionEvent[] {

@@ -34,24 +34,18 @@ export function urls<
 >(
   builder: (helpers: PathHelpers<TEnv>) => TItems,
 ): UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>> {
-  // Create the handler function that will be called by the router
   const handler = () => {
     invariant(
       typeof builder === "function",
       "urls() expects a builder function as its argument",
     );
 
-    // Get base helpers from the existing route-definition module
     const baseHelpers = createRouteHelpers<any, TEnv>();
 
-    // Create the path helper (with .json, .text, .html, .xml, .image, .stream, .any tags)
     const pathHelper = attachPathResponseTags(createPathHelper<TEnv>());
 
-    // Create the include helper
     const includeHelper = createIncludeHelper<TEnv>();
 
-    // Combine all helpers
-    // Note: layout and cache are cast to their typed versions - phantom types don't affect runtime
     const helpers: PathHelpers<TEnv> = {
       path: pathHelper as any,
       include: includeHelper as any,
@@ -69,20 +63,13 @@ export function urls<
       transition: baseHelpers.transition as PathHelpers<TEnv>["transition"],
     };
 
-    // Execute builder directly - manifest.ts handles RootLayout wrapping
-    // for inline handlers (non-Promise results).
-    // For nested include() calls, routes inherit the outer RootLayout.
     const builderResult = builder(helpers).flat(3) as AllUseItems[];
     return processItems(builderResult);
   };
 
-  // trailingSlash config is populated when handler() runs
-  // We expose it via a getter that reads from the context after handler execution
   return {
     handler,
     get trailingSlash() {
-      // Get the trailingSlash map from the current context
-      // This will be populated after handler() is called
       const store = getContext();
       const ctx = store.context.getStore();
       if (!ctx?.trailingSlash) {

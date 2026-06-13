@@ -1,10 +1,9 @@
 /**
  * A module-level handle to the active navigation store.
  *
- * The real boot path (`rsc-router.tsx`) calls `createNavigationStore()`
- * directly, so the `getNavigationStore()` singleton in `navigation-store.ts`
- * is never populated in a running app (it throws; only unit tests use it).
- * This handle is the live reference for code that needs the store but does not
+ * The boot path (`rsc-router.tsx`) calls `createNavigationStore()` directly;
+ * there is no global store singleton. This handle is the live reference for
+ * code that needs the store but does not
  * receive it by argument: the jar-divergence observer (below) and the client
  * seat of `invalidateClientCache()` (added later).
  *

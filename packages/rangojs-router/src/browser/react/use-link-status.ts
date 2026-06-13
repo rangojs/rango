@@ -82,11 +82,9 @@ export function useLinkStatus(): LinkStatus {
   const linkTo = useContext(LinkContext);
   const ctx = useContext(NavigationStoreContext);
 
-  // Get origin for URL normalization (stable across renders)
   const origin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
-  // Base state for useOptimistic
   const [basePending, setBasePending] = useState<boolean>(() => {
     if (!ctx || linkTo === null) {
       return false;
@@ -97,7 +95,6 @@ export function useLinkStatus(): LinkStatus {
 
   const prevPending = useRef(basePending);
 
-  // useOptimistic allows immediate updates during transitions
   const [pending, setOptimisticPending] = useOptimistic(basePending);
 
   useEffect(() => {
@@ -105,7 +102,6 @@ export function useLinkStatus(): LinkStatus {
       return;
     }
 
-    // Subscribe to navigation state changes
     return ctx.eventController.subscribe(() => {
       const state = ctx.eventController.getState();
       const isPending = isPendingFor(linkTo, state.pendingUrl, origin);

@@ -25,11 +25,6 @@ export function safeDecodeURIComponent(raw: string): string {
   }
 }
 
-// encodeURIComponent over-encodes for path segments. After running it,
-// un-encode the pchar sub-delims + (`:` / `@`) so the resulting URL
-// keeps human-readable characters that are legal in a path segment.
-// Everything dangerous — `/ ? # %` and space/control/non-ASCII — stays
-// encoded.
 const PATH_SAFE_ESCAPES: Record<string, string> = {
   "%3A": ":",
   "%40": "@",

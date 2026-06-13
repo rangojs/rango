@@ -125,10 +125,6 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
   return {
     emit(event: TelemetryEvent): void {
       switch (event.type) {
-        // -----------------------------------------------------------------
-        // Request lifecycle
-        // -----------------------------------------------------------------
-
         case "request.start": {
           const span = tracer.startSpan("rango.request", {
             attributes: {
@@ -168,10 +164,6 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
           }
           break;
         }
-
-        // -----------------------------------------------------------------
-        // Loader lifecycle
-        // -----------------------------------------------------------------
 
         case "loader.start": {
           const span = tracer.startSpan("rango.loader", {
@@ -231,10 +223,6 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
           break;
         }
 
-        // -----------------------------------------------------------------
-        // Handler errors (instant span)
-        // -----------------------------------------------------------------
-
         case "handler.error": {
           const attrs: Record<string, string | number | boolean> = {
             "rango.handled_by_boundary": event.handledByBoundary,
@@ -257,10 +245,6 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
           break;
         }
 
-        // -----------------------------------------------------------------
-        // Cache decision (instant span)
-        // -----------------------------------------------------------------
-
         case "cache.decision": {
           const attrs: Record<string, string | number | boolean> = {
             "http.route": event.pathname,
@@ -276,10 +260,6 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
           span.end();
           break;
         }
-
-        // -----------------------------------------------------------------
-        // Revalidation decision (instant span)
-        // -----------------------------------------------------------------
 
         case "revalidation.decision": {
           const span = tracer.startSpan("rango.revalidation.decision", {

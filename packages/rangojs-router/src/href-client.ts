@@ -298,13 +298,9 @@ declare global {
  */
 export function href<T extends ValidPaths>(path: T, mount?: string): string {
   if (mount && mount !== "/") {
-    // Strip trailing slash from mount to avoid double-slash when joining
     const normalizedMount = mount.endsWith("/") ? mount.slice(0, -1) : mount;
     return normalizedMount + path;
   }
-  // ValidPaths is built from template literals so T does extend string at
-  // runtime, but the inference can fail past a certain route-union complexity
-  // and TypeScript reports T as not assignable to string.
   return path as string;
 }
 

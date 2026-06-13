@@ -69,24 +69,6 @@ export function computeExpiration(
   return { staleAt, expiresAt };
 }
 
-// ============================================================================
-// Cache Key Resolution
-// ============================================================================
-
-/**
- * Resolve cache key using the 3-tier priority:
- * 1. keyFn (full override from route/loader cache options)
- * 2. store.keyGenerator (modifies default key)
- * 3. defaultKey (used when neither keyFn nor keyGenerator is provided)
- *
- * Errors from keyFn and store.keyGenerator propagate to the caller.
- * Cache identity is correctness-critical: if explicit key logic throws,
- * silently remapping to a different key could cause cache collisions or
- * serve stale/wrong data. Callers must handle the error or let it surface.
- *
- * Uses _getRequestContext (non-throwing) so that calls outside ALS
- * (e.g. build-time) gracefully fall back to defaultKey.
- */
 export async function resolveCacheKey(
   keyFn: ((ctx: RequestContext) => string | Promise<string>) | undefined,
   store: SegmentCacheStore | null,
@@ -95,34 +77,17 @@ export async function resolveCacheKey(
 ): Promise<string> {
   const requestCtx = _getRequestContext();
 
-  // Priority 1: Route/loader-level key function (full override)
   if (keyFn && requestCtx) {
     return await keyFn(requestCtx);
   }
 
-  // Priority 2: Store-level keyGenerator (modifies default key)
   if (store?.keyGenerator && requestCtx) {
     return await store.keyGenerator(requestCtx, defaultKey);
   }
 
-  // Priority 3: Default key (no custom key logic provided)
   return defaultKey;
 }
 
-// ============================================================================
-// Cache Tag Resolution
-// ============================================================================
-
-/**
- * Resolve cache tags from a tags option (static array or function of ctx).
- *
- * Fails open: a thrown tag callback falls back to no tags rather than
- * aborting the request. Tags are additive metadata (not identity), so a
- * missing tag does not cause cache collisions, only a missed invalidation.
- *
- * Shared by the cache() DSL (cache-scope) and loader caching (loader-cache)
- * so tag resolution behaves identically across every cache axis.
- */
 export function resolveTagsOption<TEnv>(
   tags: string[] | ((ctx: RequestContext<TEnv>) => string[]) | undefined,
   ctx: RequestContext<TEnv> | undefined,
@@ -131,10 +96,6 @@ export function resolveTagsOption<TEnv>(
   if (!tags) return undefined;
   if (typeof tags === "function") {
     if (!ctx) {
-      // A dynamic tags function needs the request context to run. Without it
-      // (e.g. resolved outside a request, at build/prerender time) the entry is
-      // cached UNTAGGED and can never be invalidated - surface that rather than
-      // silently dropping the tags, matching the thrown-callback branch below.
       console.warn(
         `[${label}] Dynamic tags function present but no request context; ` +
           `caching without tags (this entry will not be tag-invalidatable).`,
@@ -167,25 +128,10 @@ function normalizeTagList(tags: string[]): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-// ============================================================================
-// Cache Store Resolution
-// ============================================================================
-
-/**
- * Resolve cache store from the 2-tier priority:
- * 1. Explicit store from cache options
- * 2. App-level store from request context
- */
 export function resolveCacheStore(
   explicitStore: SegmentCacheStore | undefined,
 ): SegmentCacheStore | null {
   if (explicitStore) {
-    // Register explicit per-scope stores so updateTag()/revalidateTag() can
-    // reach them. This is the single chokepoint every cache axis (segment,
-    // response, loader) resolves through, so registering here covers them all
-    // eagerly - no dependence on whether a tagged write has happened yet. The
-    // app-level store is intentionally not registered (always reachable via
-    // ctx._cacheStore).
     registerExplicitTaggedStore(explicitStore);
     return explicitStore;
   }

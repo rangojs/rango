@@ -29,7 +29,6 @@ export function createVersionInjectorPlugin(
 
     transform(code, id) {
       if (!resolvedEntryPath) return null;
-      // Only transform the RSC entry file
       const normalizedId = Vite.normalizePath(id);
       const normalizedEntry = Vite.normalizePath(resolvedEntryPath);
 
@@ -37,25 +36,10 @@ export function createVersionInjectorPlugin(
         return null;
       }
 
-      // Always prepend `import "virtual:rsc-router/routes-manifest"` as the
-      // first side-effect import. The manifest virtual module's `load()` hook
-      // awaits `s.discoveryDone` so that, by the time the rest of the entry
-      // including any module-level `router.reverse()` calls under `./router.js`
-      // evaluates, runtime discovery has rewritten `router.named-routes.gen.ts`
-      // with the full route table.
-      //
-      // ES module evaluation order matters here: while imports are *parsed*
-      // hoisted, side-effect imports are evaluated in source order in the
-      // dependency graph. A user-authored `import "virtual:rsc-router/..."`
-      // placed after `import "./router.js"` runs too late: the manifest
-      // gate fires after router.tsx has already crashed on a stale gen file.
-      // We always prepend; ESM dedups any user-written duplicate, so module
-      // initialization still runs once.
       const prepend: string[] = [
         `import "virtual:rsc-router/routes-manifest";`,
       ];
 
-      // Auto-inject VERSION if file uses createRSCHandler without version
       let newCode = code;
       const needsVersion =
         code.includes("createRSCHandler") &&
@@ -70,10 +54,6 @@ export function createVersionInjectorPlugin(
         );
       }
 
-      // Insert after any leading `/// <reference ... />` triple-slash
-      // directives (and surrounding blank lines). TypeScript requires those
-      // directives to precede all other code; putting our imports above
-      // them silently demotes the directives to plain comments.
       const lines = newCode.split("\n");
       let insertAt = 0;
       while (insertAt < lines.length) {

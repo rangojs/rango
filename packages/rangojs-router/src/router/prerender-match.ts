@@ -11,7 +11,7 @@ import {
   createStaticContext,
   createReverseFunction,
 } from "./handler-context.js";
-import { isPrerenderPassthrough } from "../prerender.js";
+import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
@@ -82,6 +82,17 @@ export async function matchForPrerender<TEnv = any>(
   // Build RouterContext for loadManifest/traverseBack
   const routerCtx = deps.buildRouterContext();
 
+  // Passthrough sentinel result: an unknown-param Passthrough route falls
+  // through to the live handler at runtime, so no artifact is baked. A fresh
+  // object is returned per call (no site mutates or identity-compares it).
+  const passthroughResult = () => ({
+    segments: [],
+    handles: "",
+    routeName: matched.routeKey,
+    params: matchedParams,
+    passthrough: true as const,
+  });
+
   return runWithRouterContext(routerCtx, async () => {
     // 2. Load the manifest entry tree
     const manifestEntry = await loadManifest(
@@ -145,13 +156,7 @@ export async function matchForPrerender<TEnv = any>(
             );
           });
           if (!isKnown) {
-            return {
-              segments: [],
-              handles: "",
-              routeName: matched.routeKey,
-              params: matchedParams,
-              passthrough: true as const,
-            };
+            return passthroughResult();
           }
           // Preserve vars set by getParams() for the render context
           if (
@@ -165,13 +170,7 @@ export async function matchForPrerender<TEnv = any>(
           // Skip errors are intentional — treat as passthrough.
           // All other errors propagate so dev surfaces them.
           if (err?.name === "Skip") {
-            return {
-              segments: [],
-              handles: "",
-              routeName: matched.routeKey,
-              params: matchedParams,
-              passthrough: true as const,
-            };
+            return passthroughResult();
           }
           throw err;
         }
@@ -264,17 +263,13 @@ export async function matchForPrerender<TEnv = any>(
         { skipLoaders: true },
       );
 
-      // 9. Detect passthrough sentinel: handler returned ctx.passthrough()
-      for (const seg of allSegments) {
-        if (isPrerenderPassthrough(seg.component)) {
-          return {
-            segments: [],
-            handles: "",
-            routeName: matched.routeKey,
-            params: matchedParams,
-            passthrough: true as const,
-          };
-        }
+      // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
+      // When the route declares loading(), the handler result is deferred so the
+      // component is a thenable resolving to the sentinel — detectPrerenderPassthrough
+      // resolves thenables before testing (a sync check would miss it and bake a
+      // corrupt artifact).
+      if (await detectPrerenderPassthrough(allSegments)) {
+        return passthroughResult();
       }
 
       // 10. Filter out any loader segments (belt-and-suspenders)
@@ -319,24 +314,14 @@ export async function matchForPrerender<TEnv = any>(
       }[] = [];
       let current: EntryData | null = manifestEntry;
       while (current) {
-        if (current.intercept && current.intercept.length > 0) {
-          for (const ic of current.intercept) {
+        // Flatten the entry and its sibling layouts into one source list, the
+        // same traversal findInterceptForRoute uses; the build keeps ALL matches
+        // (not just the innermost) and skips when(). intercept/layout are
+        // non-optional arrays, so empty ones are a no-op here.
+        for (const source of [current, ...current.layout]) {
+          for (const ic of source.intercept) {
             if (ic.routeName === matched.routeKey) {
-              foundIntercepts.push({ intercept: ic, entry: current });
-            }
-          }
-        }
-        if (current.layout && current.layout.length > 0) {
-          for (const siblingLayout of current.layout) {
-            if (siblingLayout.intercept && siblingLayout.intercept.length > 0) {
-              for (const ic of siblingLayout.intercept) {
-                if (ic.routeName === matched.routeKey) {
-                  foundIntercepts.push({
-                    intercept: ic,
-                    entry: siblingLayout,
-                  });
-                }
-              }
+              foundIntercepts.push({ intercept: ic, entry: source });
             }
           }
         }
@@ -503,14 +488,13 @@ export async function renderStaticSegment<TEnv = any>(
     setupBuildUse(buildCtx);
 
     const raw = await handler(buildCtx);
-    const component = raw?.type ? raw : raw;
 
     const segment: ResolvedSegment = {
       id: handlerId,
       namespace: handlerId,
       type: "layout",
       index: 0,
-      component,
+      component: raw,
       params: {},
       belongsToRoute: false,
     };

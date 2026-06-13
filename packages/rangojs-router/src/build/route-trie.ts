@@ -63,6 +63,9 @@ export interface TrieNode {
  * @param routeAncestry - Map of route name to ancestry shortCodes
  * @param routeToStaticPrefix - Map of route name to its entry's staticPrefix
  * @param routeTrailingSlash - Optional map of route name to trailing slash mode
+ * @param prerenderRouteNames - Optional set of prerendered route names (sets leaf.pr)
+ * @param passthroughRouteNames - Optional set of passthrough route names (sets leaf.pt)
+ * @param responseTypeRoutes - Optional map of route name to response type (sets leaf.rt)
  */
 export function buildRouteTrie(
   routeManifest: Record<string, string>,

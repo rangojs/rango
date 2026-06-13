@@ -24,9 +24,6 @@ import type { ReadonlyURLSearchParams } from "../types.js";
 export function useSearchParams(): ReadonlyURLSearchParams {
   const ctx = useContext(NavigationStoreContext);
 
-  // Always initialize with empty URLSearchParams to match SSR output
-  // and avoid hydration mismatch. The useEffect below syncs from
-  // the real URL after hydration.
   const [searchParams, setSearchParams] = useState<ReadonlyURLSearchParams>(
     () => new URLSearchParams(),
   );
@@ -41,12 +38,10 @@ export function useSearchParams(): ReadonlyURLSearchParams {
       const nextSearch = location.searchParams.toString();
       if (nextSearch !== prevSearch.current) {
         prevSearch.current = nextSearch;
-        // Create a snapshot so callers cannot mutate the source URLSearchParams
         setSearchParams(new URLSearchParams(nextSearch));
       }
     };
 
-    // Sync on mount (picks up search params from browser URL)
     update();
 
     return ctx.eventController.subscribe(update);

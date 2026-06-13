@@ -19,17 +19,13 @@ import type { ThemeContextValue } from "./types.js";
 export const ThemeContext: Context<ThemeContextValue | null> =
   createContext<ThemeContextValue | null>(null);
 
-/**
- * Get theme context (internal use)
- * Returns null if theme is not enabled
- */
 export function useThemeContext(): ThemeContextValue | null {
   return useContext(ThemeContext);
 }
 
 /**
  * Get theme context, throwing if not available
- * Use this in useTheme hook
+ * Used by useTheme hook
  */
 export function requireThemeContext(): ThemeContextValue {
   const ctx = useContext(ThemeContext);

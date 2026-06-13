@@ -168,8 +168,6 @@ export function withBackgroundRevalidation<TEnv>(
       requestCtx._handleStore = createHandleStore();
 
       try {
-        // Create fresh handler context and loader promises to avoid
-        // reusing memoized results from the foreground pass
         const freshHandlerContext = createHandlerContext(
           ctx.matched.params,
           ctx.request,
@@ -185,10 +183,6 @@ export function withBackgroundRevalidation<TEnv>(
         const freshLoaderPromises = new Map<string, Promise<any>>();
         setupLoaderAccess(freshHandlerContext, freshLoaderPromises);
 
-        // Resolve all segments fresh (without revalidation logic)
-        // to ensure complete components for caching.
-        // Skip DSL loaders — they are never cached (cacheRoute filters them)
-        // and are always resolved fresh on each request.
         const freshSegments = await ctx.Store.run(() =>
           resolveAllSegments(
             ctx.entries,
@@ -200,7 +194,6 @@ export function withBackgroundRevalidation<TEnv>(
           ),
         );
 
-        // Also resolve intercept segments fresh if applicable
         let freshInterceptSegments: ResolvedSegment[] = [];
         if (ctx.interceptResult) {
           freshInterceptSegments = await ctx.Store.run(() =>

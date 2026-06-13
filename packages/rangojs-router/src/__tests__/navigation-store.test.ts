@@ -1,10 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   createNavigationStore,
   generateHistoryKey,
-  initNavigationStore,
-  getNavigationStore,
-  resetNavigationStore,
 } from "../browser/navigation-store";
 
 // All tests use crossTabSync: false to avoid BroadcastChannel dependency.
@@ -533,52 +530,6 @@ describe("navigation-store", () => {
       const listener2 = vi.fn();
       store.subscribeToAction("myAction", listener2);
       // Should not throw and should work normally
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Singleton pattern
-  // --------------------------------------------------------------------------
-  describe("singleton", () => {
-    afterEach(() => {
-      resetNavigationStore();
-    });
-
-    it("initNavigationStore creates singleton", () => {
-      const store1 = initNavigationStore({
-        initialLocation: { href: "http://localhost/" },
-        crossTabSync: false,
-      });
-      const store2 = initNavigationStore({
-        initialLocation: { href: "http://localhost/other" },
-        crossTabSync: false,
-      });
-
-      // Second call returns same instance
-      expect(store1).toBe(store2);
-    });
-
-    it("getNavigationStore throws before init", () => {
-      expect(() => getNavigationStore()).toThrow(
-        "Navigation store not initialized",
-      );
-    });
-
-    it("getNavigationStore returns initialized store", () => {
-      const store = initNavigationStore({
-        initialLocation: { href: "http://localhost/" },
-        crossTabSync: false,
-      });
-      expect(getNavigationStore()).toBe(store);
-    });
-
-    it("resetNavigationStore clears singleton", () => {
-      initNavigationStore({
-        initialLocation: { href: "http://localhost/" },
-        crossTabSync: false,
-      });
-      resetNavigationStore();
-      expect(() => getNavigationStore()).toThrow();
     });
   });
 });

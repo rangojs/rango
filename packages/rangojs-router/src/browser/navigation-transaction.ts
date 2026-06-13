@@ -13,7 +13,6 @@ import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
 import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
 
-// Re-export for consumers that import from navigation-transaction
 export { resolveNavigationState } from "./history-state.js";
 
 /** Check if a history state object contains location state keys. */
@@ -25,7 +24,6 @@ function hasLocationState(state: unknown): boolean {
   );
 }
 
-// Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
 }
@@ -114,7 +112,6 @@ export function createNavigationTransaction(
   let committed = false;
   const currentUrl = window.location.href;
 
-  // Start navigation in event controller (this sets loading state)
   const handle = eventController.startNavigation(url, options);
 
   /**
@@ -138,71 +135,49 @@ export function createNavigationTransaction(
 
     const parsedUrl = new URL(url, window.location.origin);
 
-    // Generate history key from URL (with intercept suffix for separate caching)
     const historyKey = generateHistoryKey(url, { intercept });
 
-    // For cache-only commits (stale revalidation), only update cache and return
-    // Don't touch store state or history - user may have navigated elsewhere
     if (cacheOnly) {
       const currentHandleData = eventController.getHandleState().data;
       store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
-      // Complete the navigation handle so currentNavigation is cleared.
-      // Without this, the entry lingers and weakens state-machine invariants.
       handle.complete(parsedUrl);
       debugLog("[Browser] Cache-only commit, historyKey:", historyKey);
       return { scroll: false };
     }
 
-    // Save current scroll position before navigating
     handleNavigationStart();
 
-    // Update segment state atomically
     store.setSegmentIds(segmentIds);
     store.setCurrentUrl(url);
     store.setPath(parsedUrl.pathname);
 
     store.setHistoryKey(historyKey);
 
-    // Cache segments with current handleData for this history entry
     const currentHandleData = eventController.getHandleState().data;
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
-    // For server actions, skip URL/history updates but still complete navigation
     if (storeOnly) {
       debugLog("[Browser] Store updated (action)");
-      // Complete navigation to clear loading state
       handle.complete(parsedUrl);
       return { scroll: false };
     }
 
-    // Build history state - include user state, intercept info, and server-set state
     const historyState = buildHistoryState(
       opts.state,
       { intercept, sourceUrl: interceptSourceUrl },
       serverState,
     );
 
-    // Snapshot old state before pushState/replaceState overwrites it.
-    // Used to detect when location state is being cleared.
     const oldState = window.history.state;
 
-    // Update browser URL (stamps history.state.idx for back() first-entry detection)
     pushHistoryWithIdx(historyState, url, replace ?? false);
-    // Ensure new history entry has a scroll restoration key
     ensureHistoryKey();
 
-    // Notify location state hooks when either old or new state carries
-    // location state. This covers both "set new state" and "clear old state"
-    // for same-page navigations where components don't remount.
     if (hasLocationState(oldState) || hasLocationState(historyState)) {
       window.dispatchEvent(new Event("__rsc_locationstate"));
     }
 
-    // Complete the navigation in event controller (sets idle state, updates location)
     handle.complete(parsedUrl);
-
-    // NOTE: Scroll is NOT handled here. The caller (partial-update.ts) handles
-    // scroll AFTER onUpdate() so React has the new content before we scroll.
 
     debugLog(
       "[Browser] Navigation committed, historyKey:",
@@ -217,10 +192,6 @@ export function createNavigationTransaction(
     handle,
     commit,
 
-    /**
-     * Create a bound transaction with pre-configured URL options
-     * segmentIds and segments provided at commit time (after they're resolved)
-     */
     with(
       opts: Omit<CommitOptions, "segmentIds" | "segments">,
     ): BoundTransaction {
@@ -264,13 +235,10 @@ export function createNavigationTransaction(
     },
 
     [Symbol.dispose]() {
-      // Superseded: another navigation took over.
       if (handle.signal.aborted) {
         return;
       }
 
-      // Failed (not committed): keep the target URL -- the error UI owns it.
-      // Just reset the event controller to idle.
       if (!committed) {
         handle[Symbol.dispose]();
       }

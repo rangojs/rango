@@ -1,14 +1,11 @@
-// Global namespace (must be imported for side effects: `declare global`)
 export type {
   GetRegisteredRoutes,
   DefaultHandlerRouteMap,
   DefaultReverseRouteMap,
   DefaultEnv,
 } from "./global-namespace.js";
-// Ensure the global namespace declaration is evaluated
 import "./global-namespace.js";
 
-// Route configuration
 export type {
   DocumentProps,
   ExtractParams,
@@ -19,7 +16,6 @@ export type {
   ResolvedRouteMap,
 } from "./route-config.js";
 
-// Boundaries (error/notFound)
 export type {
   ErrorInfo,
   ErrorBoundaryFallbackProps,
@@ -32,7 +28,6 @@ export type {
 } from "./boundaries.js";
 export { isLoaderDataResult } from "./boundaries.js";
 
-// Handler context and related types
 export type {
   MiddlewareFn,
   ScopedRouteMap,
@@ -50,7 +45,6 @@ export type {
   Middleware,
 } from "./handler-context.js";
 
-// Segments
 export type {
   ViewTransitionClass,
   TransitionConfig,
@@ -61,10 +55,8 @@ export type {
   MatchResult,
 } from "./segments.js";
 
-// Route entries
 export type { LazyIncludeContext, RouteEntry } from "./route-entry.js";
 
-// Loader types
 export type {
   LoaderContext,
   LoaderFn,
@@ -73,7 +65,6 @@ export type {
   LoaderDefinition,
 } from "./loader-types.js";
 
-// Cache types
 export type {
   CacheContext,
   CacheOptions,
@@ -81,7 +72,6 @@ export type {
   EntryCacheConfig,
 } from "./cache-types.js";
 
-// Error handling types
 export type {
   ErrorPhase,
   OnErrorContext,

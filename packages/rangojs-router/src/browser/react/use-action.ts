@@ -25,31 +25,23 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
 };
 
 /**
- * Normalize action ID - returns the ID as-is
- *
- * Server actions have IDs like "hash#actionName" or "src/actions.ts#actionName".
- * When using function references, we use the full ID for exact matching.
- * When using strings, the event controller supports suffix matching
- * (e.g., "addToCart" matches "hash#addToCart").
- */
-function normalizeActionId(actionId: string): string {
-  return actionId;
-}
-
-/**
  * Extract action ID from a server action function or string.
  *
  * Actions passed as props from server components lose their metadata
  * during RSC serialization - use a string action name instead.
+ *
+ * The extracted $$id (e.g. "hash#actionName" or "src/actions.ts#actionName")
+ * is returned as-is. Suffix-vs-exact matching against this ID happens
+ * downstream in the event controller, not here.
  */
-export function getActionId(action: ServerActionFunction | string): string {
+function getActionId(action: ServerActionFunction | string): string {
   invariant(
     typeof action === "function" || typeof action === "string",
     `useAction: action must be a function or string, got ${typeof action}`,
   );
   const actionId = (action as any)?.$$id;
   if (actionId) {
-    return normalizeActionId(actionId);
+    return actionId;
   }
 
   // If action is a string, use it directly
@@ -162,7 +154,6 @@ export function useAction<T>(
   });
   const prevSelected = useRef(baseState);
   prevSelected.current = baseState;
-  // useOptimistic allows immediate updates during transitions/actions
   const [optimisticState, setOptimisticState] = useOptimistic<
     T | TrackedActionState
   >(null!);

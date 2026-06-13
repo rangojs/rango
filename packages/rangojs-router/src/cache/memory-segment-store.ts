@@ -59,8 +59,6 @@ interface CachedResponseEntry {
 
 interface CachedItemEntry {
   value: string;
-  /** RSC-encoded handle data (see handle-snapshot.ts encodeHandles). Stored as
-   *  the encoded string by reference, identical to the JSON-serializing stores. */
   handles?: string;
   expiresAt: number;
   staleAt: number;
@@ -171,8 +169,6 @@ export class MemorySegmentCacheStore<
 
   constructor(options?: MemorySegmentCacheStoreOptions<TEnv>) {
     if (options?.name != null) {
-      // Named stores use the globalThis registry so data survives HMR.
-      // Each name gets its own isolated Map.
       this.cache = getNamedMap<CachedEntryData>(
         CACHE_REGISTRY_KEY,
         options.name,
@@ -194,7 +190,6 @@ export class MemorySegmentCacheStore<
         options.name,
       );
     } else {
-      // Unnamed stores get a plain instance-level Map (no globalThis sharing).
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
       this.itemCache = new Map<string, CachedItemEntry>();
@@ -229,15 +224,11 @@ export class MemorySegmentCacheStore<
     ttl: number,
     _swr?: number,
   ): Promise<void> {
-    // Note: Memory store doesn't implement SWR - entries just expire at TTL
-    // For SWR support, use CFCacheStore or similar distributed cache
     const entry: CachedEntryData = {
       ...data,
       expiresAt: Date.now() + ttl * 1000,
     };
     const prefixedKey = `seg:${key}`;
-    // Always drop stale tag mappings before writing so an overwrite with
-    // different (or no) tags cannot leave the previous tags pointing here.
     this.unregisterTags(prefixedKey);
     this.cache.set(key, entry);
     if (data.tags && data.tags.length > 0) {
@@ -289,14 +280,7 @@ export class MemorySegmentCacheStore<
     tags?: string[],
   ): Promise<void> {
     try {
-      // arrayBuffer() can reject (e.g. an already-consumed body). A write
-      // failure must degrade to a no-op (entry simply not cached), never throw
-      // up and fail the request.
       const body = await response.clone().arrayBuffer();
-      // Defense-in-depth (Finding #3): never persist a per-client signal into a
-      // shared store. The document-cache chokepoint already refuses these, but
-      // putResponse is public and reachable directly (e.g. tag-revalidation
-      // re-puts), so strip them here too.
       const headers: [string, string][] = [];
       response.headers.forEach((value, name) => {
         if (isPerClientSignalHeader(name)) return;
@@ -369,19 +353,11 @@ export class MemorySegmentCacheStore<
     }
   }
 
-  /**
-   * Invalidate every cache entry (segment, response, item) tagged with any of
-   * `tags`. Entries are dropped immediately; the next read is a miss and
-   * re-renders fresh. This is the store-level primitive both updateTag() and
-   * revalidateTag() delegate to. (In-process, so there is nothing to batch
-   * beyond looping the tags.)
-   */
   async invalidateTags(tags: string[]): Promise<void> {
     for (const tag of tags) {
       const keys = this.tagIndex.get(tag);
       if (!keys || keys.size === 0) continue;
 
-      // Snapshot the keys before mutating the index inside the loop.
       const prefixedKeys = [...keys];
 
       for (const prefixedKey of prefixedKeys) {
@@ -397,18 +373,11 @@ export class MemorySegmentCacheStore<
           this.itemCache.delete(rawKey);
         }
 
-        // Drop this key from every tag set it belonged to, not just `tag`.
         this.unregisterTags(prefixedKey);
       }
     }
   }
 
-  /**
-   * Register `tags` for a prefixed cache key in both the forward
-   * (tag -> keys) and reverse (key -> tags) indexes.
-   * Callers must call unregisterTags() first to clear stale mappings.
-   * @internal
-   */
   private registerTags(tags: string[], prefixedKey: string): void {
     let tagSet = this.keyTags.get(prefixedKey);
     if (!tagSet) {
@@ -426,11 +395,6 @@ export class MemorySegmentCacheStore<
     }
   }
 
-  /**
-   * Remove a prefixed cache key from every tag set it belongs to.
-   * Uses the reverse index so this is O(tags-per-key), not O(total-tags).
-   * @internal
-   */
   private unregisterTags(prefixedKey: string): void {
     const tagSet = this.keyTags.get(prefixedKey);
     if (!tagSet) return;
@@ -446,10 +410,6 @@ export class MemorySegmentCacheStore<
     this.keyTags.delete(prefixedKey);
   }
 
-  /**
-   * Get cache statistics for debugging purposes.
-   * @internal
-   */
   getStats(): { size: number; keys: string[] } {
     return {
       size: this.cache.size,
@@ -457,18 +417,6 @@ export class MemorySegmentCacheStore<
     };
   }
 
-  /**
-   * Reset the global cache registry.
-   * Useful for test isolation - call this in beforeEach to ensure
-   * tests don't share cache state via globalThis.
-   *
-   * @example
-   * ```typescript
-   * beforeEach(() => {
-   *   MemorySegmentCacheStore.resetGlobalCache();
-   * });
-   * ```
-   */
   static resetGlobalCache(): void {
     delete (globalThis as any)[CACHE_REGISTRY_KEY];
     delete (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY];

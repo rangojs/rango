@@ -128,6 +128,27 @@ Any change to handler loading shapes must update:
 3. Type-level tests in `__tests__/route-entry-handler-types.check.ts`
 4. Unit tests in `router/__tests__/debug-manifest.test.ts`
 
+### Limitation: a Response from an async handler under `loading()` is not a redirect
+
+On a route **without** `loading()`, a handler that returns or throws a `Response`
+(e.g. `redirect()`) short-circuits to an HTTP redirect: the handler is awaited at
+the resolution boundary, so the thrown `Response` propagates out to `match()`
+and becomes a 302/308.
+
+On a route that declares `loading()`, the handler result is **streamed** — it is
+not awaited at the resolution boundary (`segment-resolution/fresh.ts`). So an
+**async** handler that returns a `Response` has that `Response` surface only
+during RSC serialization, where it is rendered into the stream via React's
+error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
+return on a `loading()` route still throws synchronously and redirects correctly;
+only the async/Promise sub-branch is affected. Parallel slots with `loading()`
+share this behavior.
+
+To redirect from a `loading()` route, issue the redirect from middleware, a
+loader, or a synchronous handler return. In development, `warnOnStreamedResponse`
+(`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
+or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
+
 ## Loader Context: params vs routeParams
 
 Loaders receive two param fields:

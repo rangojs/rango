@@ -82,13 +82,6 @@ export interface RenderToFlightStringOptions {
 
 const DEFAULT_URL = "http://localhost/";
 
-/**
- * Guard the pre-rename `{ url }` option (renamed to `{ request }`). A plain-JS
- * consumer, or one whose object spread defeats the compile-time type error,
- * would otherwise have `{ url }` SILENTLY ignored and render against
- * http://localhost/. Throw a clear migration error instead. Cheap: a single
- * `in` check on the already-built options object.
- */
 export function assertNoLegacyUrlOption(opts: object, fnName: string): void {
   if ("url" in opts) {
     throw new Error(
@@ -100,11 +93,6 @@ export function assertNoLegacyUrlOption(opts: object, fnName: string): void {
   }
 }
 
-/**
- * Wrap a single element in the minimal ResolvedSegment + RscPayload shape that
- * mirrors Rango's wire format, so the serialized output matches what a real
- * route segment would emit.
- */
 function wrapAsPayload(element: ReactNode, pathname: string): RscPayload {
   const segment: ResolvedSegment = {
     id: "test",
@@ -137,20 +125,9 @@ export async function renderToFlightString(
   opts: RenderToFlightStringOptions = {},
 ): Promise<string> {
   assertNoLegacyUrlOption(opts, "renderToFlightString");
-  // Server-only trees: empty client manifest. A client reference would emit an
-  // unresolvable `I` row here; use renderServerTree (flight-tree.ts) when the
-  // tree has client boundaries you want to inspect.
   return serializeToFlightString(element, opts, {});
 }
 
-/**
- * Shared serialize core: set up a request context, wrap the element as a Rango
- * payload, and serialize it with the given client-reference manifest. Used by
- * {@link renderToFlightString} (empty manifest) and renderServerTree (a manifest
- * that resolves every registered client reference).
- *
- * Must run under the `react-server` export condition (see module header).
- */
 export async function serializeToFlightString(
   element: ReactNode,
   opts: RenderToFlightStringOptions,
@@ -167,8 +144,6 @@ export async function serializeToFlightString(
     env: opts.env ?? {},
     request,
     url,
-    // Seed vars so a server component reading ctx.get(MyVar) during render sees
-    // them — same seeding the handler-test primitives use.
     variables: seedVariables({}, opts.vars),
   });
 
@@ -178,28 +153,12 @@ export async function serializeToFlightString(
   });
 }
 
-/**
- * Serialize a node to a Flight string, ASSUMING a request context is already
- * active (i.e. called inside `runWithRequestContext`). This is the core
- * `renderHandler` reuses: it enters its own context, builds a HandlerContext,
- * invokes the handler, then serializes the returned RSC in that SAME context (so
- * cookies/headers/vars/handles the handler set are all on one context).
- *
- * Must run under the `react-server` export condition (see module header).
- */
 export async function serializeNodeToFlight(
   node: ReactNode,
   clientManifest: unknown,
   pathname: string,
 ): Promise<string> {
   const payload = wrapAsPayload(node, pathname);
-  // Capture (do NOT rethrow) the first render error. The serializer calls
-  // onError from its own scheduled work; throwing there escapes as an unhandled
-  // rejection AND leaves the stream un-closed, so the drain below would hang
-  // until the test times out. Production's onError returns void (rsc-rendering.ts)
-  // so the stream completes with an error row. We mirror that — let the stream
-  // finish — then surface the error as a clean rejection after draining, so
-  // `await expect(...).rejects.toThrow()` works.
   let renderError: unknown;
   let didError = false;
   const stream = RSDServer.renderToReadableStream(payload, clientManifest, {
@@ -210,18 +169,11 @@ export async function serializeNodeToFlight(
       }
     },
   });
-  // Drain inside the context so async components see ctx during streaming.
   const text = await new Response(stream).text();
   if (didError) throw renderError;
   return text;
 }
 
-/**
- * Smoke check that the vendored serializer subpath still resolves and exposes
- * `renderToReadableStream`. The vendored path is private to plugin-rsc; a minor
- * bump could relocate it. Call this in a test to fail loudly with a clear
- * message instead of an opaque import error.
- */
 export function assertFlightRuntimeAvailable(): void {
   if (typeof RSDServer.renderToReadableStream !== "function") {
     throw new Error(

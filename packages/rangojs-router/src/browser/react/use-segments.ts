@@ -86,31 +86,20 @@ export function useSegments<T>(
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  // Track selector identity to detect when the selector function changes.
-  // Only then do we eagerly recompute during render to avoid staleness.
-  // Without this guard, no-selector mode causes infinite re-renders because
-  // buildSegmentsState creates fresh arrays that fail Object.is checks.
   const prevSelectorIdentity = useRef(selector);
 
-  // Cache SegmentsState to stabilize nested references (path, segmentIds
-  // arrays) so selectors returning composite values don't cause spurious
-  // render-time setState calls.
   const segmentsCache = useRef<{
     location: URL;
     routeSegmentIds: string[];
     state: SegmentsState;
   } | null>(null);
 
-  // Recompute selected value from current store state and apply selector.
-  // Shared by the render-time eager check and the subscription callback.
   function recompute(
     sel: ((state: SegmentsState) => T) | undefined,
   ): T | SegmentsState {
     const location = ctx!.eventController.getLocation();
     const handleState = ctx!.eventController.getHandleState();
 
-    // Reuse cached state when inputs haven't changed by reference,
-    // keeping array/object references stable for composite selectors.
     const cache = segmentsCache.current;
     let segmentsState: SegmentsState;
     if (
@@ -165,8 +154,6 @@ export function useSegments<T>(
       unsubscribeNav();
       unsubscribeHandles();
     };
-    // Stable subscription: selector changes are handled via selectorRef,
-    // state comparison uses prevState ref. No re-subscribe needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

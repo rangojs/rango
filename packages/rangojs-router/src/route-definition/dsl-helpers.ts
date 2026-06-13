@@ -302,15 +302,15 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
  * Supports these call signatures:
  * - cache() - no args, uses app-level defaults (for loader caching)
  * - cache(() => [...]) - wraps children with app-level defaults
- * - cache('profileName') - uses a named cache profile
- * - cache('profileName', () => [...]) - named profile with children
  * - cache({ ttl: 60 }, () => [...]) - with explicit options
+ *
+ * Named cache profiles are applied via the `"use cache: <profile>"` directive,
+ * not a `cache("profileName")` form in the route tree.
  */
 const cache: RouteHelpers<any, any>["cache"] = (
   optionsOrChildren?:
     | PartialCacheOptions
     | false
-    | string
     | (() => UseItems<AllUseItems>),
   maybeChildren?: () => UseItems<AllUseItems>,
 ) => {
@@ -326,18 +326,6 @@ const cache: RouteHelpers<any, any>["cache"] = (
     // cache() - no args, use defaults
     options = {};
     children = undefined;
-  } else if (typeof optionsOrChildren === "string") {
-    // cache('profileName') or cache('profileName', () => [...])
-    // Resolve from context-scoped profiles (set per-router via HelperContext).
-    const ctxStore = RangoContext.getStore();
-    const profile = ctxStore?.cacheProfiles?.[optionsOrChildren];
-    invariant(
-      profile,
-      `cache("${optionsOrChildren}"): unknown cache profile. ` +
-        `Define it in createRouter({ cacheProfiles: { "${optionsOrChildren}": { ttl: ... } } }).`,
-    );
-    options = { ttl: profile.ttl, swr: profile.swr, tags: profile.tags };
-    children = maybeChildren;
   } else if (typeof optionsOrChildren === "function") {
     // cache(() => [...]) - use empty options (will use defaults)
     options = {};
@@ -393,10 +381,10 @@ const cache: RouteHelpers<any, any>["cache"] = (
     return { name: namespace, type: "cache" } as CacheItem;
   }
 
-  // Inside a loader() use() callback, only the direct form — cache()/cache(opts)/
-  // cache("profile") — writes cache config to the loader entry. The wrapper
-  // form creates a structural cache boundary with its own children scope, which
-  // has no effect on the loader and would silently no-op.
+  // Inside a loader() use() callback, only the direct form — cache()/cache(opts)
+  // — writes cache config to the loader entry. The wrapper form creates a
+  // structural cache boundary with its own children scope, which has no effect
+  // on the loader and would silently no-op.
   invariant(
     !(ctx.parent && (ctx.parent as any).type === "loader"),
     "cache() wrapper form is not valid inside loader() use(). Use cache({...}) without children to configure the loader's cache.",

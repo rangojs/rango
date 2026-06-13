@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { evictHandlerCode } from "../utils/bundle-analysis.js";
 import { copyStagedBuildAssets } from "../utils/prerender-utils.js";
+import { jsonParseExpression } from "../utils/manifest-utils.js";
 import type { DiscoveryState } from "./state.js";
 
 /**
@@ -104,7 +105,7 @@ export function postprocessBundle(state: DiscoveryState): void {
         }
 
         const manifestCode = [
-          `const m=JSON.parse('${JSON.stringify(manifestMap).replace(/'/g, "\\'")}');`,
+          `const m=${jsonParseExpression(manifestMap)};`,
           `export function loadPrerenderAsset(s){return import(s)}`,
           `export default m;`,
           "",
