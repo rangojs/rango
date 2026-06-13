@@ -22,7 +22,6 @@ import type { ResolvedThemeConfig } from "./types.js";
  * - Handle all edge cases (no localStorage, no cookie, etc.)
  */
 export function generateThemeScript(config: ResolvedThemeConfig): string {
-  // Build the script as a string, then minify
   const script = `
 (function() {
   var storageKey = ${JSON.stringify(config.storageKey)};
@@ -33,9 +32,7 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
   var valueMap = ${JSON.stringify(config.value)};
   var themes = ${JSON.stringify(config.themes)};
 
-  // Read theme from cookie or localStorage
   function getStoredTheme() {
-    // Try cookie first (for SSR consistency)
     var cookies = document.cookie.split(';');
     for (var i = 0; i < cookies.length; i++) {
       var cookie = cookies[i].trim();
@@ -44,7 +41,6 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
         catch (e) { return cookie.substring(storageKey.length + 1); }
       }
     }
-    // Fall back to localStorage
     try {
       return localStorage.getItem(storageKey);
     } catch (e) {
@@ -52,7 +48,6 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
     }
   }
 
-  // Get system preference
   function getSystemTheme() {
     if (typeof window !== 'undefined' && window.matchMedia) {
       return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -60,7 +55,6 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
     return 'light';
   }
 
-  // Resolve "system" to actual theme
   function resolveTheme(theme) {
     if (theme === 'system' && enableSystem) {
       return getSystemTheme();
@@ -68,15 +62,12 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
     return theme;
   }
 
-  // Apply theme to HTML element
   function applyTheme(theme) {
     var resolved = resolveTheme(theme);
     var value = valueMap[resolved] || resolved;
     var el = document.documentElement;
 
-    // Apply attribute
     if (attribute === 'class') {
-      // Remove all theme classes, then add current
       for (var i = 0; i < themes.length; i++) {
         var v = valueMap[themes[i]] || themes[i];
         el.classList.remove(v);
@@ -86,22 +77,18 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
       el.setAttribute(attribute, value);
     }
 
-    // Set color-scheme for native dark mode support
     if (enableColorScheme) {
       el.style.colorScheme = resolved;
     }
   }
 
-  // Get stored theme or use default
   var stored = getStoredTheme();
   var theme = stored && (stored === 'system' || themes.indexOf(stored) !== -1)
     ? stored
     : defaultTheme;
 
-  // Apply immediately
   applyTheme(theme);
 
-  // Listen for system preference changes (for "system" theme)
   if (enableSystem && typeof window !== 'undefined' && window.matchMedia) {
     try {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
@@ -117,7 +104,6 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
 })();
 `;
 
-  // Minify by removing comments, extra whitespace, and newlines
   return minifyScript(script);
 }
 

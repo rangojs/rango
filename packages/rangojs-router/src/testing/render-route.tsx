@@ -63,11 +63,6 @@ const TEST_ORIGIN = "http://localhost";
  */
 export type HandleDataSeed = Record<string, Record<string, unknown[]>>;
 
-// Loaders and location-state defs carry an id (`$$id` / `__rsc_ls_key`) that the
-// Vite plugin injects at build time; in a bare test it is "". These helpers
-// assign a synthetic stable id (mutating the handle, tracked per-object) so that
-// seeding by reference lines up with the read path (useLoader / useLocationState
-// both read the id off the handle at call time).
 const syntheticIds = new WeakMap<object, string>();
 let syntheticIdCounter = 0;
 
@@ -86,7 +81,6 @@ function ensureSyntheticId(
   return id;
 }
 
-/** One-level clone of a raw handle seed so we don't mutate the caller's object. */
 function cloneHandleSeed(seed?: HandleDataSeed): HandleDataSeed {
   const out: HandleDataSeed = {};
   for (const [name, segMap] of Object.entries(seed ?? {})) {
@@ -95,12 +89,6 @@ function cloneHandleSeed(seed?: HandleDataSeed): HandleDataSeed {
   return out;
 }
 
-/**
- * One node of the route definition passed to renderRoute. The array models a
- * single matched route plus its optional layout chain — element order is
- * outermost layout first, the leaf route last (the same root-to-leaf order the
- * real matcher produces).
- */
 export interface RenderRouteSpec {
   /**
    * The route pattern this node matches, e.g. "/products/:productId". The LAST
@@ -281,11 +269,6 @@ interface ResolvedMatch {
   pathname: string;
 }
 
-/**
- * Match a pathname against the leaf spec's pattern and extract params.
- * Returns null when the pattern does not match (params then fall back to the
- * caller-provided `options.params`).
- */
 function matchLeaf(
   pattern: string,
   pathname: string,
@@ -303,7 +286,6 @@ function matchLeaf(
   return params;
 }
 
-/** Derive a usable initial pathname from a leaf pattern when none is given. */
 function staticPrefix(pattern: string): string {
   const out: string[] = [];
   for (const part of pattern.split("/")) {
@@ -314,13 +296,6 @@ function staticPrefix(pattern: string): string {
   return "/" + out.join("/");
 }
 
-/**
- * Build the synthetic ResolvedSegment[] for a matched route. Produces, in
- * root-to-leaf order: one layout segment per non-leaf spec, then the leaf route
- * segment, plus a loader segment for each seeded loader id attached to the
- * owning spec. Segment ids follow the real convention (L0, L0L1, ..., the leaf
- * route as L0...R{n}; loaders as {parentId}D{i}.{loaderId}).
- */
 function buildSegments(
   routes: RenderRouteSpec[],
   params: Record<string, string>,
@@ -353,20 +328,13 @@ function buildSegments(
       params,
       belongsToRoute: true,
     };
-    // Model an include() mount: every component segment in the chain shares the
-    // same prefix, so renderSegments wraps each in a MountContextProvider and
-    // useMount() resolves the mounted prefix (production sets mountPath on every
-    // segment of an included subtree). Must be applied identically at both
-    // buildSegments call sites or segment-structure-assert flags a remount.
     if (mount) node.mountPath = mount;
-    // A leaf-owned layout component wraps the route via its own layout element.
     if (isLeaf && spec.layout) {
       const Layout = spec.layout;
       node.layout = <Layout />;
     }
     segments.push(node);
 
-    // Determine which seeded loader ids this spec owns.
     const ownedIds = spec.loaderIds
       ? spec.loaderIds.filter((id) => id in loaderData)
       : isLeaf
@@ -390,30 +358,6 @@ function buildSegments(
   return segments;
 }
 
-/**
- * Render a CLIENT component (and its layout chain) inside the router's
- * NavigationProvider for unit testing. Exported from `@rangojs/router/testing/dom`
- * (its own entry, kept out of the main `@rangojs/router/testing` barrel so that
- * barrel never references React/@testing-library/react). Async so the heavy
- * @testing-library/react dependency is loaded only at call time.
- *
- * @example
- * ```tsx
- * // @vitest-environment happy-dom
- * import { renderRoute } from "@rangojs/router/testing/dom";
- *
- * function Product() {
- *   const { productId } = useParams<{ productId: string }>();
- *   const reverse = useReverse({ product: "/products/:productId" });
- *   return <a href={reverse("product", { productId: "2" })}>{productId}</a>;
- * }
- *
- * const { getByText, router } = await renderRoute(
- *   [{ path: "/products/:productId", Component: Product }],
- *   { request: "/products/1" },
- * );
- * ```
- */
 export async function renderRoute(
   routes: RenderRouteSpec[],
   options: RenderRouteOptions = {},
@@ -421,9 +365,6 @@ export async function renderRoute(
   if (routes.length === 0) {
     throw new Error("renderRoute: `routes` must contain at least one entry");
   }
-  // The pre-rename `initialUrl` option was renamed to `request`. A plain-JS or
-  // spread-defeated caller still passing it would otherwise be silently ignored;
-  // fail loud with the migration name instead.
   if ("initialUrl" in options) {
     throw new Error(
       "renderRoute: the `initialUrl` option was renamed to `request`. " +
@@ -439,30 +380,19 @@ export async function renderRoute(
   const initialUrl = requestUrl ?? staticPrefix(leaf.path) ?? "/";
   const url = new URL(initialUrl, TEST_ORIGIN);
 
-  // Seed loader data: explicit-id entries from `loaderData`, plus by-reference
-  // entries from `loaders` (assigning synthetic ids to real handles whose `$$id`
-  // is empty in a bare test).
   const loaderData: Record<string, unknown> = { ...(options.loaderData ?? {}) };
   for (const [loader, data] of options.loaders ?? []) {
     loaderData[ensureSyntheticId(loader as object, "$$id")] = data;
   }
 
-  // Seed location state into history.state so useLocationState(def) resolves.
-  // Keyed defs read history.state[def.__rsc_ls_key]; assign a synthetic key when
-  // the injected one is empty (bare test). RESET history.state to only this
-  // call's seeds (not a merge) so a previous render's seeded state does not leak
-  // into a later render in the same DOM environment.
   if (typeof window !== "undefined") {
     const stateObj: Record<string, unknown> = {};
     for (const [def, value] of options.locationState ?? []) {
       stateObj[ensureSyntheticId(def as object, "__rsc_ls_key")] = value;
     }
-    // No URL arg: useLocationState reads history.state (not the URL), and passing
-    // a TEST_ORIGIN URL would trip the DOM env's same-origin check.
     window.history.replaceState(stateObj, "");
   }
 
-  // Resolve params: URL-extracted params first, explicit params override.
   const resolve = (pathname: string): ResolvedMatch => {
     const matched = matchLeaf(leaf.path, pathname) ?? {};
     return {
@@ -472,10 +402,7 @@ export async function renderRoute(
   };
   const initialMatch = resolve(url.pathname);
 
-  // Reuse the real browser primitives so context shape matches production.
   const historyKey = generateHistoryKey(url.href);
-  // Normalize the include() mount prefix once and apply it at BOTH buildSegments
-  // call sites (initial + navigate) so mountPath is consistent across renders.
   const mount = normalizeBasename(options.mount);
   const initialSegments = buildSegments(
     routes,
@@ -490,20 +417,12 @@ export async function renderRoute(
     initialSegments,
     crossTabSync: false,
   });
-  // Seed handle data: raw `handle` entries plus by-reference `handles` attached
-  // to the leaf route segment under each handle's id (so useHandle(handle)
-  // resolves the pushed values).
   const leafRouteSegmentId =
     [...initialSegments].reverse().find((s) => s.type === "route")?.id ??
     initialSegments[initialSegments.length - 1]?.id;
   const handleSeed: HandleDataSeed = cloneHandleSeed(options.handle);
   for (const [handle, values] of options.handles ?? []) {
     if (leafRouteSegmentId === undefined) continue;
-    // createHandle always has a non-empty $$id (the Vite plugin injects one, and
-    // createHandle assigns a runtime fallback otherwise) with its REAL collect
-    // registered — so seeding under handle.$$id makes useHandle(handle) run the
-    // handle's actual collect/accumulator (custom collects included), not just a
-    // default flatten.
     const id = (handle as unknown as { $$id: string }).$$id;
     (handleSeed[id] ??= {})[leafRouteSegmentId] = values;
   }
@@ -515,14 +434,6 @@ export async function renderRoute(
     initialSegments.map((s) => s.id),
   );
 
-  // Client-only navigation: re-resolve against the in-memory routes and emit a
-  // re-render. No server fetch — only routes passed to renderRoute exist. The
-  // store update is flushed inside act() so React commits before callers
-  // assert, mirroring how a real navigation lands a single payload swap.
-  // NOTE: the seeded `loaderData` is reused for the target route too (no
-  // per-route loader fetch in a unit test), so every seeded loader stays
-  // available after navigate() — unlike a real navigation, which would fetch
-  // the target route's own loaders. This is a deliberate test-isolation design.
   const navigate = async (target: string): Promise<void> => {
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);
@@ -578,7 +489,6 @@ export async function renderRoute(
   return Object.assign(result, { router });
 }
 
-/** Minimal RscMetadata for client-side re-renders (no server-only fields). */
 function makeMetadata(
   pathname: string,
   segments: ResolvedSegment[],

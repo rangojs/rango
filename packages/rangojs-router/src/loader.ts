@@ -38,8 +38,7 @@ export function createLoader<T>(
   options: FetchableLoaderOptions,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
-// Implementation - client stub that just returns the loader definition
-// The $$id parameter is injected by Vite plugin, not user-provided
+// Implementation - client stub ($$id injected by Vite plugin, not user-provided)
 export function createLoader<T>(
   _fn: LoaderFn<T, Record<string, string | undefined>, any>,
   _fetchable?: true | FetchableLoaderOptions,
@@ -47,13 +46,8 @@ export function createLoader<T>(
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   const loaderId = __injectedId || "";
 
-  // Client/SSR build of createLoader. Under a test runner it needs no id
-  // (loaderId stays ""; the react-server build in loader.rsc.ts adds the runtime
-  // fallback for whole-router construction). Otherwise (dev or a real build) a
-  // missing id means an UNSUPPORTED shape the plugin skipped — fail loud rather
-  // than ship `$$id: ""` (which would make a client useLoader read the wrong
-  // key). The rich diagnostic stays behind the NODE_ENV check so production folds
-  // it away and ships the small throw. isUnderTestRunner() is runtime-safe.
+  // Under test runner, no id needed (loaderId stays ""; loader.rsc.ts provides fallback).
+  // Otherwise, missing id means unsupported shape — fail loud to avoid wrong key.
   if (!loaderId && !isUnderTestRunner()) {
     if (process.env.NODE_ENV !== "production") {
       throw missingInjectedIdError("Loader", "createLoader");

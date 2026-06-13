@@ -34,7 +34,6 @@
  * - RSC:         see @rangojs/router/testing/flight
  */
 
-// Unit
 export { runMiddleware } from "./run-middleware.js";
 export type {
   RunMiddlewareOptions,
@@ -48,15 +47,9 @@ export type {
   TestLoaderContext,
 } from "./run-loader.js";
 
-// Integration
 export { dispatch } from "./dispatch.js";
 export type { DispatchOptions } from "./dispatch.js";
 
-// renderRoute lives at `@rangojs/router/testing/dom` — it pulls React, the
-// browser runtime, and @testing-library/react types, which this barrel keeps
-// out so node-only unit suites depend on none of them.
-
-// Cross-cutting: cache/prerender status
 export {
   assertCacheStatus,
   parseCacheHeader,
@@ -68,9 +61,6 @@ export type {
   CacheStatusTarget,
   CacheSink,
 } from "./cache-status.js";
-// The telemetry event types a cache-status assertion inspects (createCacheSink
-// records CacheDecisionEvents; filterCacheDecisions narrows them). Re-exported
-// here so a test can annotate the events without reaching past `@rangojs/router/testing`.
 export type {
   TelemetryEvent,
   TelemetrySink,
@@ -79,10 +69,8 @@ export type {
   CacheSegmentStatus,
 } from "../router/telemetry.js";
 
-// Cross-cutting: handle collect/accumulator
 export { collectHandle } from "./collect-handle.js";
 
-// Cross-cutting: generated-route drift
 export {
   diffGeneratedRoutes,
   assertGeneratedRoutesMatch,
@@ -92,7 +80,6 @@ export type {
   GeneratedRouteMismatch,
 } from "./generated-routes.js";
 
-// Advanced: build a real RequestContext for bespoke loader/middleware setups
 export {
   createTestRequestContext,
   runInRequestContext,
@@ -108,12 +95,4 @@ export type {
   StateCookieSeed,
 } from "./internal/context.js";
 
-// The low-level context runner that enters a RequestContext (the same one the
-// RSC handler uses for server actions). Re-exported so a ctx built with
-// createTestRequestContext can be entered directly; runInRequestContext is the
-// one-call convenience over createTestRequestContext + runWithRequestContext.
 export { runWithRequestContext } from "../server/request-context.js";
-
-// The E2E harness is NOT re-exported here: it must be imported from
-// `@rangojs/router/testing/e2e` so it stays loadable in a plain Playwright
-// runner (this barrel pulls in router-manifest code that needs Vite virtuals).

@@ -301,15 +301,10 @@ export async function renderSegments(
         : "";
     const key = paramStr ? `${id}-${paramStr}` : id;
 
-    // Get loader entries for this node
     const loaderEntries = node.loaders.filter(
       (loader) => loader.loaderId && loader.loaderData !== undefined,
     );
 
-    // Determine the component content (with or without Suspense wrapper)
-    // Wrap when loading skeleton defined OR component is Promise (needs Suspense)
-    // During actions, await component Promise to prevent Suspense from triggering
-    // This keeps existing content visible instead of showing loading skeleton
     let resolvedComponent = component;
     if (isAction && component instanceof Promise) {
       resolvedComponent = await component;
@@ -366,13 +361,7 @@ export async function renderSegments(
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
 
-    // Use LoaderBoundary when loading is defined to maintain consistent tree structure
-    // This ensures cached segments (which may not have loader segments) have the same
-    // tree structure as fresh segments, preventing React remounts
-    // If forceAwait or isAction is set, pre-resolve promises so LoaderBoundary won't suspend
     if (loading !== undefined && loading !== null) {
-      // Aggregate built here only — the loaderless and no-loading branches don't
-      // read it (the latter builds its own per-parallel promises).
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
@@ -387,7 +376,6 @@ export async function renderSegments(
         children: nodeContent,
       });
     } else if (loaderEntries.length === 0) {
-      // No loaders, no loading - simple OutletProvider
       content = createElement(OutletProvider, {
         key,
         content: outletContent,
@@ -396,17 +384,11 @@ export async function renderSegments(
         children: nodeContent,
       });
     } else {
-      // Has loaders but no loading skeleton.
-      // Split: parallel-owned loaders stream (their parallel has loading()),
-      // layout-owned loaders are awaited (they gate the layout content).
       const layoutLoaders = loaderEntries.filter((l) => !l.parallelLoading);
       const parallelOwnedLoaders = loaderEntries.filter(
         (l) => !!l.parallelLoading,
       );
 
-      // Await only layout-owned loaders. buildLoaderPromise (not the memoizing
-      // getMemoizedLoaderPromise) is the right primitive here: the result is
-      // awaited immediately below, so a fresh per-call Promise is required.
       const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
       const resolvedData = await buildLoaderPromise(layoutLoaders);
       const { loaderData, errorFallback } = decodeLoaderResults(
@@ -414,8 +396,6 @@ export async function renderSegments(
         layoutLoaderIds,
       );
 
-      // Parallel-owned loaders: attach to their owning parallel segment
-      // as loaderDataPromise so ParallelOutlet wraps in LoaderBoundary
       if (parallelOwnedLoaders.length > 0) {
         const loadersByParallelNamespace = new Map<string, ResolvedSegment[]>();
 
@@ -472,8 +452,6 @@ export async function renderSegments(
     }
   }
 
-  // Always wrap with root error boundary to prevent white screens
-  // This catches any unhandled errors that bubble up from the segment tree
   const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,
   });
@@ -481,11 +459,8 @@ export async function renderSegments(
     await Promise.allSettled(temporalLazyRefs);
   }
 
-  // Build the final result, optionally wrapped with root layout
   let result: ReactNode = errorBoundaryWrapped;
 
-  // If rootLayout is provided, wrap the error boundary with it
-  // This ensures the app shell stays mounted even during errors (prevents FOUC)
   if (RootLayout) {
     result = createElement(RootLayout, {
       children: errorBoundaryWrapped,

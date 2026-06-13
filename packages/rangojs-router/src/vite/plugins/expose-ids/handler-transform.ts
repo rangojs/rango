@@ -69,10 +69,6 @@ export function transformLocationState(
   return hasChanges;
 }
 
-/**
- * Replace the entire file with lightweight stubs when ALL non-type exports are
- * handler calls of the given type. Returns null for files with mixed exports.
- */
 export function generateWholeFileStubs(
   cfg: HandlerTransformConfig,
   bindings: CreateExportBinding[],
@@ -91,10 +87,6 @@ export function generateWholeFileStubs(
   return { code: stubs.join("\n") + "\n", map: null };
 }
 
-/**
- * Replace handler call expressions with lightweight stub objects on the shared
- * unified-pipeline MagicString so all transforms share one sourcemap.
- */
 export function stubHandlerExprs(
   cfg: HandlerTransformConfig,
   bindings: CreateExportBinding[],
@@ -117,9 +109,6 @@ export function stubHandlerExprs(
   return hasChanges;
 }
 
-/**
- * Inject $$id into export const handler calls in RSC environments.
- */
 export function transformHandlerIds(
   cfg: HandlerTransformConfig,
   bindings: CreateExportBinding[],
@@ -133,10 +122,6 @@ export function transformHandlerIds(
 
     const handlerId = makeStubId(filePath, exportName, isBuild);
 
-    // Injection strategy matches the runtime overload signatures:
-    //   0 args                              -> inject undefined, "id"
-    //   1 arg  (handler)                    -> inject , undefined, "id"
-    //   2+ args                             -> inject , "id"
     let paramInjection: string;
     if (binding.argCount === 0) {
       paramInjection = `undefined, "${handlerId}"`;

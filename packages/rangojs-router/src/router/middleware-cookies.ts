@@ -1,14 +1,5 @@
-/**
- * Cookie Utilities
- *
- * Parsing and serialization for HTTP cookies used by middleware context.
- */
-
 import type { CookieOptions } from "./middleware-types.js";
 
-/**
- * Parse cookies from Cookie header
- */
 export function parseCookies(
   cookieHeader: string | null,
 ): Record<string, string> {
@@ -24,7 +15,6 @@ export function parseCookies(
       try {
         cookies[name] = decodeURIComponent(raw);
       } catch {
-        // Malformed percent-encoded value (e.g. %zz) - fall back to raw value
         cookies[name] = raw;
       }
     }
@@ -33,9 +23,6 @@ export function parseCookies(
   return cookies;
 }
 
-/**
- * Serialize a cookie for Set-Cookie header
- */
 export function serializeCookie(
   name: string,
   value: string,

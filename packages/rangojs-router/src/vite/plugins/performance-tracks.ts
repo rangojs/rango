@@ -54,9 +54,6 @@ export function performanceTracksOptimizeDepsPlugin(): {
     /react-server-dom-webpack-client\.browser\.(development|production)\.js$/;
   return {
     name: "@rangojs/router:performance-tracks-optimize-deps",
-    // Vite 8 optimizes deps with Rolldown (Rollup-style plugin pipeline), so the
-    // pre-bundled RSDW client is patched via load() rather than esbuild's onLoad.
-    // Returning code overrides Rolldown's default filesystem read for the module.
     async load(id: string): Promise<{ code: string } | null> {
       const cleanId = id.split("?")[0] ?? id;
       if (!RSDW_CLIENT_RE.test(cleanId)) return null;

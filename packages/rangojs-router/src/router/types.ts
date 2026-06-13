@@ -22,18 +22,11 @@ import type {
   ShouldRevalidateFn,
 } from "../types";
 
-/**
- * Result of resolving segments with revalidation
- * Contains both segments to render and all matched segment IDs
- */
 export interface SegmentRevalidationResult {
   segments: ResolvedSegment[];
   matchedIds: string[];
 }
 
-/**
- * Action context type for revalidation
- */
 export type ActionContext = {
   actionId?: string;
   actionUrl?: URL;
@@ -41,10 +34,6 @@ export type ActionContext = {
   formData?: FormData;
 };
 
-/**
- * Dependencies injected from createRouter closure into extracted segment resolution functions.
- * These are the closure-bound helpers that cannot be imported directly.
- */
 export interface SegmentResolutionDeps<TEnv = any> {
   wrapLoaderPromise: <T>(
     promise: Promise<T>,
@@ -86,9 +75,6 @@ export interface SegmentResolutionDeps<TEnv = any> {
   viewTransitionDefault?: "auto" | false;
 }
 
-/**
- * Dependencies injected from createRouter closure into extracted match API functions.
- */
 export interface MatchApiDeps<TEnv = any> {
   findMatch: (pathname: string, ms?: any) => any;
   getMetricsStore: () => any;
@@ -103,23 +89,13 @@ export interface MatchApiDeps<TEnv = any> {
   getRouteMap: () => Record<string, string>;
 }
 
-/**
- * Title descriptor types for template support
- */
 export type TitleDescriptor =
   | string
   | { template: string; default: string } // For layouts - template applied to child titles
-  | { absolute: string }; // Bypass parent template
+  | { absolute: string };
 
-/**
- * Unset descriptor to remove inherited meta
- * Key format matches getMetaKey output: "title", "name:description", "property:og:image"
- */
 export type UnsetDescriptor = { unset: string };
 
-/**
- * Base meta descriptor types (sync values)
- */
 export type MetaDescriptorBase =
   | { charSet: "utf-8" }
   | { title: TitleDescriptor }
@@ -131,10 +107,6 @@ export type MetaDescriptorBase =
   | UnsetDescriptor
   | { [name: string]: unknown };
 
-/**
- * Meta descriptor that can be sync or async.
- * Use Promise<MetaDescriptorBase> for streaming meta that resolves after initial render.
- */
 export type MetaDescriptor = MetaDescriptorBase | Promise<MetaDescriptorBase>;
 
 type LdJsonObject = { [Key in string]: LdJsonValue } & {

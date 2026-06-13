@@ -134,11 +134,6 @@ export interface RenderHandlerResult {
  */
 class RenderHandlerSetupError extends Error {}
 
-// Local copy (not imported from internal/context.ts): that module is the NODE
-// tier and is deliberately NOT react-server-safe (the reason seed-vars.ts was
-// split out), and render-handler ships from the react-server ./testing/flight
-// entry. A 6-line pure projection is cheaper to duplicate than to route a
-// shared util across that boundary.
 function headersToObject(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, name) => {
@@ -147,15 +142,6 @@ function headersToObject(headers: Headers): Record<string, string> {
   return out;
 }
 
-/**
- * Detect the server-only-API stub throw: when a handler/component imports
- * getRequestContext()/cookies()/etc. from the BARE `@rangojs/router` specifier
- * (the out-of-react-server stub in index.ts) instead of the react-server build.
- * In an rsc test this happens when the vitest.rsc.config.ts `resolve.alias` does
- * not map the bare specifier to `index.rsc.ts` (the `rangoTestAliases` preset).
- * The dual-substring match keeps a legitimate handler throw from being
- * reclassified as a setup error.
- */
 function isServerOnlyStubError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -175,20 +161,6 @@ function toRequest(
   return new Request(DEFAULT_URL, { headers });
 }
 
-/**
- * Build the result `response` from the request-context stub and, when present,
- * the Response the handler returned or threw (`source`). The stub cookies and
- * headers are merged in (Set-Cookie appended to preserve duplicates, other stub
- * headers filled in without clobbering the source), mirroring dispatch.ts's
- * rewrap.
- *
- * The source's BODY is carried over (not dropped): a response route returns a
- * `new Response(JSON.stringify(...))`, so callers reach for
- * `await result.response.text()`/`.json()`. Pre-fix this rewrapped to
- * `new Response(null, ...)` and the body was lost irrecoverably. A body is a
- * single-use stream; `source` is not read again here or by renderHandler, so
- * handing its body to the new Response is safe.
- */
 function buildResponse(reqCtx: RequestContext<any>, source: unknown): Response {
   const stub = reqCtx.res;
   if (source instanceof Response) {
@@ -231,9 +203,6 @@ export async function renderHandler<TEnv = any>(
   if (opts.clientComponents) registerClientComponents(opts.clientComponents);
   const request = toRequest(opts.request, opts.headers);
   const url = new URL(request.url);
-  // Seed a resolved name so a handler calling invalidateClientCache() rotates
-  // (emits the Set-Cookie) like production; opts.stateCookie customizes it. Also
-  // surfaced on the result so a consumer asserts the rotation without recomputing.
   const stateCookieName = resolveSeededStateCookieName(opts.stateCookie);
   const reqCtx = createRequestContext<TEnv>({
     env: (opts.env ?? {}) as TEnv,
@@ -264,17 +233,10 @@ export async function renderHandler<TEnv = any>(
       opts.routeMap ?? {},
       opts.routeName,
     );
-    // Seed ctx.use: a handle returns a push fn that RECORDS (so ctx.use(Meta)
-    // doesn't crash and pushes are assertable); a loader returns its seeded data
-    // (no real loader run).
     (hctx as { use: unknown }).use = (item: unknown) => {
       if (isHandle(item)) {
         const handle = item as Handle<any, any>;
         return (dataOrFn: unknown) => {
-          // Mirror production's push fn (loader-resolution.ts): a FUNCTION arg
-          // (ctx.use(Meta)(() => fetchMeta())) is CALLED and its result is
-          // recorded, not the function itself. An async callback records the
-          // promise it returns, same as production (which does not await it).
           const value =
             typeof dataOrFn === "function"
               ? (dataOrFn as () => unknown)()
@@ -294,8 +256,6 @@ export async function renderHandler<TEnv = any>(
 
     try {
       out = await handler(hctx as HandlerContext<any, TEnv>);
-      // Serialize the RSC in THIS context, so nested async server components see
-      // getRequestContext()/cookies()/vars while they render.
       if (out !== undefined && !(out instanceof Response)) {
         flight = await serializeNodeToFlight(
           out as ReactNode,
@@ -304,13 +264,7 @@ export async function renderHandler<TEnv = any>(
         );
       }
     } catch (error) {
-      // A harness misconfiguration (unseeded loader) is the consumer's mistake —
-      // surface it as a rejection, not as a captured handler throw.
       if (error instanceof RenderHandlerSetupError) throw error;
-      // Same for the server-only-API stub throw: the handler read
-      // getRequestContext()/cookies() but the bare `@rangojs/router` resolved to
-      // the throwing stub. Rethrow LOUDLY with the fix, instead of silently
-      // capturing it (which surfaces as an opaque tree:undefined + bare throw).
       if (isServerOnlyStubError(error)) {
         throw new RenderHandlerSetupError(
           `renderHandler: the handler called a server-only API (getRequestContext/cookies/...) ` +
@@ -320,8 +274,6 @@ export async function renderHandler<TEnv = any>(
             `Original: ${(error as Error).message}`,
         );
       }
-      // Otherwise captured, NOT re-thrown: a handler's success path is often
-      // `throw redirect(...)`; its cookies/flash must stay observable.
       didThrow = true;
       thrown = error;
     }
@@ -342,7 +294,6 @@ export async function renderHandler<TEnv = any>(
       }
     )._locationState ?? [],
   );
-  // Deserialize outside the context (the client deserializer needs no ctx).
   const tree =
     flight !== undefined ? await deserializeFlight(flight) : undefined;
 

@@ -1,8 +1,3 @@
-/**
- * Default virtual entry file contents for rsc-router.
- * These are used when users don't provide their own entry files.
- */
-
 export const VIRTUAL_ENTRY_BROWSER: string = `
 import {
   createFromReadableStream,
@@ -51,9 +46,6 @@ export const renderHTML = createSSRHandler({
 });
 `.trim();
 
-/**
- * Generate the RSC entry content with the specified router path
- */
 export function getVirtualEntryRSC(routerPath: string): string {
   return `
 import {
@@ -104,9 +96,6 @@ export default function handler(request, env) {
 `.trim();
 }
 
-/**
- * Virtual module IDs
- */
 export const VIRTUAL_IDS = {
   browser: "virtual:rsc-router/entry.browser.js",
   ssr: "virtual:rsc-router/entry.ssr.js",
@@ -114,10 +103,6 @@ export const VIRTUAL_IDS = {
   version: "@rangojs/router:version",
 } as const;
 
-/**
- * Virtual module content for version.
- * Exports VERSION - a timestamp that changes on server restart (dev) or at build time (production).
- */
 export function getVirtualVersionContent(version: string): string {
   return `export const VERSION = ${JSON.stringify(version)};`;
 }

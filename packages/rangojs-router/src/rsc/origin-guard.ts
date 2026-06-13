@@ -69,11 +69,8 @@ export type OriginCheckConfig<TEnv = any> =
  * Returns true to allow, false to reject.
  */
 export function defaultOriginCheck(request: Request, url: URL): boolean {
-  // 1. Read Origin header (present on all cross-origin requests and
-  //    same-origin POST/PUT/PATCH/DELETE in modern browsers)
   let requestOrigin = request.headers.get("origin");
 
-  // 2. Fallback to Referer if Origin is absent (some proxies strip it)
   if (!requestOrigin) {
     const referer = request.headers.get("referer");
     if (referer) {
@@ -85,22 +82,13 @@ export function defaultOriginCheck(request: Request, url: URL): boolean {
     }
   }
 
-  // 3. No Origin or Referer — allow (can't be browser-initiated CSRF)
   if (!requestOrigin) return true;
 
-  // "null" origin comes from privacy-sensitive contexts (data: URLs,
-  // sandboxed iframes, cross-origin redirects). Reject it.
   if (requestOrigin === "null") return false;
 
-  // 4. Determine expected host from Host header or URL.
-  // X-Forwarded-Host/Proto are NOT used — they are client-controllable
-  // unless a trusted proxy strips them. On standard deployments (Cloudflare
-  // Workers, Node behind nginx/caddy) the Host header is already correct.
-  // For non-standard setups, use the custom function escape hatch.
   const expectedHost = request.headers.get("host") || url.host;
   const expectedProtocol = url.protocol;
 
-  // 5. Build expected origin and compare (case-insensitive)
   const expectedOrigin = `${expectedProtocol}//${expectedHost}`;
 
   return requestOrigin.toLowerCase() === expectedOrigin.toLowerCase();

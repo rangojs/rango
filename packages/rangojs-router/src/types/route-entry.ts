@@ -1,9 +1,6 @@
 import type { AllUseItems } from "../route-types.js";
 import type { TrailingSlashMode, ResolvedRouteMap } from "./route-config.js";
 
-/**
- * Context captured for lazy include evaluation
- */
 export interface LazyIncludeContext {
   urlPrefix: string;
   namePrefix: string | undefined;
@@ -25,9 +22,6 @@ export interface LazyIncludeContext {
   includeScope?: string;
 }
 
-/**
- * Internal route entry stored in router
- */
 export interface RouteEntry<TEnv = any> {
   prefix: string;
   /**

@@ -97,24 +97,18 @@ function isPromise(value: unknown): value is Promise<unknown> {
   return value !== null && typeof value === "object" && "then" in value;
 }
 
-/**
- * Render a single meta descriptor as a React element.
- */
 function renderMetaDescriptor(
   descriptor: MetaDescriptorBase,
   index: number,
 ): React.ReactNode {
-  // charset
   if (hasCharSet(descriptor)) {
     return <meta key="charSet" charSet={descriptor.charSet} />;
   }
 
-  // title
   if (hasTitle(descriptor)) {
     return <title key="title">{descriptor.title}</title>;
   }
 
-  // name + content (description, viewport, etc.)
   if (hasNameContent(descriptor)) {
     return (
       <meta
@@ -125,7 +119,6 @@ function renderMetaDescriptor(
     );
   }
 
-  // property + content (Open Graph, etc.)
   if (hasPropertyContent(descriptor)) {
     return (
       <meta
@@ -136,7 +129,6 @@ function renderMetaDescriptor(
     );
   }
 
-  // http-equiv + content
   if (hasHttpEquivContent(descriptor)) {
     return (
       <meta
@@ -147,7 +139,6 @@ function renderMetaDescriptor(
     );
   }
 
-  // JSON-LD structured data
   if (hasScriptLdJson(descriptor)) {
     const json = JSON.stringify(descriptor["script:ld+json"]);
     return (
@@ -159,7 +150,6 @@ function renderMetaDescriptor(
     );
   }
 
-  // Custom tagName (meta or link with arbitrary attributes)
   if (hasTagName(descriptor)) {
     const { tagName, ...rest } = descriptor;
     if (tagName === "link") {
@@ -180,7 +170,6 @@ function renderMetaDescriptor(
     }
   }
 
-  // Fallback: treat as meta attributes
   return (
     <meta
       key={`meta-fallback-${index}`}
@@ -189,9 +178,6 @@ function renderMetaDescriptor(
   );
 }
 
-/**
- * Wrapper component to resolve a Promise<MetaDescriptorBase> using use().
- */
 function AsyncMetaTag({
   promise,
   index,

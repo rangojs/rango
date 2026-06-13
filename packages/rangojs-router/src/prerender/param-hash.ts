@@ -1,18 +1,10 @@
 /**
  * Deterministic param hashing for prerender storage keys.
- *
- * Used at build time (child process) to generate filenames and at
- * runtime (worker) to look up pre-rendered data. Both environments
- * must produce identical hashes for the same params.
- *
- * Uses a simple DJB2-based hash that works in all JS environments
- * (Node.js, Cloudflare Workers, browsers) without crypto imports.
+ * Used at build time and runtime; both must produce identical hashes.
+ * DJB2-based; works in all JS environments without crypto imports.
  */
 
-/**
- * Compute a deterministic hash string from route params.
- * For static routes (no params), returns "_".
- */
+// For static routes (no params), returns "_".
 export function hashParams(params: Record<string, string>): string {
   const entries = Object.entries(params);
   if (entries.length === 0) return "_";

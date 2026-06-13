@@ -46,15 +46,10 @@ function defaultCollect<T>(segments: T[][]): T[] {
 // Used by useHandle() to recover collect when handle is deserialized from RSC prop.
 const collectRegistry = new Map<string, (segments: unknown[][]) => unknown>();
 
-// Monotonic counter for runtime fallback ids (see createHandle). Module-scoped
-// and deterministic, so each createHandle() call gets a stable, unique id within
-// the process. Only used when no build id was injected (a bare unit test).
+// Monotonic counter for runtime fallback ids (see createHandle). Only used
+// when no build id was injected (a bare unit test).
 let runtimeHandleIdCounter = 0;
 
-/**
- * Look up a collect function from the registry by handle $$id.
- * Returns undefined if not registered (falls back to defaultCollect in useHandle).
- */
 export function getCollectFn(
   id: string,
 ): ((segments: unknown[][]) => unknown) | undefined {
@@ -127,8 +122,6 @@ export function createHandle<TData, TAccumulated = TData[]>(
     collect ??
     (defaultCollect as unknown as (segments: TData[][]) => TAccumulated);
 
-  // Register collect in module-level registry so useHandle() can recover it
-  // when the handle is deserialized from RSC props (toJSON strips collect).
   collectRegistry.set(
     handleId,
     collectFn as (segments: unknown[][]) => unknown,
@@ -140,9 +133,6 @@ export function createHandle<TData, TAccumulated = TData[]>(
   };
 }
 
-/**
- * Type guard to check if a value is a Handle.
- */
 export function isHandle(value: unknown): value is Handle<unknown, unknown> {
   return (
     typeof value === "object" &&

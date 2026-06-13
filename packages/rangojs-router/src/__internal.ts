@@ -9,10 +9,6 @@
  * adding them to the public API.
  */
 
-// ============================================================================
-// Segment Resolution (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Internal representation of a resolved route segment.
@@ -26,10 +22,6 @@ export type { ResolvedSegment, SegmentMetadata } from "./types.js";
  */
 export type { MatchResult, SlotState } from "./types.js";
 
-// ============================================================================
-// Intercept System (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Context for intercept route selection.
@@ -39,10 +31,6 @@ export type {
   InterceptSegmentsState,
   InterceptWhenFn,
 } from "./server/context.js";
-
-// ============================================================================
-// Browser State (Internal)
-// ============================================================================
 
 /**
  * @internal
@@ -68,10 +56,6 @@ export type {
   NavigationUpdate,
 } from "./browser/types.js";
 
-// ============================================================================
-// Handle System (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Internal handle storage mechanism.
@@ -84,10 +68,6 @@ export type { HandleStore, HandleData } from "./server/handle-store.js";
  */
 export type { SegmentHandleData } from "./cache/types.js";
 
-// ============================================================================
-// Cache Internals
-// ============================================================================
-
 /**
  * @internal
  * Internal cache entry data structure.
@@ -99,10 +79,6 @@ export type {
   CacheDefaults,
 } from "./cache/types.js";
 
-// ============================================================================
-// Router Context (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Router context for AsyncLocalStorage.
@@ -112,10 +88,6 @@ export type {
   RevalidationContext,
   InterceptResult,
 } from "./router/router-context.js";
-
-// ============================================================================
-// Match Pipeline (Internal)
-// ============================================================================
 
 /**
  * @internal
@@ -131,10 +103,6 @@ export type {
  * Pattern matching result.
  */
 export type { RouteMatchResult } from "./router/pattern-matching.js";
-
-// ============================================================================
-// Server Context (Internal)
-// ============================================================================
 
 /**
  * @internal
@@ -152,10 +120,6 @@ export type {
   EntryPropSegments,
 } from "./server/context.js";
 
-// ============================================================================
-// Handler Context (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Internal handler context with additional props for router internals.
@@ -163,29 +127,17 @@ export type {
  */
 export type { InternalHandlerContext } from "./types.js";
 
-// ============================================================================
-// Rendering (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Builds React element trees from route segments.
  */
 export { renderSegments } from "./segment-system.js";
 
-// ============================================================================
-// Error Utilities (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Error sanitization and network error utilities.
  */
 export { sanitizeError, NetworkError, isNetworkError } from "./errors.js";
-
-// ============================================================================
-// Type Utilities (Internal)
-// ============================================================================
 
 /**
  * @internal
@@ -216,10 +168,6 @@ export type {
   RevalidationDecisionEvent,
 } from "./router/telemetry.js";
 
-// ============================================================================
-// Pre-render / Static Handler Guards (Internal)
-// ============================================================================
-
 /**
  * @internal
  * Type guard for prerender handler definitions.
@@ -232,19 +180,11 @@ export { isPrerenderHandler, isPassthroughHandler } from "./prerender.js";
  */
 export { isStaticHandler } from "./static-handler.js";
 
-// ============================================================================
-// URL Pattern Internals
-// ============================================================================
-
 /**
  * @internal
  * Sentinel used to tag response-type route entries.
  */
 export { RESPONSE_TYPE } from "./urls.js";
-
-// ============================================================================
-// Route Match Debug (Internal)
-// ============================================================================
 
 /**
  * @internal
@@ -254,10 +194,6 @@ export {
   enableMatchDebug,
   getMatchDebugStats,
 } from "./router/pattern-matching.js";
-
-// ============================================================================
-// Debug Utilities (Internal)
-// ============================================================================
 
 /**
  * @internal

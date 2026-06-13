@@ -1,8 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
-// -- Revalidation trace types --
-
 export interface RevalidationTraceEntry {
   segmentId: string;
   segmentType: string;
@@ -35,8 +33,6 @@ export interface RevalidationTrace {
   meta: RevalidationTraceMeta;
   entries: RevalidationTraceEntry[];
 }
-
-// -- Log context --
 
 interface RouterLogContext {
   requestId: string;
@@ -194,8 +190,6 @@ export function debugWarn(
 
   console.warn(`${prefix} ${message}`);
 }
-
-// -- Revalidation trace helpers --
 
 export function isTraceActive(): boolean {
   if (!INTERNAL_RANGO_DEBUG) return false;

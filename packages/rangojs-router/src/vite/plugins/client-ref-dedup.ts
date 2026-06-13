@@ -73,8 +73,6 @@ export function clientRefDedup(): Plugin {
     apply: "serve",
 
     configResolved(config: ResolvedConfig) {
-      // Respect user's optimizeDeps.exclude — if a package is explicitly
-      // excluded from pre-bundling, we shouldn't redirect it there.
       const clientEnv = config.environments?.["client"];
       clientExclude =
         clientEnv?.optimizeDeps?.exclude ?? config.optimizeDeps?.exclude ?? [];
@@ -91,24 +89,19 @@ export function clientRefDedup(): Plugin {
     },
 
     resolveId(source, importer, options) {
-      // Only intercept in the client environment
       if (this.environment?.name !== "client") return;
 
-      // Only handle imports from client-in-server-package-proxy virtual modules
       if (!importer?.includes(CLIENT_IN_SERVER_PROXY_PREFIX)) return;
 
-      // Only handle absolute node_modules paths
       if (!source.includes("/node_modules/")) return;
 
       const packageName = extractPackageName(source);
       if (!packageName) return;
 
-      // Don't redirect packages that are excluded from optimization
       if (clientExclude.includes(packageName)) return;
 
       if (debug) dedupedPackages.add(packageName);
 
-      // Return a virtual module that re-exports via bare specifier
       return `\0rango:dedup/${packageName}`;
     },
 
@@ -117,7 +110,6 @@ export function clientRefDedup(): Plugin {
 
       const packageName = id.slice("\0rango:dedup/".length);
 
-      // Re-export via bare specifier so Vite routes through pre-bundling
       return [
         `export * from ${JSON.stringify(packageName)};`,
         `import * as __all__ from ${JSON.stringify(packageName)};`,

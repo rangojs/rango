@@ -32,23 +32,13 @@ import {
   serializeStateCookie,
 } from "./cookie-name.js";
 
-// The resolved cookie name this document is bound to (server-resolved, read
-// from payload metadata at boot). Bare default until initRangoState runs.
 let cookieName: string = DEFAULT_STATE_COOKIE_PREFIX;
 
-// Build version for this document, used as the prefix of minted values.
 let currentVersion = "0";
 
-// Write-through mirror of the value. Authoritative only when the cookie is
-// unreadable. `cookieBacked` records whether the mirror was last confirmed
-// present in the jar, so a present->absent transition (an external clear) is
-// detected exactly once instead of re-firing on every subsequent read.
 let mirror: string | null = null;
 let cookieBacked = false;
 
-// External-rotation observer, registered by the store-handle wiring (so a
-// sibling tab's rotation or a server Set-Cookie marks the history cache stale).
-// Null until registered; self-rotations never call it.
 let externalRotationObserver: ((value: string) => void) | null = null;
 
 /**
@@ -81,7 +71,6 @@ function readCookie(name: string): CookieRead {
   } catch {
     return { readable: false, value: null };
   }
-  // Shared parser with the server seat so both read the same jar entry.
   return { readable: true, value: getRawCookieValue(raw, name) };
 }
 
@@ -91,14 +80,9 @@ function writeCookie(name: string, value: string): void {
     typeof location !== "undefined" && location.protocol === "https:";
   try {
     document.cookie = serializeStateCookie(name, value, secure);
-  } catch {
-    // Write failures are silently absorbed; the mirror carries the value.
-  }
+  } catch {}
 }
 
-// Mint a fresh value: same version, a timestamp strictly greater than the
-// current one (the in-memory mirror is the previous value). The monotonic guard
-// lives in mintStateValue, shared with the server seat.
 function mintValue(): string {
   return mintStateValue(currentVersion, mirror);
 }
@@ -195,9 +179,6 @@ export function invalidateRangoState(): void {
   writeCookie(cookieName, mirror);
 }
 
-// One-time migration: remove the legacy localStorage keys this mechanism used
-// before the cookie cutover. No value porting — a fresh cookie mint just misses
-// cleanly. Idempotent: scans for `rango-state` and `rango-state:{routerId}`.
 function cleanupLegacyStorage(): void {
   if (typeof localStorage === "undefined") return;
   try {
@@ -209,7 +190,5 @@ function cleanupLegacyStorage(): void {
       }
     }
     for (const key of toRemove) localStorage.removeItem(key);
-  } catch {
-    // localStorage unavailable; nothing to clean.
-  }
+  } catch {}
 }

@@ -66,18 +66,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const resolvedOptions: RangoOptions = options ?? { preset: "node" };
   const preset = resolvedOptions.preset ?? "node";
   const showBanner = resolvedOptions.banner ?? true;
-  // Client-chunking strategy (per-route/per-feature splitting of the browser
-  // bundle). Defaults to the built-in directory strategy (`true`) pre-1.0; pass
-  // `clientChunks: false` to opt out. Resolved once and forwarded to
-  // @vitejs/plugin-rsc in both presets. The built-in strategy only splits where it
-  // recognizes a route structure, so this default is a no-op for flat / host-split
-  // apps and never duplicates the shared runtime.
   const clientChunksOption = resolvedOptions.clientChunks ?? true;
-  // Shared context the built-in strategy reads at build time: the production
-  // hashes of registered error/notFound fallback modules (-> app-fallback).
-  // Populated by the discovery plugin in buildStart, before the client build
-  // invokes the strategy. Only wired when the built-in strategy is active; a
-  // custom function owns its own grouping.
   const useBuiltInClientChunks = clientChunksOption === true;
   const clientChunkCtx: ClientChunkContext | undefined = useBuiltInClientChunks
     ? { fallbackRefs: new Set<string>() }
@@ -124,14 +113,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const prerenderEnabled = true;
 
   if (preset === "cloudflare") {
-    // Cloudflare preset: configure entries for cloudflare worker setup
-    // Router is not needed here - worker.rsc.tsx imports it directly
-
-    // Dynamically import @vitejs/plugin-rsc
     const { default: rsc } = await import("@vitejs/plugin-rsc");
 
-    // Only client and ssr entries - rsc entry is handled by cloudflare plugin
-    // Always use virtual modules for cloudflare preset
     const finalEntries: { client: string; ssr: string } = {
       client: VIRTUAL_IDS.browser,
       ssr: VIRTUAL_IDS.ssr,
@@ -142,10 +125,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       enforce: "pre",
 
       config() {
-        // Configure environments for cloudflare deployment
         return {
-          // Exclude rsc-router modules from optimization to prevent module duplication
-          // This ensures the same Context instance is used by both browser entry and RSC proxy modules
           optimizeDeps: {
             exclude: excludeDeps,
             rolldownOptions: sharedRolldownOptions,
@@ -168,21 +148,12 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             client: {
               build: {
                 rollupOptions: {
-                  // FILE_NAME_CONFLICT (and any other client-build warning) is
-                  // emitted by the CLIENT environment build, which consults THIS
-                  // env's onwarn -- Vite 8's environment builds do NOT propagate
-                  // the top-level build.rollupOptions.onwarn into the client env.
-                  // Wire it here so the suppression runs where the conflicts
-                  // originate (the top-level handler is invoked 0x for these; the
-                  // client-env handler is invoked for all of them).
                   onwarn,
                   output: {
                     manualChunks: getManualChunks,
                   },
                 },
               },
-              // Pre-bundle rsc-html-stream to prevent discovery during first request
-              // Exclude rsc-router modules to ensure same Context instance
               optimizeDeps: {
                 include: [nested("rsc-html-stream/client")],
                 exclude: excludeDeps,
@@ -190,12 +161,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               },
             },
             ssr: {
-              // Build SSR inside RSC directory so wrangler can deploy self-contained dist/rsc
               build: {
                 outDir: "./dist/rsc/ssr",
               },
-              // Pre-bundle SSR entry and React for proper module linking with childEnvironments
-              // All deps must be listed to avoid late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
               optimizeDeps: {
                 entries: [finalEntries.ssr],
                 include: [
@@ -215,10 +183,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               },
             },
             rsc: {
-              // RSC environment needs exclude list and esbuild options
-              // Exclude rsc-router modules to prevent createContext in RSC environment
               optimizeDeps: {
-                // Pre-bundle all RSC deps to prevent late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
                 include: [
                   "react",
                   "react/jsx-runtime",
@@ -249,13 +214,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     });
 
     plugins.push(createVirtualEntriesPlugin(finalEntries));
-
-    // Dev-only: RSDW client patch for React Performance Tracks
     plugins.push(performanceTracksPlugin());
-
-    // Add RSC plugin with cloudflare-specific options
-    // Note: loadModuleDevProxy should NOT be used with childEnvironments
-    // since SSR runs in workerd alongside RSC
     plugins.push(
       rsc({
         entries: finalEntries,
@@ -263,13 +222,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         clientChunks,
       }) as PluginOption,
     );
-
-    // Deduplicate client references from third-party packages in dev mode.
-    // Prevents module duplication when server components import "use client"
-    // packages that are also imported directly by client components.
     plugins.push(clientRefDedup());
   } else {
-    // Auto-discover router using Vite's resolved root (not process.cwd())
     plugins.push({
       name: "@rangojs/router:auto-discover",
       config(userConfig) {
@@ -292,18 +246,15 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             .join("\n");
           throw new Error(`[rango] Multiple routers found:\n${list}`);
         }
-        // 0 found: routerRef.path stays undefined, warn at startup via discovery plugin
       },
     });
 
-    // Always use virtual entries for client, ssr, and rsc
     const finalEntries = {
       client: VIRTUAL_IDS.browser,
       ssr: VIRTUAL_IDS.ssr,
       rsc: VIRTUAL_IDS.rsc,
     };
 
-    // Dynamically import @vitejs/plugin-rsc
     const { default: rsc } = await import("@vitejs/plugin-rsc");
 
     let hasWarnedDuplicate = false;
@@ -336,13 +287,6 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             client: {
               build: {
                 rollupOptions: {
-                  // FILE_NAME_CONFLICT (and any other client-build warning) is
-                  // emitted by the CLIENT environment build, which consults THIS
-                  // env's onwarn -- Vite 8's environment builds do NOT propagate
-                  // the top-level build.rollupOptions.onwarn into the client env.
-                  // Wire it here so the suppression runs where the conflicts
-                  // originate (the top-level handler is invoked 0x for these; the
-                  // client-env handler is invoked for all of them).
                   onwarn,
                   output: {
                     manualChunks: getManualChunks,
@@ -423,36 +367,17 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       },
     });
 
-    // Add virtual entries plugin (RSC entry generated lazily from routerRef)
     plugins.push(createVirtualEntriesPlugin(finalEntries, routerRef));
-
-    // Dev-only: RSDW client patch for React Performance Tracks
     plugins.push(performanceTracksPlugin());
-
     plugins.push(
       rsc({
         entries: finalEntries,
         clientChunks,
       }) as PluginOption,
     );
-
-    // Deduplicate client references from third-party packages in dev mode.
-    // Prevents module duplication when server components import "use client"
-    // packages that are also imported directly by client components.
     plugins.push(clientRefDedup());
   }
 
-  // Fix HMR for "use client" components.
-  //
-  // @vitejs/plugin-rsc's hotUpdate returns undefined for "use client" files
-  // in the RSC environment. Vite then tries to propagate through the RSC
-  // module graph, but the proxy module has no import.meta.hot.accept()
-  // boundary, causing a full page reload. The client env would handle it
-  // fine via React Refresh, but the RSC env's full-reload arrives first.
-  //
-  // Fix: in the RSC env, return [] for "use client" files to signal
-  // "handled, nothing to propagate". The client env is left alone so
-  // React Refresh processes the update normally.
   plugins.push({
     name: "@rangojs/router:client-component-hmr",
     hotUpdate(ctx) {
@@ -476,59 +401,27 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           trimmed.startsWith('"use client"') ||
           trimmed.startsWith("'use client'")
         ) {
-          // Consume the update in RSC/SSR envs. The proxy module was already
-          // re-transformed by the RSC plugin's hotUpdate. Without this, Vite
-          // tries to propagate through the RSC/SSR module graph where the proxy
-          // has no import.meta.hot.accept() boundary, triggering a full reload.
-          // The actual component update is handled by React Refresh in the
-          // client environment.
           return [];
         }
-      } catch {
-        // File deleted/moved during HMR, let default handling proceed
-      }
+      } catch {}
     },
   });
 
   plugins.push(exposeActionId());
-
-  // "use cache" directive transform (enforce: "post"):
-  // Wraps exports with registerCachedFunction() for function-level caching.
   plugins.push(useCacheTransform());
-
-  // Consolidated plugin for create* ID injection (enforce: "post"):
-  // loaders, handles, location state, and prerender handlers.
   plugins.push(exposeInternalIds());
-
-  // Router ID injection runs at normal priority (no enforce) to avoid
-  // changing Vite's dep optimization timing.
   plugins.push(exposeRouterId());
-
-  // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
-  // Entry path for discovery: user-specified value (if any) or undefined.
-  // Auto-discovered path is passed separately via routerRef.
-  // Cloudflare preset: deferred to configResolved (read from resolved Vite env config).
   const discoveryEntryPath =
     preset !== "cloudflare" ? routerRef.path : undefined;
-  // Ref for deferred auto-discovery (node preset only, undefined for cloudflare)
   const discoveryRouterRef = preset !== "cloudflare" ? routerRef : undefined;
 
-  // Version injector: auto-injects VERSION and routes-manifest into the RSC entry.
-  // For cloudflare preset, the entry is resolved lazily in configResolved.
-  // For node preset, the virtual entry already includes these imports.
   if (preset === "cloudflare") {
     plugins.push(createVersionInjectorPlugin(undefined));
   }
 
-  // Transform CJS vendor files to ESM for browser compatibility
-  // optimizeDeps.include doesn't work because the file is loaded after initial optimization
   plugins.push(createCjsToEsmPlugin());
-
-  // Router discovery plugin for build-time manifest generation.
-  // For cloudflare, the entry is resolved lazily in configResolved from the RSC environment.
-  // For node, discoveryRouterRef provides the auto-discovered path when not user-specified.
   plugins.push(
     createRouterDiscoveryPlugin(discoveryEntryPath, {
       routerPathRef: discoveryRouterRef,

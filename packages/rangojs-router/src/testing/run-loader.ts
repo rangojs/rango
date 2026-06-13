@@ -177,10 +177,6 @@ export interface RunLoaderOptions<TEnv = any> {
   handles?: ReadonlyArray<readonly [Handle<any, any>, unknown]>;
 }
 
-/**
- * Merge `search` into a request's URL, returning a value `toRequest` can build.
- * Keeps the original method/headers/body when a Request was passed.
- */
 function withSearch(
   request: Request | string | undefined,
   search: Record<string, string> | undefined,
@@ -206,16 +202,6 @@ export type RunnableLoader<T> =
   | ((ctx: TestLoaderContext) => Promise<T> | T)
   | LoaderDefinition<T, any>;
 
-/**
- * Resolve the function to run from either a raw body or a `createLoader()` handle.
- *
- * A handle carries no inline body (`createLoader` registers it in the fetchable
- * registry by `$$id`), so recover it from there — `def.fn` first (a hand-built
- * def), then the registry. This works when the handle resolves through the
- * SERVER build (the consumer's `@rangojs/router` under `rangoTestConfig`, which
- * registers the fn); the CLIENT stub drops the body, so a handle imported that
- * way is unrecoverable and we say so explicitly.
- */
 function resolveLoaderFn<T>(
   loader: RunnableLoader<T>,
 ): (ctx: TestLoaderContext) => Promise<T> | T {
@@ -237,31 +223,11 @@ function resolveLoaderFn<T>(
   return fn as (ctx: TestLoaderContext) => Promise<T> | T;
 }
 
-/**
- * Run a loader and return its resolved data. Pass the RAW loader body, or a
- * registered `createLoader()` handle (its fn is recovered from the registry).
- *
- * @example
- * ```ts
- * // raw body
- * const a = await runLoader(
- *   async (ctx) => ({ id: ctx.params.id, user: ctx.get("user") }),
- *   { params: { id: "42" }, vars: { user: { name: "Ada" } } },
- * );
- * // registered createLoader() handle (recovered from the registry)
- * const b = await runLoader(ProductLoader, { params: { id: "42" } });
- * ```
- */
-// Build the createTestRequestContext options from runLoader's options. Shared by
-// runLoader (returns the loader data) and runLoaderResult (also snapshots effects).
 function buildLoaderCtxOpts(
   opts: RunLoaderOptions,
 ): CreateTestContextOptions<any> {
   return {
     env: opts.env,
-    // Bake opts.search into the request URL itself so ctx.request.url, ctx.url,
-    // and ctx.searchParams all agree (production carries the query string on the
-    // real request — a loader reading ctx.request.url must see it too).
     request: withSearch(opts.request, opts.search),
     requestInit: opts.method ? { method: opts.method } : undefined,
     vars: opts.vars,
@@ -276,33 +242,19 @@ function buildLoaderCtxOpts(
   };
 }
 
-// Enter `reqCtx` and run `fn` with a seeded TestLoaderContext (the same ctx shape
-// a real loader receives). The single place the loader context is built, so
-// runLoader and runLoaderResult share identical loader-context semantics.
 function runWithLoaderContext<R>(
   reqCtx: RequestContext<any>,
   opts: RunLoaderOptions,
   fn: (ctx: TestLoaderContext) => R,
 ): R {
-  // Seed values for ctx.use(SomeHandle), matched by handle reference (so a real
-  // handle resolves regardless of its build-injected $$id).
   const handleSeeds = new Map<unknown, unknown>(opts.handles ?? []);
-
-  // Seed values for ctx.use(OtherLoader), matched by loader reference (same model
-  // as renderHandler/renderRoute). Checked before the `use` resolver.
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
-
-  // Tracks whether the mocked render barrier has settled. ctx.use(handle)
-  // reads are gated on this, matching production (loader-resolution.ts).
   let renderedResolved = false;
 
   return runWithRequestContext(reqCtx, () => {
     const reverse = opts.routeMap
       ? createReverseFunction(opts.routeMap, opts.routeName, opts.params ?? {})
       : ((() => {
-          // Documented contract: reverse requires routeMap. Do NOT fall back to
-          // reqCtx.reverse (the global route map) — that leaks whichever routes
-          // another test registered and contradicts the documented behavior.
           throw new Error(
             "ctx.reverse() requires the `routeMap` option in runLoader(). " +
               "Pass { routeMap: { name: pattern, ... } } to enable reverse().",
@@ -323,10 +275,6 @@ function runWithLoaderContext<R>(
       executionContext: reqCtx.executionContext,
       get: reqCtx.get as TestLoaderContext["get"],
       use: ((dep: LoaderDefinition<any, any> | Handle<any, any>) => {
-        // Match production (loader-resolution.ts): reading a handle in a loader
-        // requires the render barrier to have settled. Gate BEFORE returning a
-        // seed, so a loader that forgets `await ctx.rendered()` fails in the
-        // test exactly as it would at runtime.
         if (isHandle(dep) && !renderedResolved) {
           throw new Error(
             `ctx.use(handle) in a loader requires "await ctx.rendered()" first. ` +
@@ -334,16 +282,8 @@ function runWithLoaderContext<R>(
               `the render tree has settled.`,
           );
         }
-        // Handle reads (ctx.use(SomeHandle)) resolve from the seeded map first.
         if (handleSeeds.has(dep)) return handleSeeds.get(dep);
-        // Post-barrier, an UNSEEDED handle must match production
-        // (loader-resolution.ts -> collectHandleData), which runs the handle's
-        // registered collect over empty segments (collect([])) rather than
-        // throwing or leaking into the loader resolver. Resolve it via
-        // collectHandle, which recovers and runs that same collect.
         if (isHandle(dep)) return collectHandle(dep, []);
-        // Loader reads (ctx.use(OtherLoader)) resolve from the seeded map next,
-        // then the dynamic `use` resolver, then the real request-context use().
         if (loaderSeeds.has(dep)) return loaderSeeds.get(dep);
         if (opts.use) return opts.use(dep as LoaderDefinition<any, any>);
         return reqCtx.use(dep as LoaderDefinition<any, any>);
@@ -358,7 +298,6 @@ function runWithLoaderContext<R>(
               if (typeof opts.rendered === "function") {
                 await opts.rendered();
               }
-              // Barrier has settled: subsequent ctx.use(handle) reads resolve.
               renderedResolved = true;
             }
           : () => {
@@ -377,13 +316,6 @@ function runWithLoaderContext<R>(
   });
 }
 
-/**
- * Run a loader and return its resolved data.
- *
- * Effects the loader sets (cookies, response headers, a thrown redirect) are NOT
- * observable here — use {@link runLoaderResult} for an auth-style loader that
- * sets a `Set-Cookie` and/or `throw redirect(...)`.
- */
 export async function runLoader<T>(
   loader: RunnableLoader<T>,
   opts: RunLoaderOptions = {},
@@ -395,12 +327,6 @@ export async function runLoader<T>(
   );
 }
 
-/**
- * What a loader run accumulated: its data PLUS the response effects it produced,
- * surfaced as PUBLIC values (parity with `runMiddleware`/`runInRequestContext`)
- * so an effect-setting loader is assertable without casting through the
- * `@internal` request context.
- */
 export interface RunLoaderResult<T> {
   /**
    * The loader's resolved data (the value bare `runLoader` returns), or
@@ -430,25 +356,6 @@ export interface RunLoaderResult<T> {
   stateCookieName: string;
 }
 
-/**
- * Run a loader AND surface the response effects it produced. The richer sibling
- * of {@link runLoader} (which returns the bare data): use this when the loader
- * sets a cookie / response header / location-state, or `throw redirect(...)`, and
- * the test must assert that output.
- *
- * @example
- * ```ts
- * // AuthLoader: validates, sets a `session` cookie, then `throw redirect("/")`.
- * const { thrown, response, cookies } = await runLoaderResult(AuthLoader, {
- *   request: new Request("https://app.test/login?token=ok"),
- * });
- * expect((thrown as Response).headers.get("Location")).toBe("/");
- * expect(cookies.session).toBeDefined();
- * expect(
- *   response.headers.getSetCookie().some((c) => c.startsWith("session=")),
- * ).toBe(true);
- * ```
- */
 export async function runLoaderResult<T>(
   loader: RunnableLoader<T>,
   opts: RunLoaderOptions = {},
@@ -465,9 +372,6 @@ export async function runLoaderResult<T>(
       Promise.resolve(loaderFn(loaderCtx)),
     );
   } catch (error) {
-    // Capture (do NOT re-throw): a loader's success path is often
-    // `throw redirect(...)`, and the cookie/flash it set before the throw must
-    // stay observable (parity with runInRequestContext).
     thrown = error;
   }
   return { result, ...buildRunSnapshot(reqCtx, thrown, stateCookieName) };

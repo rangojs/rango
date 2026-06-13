@@ -125,17 +125,14 @@ export function withInterceptResolution<TEnv>(
   ): AsyncGenerator<ResolvedSegment> {
     const ms = ctx.metricsStore;
 
-    // First, yield all segments from the source (main segment resolution or cache)
     const segments: ResolvedSegment[] = [];
     for await (const segment of source) {
       segments.push(segment);
       yield segment;
     }
 
-    // Measure own work only (after source iteration completes)
     const ownStart = performance.now();
 
-    // Skip intercept resolution for full match (document requests don't have intercepts)
     if (ctx.isFullMatch) {
       if (ms) {
         ms.metrics.push({
@@ -147,18 +144,12 @@ export function withInterceptResolution<TEnv>(
       return;
     }
 
-    // Skip intercept resolution if:
-    // 1. No intercept result
-    // 2. Already have intercept segments (from cache hit with intercept key)
-    // 3. Cache hit with intercept key
     const skipInterceptResolution =
       !ctx.interceptResult ||
       state.interceptSegments.length > 0 ||
       (state.cacheHit && ctx.isIntercept);
 
     if (skipInterceptResolution) {
-      // For cache hit with intercept, extract intercept segments from cached data for slots
-      // and re-resolve loaders for fresh data
       if (ctx.interceptResult && state.cacheHit && ctx.isIntercept) {
         await handleCacheHitIntercept(ctx, state, segments);
       }
@@ -172,7 +163,6 @@ export function withInterceptResolution<TEnv>(
       return;
     }
 
-    // Resolve intercept segments
     const { resolveInterceptEntry } = getRouterContext<TEnv>();
 
     const slotName = ctx.interceptResult!.intercept.slotName;
@@ -181,7 +171,6 @@ export function withInterceptResolution<TEnv>(
       slotName,
     });
 
-    // Resolve intercept entry (middleware, loaders, handler)
     const Store = ctx.Store;
     const interceptSegments = await Store.run(() =>
       resolveInterceptEntry(
@@ -203,14 +192,12 @@ export function withInterceptResolution<TEnv>(
       ),
     );
 
-    // Update state
     state.interceptSegments = interceptSegments;
     state.slots[slotName] = {
       active: true,
       segments: interceptSegments,
     };
 
-    // Yield intercept segments
     for (const segment of interceptSegments) {
       yield segment;
     }
@@ -225,11 +212,6 @@ export function withInterceptResolution<TEnv>(
   };
 }
 
-/**
- * Handle cache hit with intercept scenario
- *
- * Extract intercept segments from cached data and re-resolve loaders for fresh data.
- */
 async function handleCacheHitIntercept<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
@@ -241,14 +223,11 @@ async function handleCacheHitIntercept<TEnv>(
 
   const slotName = ctx.interceptResult.intercept.slotName;
 
-  // Find intercept segments from cached segments (namespace starts with "intercept:")
   const interceptSegments = segments.filter((s) =>
     s.namespace?.startsWith("intercept:"),
   );
   state.interceptSegments = interceptSegments;
 
-  // Re-resolve intercept loaders for fresh data on cache hit
-  // This keeps cached component/layout but fetches fresh loader data
   if (resolveInterceptLoadersOnly) {
     const Store = ctx.Store;
     const freshLoaderResult = await Store.run(() =>
@@ -271,7 +250,6 @@ async function handleCacheHitIntercept<TEnv>(
       ),
     );
 
-    // Update intercept segment's loaderDataPromise with fresh data
     if (freshLoaderResult) {
       const interceptMainSegment = interceptSegments.find(
         (s) => s.type === "parallel" && s.slot,

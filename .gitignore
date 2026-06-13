@@ -21,3 +21,4 @@ rango-review-findings.md
 .claude/fanout-groups.json
 .claude/group-findings.cjs
 .claude/wf-cleanup.js
+.claude/gen-comment-groups.cjs

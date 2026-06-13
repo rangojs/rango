@@ -46,8 +46,6 @@ export function filterSegmentOrder(matched: string[]): string[] {
     const slots = slotsByParent.get(id);
     if (slots) result.push(...slots);
   }
-  // Defensive: any slot whose parent is missing from the filtered list still
-  // gets included rather than silently dropped. Shouldn't happen in practice.
   for (const [parent, slots] of slotsByParent) {
     if (!nonSlotSet.has(parent)) result.push(...slots);
   }

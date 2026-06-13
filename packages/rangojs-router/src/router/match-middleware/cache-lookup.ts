@@ -352,10 +352,6 @@ export function withCacheLookup<TEnv>(
       resolveLoadersOnly,
     } = getRouterContext<TEnv>();
 
-    // Prerender lookup: check build-time cached data before runtime cache.
-    // Prerender data is available regardless of runtime cache configuration.
-    // Skip for HMR requests — the dev prerender endpoint reads from a stale
-    // RouterRegistry snapshot; rendering fresh ensures edits are visible.
     const isHmr = !!ctx.request.headers.get("X-RSC-HMR");
     if (!ctx.isAction && !isHmr && ctx.matched.pr) {
       await ensurePrerenderDeps();
@@ -370,14 +366,6 @@ export function withCacheLookup<TEnv>(
       }
     }
 
-    // Dev-mode static handler interception for non-Node.js runtimes.
-    // __PRERENDER_DEV_URL is set by the Vite plugin when the RSC environment
-    // lacks a Node.js module runner (e.g. workerd, Deno workers). In those
-    // runtimes, handlers that depend on Node APIs like node:fs can't run
-    // in-process. We redirect them to the /__rsc_prerender endpoint which
-    // resolves segments in a Node.js temp server, same as prerender routes.
-    // In Node.js dev mode this variable is undefined -- handlers run
-    // in-process where Node APIs work, so no interception is needed.
     if (!ctx.isAction && !ctx.matched.pr && globalThis.__PRERENDER_DEV_URL) {
       const hasStatic = ctx.entries.some(
         (e) =>
@@ -400,9 +388,7 @@ export function withCacheLookup<TEnv>(
       }
     }
 
-    // Skip cache during actions
     if (ctx.isAction || !ctx.cacheScope?.enabled) {
-      // Cache miss - pass through to segment resolution
       yield* source;
       if (ms) {
         ms.metrics.push({
@@ -414,7 +400,6 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
-    // Lookup cache
     const cacheResult = await ctx.cacheScope.lookupRoute(
       ctx.pathname,
       ctx.matched.params,
@@ -422,7 +407,6 @@ export function withCacheLookup<TEnv>(
     );
 
     if (!cacheResult) {
-      // Cache miss - pass through to segment resolution
       yield* source;
       if (ms) {
         ms.metrics.push({
@@ -434,16 +418,12 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
-    // Cache HIT
     state.cacheHit = true;
     state.cacheSource = "runtime";
     state.shouldRevalidate = cacheResult.shouldRevalidate;
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
 
-    // Apply revalidation to cached segments.
-    // For full matches or empty client segment sets, this map is unnecessary:
-    // we never run segment-level revalidation and can stream segments directly.
     const canCheckSegmentRevalidation =
       !ctx.isFullMatch &&
       ctx.clientSegmentSet.size > 0 &&
@@ -453,7 +433,6 @@ export function withCacheLookup<TEnv>(
       : undefined;
 
     for (const segment of cacheResult.segments) {
-      // Skip segments client doesn't have - they need their component
       if (!ctx.clientSegmentSet.has(segment.id)) {
         if (isTraceActive()) {
           pushRevalidationTraceEntry({
@@ -470,19 +449,13 @@ export function withCacheLookup<TEnv>(
         continue;
       }
 
-      // Skip intercept segments - they're handled separately
       if (segment.namespace?.startsWith("intercept:")) {
         yield segment;
         continue;
       }
 
-      // Look up revalidation rules for this segment
       const entryInfo = entryRevalidateMap?.get(segment.id);
 
-      // Even without explicit revalidation rules, route segments and their
-      // children must re-render when params or search params change — the
-      // handler reads ctx.params/ctx.searchParams so different values produce
-      // different content. Matches evaluateRevalidation's default logic.
       const searchChanged = ctx.prevUrl.search !== ctx.url.search;
       const routeParamsChanged = !paramsEqual(
         ctx.matched.params,
@@ -496,7 +469,6 @@ export function withCacheLookup<TEnv>(
 
       if (!entryInfo || entryInfo.revalidate.length === 0) {
         if (shouldDefaultRevalidate) {
-          // Params or search params changed — must re-render even without custom rules
           if (isTraceActive()) {
             pushRevalidationTraceEntry({
               segmentId: segment.id,
@@ -513,7 +485,6 @@ export function withCacheLookup<TEnv>(
           yield segment;
           continue;
         }
-        // No revalidation rules, use default behavior (skip if client has)
         if (isTraceActive()) {
           pushRevalidationTraceEntry({
             segmentId: segment.id,
@@ -531,7 +502,6 @@ export function withCacheLookup<TEnv>(
         continue;
       }
 
-      // Evaluate revalidation rules
       const shouldRevalidate = await evaluateRevalidation({
         segment,
         prevParams: ctx.prevParams,
@@ -565,7 +535,6 @@ export function withCacheLookup<TEnv>(
       }
 
       if (!shouldRevalidate) {
-        // Client has it, no revalidation needed
         segment.component = null;
         segment.loading = undefined;
       }
@@ -573,7 +542,6 @@ export function withCacheLookup<TEnv>(
       yield segment;
     }
 
-    // Set streaming flag (once) and resolve render barrier.
     const barrierReqCtx = _getRequestContext();
     if (barrierReqCtx) {
       if (barrierReqCtx._treeHasStreaming === undefined) {
@@ -582,22 +550,17 @@ export function withCacheLookup<TEnv>(
       barrierReqCtx._resolveRenderBarrier(cacheResult.segments);
     }
 
-    // Resolve loaders fresh (loaders are NOT cached by default)
-    // This ensures fresh data even on cache hit
     const Store = ctx.Store;
     const loaderStart = performance.now();
 
     if (ctx.isFullMatch) {
-      // Full match (document request) - simple loader resolution without revalidation
       if (resolveLoadersOnly) {
         const loaderSegments = await Store.run(() =>
           resolveLoadersOnly(ctx.entries, ctx.handlerContext),
         );
 
-        // Update state - full match doesn't track matchedIds separately
         state.matchedIds = state.cachedMatchedIds!;
 
-        // Yield fresh loader segments
         for (const segment of loaderSegments) {
           yield segment;
         }
@@ -605,7 +568,6 @@ export function withCacheLookup<TEnv>(
         state.matchedIds = state.cachedMatchedIds!;
       }
     } else {
-      // Partial match (navigation) - loader resolution with revalidation
       if (resolveLoadersOnlyWithRevalidation) {
         const loaderResult = await Store.run(() =>
           resolveLoadersOnlyWithRevalidation(

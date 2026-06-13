@@ -107,14 +107,6 @@ type StrictLocalParamsWithExtras<TEntry> =
     ? Record<string, string>
     : ExtractParamsFromEntry<TEntry, {}> & Record<string, string>;
 
-// HandlerContext.reverse is the only reverse surface with runtime param autofill
-// from the current matched request. Middleware/loaders/request context do not
-// have the same local-route guarantees, so they keep plain ScopedReverseFunction.
-//
-// When a handler has an explicit local route map, enforce that local route
-// params declared by that map are present while still allowing extra mount
-// params to be passed through. Global names remain autofill-friendly because
-// parent include() params are often unknown at the module definition site.
 type StrictLocalAutofillGlobalReverseFunction<TLocalRoutes, TGlobalRoutes> =
   ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
     <TName extends keyof TGlobalRoutes & string>(

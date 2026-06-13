@@ -27,9 +27,6 @@ import type { UseThemeReturn } from "./types.js";
  *
  * Must be used within a ThemeProvider (which is automatically included
  * in NavigationProvider when theme is enabled in router config).
- *
- * @returns Theme state and methods
- * @throws Error if used outside ThemeProvider
  */
 export function useTheme(): UseThemeReturn {
   const ctx = requireThemeContext();

@@ -1,13 +1,4 @@
 /// <reference types="vite/types/importMeta.d.ts" />
-/**
- * Middleware Execution
- *
- * True middleware that wraps the entire RSC handler.
- * - `await next()` returns actual Response
- * - Can modify response headers
- * - Can catch errors from RSC rendering
- * - Forgiving API: if middleware doesn't return, original response is used
- */
 
 import { contextGet, contextSet } from "../context-var.js";
 import { safeDecodeURIComponent } from "./url-params.js";
@@ -37,7 +28,6 @@ export type {
 export { parseCookies, serializeCookie } from "./middleware-cookies.js";
 
 const MIDDLEWARE_METRIC_DEPTH = 1;
-/** Ignore post-next() durations below this threshold (measurement noise). */
 const POST_METRIC_MIN_DURATION_MS = 0.01;
 
 function getMiddlewareMetricLabel<TEnv>(
@@ -54,10 +44,6 @@ function getMiddlewareMetricLabel<TEnv>(
   return `middleware:${scope}#${ordinal + 1}`;
 }
 
-/**
- * Parse a route pattern into regex and param names
- * Supports: *, /path, /path/*, /path/:param, /path/:param/*
- */
 export function parsePattern(pattern: string): {
   regex: RegExp;
   paramNames: string[];

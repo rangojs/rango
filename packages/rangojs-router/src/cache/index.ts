@@ -1,23 +1,7 @@
-/**
- * Cache Store
- *
- * Server-side caching for RSC segments and loader data.
- *
- * Main exports for users:
- * - SegmentCacheStore - Interface for implementing custom cache stores
- * - MemorySegmentCacheStore - In-memory cache for development/testing
- * - CFCacheStore - Cloudflare edge cache store for production
- * - CacheScope / createCacheScope - Request-scoped cache provider
- */
-
-// Segment cache store types and implementations
 export type {
   SegmentCacheStore,
   CachedEntryData,
   CacheGetResult,
-  // The getItem()/setItem() signature types on SegmentCacheStore. Exported
-  // alongside CacheGetResult so a consumer implementing a custom store can name
-  // every type its interface methods use, not just the segment-read result.
   CacheItemResult,
   CacheItemOptions,
   SerializedSegmentData,
@@ -26,7 +10,6 @@ export type {
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 
-// Cloudflare cache store
 export {
   CFCacheStore,
   type CFCacheStoreOptions,
@@ -41,17 +24,11 @@ export {
   KV_READ_TIMEOUT_MS,
 } from "./cf/index.js";
 
-// Cache scope
 export { CacheScope, createCacheScope } from "./cache-scope.js";
 
-// Document-level cache middleware
 export {
   createDocumentCacheMiddleware,
   type DocumentCacheOptions,
 } from "./document-cache.js";
 
-// Cache error reporting. CacheErrorCategory is the discriminator surfaced to a
-// router's onError callback as `metadata.category` for the `cache` phase, so
-// consumers can branch on the failure kind (e.g. distinguish a transient
-// cache-read outage from cache-corrupt self-heal).
 export type { CacheErrorCategory } from "./cache-error.js";

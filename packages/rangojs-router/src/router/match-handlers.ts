@@ -109,9 +109,6 @@ export function createMatchHandlers<TEnv = any>(
   const hasTelemetry = !!deps.telemetry;
   const telemetry = resolveSink(deps.telemetry);
   const cacheSignalEnabled = !!deps.cacheSignalEnabled;
-  // Compute the coarse cache signal when EITHER telemetry needs it (for the
-  // cache.decision event) OR the debug header gate is on. When neither is set,
-  // this is never called — zero extra work on the hot path.
   const buildSignal = (
     routeKey: string,
     state: {
@@ -120,8 +117,6 @@ export function createMatchHandlers<TEnv = any>(
       shouldRevalidate?: boolean;
     },
   ): CacheSegmentSignal[] => buildCacheSignalSegments(routeKey, state);
-  // Stash the signal on the request context for the response path to emit as
-  // the X-Rango-Cache header. Only when the debug gate is on.
   const recordSignalIfEnabled = (segments: CacheSegmentSignal[]): void => {
     if (!cacheSignalEnabled) return;
     const reqCtx = _getRequestContext();
@@ -159,15 +154,6 @@ export function createMatchHandlers<TEnv = any>(
     );
   }
 
-  /**
-   * Match request and return segments (document/SSR requests)
-   *
-   * Uses generator middleware pipeline for clean separation of concerns:
-   * - cache-lookup: Check cache first
-   * - segment-resolution: Resolve segments on cache miss
-   * - cache-store: Store results in cache
-   * - background-revalidation: SWR revalidation
-   */
   async function match(request: Request, env: TEnv): Promise<MatchResult> {
     const requestId = hasTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext({ request, transaction: "match" }, () => {
@@ -191,7 +177,6 @@ export function createMatchHandlers<TEnv = any>(
 
           const result = await createMatchContextForFull(request, env);
 
-          // Handle redirect case
           if ("type" in result && result.type === "redirect") {
             if (hasTelemetry) {
               safeEmit(telemetry, {
@@ -270,7 +255,6 @@ export function createMatchHandlers<TEnv = any>(
               });
             }
             if (error instanceof Response) throw error;
-            // Report unhandled errors during full match pipeline
             callOnError(error, "routing", {
               request,
               url: ctx.url,
@@ -305,16 +289,6 @@ export function createMatchHandlers<TEnv = any>(
     );
   }
 
-  /**
-   * Match partial request with revalidation
-   *
-   * Uses generator middleware pipeline for clean separation of concerns:
-   * - cache-lookup: Check cache first
-   * - segment-resolution: Resolve segments on cache miss
-   * - intercept-resolution: Handle intercept routes
-   * - cache-store: Store results in cache
-   * - background-revalidation: SWR revalidation
-   */
   async function matchPartial(
     request: Request,
     context: TEnv,
@@ -434,7 +408,6 @@ export function createMatchHandlers<TEnv = any>(
                 });
               }
               if (error instanceof Response) throw error;
-              // Report unhandled errors during partial match pipeline
               callOnError(error, actionContext ? "action" : "revalidation", {
                 request,
                 url: ctx.url,

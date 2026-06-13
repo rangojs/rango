@@ -28,9 +28,6 @@ import type {
 } from "./types.js";
 import { THEME_COOKIE } from "./constants.js";
 
-/**
- * Get system preference for color scheme
- */
 function getSystemTheme(): ResolvedTheme {
   if (typeof window !== "undefined" && window.matchMedia) {
     return window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -40,9 +37,6 @@ function getSystemTheme(): ResolvedTheme {
   return "light";
 }
 
-/**
- * Read theme from cookie
- */
 function readThemeFromCookie(storageKey: string): string | null {
   if (typeof document === "undefined") return null;
 
@@ -61,9 +55,6 @@ function readThemeFromCookie(storageKey: string): string | null {
   return null;
 }
 
-/**
- * Read theme from localStorage
- */
 function readThemeFromStorage(storageKey: string): string | null {
   if (typeof localStorage === "undefined") return null;
 
@@ -74,9 +65,6 @@ function readThemeFromStorage(storageKey: string): string | null {
   }
 }
 
-/**
- * Write theme to cookie
- */
 function writeThemeToCookie(storageKey: string, theme: Theme): void {
   if (typeof document === "undefined") return;
 
@@ -85,9 +73,6 @@ function writeThemeToCookie(storageKey: string, theme: Theme): void {
   document.cookie = cookie;
 }
 
-/**
- * Write theme to localStorage
- */
 function writeThemeToStorage(storageKey: string, theme: Theme): void {
   if (typeof localStorage === "undefined") return;
 
@@ -98,9 +83,6 @@ function writeThemeToStorage(storageKey: string, theme: Theme): void {
   }
 }
 
-/**
- * Apply theme to HTML element
- */
 function applyThemeToDocument(theme: Theme, config: ResolvedThemeConfig): void {
   if (typeof document === "undefined") return;
 
@@ -112,40 +94,30 @@ function applyThemeToDocument(theme: Theme, config: ResolvedThemeConfig): void {
   const value = config.value[resolved] || resolved;
   const el = document.documentElement;
 
-  // Apply attribute
   if (config.attribute === "class") {
-    // Remove all theme classes
     for (const t of config.themes) {
       const v = config.value[t] || t;
       el.classList.remove(v);
     }
-    // Add current theme class
     el.classList.add(value);
   } else {
     el.setAttribute(config.attribute, value);
   }
 
-  // Set color-scheme for native dark mode support
   if (config.enableColorScheme) {
     el.style.colorScheme = resolved;
   }
 }
 
-/**
- * Get the resolved stored theme (validated against available themes)
- */
 function getStoredTheme(config: ResolvedThemeConfig): Theme {
   const { storageKey, themes, defaultTheme, enableSystem } = config;
 
-  // Try cookie first (for SSR consistency)
   let stored = readThemeFromCookie(storageKey);
 
-  // Fall back to localStorage
   if (!stored) {
     stored = readThemeFromStorage(storageKey);
   }
 
-  // Validate stored value
   if (stored) {
     if (stored === "system" && enableSystem) {
       return "system";
@@ -158,38 +130,26 @@ function getStoredTheme(config: ResolvedThemeConfig): Theme {
   return defaultTheme;
 }
 
-/**
- * ThemeProvider component
- *
- * Provides theme state to the component tree via context.
- * Handles theme persistence, system preference detection, and cross-tab sync.
- */
 export function ThemeProvider({
   config,
   initialTheme,
   children,
 }: ThemeProviderProps): React.ReactNode {
-  // Track mount state to avoid hydration mismatches
-  // During SSR and initial hydration, mounted is false
   const [mounted, setMounted] = useState(false);
 
-  // Initialize theme from prop, storage, or default
   const [theme, setThemeState] = useState<Theme>(() => {
     if (initialTheme) return initialTheme;
     if (typeof window === "undefined") return config.defaultTheme;
     return getStoredTheme(config);
   });
 
-  // Track system preference - use stable default during SSR
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
 
-  // Set mounted after hydration and detect actual system theme
   useEffect(() => {
     setMounted(true);
     setSystemTheme(getSystemTheme());
   }, []);
 
-  // Set theme and persist to storage
   const setTheme = useCallback(
     (newTheme: Theme) => {
       setThemeState(newTheme);
@@ -200,7 +160,6 @@ export function ThemeProvider({
     [config],
   );
 
-  // Listen for system preference changes
   useEffect(() => {
     if (!config.enableSystem) return;
     if (typeof window === "undefined" || !window.matchMedia) return;
@@ -211,13 +170,11 @@ export function ThemeProvider({
       const newSystemTheme = e.matches ? "dark" : "light";
       setSystemTheme(newSystemTheme);
 
-      // If current theme is "system", re-apply to update document
       if (theme === "system") {
         applyThemeToDocument("system", config);
       }
     };
 
-    // Modern browsers
     mediaQuery.addEventListener("change", handleChange);
 
     return () => {
@@ -225,7 +182,6 @@ export function ThemeProvider({
     };
   }, [config, theme]);
 
-  // Cross-tab synchronization via localStorage storage event
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -249,12 +205,8 @@ export function ThemeProvider({
     };
   }, [config]);
 
-  // Compute resolved theme
-  // During SSR (not mounted), use the initial theme or default to avoid hydration mismatch
   const resolvedTheme: ResolvedTheme = useMemo(() => {
     if (!mounted) {
-      // During SSR, return the initial theme if it's not "system", otherwise "light"
-      // The inline script will apply the correct class before hydration
       if (initialTheme && initialTheme !== "system") {
         return initialTheme as ResolvedTheme;
       }
@@ -266,7 +218,6 @@ export function ThemeProvider({
     return theme as ResolvedTheme;
   }, [theme, systemTheme, config.enableSystem, mounted, initialTheme]);
 
-  // Build themes list (include "system" if enabled)
   const themes = useMemo(() => {
     if (config.enableSystem) {
       return ["system", ...config.themes.filter((t) => t !== "system")];
@@ -274,14 +225,11 @@ export function ThemeProvider({
     return config.themes;
   }, [config.themes, config.enableSystem]);
 
-  // Context value
-  // During SSR (not mounted), return stable values to avoid hydration mismatch
   const contextValue: ThemeContextValue = useMemo(
     () => ({
       theme,
       setTheme,
       resolvedTheme,
-      // Return stable "light" for systemTheme during SSR - actual value updates after mount
       systemTheme: mounted ? systemTheme : "light",
       themes,
       config,

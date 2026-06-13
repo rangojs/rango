@@ -4,16 +4,10 @@
  * All host router errors extend HostRouterError for easy instance checking.
  */
 
-/**
- * Error options with cause
- */
 interface ErrorOptions {
   cause?: unknown;
 }
 
-/**
- * Base error class for all host router errors
- */
 export class HostRouterError extends Error {
   cause?: unknown;
 
@@ -27,9 +21,6 @@ export class HostRouterError extends Error {
   }
 }
 
-/**
- * Error thrown when pattern validation fails
- */
 export class InvalidPatternError extends HostRouterError {
   constructor(pattern: string, reason: string, options?: ErrorOptions) {
     super(`Invalid pattern "${pattern}": ${reason}`, options);
@@ -38,9 +29,6 @@ export class InvalidPatternError extends HostRouterError {
   }
 }
 
-/**
- * Error thrown when cookie override is not allowed
- */
 export class HostOverrideNotAllowedError extends HostRouterError {
   constructor(currentHost: string, cookieName: string, options?: ErrorOptions) {
     super(
@@ -52,9 +40,6 @@ export class HostOverrideNotAllowedError extends HostRouterError {
   }
 }
 
-/**
- * Error thrown when cookie hostname is invalid
- */
 export class InvalidHostnameError extends HostRouterError {
   constructor(hostname: string, options?: ErrorOptions) {
     super(`Invalid hostname format: "${hostname}"`, options);
@@ -63,9 +48,6 @@ export class InvalidHostnameError extends HostRouterError {
   }
 }
 
-/**
- * Error thrown when custom validation fails
- */
 export class HostValidationError extends HostRouterError {
   constructor(message: string, cause?: unknown) {
     super(message, { cause });
@@ -74,9 +56,6 @@ export class HostValidationError extends HostRouterError {
   }
 }
 
-/**
- * Error thrown when no route matches
- */
 export class NoRouteMatchError extends HostRouterError {
   constructor(hostname: string, pathname: string, options?: ErrorOptions) {
     super(`No route matched for ${hostname}${pathname}`, options);
@@ -85,9 +64,6 @@ export class NoRouteMatchError extends HostRouterError {
   }
 }
 
-/**
- * Error thrown when handler type is invalid
- */
 export class InvalidHandlerError extends HostRouterError {
   constructor(handler: unknown, options?: ErrorOptions) {
     super(`Invalid handler type: ${typeof handler}`, options);

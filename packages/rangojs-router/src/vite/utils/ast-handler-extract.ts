@@ -1,10 +1,6 @@
 import type MagicString from "magic-string";
 import { hashInlineId, buildExportMap } from "../plugins/expose-id-utils.js";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 /** Minimal ESTree Program node — avoids importing from `rollup` (not a direct dep). */
 interface ProgramNode {
   type: "Program";
@@ -70,10 +66,6 @@ function findImportInsertionPos(
   return insertionPos;
 }
 
-// ---------------------------------------------------------------------------
-// AST walking helper
-// ---------------------------------------------------------------------------
-
 /**
  * Recursively walk an ESTree AST node, calling `enter` on each node.
  * Parent is passed for context.
@@ -110,10 +102,6 @@ function walkNode(
 
   ancestors.pop();
 }
-
-// ---------------------------------------------------------------------------
-// AST analysis
-// ---------------------------------------------------------------------------
 
 /**
  * Parse the file with Vite's parseAst and find all calls to `fnName`.
@@ -425,10 +413,6 @@ export function extractModuleLevelDeclarations(
 
   return declarations;
 }
-
-// ---------------------------------------------------------------------------
-// Transform
-// ---------------------------------------------------------------------------
 
 /**
  * Transform inline handler calls by extracting them into virtual modules.

@@ -6,10 +6,6 @@
  * a Promise.race mechanism, returning 504 on expiry.
  */
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
 export interface RouterTimeouts {
   /** Timeout for server action execution (ms). */
   actionMs?: number;
@@ -35,10 +31,6 @@ export type OnTimeoutCallback<TEnv = any> = (
   ctx: TimeoutContext<TEnv>,
 ) => Response | Promise<Response>;
 
-// ---------------------------------------------------------------------------
-// Internal resolved form
-// ---------------------------------------------------------------------------
-
 export interface ResolvedTimeouts {
   actionMs: number | undefined;
   renderStartMs: number | undefined;
@@ -63,10 +55,6 @@ export function resolveTimeouts(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Error class
-// ---------------------------------------------------------------------------
-
 export class RouterTimeoutError extends Error {
   override name = "RouterTimeoutError" as const;
   phase: TimeoutPhase;
@@ -80,10 +68,6 @@ export class RouterTimeoutError extends Error {
     this.durationMs = durationMs;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Race helper
-// ---------------------------------------------------------------------------
 
 type TimeoutResult<T> =
   | { result: T; timedOut: false }
@@ -128,10 +112,6 @@ export async function withTimeout<T>(
     throw error;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Default response
-// ---------------------------------------------------------------------------
 
 /**
  * Create the default 504 response for a timed-out request.

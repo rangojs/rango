@@ -9,12 +9,6 @@ import {
 import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
 import type { CreateExportBinding } from "./types.js";
 
-/**
- * Check whether every non-type export in `code` is accounted for by the given
- * bindings. Returns false if any export exists that is not one of the known
- * create* call locals/exports, allowing callers to bail out for mixed-export
- * files.
- */
 export function isExportOnlyFile(
   code: string,
   bindings: CreateExportBinding[],
@@ -28,10 +22,8 @@ export function isExportOnlyFile(
     for (const e of b.exportNames) knownExports.add(e);
   }
 
-  // Bail on star re-exports (unknown exports)
   if (/export\s*\*/.test(code)) return false;
 
-  // Check `export const/let/var/function/class/default X` declarations
   const declExportPattern =
     /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
   let match: RegExpExecArray | null;
@@ -39,8 +31,6 @@ export function isExportOnlyFile(
     if (!knownExports.has(match[2])) return false;
   }
 
-  // Check `export { X }` and `export { X as Y }` specifiers: the local name
-  // must reference a known create* binding.
   const specExportPattern = /export\s*\{([^}]+)\}/g;
   while ((match = specExportPattern.exec(code)) !== null) {
     const specifiers = match[1]
@@ -67,9 +57,6 @@ function createCallPattern(fnNames: string[]): RegExp {
   );
 }
 
-// Counts real create*() call sites, ignoring occurrences inside comments and
-// string literals. Used by the unsupported-shape warning heuristic and the
-// inline-extraction pre-check.
 export function countCreateCallsForNames(
   code: string,
   fnNames: string[],
@@ -77,7 +64,6 @@ export function countCreateCallsForNames(
   return codeMatchIndices(code, createCallPattern(fnNames)).length;
 }
 
-/** Convert a 0-based byte offset to a 1-based { line, column }. */
 export function offsetToLineColumn(
   code: string,
   index: number,
@@ -94,14 +80,6 @@ export function offsetToLineColumn(
   return { line, column: index - lineStart + 1 };
 }
 
-/**
- * Locate every real create*() call site (comment/string-free) that is NOT one
- * of the supported, id-injectable export bindings, returning each as a 1-based
- * { line, column }. The empty result means every call is in a supported shape.
- * Both binding-collection paths anchor `callExprStart` at the start of the
- * create* identifier — exactly where this pattern matches — so the set
- * difference is exact.
- */
 export function findUnsupportedCreateCallSites(
   code: string,
   fnNames: string[],
@@ -158,16 +136,6 @@ export function getCalledIdentifierFromCall(callExpr: any): string | null {
   return null;
 }
 
-/**
- * plugin-react's dev Fast Refresh wraps exports whose function body uses
- * hook-like calls in a signature-registration call. A loader/handle that calls
- * `ctx.use(...)` trips this heuristic, so `export const X = createLoader(...)`
- * becomes `export const X = _s(createLoader(...), "<sig>", true)` — the create*
- * call is the first argument of an unrelated wrapper call. Unwrap a single such
- * layer so ID injection still targets the inner create* call. The `$$id`
- * assignment is appended after the whole statement (against the export local),
- * which is unaffected by the wrapper since `_s(x)` returns `x`.
- */
 function unwrapSignatureWrappedCall(init: any, fnNameSet: Set<string>): any {
   if (init?.type !== "CallExpression") return init;
   const directId = getCalledIdentifierFromCall(init);
@@ -331,10 +299,6 @@ export function collectCreateExportBindings(
     }
   }
 
-  // When the JS parser misidentifies TypeScript generics (e.g.,
-  // createLocationState<{ text: string }>({...})) as binary expressions,
-  // the AST path finds 0 bindings even though calls exist. Fall back to
-  // regex-based detection which handles generics via <[^>]*> matching.
   if (bindings.length === 0) {
     return collectCreateExportBindingsFallback(code, fnNames);
   }
@@ -349,8 +313,6 @@ export function buildUnsupportedShapeWarning(
 ): string {
   const lines = [`[rango] Unsupported ${fnName} shape in "${filePath}".`];
 
-  // Point at the exact call(s) so the location is clickable in the terminal/IDE
-  // (file:line:column) instead of leaving the user to scan the whole file.
   if (sites.length === 1) {
     const s = sites[0];
     lines.push(

@@ -106,16 +106,6 @@ import {
   withSegmentResolution,
 } from "./match-middleware/index.js";
 
-/**
- * Compose multiple async generator middleware into a single middleware
- *
- * Middleware are applied in reverse order (rightmost runs first, innermost).
- * For the pipeline:
- *   compose(A, B, C)(source)
- *
- * The flow is: source -> C -> B -> A -> output
- * Where C is the innermost (runs first on input) and A is outermost (runs last).
- */
 export function compose<T>(
   ...middleware: GeneratorMiddleware<T>[]
 ): GeneratorMiddleware<T> {
@@ -126,54 +116,23 @@ export function compose<T>(
     return middleware[0];
   }
   return (source) => {
-    // Apply middleware in reverse order (rightmost first)
     return middleware.reduceRight((prev, fn) => fn(prev), source);
   };
 }
 
-/**
- * Create an empty async generator (source for pipeline)
- */
-export async function* empty<T>(): AsyncGenerator<T> {
-  // Yields nothing - used as the initial source for the pipeline
-}
+export async function* empty<T>(): AsyncGenerator<T> {}
 
-/**
- * Create the match partial pipeline
- *
- * Pipeline order (innermost to outermost):
- * 1. cache-lookup    - Check cache first, yield cached segments if hit
- * 2. segment-resolution - Resolve segments if cache miss
- * 3. intercept-resolution - Resolve intercept segments
- * 4. cache-store     - Store segments in cache
- * 5. background-revalidation - Trigger SWR if cache was stale
- *
- * Data flow:
- * - empty() produces no segments
- * - cache-lookup either yields cached segments OR passes through to segment-resolution
- * - segment-resolution resolves fresh segments on cache miss
- * - intercept-resolution adds intercept segments
- * - cache-store observes and caches segments
- * - background-revalidation triggers SWR revalidation if needed
- */
 export function createMatchPartialPipeline<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
 ): AsyncGenerator<ResolvedSegment> {
-  // Build the middleware chain
   const pipeline = compose<ResolvedSegment>(
-    // Outermost - observes segments and triggers background revalidation
     withBackgroundRevalidation(ctx, state),
-    // Observes and stores segments in cache
     withCacheStore(ctx, state),
-    // Adds intercept segments after main segments
     withInterceptResolution(ctx, state),
-    // Resolves segments on cache miss
     withSegmentResolution(ctx, state),
-    // Innermost - checks cache first
     withCacheLookup(ctx, state),
   );
 
-  // Start with empty source - cache lookup or segment resolution will produce segments
   return pipeline(empty());
 }

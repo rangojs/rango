@@ -1,25 +1,3 @@
-/**
- * Discovery Runner Config Parity
- *
- * The discovery temp server (createTempRscServer) runs the user's handler
- * graph through a throwaway Node Vite server built with `configFile: false`.
- * Without help, that server only sees a fixed Rango-owned plugin set, so any
- * user resolution is absent during discovery, prerender, and static handler
- * rendering — even though it applies at request time. Two flavors of user
- * resolution must be carried across:
- *
- * - Third-party resolveId plugins (e.g. vite-tsconfig-paths) — forwarded as
- *   plugin instances, see selectForwardableResolvePlugins.
- * - Native config-driven resolution, including Vite 8's built-in
- *   `resolve.tsconfigPaths` (which supersedes vite-tsconfig-paths) — forwarded
- *   as the data slice, see pickForwardedRunnerConfig.
- *
- * These helpers extract the resolution-relevant slice of the user's resolved
- * config (resolve.*, define, oxc) and forward the user's resolution plugins
- * into the temp server so discovery resolves modules the same way the real
- * environment does.
- */
-
 import type { Plugin, ResolvedConfig, UserConfig } from "vite";
 
 /**

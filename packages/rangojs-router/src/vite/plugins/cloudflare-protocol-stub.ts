@@ -32,14 +32,6 @@ const IMPORT_NODE_TYPES = new Set([
   "ExportAllDeclaration",
 ]);
 
-// Keep in sync with `STUBS` in cloudflare-protocol-loader-hook.mjs —
-// both paths (Vite transform and Node loader) need to hand out the same
-// classes. Unknown `cloudflare:*` modules fall back to an empty default
-// export so third-party packages (e.g. the Cloudflare Agents SDK) can
-// pull them into the graph without crashing discovery. Discovery only
-// evaluates module top-level code — no handlers run — so missing named
-// exports only fail if something does `class X extends Missing {}` at
-// module scope, which is rare outside the already-stubbed classes.
 const STUBS: Record<string, string> = {
   "cloudflare:workers": `
 export class DurableObject { constructor(_ctx, _env) {} }
@@ -65,15 +57,6 @@ export default {};
 `,
 };
 
-// Policy: unknown `cloudflare:*` specifiers resolve permissively (empty
-// default export) rather than throwing. We prioritize dependency-graph
-// resilience over strict validation of user imports because third-party
-// packages can pull `cloudflare:*` modules we haven't curated, and
-// discovery should not fail just because those modules appear in the graph.
-// Tradeoff: unsupported user-authored `cloudflare:*` imports may fail later
-// with a generic JS/module error instead of a tailored rango-branded hint.
-// The test below pins this behavior so dependency compatibility is not
-// regressed accidentally.
 const FALLBACK_STUB = `export default {};\n`;
 
 interface AstNode {
@@ -163,9 +146,6 @@ export function createCloudflareProtocolStubPlugin(): Plugin {
 
       if (hits.length === 0) return null;
 
-      // Rewrite from last to first so earlier offsets stay valid. `start`/
-      // `end` span the full literal including quotes, so we re-emit the
-      // same quote character around the new specifier.
       hits.sort((a, b) => b.start - a.start);
       let out = code;
       for (const hit of hits) {

@@ -42,14 +42,6 @@ interface MatcherResult {
   message: () => string;
 }
 
-/**
- * Matcher object for `expect.extend(flightMatchers)`.
- *
- * - `toMatchFlight(received, expected)` — `received` is a rendered Flight
- *   string; passes if its normalized form contains `expected`.
- * - `toMatchFlightSnapshot(received)` — delegates to vitest's snapshot on the
- *   normalized Flight string.
- */
 export const flightMatchers: {
   toMatchFlight(received: string, expected: string): MatcherResult;
   toMatchFlightSnapshot(received: string): MatcherResult;
@@ -78,12 +70,7 @@ export const flightMatchers: {
   },
 
   toMatchFlightSnapshot(received: string): MatcherResult {
-    // Delegate to vitest's snapshot engine on the normalized string. The
-    // snapshot is keyed by the current test file/title (vitest tracks this via
-    // the active test context), not by this call site, so delegating through a
-    // freshly imported `expect` is reliable.
     expect(normalizeFlight(received)).toMatchSnapshot();
-    // toMatchSnapshot throws on mismatch; reaching here means it passed.
     return {
       pass: true,
       message: () => "Flight snapshot matched.",
