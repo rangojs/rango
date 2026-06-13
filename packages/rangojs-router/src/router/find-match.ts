@@ -8,13 +8,10 @@ import {
 import type { MetricsStore } from "../server/context";
 import type { RouteEntry } from "../types";
 
-// Return a shallow copy with an independent `params` object. The single-entry
-// cache below is module-lifetime and keyed only on pathname, so the same result
-// object is handed to every same-pathname request in the isolate. ctx.params
-// aliases this `params` (see request-context), so without an own copy a handler
-// that mutates ctx.params would corrupt the cached entry for later requests.
-// `entry` and the flags are intentionally shared by reference: they are
-// read-only, and entry identity is compared in match-api (prevMatch.entry).
+// The single-entry cache is module-lifetime, keyed only on pathname, so the same
+// result object is handed to every same-pathname request. ctx.params aliases
+// this object, so handlers mutating it would corrupt the cache for later requests.
+// Clone params; entry/flags are read-only and shared safely.
 function cloneMatchResult<TEnv>(
   r: RouteMatchResult<TEnv> | null,
 ): RouteMatchResult<TEnv> | null {
@@ -40,21 +37,14 @@ export function createFindMatch<TEnv = any>(
   let lastFindMatchPathname: string | null = null;
   let lastFindMatchResult: RouteMatchResult<TEnv> | null = null;
 
-  // Wrapper for findMatch that uses routesEntries
-  // Handles lazy evaluation by evaluating lazy entries on first match.
-  // Phase 1: try O(path_length) trie match.
-  // Phase 2: fall back to regex iteration.
   return function findMatch(
     pathname: string,
     ms?: MetricsStore,
   ): RouteMatchResult<TEnv> | null {
-    // Return cached result if same pathname (avoids double-match per request).
-    // Clone so a caller mutating ctx.params cannot corrupt the shared cache.
     if (lastFindMatchPathname === pathname) {
       return cloneMatchResult(lastFindMatchResult);
     }
 
-    // Helper to push sub-metrics
     const pushMetric = ms
       ? (label: string, start: number) => {
           ms.metrics.push({
@@ -65,16 +55,7 @@ export function createFindMatch<TEnv = any>(
         }
       : undefined;
 
-    // Phase 1: Try trie match (O(path_length))
-    // Only use the per-router trie. The global trie merges routes from ALL
-    // routers and must not be used — in multi-router setups (host routing)
-    // overlapping paths like "/" would match the wrong app's route.
     const routeTrie = getRouterTrie(deps.routerId);
-    // Whether the trie produced a match for this pathname (independent of
-    // whether the owning RouteEntry was resolvable yet). Used to suppress the
-    // R3 dev warning below: if the trie DID match but we fell through to the
-    // regex fallback only because a lazy entry was not spliced in yet, that is
-    // not a trie gap.
     let trieMatched = false;
     if (routeTrie) {
       const trieStart = performance.now();
@@ -104,12 +85,8 @@ export function createFindMatch<TEnv = any>(
           }
         }
 
-        // If no entry had the route in its routes map, use the first matching
-        // entry as fallback (handles main entry with inline routes not yet
-        // reflected in its routes object).
         if (!entry) entry = fallbackEntry;
 
-        // If entry not found (nested include not yet discovered), evaluate parent
         if (!entry) {
           const parent = deps.routesEntries.find(
             (e) =>
@@ -150,12 +127,9 @@ export function createFindMatch<TEnv = any>(
       }
     }
 
-    // Phase 2: Fall back to existing matching (regex iteration)
     const regexStart = performance.now();
     let result = findRouteMatch(pathname, deps.routesEntries);
 
-    // If we hit a lazy entry that needs evaluation, evaluate and retry.
-    // Cap iterations to prevent infinite loops from pathological nesting.
     const MAX_LAZY_ITERATIONS = 100;
     let iterations = 0;
     while (isLazyEvaluationNeeded(result)) {

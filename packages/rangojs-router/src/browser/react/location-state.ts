@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { LocationStateDefinition } from "./location-state-shared.js";
 
-// Re-export shared utilities and types
 export {
   createLocationState,
   isLocationStateEntry,

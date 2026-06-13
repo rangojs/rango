@@ -156,7 +156,9 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
   /**
    * Deployment preset for Cloudflare Workers.
    * When using cloudflare preset:
-   * - @vitejs/plugin-rsc is NOT added (cloudflare plugin adds it)
+   * - @vitejs/plugin-rsc IS still added by rango(), but with `serverHandler: false`
+   *   (the cloudflare plugin owns the RSC worker/server entry); only `client` and
+   *   `ssr` virtual entries are configured, no rsc entry
    * - Your worker entry (e.g., worker.rsc.tsx) imports the router directly
    * - Browser and SSR use virtual entries
    * - Build-time manifest generation is auto-detected from the resolved RSC environment config

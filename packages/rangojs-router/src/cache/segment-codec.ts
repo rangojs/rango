@@ -16,10 +16,6 @@ import {
 } from "@vitejs/plugin-rsc/rsc";
 import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 
-// ============================================================================
-// Stream Utilities (internal)
-// ============================================================================
-
 /**
  * Convert a ReadableStream to a string.
  */
@@ -55,10 +51,6 @@ export function stringToStream(str: string): ReadableStream<Uint8Array> {
   });
 }
 
-// ============================================================================
-// RSC Serialization Primitives (internal)
-// ============================================================================
-
 /**
  * RSC-serialize a value using React Server Components stream.
  * Used for serializing loaderData, layout, loading components etc.
@@ -90,10 +82,6 @@ export async function rscDeserialize<T>(
   return createFromReadableStream<T>(stream, { temporaryReferences });
 }
 
-// ============================================================================
-// Null-Preserving RSC Serialization (for caching)
-// ============================================================================
-
 /**
  * RSC-serialize any value including null.
  * Unlike rscSerialize(), this does NOT skip null — it serializes it through
@@ -121,10 +109,6 @@ export async function deserializeResult<T>(encoded: string): Promise<T> {
   const stream = stringToStream(encoded);
   return createFromReadableStream<T>(stream, { temporaryReferences });
 }
-
-// ============================================================================
-// Public API
-// ============================================================================
 
 /**
  * RSC-deserialize a single encoded component string back to a React element.

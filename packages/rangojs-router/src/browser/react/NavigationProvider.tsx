@@ -29,6 +29,7 @@ import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 import { cancelAllPrefetches } from "../prefetch/queue.js";
 import { handleNavigationEnd } from "../scroll-restoration.js";
 import { createAppShellRef, type AppShellRef } from "../app-shell.js";
+import { debugLog } from "../logging.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -70,7 +71,7 @@ async function processHandles(
     // This prevents handle data from cancelled navigations polluting
     // the current route's breadcrumbs (e.g., quick popstate after clicking a link).
     if (historyKey !== store.getHistoryKey()) {
-      console.log(
+      debugLog(
         "[NavigationProvider] Stopping handle processing - user navigated away",
       );
       return;

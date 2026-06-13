@@ -1,9 +1,3 @@
-/**
- * Cookie Override Handler
- *
- * Manages cookie-based host override for development environments.
- */
-
 import type { HostOverrideConfig } from "./types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { matchPattern, parseRequest } from "./pattern-matcher.js";
@@ -13,9 +7,6 @@ import {
   HostValidationError,
 } from "./errors.js";
 
-/**
- * Parse cookies from request
- */
 export function parseCookies(request: Request): Record<string, string> {
   const cookieHeader = request.headers.get("cookie");
   if (!cookieHeader) {
@@ -40,24 +31,15 @@ export function parseCookies(request: Request): Record<string, string> {
   return cookies;
 }
 
-/**
- * Get cookie value from request
- */
 export function getCookie(request: Request, name: string): string | undefined {
   const cookies = parseCookies(request);
   return cookies[name];
 }
 
-/**
- * Create Set-Cookie header to delete a cookie
- */
 export function createDeleteCookieHeader(name: string): string {
   return `${name}=; Max-Age=0; Path=/; Secure; HttpOnly`;
 }
 
-/**
- * Create error response with cookie deletion
- */
 export function createCookieErrorResponse(
   cookieName: string,
   message: string,
@@ -77,9 +59,6 @@ export function createCookieErrorResponse(
   );
 }
 
-/**
- * Check if current host is allowed to use override
- */
 export function isHostAllowed(
   request: Request,
   allowedHosts: string[],
@@ -95,12 +74,6 @@ export function isHostAllowed(
   return false;
 }
 
-/**
- * Handle cookie override logic
- *
- * Returns overridden hostname if valid, original hostname if no override.
- * Throws errors for invalid overrides.
- */
 export function handleCookieOverride(
   request: Request,
   config: HostOverrideConfig | undefined,
@@ -115,46 +88,37 @@ export function handleCookieOverride(
   const cookieValue = getCookie(request, cookieName);
   const { hostname: originalHostname } = parseRequest(request);
 
-  // No cookie - return original hostname
   if (!cookieValue) {
     return originalHostname;
   }
 
-  // Check if current host is allowed
   const allowed = isHostAllowed(request, allowedHosts);
 
-  // If not allowed, throw error
   if (!allowed) {
     throw new HostOverrideNotAllowedError(originalHostname, cookieName, {
       cause: { cookieValue, currentHost: originalHostname },
     });
   }
 
-  // If allowed and has custom validation, run it
   if (validate) {
     try {
       const validatedHostname = validate(request, cookieValue, input);
       return validatedHostname;
     } catch (error) {
-      // Wrap in HostValidationError
       const message = error instanceof Error ? error.message : String(error);
       throw new HostValidationError(message, error);
     }
   }
 
-  // Default validation - verify it's a valid hostname using URL constructor
   try {
-    // Try to construct a URL with the hostname to validate it
     const testUrl = new URL(`https://${cookieValue}`);
 
-    // Ensure the hostname matches what we provided (URL constructor normalizes it)
     if (testUrl.hostname !== cookieValue) {
       throw new InvalidHostnameError(cookieValue, {
         cause: { original: cookieValue, normalized: testUrl.hostname },
       });
     }
   } catch (error) {
-    // If URL constructor failed, throw InvalidHostnameError with cause
     if (error instanceof InvalidHostnameError) {
       throw error;
     }

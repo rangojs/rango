@@ -43,12 +43,6 @@ export interface ThemeScriptProps {
   nonce?: string;
 }
 
-/**
- * Server component that renders the theme initialization script.
- *
- * This renders a synchronous inline script that applies the theme
- * to the HTML element before React hydration, preventing FOUC.
- */
 export function ThemeScript({
   config,
   nonce,

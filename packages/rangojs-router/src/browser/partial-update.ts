@@ -24,20 +24,12 @@ import { debugLog } from "./logging.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
 
-/** Build a scroll payload from the commit's scroll option */
 function toScrollPayload(
   scroll: boolean | undefined,
 ): NonNullable<NavigationUpdate["scroll"]> {
   return { enabled: scroll !== false ? scroll : false };
 }
 
-/**
- * Whether to wrap an update in startViewTransition.
- *
- * Intercept-driven updates only mutate the parallel slot — the main outlet
- * shows the same content — so transitions on the underlying main segments
- * shouldn't fire (otherwise their elements get hoisted above the modal).
- */
 function shouldStartViewTransition(segments: ResolvedSegment[]): boolean {
   let hasIntercept = false;
   let hasTransition = false;
@@ -112,15 +104,6 @@ export type PartialUpdater = (
   mode?: UpdateMode,
 ) => Promise<void>;
 
-/**
- * Create a partial updater for fetching and applying RSC partial updates
- *
- * This function is shared between navigation-bridge and server-action-bridge
- * to handle partial RSC updates with HMR resilience.
- *
- * @param config - Partial update configuration
- * @returns fetchPartialUpdate function
- */
 export function createPartialUpdater(
   config: PartialUpdateConfig,
 ): PartialUpdater {
@@ -132,21 +115,12 @@ export function createPartialUpdater(
     getVersion = () => undefined,
   } = config;
 
-  /**
-   * Get current page's cached segments as an array
-   */
   function getCurrentCachedSegments(): ResolvedSegment[] {
     const currentKey = store.getHistoryKey();
     const cached = store.getCachedSegments(currentKey);
     return cached?.segments || [];
   }
 
-  /**
-   * Fetch partial update and trigger UI update
-   *
-   * @param tx - Transaction for committing segment state (required)
-   * @param signal - AbortSignal to check if navigation is stale (not for aborting fetch)
-   */
   async function fetchPartialUpdate(
     targetUrl: string,
     segmentIds: string[] | undefined,
@@ -158,20 +132,16 @@ export function createPartialUpdater(
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
 
-    // Capture history key at start for stale revalidation consistency check
     const historyKeyAtStart = store.getHistoryKey();
 
     const interceptSourceUrl = mode.interceptSourceUrl;
 
-    // When leaving intercept, filter out intercept-specific segments
     let segments: string[];
     if (mode.type === "leave-intercept") {
       const currentSegments = segmentIds ?? segmentState.currentSegmentIds;
       const currentCached = getCurrentCachedSegments();
       const interceptIds = new Set(
-        currentCached
-          .filter((s) => s.namespace?.startsWith("intercept:"))
-          .map((s) => s.id),
+        currentCached.filter(isInterceptSegment).map((s) => s.id),
       );
       segments = currentSegments.filter((id) => !interceptIds.has(id));
       debugLog(
@@ -181,12 +151,6 @@ export function createPartialUpdater(
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
 
-    // For intercept revalidation, use the intercept source URL as previousUrl.
-    // For leave-intercept, tx.currentUrl captures window.location.href at tx
-    // creation, which on popstate is already the destination URL and would
-    // tell the server "from == to". segmentState.currentUrl still points at
-    // the URL the cached segments render (the intercept URL), which is the
-    // correct "from" for the server's diff computation.
     const previousUrl =
       mode.type === "leave-intercept"
         ? segmentState.currentUrl || tx.currentUrl
@@ -200,9 +164,6 @@ export function createPartialUpdater(
       debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
     }
 
-    // Get cached segments for merging with server diff.
-    // When navigating with targetCacheSegments, use those for consistency.
-    // Otherwise fall back to current page's segments (for same-route revalidation).
     const targetCache =
       mode.type === "navigate" && mode.targetCacheSegments?.length
         ? mode.targetCacheSegments
@@ -213,22 +174,16 @@ export function createPartialUpdater(
       `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
     );
 
-    // Fetch partial payload (no abort signal - RSC doesn't support it well)
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
     fetchResult = await client.fetchPartial({
       targetUrl: url,
       segmentIds: segments,
       previousUrl,
-      // Mark stale when explicitly requested OR when no segments are sent
-      // (action redirect sends empty segments for a fresh render).
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
       version: getVersion(),
       routerId: store.getRouterId?.(),
     });
-    // Mark navigation as streaming (response received, now parsing RSC).
-    // Called after fetchPartial so pendingUrl stays set during the network wait,
-    // allowing useLinkStatus to show per-link pending indicators.
     const streamingToken = tx.startStreaming();
     const { payload, streamComplete: rawStreamComplete } = fetchResult;
     debugLog("payload.metadata", payload.metadata);
@@ -237,13 +192,6 @@ export function createPartialUpdater(
       streamingToken.end();
     });
 
-    // Integrity guard (defense in depth). The server redirects on a cross-app
-    // routerId mismatch (X-RSC-Reload), so a partial payload's routerId must
-    // match this client's. If it doesn't — a stale/edge cache keyed without the
-    // routerId, a proxy mixing app responses, or a server classification bug —
-    // do NOT splice a foreign app's segments and client references into this
-    // document. Force a full reload so the server re-establishes the
-    // authoritative document for this URL.
     const currentRouterId = store.getRouterId?.();
     if (
       payload.metadata?.routerId &&
@@ -258,7 +206,6 @@ export function createPartialUpdater(
       return;
     }
 
-    // Handle server-side redirect with state
     if (payload.metadata?.redirect) {
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale redirect (aborted)");
@@ -288,7 +235,6 @@ export function createPartialUpdater(
       debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
       debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
 
-      // If diff is empty, nothing changed on server side.
       if (!diff || diff.length === 0) {
         const matchedIds = matched || [];
         const cacheMap = new Map(cachedSegs.map((s) => [s.id, s]));
@@ -296,7 +242,6 @@ export function createPartialUpdater(
           .map((id: string) => cacheMap.get(id))
           .filter(Boolean) as ResolvedSegment[];
 
-        // When navigating with cached segments to a different route, render them.
         if (mode.type === "navigate" && targetCache) {
           debugLog(
             "[Browser] No diff but navigating with cached segments - rendering target route",
@@ -311,10 +256,6 @@ export function createPartialUpdater(
             existingSegments,
           );
 
-          // tx.commit() cached the source page's handleData because
-          // eventController hasn't been updated yet. Overwrite with the
-          // correct cached handleData to prevent cache corruption on
-          // subsequent navigations to this same URL.
           if (mode.targetCacheHandleData) {
             store.updateCacheHandleData(
               store.getHistoryKey(),
@@ -322,10 +263,6 @@ export function createPartialUpdater(
             );
           }
 
-          // Include cachedHandleData in metadata so NavigationProvider can restore
-          // breadcrumbs and other handle data from cache.
-          // Remove `handles` from metadata to prevent NavigationProvider from
-          // processing an empty handles stream, which would clear the cached breadcrumbs.
           const { handles: _unusedHandles, ...metadataWithoutHandles } =
             payload.metadata!;
           const cachedUpdate = {
@@ -352,7 +289,6 @@ export function createPartialUpdater(
           return;
         }
 
-        // When leaving intercept, force re-render even with empty diff
         if (mode.type === "leave-intercept") {
           debugLog(
             "[Browser] Leaving intercept - forcing re-render to remove modal",
@@ -377,7 +313,6 @@ export function createPartialUpdater(
           return;
         }
 
-        // Same route revalidation with no changes - skip UI update
         debugLog(
           "[Browser] No changes - all revalidations returned false, keeping existing UI",
         );
@@ -386,7 +321,6 @@ export function createPartialUpdater(
         return;
       }
 
-      // Reconcile server segments with cached segments (single source of truth)
       const matchedIds = matched || [];
       const actor: ReconcileActor =
         mode.type === "stale-revalidation" || mode.type === "action"
@@ -402,7 +336,6 @@ export function createPartialUpdater(
         insertMissingDiff: true,
       });
 
-      // HMR RESILIENCE: Check if we're missing any matched segments
       const reconciledIdSet = new Set(reconciled.segments.map((s) => s.id));
       const missingIds = matchedIds.filter(
         (id: string) => !reconciledIdSet.has(id),
@@ -430,7 +363,6 @@ export function createPartialUpdater(
           `[Browser] HMR detected: Missing ${missingCount} segments. Refetching all...`,
         );
 
-        // Refetch with empty segments = server sends everything
         return fetchPartialUpdate(url, [], true, signal, tx, mode);
       }
 
@@ -439,7 +371,6 @@ export function createPartialUpdater(
         return;
       }
 
-      // Rebuild tree on client (await for loader data resolution)
       const renderOptions = {
         isAction: mode.type === "action",
         forceAwait: mode.type === "stale-revalidation",
@@ -462,21 +393,15 @@ export function createPartialUpdater(
           ])
         : renderSegments(reconciled.mainSegments, renderOptions));
 
-      // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
         return;
       }
 
-      // Check if this is an intercept response (any slot is active)
       const isInterceptResponse = hasActiveInterceptSlots(
         payload.metadata?.slots,
       );
 
-      // Track intercept context (only on navigation, not actions or stale revalidation)
-      // Use the authoritative source from mode/history state when restoring an
-      // intercept via popstate cache miss; fall back to the current URL for fresh
-      // intercept navigations.
       const effectiveInterceptSource =
         interceptSourceUrl || segmentState.currentUrl;
       if (mode.type !== "action" && mode.type !== "stale-revalidation") {
@@ -487,9 +412,6 @@ export function createPartialUpdater(
         }
       }
 
-      // Commit navigation - use server's matched as the authoritative segment ID list.
-      // reconciled.segments may be missing IDs (e.g., loader segments not in diff or cache)
-      // but the server's matched always includes all expected segment IDs.
       const allSegmentIds = matchedIds;
       const serverLocationState = payload.metadata?.locationState;
       const overrides: CommitOverrides | undefined = isInterceptResponse
@@ -508,7 +430,6 @@ export function createPartialUpdater(
         overrides,
       );
 
-      // For stale revalidation: verify history key hasn't changed before updating UI
       if (mode.type === "stale-revalidation") {
         const historyKeyNow = store.getHistoryKey();
         if (historyKeyNow !== historyKeyAtStart) {
@@ -521,8 +442,6 @@ export function createPartialUpdater(
 
       debugLog("[partial-update] updating document");
 
-      // Emit update to trigger React render.
-      // Scroll info is included so NavigationProvider applies it after React commits.
       const hasTransition = shouldStartViewTransition(reconciled.segments);
       const scrollPayload = toScrollPayload(navScroll);
 
@@ -559,7 +478,6 @@ export function createPartialUpdater(
       debugLog("[Browser] Navigation complete");
       return;
     } else {
-      // Full update (fallback)
       console.warn(`[Browser] Full update (fallback)`);
 
       const segments = payload.metadata?.segments || [];

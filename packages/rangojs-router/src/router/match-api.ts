@@ -1,10 +1,3 @@
-/**
- * Match API
- *
- * Extracted from createRouter closure. Contains match context creation functions
- * and the matchError function for error boundary resolution.
- */
-
 import { CacheScope, createCacheScope } from "../cache/cache-scope.js";
 import { RouteNotFoundError } from "../errors";
 import {
@@ -59,8 +52,6 @@ export async function createMatchContextForFull<TEnv>(
 
   const metricsStore = deps.getMetricsStore();
 
-  // Full renders always resolve fresh with isSSR: true because loadManifest
-  // keys its cache on isSSR and stamps Store.isSSR for downstream behavior.
   const result = await resolveRoute<TEnv>(pathname, {
     findMatch: (p) => deps.findMatch(p, metricsStore),
     metricsStore,
@@ -84,12 +75,10 @@ export async function createMatchContextForFull<TEnv>(
 
   const { matched } = snapshot;
 
-  // Backward compat: downstream middleware reads matched.pt
   if (snapshot.isPassthrough) {
     matched.pt = true;
   }
 
-  // Clean URL without internal _rsc* params for userland access
   const cleanUrl = stripInternalParams(url);
 
   const handlerContext = createHandlerContext(
@@ -231,7 +220,6 @@ export async function createMatchContextForPartial<TEnv>(
     matched.pt = true;
   }
 
-  // Navigation state (prev + intercept-source findMatch calls)
   const nav = resolveNavigation(request, url, matched.routeKey, {
     findMatch: deps.findMatch,
   });
@@ -239,10 +227,6 @@ export async function createMatchContextForPartial<TEnv>(
     return null;
   }
 
-  // Push route-matching metric. On the fresh path this covers all findMatch
-  // calls (current + prev + intercept-source). On the reuse path, current-route
-  // findMatch was already timed during classification, so this only covers
-  // the nav lookups (prev + intercept-source).
   if (metricsStore) {
     const isReuse = !!classifiedRoute;
     metricsStore.metrics.push({
@@ -259,7 +243,6 @@ export async function createMatchContextForPartial<TEnv>(
     });
   }
 
-  // Clean URL without internal _rsc* params for userland access
   const cleanUrl = stripInternalParams(url);
 
   const handlerContext = createHandlerContext(
@@ -304,9 +287,6 @@ export async function createMatchContextForPartial<TEnv>(
     });
   }
 
-  // Store previous route key on the request context for revalidation
-  // fromRouteName. Uses effectiveFromMatch so intercept-source navigations
-  // see the intercept origin route, not the plain previous URL route.
   setRequestContextPrevRouteKey(nav.effectiveFromMatch?.routeKey);
 
   const interceptSelectorContext: InterceptSelectorContext = {

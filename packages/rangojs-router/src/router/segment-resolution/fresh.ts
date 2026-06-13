@@ -27,58 +27,16 @@ import {
   tryStaticSlot,
   resolveLayoutComponent,
   resolveWithErrorBoundary,
+  warnOnStreamedResponse,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
-import { resolveSink, safeEmit } from "../telemetry.js";
+import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
   RangoContext,
   runInsideLoaderScope,
 } from "../../server/context.js";
-
-// ---------------------------------------------------------------------------
-// Streamed handler telemetry
-// ---------------------------------------------------------------------------
-
-/**
- * Attach a fire-and-forget rejection observer to a streamed handler promise.
- * React catches the actual error via its error boundary; this only emits
- * the handler.error telemetry event.
- */
-function observeStreamedHandler(
-  promise: Promise<ReactNode>,
-  segmentId: string,
-  segmentType: string,
-  pathname?: string,
-  routeKey?: string,
-  params?: Record<string, string>,
-): void {
-  let routerCtx;
-  try {
-    routerCtx = getRouterContext();
-  } catch {
-    return;
-  }
-  if (!routerCtx?.telemetry) return;
-  const sink = resolveSink(routerCtx.telemetry);
-  const reqId = routerCtx.requestId;
-  promise.catch((err: unknown) => {
-    const errorObj = err instanceof Error ? err : new Error(String(err));
-    safeEmit(sink, {
-      type: "handler.error",
-      timestamp: performance.now(),
-      requestId: reqId,
-      segmentId,
-      segmentType,
-      error: errorObj,
-      handledByBoundary: true,
-      pathname,
-      routeKey,
-      params,
-    });
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
@@ -133,18 +91,32 @@ export async function resolveLoaders<TEnv>(
 
   // Loading disabled: still start all loaders in parallel, but only emit
   // settled promises so handlers don't stream loading placeholders.
-  const pendingLoaderData = loaderEntries.map((loaderEntry) => {
+  //
+  // Wrap each loader promise with wrapLoaderPromise BEFORE awaiting. The wrapped
+  // promise resolves to a LoaderDataResult and never rejects, routing a failed
+  // loader to its own per-loader error boundary. Awaiting the RAW promises here
+  // instead would (1) propagate a rejection to the segment-level boundary,
+  // collapsing the whole entry and discarding successful sibling data, and
+  // (2) leave the other in-flight raw promises without a .catch, producing
+  // unhandled rejections. Mirrors the loading path and intercept-resolution.
+  const pendingLoaderData = loaderEntries.map((loaderEntry, i) => {
+    const { loader } = loaderEntry;
+    const segmentId = `${shortCode}D${i}.${loader.$$id}`;
     const start = performance.now();
-    const promise = runInsideLoaderScope(() =>
-      resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+    const wrapped = deps.wrapLoaderPromise(
+      runInsideLoaderScope(() =>
+        resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+      ),
+      entry,
+      segmentId,
+      ctx.pathname,
     );
-    return { promise, start, loaderId: loaderEntry.loader.$$id };
+    return { wrapped, start, segmentId, loaderId: loader.$$id };
   });
-  await Promise.all(pendingLoaderData.map((p) => p.promise));
+  await Promise.all(pendingLoaderData.map((p) => p.wrapped));
 
   return loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
-    const segmentId = `${shortCode}D${i}.${loader.$$id}`;
     const pending = pendingLoaderData[i]!;
     if (ms && !ms.metrics.some((m) => m.label === `loader:${loader.$$id}`)) {
       // All loaders ran in parallel via Promise.all — each span covers
@@ -160,19 +132,14 @@ export async function resolveLoaders<TEnv>(
       );
     }
     return {
-      id: segmentId,
+      id: pending.segmentId,
       namespace: entry.id,
       type: "loader" as const,
       index: i,
       component: null,
       params: ctx.params,
       loaderId: loader.$$id,
-      loaderData: deps.wrapLoaderPromise(
-        pending.promise,
-        entry,
-        segmentId,
-        ctx.pathname,
-      ),
+      loaderData: pending.wrapped,
       belongsToRoute,
     };
   });
@@ -297,6 +264,7 @@ export async function resolveSegment<TEnv>(
       if (entry.loading) {
         const result = handleHandlerResult(handler(context));
         if (result instanceof Promise) {
+          warnOnStreamedResponse(result, entry.id);
           result.finally(doneRouteHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
             segmentId: entry.shortCode,

@@ -73,16 +73,16 @@ use-cache:{functionId}:{serializedArgs}
 ```
 
 - `functionId` -- stable ID assigned at build time by the Vite transform (module path + export name).
-- `serializedArgs` -- function arguments serialized via RSC `encodeReply()`. Falls back to stable JSON stringification when RSC APIs are unavailable.
+- `serializedArgs` -- function arguments serialized via RSC `encodeReply()`. If the arguments cannot be encoded, the call runs uncached (no key is generated, the function still executes); there is no JSON fallback.
 
 ### Tainted arguments
 
-Request-scoped objects (`ctx`, `env`, `req`) are branded with a taint symbol (`Symbol.for('rango:nocache')`) at creation time in `createContext()`.
+Request-scoped objects (`ctx`, `env`, `req`) are branded with a taint symbol (`Symbol.for('rango:nocache')`) at creation time in `createRequestContext()` (and the analogous handler/response-route context constructors).
 
 When `registerCachedFunction` detects a tainted argument:
 
-1. **Extract route-scoping dimensions into the cache key** -- `pathname`, sorted `params`, `_responseType`, and normalized user-facing search params (excluding internal `_rsc*`/`__*` params) are included so different routes, param combinations, and query variants produce distinct cache entries.
-2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via a reentrant save/restore capture on `HandleStore.push`. Nested cached function calls capture/restore correctly in LIFO order.
+1. **Extract route-scoping dimensions into the cache key** -- the url `host` (cross-host collision guard on shared stores), the route name (`_routeName`, cross-route reuse guard when the same cached function is reused across routes with identical pathname/params but a different `reverse()` scope), `pathname`, sorted `params`, `_responseType`, and normalized user-facing search params (excluding internal `_rsc*`/`__*` params) are included so different hosts, routes, param combinations, and query variants produce distinct cache entries.
+2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via a single `HandleStore.push` interceptor installed once per store; each push fans out to a `Set` of active capture tokens. Overlapping/nested captures are independent and may stop in any order (no LIFO requirement).
 3. **Replay handle data on hit** -- restore via `restoreHandles()` into the current request's `HandleStore`.
 
 This means handle-style metadata side effects such as `ctx.breadcrumb()` work
@@ -181,9 +181,8 @@ registerCachedFunction(fn, id, profileName);
 
 ### Serialization
 
-- Primary: RSC Flight protocol (`renderToReadableStream` / `createFromReadableStream`). Handles JSX, client references, Promises, plain data.
-- Fallback: JSON (when RSC APIs unavailable, e.g. tests).
-- Non-serializable results: skip caching, return uncached. No error.
+- Serialization: RSC Flight protocol (`renderToReadableStream` / `createFromReadableStream`). Handles JSX, client references, Promises, plain data.
+- Non-serializable results: skip caching, return uncached. No error. `serializeResult()` returns `null` and the caller gates the write on `serialized !== null`. There is no JSON fallback path.
 
 ### Dev mode
 
@@ -204,5 +203,7 @@ All three write to the same `SegmentCacheStore`.
 ## Remaining / Future
 
 - `"use cache: private"` variant for per-request in-memory caching (no shared store).
-- Tag-based invalidation API (`revalidateTag()`) backed by stores with tag indexing.
 - Cache warming / pre-population strategies.
+
+Tag-based invalidation (`cacheTag`/`updateTag`/`revalidateTag`) is shipped — see
+the **Tags** note above.

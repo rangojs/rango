@@ -242,25 +242,3 @@ export function createPipelineState(): MatchPipelineState {
     slots: {},
   };
 }
-
-/**
- * Input parameters for createMatchContext
- */
-export interface CreateMatchContextInput<TEnv = any> {
-  request: Request;
-  env: TEnv;
-  actionContext?: ActionContext;
-}
-
-/**
- * Result from createMatchContext - either a context or null (fall back to full match)
- */
-export type CreateMatchContextResult<TEnv = any> =
-  | { type: "context"; ctx: MatchContext<TEnv> }
-  | { type: "fallback"; reason: string }
-  | { type: "error"; error: Error };
-
-// Note: createMatchContext() will be implemented in Step J10 when we wire everything together.
-// It requires access to RouterContext (findMatch, loadManifest, etc.) which are closure
-// functions from createRouter(). The implementation will live in router.ts initially
-// and call getRouterContext() to access these dependencies.

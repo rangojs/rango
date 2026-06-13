@@ -5,7 +5,7 @@ import type { ActionEntry } from "./event-controller.js";
  * full-update-unsupported cases are handled inline in the bridge before
  * reconciliation; this only covers successfully-reconciled partial responses.
  */
-export type ActionScenario =
+type ActionScenario =
   | {
       type: "navigated-away";
       historyKeyChanged: boolean;

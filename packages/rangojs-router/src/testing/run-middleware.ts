@@ -133,21 +133,6 @@ export interface RunMiddlewareResult<TEnv = any> {
   stateCookieName: string;
 }
 
-/**
- * Run a middleware chain and return the response plus observable context.
- *
- * @example
- * ```ts
- * const { response, ctx, nextCalled } = await runMiddleware(
- *   async (ctx, next) => {
- *     if (!ctx.get("user")) return new Response(null, { status: 401 });
- *     return next();
- *   },
- *   { request: "/dashboard", vars: [["user", { id: 1 }]] },
- * );
- * // nextCalled === 1, response.status === 200
- * ```
- */
 export async function runMiddleware<TEnv = any>(
   mw: MiddlewareFn<TEnv> | MiddlewareFn<TEnv>[],
   opts: RunMiddlewareOptions<TEnv>,
@@ -181,11 +166,6 @@ export async function runMiddleware<TEnv = any>(
     return opts.next?.() ?? new Response(null, { status: 200 });
   };
 
-  // Match production: app/response middleware receive ctx.reverse built from the
-  // route map ALONE (no matched route name or current params), so reversing a
-  // parameterized route without explicit params does NOT auto-fill from the
-  // current request. Passing routeName/params here would recreate the
-  // false-confidence class fixed in dispatch.
   const reverse = opts.routeMap
     ? (createReverseFunction(opts.routeMap) as (
         name: string,
@@ -194,12 +174,6 @@ export async function runMiddleware<TEnv = any>(
       ) => string)
     : undefined;
 
-  // Keep the RETURNED ctx.reverse consistent with the map-only reverse the
-  // chain receives. createTestRequestContext installs an auto-fill reverse
-  // (correct for the loader phase) when routeName/params are passed, but
-  // production app/response middleware see a map-only reverse. Without this,
-  // a middleware reading getRequestContext().reverse — or a consumer asserting
-  // on result.ctx.reverse — would observe auto-fill that production never does.
   if (reverse) {
     (ctx as RequestContext<TEnv>).reverse =
       reverse as RequestContext<TEnv>["reverse"];

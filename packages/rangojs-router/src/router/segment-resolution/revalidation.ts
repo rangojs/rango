@@ -34,6 +34,7 @@ import {
 import { resolveLoaderData } from "./loader-cache.js";
 import {
   handleHandlerResult,
+  warnOnStreamedResponse,
   tryStaticHandler,
   tryStaticSlot,
   resolveLayoutComponent,
@@ -42,53 +43,12 @@ import {
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
+import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
   RangoContext,
   runInsideLoaderScope,
 } from "../../server/context.js";
-
-// ---------------------------------------------------------------------------
-// Telemetry helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Attach a fire-and-forget rejection observer to a streamed handler promise.
- * Silently no-ops when called outside RouterContext (e.g. in unit tests).
- */
-function observeStreamedHandler(
-  promise: Promise<ReactNode>,
-  segmentId: string,
-  segmentType: string,
-  pathname?: string,
-  routeKey?: string,
-  params?: Record<string, string>,
-): void {
-  let routerCtx;
-  try {
-    routerCtx = getRouterContext();
-  } catch {
-    return;
-  }
-  if (!routerCtx?.telemetry) return;
-  const sink = resolveSink(routerCtx.telemetry);
-  const reqId = routerCtx.requestId;
-  promise.catch((err: unknown) => {
-    const errorObj = err instanceof Error ? err : new Error(String(err));
-    safeEmit(sink, {
-      type: "handler.error",
-      timestamp: performance.now(),
-      requestId: reqId,
-      segmentId,
-      segmentType,
-      error: errorObj,
-      handledByBoundary: true,
-      pathname,
-      routeKey,
-      params,
-    });
-  });
-}
 
 /**
  * Trace a parallel slot that's being force-rendered on a full refetch (client
@@ -564,6 +524,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           const result =
             typeof handler === "function" ? handler(context) : handler;
           if (result instanceof Promise) {
+            warnOnStreamedResponse(result, parallelId);
             const tracked = deps.trackHandler(result, {
               segmentId: parallelId,
               segmentType: "parallel",
@@ -762,6 +723,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       if (!actionContext) {
         const result = handleHandlerResult(handler(context));
         if (result instanceof Promise) {
+          warnOnStreamedResponse(result, routeEntry.id);
           result.finally(doneHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
             segmentId: entry.shortCode,
@@ -1274,6 +1236,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
           const result =
             typeof handler === "function" ? handler(context) : handler;
           if (result instanceof Promise) {
+            warnOnStreamedResponse(result, parallelId);
             const tracked = deps.trackHandler(result, {
               segmentId: parallelId,
               segmentType: "parallel",

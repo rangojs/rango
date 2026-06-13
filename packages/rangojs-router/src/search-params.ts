@@ -7,10 +7,6 @@
  * URLSearchParams instance.
  */
 
-// ============================================================================
-// Schema Types
-// ============================================================================
-
 /** Supported scalar types for search params (append ? for optional). */
 export type SearchSchemaValue =
   | "string"
@@ -22,10 +18,6 @@ export type SearchSchemaValue =
 
 /** A search schema maps param names to their type descriptors. */
 export type SearchSchema = Record<string, SearchSchemaValue>;
-
-// ============================================================================
-// Type-Level Schema Resolution
-// ============================================================================
 
 /** Strip trailing `?` from a schema value to get the base type. */
 type BaseType<T extends string> = T extends `${infer B}?` ? B : T;
@@ -163,10 +155,6 @@ type ExtractParamsFromPattern<T extends string> =
             : { [K in Param]: string }
       : {};
 
-// ============================================================================
-// Runtime Parser
-// ============================================================================
-
 /**
  * Parse URLSearchParams into a typed object using the given schema.
  *
@@ -209,10 +197,6 @@ export function parseSearchParams<T extends SearchSchema>(
 
   return result as ResolveSearchSchema<T>;
 }
-
-// ============================================================================
-// Runtime Serializer
-// ============================================================================
 
 /**
  * Serialize a typed search params object to a query string (without leading `?`).

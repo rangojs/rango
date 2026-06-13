@@ -17,27 +17,6 @@
 
 import { getCollectFn, type Handle } from "../handle.js";
 
-/**
- * Run a handle's collect function on per-segment pushed values.
- *
- * @param handle - The handle whose collect to run.
- * @param segments - Per-segment pushed values: each entry is the array of values
- *   one route segment pushed for this handle, in parent -> child order. Empty
- *   per-segment arrays are dropped before the collect runs, matching production
- *   collectHandleData (a segment that pushed nothing is not passed through).
- * @returns The accumulated value the handle's collect produces.
- *
- * @example
- * ```ts
- * // Default flatten
- * collectHandle(Breadcrumbs, [[{ label: "Home", href: "/" }], [{ label: "P", href: "/p" }]]);
- * // -> [{ label: "Home", href: "/" }, { label: "P", href: "/p" }]
- *
- * // Custom "last wins"
- * const PageTitle = createHandle<string, string>((s) => s.flat().at(-1) ?? "");
- * collectHandle(PageTitle, [["Home"], ["Product"]]); // -> "Product"
- * ```
- */
 export function collectHandle<TData, TAccumulated>(
   handle: Handle<TData, TAccumulated>,
   segments: ReadonlyArray<ReadonlyArray<TData>>,
@@ -55,9 +34,7 @@ export function collectHandle<TData, TAccumulated>(
     return segments.flat() as unknown as TAccumulated;
   }
 
-  // Match production collectHandleData (handle.ts): segments that pushed
-  // nothing (empty arrays) are dropped before the collect runs, so a collect
-  // that inspects segment count or indices sees the same input as at runtime.
+  // Drop empty arrays matching production behavior (segment count/indices).
   const nonEmpty = segments.filter((seg) => seg.length > 0) as TData[][];
   return collectFn(nonEmpty);
 }

@@ -49,7 +49,6 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
         );
         genFileVars.push(varName);
       } else {
-        // Routers without sourceFile: inline their manifest data directly
         routersWithoutGenFile.push({
           id: entry.id,
           manifest: entry.routeManifest,
@@ -68,14 +67,12 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       `clearAllRouterData();`,
     ];
 
-    // Flatten NamedRoutes entries: search schema objects -> plain string paths
     if (genFileVars.length > 0) {
       lines.push(
         `function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`,
       );
     }
 
-    // Build the merged manifest from gen file imports + inlined data
     if (genFileVars.length === 1 && routersWithoutGenFile.length === 0) {
       lines.push(`setCachedManifest(__flat(${genFileVars[0]}));`);
     } else {
@@ -86,7 +83,6 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       lines.push(`setCachedManifest({ ${parts.join(", ")} });`);
     }
 
-    // Set per-router manifests
     let genVarIdx = 0;
     for (const entry of state.perRouterManifests) {
       if (entry.sourceFile) {
@@ -114,8 +110,6 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     // against live router.urlpatterns, which is always correct after a
     // program reload.
 
-    // Register lazy loaders for per-router manifest modules.
-    // Each import() uses a static string literal so Rollup creates separate chunks.
     for (const routerId of state.perRouterManifestDataMap.keys()) {
       lines.push(
         `registerRouterManifestLoader(${JSON.stringify(routerId)}, () => import(${JSON.stringify(VIRTUAL_ROUTES_MANIFEST_ID + "/" + routerId)}));`,
@@ -129,9 +123,6 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     return lines.join("\n");
   }
 
-  // No manifest: either discovery hasn't completed or no runner (Cloudflare dev).
-  // Still inject __PRERENDER_DEV_URL so the prerender store can fetch on-demand.
-  // Re-resolve origin now since the server is listening by module load time.
   if (!state.isBuildMode) {
     const origin =
       state.devServerOrigin ||
@@ -160,7 +151,6 @@ export function generatePerRouterModule(
   const lines: string[] = [];
 
   if (routerEntry?.sourceFile) {
-    // Import manifest from the gen file so HMR auto-propagates
     const routerDir = dirname(routerEntry.sourceFile);
     const routerBasename = basename(routerEntry.sourceFile).replace(
       /\.(tsx?|jsx?)$/,
@@ -189,5 +179,5 @@ export function generatePerRouterModule(
       `export const precomputedEntries = ${jsonParseExpression(entries)};`,
     );
   }
-  return lines.join("\n") || "// empty router manifest";
+  return lines.join("\n") || "";
 }

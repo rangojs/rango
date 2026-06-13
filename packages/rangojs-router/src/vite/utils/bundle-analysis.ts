@@ -5,9 +5,7 @@ import {
 
 /**
  * Find matching close paren in bundled code using depth counting.
- * Uses skipStringOrComment from expose-id-utils to correctly handle
- * template literal ${...} expressions, comments, and nested strings.
- * Returns the position after the closing paren, or -1 if unmatched.
+ * Uses skipStringOrComment to correctly handle template literals, comments, and nested strings.
  * @internal Exported for testing only.
  */
 export function findMatchingParenInBundle(
@@ -30,9 +28,8 @@ export function findMatchingParenInBundle(
 }
 
 /**
- * Scan a bundled chunk for handler exports of a given type and extract
- * their names + $$id values. Optionally detects passthrough flag.
- * @internal Exported for testing only.
+ * Scan a bundled chunk for handler exports and extract their names + $$id values.
+ * Optionally detects passthrough flag. @internal Exported for testing only.
  */
 export function extractHandlerExportsFromChunk(
   chunkCode: string,
@@ -67,7 +64,7 @@ export function extractHandlerExportsFromChunk(
           const closePos = findMatchingParenInBundle(chunkCode, afterOpen);
           if (closePos !== -1) {
             const callBody = chunkCode.slice(callStart.index, closePos);
-            isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody);
+            isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody); // !0 is minified true
           }
         }
       }
@@ -79,9 +76,8 @@ export function extractHandlerExportsFromChunk(
 }
 
 /**
- * Evict handler code from a bundled chunk, replacing full handler call
- * expressions with lightweight stub objects. Returns the modified code
- * and bytes saved, or null if no changes were made.
+ * Evict handler code from a bundled chunk, replacing full call expressions with stubs.
+ * Returns the modified code and bytes saved, or null if no changes were made.
  * @internal Exported for testing only.
  */
 export function evictHandlerCode(
@@ -110,13 +106,11 @@ export function evictHandlerCode(
     const closePos = findMatchingParenInBundle(modified, afterOpen);
     if (closePos === -1) continue;
 
-    // Skip trailing whitespace and optional semicolon
     let rangeEnd = closePos;
     while (rangeEnd < modified.length && /\s/.test(modified[rangeEnd]))
       rangeEnd++;
     if (modified[rangeEnd] === ";") rangeEnd++;
 
-    // Validate: matched range must contain the expected handlerId
     const matched = modified.slice(startMatch.index, rangeEnd);
     if (!matched.includes(handlerId)) continue;
 
@@ -124,7 +118,6 @@ export function evictHandlerCode(
     modified =
       modified.slice(0, startMatch.index) + stub + modified.slice(rangeEnd);
 
-    // Remove the now-redundant $$id assignment line.
     modified = modified.replace(
       new RegExp(`\\n${eName}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
       "",

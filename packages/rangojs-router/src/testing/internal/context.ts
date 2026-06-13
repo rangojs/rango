@@ -28,8 +28,6 @@ import type { CacheProfile } from "../../cache/profile-registry.js";
 
 const DEFAULT_ORIGIN = "http://localhost/";
 
-// VarsInit + seedVariables live in ./seed-vars.js (react-server-safe) so the
-// Flight tier can seed vars too; re-exported here for existing importers.
 export type { VarsInit, StateCookieSeed };
 export { seedVariables };
 
@@ -39,10 +37,9 @@ export function toRequest(
   init?: RequestInit,
 ): Request {
   if (request instanceof Request) return request;
-  if (typeof request === "string") {
-    return new Request(new URL(request, DEFAULT_ORIGIN), init);
-  }
-  return new Request(DEFAULT_ORIGIN, init);
+  return typeof request === "string"
+    ? new Request(new URL(request, DEFAULT_ORIGIN), init)
+    : new Request(DEFAULT_ORIGIN, init);
 }
 
 export interface CreateTestContextOptions<TEnv> {
@@ -146,10 +143,6 @@ export function createTestRequestContext<TEnv>(
   const request = toRequest(opts.request, opts.requestInit);
   const url = new URL(request.url);
   const variables = seedVariables(opts.variables ?? {}, opts.vars);
-  // Always seed a resolved name so invalidateClientCache() rotates (and emits
-  // the Set-Cookie) like production instead of no-opping; opts.stateCookie
-  // customizes the name/version. Surfaced on the result so a consumer asserts
-  // the rotation against the same name without recomputing it.
   const stateCookieName = resolveSeededStateCookieName(opts.stateCookie);
   const ctx = createRequestContext<TEnv>({
     env: (opts.env ?? {}) as TEnv,
@@ -174,10 +167,6 @@ export function createTestRequestContext<TEnv>(
       opts.params ?? {},
     ) as RequestContext<TEnv>["reverse"];
   }
-  // ctx.reverse is assigned the routeMap-scoped reverse (string-accepting) above;
-  // expose it through the relaxed type so a test reverses a local route name
-  // without casting. The runtime value matches; RequestContext's reverse is
-  // declared against the narrower global route-name union, hence the cast.
   return {
     ctx: ctx as unknown as TestRequestContextObject<TEnv>,
     request,
@@ -246,13 +235,6 @@ export interface RunInRequestContextResult<T> {
   stateCookieName: string;
 }
 
-/**
- * Snapshot the observable effects a run left on `ctx` (cookies + location
- * state). Reads the fields directly off the ctx object, so it works both inside
- * and outside the AsyncLocalStorage scope (no `getRequestContext()`). Headers are
- * snapshotted separately from the final {@link Response} (via
- * {@link headersToObject}) so a thrown redirect's `Location` is included.
- */
 export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
   cookies: Record<string, string>;
   locationState: Record<string, unknown>;
@@ -263,12 +245,6 @@ export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
   };
 }
 
-/**
- * The response headers as a plain `{ name: value }` object, EXCLUDING
- * `set-cookie` (surfaced parsed on `cookies`). Names are lowercased (HTTP header
- * names are case-insensitive). Read from the final response so a thrown
- * redirect's `Location` and any `ctx.header(...)` both appear.
- */
 export function headersToObject(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, name) => {
@@ -278,14 +254,6 @@ export function headersToObject(headers: Headers): Record<string, string> {
   return out;
 }
 
-/**
- * Build the observable response from what the run accumulated on `ctx.res`. When
- * `fn` threw a `Response` (a `redirect()`/`notFound()`), that Response IS the
- * response — merge the accumulated Set-Cookie/other headers into it (the
- * framework does this when it catches the thrown Response in production), with
- * its status/Location preserved. Otherwise snapshot the stub (status + headers).
- * The `Response`/`Headers` constructors copy, so the result is immutable.
- */
 export function buildRunResponse<TEnv>(
   ctx: RequestContext<TEnv>,
   thrown: unknown,
@@ -305,14 +273,6 @@ export function buildRunResponse<TEnv>(
   return new Response(null, { status: stub.status, headers: stub.headers });
 }
 
-/**
- * Snapshot the shared run-result envelope fields (everything except the primary
- * value) from what a run left on `ctx`: the captured `thrown`, the merged
- * `response`, the effective `cookies`/`headers` views, the `locationState`, and
- * the resolved `stateCookieName`. Shared by `runInRequestContext` and
- * `runLoaderResult` so the snapshot sequence lives once; each spreads it next to
- * its own primary field (`result` / `data`).
- */
 export function buildRunSnapshot<TEnv>(
   ctx: RequestContext<TEnv>,
   thrown: unknown,
@@ -382,8 +342,6 @@ export async function runInRequestContext<T, TEnv = unknown>(
   try {
     result = (await runWithRequestContext(ctx, () => fn(ctx))) as T;
   } catch (error) {
-    // Capture (do NOT re-throw): a redirect/notFound action throws its Response
-    // on the SUCCESS path, and its cookie/flash output must stay observable.
     thrown = error;
   }
   return { result, ...buildRunSnapshot(ctx, thrown, stateCookieName) };

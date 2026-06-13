@@ -13,7 +13,10 @@ describe("Comprehensive Pattern Testing - Apex Domains", () => {
         "test.dev",
         "my-app.io",
         "site123.net",
-        "example.co.uk", // Note: This is 3 parts but .co.uk is treated as TLD
+        // 3 parts: NOT detected as apex. There is no Public Suffix List, so a
+        // two-label public suffix like .co.uk counts as a subdomain level — the
+        // any-apex pattern does NOT match it (asserted explicitly below).
+        "example.co.uk",
       ];
 
       apexHosts.forEach((host) => {
@@ -22,6 +25,11 @@ describe("Comprehensive Pattern Testing - Apex Domains", () => {
           expect(matchPattern(pattern, host, "/", parts)).toBe(true);
         }
       });
+
+      // Pin the dot-count limitation: a 2-label public suffix is treated as a
+      // subdomain (3 parts), so an any-apex pattern does not match it.
+      const coUk = "example.co.uk".split(".");
+      expect(matchPattern(pattern, "example.co.uk", "/", coUk)).toBe(false);
     });
 
     it(`${pattern} should NOT match subdomains`, () => {

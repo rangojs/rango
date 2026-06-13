@@ -46,6 +46,7 @@ import {
   runWithCacheTagScope,
 } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
+import type { CacheItemResult } from "./types.js";
 
 /**
  * Convert encodeReply result to a stable string key.
@@ -84,6 +85,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // cacheTag() call inside the function degrades to a no-op rather than
     // throwing "must be called inside a use cache function" - adopting cacheTag()
     // must not hard-fail in apps/tests without an item-capable cache configured.
+    // Note: the INSIDE_CACHE_EXEC guard (cookies()/headers()/ctx.set() rejection)
+    // is intentionally NOT stamped here. It is a cached-path-only check; in the
+    // bypass the body actually executes, so the guarded side effects take effect
+    // and nothing is lost on a (non-existent) hit. Same applies to the
+    // non-serializable-args bypass below.
     if (!store?.getItem) {
       const scoped = runWithCacheTagScope(() => fn.apply(this, args));
       const result = await scoped.result;
@@ -185,23 +191,29 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Cache lookup
     const cached = await store.getItem(cacheKey);
 
+    // Serve a cached entry on the hit path: deserialize the stored value,
+    // replay handle data (gated on tainted args), and surface the entry's tags
+    // to the request set (the function did not re-run, so its runtime cacheTag()
+    // tags are only available from the stored entry). Shared by the fresh-hit
+    // and stale-hit branches; the only divergence is the stale branch scheduling
+    // background revalidation, which it does after this returns.
+    const serveCached = async (entry: CacheItemResult): Promise<any> => {
+      const result = await deserializeResult(entry.value);
+      if (entry.handles && hasTaintedArgs) {
+        const handleStore = requestCtx?._handleStore;
+        if (handleStore) {
+          const r = await decodeHandles(entry.handles);
+          if (r) restoreHandles(r, handleStore);
+        }
+      }
+      recordRequestTags(entry.tags, requestCtx);
+      return result;
+    };
+
     if (cached && !cached.shouldRevalidate) {
       // Fresh hit: deserialize and return
       try {
-        const result = await deserializeResult(cached.value);
-        // Restore handle data if present
-        if (cached.handles && hasTaintedArgs) {
-          const handleStore = requestCtx?._handleStore;
-          if (handleStore) {
-            const r = await decodeHandles(cached.handles);
-            if (r) restoreHandles(r, handleStore);
-          }
-        }
-        // Surface the hit's tags to the request set so a document built from a
-        // cached item is still tagged (the function did not re-run, so its
-        // runtime cacheTag() tags are only available from the stored entry).
-        recordRequestTags(cached.tags, requestCtx);
-        return result;
+        return await serveCached(cached);
       } catch (error) {
         // The stored value is corrupt/partial (failed RSC deserialize). Report
         // it, then fall through to fresh execution - the miss path below re-runs
@@ -217,16 +229,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     if (cached?.shouldRevalidate) {
       // Stale hit: return stale value, revalidate in background
       try {
-        const result = await deserializeResult(cached.value);
-        if (cached.handles && hasTaintedArgs) {
-          const handleStore = requestCtx?._handleStore;
-          if (handleStore) {
-            const r = await decodeHandles(cached.handles);
-            if (r) restoreHandles(r, handleStore);
-          }
-        }
-        // Tag the request with the stale entry's tags (see fresh-hit note).
-        recordRequestTags(cached.tags, requestCtx);
+        const result = await serveCached(cached);
         // Background revalidation — must capture handles if tainted args present.
         // Use an isolated handle store so background pushes don't pollute the
         // live response or throw LateHandlePushError on the completed store.

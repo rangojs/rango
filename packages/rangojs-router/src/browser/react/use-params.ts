@@ -50,8 +50,6 @@ export function useParams<T>(
   });
 
   const prevValue = useRef(value);
-  // Ref keeps the latest selector without re-subscribing. Event-driven by
-  // design: value updates on store events, not on selector identity change.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 

@@ -14,7 +14,6 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { RouteSnapshot } from "./route-snapshot.js";
 
-// Response type -> MIME type used for Accept header matching
 export const RESPONSE_TYPE_MIME: Record<string, string> = {
   json: "application/json",
   text: "text/plain",
@@ -23,7 +22,6 @@ export const RESPONSE_TYPE_MIME: Record<string, string> = {
   md: "text/markdown",
 };
 
-// Reverse lookup: MIME type -> response type tag (e.g. "text/html" -> "html")
 export const MIME_RESPONSE_TYPE: Record<string, string> = Object.fromEntries(
   Object.entries(RESPONSE_TYPE_MIME).map(([tag, mime]) => [mime, tag]),
 );
@@ -71,12 +69,10 @@ export function parseAcceptTypes(accept: string): AcceptEntry[] {
     }
     entries.push({ mime, q, order: i });
   }
-  // Sort: highest q first, then lowest client order first (stable)
   entries.sort((a, b) => b.q - a.q || a.order - b.order);
   return entries;
 }
 
-// Sentinel response type for RSC routes in negotiation candidates
 export const RSC_RESPONSE_TYPE = "__rsc__";
 
 /**
@@ -89,7 +85,6 @@ export function pickNegotiateVariant(
   acceptEntries: AcceptEntry[],
   candidates: Array<{ routeKey: string; responseType: string }>,
 ): { routeKey: string; responseType: string } {
-  // Build a MIME -> candidate lookup for O(1) matching
   const byCandidateMime = new Map<
     string,
     { routeKey: string; responseType: string }
@@ -106,9 +101,7 @@ export function pickNegotiateVariant(
 
   for (const entry of acceptEntries) {
     if (entry.q === 0) continue;
-    // Wildcard matches first candidate
     if (entry.mime === "*/*") return candidates[0]!;
-    // Type wildcard (e.g. "text/*") -- match first candidate with that type
     if (entry.mime.endsWith("/*")) {
       const typePrefix = entry.mime.slice(0, entry.mime.indexOf("/"));
       for (const [mime, candidate] of byCandidateMime) {
@@ -119,7 +112,6 @@ export function pickNegotiateVariant(
     const match = byCandidateMime.get(entry.mime);
     if (match) return match;
   }
-  // No match -- use first candidate as default
   return candidates[0]!;
 }
 
@@ -173,7 +165,6 @@ export async function negotiateRoute(
 
   const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
 
-  // Build candidate list preserving definition order.
   const variants = matched.negotiateVariants;
   let candidates: Array<{ routeKey: string; responseType: string }>;
   if (responseType) {
@@ -190,12 +181,10 @@ export async function negotiateRoute(
 
   const variant = pickNegotiateVariant(acceptEntries, candidates);
 
-  // RSC won negotiation
   if (variant.responseType === RSC_RESPONSE_TYPE) {
     return null;
   }
 
-  // Primary response-type won — use existing manifest entry and middleware
   if (responseType && variant.routeKey === matched.routeKey) {
     return {
       responseType,
@@ -205,8 +194,6 @@ export async function negotiateRoute(
       negotiated: true,
     };
   }
-
-  // Different variant won — load its manifest entry
   const negotiateEntry = await loadManifest(
     matched.entry,
     variant.routeKey,

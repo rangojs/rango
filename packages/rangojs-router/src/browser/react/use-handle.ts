@@ -43,7 +43,6 @@ export function useHandle<T, A, S>(
 ): Rango.FlightSerialize<A> | S {
   const ctx = useContext(NavigationStoreContext);
 
-  // Initial state from context event controller, or empty fallback without provider.
   const [value, setValue] = useState<Rango.FlightSerialize<A> | S>(() => {
     if (!ctx) {
       const collected = collectHandleData(
@@ -54,7 +53,6 @@ export function useHandle<T, A, S>(
       return selector ? selector(collected) : collected;
     }
 
-    // On client, use event controller state
     const state = ctx.eventController.getHandleState();
     const collected = collectHandleData(
       handle,
@@ -65,15 +63,12 @@ export function useHandle<T, A, S>(
   });
   const [optimisticValue, setOptimisticValue] = useOptimistic(value);
 
-  // Track previous value for shallow comparison
   const prevValueRef = useRef(value);
   prevValueRef.current = value;
 
-  // Ref keeps the latest selector without re-subscribing on every render.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  // Subscribe to handle data changes (client only)
   useEffect(() => {
     if (!ctx) return;
 

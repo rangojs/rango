@@ -161,23 +161,9 @@ function isContentHashedAssetConflict(message: string | undefined): boolean {
 }
 
 /**
- * Rollup onwarn handler that suppresses known harmless warnings:
- * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
- * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
- * - sourcemap incomplete: plugins that transform without generating sourcemaps (router + RSC plugin)
- * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope).
- *   Under Rolldown (Vite 8) this surfaces as the INEFFECTIVE_DYNAMIC_IMPORT code emitted directly
- *   by the bundler, rather than the vite:reporter message handled below (Rollup/Vite 7 shape).
- * - empty bundle: @vitejs/plugin-rsc scan build (step 1/5) produces an empty "index" chunk
- *   because the RSC entry is fully externalized during client-reference analysis
- * - file name conflicts on content-hashed assets: @vitejs/plugin-rsc copies the rsc
- *   environment's imported CSS/assets into the client bundle (its assets-manifest
- *   generateBundle re-emits each via emitFile with an explicit content-hashed
- *   fileName). When the client bundle already produced that identical asset,
- *   rollup raises FILE_NAME_CONFLICT even though the bytes are identical (a
- *   content hash collision IS a content match). Only these are suppressed; a
- *   collision on a stable name still surfaces. No upstream fix as of
- *   @vitejs/plugin-rsc@0.5.27; remove when it skips the redundant emit.
+ * Suppress known harmless warnings: "use client" directives, sourcemap errors,
+ * mixed imports (expected for router internals), empty bundles, and content-hashed
+ * asset collisions from @vitejs/plugin-rsc copying RSC-env assets to the client bundle.
  */
 export function onwarn(
   warning: Vite.Rollup.RollupLog,
@@ -197,10 +183,6 @@ export function onwarn(
   ) {
     return;
   }
-  // @vitejs/plugin-rsc@0.5.14: rsc:virtual:vite-rsc/assets-manifest renderChunk
-  // returns { code } without map, causing Rollup to warn about incorrect sourcemaps.
-  // This is harmless (simple string replacement). Remove this suppression if a
-  // future version of @vitejs/plugin-rsc fixes the missing sourcemap.
   if (warning.message?.includes("Sourcemap is likely to be incorrect")) {
     return;
   }
@@ -215,10 +197,6 @@ export function onwarn(
   defaultHandler(warning);
 }
 
-/**
- * Manual chunks configuration for client build.
- * Splits React and router packages into separate chunks for better caching.
- */
 export function getManualChunks(id: string): string | undefined {
   const normalized = Vite.normalizePath(id);
 
@@ -230,16 +208,6 @@ export function getManualChunks(id: string): string | undefined {
   ) {
     return "react";
   }
-  // Use dynamic package name from package.json
-  // Check both npm install path and workspace symlink resolved path.
-  //
-  // The workspace patterns are anchored to the package's own `src`/`dist` so
-  // they match the router runtime but NOT consumer apps that merely live under a
-  // `packages/rangojs-router/` ancestor (the in-repo e2e apps at
-  // `packages/rangojs-router/e2e/<app>/src/...`). Without the anchor those apps'
-  // own client components were force-merged into the shared "router" chunk,
-  // which both misrepresented real-consumer bundles and blocked `clientChunks`
-  // splitting from relocating them.
   const packageName = getPublishedPackageName();
   if (
     normalized.includes(`node_modules/${packageName}/`) ||

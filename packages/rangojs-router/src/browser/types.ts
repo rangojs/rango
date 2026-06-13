@@ -14,7 +14,6 @@ import type { RenderSegmentsOptions } from "../segment-system.js";
 export interface RscPayload<TMetadata = RscMetadata> {
   metadata?: TMetadata;
   returnValue?: ActionResult;
-  formState?: unknown;
 }
 
 /**

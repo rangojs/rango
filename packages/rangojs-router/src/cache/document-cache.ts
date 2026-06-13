@@ -22,36 +22,8 @@ import { sortedSearchString } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-/** Header indicating cache status for debugging */
 const CACHE_STATUS_HEADER = "x-document-cache-status";
 
-/**
- * Snapshot the request-scoped tag union for a document cache write. The full-page
- * entry is tagged with every cache tag its content resolved (runtime cacheTag(),
- * "use cache" profile tags, and loader cache tags) so updateTag()/revalidateTag()
- * can invalidate it. Returns undefined when no tags were used, keeping untagged
- * document entries header-free.
- *
- * This is a plain synchronous snapshot. The CALLER must drain the rendered body
- * first (see the cache-write closures): runtime cacheTag()/"use cache" and loader
- * tags are recorded synchronously as each value resolves during render, including
- * Suspense-streamed ones that resolve AFTER the handler-settlement barrier - so
- * the correct barrier is the stream draining (render complete), not _handleStore.
- *
- * Caveat: this applies only to the segment cache WRITE path. When a segment is
- * cached for the first time, its cache({ tags }) DSL tags are recorded inside the
- * deferred cacheRoute waitUntil, which can still run after this snapshot; a
- * document that combines whole-page document caching with first-write segment-DSL
- * tags may miss those (the segment cache entry itself is still correctly tagged
- * and invalidated). On a segment-cache HIT the entry's tags are recorded
- * synchronously during lookupRoute, before this snapshot, so they are captured.
- * Runtime cacheTag()/"use cache" and loader tags are always captured once the
- * body drains.
- */
 function collectRequestTags(
   requestCtx: RequestContext | undefined,
 ): string[] | undefined {
@@ -59,11 +31,6 @@ function collectRequestTags(
   return tags && tags.size > 0 ? [...tags] : undefined;
 }
 
-/**
- * Simple hash function for segment IDs.
- * Creates a short, deterministic hash to differentiate cache keys
- * based on which segments the client already has.
- */
 function hashSegmentIds(segmentIds: string): string {
   if (!segmentIds) return "";
 
@@ -72,12 +39,9 @@ function hashSegmentIds(segmentIds: string): string {
     const char = segmentIds.charCodeAt(i);
     hash = ((hash << 5) - hash + char) | 0;
   }
-  // Convert to base36 for shorter string, take absolute value
   return Math.abs(hash).toString(36);
 }
 
-// ============================================================================
-// Cache Control Parsing
 // ============================================================================
 
 interface CacheDirectives {

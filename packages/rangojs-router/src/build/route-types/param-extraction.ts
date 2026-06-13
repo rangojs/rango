@@ -37,12 +37,15 @@ export function formatRouteEntry(
 ): string {
   const hasSearch = search && Object.keys(search).length > 0;
 
+  // JSON.stringify the pattern and search values so backslashes and quotes in a
+  // route pattern (e.g. a custom regex constraint) survive interpolation into
+  // both the type-level string and the runtime NamedRoutes value.
   if (!hasSearch) {
-    return `  ${key}: "${pattern}",`;
+    return `  ${key}: ${JSON.stringify(pattern)},`;
   }
 
   const searchBody = Object.entries(search!)
-    .map(([k, v]) => `${k}: "${v}"`)
+    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
     .join(", ");
-  return `  ${key}: { path: "${pattern}", search: { ${searchBody} } },`;
+  return `  ${key}: { path: ${JSON.stringify(pattern)}, search: { ${searchBody} } },`;
 }

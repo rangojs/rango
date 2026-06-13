@@ -1,9 +1,3 @@
-/**
- * Router Metrics Utilities
- *
- * Performance metrics collection and reporting for Rango.
- */
-
 import type { MetricsStore, PerformanceMetric } from "../server/context";
 
 const BASE_INDENT = 2;
@@ -16,7 +10,6 @@ function formatMs(value: number): string {
 
 function sortMetrics(metrics: PerformanceMetric[]): PerformanceMetric[] {
   return [...metrics].sort((a, b) => {
-    // handler:total always goes last (it wraps everything)
     if (a.label === "handler:total") return 1;
     if (b.label === "handler:total") return -1;
     return a.startTime - b.startTime;
@@ -68,11 +61,6 @@ function createTimelineAxis(total: number): string {
   )}${totalLabel}`;
 }
 
-/**
- * Create a metrics store for the request if debugPerformance is enabled.
- * An optional `requestStart` timestamp can anchor the store to an earlier
- * point (e.g. handler start) so that handler:total has startTime=0.
- */
 export function createMetricsStore(
   debugPerformance: boolean,
   requestStart?: number,
@@ -85,9 +73,6 @@ export function createMetricsStore(
   };
 }
 
-/**
- * Append a metric to the request store using an absolute start timestamp.
- */
 export function appendMetric(
   metricsStore: MetricsStore | undefined,
   label: string,
@@ -104,9 +89,6 @@ export function appendMetric(
   });
 }
 
-/**
- * Log the current request metrics and return the corresponding Server-Timing value.
- */
 export function buildMetricsTiming(
   method: string,
   pathname: string,
@@ -117,7 +99,6 @@ export function buildMetricsTiming(
   return generateServerTiming(metricsStore) || undefined;
 }
 
-/** Display row produced by merging :pre/:post metric pairs. */
 interface DisplayRow {
   label: string;
   startTime: number;
@@ -126,12 +107,7 @@ interface DisplayRow {
   spans: Span[];
 }
 
-/**
- * Build display rows from sorted metrics, merging :pre/:post pairs into
- * a single row with disjoint timeline segments.
- */
 function buildDisplayRows(sorted: PerformanceMetric[]): DisplayRow[] {
-  // Index :pre and :post metrics by their base label
   const preMap = new Map<string, PerformanceMetric>();
   const postMap = new Map<string, PerformanceMetric>();
   const consumed = new Set<PerformanceMetric>();
@@ -211,11 +187,6 @@ function buildDisplayRows(sorted: PerformanceMetric[]): DisplayRow[] {
   return rows;
 }
 
-/**
- * Log metrics to console in a formatted way.
- * Uses a shared-axis timeline so overlapping work stays visible.
- * Merges :pre/:post pairs onto one row with disjoint timeline segments.
- */
 export function logMetrics(
   method: string,
   pathname: string,
@@ -267,11 +238,6 @@ export function logMetrics(
   }
 }
 
-/**
- * Generate Server-Timing header value from metrics
- * Format: metric-name;dur=X.XX
- * Depth is encoded as a "d{N}-" prefix for nested metrics.
- */
 export function generateServerTiming(metricsStore: MetricsStore): string {
   return metricsStore.metrics
     .map((m) => {

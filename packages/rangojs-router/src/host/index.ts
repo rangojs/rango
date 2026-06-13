@@ -20,6 +20,12 @@
  *   }
  * };
  * ```
+ *
+ * The host surface (`Handler`, `Middleware`, `match`, `HostOverrideConfig.validate`)
+ * types `input` as `RouterRequestInput<any>` by design: a host router fans out to
+ * heterogeneous sub-apps with differing env/vars shapes, so there is no single
+ * `TEnv`/`TVars` to thread through. `input.env`/`input.vars` are therefore `any`
+ * here; the typed env shape lives on each sub-app's `createRouter<TEnv>()`.
  */
 
 // Core router

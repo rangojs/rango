@@ -8,7 +8,7 @@
  * Cache key resolution (3-tier, matching CacheScope.resolveKey):
  *   1. options.key(requestCtx) — full override
  *   2. store.keyGenerator(requestCtx, defaultKey) — store-level modification
- *   3. loader:{loaderId}:{pathname}:{sortedParams} — default
+ *   3. loader:{loaderId}:{host}{pathname}:{sortedParams} — default
  *
  * Values are serialized via RSC Flight (serializeResult/deserializeResult),
  * supporting ReactNode, Promises, null, and all RSC-serializable types.
@@ -57,12 +57,13 @@ function debugLoaderCacheLog(message: string): void {
 
 function getDefaultLoaderCacheKey(
   loaderId: string,
+  host: string,
   pathname: string,
   params: Record<string, string>,
 ): string {
   const paramStr = sortedRouteParams(params);
   const base = paramStr ? `${pathname}:${paramStr}` : pathname;
-  return `loader:${loaderId}:${base}`;
+  return `loader:${loaderId}:${host}${base}`;
 }
 
 /**
@@ -76,7 +77,13 @@ async function resolveLoaderKey(
   params: Record<string, string>,
 ): Promise<string> {
   const options = loaderEntry.cache!.options;
-  const defaultKey = getDefaultLoaderCacheKey(loaderId, pathname, params);
+  // The host is part of the loader cache identity, matching the route-level
+  // cache (cache-scope getCacheKeyBase: `${host}${pathname}`) and "use cache"
+  // (cache-runtime pushes ctx.url.host). Without it, a multi-tenant host router
+  // serving the same pathname for different hosts would leak one host's cached
+  // loader data to another.
+  const host = getRequestContext()?.url?.host ?? "localhost";
+  const defaultKey = getDefaultLoaderCacheKey(loaderId, host, pathname, params);
   if (options === false) return defaultKey;
   return resolveCacheKey(options.key, store, defaultKey, "LoaderCache");
 }
@@ -139,14 +146,8 @@ export function resolveLoaderData<TEnv>(
   const swrWindow = resolveSwrWindow(options.swr, store.defaults);
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
-  // Loader tags are config-derived, so they are the complete set whether this is
-  // a cache hit or miss; record them every time so a document built from this
-  // loader is tagged for invalidation.
   recordRequestTags(tags);
 
-  // Wrap ctx.use() so cache HIT primes the handler's memoization map.
-  // ctx.use() closes over the match context's loaderPromises (not request context's).
-  // By intercepting ctx.use(), we inject cached data into the correct map.
   const originalUse = ctx.use;
   const dataPromise = (async () => {
     const codec = await getCodec();
@@ -174,10 +175,6 @@ export function resolveLoaderData<TEnv>(
     });
   })();
 
-  // Temporarily replace ctx.use() so the handler's call returns cached data.
-  // This is needed because ctx.use() closes over the match context's loaderPromises
-  // map which is separate from the request context. By wrapping use(), we intercept
-  // the handler's call and return the shared dataPromise.
   const wrappedUse = ((item: any) => {
     if (item === loaderEntry.loader || item?.$$id === loaderId) {
       return dataPromise;

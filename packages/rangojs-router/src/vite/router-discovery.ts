@@ -424,7 +424,8 @@ export function createRouterDiscoveryPlugin(
         releaseBuildEnv(s).catch(() => {});
       });
 
-      // Mirror the build-path contract (router-discovery.ts ~line 878):
+      // Mirror the build-path contract (the buildStart hook below, which sets
+      // __rscRouterDiscoveryActive before running user modules):
       // set __rscRouterDiscoveryActive before running user modules so any
       // module-level router.reverse() calls return a placeholder instead
       // of throwing. The temp Vite server's module runner has its own

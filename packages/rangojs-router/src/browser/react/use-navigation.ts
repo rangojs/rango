@@ -46,7 +46,6 @@ export function useNavigation<T>(
     throw new Error("useNavigation must be used within NavigationProvider");
   }
 
-  // Base state for useOptimistic
   const [baseValue, setBaseValue] = useState<T | PublicNavigationState>(() => {
     const publicState = toPublicState(ctx.eventController.getState());
     return selector ? selector(publicState) : publicState;
@@ -59,7 +58,6 @@ export function useNavigation<T>(
   // parent transition (e.g. <Link> click) is still pending.
   const optimisticPinnedRef = useRef(false);
 
-  // useOptimistic allows immediate updates during transitions/actions
   const [value, setOptimisticValue] = useOptimistic(baseValue);
 
   // Store selector in a ref so the subscription callback always uses the
@@ -72,7 +70,6 @@ export function useNavigation<T>(
 
   // Subscribe to event controller state changes (only runs on client)
   useEffect(() => {
-    // Subscribe to updates from event controller
     return ctx.eventController.subscribe(() => {
       const currentState = ctx.eventController.getState();
       const publicState = toPublicState(currentState);

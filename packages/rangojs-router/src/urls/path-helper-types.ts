@@ -348,9 +348,9 @@ export type PathHelpers<TEnv> = {
     <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
       children: () => TChildren,
     ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
-    (options: PartialCacheOptions | false): TypedCacheItem<{}, {}>;
+    (options: PartialCacheOptions<TEnv> | false): TypedCacheItem<{}, {}>;
     <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
-      options: PartialCacheOptions | false,
+      options: PartialCacheOptions<TEnv> | false,
       use: () => TChildren,
     ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };

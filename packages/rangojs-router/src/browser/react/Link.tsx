@@ -39,8 +39,6 @@ import {
   unobserveForPrefetch,
 } from "../prefetch/observer.js";
 
-// Touch device detection for adaptive strategy.
-// Checked once at module load (Link.tsx is "use client", runs only in browser).
 const isTouchDevice =
   typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
 

@@ -112,9 +112,6 @@ import type { MatchContext, MatchPipelineState } from "./match-context.js";
 import { debugLog } from "./logging.js";
 import { appendMetric } from "./metrics.js";
 
-/**
- * Collect all segments from an async generator
- */
 export async function collectSegments(
   generator: AsyncGenerator<ResolvedSegment>,
 ): Promise<ResolvedSegment[]> {
@@ -159,8 +156,6 @@ function deduplicateLoaderSegments(
     }
   }
 
-  // An inherited loader is needed when it shares a namespace with a
-  // loading-bearing segment (its data sits behind that LoaderBoundary).
   const loadersWithLoading = new Set<string>();
   for (const ns of namespacesWithLoading) {
     for (const id of loaderIdsByNamespace.get(ns) ?? []) {
@@ -195,9 +190,6 @@ function deduplicateLoaderSegments(
   return { segments: result, removedIds };
 }
 
-/**
- * Build the final MatchResult from collected segments and context
- */
 export function buildMatchResult<TEnv>(
   allSegments: ResolvedSegment[],
   ctx: MatchContext<TEnv>,
@@ -211,11 +203,6 @@ export function buildMatchResult<TEnv>(
   let segmentsToRender: ResolvedSegment[];
 
   if (ctx.isFullMatch) {
-    // Full match (document request) - all segments are rendered
-    // Deduplicate by segment ID (defense-in-depth). The primary dedup is in
-    // resolveAllSegments, but this guards against any path that bypasses it.
-    // include() scopes can produce entries that resolve the same shared layout,
-    // and duplicate IDs change the client's React tree depth causing remounts.
     const seen = new Set<string>();
     segmentsToRender = [];
     for (const s of allSegments) {
@@ -226,24 +213,14 @@ export function buildMatchResult<TEnv>(
     }
     allIds = segmentsToRender.map((s) => s.id);
   } else {
-    // Partial match (navigation) - filter and handle intercepts
-    // When intercepting, tell browser to keep its current segments + add modal
-    // This prevents the browser from discarding the current page content
-    // If client sent empty segments (HMR recovery), use segment IDs from allSegments
     allIds = ctx.interceptResult
       ? ctx.clientSegmentIds.length > 0
         ? [...ctx.clientSegmentIds, ...state.interceptSegments.map((s) => s.id)]
-        : allSegments.map((s) => s.id) // Use actual segments, not matchedIds
+        : allSegments.map((s) => s.id)
       : [...state.matchedIds, ...state.interceptSegments.map((s) => s.id)];
 
-    // Deduplicate allIds (defense-in-depth for partial match path)
     allIds = [...new Set(allIds)];
 
-    // Filter out null-component segments only when the client already has
-    // them cached (revalidation skip). If the client doesn't have the segment,
-    // it must be included even with null component — it's structurally required
-    // as a parent node for child layouts/parallels to reconcile against.
-    // Loader segments are always included as they carry data.
     const clientIdSet = new Set(ctx.clientSegmentIds);
     segmentsToRender = allSegments.filter(
       (s) =>
@@ -256,34 +233,13 @@ export function buildMatchResult<TEnv>(
     logPrefix,
   );
 
-  debugLog(logPrefix, "all segments", {
-    segments: allSegments.map((s) => ({
-      id: s.id,
-      type: s.type,
-      hasComponent: s.component !== null,
-    })),
-  });
-  debugLog(logPrefix, "segments to render", {
-    segmentIds: dedupedSegments.map((s) => s.id),
-  });
-
-  // Remove deduped loader IDs from matched so the client doesn't treat
-  // them as missing segments and trigger a fallback refetch.
   const matchedIds =
     removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
 
-  // resolvedIds: every segment whose handler actually ran this request.
-  // For full-match every segment is fresh; for partial-match we filter by
-  // the internal `_handlerRan` flag set in revalidation.ts. Drives the
-  // client's handle-bucket cleanup — a slot that re-resolved and pushed
-  // nothing must have its previous handle data cleared, but `diff` won't
-  // carry it because the segment payload skips null-component cached
-  // segments to save bytes.
   const resolvedIds = ctx.isFullMatch
     ? allSegments.map((s) => s.id)
     : allSegments.filter((s) => s._handlerRan).map((s) => s.id);
 
-  // Strip internal-only fields from the segments going on the wire.
   const cleanedSegments = dedupedSegments.map((s) => {
     if (s._handlerRan === undefined) return s;
     const { _handlerRan: _drop, ...rest } = s;
@@ -303,12 +259,6 @@ export function buildMatchResult<TEnv>(
   };
 }
 
-/**
- * Collect segments from pipeline and build MatchResult
- *
- * This is the main entry point for building the final result after
- * the pipeline has processed all segments.
- */
 export async function collectMatchResult<TEnv>(
   pipeline: AsyncGenerator<ResolvedSegment>,
   ctx: MatchContext<TEnv>,
@@ -318,7 +268,6 @@ export async function collectMatchResult<TEnv>(
 
   const buildStart = performance.now();
 
-  // Update state with collected segments if not already set
   if (state.segments.length === 0) {
     state.segments = allSegments;
   }

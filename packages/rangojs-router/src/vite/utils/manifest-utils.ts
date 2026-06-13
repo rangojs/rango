@@ -1,7 +1,3 @@
-// Pure prefix-tree walks live in the build layer so runtime code can consume
-// them without importing from vite/. Re-exported here for the vite-side
-// callers (discover-routers, virtual-module-codegen) that already import them
-// from this module.
 export {
   flattenLeafEntries,
   buildRouteToStaticPrefix,

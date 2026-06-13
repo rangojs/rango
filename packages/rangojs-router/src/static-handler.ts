@@ -37,8 +37,6 @@ import type { UseItems, HandlerUseItem } from "./route-types.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { isUnderTestRunner } from "./runtime-env.js";
 
-// -- Types ------------------------------------------------------------------
-
 export interface StaticHandlerOptions {
   /**
    * Keep handler in server bundle for live fallback (default: false).
@@ -62,11 +60,8 @@ export interface StaticHandlerDefinition<
   use?: () => UseItems<HandlerUseItem>;
 }
 
-// -- Function ---------------------------------------------------------------
-
-// Process-stable fallback id counter (mirrors createHandle / createLoader /
-// Prerender). Only assigned in a bare unit test where the Vite plugin did not
-// inject an id; never fires in a real build (the plugin always injects).
+// Process-stable fallback id counter (mirrors createHandle/createLoader/Prerender).
+// Only assigned in bare unit tests where the Vite plugin did not inject an id.
 let runtimeStaticIdCounter = 0;
 
 export function Static<TParams extends Record<string, any> = {}>(
@@ -74,8 +69,6 @@ export function Static<TParams extends Record<string, any> = {}>(
   options?: StaticHandlerOptions,
   __injectedId?: string,
 ): StaticHandlerDefinition<TParams>;
-
-// -- Implementation ---------------------------------------------------------
 
 export function Static<TParams extends Record<string, any>>(
   handler: Function,
@@ -100,25 +93,12 @@ export function Static<TParams extends Record<string, any>>(
     id = maybeId ?? "";
   }
 
-  // Throw unless under a test runner. The plugin always injects $$id for a
-  // supported `export const` Static on every build, so a missing id means either
-  // no plugin (a bare test — fall back below) or an UNSUPPORTED shape the plugin
-  // silently skipped (dev OR a real build — fail loud; a synthetic id would
-  // degrade to a silent static/prerender miss). The message is already small (no
-  // stack-parsing diagnostic), so it ships as-is. isUnderTestRunner() is
-  // runtime-safe — never a bare `process.env` access.
   if (!id && !isUnderTestRunner()) {
     throw new Error(
       "[rango] Static: missing $$id. Use `export const X = Static(...)` and " +
         "ensure the exposeInternalIds Vite plugin is configured.",
     );
   }
-  // Under vitest with no plugin id: assign a process-stable runtime id so a
-  // whole-app router with Static() routes constructs in a bare test. Never
-  // reached in a real build (the throw above fires there); staticHandlerId is
-  // read only during RSC serving (never in dispatch / assertGeneratedRoutesMatch),
-  // and the build static manifest keys on the plugin id. Mirrors createHandle /
-  // createLoader / Prerender.
   if (!id) {
     id = `__rango_runtime_static_${runtimeStaticIdCounter++}`;
   }
@@ -131,11 +111,6 @@ export function Static<TParams extends Record<string, any>>(
   };
 }
 
-// -- Type guard -------------------------------------------------------------
-
-/**
- * Type guard to check if a value is a StaticHandlerDefinition.
- */
 export function isStaticHandler(
   value: unknown,
 ): value is StaticHandlerDefinition {

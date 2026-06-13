@@ -126,7 +126,9 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/products");
 
-      expect(store.getItem).toHaveBeenCalledWith("loader:my-loader:/products");
+      expect(store.getItem).toHaveBeenCalledWith(
+        "loader:my-loader:localhost/products",
+      );
     });
 
     it("includes sorted params in default key", async () => {
@@ -138,8 +140,33 @@ describe("loader-cache", () => {
       await resolveLoaderData(entry, ctx, "/items");
 
       expect(store.getItem).toHaveBeenCalledWith(
-        "loader:loader-params:/items:a=first&z=last",
+        "loader:loader-params:localhost/items:a=first&z=last",
       );
+    });
+
+    it("isolates the default key by host (no cross-host loader-cache leak)", async () => {
+      // The route-level cache and "use cache" both key by host; the loader cache
+      // must too, or a multi-tenant host router serving the same pathname for two
+      // hosts would serve one host's cached loader data to the other.
+      const keyFor = async (host: string) => {
+        mockRequestCtx.url = { host, searchParams: new URLSearchParams() };
+        const store = createMockStore();
+        const loader = createMockLoader("tenant-loader");
+        await resolveLoaderData(
+          createLoaderEntry(loader, { store }),
+          createMockCtx(),
+          "/dashboard",
+        );
+        return (store.getItem as any).mock.calls[0][0] as string;
+      };
+
+      const keyA = await keyFor("a.example.com");
+      const keyB = await keyFor("b.example.com");
+      delete mockRequestCtx.url; // restore default host for the other tests
+
+      expect(keyA).toContain("a.example.com");
+      expect(keyB).toContain("b.example.com");
+      expect(keyA).not.toBe(keyB);
     });
 
     it("priority 1: options.key overrides default", async () => {
@@ -170,10 +197,10 @@ describe("loader-cache", () => {
 
       expect(store.keyGenerator).toHaveBeenCalledWith(
         mockRequestCtx,
-        "loader:loader-keygen:/products",
+        "loader:loader-keygen:localhost/products",
       );
       expect(store.getItem).toHaveBeenCalledWith(
-        "region:us:loader:loader-keygen:/products",
+        "region:us:loader:loader-keygen:localhost/products",
       );
     });
 
@@ -267,7 +294,7 @@ describe("loader-cache", () => {
 
       expect(result).toEqual(freshData);
       expect(store.setItem).toHaveBeenCalledWith(
-        "loader:miss-loader:/product",
+        "loader:miss-loader:localhost/product",
         JSON.stringify(freshData),
         expect.objectContaining({ ttl: 120 }),
       );
@@ -316,7 +343,7 @@ describe("loader-cache", () => {
       // The mock returns "null" (JSON.stringify(null)), which is not null,
       // so setItem should be called
       expect(store.setItem).toHaveBeenCalledWith(
-        "loader:null-loader:/nullable",
+        "loader:null-loader:localhost/nullable",
         "null",
         expect.objectContaining({ ttl: 60 }),
       );

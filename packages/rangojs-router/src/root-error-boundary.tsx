@@ -3,26 +3,17 @@
 import { Component, useState, type ReactNode } from "react";
 import type { ClientErrorBoundaryFallbackProps } from "./types.js";
 
-/**
- * Check if an error is a network-related error
- */
 function isNetworkError(error: Error): boolean {
   return error.name === "NetworkError";
 }
 
-/**
- * Network error fallback UI with retry functionality
- * Shows a connection-specific message and allows retrying via page refresh
- */
 function NetworkErrorFallback({
   error,
-  reset,
 }: ClientErrorBoundaryFallbackProps): ReactNode {
   const [isRetrying, setIsRetrying] = useState(false);
 
   const handleRetry = (): void => {
     setIsRetrying(true);
-    // Refresh the page to retry the request
     window.location.reload();
   };
 
@@ -42,7 +33,6 @@ function NetworkErrorFallback({
           marginBottom: "1rem",
         }}
       >
-        {/* Simple cloud with x icon using CSS */}
         <span style={{ color: "#9ca3af" }}>&#9729;</span>
       </div>
       <h1
@@ -101,10 +91,6 @@ function NetworkErrorFallback({
   );
 }
 
-/**
- * Default fallback UI for root error boundary
- * This is shown when an unhandled error bubbles up to the root
- */
 function RootErrorFallback({
   error,
   reset,
@@ -230,7 +216,6 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidMount(): void {
-    // Listen for popstate (back/forward navigation) to reset error state
     window.addEventListener("popstate", this.handlePopState);
   }
 
@@ -247,15 +232,13 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidUpdate(prevProps: { children: ReactNode }): void {
-    // Reset error state when children change (e.g., navigation)
-    // This allows the app to recover after navigation away from an errored route
+    // Reset error on children change (navigation).
     if (this.state.hasError && prevProps.children !== this.props.children) {
       this.setState({ hasError: false, error: null });
     }
   }
 
   handlePopState = (): void => {
-    // Reset error state on back/forward navigation
     if (this.state.hasError) {
       this.setState({ hasError: false, error: null });
     }
@@ -276,7 +259,6 @@ export class RootErrorBoundary extends Component<
         segmentType: "route" as const,
       };
 
-      // Use specialized fallback for network errors
       if (isNetworkError(this.state.error)) {
         return <NetworkErrorFallback error={errorInfo} reset={this.reset} />;
       }

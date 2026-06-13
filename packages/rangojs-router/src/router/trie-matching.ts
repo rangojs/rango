@@ -43,14 +43,12 @@ export function tryTrieMatch(
 ): TrieMatchResult | null {
   if (!trie) return null;
 
-  // Split pathname into segments, filtering empty strings from leading/trailing slashes
   const pathnameHasTrailingSlash =
     pathname.length > 1 && pathname.endsWith("/");
   const normalizedPath = pathnameHasTrailingSlash
     ? pathname.slice(0, -1)
     : pathname;
 
-  // Handle root path
   if (normalizedPath === "" || normalizedPath === "/") {
     if (trie.r) {
       return validateAndBuild(
@@ -77,10 +75,8 @@ export function tryTrieMatch(
     return null;
   }
 
-  // Remove leading slash and split
   const segments = normalizedPath.slice(1).split("/");
 
-  // Try exact match with normalized path (no trailing slash)
   const result = walkTrie(trie, segments, 0, []);
   if (result) {
     return validateAndBuild(
@@ -102,8 +98,58 @@ interface WalkResult {
 }
 
 /**
- * Walk the trie by segments with priority: static > param > wildcard.
- * Uses backtracking to try all possible matches.
+ * Check a leaf's constraints (leaf.cv) against already-resolved named params.
+ * Empty/undefined values are exempt (optional params that were not bound).
+ */
+function constraintsSatisfied(
+  leaf: TrieLeaf,
+  params: Record<string, string>,
+): boolean {
+  if (!leaf.cv) return true;
+  for (const paramName in leaf.cv) {
+    const allowed = leaf.cv[paramName]!;
+    const value = params[paramName];
+    if (value !== undefined && value !== "" && !allowed.includes(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Constraint check for a candidate terminal DURING the walk. Builds the named
+ * params from positional walk values (decoded the same way validateAndBuild
+ * does) and validates leaf.cv. Returning false lets walkTrie unwind to a
+ * lower-priority sibling instead of committing to a leaf that would only be
+ * rejected post-walk — that post-walk rejection is what forced the regex
+ * fallback (and its false "trie gap" R3 warning) for perfectly valid configs.
+ */
+function leafConstraintsPass(
+  leaf: TrieLeaf,
+  paramValues: string[],
+  wildcardValue: string | undefined,
+): boolean {
+  if (!leaf.cv) return true;
+  const params: Record<string, string> = {};
+  if (leaf.pa) {
+    for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
+      params[leaf.pa[i]] = safeDecodeURIComponent(paramValues[i]);
+    }
+  }
+  if (wildcardValue !== undefined && "pn" in leaf) {
+    params[(leaf as TrieLeaf & { pn: string }).pn] =
+      safeDecodeURIComponent(wildcardValue);
+  }
+  return constraintsSatisfied(leaf, params);
+}
+
+/**
+ * Walk the trie by segments with priority: static > suffix-param > param >
+ * wildcard (Priority 1-4 below; matches the canonical M4 ordering in
+ * docs/internal/matching-and-lazy-discovery.md).
+ * Uses backtracking to try all possible matches. Per-leaf constraints are
+ * enforced at each candidate terminal so a constraint miss backtracks to a
+ * lower-priority sibling rather than aborting the whole match.
  */
 function walkTrie(
   node: TrieNode,
@@ -111,9 +157,8 @@ function walkTrie(
   index: number,
   paramValues: string[],
 ): WalkResult | null {
-  // All segments consumed: check for terminal
   if (index === segments.length) {
-    if (node.r) {
+    if (node.r && leafConstraintsPass(node.r, paramValues, undefined)) {
       return { leaf: node.r, paramValues: [...paramValues] };
     }
     // A wildcard at this node matches the bare prefix with an empty remainder
@@ -122,7 +167,7 @@ function walkTrie(
     // so without this a request to the wildcard's own prefix misses the trie
     // and the regex fallback emits a corrupt redirect. A static terminal
     // (node.r) still wins.
-    if (node.w) {
+    if (node.w && leafConstraintsPass(node.w, paramValues, "")) {
       return { leaf: node.w, paramValues: [...paramValues], wildcardValue: "" };
     }
     return null;
@@ -131,13 +176,11 @@ function walkTrie(
   const segment = segments[index];
   const staticChild = node.s?.[segment];
 
-  // Priority 1: Static match
   if (staticChild) {
     const result = walkTrie(staticChild, segments, index + 1, paramValues);
     if (result) return result;
   }
 
-  // Priority 2: Suffix-param match (e.g., :productId.html)
   if (node.xp) {
     for (const suffix in node.xp) {
       if (segment.endsWith(suffix) && segment.length > suffix.length) {
@@ -155,7 +198,6 @@ function walkTrie(
     }
   }
 
-  // Priority 3: Param match
   if (node.p) {
     paramValues.push(segment);
     const result = walkTrie(node.p.c, segments, index + 1, paramValues);
@@ -163,14 +205,15 @@ function walkTrie(
     if (result) return result;
   }
 
-  // Priority 4: Wildcard match (consumes rest)
   if (node.w) {
     const rest = joinRemainingSegments(segments, index);
-    return {
-      leaf: node.w,
-      paramValues: [...paramValues],
-      wildcardValue: rest,
-    };
+    if (leafConstraintsPass(node.w, paramValues, rest)) {
+      return {
+        leaf: node.w,
+        paramValues: [...paramValues],
+        wildcardValue: rest,
+      };
+    }
   }
 
   return null;
@@ -196,10 +239,6 @@ function validateAndBuild(
   originalPathname: string,
   pathnameHasTrailingSlash: boolean,
 ): TrieMatchResult | null {
-  // Build named params by zipping leaf.pa with positional paramValues.
-  // Params are URL-decoded at this boundary so ctx.params holds the values
-  // apps expect (matching Express/React Router) and round-trip cleanly
-  // through ctx.reverse.
   const params: Record<string, string> = {};
   if (leaf.pa) {
     for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
@@ -207,31 +246,15 @@ function validateAndBuild(
     }
   }
 
-  // Add wildcard param (wildcard leaves have pn from TrieNode.w type)
   if (wildcardValue !== undefined && "pn" in leaf) {
     params[(leaf as TrieLeaf & { pn: string }).pn] =
       safeDecodeURIComponent(wildcardValue);
   }
 
-  // Validate constraints against decoded values so constraint lists can be
-  // written in decoded form (e.g. ["en-GB", "en US"]).
-  if (leaf.cv) {
-    for (const paramName in leaf.cv) {
-      const allowed = leaf.cv[paramName]!;
-      const value = params[paramName];
-      if (value !== undefined && value !== "" && !allowed.includes(value)) {
-        return null;
-      }
-    }
+  if (!constraintsSatisfied(leaf, params)) {
+    return null;
   }
 
-  // Optional params that weren't matched are left absent from `params` so
-  // `ctx.params.locale` reads as `undefined`, matching the
-  // `ExtractParams<"/:locale?/...">` type (`{ locale?: string }`). Both
-  // internal consumers — the constraint check above and `reverse()` —
-  // already treat missing/undefined as the absent form.
-
-  // Trailing slash handling
   const tsMode = leaf.ts as "never" | "always" | "ignore" | undefined;
   let redirectTo: string | undefined;
 

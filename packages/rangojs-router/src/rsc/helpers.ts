@@ -13,6 +13,7 @@ import { resolveLocationStateEntries } from "../browser/react/location-state-sha
 import { isRedirectResponse } from "../response-utils.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
+import type { RscPayload } from "./types.js";
 
 /**
  * DEVELOPMENT/TEST ONLY. When the debug cache signal gate is on,
@@ -183,6 +184,20 @@ export function interceptRedirectForPartial(
   carryOverRedirectHeaders(response, intercepted);
 
   return intercepted;
+}
+
+/**
+ * Attach location state set during a request to a payload's metadata.
+ * No-op if no location state was set. Callers must ensure payload.metadata
+ * is populated (the non-null assertion holds for the partial/action payloads
+ * that reach this helper).
+ */
+export function attachLocationStateIfPresent(payload: RscPayload): void {
+  const locationState = getLocationState();
+  if (locationState) {
+    payload.metadata!.locationState =
+      resolveLocationStateEntries(locationState);
+  }
 }
 
 /**

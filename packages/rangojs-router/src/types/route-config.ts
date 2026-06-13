@@ -7,47 +7,24 @@ export type DocumentProps = {
   children: ReactNode;
 };
 
-/**
- * Parse constraint values into a union type
- * "a|b|c" -> "a" | "b" | "c"
- */
 type ParseConstraint<T extends string> =
   T extends `${infer First}|${infer Rest}` ? First | ParseConstraint<Rest> : T;
 
-/**
- * Extract param info from a param segment
- *
- * Handles:
- * - :param -> { name: "param", optional: false, type: string }
- * - :param? -> { name: "param", optional: true, type: string }
- * - :param(a|b) -> { name: "param", optional: false, type: "a" | "b" }
- * - :param(a|b)? -> { name: "param", optional: true, type: "a" | "b" }
- */
 type ExtractParamInfo<T extends string> =
-  // Optional + constrained (with optional suffix): :param(a|b)?suffix
   T extends `${infer Name}(${infer Constraint})?${string}`
     ? { name: Name; optional: true; type: ParseConstraint<Constraint> }
-    : // Constrained (with optional suffix): :param(a|b)suffix
-      T extends `${infer Name}(${infer Constraint})${string}`
+    : T extends `${infer Name}(${infer Constraint})${string}`
       ? { name: Name; optional: false; type: ParseConstraint<Constraint> }
-      : // Optional (with optional suffix): :param?suffix
-        T extends `${infer Name}?${string}`
+      : T extends `${infer Name}?${string}`
         ? { name: Name; optional: true; type: string }
-        : // Param with dot-suffix: :param.html
-          T extends `${infer Name}.${string}`
+        : T extends `${infer Name}.${string}`
           ? { name: Name; optional: false; type: string }
-          : // Param with dash-suffix: :param-slug
-            T extends `${infer Name}-${string}`
+          : T extends `${infer Name}-${string}`
             ? { name: Name; optional: false; type: string }
-            : // Param with tilde-suffix: :param~v2
-              T extends `${infer Name}~${string}`
+            : T extends `${infer Name}~${string}`
               ? { name: Name; optional: false; type: string }
-              : // Required: :param (no suffix)
-                { name: T; optional: false; type: string };
+              : { name: T; optional: false; type: string };
 
-/**
- * Build param object from info
- */
 type ParamFromInfo<Info> = Info extends {
   name: infer N extends string;
   optional: true;
@@ -62,10 +39,6 @@ type ParamFromInfo<Info> = Info extends {
     ? { [K in N]: V }
     : never;
 
-/**
- * Merge two param objects preserving optionality
- * Uses Pick to preserve the modifiers from source types
- */
 type MergeParams<A, B> = Pick<A, keyof A> & Pick<B, keyof B> extends infer O
   ? { [K in keyof O]: O[K] }
   : never;
@@ -109,17 +82,11 @@ export type ExtractParams<
  */
 export type TrailingSlashMode = "never" | "always" | "ignore";
 
-/**
- * Route configuration object (alternative to string path)
- */
 export type RouteConfig = {
   path: string;
   trailingSlash?: TrailingSlashMode;
 };
 
-/**
- * Route definition options (global defaults)
- */
 export type RouteDefinitionOptions = {
   trailingSlash?: TrailingSlashMode;
 };
@@ -128,11 +95,6 @@ export type RouteDefinition = {
   [key: string]: string | RouteConfig | RouteDefinition;
 };
 
-/**
- * Recursively flatten nested routes with depth limit to prevent infinite recursion
- * Transforms: { products: { detail: "/product/:slug" } } => { "products.detail": "/product/:slug" }
- * Also handles RouteConfig objects: { api: { path: "/api" } } => { "api": "/api" }
- */
 type FlattenRoutes<
   T extends RouteDefinition,
   Prefix extends string = "",
@@ -153,18 +115,12 @@ type FlattenRoutes<
             : never;
     }[keyof T];
 
-/**
- * Union to intersection helper
- */
 type UnionToIntersection<U> = (
   U extends unknown ? (k: U) => void : never
 ) extends (k: infer I) => void
   ? I
   : never;
 
-/**
- * Resolved route map - flattened route definitions with full paths
- */
 export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<
   FlattenRoutes<T>
 >;

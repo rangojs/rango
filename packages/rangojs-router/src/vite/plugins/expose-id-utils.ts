@@ -8,21 +8,12 @@ export function normalizePath(p: string): string {
   return p.split(path.sep).join("/");
 }
 
-/**
- * Generate a short hash for an ID.
- * Uses first 8 chars of SHA-256 hash for uniqueness while keeping IDs short.
- * Appends export name for easier debugging in production: "abc123#ExportName"
- */
 export function hashId(filePath: string, exportName: string): string {
   const input = `${filePath}#${exportName}`;
   const hash = crypto.createHash("sha256").update(input).digest("hex");
   return `${hash.slice(0, 8)}#${exportName}`;
 }
 
-/**
- * Build a stable ID for an export binding. Uses hashed IDs in production
- * builds (short + opaque) and readable path#name IDs in dev.
- */
 export function makeStubId(
   filePath: string,
   exportName: string,
@@ -31,17 +22,6 @@ export function makeStubId(
   return isBuild ? hashId(filePath, exportName) : `${filePath}#${exportName}`;
 }
 
-/**
- * Generate an 8-char hex hash for an inline handler call site.
- *
- * Keyed on the source-order INDEX of the call (the Nth inline `fnName(...)` in
- * the file), NOT its line number. Line numbers shift between the prerender
- * build context and the production build context (preceding transforms differ,
- * e.g. plugin-react boilerplate), which would desync the prerender manifest key
- * from the runtime handler id and break prerender/static freezing. The
- * source-order index is invariant to line shifts; `fnName` keeps Static and
- * Prerender inline ids from colliding at the same index.
- */
 export function hashInlineId(
   filePath: string,
   fnName: string,
@@ -61,11 +41,6 @@ export interface DetectedImports {
   any: boolean;
 }
 
-/**
- * Build a map from local binding name to exported names by walking
- * ExportNamedDeclaration nodes. Handles `export const X`, `export { X }`,
- * and `export { X as Y }`. Skips re-exports (`export { X } from "..."`).
- */
 export function buildExportMap(program: any): Map<string, string[]> {
   const exportMap = new Map<string, string[]>();
 
@@ -105,10 +80,6 @@ export function buildExportMap(program: any): Map<string, string[]> {
   return exportMap;
 }
 
-/**
- * Single-pass detection of all create* imports from @rangojs/router.
- * Returns which create functions are imported so we can skip unnecessary transforms.
- */
 export function detectImports(code: string): DetectedImports {
   // Extract all import declarations from @rangojs/router in one scan
   const importPattern =
@@ -135,10 +106,6 @@ export function detectImports(code: string): DetectedImports {
     if (/\bcreateRouter\b/.test(imports)) result.router = true;
   }
 
-  // createRouter has a stricter check: only from "@rangojs/router" (not sub-paths).
-  // NOTE: This is intentional — detectImports is used as a fast pre-filter in
-  // exposeInternalIds (which does NOT handle router transforms). The separate
-  // exposeRouterId plugin handles createRouter and DOES accept the /server subpath.
   if (result.router) {
     result.router =
       /import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router["']/.test(
@@ -157,11 +124,6 @@ export function detectImports(code: string): DetectedImports {
   return result;
 }
 
-/**
- * Skip past a string literal, template literal, or comment starting at pos.
- * Returns the index after the closing delimiter, or pos if not at a
- * string/comment start. Handles escape sequences and nested ${} in templates.
- */
 export function skipStringOrComment(code: string, pos: number): number {
   const ch = code[pos];
 
@@ -219,11 +181,6 @@ export function skipStringOrComment(code: string, pos: number): number {
   return pos;
 }
 
-/**
- * Find the matching closing paren starting after an already-opened paren.
- * Skips strings, template literals, and comments so parens inside them
- * don't affect depth tracking. Returns the index after the closing paren.
- */
 export function findMatchingParen(code: string, startPos: number): number {
   let depth = 1;
   let i = startPos;
@@ -240,10 +197,6 @@ export function findMatchingParen(code: string, startPos: number): number {
   return i;
 }
 
-/**
- * Count the number of top-level arguments in a function call.
- * Skips nested parens, brackets, braces, strings, and comments.
- */
 export function countArgs(
   code: string,
   startPos: number,
@@ -279,10 +232,6 @@ export function countArgs(
   return hasContent ? argCount + 1 : 0;
 }
 
-/**
- * Find the end of a statement: skip whitespace and optional semicolon after
- * a closing paren position.
- */
 export function findStatementEnd(code: string, pos: number): number {
   let i = pos;
   while (i < code.length && /\s/.test(code[i])) {
@@ -294,10 +243,6 @@ export function findStatementEnd(code: string, pos: number): number {
   return i;
 }
 
-/**
- * Escape special regex characters in a string so it can be safely
- * interpolated into a RegExp pattern.
- */
 export function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

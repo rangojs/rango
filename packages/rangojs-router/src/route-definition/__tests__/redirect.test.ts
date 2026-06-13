@@ -176,4 +176,50 @@ describe("redirect()", () => {
       expect(spy).not.toHaveBeenCalled();
     });
   });
+
+  describe("basename auto-prefix", () => {
+    /** Run redirect() under a configured basename and return the Location header. */
+    function locationUnderBasename(
+      basename: string,
+      url: string,
+    ): string | null {
+      const reqUrl = new URL("https://example.com" + url);
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(reqUrl),
+        url: reqUrl,
+        variables: {},
+      });
+      ctx._basename = basename;
+      return runWithRequestContext(ctx, () =>
+        redirect(url).headers.get("Location"),
+      );
+    }
+
+    it("prefixes a bare app-local path", () => {
+      expect(locationUnderBasename("/admin", "/users")).toBe("/admin/users");
+    });
+
+    it("does not double-prefix an already-prefixed path", () => {
+      expect(locationUnderBasename("/admin", "/admin/users")).toBe(
+        "/admin/users",
+      );
+    });
+
+    it("does not double-prefix the basename followed directly by a query", () => {
+      expect(locationUnderBasename("/admin", "/admin?tab=x")).toBe(
+        "/admin?tab=x",
+      );
+    });
+
+    it("does not double-prefix the basename followed directly by a fragment", () => {
+      expect(locationUnderBasename("/admin", "/admin#frag")).toBe(
+        "/admin#frag",
+      );
+    });
+
+    it("maps the basename itself unchanged", () => {
+      expect(locationUnderBasename("/admin", "/admin")).toBe("/admin");
+    });
+  });
 });

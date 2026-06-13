@@ -52,6 +52,7 @@ vi.mock("../segment-resolution/helpers.js", () => ({
       }
     },
   ),
+  warnOnStreamedResponse: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------

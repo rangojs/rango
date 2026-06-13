@@ -8,15 +8,10 @@
  * See docs/manifests.md for the full data flow.
  */
 
-// Singleton route map instance - populated incrementally as routes are encountered
 let globalRouteMap: Record<string, string> = {};
 
-// Cached complete manifest - includes all routes (including lazy includes)
-// Set from runtime cache or build-time import
 let cachedManifest: Record<string, string> | null = null;
 
-// Pre-computed route entries from build-time prefix tree leaf nodes.
-// Used by evaluateLazyEntry() to skip running the handler for route matching.
 let cachedPrecomputedEntries: Array<{
   staticPrefix: string;
   routes: Record<string, string>;
@@ -43,7 +38,6 @@ export function registerRouteMap(map: Record<string, string>): void {
  * @internal
  */
 export function getGlobalRouteMap(): Record<string, string> {
-  // Cached manifest is complete (includes lazy routes), so prefer it
   if (cachedManifest) {
     return cachedManifest;
   }
@@ -231,10 +225,6 @@ export function waitForManifestReady(): Promise<void> | null {
   return manifestReadyPromise;
 }
 
-// ============================================================================
-// Route Scope Registry
-// ============================================================================
-
 // Tracks whether each route is at root scope (no named include boundary above).
 // Used by dot-local reverse resolution to decide whether bare-name fallback
 // is allowed after scoped lookups are exhausted.
@@ -259,14 +249,8 @@ export function isRouteRootScoped(routeName: string): boolean | undefined {
   return rootScopeRoutes.get(routeName);
 }
 
-// ============================================================================
-// Search Schema Registry
-// ============================================================================
-
 import type { SearchSchema } from "./search-params.js";
 
-// Global search schema map: route name -> search schema descriptor.
-// Populated by path() when a search option is provided.
 const globalSearchSchemas: Map<string, SearchSchema> = new Map();
 
 export function registerSearchSchema(

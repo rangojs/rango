@@ -111,6 +111,11 @@ function useSlotSegment(
  * the parallel segment with that slot name instead of the default content.
  * This is used for parallel routes and intercepting routes.
  *
+ * For a named slot, `<Outlet name="@x" />` is equivalent to
+ * `<ParallelOutlet name="@x" />` — both run the same resolution + wrapping
+ * pipeline. Convention: use bare `<Outlet />` for default content and
+ * `<ParallelOutlet name="@x" />` for named slots.
+ *
  * @param name - Optional slot name for parallel/intercept content (must start with @)
  *
  * @example
@@ -163,6 +168,9 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
  * is wrapped in Suspense with the loading component as fallback.
  * This enables streaming and navigation loading states for parallels.
  *
+ * Equivalent to `<Outlet name="@x" />` for a named slot; ParallelOutlet
+ * requires `name` and is named-slot-only, which reads clearer at the call site.
+ *
  * @param name - The slot name (must start with @, e.g., "@modal", "@sidebar")
  *
  * @example
@@ -186,10 +194,9 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
 }
 
 // OutletProvider is defined in outlet-provider.tsx to break a circular
-// dependency between client.tsx and route-content-wrapper.tsx.
-// Imported at the top of this file for local use in Outlet/ParallelOutlet,
-// and re-exported here for backwards compatibility.
-export { OutletProvider };
+// dependency between client.tsx and route-content-wrapper.tsx. It is imported
+// at the top of this file for local use in Outlet/ParallelOutlet only; it is an
+// internal component and is intentionally not part of the public ./client API.
 
 /**
  * Hook to access outlet content programmatically
@@ -210,7 +217,6 @@ export function useOutlet(): ReactNode {
   return context?.content ?? null;
 }
 
-// Loader hooks - re-exported from dedicated file
 export {
   useLoader,
   useFetchLoader,
@@ -329,12 +335,6 @@ export class ErrorBoundary extends Component<
   }
 }
 
-// ============================================================================
-// Re-exports from browser/react for convenience
-// These are the most commonly used client-side navigation utilities
-// ============================================================================
-
-// Navigation hooks
 export { useNavigation } from "./browser/react/use-navigation.js";
 export { useRouter } from "./browser/react/use-router.js";
 export { usePathname } from "./browser/react/use-pathname.js";
@@ -346,56 +346,48 @@ export type {
   ReadonlyURLSearchParams,
 } from "./browser/types.js";
 
-// Action state tracking hook
 export {
   useAction,
   type ServerActionFunction,
 } from "./browser/react/use-action.js";
 
-// Segments state hook
 export {
   useSegments,
   type SegmentsState,
 } from "./browser/react/use-segments.js";
 
-// Provider
 export {
   NavigationProvider,
   type NavigationProviderProps,
 } from "./browser/react/NavigationProvider.js";
 
-// Link component
 export {
   Link,
   type LinkProps,
   type PrefetchStrategy,
   type StateOrGetter,
+  type LinkState,
 } from "./browser/react/Link.js";
 
-// Link status hook
 export {
   useLinkStatus,
   type LinkStatus,
 } from "./browser/react/use-link-status.js";
 
-// Scroll restoration
 export {
   ScrollRestoration,
   useScrollRestoration,
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
 
-// Handle data hook (client-side only — createHandle/isHandle are server APIs from the root export)
 export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
 
-// Built-in handles
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
-// Location state - type-safe navigation state
 export {
   createLocationState,
   useLocationState,
@@ -404,29 +396,19 @@ export {
   type LocationStateOptions,
 } from "./browser/react/location-state.js";
 
-// Type-safe href for client-side path validation. The path and response types
-// are ambient as `Rango.Path` / `Rango.PathResponse` (declared in
-// href-client.ts) — no import needed.
+// Ambient Rango.Path / Rango.PathResponse types (declared in href-client.ts)
 export { href, type PatternToPath } from "./href-client.js";
 
-// Problem Details (RFC 9457) error body type for consuming JSON response routes.
-// On a non-2xx response, `await res.json()` yields this shape; on success the
-// body is the bare value (no envelope). Discriminate on `res.ok` / status.
+// RFC 9457 error type for JSON response routes
 export type { ProblemDetails } from "./urls.js";
 
-// Mount context for include() scoped components
 export { useMount } from "./browser/react/use-mount.js";
 export { MountContext } from "./browser/react/mount-context.js";
 
-// Mount-aware href hook - auto-prefixes paths with include() mount
 export { useHref } from "./browser/react/use-href.js";
 
-// Mount-aware reverse hook - resolves dot-prefixed names against an imported
-// generated routes map (from a urls() module's .gen.ts).
 export { useReverse } from "./browser/react/use-reverse.js";
 
-// Type-safe scoped reverse function for scopedReverse<typeof patterns>()
 export type { ScopedReverseFunction, LocalReverseFunction } from "./reverse.js";
 
-// Loader definition type - for typing loader props in client components
 export type { LoaderDefinition } from "./types.js";

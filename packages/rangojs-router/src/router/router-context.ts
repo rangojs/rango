@@ -54,10 +54,8 @@ export interface InterceptResult {
  * Instead of passing 20+ parameters, middleware calls getRouterContext() to access them.
  */
 export interface RouterContext<TEnv = any> {
-  // Route matching
   findMatch: (pathname: string) => RouteMatchResult | null;
 
-  // Manifest loading
   loadManifest: (
     entry: any,
     routeKey: string,
@@ -66,10 +64,8 @@ export interface RouterContext<TEnv = any> {
     isSSR?: boolean,
   ) => Promise<EntryData>;
 
-  // Entry traversal
   traverseBack: (entry: EntryData) => Generator<EntryData>;
 
-  // Handler context creation
   createHandlerContext: (
     params: Record<string, string>,
     request: Request,
@@ -83,7 +79,6 @@ export interface RouterContext<TEnv = any> {
     isPassthroughRoute?: boolean,
   ) => HandlerContext<any, TEnv>;
 
-  // Loader setup
   setupLoaderAccess: (
     ctx: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
@@ -94,7 +89,6 @@ export interface RouterContext<TEnv = any> {
     loaderPromises: Map<string, Promise<any>>,
   ) => void;
 
-  // Context access
   getContext: () => {
     getOrCreateStore: (key: string) => any;
     runWithStore: <T>(
@@ -105,16 +99,13 @@ export interface RouterContext<TEnv = any> {
     ) => T;
   };
 
-  // Metrics
   getMetricsStore: () => MetricsStore | undefined;
 
-  // Cache
   createCacheScope: (
     cacheConfig: any,
     parent: CacheScope | null,
   ) => CacheScope | null;
 
-  // Intercept detection
   findInterceptForRoute: (
     routeKey: string,
     parentEntry: EntryData | null,
@@ -122,7 +113,6 @@ export interface RouterContext<TEnv = any> {
     isAction: boolean,
   ) => InterceptResult | null;
 
-  // Segment resolution (with revalidation)
   resolveAllSegmentsWithRevalidation: (
     entries: EntryData[],
     routeKey: string,
@@ -166,12 +156,10 @@ export interface RouterContext<TEnv = any> {
     revalidationContext?: RevalidationContext,
   ) => Promise<ResolvedSegment[]>;
 
-  // Collect with markers
   collectWithMarkers?: <T>(
     gen: AsyncGenerator<T | { __type: "id"; id: string }>,
   ) => Promise<{ items: T[]; matchedIds: string[] }>;
 
-  // Revalidation evaluation
   evaluateRevalidation: (params: {
     segment: ResolvedSegment;
     prevParams: Record<string, string>;
@@ -195,7 +183,6 @@ export interface RouterContext<TEnv = any> {
       | "intercept-loader";
   }) => Promise<boolean>;
 
-  // Request context
   getRequestContext: () =>
     | {
         waitUntil: (fn: () => Promise<void>) => void;
@@ -203,7 +190,6 @@ export interface RouterContext<TEnv = any> {
       }
     | undefined;
 
-  // Simple segment resolution (without revalidation - for full match)
   resolveAllSegments: (
     entries: EntryData[],
     routeKey: string,
@@ -213,7 +199,6 @@ export interface RouterContext<TEnv = any> {
     options?: { skipLoaders?: boolean },
   ) => Promise<ResolvedSegment[]>;
 
-  // Generator-based simple resolution
   resolveAllSegmentsGenerator?: (
     entries: EntryData[],
     routeKey: string,
@@ -222,21 +207,17 @@ export interface RouterContext<TEnv = any> {
     loaderPromises: Map<string, Promise<any>>,
   ) => AsyncGenerator<ResolvedSegment | { __type: "id"; id: string }>;
 
-  // Collect segments from generator
   collectSegmentsFromGenerator?: <T>(
     gen: AsyncGenerator<T | { __type: "id"; id: string }>,
   ) => Promise<T[]>;
 
-  // Handle store
   createHandleStore: () => any;
 
-  // Loaders-only resolution (for full match cache hit - no revalidation)
   resolveLoadersOnly?: (
     entries: EntryData[],
     handlerContext: HandlerContext<any, TEnv>,
   ) => Promise<ResolvedSegment[]>;
 
-  // Loaders-only resolution (for cache hit scenarios)
   resolveLoadersOnlyWithRevalidation?: (
     entries: EntryData[],
     handlerContext: HandlerContext<any, TEnv>,
@@ -258,10 +239,8 @@ export interface RouterContext<TEnv = any> {
   // Telemetry sink (optional, no-op when undefined)
   telemetry?: TelemetrySink;
 
-  // Request ID for telemetry span correlation (set per-request in match handlers)
   requestId?: string;
 
-  // Intercept loaders only (for cache hit + intercept scenarios)
   resolveInterceptLoadersOnly?: (
     intercept: InterceptEntry,
     entry: EntryData,
@@ -284,7 +263,6 @@ export interface RouterContext<TEnv = any> {
   } | null>;
 }
 
-// AsyncLocalStorage instance for router context
 const routerContext = new AsyncLocalStorage<RouterContext<any>>();
 
 /**
@@ -308,10 +286,6 @@ export function getRouterContext<TEnv = any>(): RouterContext<TEnv> {
  *
  * All async code within fn() can call getRouterContext() to access router closures.
  * This works across async boundaries thanks to AsyncLocalStorage.
- *
- * @param deps Router dependencies to make available
- * @param fn Function to run with dependencies available
- * @returns Result of fn()
  */
 export function runWithRouterContext<T, TEnv = any>(
   deps: RouterContext<TEnv>,

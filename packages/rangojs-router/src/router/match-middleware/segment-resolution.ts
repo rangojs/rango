@@ -93,12 +93,6 @@ import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 
-/**
- * Check whether any entry in the tree uses loading() (streaming).
- * Matches the router's streaming semantics in fresh.ts: streaming is
- * enabled when `loading` is defined AND not `false`. `loading: false`
- * explicitly disables streaming; `undefined` means no loading at all.
- */
 export function treeHasStreaming(entries: EntryData[]): boolean {
   for (const entry of entries) {
     if (
@@ -130,12 +124,6 @@ export function treeHasStreaming(entries: EntryData[]): boolean {
   return false;
 }
 
-/**
- * Creates segment resolution middleware
- *
- * Only runs on cache miss (state.cacheHit === false).
- * Uses resolveAllSegmentsWithRevalidation from RouterContext to resolve segments.
- */
 export function withSegmentResolution<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
@@ -145,17 +133,12 @@ export function withSegmentResolution<TEnv>(
   ): AsyncGenerator<ResolvedSegment> {
     const ms = ctx.metricsStore;
 
-    // IMPORTANT: Always iterate source first to give cache-lookup a chance
-    // to run and set state.cacheHit. Without this, cache-lookup never executes!
     for await (const segment of source) {
       yield segment;
     }
 
-    // Measure own work only (after source iteration completes)
     const ownStart = performance.now();
 
-    // If cache hit, segments were already yielded by cache lookup
-    // (render barrier is resolved on the cache-hit path)
     if (state.cacheHit) {
       if (ms) {
         ms.metrics.push({
@@ -178,7 +161,6 @@ export function withSegmentResolution<TEnv>(
     const Store = ctx.Store;
 
     if (ctx.isFullMatch) {
-      // Full match (document request) - simple resolution without revalidation
       const segments = await Store.run(() =>
         resolveAllSegments(
           ctx.entries,
@@ -189,15 +171,12 @@ export function withSegmentResolution<TEnv>(
         ),
       );
 
-      // Update state with resolved segments
       state.segments = segments;
       state.matchedIds = segments.map((s: { id: string }) => s.id);
 
       if (reqCtx) {
         reqCtx._resolveRenderBarrier(segments);
       }
-
-      // Yield all resolved segments
       for (const segment of segments) {
         yield segment;
       }

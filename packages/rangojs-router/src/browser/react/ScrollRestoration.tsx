@@ -14,17 +14,21 @@ export interface ScrollRestorationProps {
    * Return location.pathname to restore scroll based on path
    * (useful for keeping scroll position on the same page).
    *
+   * Provide a stable reference: a module-level function or one wrapped in
+   * useCallback. The init effect re-runs when getKey's identity changes, and
+   * teardown clears in-memory scroll positions — a fresh inline arrow on every
+   * parent render would discard unpersisted positions mid-session.
+   *
    * @example
    * ```tsx
+   * // Stable module-level getKey (recommended)
+   * const byPathname = (location) => location.pathname;
+   *
    * // Restore based on pathname (same URL = same scroll)
-   * <ScrollRestoration
-   *   getKey={(location) => location.pathname}
-   * />
+   * <ScrollRestoration getKey={byPathname} />
    *
    * // Restore based on unique history entry (default)
-   * <ScrollRestoration
-   *   getKey={(location) => location.key}
-   * />
+   * // <ScrollRestoration /> — omit getKey to use location.key
    * ```
    */
   getKey?: (location: {

@@ -4,9 +4,6 @@
 
 import type { ResolvedThemeConfig, ThemeConfig } from "./types.js";
 
-/**
- * Default theme configuration values
- */
 export const THEME_DEFAULTS = {
   defaultTheme: "system",
   themes: ["light", "dark"],
@@ -16,9 +13,6 @@ export const THEME_DEFAULTS = {
   enableColorScheme: true,
 } as const;
 
-/**
- * Cookie configuration for theme persistence
- */
 export const THEME_COOKIE: {
   readonly maxAge: number;
   readonly path: string;
@@ -29,21 +23,15 @@ export const THEME_COOKIE: {
   sameSite: "lax",
 };
 
-/**
- * Resolve theme config by applying defaults.
- * Accepts `true` to enable with all defaults, or a config object.
- */
 export function resolveThemeConfig(
   config: ThemeConfig | true,
 ): ResolvedThemeConfig {
-  // Handle `theme: true` shorthand
   if (config === true) {
     config = {};
   }
 
   const themes = config.themes ?? [...THEME_DEFAULTS.themes];
 
-  // Build value mapping - default to identity mapping
   const value: Record<string, string> = {};
   for (const theme of themes) {
     value[theme] = config.value?.[theme] ?? theme;
