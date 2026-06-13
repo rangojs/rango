@@ -113,11 +113,11 @@ it("asserts a loader's set-cookie + redirect (runLoaderResult)", async () => {
 
 - `ctx.reverse(...)` throws unless you pass `routeMap` (and `routeName` for scoped `.name` resolution). It does NOT fall back to the global route map.
 - `ctx.rendered()` throws by default (the render barrier only exists in a full match); pass `{ rendered: true }` to mock it for post-barrier logic, and `{ handles: [[SomeHandle, data]] }` to seed `ctx.use(SomeHandle)`. `ctx.isAction(...)` is unavailable — cover those at e2e.
-- Dependency data from `loaders`/`use` is SEEDED, never executed; real loader execution and side-effects are e2e-only. `loaders` (by-reference tuples) is checked before the dynamic `use` resolver.
+- Seeded `loaders` (by-reference tuples) are NOT executed — `ctx.use(OtherLoader)` returns the seeded value. The dynamic `use` resolver, by contrast, IS executed (it is a function called to compute the value). Either way the REAL loader body is not run; real loader execution and side-effects are e2e-only. `loaders` is checked before the `use` resolver.
 - A handle imported through the CLIENT build has its body dropped — `runLoader` throws a clear error pointing to the `rangoTestConfig()` preset or the raw body. A router using `Prerender()`/`createLoader()`/`Static()` now constructs in a bare test (each assigns a runtime fallback `$$id`); only the whole router _file_ may still need the plugin (its page modules pull app deps / `virtual:` modules).
 - No `cookies`/`headers` option: seed a cookie by passing a full Request with a Cookie header — `{ request: new Request(url, { headers: { Cookie: "sid=abc" } }) }`. (`search`/`method` are baked onto this request for you.)
-- `ctx.search` (typed) defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`. Seed the typed object with `searchData`.
-- `ctx.theme`/`ctx.setTheme` are inert unless you pass `theme` (the `createRouter({ theme })` shape). `redirect()` does no basename prefixing unless you seed `basename`.
+- `ctx.search` (typed) defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`. Seed the typed object with `searchData`. (The harness seeds `searchData` verbatim — it does NOT run a typed-search SCHEMA, so schema parsing/validation is e2e.)
+- `ctx.theme`/`ctx.setTheme` are NOT on the loader context — theme accessors are handler-only. (The `theme` option seeds the underlying request context for `use cache` theme resolution, but a loader body cannot read theme.) `redirect()` does no basename prefixing unless you seed `basename`.
 - Platform bindings are yours to double via `env` (see `./bindings.md`).
 
 ## See also

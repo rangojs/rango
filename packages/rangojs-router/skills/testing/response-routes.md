@@ -86,6 +86,7 @@ describe("api routes via dispatch", () => {
 - Setup: needs the preset (alias + virtual stubs) or a Vite-RSC env (see `./setup.md`); a bare router import throws on Vite virtuals.
 - A router using `Prerender()`/`createLoader()`/`Static()` now constructs in a bare test (each assigns a runtime fallback `$$id`). Importing the whole router _file_ may still need the plugin (its page modules pull app deps / `virtual:` modules) — build from a focused include (your API routes) for whole-router dispatch.
 - A `_rsc_partial` request to a response route runs global middleware first (an auth gate can still 401/redirect), then returns `X-RSC-Reload` — route-level middleware is skipped, exactly like production.
+- `dispatch` does NOT execute server actions (`?_rsc_action`), but it DOES run the global middleware chain on an action request — middleware can still 401/redirect it, and any 3xx redirect on a partial OR action request becomes a `204` + `X-RSC-Redirect` (fetch-safe interception), the raw `Location` dropped.
 
 ## See also
 

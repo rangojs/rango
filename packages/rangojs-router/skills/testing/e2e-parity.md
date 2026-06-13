@@ -38,11 +38,12 @@ This is full-stack: the harness builds and serves your real app (`pnpm dev` or `
 
 ### expectParity options — `ExpectParityOptions`
 
-| Field     | Type                       | Meaning                                                                                                 |
-| --------- | -------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `observe` | `string[]`                 | data-testid values whose text must match across JS and no-JS.                                           |
-| `baseURL` | `string?`                  | Base URL for a relative `navigate` intent.                                                              |
-| `waitFor` | `(page) => Promise<void>?` | Post-intent settle hook on BOTH transports; for `submit` it REPLACES the generic change/stability wait. |
+| Field           | Type                               | Meaning                                                                                                                                                                                                                                                                         |
+| --------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observe`       | `string[]`                         | data-testid values whose text must match across JS and no-JS.                                                                                                                                                                                                                   |
+| `baseURL`       | `string?`                          | Base URL for a relative `navigate` intent.                                                                                                                                                                                                                                      |
+| `waitFor`       | `(page) => Promise<void>?`         | Post-intent settle hook on BOTH transports; for `submit` it REPLACES the generic change/stability wait.                                                                                                                                                                         |
+| `ignoreCookies` | `ReadonlyArray<string \| RegExp>?` | Cookie names to exclude from the JS/no-JS jar comparison (exact string or RegExp). The rango state cookie (default prefix `rango-state`) is ALWAYS excluded — it is client-only; use this for a custom `stateCookiePrefix` or other volatile/JS-only cookies (analytics, CSRF). |
 
 ### Returns
 
@@ -50,7 +51,7 @@ This is full-stack: the harness builds and serves your real app (`pnpm dev` or `
 
 - `useFixture(options)` -> `Fixture` (`{ mode, root, url(path?), proc() }`). `url(path)` resolves against the running server.
 - `parityDescribe(name, (f) => { ... }, options?)` -> registers a dev describe `name` AND a production describe `` `${name} (production)` ``. Body runs once per describe with that describe's `Fixture`.
-- `expectParity(page, intent, { observe }) => Promise<void>` — runs `intent` over the JS page and a fresh no-JS context, asserts observed testids' text + pathname/search/hash + `document.cookie` are equal.
+- `expectParity(page, intent, opts) => Promise<void>` — runs `intent` over the JS page and a fresh no-JS context, asserts observed testids' text + pathname/search/hash + `document.cookie` are equal. `opts` is the required `observe` plus optional `baseURL`, `waitFor`, and `ignoreCookies` (the rango state cookie is excluded automatically).
 - `rangoMatchers` — `{ toHaveRangoPathname }` only (pass to `expect.extend`).
 - `testNoJs` — a `test` variant with JavaScript disabled.
 - Page helpers: `waitForHydration`, `expectNoReload`, `expectNoPageError`, `testId`, `waitForNavigation`, `waitForElement`, `goBack`/`goForward`, `getHistoryState`, `waitForTextChange`/`waitForNumericChange`, timing helpers.

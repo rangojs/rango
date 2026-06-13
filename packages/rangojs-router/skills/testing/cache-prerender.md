@@ -1,6 +1,6 @@
 # Testing cache / SWR / prerender — assertCacheStatus
 
-**Layer:** e2e + signal · **Import:** `@rangojs/router/testing/e2e` (Playwright) or `@rangojs/router/testing` (telemetry sink) · **DSL it tests:** `cache()` / `"use cache"` / loader cache / `Prerender(...)` (see `/caching`, `/prerender`, `/use-cache`)
+**Layer:** e2e + signal · **Import:** the cache-status helpers (`assertCacheStatus`/`parseCacheHeader`/`createCacheSink`/`filterCacheDecisions`) are re-exported from BOTH entries — use `@rangojs/router/testing` from a Vitest unit/integration test, and `@rangojs/router/testing/e2e` from a plain Playwright runner (the e2e barrel avoids the Vite-only virtuals the main barrel pulls in). · **DSL it tests:** `cache()` / `"use cache"` / loader cache / `Prerender(...)` (see `/caching`, `/prerender`, `/use-cache`)
 
 The router's REAL cache pipeline runs (runtime cache, SWR revalidation, prerender lookup); you SEED nothing — you drive a request through the real fetch path and read the resulting cache decision. The decision surfaces two ways: the `X-Rango-Cache` response header (a debug gate) or a captured `cache.decision` telemetry event.
 

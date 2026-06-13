@@ -30,6 +30,8 @@ A handle's `collect`/accumulator (the `createHandle(collect)` argument that maps
 
 **Shape contrast:** `renderRoute` feeds the barrier INPUT (the pushes, `unknown[]`); `runLoader` feeds its OUTPUT (the single accumulated value, `unknown`).
 
+**Across navigation:** seeded `handles` are applied once at the initial render and PERSIST across `router.navigate()` within the same test (like `loaderData`) — unlike a real navigation, which re-runs handlers. A layout/page reading `useHandle` still resolves the seeded values after `navigate()`.
+
 ## Recipe
 
 ```ts
