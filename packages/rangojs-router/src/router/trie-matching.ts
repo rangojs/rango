@@ -15,10 +15,6 @@ export interface TrieMatchResult {
   sp: string;
   /** Matched route params */
   params: Record<string, string>;
-  /** Optional param names declared on the route. Absent params are omitted
-   * from `params` (read as `undefined`), matching the
-   * `ExtractParams<"/:locale?/...">` type. */
-  optionalParams?: string[];
   /** Redirect target if trailing slash requires it */
   redirectTo?: string;
   /** Route has pre-rendered data available */
@@ -182,6 +178,9 @@ function walkTrie(
   }
 
   if (node.xp) {
+    // node.xp keys are pre-sorted longest-suffix-first at build time
+    // (route-trie.ts sortSuffixParams), so the first match is the most specific
+    // suffix: `/app.min.js` matches `:file.min.js` before `:file.js`.
     for (const suffix in node.xp) {
       if (segment.endsWith(suffix) && segment.length > suffix.length) {
         const paramValue = segment.slice(0, -suffix.length);
@@ -274,7 +273,6 @@ function validateAndBuild(
     params,
   };
 
-  if (leaf.op) result.optionalParams = leaf.op;
   if (redirectTo) result.redirectTo = redirectTo;
   if (leaf.pr) result.pr = true;
   if (leaf.pt) result.pt = true;

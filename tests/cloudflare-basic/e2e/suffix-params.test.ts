@@ -66,6 +66,22 @@ test.describe("suffix params: /shop/:productId.html vs /shop/:categoryId", () =>
     await expect(testId(page, "shop-category-page")).toBeVisible();
     await expect(testId(page, "shop-category-id")).toHaveText("Category: sale");
   });
+
+  test("/shop/widget.archive.html matches the LONGER suffix, not .html", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/widget.archive.html"));
+    await waitForHydration(page);
+
+    // Longest-suffix-wins: must hit the .archive.html route with slug "widget",
+    // NOT the .html product route (which would capture "widget.archive").
+    await expect(testId(page, "shop-archive-page")).toBeVisible();
+    await expect(testId(page, "shop-archive-slug")).toHaveText(
+      "Archive: widget",
+    );
+  });
 });
 
 test.describe("suffix params: /shop/:productId.html vs /shop/:categoryId (production)", () => {
@@ -95,6 +111,20 @@ test.describe("suffix params: /shop/:productId.html vs /shop/:categoryId (produc
     await expect(testId(page, "shop-category-page")).toBeVisible();
     await expect(testId(page, "shop-category-id")).toHaveText(
       "Category: electronics",
+    );
+  });
+
+  test("/shop/widget.archive.html matches the LONGER suffix, not .html", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/widget.archive.html"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "shop-archive-page")).toBeVisible();
+    await expect(testId(page, "shop-archive-slug")).toHaveText(
+      "Archive: widget",
     );
   });
 });

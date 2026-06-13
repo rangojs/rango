@@ -96,7 +96,6 @@ function createMockRouter(
       entry: {},
       routeKey: "test",
       params: {},
-      optionalParams: new Set(),
       responseType: "json",
     })),
     previewMatch: vi.fn(async () => null),

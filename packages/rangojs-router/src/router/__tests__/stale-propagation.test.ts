@@ -240,7 +240,6 @@ describe("stale propagation through resolveAllSegmentsWithRevalidation (full pip
       new Request("http://localhost/"),
       new URL("http://localhost/prev"),
       new URL("http://localhost/next"),
-      new Map(),
       undefined, // actionContext
       null, // interceptResult
       "test.route",
@@ -273,7 +272,6 @@ describe("stale propagation through resolveAllSegmentsWithRevalidation (full pip
       new Request("http://localhost/"),
       new URL("http://localhost/prev"),
       new URL("http://localhost/next"),
-      new Map(),
       undefined,
       null,
       "test.route",

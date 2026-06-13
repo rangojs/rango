@@ -139,6 +139,24 @@ describe("trie vs regex matcher parity (stable surface)", () => {
       expect(regex(entries, "/docs/new")?.routeKey).toBe("param");
     });
 
+    it("M4 (suffix): trie picks the longest suffix; regex by declaration order", () => {
+      // Overlapping suffixes, shorter `.js` declared BEFORE `.min.js`.
+      const { trie, entries } = buildBoth({
+        js: "/assets/:file.js",
+        minjs: "/assets/:file.min.js",
+      });
+      // Trie (live matcher) picks the most specific suffix.
+      expect(tryTrieMatch(trie, "/assets/app.min.js")?.routeKey).toBe("minjs");
+      expect(tryTrieMatch(trie, "/assets/app.min.js")?.params).toEqual({
+        file: "app",
+      });
+      // Regex fallback matches the first-declared overlapping suffix.
+      expect(regex(entries, "/assets/app.min.js")?.routeKey).toBe("js");
+      expect(regex(entries, "/assets/app.min.js")?.params).toEqual({
+        file: "app.min",
+      });
+    });
+
     it("M3: trie serves the alternate slash with no redirect when no ts mode; regex canonicalizes", () => {
       const { trie, entries } = buildBoth({ foo: "/foo" });
       expect(norm(tryTrieMatch(trie, "/foo/"))).toEqual({

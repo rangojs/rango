@@ -74,7 +74,6 @@ export function parsePattern(pattern: string): ParsedSegment[] {
 export interface CompiledPattern {
   regex: RegExp;
   paramNames: string[];
-  optionalParams: Set<string>;
   hasTrailingSlash: boolean;
   /**
    * Param-name → allowed values for constrained params (e.g. `:lang(en|gb)`).
@@ -142,7 +141,6 @@ export function compilePattern(pattern: string): CompiledPattern {
 
   const segments = parsePattern(normalizedPattern);
   const paramNames: string[] = [];
-  const optionalParams = new Set<string>();
   let constraints: Record<string, string[]> | undefined;
 
   let regexPattern = "";
@@ -164,7 +162,6 @@ export function compilePattern(pattern: string): CompiledPattern {
       }
 
       if (segment.optional) {
-        optionalParams.add(segment.value);
         // Optional: make the whole /segment optional
         regexPattern += `(?:/${valuePattern}${suffixPattern})?`;
       } else {
@@ -202,7 +199,6 @@ export function compilePattern(pattern: string): CompiledPattern {
   return {
     regex: new RegExp(`^${regexPattern}$`),
     paramNames,
-    optionalParams,
     hasTrailingSlash,
     ...(constraints ? { constraints } : {}),
   };
@@ -325,8 +321,8 @@ export function joinPrefix(base: string | undefined, prefix: string): string {
  *
  * Note: Optional params that are absent in the path are omitted from the
  * returned `params` (read as `undefined`), matching the trie matcher and
- * the `ExtractParams<"/:locale?/...">` type. Use the pattern definition or
- * `optionalParams` to determine which keys are optional.
+ * the `ExtractParams<"/:locale?/...">` type. Use the pattern definition to
+ * determine which keys are optional.
  *
  * Trailing slash handling (priority order):
  * 1. Per-route `trailingSlash` config from route()
@@ -344,7 +340,6 @@ export interface RouteMatchResult<TEnv = any> {
   entry: RouteEntry<TEnv>;
   routeKey: string;
   params: Record<string, string>;
-  optionalParams: Set<string>;
   redirectTo?: string;
   /** Route has pre-rendered data available (from trie) */
   pr?: true;
@@ -463,13 +458,8 @@ export function findMatch<TEnv>(
         fullPattern = entry.prefix + pattern;
       }
 
-      const {
-        regex,
-        paramNames,
-        optionalParams,
-        hasTrailingSlash,
-        constraints,
-      } = getCompiledPattern(fullPattern);
+      const { regex, paramNames, hasTrailingSlash, constraints } =
+        getCompiledPattern(fullPattern);
 
       const trailingSlashMode: TrailingSlashMode | undefined =
         entry.trailingSlash?.[routeKey];
@@ -506,7 +496,6 @@ export function findMatch<TEnv>(
             entry,
             routeKey,
             params,
-            optionalParams,
             redirectTo: pathname + "/",
             ...prFlag,
             ...ptFlag,
@@ -516,7 +505,6 @@ export function findMatch<TEnv>(
             entry,
             routeKey,
             params,
-            optionalParams,
             redirectTo: pathname.slice(0, -1),
             ...prFlag,
             ...ptFlag,
@@ -527,7 +515,6 @@ export function findMatch<TEnv>(
           entry,
           routeKey,
           params,
-          optionalParams,
           ...prFlag,
           ...ptFlag,
         };
@@ -546,7 +533,6 @@ export function findMatch<TEnv>(
             entry,
             routeKey,
             params,
-            optionalParams,
             ...prFlag,
             ...ptFlag,
           };
@@ -556,7 +542,6 @@ export function findMatch<TEnv>(
               entry,
               routeKey,
               params,
-              optionalParams,
               redirectTo: alternatePathname,
               ...prFlag,
               ...ptFlag,
@@ -566,7 +551,6 @@ export function findMatch<TEnv>(
             entry,
             routeKey,
             params,
-            optionalParams,
             ...prFlag,
             ...ptFlag,
           };
@@ -576,7 +560,6 @@ export function findMatch<TEnv>(
               entry,
               routeKey,
               params,
-              optionalParams,
               redirectTo: alternatePathname,
               ...prFlag,
               ...ptFlag,
@@ -586,7 +569,6 @@ export function findMatch<TEnv>(
             entry,
             routeKey,
             params,
-            optionalParams,
             ...prFlag,
             ...ptFlag,
           };
@@ -598,7 +580,6 @@ export function findMatch<TEnv>(
             entry,
             routeKey,
             params,
-            optionalParams,
             redirectTo: canonicalPath,
             ...prFlag,
             ...ptFlag,

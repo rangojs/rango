@@ -46,6 +46,7 @@ import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { prerenderLoadingPatterns } from "./urls/prerender-loading.js";
 import { loadingRedirectPatterns } from "./urls/loading-redirect.js";
+import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { clientReversePatterns } from "./urls/client-reverse.js";
 import { useCachePatterns } from "./urls/use-cache.js";
@@ -898,6 +899,12 @@ export const urlpatterns = urls(
       // a real HTTP redirect before the streamed loading() boundary takes over.
       include("/loading-redirect", loadingRedirectPatterns, {
         name: "loadingRedirect",
+      }),
+
+      // Suffix-param longest-wins (#568): overlapping suffixes resolve by
+      // specificity, not declaration order.
+      include("/suffix-overlap", suffixOverlapPatterns, {
+        name: "suffixOverlap",
       }),
 
       // Reverse auto-fill test patterns (parameterized include prefix)

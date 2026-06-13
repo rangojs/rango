@@ -17,3 +17,14 @@ export function ShopCategoryPage(ctx: HandlerContext<{ categoryId: string }>) {
     </div>
   );
 }
+
+// Archive page — tests the LONGER overlapping suffix `.archive.html` against the
+// shorter `.html`. /shop/x.archive.html must match here (slug "x"), not the
+// .html product route (which would capture "x.archive"). Longest-suffix-wins.
+export function ShopArchivePage(ctx: HandlerContext<{ slug: string }>) {
+  return (
+    <div data-testid="shop-archive-page">
+      <h1 data-testid="shop-archive-slug">Archive: {ctx.params.slug}</h1>
+    </div>
+  );
+}

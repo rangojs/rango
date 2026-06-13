@@ -193,7 +193,6 @@ export function withSegmentResolution<TEnv>(
           ctx.request,
           ctx.prevUrl,
           ctx.url,
-          ctx.loaderPromises,
           ctx.actionContext,
           ctx.interceptResult,
           ctx.localRouteName,

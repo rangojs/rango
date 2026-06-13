@@ -110,7 +110,6 @@ export function createFindMatch<TEnv = any>(
             entry,
             routeKey: trieResult.routeKey,
             params: trieResult.params,
-            optionalParams: new Set(trieResult.optionalParams || []),
             redirectTo: trieResult.redirectTo,
             ...(trieResult.pr ? { pr: true } : {}),
             ...(trieResult.pt ? { pt: true } : {}),

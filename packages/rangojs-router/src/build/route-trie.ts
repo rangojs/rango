@@ -22,9 +22,6 @@ export interface TrieLeaf {
   sp: string;
   /** Ancestry shortCodes from root to route [M0L0, M0L0L0, M0L0L0R499] */
   a: string[];
-  /** Optional param names declared on the route. Absent params are
-   * omitted from the matched params record (read as `undefined`). */
-  op?: string[];
   /** Constraint validation: paramName -> allowed values */
   cv?: Record<string, string[]>;
   /** Ordered param names for this route (positional) */
@@ -100,7 +97,47 @@ export function buildRouteTrie(
     });
   }
 
+  sortSuffixParams(root);
   return root;
+}
+
+/**
+ * Sort every node's suffix-param map (`node.xp`) by descending suffix length so
+ * the matcher tries the most specific suffix first. Overlapping suffixes like
+ * `.min.js` and `.js` must resolve by specificity, not route declaration order:
+ * a request for `/app.min.js` should match `:file.min.js`, not `:file.js`.
+ *
+ * This started as a bug — `walkTrie` iterates `node.xp` in object order and
+ * returns the first suffix the segment ends with, so the winner depended on
+ * which route was declared first. Sorting at build time fixes it allocation-free
+ * on the match hot path: the serialized production trie preserves this key order
+ * through JSON.parse, so dev (per-request rebuild) and production match
+ * identically. Array.prototype.sort is stable (ES2019+), so equal-length
+ * suffixes keep their declaration order — the router's existing tiebreak.
+ */
+function sortSuffixParams(node: TrieNode): void {
+  if (node.xp) {
+    const sorted: Record<string, { n: string; c: TrieNode }> = {};
+    for (const suffix of Object.keys(node.xp).sort(
+      (a, b) => b.length - a.length,
+    )) {
+      sorted[suffix] = node.xp[suffix];
+    }
+    node.xp = sorted;
+  }
+  if (node.s) {
+    for (const child of Object.values(node.s)) {
+      sortSuffixParams(child);
+    }
+  }
+  if (node.p) {
+    sortSuffixParams(node.p.c);
+  }
+  if (node.xp) {
+    for (const child of Object.values(node.xp)) {
+      sortSuffixParams(child.c);
+    }
+  }
 }
 
 /**
@@ -158,18 +195,14 @@ function insertRoute(
   node: TrieNode,
   segments: ParsedSegment[],
   index: number,
-  leaf: Omit<TrieLeaf, "op" | "cv" | "pa">,
+  leaf: Omit<TrieLeaf, "cv" | "pa">,
 ): void {
-  // op (full optional list) and cv (full constraint map) are route-level and
-  // identical on every terminal, so compute them once on the shared base.
-  const optionalParams: string[] = [];
+  // cv (full constraint map) is route-level and identical on every terminal,
+  // so compute it once on the shared base.
   const constraints: Record<string, string[]> = {};
 
   for (const seg of segments) {
     if (seg.type === "param") {
-      if (seg.optional) {
-        optionalParams.push(seg.value);
-      }
       if (seg.constraint) {
         constraints[seg.value] = seg.constraint;
       }
@@ -178,7 +211,6 @@ function insertRoute(
 
   const leafBase: Omit<TrieLeaf, "pa"> = {
     ...leaf,
-    ...(optionalParams.length > 0 ? { op: optionalParams } : {}),
     ...(Object.keys(constraints).length > 0 ? { cv: constraints } : {}),
   };
 

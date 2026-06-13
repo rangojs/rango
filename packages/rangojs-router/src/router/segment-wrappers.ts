@@ -68,7 +68,6 @@ export interface SegmentWrappers<TEnv = any> {
     request: Request,
     prevUrl: URL,
     nextUrl: URL,
-    loaderPromises: Map<string, Promise<any>>,
     actionContext:
       | {
           actionId?: string;
@@ -192,7 +191,6 @@ export function createSegmentWrappers<TEnv = any>(
     request: Request,
     prevUrl: URL,
     nextUrl: URL,
-    loaderPromises: Map<string, Promise<any>>,
     actionContext:
       | {
           actionId?: string;
@@ -216,7 +214,6 @@ export function createSegmentWrappers<TEnv = any>(
       request,
       prevUrl,
       nextUrl,
-      loaderPromises,
       actionContext,
       interceptResult,
       localRouteName,
