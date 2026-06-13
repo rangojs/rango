@@ -178,8 +178,8 @@ export async function initBrowserApp(
 
   // Register the active store on the module-level handle and wire the
   // jar-divergence observer before any getRangoState() read can detect a
-  // cross-tab/server rotation. The real boot path never populates the
-  // getNavigationStore() singleton, so this handle is the live reference.
+  // cross-tab/server rotation. There is no global store singleton, so this
+  // handle is the live reference.
   registerNavigationStore(store);
 
   // Seed router identity from the initial SSR payload so the first
