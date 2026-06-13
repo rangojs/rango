@@ -402,8 +402,12 @@ export async function runLoader<T>(
  * `@internal` request context.
  */
 export interface RunLoaderResult<T> {
-  /** The loader's resolved data, or `undefined` if it threw (see {@link thrown}). */
-  data: T | undefined;
+  /**
+   * The loader's resolved data (the value bare `runLoader` returns), or
+   * `undefined` if it threw (see {@link thrown}). Named `result` for parity with
+   * `runInRequestContext`'s envelope.
+   */
+  result: T | undefined;
   /**
    * What the loader threw (commonly a `Response` from `throw redirect(...)` on a
    * success path) — captured, NOT re-thrown; assert on it. `undefined` if the
@@ -454,10 +458,10 @@ export async function runLoaderResult<T>(
     buildLoaderCtxOpts(opts),
   );
   const reqCtx = ctx as RequestContext<any>;
-  let data: T | undefined;
+  let result: T | undefined;
   let thrown: unknown;
   try {
-    data = await runWithLoaderContext(reqCtx, opts, (loaderCtx) =>
+    result = await runWithLoaderContext(reqCtx, opts, (loaderCtx) =>
       Promise.resolve(loaderFn(loaderCtx)),
     );
   } catch (error) {
@@ -466,5 +470,5 @@ export async function runLoaderResult<T>(
     // stay observable (parity with runInRequestContext).
     thrown = error;
   }
-  return { data, ...buildRunSnapshot(reqCtx, thrown, stateCookieName) };
+  return { result, ...buildRunSnapshot(reqCtx, thrown, stateCookieName) };
 }

@@ -213,8 +213,16 @@ async function settleSubmit(
         `\`observe\`, or pass \`waitFor\` to express the precise post-submit wait.`,
     );
   }
-  // Landed but never stabilized within the ceiling: fall through and snapshot
-  // the last-read state; the parity equality assertion surfaces any mismatch.
+  // Landed but never stabilized within the ceiling: warn (so a slow/flaky action
+  // is visible rather than silently snapshotting a mid-flight DOM), then fall
+  // through and snapshot the last-read state — the parity equality assertion
+  // still surfaces any JS-vs-no-JS mismatch. A throw here would risk failing a
+  // slow-but-correct submit, so this stays a warning.
+  console.warn(
+    `expectParity: the observed testids [${observe.join(", ")}] did not stabilize ` +
+      `within 5s; snapshotting the last-read state. If this is flaky, pass ` +
+      `\`waitFor\` to express the precise post-submit wait.`,
+  );
 }
 
 async function snapshot(
@@ -223,7 +231,13 @@ async function snapshot(
 ): Promise<ParitySnapshot> {
   const testIds: Record<string, string | null> = {};
   for (const id of observe) {
-    testIds[id] = await page.locator(`[data-testid="${id}"]`).textContent();
+    // Match readObserved: .first() (a testid may repeat) + .catch (a missing
+    // testid yields null, not an unhandled rejection).
+    testIds[id] = await page
+      .locator(`[data-testid="${id}"]`)
+      .first()
+      .textContent()
+      .catch(() => null);
   }
   return {
     testIds,

@@ -48,6 +48,34 @@ describe("renderRoute handles seeding runs the real collect", () => {
       expect(getByTestId("title").textContent).toBe("C");
     });
   });
+
+  it("keeps seeded handles resolvable across router.navigate() (#20)", async () => {
+    // Handles are seeded once at initial render and persist across navigate()
+    // within the test (like loaderData) — unlike a real navigation, which would
+    // re-run handlers. Pin that a handle still resolves after navigate().
+    const Crumbs = createHandle<string, string>((segments) =>
+      segments.flat().join(" > "),
+    );
+    function View() {
+      const { id } = useParams<{ id: string }>();
+      return (
+        <div>
+          <span data-testid="id">{id}</span>
+          <span data-testid="crumbs">{useHandle(Crumbs)}</span>
+        </div>
+      );
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/users/:id", Component: View }],
+      { request: "/users/alice", handles: [[Crumbs, ["Home", "Users"]]] },
+    );
+    expect(getByTestId("crumbs").textContent).toBe("Home > Users");
+
+    await router.navigate("/users/bob");
+
+    expect(getByTestId("id").textContent).toBe("bob");
+    expect(getByTestId("crumbs").textContent).toBe("Home > Users");
+  });
 });
 
 describe("renderRoute", () => {
@@ -279,6 +307,33 @@ describe("renderRoute mount (include() scope)", () => {
       { mount: "/shop", request: "/shop" },
     );
     expect(getByTestId("mount").textContent).toBe("/shop");
+  });
+
+  it("models a locale-parameterized include (mount = a resolved /:locale? value) (#25)", async () => {
+    // include('/:locale?', subApp) mounts the sub-app under a RESOLVED locale
+    // prefix (e.g. "/en"). Seeding mount: "/en" reproduces that: useReverse /
+    // useHref inside the sub-app prefix by the locale, so a reversed link keeps
+    // it — the locale-prefixed-routes pattern, end to end.
+    function LocalePage() {
+      const reverse = useReverse({ product: "/c/:slug" });
+      const href = useHref();
+      return (
+        <div>
+          <span data-testid="mount">{useMount()}</span>
+          <a data-testid="rev" href={reverse("product", { slug: "wine" })}>
+            x
+          </a>
+          <span data-testid="href">{href("/c/wine")}</span>
+        </div>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/:slug", Component: LocalePage }],
+      { mount: "/en", request: "/c/wine" },
+    );
+    expect(getByTestId("mount").textContent).toBe("/en");
+    expect(getByTestId("rev").getAttribute("href")).toBe("/en/c/wine");
+    expect(getByTestId("href").textContent).toBe("/en/c/wine");
   });
 });
 

@@ -100,8 +100,26 @@ export interface CreateTestContextOptions<TEnv> {
   stateCookie?: StateCookieSeed;
 }
 
+/**
+ * The seeded RequestContext with its `reverse` RELAXED to accept any route NAME
+ * from the `routeMap` you passed, rather than the global `Rango.GeneratedRouteMap`
+ * union — so reversing a test-only route name is not a type error (it works at
+ * runtime; the names come from your `routeMap`). Mirrors runLoader's
+ * `TestLoaderContext.reverse`. Everything else is the real `RequestContext`.
+ */
+export type TestRequestContextObject<TEnv> = Omit<
+  RequestContext<TEnv>,
+  "reverse"
+> & {
+  reverse: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string;
+};
+
 export interface TestRequestContext<TEnv> {
-  ctx: RequestContext<TEnv>;
+  ctx: TestRequestContextObject<TEnv>;
   request: Request;
   url: URL;
   variables: Record<string, unknown>;
@@ -156,7 +174,17 @@ export function createTestRequestContext<TEnv>(
       opts.params ?? {},
     ) as RequestContext<TEnv>["reverse"];
   }
-  return { ctx, request, url, variables, stateCookieName };
+  // ctx.reverse is assigned the routeMap-scoped reverse (string-accepting) above;
+  // expose it through the relaxed type so a test reverses a local route name
+  // without casting. The runtime value matches; RequestContext's reverse is
+  // declared against the narrower global route-name union, hence the cast.
+  return {
+    ctx: ctx as unknown as TestRequestContextObject<TEnv>,
+    request,
+    url,
+    variables,
+    stateCookieName,
+  };
 }
 
 /**

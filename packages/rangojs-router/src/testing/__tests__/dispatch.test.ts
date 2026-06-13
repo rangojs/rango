@@ -828,6 +828,29 @@ describe("dispatch", () => {
       expect(res.headers.get("Location")).toBeNull();
     });
 
+    it("converts a middleware 302 on a _rsc_action request to 204 + X-RSC-Redirect", async () => {
+      // interceptRedirectForPartial runs on partial AND action requests alike, so
+      // a middleware redirect on an action request (?_rsc_action=1) must also
+      // become a 204 + X-RSC-Redirect (dispatch does not execute the action
+      // itself, but the global middleware chain still runs and can redirect).
+      const redirectMw: MiddlewareFn = async () =>
+        new Response(null, { status: 302, headers: { Location: "/login" } });
+      const router = createRouter<{}>({})
+        .use(redirectMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, {
+        request: "/api/data?_rsc_action=1",
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      expect(res.headers.get("Location")).toBeNull();
+    });
+
     it("fires ctx.onResponse() when global middleware short-circuits", async () => {
       // Production drains onResponse via finalizeResponse on every global-chain
       // exit (handler.ts:499-501). A middleware that registers an onResponse

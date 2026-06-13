@@ -102,6 +102,7 @@ export {
 export type {
   CreateTestContextOptions,
   TestRequestContext,
+  TestRequestContextObject,
   RunInRequestContextResult,
   VarsInit,
   StateCookieSeed,

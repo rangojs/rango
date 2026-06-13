@@ -123,6 +123,14 @@ export interface RunMiddlewareResult<TEnv = any> {
    * and `renderHandler`.
    */
   locationState: Record<string, unknown>;
+  /**
+   * The resolved rango state cookie name seeded for the run (default
+   * `rango-state_router_0`, or composed from `opts.stateCookie`). Assert a
+   * middleware's `invalidateClientCache()` rotation against it without
+   * recomputing — parity with `runInRequestContext` / `runLoaderResult` /
+   * `renderHandler`.
+   */
+  stateCookieName: string;
 }
 
 /**
@@ -164,6 +172,7 @@ export async function runMiddleware<TEnv = any>(
     ctx,
     request: builtRequest,
     variables,
+    stateCookieName,
   } = createTestRequestContext<TEnv>(ctxOpts);
 
   let nextCalled = 0;
@@ -210,5 +219,13 @@ export async function runMiddleware<TEnv = any>(
 
   const { cookies, locationState } = snapshotRunEffects(ctx);
   const headers = headersToObject(response.headers);
-  return { response, ctx, nextCalled, cookies, headers, locationState };
+  return {
+    response,
+    ctx,
+    nextCalled,
+    cookies,
+    headers,
+    locationState,
+    stateCookieName,
+  };
 }

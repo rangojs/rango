@@ -78,6 +78,19 @@ if (cfg.alias.length !== 5) throw new Error("expected 5 aliases, got " + cfg.ali
 if (!cfg.server.deps.inline.length) throw new Error("missing server.deps.inline");
 if (!cfg.alias.every((a) => existsSync(a.replacement)))
   throw new Error("alias targets do not resolve to shipped src files");
+// The load-bearing alias: bare @rangojs/router -> its react-server build, so a
+// handler/component reading getRequestContext()/cookies() resolves the real impl
+// (not the throwing out-of-react-server stub). resolve.conditions alone does not
+// reliably do this for bare-package export resolution, so this alias MUST exist.
+const bareToRsc = cfg.alias.some((a) => {
+  const m =
+    a.find instanceof RegExp
+      ? a.find.test("@rangojs/router")
+      : a.find === "@rangojs/router";
+  return m && a.replacement.endsWith("index.rsc.ts");
+});
+if (!bareToRsc)
+  throw new Error("bare @rangojs/router must alias to index.rsc.ts");
 console.log("QUICKSTART_OK");
 `,
         );

@@ -324,4 +324,15 @@ describe("runWithRequestContext re-export", () => {
     );
     expect(sid).toBe("zzz");
   });
+
+  it("ctx.reverse accepts a local routeMap name without a cast (T8)", () => {
+    // The returned ctx.reverse is typed (TestRequestContextObject) against the
+    // routeMap you pass, NOT the global Rango.GeneratedRouteMap — so reversing a
+    // test-only route name type-checks (pre-T8 it errored and forced a cast).
+    // This call compiling is itself the assertion; the value confirms runtime.
+    const { ctx } = createTestRequestContext({
+      routeMap: { "test-only": "/t/:id" },
+    });
+    expect(ctx.reverse("test-only", { id: "9" })).toBe("/t/9");
+  });
 });

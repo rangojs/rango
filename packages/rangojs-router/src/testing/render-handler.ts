@@ -134,6 +134,19 @@ export interface RenderHandlerResult {
  */
 class RenderHandlerSetupError extends Error {}
 
+// Local copy (not imported from internal/context.ts): that module is the NODE
+// tier and is deliberately NOT react-server-safe (the reason seed-vars.ts was
+// split out), and render-handler ships from the react-server ./testing/flight
+// entry. A 6-line pure projection is cheaper to duplicate than to route a
+// shared util across that boundary.
+function headersToObject(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    if (name.toLowerCase() !== "set-cookie") out[name] = value;
+  });
+  return out;
+}
+
 /**
  * Detect the server-only-API stub throw: when a handler/component imports
  * getRequestContext()/cookies()/etc. from the BARE `@rangojs/router` specifier
@@ -149,14 +162,6 @@ function isServerOnlyStubError(error: unknown): boolean {
     error.message.includes("is only available from") &&
     error.message.includes("react-server")
   );
-}
-
-function headersToObject(headers: Headers): Record<string, string> {
-  const out: Record<string, string> = {};
-  headers.forEach((value, name) => {
-    if (name.toLowerCase() !== "set-cookie") out[name] = value;
-  });
-  return out;
 }
 
 function toRequest(

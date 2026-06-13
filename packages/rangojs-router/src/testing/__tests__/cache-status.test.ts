@@ -18,28 +18,32 @@ describe("parseCacheHeader", () => {
   });
 
   it("parses a single entry", () => {
-    expect(parseCacheHeader("/products/:id=hit")).toEqual({
-      "/products/:id": "hit",
+    expect(parseCacheHeader("product.detail=hit")).toEqual({
+      "product.detail": "hit",
     });
   });
 
   it("parses multiple comma-separated entries", () => {
-    expect(parseCacheHeader("/a=hit, /b=stale, /c=miss")).toEqual({
-      "/a": "hit",
-      "/b": "stale",
-      "/c": "miss",
+    expect(
+      parseCacheHeader("route.a=hit, route.b=stale, route.c=miss"),
+    ).toEqual({
+      "route.a": "hit",
+      "route.b": "stale",
+      "route.c": "miss",
     });
   });
 
   it("tolerates surrounding whitespace and trailing commas", () => {
-    expect(parseCacheHeader("  /a = hit ,  /b=miss ,")).toEqual({
-      "/a": "hit",
-      "/b": "miss",
+    expect(parseCacheHeader("  route.a = hit ,  route.b=miss ,")).toEqual({
+      "route.a": "hit",
+      "route.b": "miss",
     });
   });
 
   it("ignores malformed entries without a status", () => {
-    expect(parseCacheHeader("/a, /b=hit, =miss")).toEqual({ "/b": "hit" });
+    expect(parseCacheHeader("route.a, route.b=hit, =miss")).toEqual({
+      "route.b": "hit",
+    });
   });
 });
 
@@ -51,40 +55,46 @@ describe("assertCacheStatus", () => {
   }
 
   it("passes when the segment matches the expected status", () => {
-    const res = responseWith("/products/:id=hit");
-    expect(() => assertCacheStatus(res, "/products/:id", "hit")).not.toThrow();
+    const res = responseWith("product.detail=hit");
+    expect(() => assertCacheStatus(res, "product.detail", "hit")).not.toThrow();
   });
 
   it("works against a plain { headers } target", () => {
-    const target = { headers: new Headers({ "X-Rango-Cache": "/x=stale" }) };
-    expect(() => assertCacheStatus(target, "/x", "stale")).not.toThrow();
+    const target = {
+      headers: new Headers({ "X-Rango-Cache": "route.x=stale" }),
+    };
+    expect(() => assertCacheStatus(target, "route.x", "stale")).not.toThrow();
   });
 
   it("throws when the status differs", () => {
-    const res = responseWith("/products/:id=miss");
-    expect(() => assertCacheStatus(res, "/products/:id", "hit")).toThrow(
+    const res = responseWith("product.detail=miss");
+    expect(() => assertCacheStatus(res, "product.detail", "hit")).toThrow(
       /expected "hit" but got "miss"/,
     );
   });
 
   it("throws when the segment is absent", () => {
-    const res = responseWith("/other=hit");
-    expect(() => assertCacheStatus(res, "/products/:id", "hit")).toThrow(
+    const res = responseWith("route.other=hit");
+    expect(() => assertCacheStatus(res, "product.detail", "hit")).toThrow(
       /not found in X-Rango-Cache/,
     );
   });
 
   it("throws a clear error when the header is missing (gate off)", () => {
     const res = new Response(null);
-    expect(() => assertCacheStatus(res, "/a", "hit")).toThrow(
+    expect(() => assertCacheStatus(res, "route.a", "hit")).toThrow(
       /no X-Rango-Cache header/,
     );
   });
 
   it("distinguishes prerendered and passthrough statuses", () => {
-    const res = responseWith("/a=prerendered, /b=passthrough");
-    expect(() => assertCacheStatus(res, "/a", "prerendered")).not.toThrow();
-    expect(() => assertCacheStatus(res, "/b", "passthrough")).not.toThrow();
+    const res = responseWith("route.a=prerendered, route.b=passthrough");
+    expect(() =>
+      assertCacheStatus(res, "route.a", "prerendered"),
+    ).not.toThrow();
+    expect(() =>
+      assertCacheStatus(res, "route.b", "passthrough"),
+    ).not.toThrow();
   });
 });
 
@@ -174,5 +184,47 @@ describe("createCacheSink (telemetry capture path)", () => {
     const [decision] = filterCacheDecisions(events);
     expect(decision.segments?.[0].cacheStatus).toBe("stale");
     expect(decision.segments?.[0].shouldRevalidate).toBe(true);
+  });
+
+  it("filters cache.decision out of a mixed event stream and exposes per-decision segment status", () => {
+    // The full sink workflow a consumer runs: capture a mixed stream, filter to
+    // the cache decisions, then assert each decision's segment-level status.
+    const { sink, events } = createCacheSink();
+    sink.emit({
+      type: "request.start",
+      timestamp: 1,
+      method: "GET",
+      pathname: "/x",
+      transaction: "match",
+      isPartial: false,
+    });
+    sink.emit({
+      type: "cache.decision",
+      timestamp: 2,
+      pathname: "/x",
+      routeKey: "/x",
+      hit: true,
+      shouldRevalidate: false,
+      source: "runtime",
+      segments: [{ id: "/x", type: "route", cacheStatus: "hit" }],
+    });
+    sink.emit({
+      type: "cache.decision",
+      timestamp: 3,
+      pathname: "/y",
+      routeKey: "/y",
+      hit: false,
+      shouldRevalidate: false,
+      source: "runtime",
+      segments: [{ id: "/y", type: "route", cacheStatus: "miss" }],
+    });
+
+    const decisions = filterCacheDecisions(events);
+    // request.start is filtered out; both cache.decision events remain, in order.
+    expect(decisions).toHaveLength(2);
+    expect(decisions.map((d) => d.segments?.[0].cacheStatus)).toEqual([
+      "hit",
+      "miss",
+    ]);
   });
 });

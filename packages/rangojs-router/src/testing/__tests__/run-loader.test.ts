@@ -360,24 +360,24 @@ describe("runLoader accepts a registered createLoader handle", () => {
 });
 
 describe("runLoaderResult — effect observability (cookies/headers/redirect)", () => {
-  it("returns data and undefined thrown when the loader returns normally", async () => {
-    const { data, thrown } = await runLoaderResult(async () => ({
+  it("returns result and undefined thrown when the loader returns normally", async () => {
+    const { result, thrown } = await runLoaderResult(async () => ({
       items: [1, 2, 3],
     }));
-    expect(data).toEqual({ items: [1, 2, 3] });
+    expect(result).toEqual({ items: [1, 2, 3] });
     expect(thrown).toBeUndefined();
   });
 
   it("surfaces a Set-Cookie a loader set on response + cookies", async () => {
     const {
-      data,
+      result,
       response,
       cookies: jar,
     } = await runLoaderResult(async () => {
       cookies().set("prefs", "dark", { path: "/" });
       return { ok: true };
     });
-    expect(data).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true });
     expect(jar.prefs).toBe("dark");
     expect(
       response.headers.getSetCookie().some((c) => c.startsWith("prefs=dark")),
@@ -388,7 +388,7 @@ describe("runLoaderResult — effect observability (cookies/headers/redirect)", 
     // The exact gap the finding documents: today runLoader only lets you check
     // the redirect, not the Set-Cookie. runLoaderResult exposes BOTH.
     const {
-      data,
+      result,
       thrown,
       response,
       cookies: jar,
@@ -399,7 +399,7 @@ describe("runLoaderResult — effect observability (cookies/headers/redirect)", 
       },
       { request: new Request("https://app.test/login?token=ok") },
     );
-    expect(data).toBeUndefined();
+    expect(result).toBeUndefined();
     expect(thrown).toBeInstanceOf(Response);
     expect((thrown as Response).headers.get("Location")).toBe("/");
     // response merges the redirect's Location AND the accumulated Set-Cookie.
@@ -425,10 +425,10 @@ describe("runLoaderResult — effect observability (cookies/headers/redirect)", 
 
   it("preserves the full loader context (params, ctx.use seeding) on the rich path", async () => {
     const Other = createVar<{ n: number }>();
-    const { data } = await runLoaderResult(
+    const { result } = await runLoaderResult(
       async (ctx) => ({ id: ctx.params.id, n: ctx.get(Other)?.n }),
       { params: { id: "7" }, vars: [[Other, { n: 5 }]] },
     );
-    expect(data).toEqual({ id: "7", n: 5 });
+    expect(result).toEqual({ id: "7", n: 5 });
   });
 });

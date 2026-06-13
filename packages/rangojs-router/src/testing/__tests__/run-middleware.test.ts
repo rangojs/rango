@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { runMiddleware } from "../run-middleware.js";
-import { cookies } from "../../server/cookie-store.js";
+import {
+  cookies,
+  invalidateClientCache,
+  keepClientCache,
+} from "../../server/cookie-store.js";
+import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { redirect } from "../../route-definition/redirect.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
 
@@ -224,5 +229,57 @@ describe("runMiddleware", () => {
       routeMap: { post: "/blog/:slug" },
     });
     expect(reversed).toBe("/blog/hi");
+  });
+
+  describe("invalidateClientCache / keepClientCache + stateCookieName", () => {
+    const stateCookies = (res: Response) =>
+      res.headers.getSetCookie().filter((c) => c.startsWith("rango-state_"));
+
+    it("a middleware calling invalidateClientCache() rotates the state cookie and exposes stateCookieName", async () => {
+      const mw: MiddlewareFn = async (_ctx, next) => {
+        invalidateClientCache();
+        return next();
+      };
+      const { response, stateCookieName, nextCalled } = await runMiddleware(
+        mw,
+        {
+          request: "/dashboard",
+        },
+      );
+      expect(nextCalled).toBe(1);
+      // result.stateCookieName surfaces the resolved name (parity with the other primitives).
+      expect(stateCookieName).toBe("rango-state_router_0");
+      const cookies = stateCookies(response);
+      expect(cookies).toHaveLength(1);
+      expect(cookies[0].startsWith(stateCookieName + "=")).toBe(true);
+    });
+
+    it("a middleware calling keepClientCache() sets the directive header and no cookie", async () => {
+      const mw: MiddlewareFn = async (_ctx, next) => {
+        keepClientCache();
+        return next();
+      };
+      const { headers, response } = await runMiddleware(mw, {
+        request: "/dashboard",
+      });
+      expect(headers[KEEP_CACHE_HEADER]).toBe("1");
+      expect(stateCookies(response)).toHaveLength(0);
+    });
+
+    it("the stateCookie seed customizes the rotated name and matches result.stateCookieName", async () => {
+      const mw: MiddlewareFn = async (_ctx, next) => {
+        invalidateClientCache();
+        return next();
+      };
+      const { response, stateCookieName } = await runMiddleware(mw, {
+        request: "/dashboard",
+        stateCookie: { prefix: "myapp", routerId: "shop", version: "v9" },
+      });
+      expect(stateCookieName).toBe("myapp_shop");
+      const [cookie] = response.headers
+        .getSetCookie()
+        .filter((c) => c.startsWith("myapp_shop="));
+      expect(cookie).toMatch(/^myapp_shop=v9:\d+;/);
+    });
   });
 });
