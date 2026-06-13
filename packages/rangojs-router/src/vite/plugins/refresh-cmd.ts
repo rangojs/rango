@@ -20,7 +20,7 @@ import type { Plugin } from "vite";
  */
 export function poke(): Plugin {
   return {
-    name: "vite-plugin-poke",
+    name: "@rangojs/router:poke",
     apply: "serve",
 
     configureServer(server) {

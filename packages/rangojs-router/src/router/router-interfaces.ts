@@ -9,6 +9,7 @@ import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
+import type { ExtractParams } from "../types/route-config.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
@@ -105,9 +106,14 @@ export interface Rango<
    * createRouter({ document: RootLayout })
    *   .use(loggerMiddleware)           // All routes
    *   .use("/api/*", rateLimiter)      // Pattern match
+   *   .use("/users/:id", (ctx) => {})  // ctx.params.id is typed
    *   .routes(urlpatterns)
    * ```
    */
+  use<Pattern extends string>(
+    pattern: Pattern,
+    middleware: MiddlewareFn<TEnv, ExtractParams<Pattern>>,
+  ): Rango<TEnv, TRoutes>;
   use(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
     middleware?: MiddlewareFn<TEnv>,
@@ -225,6 +231,10 @@ export interface RangoInternal<
   /**
    * Add global middleware that runs on all routes
    */
+  use<Pattern extends string>(
+    pattern: Pattern,
+    middleware: MiddlewareFn<TEnv, ExtractParams<Pattern>>,
+  ): Rango<TEnv, TRoutes>;
   use(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
     middleware?: MiddlewareFn<TEnv>,

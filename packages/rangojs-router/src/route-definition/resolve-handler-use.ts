@@ -139,6 +139,12 @@ export function mergeHandlerUse(
   mountSite: string,
 ): (() => any[]) | undefined {
   if (!handlerUse && !explicitUse) return undefined;
+  // Validation asymmetry (intentional, pre-1.0): only handler.use() items are
+  // checked against the mount-site allow-list (validateHandlerUseItems below).
+  // Explicit use() items pass through unvalidated on both the explicit-only
+  // branch here and the merged branch, so a structurally-valid-but-prohibited
+  // item (e.g. middleware() inside a parallel slot) is not rejected at this seam.
+  // Documented rather than enforced for now; revisit before 1.0 (#569).
   if (!handlerUse) return explicitUse;
   if (!explicitUse) {
     return () => {

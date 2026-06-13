@@ -193,6 +193,15 @@ export interface TrackedActionState {
 }
 
 /**
+ * The value returned by {@link useAction} when called without a selector.
+ *
+ * This is the stable, public name for the action-state shape; consumers can
+ * name it in their own signatures (e.g. a wrapper hook). It aliases the
+ * internal {@link TrackedActionState}.
+ */
+export type ActionState = TrackedActionState;
+
+/**
  * Listener for action state changes
  *
  * @internal This type is an implementation detail and may change without notice.
