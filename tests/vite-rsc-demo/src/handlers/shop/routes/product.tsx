@@ -9,7 +9,7 @@ import {
   StreamingActionStatus,
 } from "@/components/StreamingActionForm.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
-import { OutletProvider, ParallelOutlet } from "@rangojs/router/client";
+import { ParallelOutlet } from "@rangojs/router/client";
 import {
   addToCart,
   addToCartWithResult,

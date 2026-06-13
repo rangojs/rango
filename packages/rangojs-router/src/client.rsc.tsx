@@ -14,7 +14,6 @@
 export {
   Outlet,
   ParallelOutlet,
-  OutletProvider,
   useOutlet,
   useLoader,
   ErrorBoundary,

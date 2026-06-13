@@ -75,6 +75,13 @@ export type {
   ResolveStreamingContext,
 } from "./router.js";
 
+// Origin-check callback types (referenced by the RangoOptions.originCheck JSDoc)
+export type {
+  OriginCheckConfig,
+  OriginCheckContext,
+  OriginCheckPhase,
+} from "./rsc/origin-guard.js";
+
 // Server-side createLoader and redirect
 export {
   createLoader,
@@ -124,6 +131,7 @@ export {
   type BuildContext,
   type StaticBuildContext,
   type GetParamsContext,
+  type PrerenderPassthroughResult,
 } from "./prerender.js";
 
 // Static handler API

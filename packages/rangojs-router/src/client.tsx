@@ -194,10 +194,9 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
 }
 
 // OutletProvider is defined in outlet-provider.tsx to break a circular
-// dependency between client.tsx and route-content-wrapper.tsx.
-// Imported at the top of this file for local use in Outlet/ParallelOutlet,
-// and re-exported here for backwards compatibility.
-export { OutletProvider };
+// dependency between client.tsx and route-content-wrapper.tsx. It is imported
+// at the top of this file for local use in Outlet/ParallelOutlet only; it is an
+// internal component and is intentionally not part of the public ./client API.
 
 /**
  * Hook to access outlet content programmatically

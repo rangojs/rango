@@ -20,7 +20,7 @@ function MockRootErrorBoundary(props: any) {
   return props.children;
 }
 
-vi.mock("../client.js", () => ({
+vi.mock("../outlet-provider.js", () => ({
   OutletProvider: MockOutletProvider,
 }));
 

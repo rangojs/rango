@@ -1,6 +1,6 @@
 import * as React from "react";
 import { createElement, type ReactNode, type ComponentType } from "react";
-import { OutletProvider } from "./client.js";
+import { OutletProvider } from "./outlet-provider.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
