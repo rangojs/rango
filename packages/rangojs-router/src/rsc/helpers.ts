@@ -226,7 +226,6 @@ export function buildRouteMiddlewareEntries<TEnv>(
       regex: null,
       paramNames: [],
       handler: mw.handler,
-      mountPrefix: null,
     } as MiddlewareEntry<TEnv>,
     params: mw.params,
   }));

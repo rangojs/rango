@@ -506,7 +506,6 @@ export async function dispatch<TEnv = any>(
             regex: null,
             paramNames: [],
             handler: mw.handler,
-            mountPrefix: null,
           } as MiddlewareEntry<TEnv>,
           params: mw.params,
         }),

@@ -71,6 +71,18 @@ export function isContextVar(value: unknown): value is ContextVar<unknown> {
 }
 
 /**
+ * Does a variables object hold any entries? Counts both string keys and the
+ * symbol-keyed entries (context vars are stored under symbols), so an object
+ * carrying only symbol-keyed vars is still reported as non-empty.
+ */
+export function hasContextVars(variables: object): boolean {
+  return (
+    Object.keys(variables).length > 0 ||
+    Object.getOwnPropertySymbols(variables).length > 0
+  );
+}
+
+/**
  * Symbol used as a Set stored on the variables object to track
  * which keys hold non-cacheable values (from write-level { cache: false }).
  */

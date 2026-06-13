@@ -355,7 +355,6 @@ export function createRouter<TEnv = any>(
       regex,
       paramNames,
       handler,
-      mountPrefix,
     });
   }
 

@@ -76,7 +76,6 @@ export interface MiddlewareEntry<TEnv = any> {
   regex: RegExp | null;
   paramNames: string[];
   handler: MiddlewareFn<TEnv>;
-  mountPrefix: string | null;
 }
 
 export interface ResponseHolder {

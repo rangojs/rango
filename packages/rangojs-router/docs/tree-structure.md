@@ -20,8 +20,8 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
 
   Segment `key` derivation (the per-segment `key` that flows into the
   LoaderBoundary/OutletProvider/Suspense keys), gated on `inTransitionScope`
-  (computed once per render: does any layout/route segment in the matched chain
-  declare `transition()`):
+  (computed once per render: does any layout, route, error, or notFound segment
+  in the matched chain declare `transition()`):
   - `route` and route-owned (`belongsToRoute`) `layout` segments use a
     param-AGNOSTIC key (`id` only) WHEN `inTransitionScope`; otherwise they keep
     a param-BEARING key (`id-params`). The param-agnostic case is the

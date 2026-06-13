@@ -2,8 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import {
   parsePattern,
   extractParams,
-  parseCookies,
-  serializeCookie,
   matchMiddleware,
   executeMiddleware,
   executeInterceptMiddleware,
@@ -11,12 +9,14 @@ import {
   collectRouteMiddleware,
   type MiddlewareFn,
   type MiddlewareEntry,
-  type MiddlewareCollectableEntry,
 } from "./middleware";
+import type { MiddlewareCollectableEntry } from "./middleware-types.js";
 import { cookies } from "../server/cookie-store.js";
 import {
   createRequestContext,
   runWithRequestContext,
+  parseCookiesFromHeader as parseCookies,
+  serializeCookieValue as serializeCookie,
 } from "../server/request-context.js";
 import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
 import type { MetricsStore } from "../server/context.js";
@@ -194,7 +194,6 @@ describe("middleware", () => {
           regex: null,
           paramNames: [],
           handler: vi.fn(),
-          mountPrefix: null,
         },
       ];
       const matches = matchMiddleware("/any/path", entries);
@@ -209,7 +208,6 @@ describe("middleware", () => {
           regex,
           paramNames,
           handler: vi.fn(),
-          mountPrefix: null,
         },
       ];
 
@@ -225,7 +223,6 @@ describe("middleware", () => {
           regex,
           paramNames,
           handler: vi.fn(),
-          mountPrefix: null,
         },
       ];
 
@@ -241,13 +238,11 @@ describe("middleware", () => {
           regex: null,
           paramNames: [],
           handler: vi.fn(),
-          mountPrefix: null,
         },
         {
           pattern: "/admin/*",
           ...parsePattern("/admin/*"),
           handler: vi.fn(),
-          mountPrefix: null,
         },
       ];
 
@@ -265,7 +260,6 @@ describe("middleware", () => {
         regex: null,
         paramNames: [],
         handler,
-        mountPrefix: null,
       },
       params: {},
     });
@@ -839,7 +833,6 @@ describe("middleware", () => {
               pattern: "/users/:id/*",
               ...parsePattern("/users/:id/*"),
               handler: middleware,
-              mountPrefix: null,
             },
             params: { id: "123" },
           },
@@ -1821,7 +1814,6 @@ describe("middleware", () => {
                   cookies().set("session", "new-token");
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },
@@ -1834,7 +1826,6 @@ describe("middleware", () => {
                   readValue = cookies().get("session")?.value;
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },
@@ -1871,7 +1862,6 @@ describe("middleware", () => {
                   cookies().set("mw-set", "hello");
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },
@@ -1913,7 +1903,6 @@ describe("middleware", () => {
                   cookies().delete("session");
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },
@@ -1926,7 +1915,6 @@ describe("middleware", () => {
                   readValue = cookies().get("session")?.value;
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },
@@ -1967,7 +1955,6 @@ describe("middleware", () => {
                   setCookieHeaders = ctx.headers.getSetCookie();
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },
@@ -2008,7 +1995,6 @@ describe("middleware", () => {
                   headerValue = ctx.headers.get("X-Request-Id");
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },
@@ -2049,7 +2035,6 @@ describe("middleware", () => {
                   readValue = cookies().get("fallback")?.value;
                   return next();
                 },
-                mountPrefix: null,
               },
               params: {},
             },

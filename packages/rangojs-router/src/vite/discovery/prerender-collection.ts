@@ -6,7 +6,7 @@
  * generation.
  */
 
-import { contextSet } from "../../context-var.js";
+import { contextSet, hasContextVars } from "../../context-var.js";
 import {
   encodePathParam,
   substituteRouteParams,
@@ -135,9 +135,7 @@ export async function expandPrerenderRoutes(
                 (performance.now() - getParamsStart).toFixed(1),
               );
               const concurrency = def.options?.concurrency ?? 1;
-              const hasBuildVars =
-                Object.keys(buildVars).length > 0 ||
-                Object.getOwnPropertySymbols(buildVars).length > 0;
+              const hasBuildVars = hasContextVars(buildVars);
               for (const params of paramsList) {
                 let url = substituteRouteParams(
                   pattern,
