@@ -383,7 +383,8 @@ it("returns the product and a self link", async () => {
 a response header, or a `throw redirect(...)` (the auth-loader pattern: validate,
 set a session cookie, redirect) — reach for the sibling **`runLoaderResult`**.
 Same options, but it returns the same envelope `runInRequestContext` does
-(`{ data, thrown, response, cookies, headers, locationState, stateCookieName }`):
+(`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`
+— `result` is the loader's data):
 
 ```ts
 import { runLoaderResult } from "@rangojs/router/testing";
@@ -1182,7 +1183,7 @@ runLoader<T>(
 runLoaderResult<T>(                       // sibling of runLoader for EFFECT-setting loaders (same opts)
   loader: ((ctx) => T | Promise<T>) | LoaderDefinition<T>,
   opts?: { /* identical to runLoader */ },
-): Promise<{ data: T | undefined; thrown: unknown; response: Response;
+): Promise<{ result: T | undefined; thrown: unknown; response: Response;
              cookies: Record<string, string>; headers: Record<string, string>;
              locationState: Record<string, unknown>; stateCookieName: string }>;
 // Use when the loader sets a cookie / header or `throw redirect(...)` (auth loaders) and you must assert that output.

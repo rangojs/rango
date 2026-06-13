@@ -30,7 +30,7 @@ Plus **`@rangojs/router/host/testing`** for host-router pattern matching.
 
 **Key Primitives:**
 
-- **`runMiddleware(fn, opts)`** → `{ response, ctx, nextCalled, cookies, headers, locationState }` — Execute a single middleware function with seeded request state, capture its effects.
+- **`runMiddleware(fn, opts)`** → `{ response, ctx, nextCalled, cookies, headers, locationState, stateCookieName }` — Execute a single middleware function with seeded request state, capture its effects.
 - **`runLoader(fn | LoaderHandle, opts)`** → `T` — Run a loader body or `createLoader()` handle and return its data (effects not captured).
 - **`runLoaderResult(fn | LoaderHandle, opts)`** → `{ result: T | undefined, thrown, response, cookies, headers, locationState, stateCookieName }` — Same as above but also capture effects (Set-Cookie, redirects).
 - **`dispatch(router, opts)`** → `Response` — Full request→response for response routes, redirects, 404s, middleware chains. Does NOT render RSC.
@@ -114,9 +114,10 @@ Plus **`@rangojs/router/host/testing`** for host-router pattern matching.
 
 **Returned harness:**
 
-- **`useFixture(opts)`** → `{ url, page, context }` — Spawn a dev or prod server instance, point Playwright at it.
-- **`parityDescribe(title, fn(t))`** — Describe block that runs the test twice (JS on, JS off) and asserts parity (observable behavior is identical).
-- **`expectParity(assertion)`** → assertion proxy — Asserts that the same check passes on both JS-on and JS-off runs.
+- **`useFixture(options)`** → `Fixture` (`{ mode, root, url(path?), proc() }`) — Spawn a dev or production server (per `mode`) and serve the app; `url(path)` resolves a path against the running server, `proc()` is the server process handle.
+- **`parityDescribe(name, (f) => { … }, options?)`** — Registers a DEV describe (`name`) AND a PRODUCTION describe (`` `${name} (production)` ``) from one body, each with its own `Fixture` — i.e. dev/prod **bucketing** (it does NOT toggle JS within a single test). The `(production)` suffix is generated here so the suite can't drift out of its bucket.
+- **`expectParity(page, intent, opts)`** → `Promise<void>` — Runs one `intent` (`{ navigate }` or `{ submit }`) over the JS `page` AND a fresh no-JS context, then asserts the observed testids' text + pathname/search/hash + `document.cookie` are equal across the two transports. `opts` = required `observe` + optional `baseURL`/`waitFor`/`ignoreCookies` (the rango state cookie is excluded automatically). This is the progressive-enhancement parity check.
+- **`testNoJs`** — a `test` variant with JavaScript disabled. **`rangoMatchers`** — `{ toHaveRangoPathname }` (pass to `expect.extend`).
 - **Page helpers:** `waitForHydration()`, `waitForNavigation()`, `goBack()`, `goForward()`, `getHistoryState()`, `waitForElement()`, `isVisibleInViewport()`, `parseNumber()`, `getNumericContent()`, `createStopwatch()`, `measureTime()`.
 - **`testNoJs`** — Test variant with JavaScript disabled (paired with `parityDescribe`).
 - **`rangoMatchers`** — Custom matchers: `toHaveRangoPathname()`.
@@ -277,7 +278,7 @@ Plus **`@rangojs/router/host/testing`** for host-router pattern matching.
 
 1. **Whole-router imports** — a consumer's router file may pull app-specific page modules or plugin `virtual:` modules that need the rango Vite plugin. Build from a focused include (e.g., API routes) for `dispatch` / drift checks, or run whole-router tests at e2e.
 2. **Search schema typing** — `opts.search` (raw string) and `opts.searchData` (typed object) are separate. A loader reading `ctx.search` sees only what `searchData` provides; the raw `searchParams` reflect `search`.
-3. **Unseeded loaders** — in `renderRoute` and `renderHandler`, an unseeded loader read defaults to `undefined` data (does not throw or default to the body's fallback return).
+3. **Unseeded loaders** — the two render primitives differ: in `renderRoute`, an unseeded `useLoader` read resolves to `undefined` data (no throw); in `renderHandler`, an unseeded `ctx.use(loader)` REJECTS with a `RenderHandlerSetupError` (a harness misconfiguration is surfaced, not silently `undefined`). Seed every dependency via `loaders: [[Loader, data]]`.
 4. **Streaming Suspense** — a `use(promise)` inside `<Suspense>` does not flush when the promise resolves in happy-dom/RTL without an `act` boundary. Assert the fallback for pending, pass a pre-settled promise for the resolved state, or test interaction at e2e.
 5. **Cache hit/miss/stale** — without a seeded `cacheStore`, `use cache` functions bypass (registerCachedFunction checks for a store first), so unit tests of cached logic run uncached. Real hit/miss/stale is e2e.
 

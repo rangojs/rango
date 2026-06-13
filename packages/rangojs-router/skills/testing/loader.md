@@ -61,8 +61,9 @@ The loader data DIRECTLY (no envelope). `T` is the loader's return type.
 To assert a loader's EFFECTS — a `Set-Cookie`, a response header, or a
 `throw redirect(...)` (the auth-loader pattern) — use the sibling
 **`runLoaderResult(loader, opts)`** instead. Same options, but it returns an
-envelope: `{ data, thrown, response, cookies, headers, locationState, stateCookieName }`
-(parity with `runInRequestContext`). `runLoader` discards those effects.
+envelope: `{ result, thrown, response, cookies, headers, locationState, stateCookieName }`
+(parity with `runInRequestContext`; `result` is the loader's data). `runLoader`
+discards those effects.
 
 ## Recipe
 
