@@ -1,4 +1,9 @@
-import { urls, createHandle, createLoader } from "@rangojs/router";
+import {
+  urls,
+  createHandle,
+  createLoader,
+  type LoaderContext,
+} from "@rangojs/router";
 import { PriceDisplay } from "../components/PriceDisplay.js";
 
 export const RenderedProducts = createHandle<string>();
@@ -9,7 +14,12 @@ const PRICE_MAP: Record<string, number> = {
   "widget-c": 29.99,
 };
 
-export const LivePricesLoader = createLoader(async (ctx) => {
+// Body exported so the rendered-barrier loader can be unit-tested with
+// runLoader({ rendered: true, handles: [[RenderedProducts, ids]] }) — the barrier
+// is mocked and the handle data is seeded, exercising the price-mapping logic.
+export async function livePricesLoaderBody(
+  ctx: LoaderContext,
+): Promise<{ prices: Record<string, number>; fetchedAt: number }> {
   "use server";
   await ctx.rendered();
   const productIds = ctx.use(RenderedProducts);
@@ -18,7 +28,9 @@ export const LivePricesLoader = createLoader(async (ctx) => {
     prices[id] = PRICE_MAP[id] ?? 0;
   }
   return { prices, fetchedAt: Date.now() };
-});
+}
+
+export const LivePricesLoader = createLoader(livePricesLoaderBody);
 
 function RenderedBarrierPage(ctx: any) {
   const push = ctx.use(RenderedProducts);

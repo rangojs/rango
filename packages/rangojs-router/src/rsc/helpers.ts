@@ -12,6 +12,24 @@ import type { RequestContext } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { isRedirectResponse } from "../response-utils.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
+import { formatCacheSignalHeader } from "../router/telemetry.js";
+
+/**
+ * DEVELOPMENT/TEST ONLY. When the debug cache signal gate is on,
+ * match/matchPartial populate ctx._cacheSignal. Emit it as the X-Rango-Cache
+ * header. When the gate is off, ctx._cacheSignal is undefined and NOTHING is
+ * attached — output is byte-identical to the default. Header mutation failures
+ * are swallowed so immutable Response headers (e.g. protocol-switch) are safe.
+ */
+function applyCacheSignalHeader(target: Headers, ctx: RequestContext): void {
+  const signal = ctx._cacheSignal;
+  if (!signal || signal.length === 0) return;
+  try {
+    target.set("X-Rango-Cache", formatCacheSignalHeader(signal));
+  } catch {
+    // Headers immutable — skip.
+  }
+}
 
 /**
  * Copy stub headers from the request context onto a target Headers instance:
@@ -85,6 +103,7 @@ export function createResponseWithMergedHeaders(
   const mergedHeaders = new Headers(init.headers);
   applyStubHeaders(mergedHeaders, ctx.res.headers);
   ctx.res.headers.delete("set-cookie");
+  applyCacheSignalHeader(mergedHeaders, ctx);
 
   // ctx.res.status overrides init.status when explicitly set (e.g. 404 for
   // notFound, 500 for error). Default ctx.res.status is 200.

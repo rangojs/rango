@@ -137,8 +137,25 @@ describe("Prerender type constraints", () => {
 // ============================================================================
 
 describe("Static runtime constraints", () => {
-  it("throws when $$id is missing", () => {
-    expect(() => Static(() => null as any)).toThrow("Static: missing $$id");
+  it("throws for a missing $$id outside a test runner; assigns a runtime fallback under one", () => {
+    // Outside a test runner (a real build / dev), a missing id means an
+    // unsupported Static shape the plugin skipped — fail loud rather than mask it
+    // with a synthetic id (which would silently miss the static manifest). Under
+    // vitest the fallback fires so a whole-app router can construct — mirrors
+    // createHandle / createLoader / Prerender. The fallback is inert
+    // (staticHandlerId is read only during real RSC serving; the manifest keys on
+    // the plugin id).
+    const prev = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      expect(() => Static(() => null as any)).toThrow("Static: missing $$id");
+    } finally {
+      process.env.VITEST = prev;
+    }
+    // Under vitest (VITEST set) the fallback fires (no throw).
+    expect(Static(() => null as any).$$id).toMatch(
+      /^__rango_runtime_static_\d+$/,
+    );
   });
 
   it("succeeds when $$id is provided", () => {

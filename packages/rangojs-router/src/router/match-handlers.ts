@@ -33,10 +33,13 @@ import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
 import {
   type TelemetrySink,
+  type CacheSegmentSignal,
   safeEmit,
   resolveSink,
   getRequestId,
+  buildCacheSignalSegments,
 } from "./telemetry.js";
+import { _getRequestContext } from "../server/request-context.js";
 
 export interface MatchHandlerDeps<TEnv = any> {
   buildRouterContext: () => RouterContext<TEnv>;
@@ -51,6 +54,12 @@ export interface MatchHandlerDeps<TEnv = any> {
     isAction: boolean,
   ) => { intercept: InterceptEntry; entry: EntryData } | null;
   telemetry?: TelemetrySink;
+  /**
+   * DEVELOPMENT/TEST ONLY gate for the X-Rango-Cache debug header. When true,
+   * match/matchPartial stash a coarse route-level cache signal on the request
+   * context for the response-finalization path to emit. Default off.
+   */
+  cacheSignalEnabled?: boolean;
 }
 
 export interface MatchHandlers<TEnv = any> {
@@ -113,6 +122,25 @@ export function createMatchHandlers<TEnv = any>(
   } = deps;
   const hasTelemetry = !!deps.telemetry;
   const telemetry = resolveSink(deps.telemetry);
+  const cacheSignalEnabled = !!deps.cacheSignalEnabled;
+  // Compute the coarse cache signal when EITHER telemetry needs it (for the
+  // cache.decision event) OR the debug header gate is on. When neither is set,
+  // this is never called — zero extra work on the hot path.
+  const buildSignal = (
+    routeKey: string,
+    state: {
+      cacheHit: boolean;
+      cacheSource?: "runtime" | "prerender";
+      shouldRevalidate?: boolean;
+    },
+  ): CacheSegmentSignal[] => buildCacheSignalSegments(routeKey, state);
+  // Stash the signal on the request context for the response path to emit as
+  // the X-Rango-Cache header. Only when the debug gate is on.
+  const recordSignalIfEnabled = (segments: CacheSegmentSignal[]): void => {
+    if (!cacheSignalEnabled) return;
+    const reqCtx = _getRequestContext();
+    if (reqCtx) reqCtx._cacheSignal = segments;
+  };
 
   async function createMatchContextForFull(
     request: Request,
@@ -208,17 +236,24 @@ export function createMatchHandlers<TEnv = any>(
             const state = createPipelineState();
             const pipeline = createMatchPartialPipeline(ctx, state);
             const matchResult = await collectMatchResult(pipeline, ctx, state);
+            if (hasTelemetry || cacheSignalEnabled) {
+              const signalSegments = buildSignal(ctx.routeKey, state);
+              recordSignalIfEnabled(signalSegments);
+              if (hasTelemetry) {
+                safeEmit(telemetry, {
+                  type: "cache.decision",
+                  timestamp: performance.now(),
+                  requestId,
+                  pathname,
+                  routeKey: ctx.routeKey,
+                  hit: state.cacheHit,
+                  shouldRevalidate: !!state.shouldRevalidate,
+                  source: state.cacheSource,
+                  segments: signalSegments,
+                });
+              }
+            }
             if (hasTelemetry) {
-              safeEmit(telemetry, {
-                type: "cache.decision",
-                timestamp: performance.now(),
-                requestId,
-                pathname,
-                routeKey: ctx.routeKey,
-                hit: state.cacheHit,
-                shouldRevalidate: !!state.shouldRevalidate,
-                source: state.cacheSource,
-              });
               safeEmit(telemetry, {
                 type: "request.end",
                 timestamp: performance.now(),
@@ -363,17 +398,24 @@ export function createMatchHandlers<TEnv = any>(
                 state,
               );
               flushRevalidationTrace();
+              if (hasTelemetry || cacheSignalEnabled) {
+                const signalSegments = buildSignal(ctx.routeKey, state);
+                recordSignalIfEnabled(signalSegments);
+                if (hasTelemetry) {
+                  safeEmit(telemetry, {
+                    type: "cache.decision",
+                    timestamp: performance.now(),
+                    requestId: partialRequestId,
+                    pathname,
+                    routeKey: ctx.routeKey,
+                    hit: state.cacheHit,
+                    shouldRevalidate: !!state.shouldRevalidate,
+                    source: state.cacheSource,
+                    segments: signalSegments,
+                  });
+                }
+              }
               if (hasTelemetry) {
-                safeEmit(telemetry, {
-                  type: "cache.decision",
-                  timestamp: performance.now(),
-                  requestId: partialRequestId,
-                  pathname,
-                  routeKey: ctx.routeKey,
-                  hit: state.cacheHit,
-                  shouldRevalidate: !!state.shouldRevalidate,
-                  source: state.cacheSource,
-                });
                 safeEmit(telemetry, {
                   type: "request.end",
                   timestamp: performance.now(),

@@ -5,6 +5,7 @@
  */
 
 import type { ComponentType } from "react";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 /**
  * Symbol used by React to mark client component references.
@@ -48,11 +49,21 @@ export function isClientComponent(
  *
  * @param component - The component to check
  * @param name - Name to use in error message (e.g., "document")
+ * @param opts.allowServerInTest - When true AND running under a test runner
+ *   (`isUnderTestRunner()`), relax ONLY the "use client" requirement: a server
+ *   component is accepted. The plugin's "use client" transform does not run in a
+ *   bare unit test, so a real exported `document` (almost every app sets one) has
+ *   no client marker and would otherwise throw at `createRouter`, blocking
+ *   `dispatch`/`assertGeneratedRoutesMatch` against the real router. The document
+ *   reference is irrelevant to those (no Flight render). The "not a JSX element"
+ *   guard still fires, and a real dev/build still throws (mirrors the runtime
+ *   fallback-id gating in handle.ts/loader.ts).
  * @throws Error if the component is not a client component
  */
 export function assertClientComponent(
   component: ComponentType<unknown> | unknown,
   name: string,
+  opts?: { allowServerInTest?: boolean },
 ): asserts component is ComponentType<unknown> {
   if (typeof component !== "function") {
     throw new Error(
@@ -60,6 +71,14 @@ export function assertClientComponent(
         `Make sure to pass the component itself, not a JSX element: ` +
         `${name}: My${capitalize(name)} (correct) vs ${name}: <My${capitalize(name)} /> (incorrect)`,
     );
+  }
+
+  // Under a test runner the "use client" transform did not run, so a real
+  // server-rendered `document` has no client marker; accept it (the reference is
+  // never serialized in dispatch/route-map checks). Outside a test runner this
+  // still throws — the build-time safety net is preserved.
+  if (opts?.allowServerInTest && isUnderTestRunner()) {
+    return;
   }
 
   if (!isClientComponent(component)) {

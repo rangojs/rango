@@ -41,6 +41,20 @@ that route tree.
   routes / `include()` / host apps, and the `clientChunks` option for per-route
   splitting to shrink a route's client bundle
 
+## Testing
+
+- [Testing guide](./testing.md) - the RSC-first testing pyramid and the
+  consumer testing surface, split into six entries by test runtime:
+  `@rangojs/router/testing` (unit: `runLoader`, `runMiddleware`; integration:
+  `dispatch`; cache/prerender signals; generated-route drift),
+  `@rangojs/router/testing/vitest` (the `rangoTestConfig` setup preset),
+  `@rangojs/router/testing/dom` (`renderRoute`),
+  `@rangojs/router/testing/e2e` (`createRangoE2E` -> `parityDescribe`,
+  `expectParity`), `@rangojs/router/testing/flight`
+  (`renderToFlightString`, real Flight under the react-server condition), and
+  `@rangojs/router/testing/flight-matchers` (`flightMatchers`). See also the
+  [`/testing` skill](../skills/testing/SKILL.md).
+
 ## Observability
 
 - [Telemetry & Performance Timeline](./telemetry.md) - `debugPerformance`

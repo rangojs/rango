@@ -1,0 +1,7 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderToFlightString against cloudflare-basic server components > renders props passed through and matches a normalized snapshot 1`] = `
+"0:{"metadata":{"pathname":"/","segments":[{"id":"test","namespace":"","type":"route","index":0,"component":"$L1"}],"version":"test"}}
+1:["$","article",null,{"children":[["$","h2",null,{"children":"Gadget"}],["$","span",null,{"children":["$$","19.50"]}]]}]
+"
+`;

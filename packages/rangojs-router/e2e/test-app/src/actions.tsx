@@ -151,6 +151,24 @@ export async function getLastSubmittedName(): Promise<string | null> {
   return lastSubmittedName;
 }
 
+/**
+ * Session-scoped counter action for the consumer e2e harness submit-parity
+ * exercise. Reads the current `parity-count` cookie, increments it by the
+ * submitted `amount`, and writes it back. Because the count lives in a cookie,
+ * each browser context observes only its own increments — this is what lets the
+ * harness run the intent twice (JS context, then a fresh no-JS context) against
+ * the one shared server and still see identical state on both transports.
+ */
+export async function parityCounterAction(formData: FormData): Promise<void> {
+  await delay(50);
+  const amount = parseInt((formData.get("amount") as string) || "1", 10);
+  const current = parseInt(cookies().get("parity-count")?.value ?? "0", 10);
+  cookies().set("parity-count", String(current + amount), {
+    path: "/",
+    maxAge: 60,
+  });
+}
+
 export async function resetLastSubmittedName(): Promise<void> {
   lastSubmittedName = null;
 }

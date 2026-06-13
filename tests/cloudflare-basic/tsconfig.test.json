@@ -1,0 +1,18 @@
+{
+  // Typecheck the unit/integration/DOM/flight test suite separately from the
+  // worker app (which has a restrictive, Cloudflare-specific `types` set). This
+  // also dogfoods that the `@rangojs/router/testing*` TYPES resolve and check
+  // cleanly from a consumer's seat.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node",
+      "react",
+      "react-dom",
+      "vite/client",
+      "@rangojs/router/types"
+    ],
+    "noEmit": true
+  },
+  "include": ["test/**/*", "vitest.config.ts", "vitest.rsc.config.ts"]
+}

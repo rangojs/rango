@@ -370,6 +370,15 @@ export interface RequestContext<
    * to avoid a second resolveRoute call. Cleared on HMR invalidation.
    */
   _classifiedRoute?: import("../router/route-snapshot.js").RouteSnapshot;
+
+  /**
+   * @internal Coarse route-level cache signal for the X-Rango-Cache debug
+   * header. Populated by match/matchPartial only when the debug cache signal
+   * gate is enabled (debugCacheSignal option or RANGO_TEST_SIGNALS=1). Read by
+   * the response-finalization path (createResponseWithMergedHeaders). Undefined
+   * when the gate is off, so no header is emitted.
+   */
+  _cacheSignal?: import("../router/telemetry.js").CacheSegmentSignal[];
 }
 
 /**
@@ -415,6 +424,7 @@ export type PublicRequestContext<
   | "_setKeepCacheDirective"
   | "_variables"
   | "_classifiedRoute"
+  | "_cacheSignal"
   | "res"
 >;
 

@@ -234,6 +234,7 @@ export const NamedRoutes = {
   "parallelRevalAfterAction.revalAfterActionPageB": "/parallel-reval-after-action/page-b",
   "paramsAfterAction.error": "/params-after-action/error/:postId/section/:section",
   "paramsAfterAction.show": "/params-after-action/:postId/section/:section",
+  parityCounter: "/parity-counter",
   peRedirect: "/pe-redirect",
   "plainProduct.detail": "/plain-product/:id",
   "prerender-handle": "/prerender-handle",

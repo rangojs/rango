@@ -1,9 +1,10 @@
-import { urls, cookies, updateTag, revalidateTag } from "@rangojs/router";
+import { urls, updateTag, revalidateTag } from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
+import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 
 // Page handlers
@@ -406,13 +407,7 @@ export const urlpatterns = urls(
           "/cookie-overlay",
           CookieOverlayPage,
           { name: "cookieOverlay" },
-          () => [
-            middleware(async (ctx, next) => {
-              cookies().set("mw-overlay", "from-middleware", { path: "/" });
-              return next();
-            }),
-            loader(CookieOverlayLoader),
-          ],
+          () => [middleware(setOverlayCookie), loader(CookieOverlayLoader)],
         ),
 
         // Action location state test route (non-redirect flow)

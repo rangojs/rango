@@ -22,8 +22,13 @@ import {
   getFetchableLoader,
 } from "./server/fetchable-loader-store.js";
 import { missingInjectedIdError } from "./missing-id-error.js";
+import { isUnderTestRunner } from "./runtime-env.js";
 
 export { getFetchableLoader };
+
+// Counter for runtime-fallback loader ids assigned only in a bare unit test
+// (no Vite plugin to inject one). Process-stable; never reached in a real build.
+let runtimeLoaderIdCounter = 0;
 
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
@@ -51,10 +56,26 @@ export function createLoader<T>(
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   // The $$id will be set on the returned object by Vite plugin
   // For fetchable loaders, __injectedId is also passed as a parameter
-  const loaderId = __injectedId || "";
+  let loaderId = __injectedId || "";
 
-  if (!loaderId && process.env.NODE_ENV === "development") {
-    throw missingInjectedIdError("Loader", "createLoader");
+  // No build-injected id. Under a test runner: fall back to a synthetic id so the
+  // fn registers below and the loader is exercisable via runLoader(loaderHandle)
+  // (it recovers the fn from the registry by $$id). Otherwise (dev or a real
+  // build) it means an UNSUPPORTED shape (e.g. a namespace import
+  // `rango.createLoader(...)`) the plugin skipped — fail loud. The rich
+  // diagnostic stays behind the NODE_ENV check so production folds it away and
+  // ships the small throw. isUnderTestRunner() is runtime-safe. Mirrors createHandle.
+  if (!loaderId) {
+    if (isUnderTestRunner()) {
+      loaderId = `__rango_runtime_loader_${runtimeLoaderIdCounter++}`;
+    } else if (process.env.NODE_ENV !== "production") {
+      throw missingInjectedIdError("Loader", "createLoader");
+    } else {
+      throw new Error(
+        "[rango] Loader is missing $$id — the build plugin did not inject one. " +
+          "Export it as `export const X = createLoader(...)`.",
+      );
+    }
   }
 
   // If not fetchable, store fn in registry (for SSR ctx.use() resolution)

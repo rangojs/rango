@@ -133,6 +133,21 @@ export interface RangoOptions<TEnv = any> {
   allowDebugManifest?: boolean;
 
   /**
+   * DEVELOPMENT/TEST ONLY. Emit an `X-Rango-Cache` response header describing
+   * the cache status of the matched route, for use by testing primitives such
+   * as `assertCacheStatus`.
+   *
+   * Defaults to `false`. When neither this option nor the
+   * `RANGO_TEST_SIGNALS=1` environment flag is set, NO header is emitted and
+   * router output is byte-identical to the default.
+   *
+   * The header encodes per-segment (v1: coarse route-level) status keyed by the
+   * route NAME, e.g. `X-Rango-Cache: product.detail=hit`. Do NOT enable in
+   * production — it exposes internal cache decisions.
+   */
+  debugCacheSignal?: boolean;
+
+  /**
    * Document component that wraps the entire application.
    *
    * This component provides the HTML structure for your app and wraps

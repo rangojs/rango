@@ -238,6 +238,12 @@ Grouped by concern — read when you need to…
 | `/bundle-analysis` | Audit your app's production bundle for server leaks and oversized chunks |
 | `/debug-manifest`  | Inspect route manifest structure                                         |
 
+**Testing**:
+
+| Skill      | Description                                                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `/testing` | Unit (loaders/middleware/reverse/components), integration (dispatch/Flight), and e2e (dev+prod parity, progressive enhancement) |
+
 **Setup, types & migration**:
 
 | Skill                   | Description                                     |
