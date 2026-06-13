@@ -11,6 +11,16 @@ import {
   formatNestedRouterConflictError,
   findNestedRouterConflict,
 } from "../../build/generate-route-types.js";
+// Pure data transforms over generateManifestFull's output. Imported directly
+// from source (not the public ./build barrel, and not the runner) because they
+// are realm-independent: buildRouteTrie/buildPerRouterTrie operate on plain
+// manifest data, and collectFallbackClientRefs keys on the global-registry
+// Symbol.for("react.client.reference"), so it detects client references in a
+// boundary tree regardless of which realm imported the walker. Only
+// generateManifestFull must stay on the runner (it invokes user handlers via
+// RangoContext from the runner realm) — see the runner.import below.
+import { buildRouteTrie, buildPerRouterTrie } from "../../build/route-trie.js";
+import { collectFallbackClientRefs } from "../../build/collect-fallback-refs.js";
 import {
   flattenLeafEntries,
   buildRouteToStaticPrefix,
@@ -107,7 +117,10 @@ export async function discoverRouters(
     }
   }
 
-  // Import build utilities for manifest generation
+  // generateManifestFull must run in the RSC runner realm: it invokes the
+  // user's urlpatterns.handler() via RangoContext, consuming router instances
+  // from the runner. The trie/fallback-ref builders are pure transforms over
+  // its output and are imported directly from source above.
   const buildMod = await timed(
     debug,
     "inner: import @rangojs/router/build",
@@ -158,11 +171,12 @@ export async function discoverRouters(
   // are NOT in EntryData, so generateManifestFull's walk misses them. Collect any
   // "use client" default boundary directly off the router instance. The value is
   // commonly a handler function wrapping the client boundary in server providers,
-  // so collectFallbackClientRefs invokes + walks the tree. Routed through buildMod
-  // so it runs in the same RSC runner realm the boundary value came from.
+  // so collectFallbackClientRefs invokes + walks the tree. The walker keys on the
+  // global-registry Symbol.for("react.client.reference"), so it detects client
+  // references in a runner-realm boundary tree even when imported here directly.
   const collectFromBoundaryNode = (node: unknown): void => {
-    if (collectClientFallbackRef && buildMod.collectFallbackClientRefs) {
-      buildMod.collectFallbackClientRefs(node, collectClientFallbackRef);
+    if (collectClientFallbackRef) {
+      collectFallbackClientRefs(node, collectClientFallbackRef);
     }
   };
 
@@ -293,8 +307,7 @@ export async function discoverRouters(
   let newMergedRouteTrie: any = null;
   const trieStart = debug ? performance.now() : 0;
   if (Object.keys(newMergedRouteManifest).length > 0) {
-    const buildRouteTrie = buildMod.buildRouteTrie;
-    if (buildRouteTrie && mergedRouteAncestry) {
+    if (mergedRouteAncestry) {
       // Build routeToStaticPrefix from saved manifests
       const routeToStaticPrefix: Record<string, string> = {};
       for (const { manifest } of allManifests) {
@@ -342,11 +355,9 @@ export async function discoverRouters(
       // Build per-router tries for multi-router isolation. Uses the single
       // shared buildPerRouterTrie so the production serialized trie is built by
       // exactly the same code as the dev/HMR runtime rebuild (manifest-init.ts).
-      const buildPerRouterTrie = buildMod.buildPerRouterTrie;
+      // Returns null for route-less manifests (route-trie.ts).
       for (const { id, manifest } of allManifests) {
-        const perRouterTrie = buildPerRouterTrie
-          ? buildPerRouterTrie(manifest)
-          : null;
+        const perRouterTrie = buildPerRouterTrie(manifest);
         if (perRouterTrie) {
           newPerRouterTrieMap.set(id, perRouterTrie);
         }
