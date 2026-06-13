@@ -338,8 +338,14 @@ export interface RouterInstance {
   replace(url: string, options?: RouterNavigateOptions): Promise<void>;
   /** Refresh the current route (re-fetch server data, preserve client state) */
   refresh(): Promise<void>;
-  /** Prefetch a URL for faster client-side transition */
-  prefetch(url: string): void;
+  /**
+   * Prefetch a URL for faster client-side transition.
+   *
+   * Pass `{ key: ":source" }` to source-scope the prefetch cache entry (parity
+   * with `<Link prefetchKey=":source">`) when the target's response can differ
+   * by source page.
+   */
+  prefetch(url: string, options?: { key?: ":source" }): void;
   /** Go back in browser history */
   back(): void;
   /** Go forward in browser history */

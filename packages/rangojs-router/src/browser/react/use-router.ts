@@ -60,7 +60,7 @@ export function useRouter(): RouterInstance {
         return ctx.refresh();
       },
 
-      prefetch(url: string): void {
+      prefetch(url: string, options?: { key?: ":source" }): void {
         const segmentState = ctx.store?.getSegmentState();
         if (segmentState) {
           prefetchDirect(
@@ -68,6 +68,7 @@ export function useRouter(): RouterInstance {
             segmentState.currentSegmentIds,
             getAppVersion(),
             ctx.store?.getRouterId?.(),
+            options?.key,
           );
         }
       },
