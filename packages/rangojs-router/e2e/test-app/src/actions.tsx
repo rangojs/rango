@@ -204,8 +204,8 @@ export const StreamingAction = async (_data: FormData) => {
  * Action that redirects with a flash message.
  * Tests that server actions can use redirect() with location state.
  */
-export async function saveAndRedirect(): Promise<Response> {
-  return redirect("/location-state", {
+export async function saveAndRedirect(): Promise<void> {
+  throw redirect("/location-state", {
     state: FlashMessage({ text: "Action saved successfully!" }),
   });
 }
@@ -213,8 +213,8 @@ export async function saveAndRedirect(): Promise<Response> {
 /**
  * Action that redirects without state (pure redirect from action).
  */
-export async function actionSimpleRedirect(): Promise<Response> {
-  return redirect("/location-state/target");
+export async function actionSimpleRedirect(): Promise<void> {
+  throw redirect("/location-state/target");
 }
 
 /**

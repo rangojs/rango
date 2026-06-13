@@ -118,10 +118,6 @@
       "types": "./src/build/index.ts",
       "import": "./src/build/index.ts"
     },
-    "./build/internal": {
-      "types": "./src/build/internal.ts",
-      "import": "./src/build/internal.ts"
-    },
     "./host": {
       "types": "./src/host/index.ts",
       "react-server": "./src/host/index.ts",
