@@ -150,6 +150,25 @@ test.describe("prerender-intercept (dev mode)", () => {
       "beta",
     );
   });
+
+  test("intercept handler handle push survives into the modal (#567 gap 1)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-intercept"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="pri-link-alpha"]').click();
+    await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+
+    // The intercept handler pushed `modal-handle:alpha` via ctx.use(); the fix
+    // pins _currentSegmentId to the intercept slot so the push is attributed to
+    // the intercept segment instead of being dropped.
+    await expect(page.locator('[data-testid="pri-modal-handle"]')).toHaveText(
+      "modal-handle:alpha",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -403,5 +422,25 @@ test.describe("prerender-intercept (production build)", () => {
     await expect(
       page.locator('[data-testid="prerender-intercept-layout"]'),
     ).toBeVisible();
+  });
+
+  test("intercept handler handle push survives the baked artifact (#567 gap 1)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-intercept"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="pri-link-alpha"]').click();
+    await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+
+    // In production the intercept artifact is baked at build time, so this value
+    // comes from the prerender store. Before the fix, the build-time push landed
+    // in the wrong segment bucket and the handle data was dropped from the
+    // stored artifact -- the modal would render an empty handle.
+    await expect(page.locator('[data-testid="pri-modal-handle"]')).toHaveText(
+      "modal-handle:alpha",
+    );
   });
 });

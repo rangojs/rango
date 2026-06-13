@@ -28,7 +28,6 @@ function makeMatch(overrides?: Partial<RouteMatchResult>): RouteMatchResult {
     entry: {} as any,
     routeKey: "test",
     params: {},
-    optionalParams: new Set<string>(),
     ...overrides,
   } as RouteMatchResult;
 }

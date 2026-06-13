@@ -230,7 +230,6 @@ export function createRouteSnapshot<TEnv = any>(
       entry: {} as any,
       routeKey: "test",
       params: {},
-      optionalParams: new Set(),
     } as RouteMatchResult<TEnv>,
     manifestEntry: { type: "route", shortCode: "R0", parent: null } as any,
     entries: [],

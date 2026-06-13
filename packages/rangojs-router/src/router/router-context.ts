@@ -123,7 +123,6 @@ export interface RouterContext<TEnv = any> {
     request: Request,
     prevUrl: URL,
     nextUrl: URL,
-    loaderPromises: Map<string, Promise<any>>,
     actionContext: any | undefined,
     interceptResult: InterceptResult | null,
     localRouteName: string,

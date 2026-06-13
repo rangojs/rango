@@ -89,6 +89,16 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   it's never the live matcher, that's fine; the trie is the source of truth, and the
   fallback just needs to not be _wildly_ wrong. `trie-regex-parity.test.ts` pins where
   they agree; the dev warning catches the case where they shouldn't have diverged.
+  Within the suffix-param tier, the rule is **longest literal suffix wins**: given
+  `/:file.min.js` and `/:file.js`, a request for `/app.min.js` resolves to `.min.js`
+  (`file:"app"`), never `.js` (`file:"app.min"`). This is specificity, not declaration
+  order — `walkTrie` returns the first suffix the segment ends with, so `route-trie.ts`
+  `sortSuffixParams` pre-sorts each node's `xp` keys longest-first at build time (a stable
+  sort, so equal-length suffixes keep declaration order). It started as a bug: before the
+  sort, the winner depended on which overlapping suffix route was declared first. The sort
+  is build-time, so it's free on the match hot path and the serialized production trie
+  preserves the order through `JSON.parse`. (The regex fallback still picks by declaration
+  order here — a documented M4 divergence in `trie-regex-parity.test.ts`.)
 - **A bare-prefix wildcard matches with an empty splat (C1).** `/files` matches
   `/files/*` with `{"*":""}`, and a param-prefixed wildcard matches its own bare prefix
   too — `/users/:id/*` matches `/users/5` as `{ id:"5", "*":"" }` (a zero-or-more splat,

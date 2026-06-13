@@ -139,7 +139,6 @@ describe("segment-resolution parallel loading", () => {
       context.request,
       context.url,
       context.url,
-      new Map(),
       {
         trackHandler: (p: any) => p,
         wrapLoaderPromise: (p: Promise<any>) => p,

@@ -111,7 +111,6 @@ function createMockRouter(
       entry: {},
       routeKey: "test",
       params: {},
-      optionalParams: new Set(),
       ...matchOverrides,
     })),
     previewMatch: vi.fn(async () => null),

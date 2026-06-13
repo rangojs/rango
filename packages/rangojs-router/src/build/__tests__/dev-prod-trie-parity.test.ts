@@ -24,6 +24,7 @@ function makePatterns() {
       path("/about", Page, { name: "about", trailingSlash: "always" }),
       path("/shop/:cat?/:id", Page, { name: "product" }),
       path("/p/:id.html", Page, { name: "html" }),
+      path("/p/:id.full.html", Page, { name: "htmlfull" }),
       path("/files/*", Page, { name: "files" }),
       include(
         "/blog",
@@ -75,6 +76,7 @@ const PROBE_URLS = [
   "/shop/widget",
   "/shop/tools/widget",
   "/p/5.html",
+  "/p/5.full.html",
   "/files",
   "/files/a/b/c",
   "/blog",

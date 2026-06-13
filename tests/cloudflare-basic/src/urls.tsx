@@ -61,6 +61,7 @@ import {
 import {
   ShopProductPage,
   ShopCategoryPage,
+  ShopArchivePage,
 } from "./pages/suffix-params-test.js";
 import { CookieOverlayPage } from "./pages/cookie-overlay.js";
 import { buildEnvPatterns } from "./pages/build-env-handler.js";
@@ -293,6 +294,9 @@ export const urlpatterns = urls(
     ),
     // Suffix param test routes (e.g. /shop/:productId.html)
     path("/shop/:productId.html", ShopProductPage, { name: "shopProduct" }),
+    // Longer overlapping suffix declared AFTER `.html` to exercise the
+    // longest-suffix-wins fix: /shop/x.archive.html must match here, not above.
+    path("/shop/:slug.archive.html", ShopArchivePage, { name: "shopArchive" }),
     path("/shop/:categoryId", ShopCategoryPage, { name: "shopCategory" }),
 
     // Trie routing bug test routes (constraint fallback + param name collision)

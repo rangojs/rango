@@ -79,10 +79,8 @@ describe("compilePattern", () => {
   });
 
   it("matches optional params", () => {
-    const { regex, paramNames, optionalParams } =
-      compilePattern("/:locale?/blog");
+    const { regex, paramNames } = compilePattern("/:locale?/blog");
     expect(paramNames).toEqual(["locale"]);
-    expect(optionalParams.has("locale")).toBe(true);
     expect(regex.test("/blog")).toBe(true);
     expect(regex.test("/en/blog")).toBe(true);
   });
@@ -97,12 +95,9 @@ describe("compilePattern", () => {
   });
 
   it("captures constraint list for optional + constrained params", () => {
-    const { regex, optionalParams, constraints } = compilePattern(
-      "/:locale(en|gb)?/blog",
-    );
+    const { regex, constraints } = compilePattern("/:locale(en|gb)?/blog");
     expect(regex.test("/blog")).toBe(true);
     expect(regex.test("/en/blog")).toBe(true);
-    expect(optionalParams.has("locale")).toBe(true);
     expect(constraints).toEqual({ locale: ["en", "gb"] });
   });
 
@@ -298,7 +293,6 @@ describe("isLazyEvaluationNeeded", () => {
         entry: {} as any,
         routeKey: "k",
         params: {},
-        optionalParams: new Set(),
       }),
     ).toBe(false);
   });

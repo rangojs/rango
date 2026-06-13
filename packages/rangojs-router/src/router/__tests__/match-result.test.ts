@@ -42,7 +42,6 @@ function createMockContext(
       entry: {} as any,
       routeKey: "test",
       params: {},
-      optionalParams: new Set<string>(),
     },
     manifestEntry: {} as any,
     entries: [],
@@ -141,7 +140,6 @@ describe("match-result", () => {
           entry: {} as any,
           routeKey: "users",
           params: { id: "123" },
-          optionalParams: new Set<string>(),
         },
       });
       const state = createPipelineState();
@@ -401,7 +399,6 @@ describe("match-result", () => {
           entry: {} as any,
           routeKey: "users/posts",
           params: { userId: "123", postId: "456" },
-          optionalParams: new Set<string>(),
         },
       });
       const state = createPipelineState();

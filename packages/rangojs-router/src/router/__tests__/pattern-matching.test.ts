@@ -347,11 +347,9 @@ describe("findMatch", () => {
 describe("optional parameters", () => {
   describe("compilePattern", () => {
     it("should match pattern with optional param present: /:locale?/blog -> /en/blog", () => {
-      const { regex, paramNames, optionalParams } =
-        compilePattern("/:locale?/blog");
+      const { regex, paramNames } = compilePattern("/:locale?/blog");
       expect(regex.test("/en/blog")).toBe(true);
       expect(paramNames).toEqual(["locale"]);
-      expect(optionalParams.has("locale")).toBe(true);
     });
 
     it("should match pattern with optional param absent: /:locale?/blog -> /blog", () => {
@@ -366,13 +364,11 @@ describe("optional parameters", () => {
     });
 
     it("should handle optional param at end: /blog/:page?", () => {
-      const { regex, paramNames, optionalParams } =
-        compilePattern("/blog/:page?");
+      const { regex, paramNames } = compilePattern("/blog/:page?");
       expect(regex.test("/blog")).toBe(true);
       expect(regex.test("/blog/2")).toBe(true);
       expect(regex.test("/blog/")).toBe(false);
       expect(paramNames).toEqual(["page"]);
-      expect(optionalParams.has("page")).toBe(true);
     });
 
     it("should handle multiple optional params", () => {
@@ -383,15 +379,11 @@ describe("optional parameters", () => {
     });
 
     it("should handle mix of required and optional params", () => {
-      const { regex, paramNames, optionalParams } = compilePattern(
-        "/:locale?/blog/:slug",
-      );
+      const { regex, paramNames } = compilePattern("/:locale?/blog/:slug");
       expect(regex.test("/blog/hello")).toBe(true);
       expect(regex.test("/en/blog/hello")).toBe(true);
       expect(regex.test("/blog")).toBe(false);
       expect(paramNames).toEqual(["locale", "slug"]);
-      expect(optionalParams.has("locale")).toBe(true);
-      expect(optionalParams.has("slug")).toBe(false);
     });
   });
 
@@ -401,7 +393,6 @@ describe("optional parameters", () => {
       const result = findMatch("/en/blog", entries);
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "en" });
-      expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
     it("omits absent optional params from `params` (key not present)", () => {
@@ -410,7 +401,6 @@ describe("optional parameters", () => {
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({});
       expect(result!.params.locale).toBeUndefined();
-      expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
     it("should handle multiple optional params correctly", () => {
@@ -447,9 +437,8 @@ describe("optional parameters", () => {
   // the index route 404s for non-localized requests.
   describe("all-optional patterns (no static tail)", () => {
     it("/:locale? matches `/` and `/en`, but not `/en/`", () => {
-      const { regex, paramNames, optionalParams } = compilePattern("/:locale?");
+      const { regex, paramNames } = compilePattern("/:locale?");
       expect(paramNames).toEqual(["locale"]);
-      expect(optionalParams.has("locale")).toBe(true);
       expect(regex.test("/")).toBe(true);
       expect(regex.test("/en")).toBe(true);
       expect(regex.test("/en/")).toBe(false);
@@ -486,7 +475,6 @@ describe("optional parameters", () => {
       expect(root).not.toBeNull();
       expect(root!.params).toEqual({});
       expect(root!.params.locale).toBeUndefined();
-      expect(root!.optionalParams.has("locale")).toBe(true);
 
       const localized = findMatch("/en", entries);
       expect(localized).not.toBeNull();
@@ -612,11 +600,10 @@ describe("constrained parameters", () => {
     });
 
     it("should capture constraint for optional + constrained params", () => {
-      const { paramNames, optionalParams, constraints } = compilePattern(
+      const { paramNames, constraints } = compilePattern(
         "/:locale(en|gb)?/blog",
       );
       expect(paramNames).toEqual(["locale"]);
-      expect(optionalParams.has("locale")).toBe(true);
       expect(constraints).toEqual({ locale: ["en", "gb"] });
     });
 
@@ -642,7 +629,6 @@ describe("constrained parameters", () => {
       const result = findMatch("/gb/blog", entries);
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "gb" });
-      expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
     it("omits absent optional + constrained param from params", () => {
@@ -651,7 +637,6 @@ describe("constrained parameters", () => {
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({});
       expect(result!.params.locale).toBeUndefined();
-      expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
     it("should match constraint with regex metacharacters literally", () => {

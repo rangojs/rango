@@ -308,6 +308,8 @@ export const NamedRoutes = {
   "static-reverse": "/static-reverse",
   "static-shell": "/static-shell/:tag",
   streamModeTest: "/stream-mode-test",
+  "suffixOverlap.data": "/suffix-overlap/:file.data",
+  "suffixOverlap.v2data": "/suffix-overlap/:file.v2.data",
   "swrProduct.detail": "/swr-product/:id",
   "swrProductVtoff.detail": "/swr-product-vtoff/:id",
   testClearErrorLog: "/__test/clear-error-log",

@@ -51,6 +51,7 @@ export const NamedRoutes = {
   "renderedBarrier.index": "/rendered-barrier",
   robots: "/robots.txt",
   search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
+  shopArchive: "/shop/:slug.archive.html",
   shopCategory: "/shop/:categoryId",
   shopProduct: "/shop/:productId.html",
   slow1: "/slow/1",

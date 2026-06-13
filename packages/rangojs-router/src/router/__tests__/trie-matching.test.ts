@@ -398,3 +398,93 @@ describe("tryTrieMatch", () => {
     });
   });
 });
+
+describe("tryTrieMatch suffix-param longest-wins ordering", () => {
+  // Overlapping suffixes must resolve by specificity (longest literal suffix),
+  // never by route declaration order. Build the SAME pair in both orders and
+  // assert identical results — the regression guard for the build-time sort.
+  it("matches the longest suffix regardless of declaration order (.js declared first)", () => {
+    const trie = buildTestTrie({
+      "assets.js": "/assets/:file.js",
+      "assets.minjs": "/assets/:file.min.js",
+    });
+
+    const min = tryTrieMatch(trie, "/assets/app.min.js");
+    expect(min?.routeKey).toBe("assets.minjs");
+    expect(min?.params).toEqual({ file: "app" });
+
+    const plain = tryTrieMatch(trie, "/assets/app.js");
+    expect(plain?.routeKey).toBe("assets.js");
+    expect(plain?.params).toEqual({ file: "app" });
+  });
+
+  it("matches the longest suffix regardless of declaration order (.min.js declared first)", () => {
+    const trie = buildTestTrie({
+      "assets.minjs": "/assets/:file.min.js",
+      "assets.js": "/assets/:file.js",
+    });
+
+    const min = tryTrieMatch(trie, "/assets/app.min.js");
+    expect(min?.routeKey).toBe("assets.minjs");
+    expect(min?.params).toEqual({ file: "app" });
+
+    const plain = tryTrieMatch(trie, "/assets/app.js");
+    expect(plain?.routeKey).toBe("assets.js");
+    expect(plain?.params).toEqual({ file: "app" });
+  });
+
+  it("resolves a three-way suffix overlap by descending length", () => {
+    const trie = buildTestTrie({
+      "d.gz": "/d/:f.gz",
+      "d.targz": "/d/:f.tar.gz",
+      "d.any": "/d/:f",
+    });
+
+    expect(tryTrieMatch(trie, "/d/archive.tar.gz")?.routeKey).toBe("d.targz");
+    expect(tryTrieMatch(trie, "/d/archive.tar.gz")?.params).toEqual({
+      f: "archive",
+    });
+    expect(tryTrieMatch(trie, "/d/archive.gz")?.routeKey).toBe("d.gz");
+    expect(tryTrieMatch(trie, "/d/archive.gz")?.params).toEqual({
+      f: "archive",
+    });
+    // No suffix matches -> plain param sibling.
+    expect(tryTrieMatch(trie, "/d/plain")?.routeKey).toBe("d.any");
+    expect(tryTrieMatch(trie, "/d/plain")?.params).toEqual({ f: "plain" });
+  });
+
+  it("multi-dot suffix wins over the shorter suffix sharing the same tail", () => {
+    const trie = buildTestTrie({
+      "y.html": "/y/:f.html",
+      "y.v2html": "/y/:f.v2.html",
+    });
+
+    const v2 = tryTrieMatch(trie, "/y/widget.v2.html");
+    expect(v2?.routeKey).toBe("y.v2html");
+    expect(v2?.params).toEqual({ f: "widget" });
+
+    const plain = tryTrieMatch(trie, "/y/widget.html");
+    expect(plain?.routeKey).toBe("y.html");
+    expect(plain?.params).toEqual({ f: "widget" });
+  });
+
+  it("regression: a single suffix route still captures a multi-dot value", () => {
+    const trie = buildTestTrie({ "x.html": "/x/:file.html" });
+
+    const result = tryTrieMatch(trie, "/x/widget.v2.html");
+    expect(result?.routeKey).toBe("x.html");
+    expect(result?.params).toEqual({ file: "widget.v2" });
+  });
+
+  it("orders xp keys longest-first, with declaration order as the stable tiebreak", () => {
+    // Two equal-length suffixes (.aa, .bb) plus a longer one (.long). Stable
+    // sort keeps .aa before .bb (their declaration order); .long sorts ahead.
+    const trie = buildTestTrie({
+      "n.aa": "/n/:f.aa",
+      "n.bb": "/n/:f.bb",
+      "n.long": "/n/:f.long",
+    });
+
+    expect(Object.keys(trie.s!["n"]!.xp!)).toEqual([".long", ".aa", ".bb"]);
+  });
+});
