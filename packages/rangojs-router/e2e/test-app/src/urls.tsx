@@ -62,6 +62,7 @@ import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
+import { cacheTagPatterns } from "./urls/cache-tag.js";
 import { actionCtxSetPatterns } from "./urls/action-ctx-set.js";
 import { isActionPatterns } from "./urls/is-action.js";
 import { paramsAfterActionPatterns } from "./urls/params-after-action.js";
@@ -943,6 +944,9 @@ export const urlpatterns = urls(
         name: "cacheIsolation",
       }),
 
+      // Cache-tag invalidation tests (cacheTag / updateTag / cache({ tags }))
+      include("/cache-tag-test", cacheTagPatterns, { name: "cacheTag" }),
+
       // ALS scope propagation tests (request, render, intercept scopes)
       include("/als-scope", alsScopePatterns, { name: "alsScope" }),
 
@@ -1171,6 +1175,14 @@ export const urlpatterns = urls(
           return { source: "json", version: 2 };
         },
         { name: "responseWrapJsonHeaders" },
+      ),
+      path.json(
+        "/response-wrap/nested-promise",
+        // Regression: an object with a nested UNAWAITED Promise (the
+        // forgotten-await footgun, e.g. `{ user: db.getUser(id) }`). The runtime
+        // guard must throw (-> 500) instead of silently emitting {"value":{}}.
+        () => ({ value: Promise.resolve("resolved-late") }),
+        { name: "responseWrapNestedPromise" },
       ),
       path.text(
         "/response-wrap/text",

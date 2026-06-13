@@ -114,6 +114,12 @@ export type ResponsePathFn<TEnv> = <
  * Path function for JSON response routes (path.json()).
  * Handler can return plain JSON-serializable values or Response.
  * TData is inferred from the handler's return type (excluding Response/Promise wrappers).
+ *
+ * Note: a nested Promise in the return (a forgotten await) is caught at runtime
+ * by response-route-handler.ts (it throws instead of silently emitting `{}`). A
+ * compile-time JsonValue constraint was evaluated and rejected — it breaks
+ * interface-typed returns (interfaces lack the index signature JsonValue
+ * requires) and preserves literal types in the inferred response shape.
  */
 export type JsonResponsePathFn<TEnv> = <
   const TPattern extends string,

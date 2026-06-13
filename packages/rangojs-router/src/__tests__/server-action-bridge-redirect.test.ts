@@ -34,6 +34,17 @@ vi.mock("../browser/logging.js", () => ({
 
 import { createServerActionBridge } from "../browser/server-action-bridge";
 import { reconcileErrorSegments } from "../browser/segment-reconciler";
+import {
+  isActionFenceActive,
+  __resetActionFence,
+} from "../browser/action-fence";
+
+// Flush all microtasks (a macrotask tick). The simple-redirect terminal calls
+// finalizeAction() and then returns a never-settling promise, so the action
+// callback never resolves; we cannot await it. One macrotask hop guarantees the
+// synchronous finalizeAction() body has run.
+const flush = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0));
 
 // ---------------------------------------------------------------------------
 // Window setup (no jsdom — manual globalThis.window like prefetch-fetch tests)
@@ -113,7 +124,6 @@ function createMockStore() {
     setSegmentIds: vi.fn(),
     markCacheAsStale: vi.fn(),
     clearHistoryCache: vi.fn(),
-    broadcastCacheInvalidation: vi.fn(),
     setCrossTabRefreshCallback: vi.fn(),
     addInflightAction: vi.fn(),
     removeInflightAction: vi.fn(),
@@ -184,6 +194,11 @@ function createMockDeps(
   opts?: {
     sideEffect?: () => void | Promise<void>;
     responseHeaders?: Record<string, string>;
+    // Await the response promise inside createFromFetch (the real decoder does).
+    // Needed for the never-settling simple-redirect terminal: without it the
+    // mock resolves the payload regardless, letting the bridge run the normal
+    // path the redirect short-circuit was supposed to skip.
+    awaitResponse?: boolean;
   },
 ) {
   const sideEffect = opts?.sideEffect;
@@ -206,7 +221,8 @@ function createMockDeps(
 
   return {
     deps: {
-      createFromFetch: vi.fn(async () => {
+      createFromFetch: vi.fn(async (responsePromise: Promise<Response>) => {
+        if (opts?.awaitResponse) await responsePromise;
         await sideEffect?.();
         return payload;
       }) as any,
@@ -563,5 +579,141 @@ describe("server-action-bridge header redirect abort safety", () => {
     expect(onNavigate).not.toHaveBeenCalled();
     expect(completeFn).not.toHaveBeenCalled();
     expect(locationHrefSetter).not.toHaveBeenCalled();
+  });
+});
+
+describe("server-action-bridge simple-redirect finalization (latch)", () => {
+  let locationHrefSetter: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    ({ locationHrefSetter } = setupWindow());
+    __resetActionFence();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    __resetActionFence();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+  });
+
+  // The mutate-then-simple-redirect terminal (X-RSC-Redirect, not aborted)
+  // returns a never-settling promise, so the finally never runs. Before the
+  // single latched finalizeAction(), this path invalidated nothing and leaked
+  // the action fence permanently. It must now invalidate exactly once and
+  // release the fence.
+  it("invalidates exactly once and releases the fence on a successful simple redirect", async () => {
+    const store = createMockStore();
+    const { controller } = createMockEventController();
+    const onNavigate = vi.fn(() => Promise.resolve());
+
+    const payload: RscPayload = {
+      metadata: { isPartial: true, matched: ["root"], diff: [], segments: [] },
+      returnValue: { ok: true, data: "ignored" },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload, {
+      responseHeaders: { "X-RSC-Redirect": "/dashboard" },
+      awaitResponse: true,
+    });
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+      onNavigate,
+    });
+    bridge.register();
+
+    // Fire without awaiting: the simple-redirect terminal never settles.
+    void getActionCallback()("test-action", []);
+    await flush();
+
+    expect(store.markCacheAsStaleAndBroadcast).toHaveBeenCalledTimes(1);
+    expect(isActionFenceActive()).toBe(false);
+  });
+
+  // keepClientCache() (the x-rango-keep-cache directive) suppresses only the
+  // invalidation; the fence release must still happen, even on the
+  // never-settling simple-redirect terminal.
+  it("suppresses invalidation but still releases the fence when keepCache is set", async () => {
+    const store = createMockStore();
+    const { controller } = createMockEventController();
+    const onNavigate = vi.fn(() => Promise.resolve());
+
+    const payload: RscPayload = {
+      metadata: { isPartial: true, matched: ["root"], diff: [], segments: [] },
+      returnValue: { ok: true, data: "ignored" },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload, {
+      responseHeaders: {
+        "X-RSC-Redirect": "/dashboard",
+        "x-rango-keep-cache": "1",
+      },
+      awaitResponse: true,
+    });
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+      onNavigate,
+    });
+    bridge.register();
+
+    void getActionCallback()("test-action", []);
+    await flush();
+
+    expect(store.markCacheAsStaleAndBroadcast).not.toHaveBeenCalled();
+    expect(isActionFenceActive()).toBe(false);
+  });
+
+  // The X-RSC-Reload (version-mismatch) terminal also navigates away via a
+  // never-settling promise, so the finally never runs. Before the onReload
+  // finalizeAction() it leaked the fence for the whole session if the reload
+  // was cancelled (a beforeunload "Stay").
+  it("releases the fence on a version-mismatch reload terminal", async () => {
+    const store = createMockStore();
+    const { controller } = createMockEventController();
+
+    const payload: RscPayload = {
+      metadata: { isPartial: true, matched: ["root"], diff: [], segments: [] },
+      returnValue: { ok: true, data: "ignored" },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload, {
+      responseHeaders: { "X-RSC-Reload": "http://localhost:3000/reloaded" },
+      awaitResponse: true,
+    });
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+    });
+    bridge.register();
+
+    void getActionCallback()("test-action", []);
+    await flush();
+
+    // The reload path was taken (location.href set), and the fence is released.
+    expect(locationHrefSetter).toHaveBeenCalledWith(
+      "http://localhost:3000/reloaded",
+    );
+    expect(isActionFenceActive()).toBe(false);
+    // Nothing executed server-side on a version mismatch, so the reload terminal
+    // must NOT invalidate (no cross-tab broadcast). Contrast the simple-redirect
+    // terminal above, which committed a mutation and invalidates exactly once.
+    expect(store.markCacheAsStaleAndBroadcast).not.toHaveBeenCalled();
   });
 });

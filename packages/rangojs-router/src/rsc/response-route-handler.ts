@@ -12,7 +12,7 @@ import { contextGet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
-import { createCacheScope } from "../cache/cache-scope.js";
+import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
 import { executeMiddleware } from "../router/middleware.js";
 import {
   createReverseFunction,
@@ -131,7 +131,26 @@ export async function handleResponseRoute<TEnv>(
 
       // Handled before the MIME lookup (json is also a RESPONSE_TYPE_MIME key).
       if (preview.responseType === "json") {
-        return createResponseWithMergedHeaders(JSON.stringify(result), {
+        // Runtime guard: the json() return type rejects nested Promises at
+        // compile time, but an `as`-cast or untyped (JS) handler can still slip
+        // one through. JSON.stringify would silently emit {} for it (the
+        // forgotten-await footgun — the RSC pipeline awaits nested promises, this
+        // path does not). Throw a clear error instead of shipping empty data.
+        const body = JSON.stringify(result, (_key, value) => {
+          if (
+            value != null &&
+            typeof (value as { then?: unknown }).then === "function"
+          ) {
+            throw new RouterError(
+              "RESPONSE_NOT_SERIALIZABLE",
+              "A json() response route returned a Promise (likely a forgotten " +
+                "await). Await async values before returning so they serialize, " +
+                "instead of emitting an empty {}.",
+            );
+          }
+          return value;
+        });
+        return createResponseWithMergedHeaders(body, {
           status: 200,
           headers: { "content-type": "application/json;charset=utf-8" },
         });
@@ -258,6 +277,11 @@ export async function handleResponseRoute<TEnv>(
           }
         }
 
+        // Resolve cache tags for this document entry (static or dynamic),
+        // while request context is available. Passed to putResponse so the
+        // entry is tag-invalidatable.
+        const responseTags = resolveCacheTags(cacheScope.config, reqCtx);
+
         // Save pre-handler callbacks (registered by app-level middleware
         // before we reach the cache block) and clear the live array.
         // createResponseWithMergedHeaders (inside the handler) eagerly
@@ -299,6 +323,7 @@ export async function handleResponseRoute<TEnv>(
                     fresh.clone(),
                     cacheScope!.ttl,
                     cacheScope!.swr,
+                    responseTags,
                   );
                 }
               } catch (error) {
@@ -327,6 +352,7 @@ export async function handleResponseRoute<TEnv>(
                 response.clone(),
                 cacheScope!.ttl,
                 cacheScope!.swr,
+                responseTags,
               );
             } catch (error) {
               console.error(`[ResponseCache] Cache write failed:`, error);

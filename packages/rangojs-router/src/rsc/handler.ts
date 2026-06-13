@@ -57,6 +57,7 @@ import {
   getRouterTrie,
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
+import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
@@ -128,11 +129,34 @@ import {
  * });
  * ```
  */
+
+/**
+ * Response that tells the client to do a full document navigation. Shared by
+ * the terminal reload plans (version-mismatch and app-switch): an empty 200
+ * carrying X-RSC-Reload, which the client turns into window.location.href.
+ */
+function createReloadResponse(reloadUrl: string) {
+  return createResponseWithMergedHeaders(null, {
+    status: 200,
+    headers: {
+      "X-RSC-Reload": reloadUrl,
+      "content-type": "text/x-component;charset=utf-8",
+    },
+  });
+}
+
 export function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
   const { router, version = VERSION, nonce: nonceProvider } = options;
+
+  // Handler-owned registry of explicit per-scope stores from cache({ store }).
+  // Lives in the closure so it is scoped per handler (multi-router deployments
+  // get separate registries) and accumulates every explicit store this handler
+  // resolves across requests. updateTag()/revalidateTag() iterate it to reach
+  // stores not covered by the app-level ctx._cacheStore.
+  const explicitTaggedStores = new Set<SegmentCacheStore>();
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -425,9 +449,12 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      explicitTaggedStores,
       cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
+      stateCookieName: router.resolvedStateCookieName,
+      version,
     });
     if (earlyMetricsStore) {
       requestContext._debugPerformance = true;
@@ -437,7 +464,7 @@ export function createRSCHandler<
     // can surface non-fatal errors through the router's onError callback.
     requestContext._reportBackgroundError = (
       error: unknown,
-      category: string,
+      category: CacheErrorCategory,
     ) => {
       callOnError(error, "cache", {
         request,
@@ -642,13 +669,14 @@ export function createRSCHandler<
       console.log(
         `[RSC] Version mismatch: client=${url.searchParams.get("_rsc_v")}, server=${version}. Forcing reload.`,
       );
-      return createResponseWithMergedHeaders(null, {
-        status: 200,
-        headers: {
-          "X-RSC-Reload": plan.reloadUrl,
-          "content-type": "text/x-component;charset=utf-8",
-        },
-      });
+      return createReloadResponse(plan.reloadUrl);
+    }
+
+    if (plan.mode === "app-switch") {
+      // Cross-app SPA navigation crossed a host-router app boundary. Force a
+      // real document navigation so the target app's document is re-established
+      // (stylesheets, theme, warmup, prefetch-TTL). See request-classification.
+      return createReloadResponse(plan.reloadUrl);
     }
 
     // ---- 3. Origin guard (gate for action/loader/PE modes) ----
@@ -1053,6 +1081,7 @@ export function createRSCHandler<
               rootLayout: router.rootLayout,
               handles: handleStore.stream(),
               version,
+              stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
               initialTheme: requireRequestContext().theme,
@@ -1068,7 +1097,12 @@ export function createRSCHandler<
           if (isRscRequest(request, url, isPartial)) {
             return createResponseWithMergedHeaders(rscStream, {
               status: 404,
-              headers: { "content-type": "text/x-component;charset=utf-8" },
+              headers: {
+                "content-type": "text/x-component;charset=utf-8",
+                // Router identity for the client's pre-decode integrity check; a
+                // same-app 404 matches and applies in place. See response-adapter.
+                "X-RSC-Router-Id": router.id,
+              },
             });
           }
 

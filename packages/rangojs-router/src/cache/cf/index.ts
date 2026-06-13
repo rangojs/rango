@@ -13,13 +13,27 @@
 export {
   CFCacheStore,
   type CFCacheStoreOptions,
+  type CFCacheDebug,
+  type CFCacheReadDebugEvent,
   type KVNamespace,
 } from "./cf-cache-store.js";
 
-// Header constants for debugging and inspection
+// Header constants for debugging and inspection. The tag headers
+// (x-edge-cache-tags / x-edge-cache-tagged-at) are intentionally NOT re-exported:
+// they are an internal encoding detail of the store's tag-invalidation check, not
+// a consumer-inspectable contract.
 export {
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
+  CACHE_REVALIDATING_AT_HEADER,
+} from "./cf-cache-store.js";
+
+// Default latency-budget values, exported so the CFCacheStoreOptions JSDoc
+// {@link}s resolve and consumers can derive margins from the defaults.
+export {
+  EDGE_LOOKUP_TIMEOUT_MS,
+  EDGE_READ_TIMEOUT_MS,
+  KV_READ_TIMEOUT_MS,
 } from "./cf-cache-store.js";
 
 // Internal exports (re-exported for backwards compatibility, marked @internal in source)

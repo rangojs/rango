@@ -7,10 +7,7 @@ import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
-import type {
-  SerializedSegmentData,
-  SegmentHandleData,
-} from "../cache/types.js";
+import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
@@ -294,6 +291,13 @@ export interface RangoInternal<
   readonly prefetchCacheTTL: number;
 
   /**
+   * Resolved rango state cookie name (`{prefix}_{routerId}`), composed once at
+   * router init and shipped to the client in payload metadata. The server-side
+   * cookie writer reads it from here; the client reads it from metadata.
+   */
+  readonly resolvedStateCookieName: string;
+
+  /**
    * Whether connection warmup is enabled.
    * When true, the client sends HEAD /?_rsc_warmup after idle periods
    * and the server responds with 204 No Content.
@@ -395,11 +399,13 @@ export interface RangoInternal<
     devMode?: boolean,
   ): Promise<{
     segments: SerializedSegmentData[];
-    handles: Record<string, SegmentHandleData>;
+    /** RSC-encoded handle map ("" when none) — see handle-snapshot.ts. */
+    handles: string;
     routeName: string;
     params: Record<string, string>;
     interceptSegments?: SerializedSegmentData[];
-    interceptHandles?: Record<string, SegmentHandleData>;
+    /** RSC-encoded MERGED (main + intercept) handle map for the intercept artifact. */
+    interceptHandles?: string;
     passthrough?: true;
   } | null>;
 
@@ -413,7 +419,7 @@ export interface RangoInternal<
     routeName?: string,
     buildEnv?: any,
     devMode?: boolean,
-  ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null>;
+  ): Promise<{ encoded: string; handles: string } | null>;
 
   /**
    * Preview match - returns route middleware without segment resolution.

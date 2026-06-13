@@ -106,7 +106,33 @@ export const StaticWithReverse = Static((ctx) => {
   );
 });
 
+// Prerender handler that pushes a breadcrumb whose `content` is a
+// Promise<ReactNode>. Regression for the prerender handle-serialization bug: the
+// content must survive the build artifact / dev wire (Flight-encoded), not be
+// flattened to {} by JSON. TrailBreadcrumbs renders the restored content via
+// use() + Suspense, so the testid only appears if the Promise<ReactNode> handle
+// value round-tripped through the prerender store.
+export const PrerenderHandle = Prerender(async (ctx) => {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  breadcrumb({ label: "Home", href: "/" });
+  breadcrumb({
+    label: "Prerender Handle",
+    href: "/prerender-handle",
+    content: Promise.resolve(
+      <span data-testid="prerender-handle-content">async-crumb-content</span>,
+    ),
+  });
+  // The app's global breadcrumb component (rendered by the root layout) displays
+  // the pushed crumbs, including the Promise<ReactNode> content via use().
+  return (
+    <div data-testid="prerender-handle-page">
+      <h1 data-testid="prerender-handle-title">Prerender Handle</h1>
+    </div>
+  );
+});
+
 export const prerenderPatterns = urls(({ path, loader, notFoundBoundary }) => [
+  path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
   path("/docs", DocsPage, { name: "docs" }),
   path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
     loader(PrerenderTestLoader),

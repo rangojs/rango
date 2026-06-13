@@ -1,10 +1,7 @@
 "use client";
 
-import {
-  ErrorBoundary,
-  useClientCache,
-  useRouter,
-} from "@rangojs/router/client";
+import { ErrorBoundary, useRouter } from "@rangojs/router/client";
+import { invalidateClientCache } from "@rangojs/router";
 import type { ClientErrorBoundaryFallbackProps } from "@rangojs/router";
 import type { ReactNode } from "react";
 
@@ -13,11 +10,10 @@ function KanbanClientErrorFallback({
   error,
   reset,
 }: ClientErrorBoundaryFallbackProps) {
-  const { clear } = useClientCache();
   const router = useRouter();
 
   function handleReload() {
-    clear();
+    invalidateClientCache();
     reset();
     router.push("/kanban");
   }

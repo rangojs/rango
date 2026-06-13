@@ -28,9 +28,11 @@ import {
   resolveSwrWindow,
   resolveCacheKey,
   resolveCacheStore,
+  resolveTagsOption,
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
+import { recordRequestTags } from "../../cache/cache-tag.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -87,23 +89,8 @@ async function resolveLoaderKey(
  */
 function resolveTags(loaderEntry: LoaderEntry): string[] | undefined {
   const options = loaderEntry.cache?.options;
-  if (!options || !options.tags) return undefined;
-
-  if (typeof options.tags === "function") {
-    const requestCtx = getRequestContext();
-    if (!requestCtx) return undefined;
-    try {
-      return options.tags(requestCtx);
-    } catch (error) {
-      console.error(
-        `[LoaderCache] Tags function failed, caching without tags:`,
-        error,
-      );
-      return undefined;
-    }
-  }
-
-  return options.tags;
+  if (!options) return undefined;
+  return resolveTagsOption(options.tags, getRequestContext(), "LoaderCache");
 }
 
 function getLoaderStore(
@@ -152,6 +139,10 @@ export function resolveLoaderData<TEnv>(
   const swrWindow = resolveSwrWindow(options.swr, store.defaults);
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
+  // Loader tags are config-derived, so they are the complete set whether this is
+  // a cache hit or miss; record them every time so a document built from this
+  // loader is tagged for invalidation.
+  recordRequestTags(tags);
 
   // Wrap ctx.use() so cache HIT primes the handler's memoization map.
   // ctx.use() closes over the match context's loaderPromises (not request context's).

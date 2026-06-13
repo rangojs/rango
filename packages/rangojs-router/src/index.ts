@@ -218,6 +218,17 @@ export function headers(): never {
 }
 
 /**
+ * Client implementation of `invalidateClientCache()`. Unlike the server-only
+ * stubs above this is a REAL function under the `default` condition (it marks
+ * the client's caches stale); the `react-server` condition (index.rsc.ts)
+ * selects the server implementation that writes a rotated `Set-Cookie`.
+ */
+export {
+  invalidateClientCache,
+  keepClientCache,
+} from "./browser/invalidate-client-cache.js";
+
+/**
  * Error-throwing stub for server-only `createReverse` function.
  */
 export function createReverse(): never {
@@ -236,6 +247,18 @@ export function middleware(): never {
 }
 export function revalidate(): never {
   throw serverOnlyStubError("revalidate");
+}
+// Cache tag APIs are server-only (real implementations in index.rsc.ts). These
+// stubs keep the named-export shape identical under the default/non-react-server
+// condition so SSR/client/default bundles that encounter the import link cleanly.
+export function cacheTag(): never {
+  throw serverOnlyStubError("cacheTag");
+}
+export function updateTag(): never {
+  throw serverOnlyStubError("updateTag");
+}
+export function revalidateTag(): never {
+  throw serverOnlyStubError("revalidateTag");
 }
 export function loader(): never {
   throw serverOnlyStubError("loader");

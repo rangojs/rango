@@ -32,8 +32,10 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
 export interface RscMetadata {
   pathname: string;
   segments: ResolvedSegment[];
-  /** Router instance ID. When this changes between navigations, the client
-   *  forces a full tree replacement (app switch via host router). */
+  /** Router instance ID — the current app's identity. A mismatch with the
+   *  client's id (sent as _rsc_rid) is detected server-side and answered with
+   *  X-RSC-Reload (full document load), so the client never swaps apps
+   *  in-session; within a session this always equals the current app. */
   routerId?: string;
   isPartial?: boolean;
   isError?: boolean;
@@ -69,6 +71,12 @@ export interface RscMetadata {
    * Sent on initial render so the browser can configure its cache duration.
    */
   prefetchCacheTTL?: number;
+  /**
+   * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
+   * reads it verbatim and binds the rango state cookie to it; composition
+   * happens only server-side.
+   */
+  stateCookieName?: string;
   /**
    * Theme configuration from router.
    * Included when theme is enabled in router config.
@@ -431,15 +439,9 @@ export interface NavigationStore {
   hasHistoryCache(historyKey: string): boolean;
   updateCacheHandleData(historyKey: string, handleData: HandleData): void;
   markCacheAsStale(): void;
+  markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
-  /**
-   * Clear this tab's nav + prefetch caches without broadcasting or rotating
-   * shared state. Intended for app-switch transitions that affect only this
-   * tab's session.
-   */
-  clearHistoryCacheLocal(): void;
-  broadcastCacheInvalidation(): void;
 
   // Cross-tab refresh callback (set by navigation bridge)
   setCrossTabRefreshCallback(callback: () => void): void;
@@ -556,13 +558,6 @@ export interface NavigationBridge {
   getVersion(): string | undefined;
   /** Update the RSC version (e.g. after HMR). Clears prefetch cache. */
   updateVersion(newVersion: string): void;
-  /**
-   * Replace the active app-shell snapshot (rootLayout, basename, version)
-   * atomically. Used on cross-app navigations when the response's routerId
-   * indicates the user entered a different app. Theme, warmup, and prefetch
-   * TTL are document-lifetime and not part of the shell.
-   */
-  updateAppShell(next: import("./app-shell.js").AppShell): void;
 }
 
 /**

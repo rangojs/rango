@@ -157,9 +157,11 @@ export interface NavigationProviderProps {
   basename?: string;
 
   /**
-   * Live app-shell ref. When provided, the context's `basename` and `version`
-   * properties become live getters that track app-switch updates without
-   * invalidating the memoized context value.
+   * App-shell ref. When provided, the context's `basename` and `version` are
+   * read through it (live getters) so they don't close over a stale snapshot or
+   * invalidate the memoized context value. The shell is set once at init and is
+   * not swapped within a session — a cross-app navigation is a full document
+   * load (X-RSC-Reload), so the target app establishes its own shell on load.
    */
   appShellRef?: AppShellRef;
 }
@@ -218,8 +220,9 @@ export function NavigationProvider({
   }, []);
 
   // basename/version are always read through a shell ref so the context value
-  // has a single shape: a supplied appShellRef stays live (app-switch updates
-  // it), the standalone fallback is a frozen ref over the mount-time props.
+  // has a single shape. Both are set once: a supplied appShellRef is seeded
+  // from the init payload (a cross-app navigation reloads, so it is not swapped
+  // in-session), and the standalone fallback wraps the mount-time props.
   const fallbackShellRef = useRef<AppShellRef | null>(null);
   if (!fallbackShellRef.current) {
     fallbackShellRef.current = createAppShellRef({ basename, version });
@@ -436,10 +439,10 @@ export function NavigationProvider({
   let content = <RootErrorBoundary>{root}</RootErrorBoundary>;
 
   // Wrap with ThemeProvider when theme is enabled. The ThemeProvider is
-  // document-lifetime: its config comes from the initial load and does NOT
-  // swap on cross-app transitions, because the ThemeProvider sits above the
-  // segment tree and a smooth (no-reload) app switch cannot safely remount
-  // it. A new theme config only takes effect on a full document load.
+  // document-lifetime: its config comes from the initial load and persists for
+  // the session. It sits above the segment tree and is not remounted in-session;
+  // a cross-app navigation is a full document load (X-RSC-Reload), so the target
+  // app's theme config takes effect on its own load.
   if (themeConfig) {
     content = (
       <ThemeProvider config={themeConfig} initialTheme={initialTheme}>

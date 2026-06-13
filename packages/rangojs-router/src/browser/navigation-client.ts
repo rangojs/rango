@@ -12,11 +12,13 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
+import { isActionFenceActive } from "./action-fence.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
   handleReloadHeader,
   teeWithCompletion,
+  isForeignRouterId,
 } from "./response-adapter.js";
 import {
   buildPrefetchKey,
@@ -107,7 +109,14 @@ export function createNavigationClient(
       // server-action invalidation) auto-invalidates both scopes.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
-      const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
+      // Suspend prefetch consumption while an action is in flight: a queued
+      // prefetch holds pre-mutation data and must not be served until the
+      // action's response decides whether anything changed.
+      const canUsePrefetch =
+        !staleRevalidation &&
+        !hmr &&
+        !interceptSourceUrl &&
+        !isActionFenceActive();
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
       const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
@@ -181,6 +190,19 @@ export function createNavigationClient(
           throw new ServerRedirect(redirect.url, undefined);
         }
 
+        // Integrity check (pre-decode): refuse a foreign app's content response
+        // before createFromFetch imports its chunks. Ordered AFTER the reload
+        // and redirect handlers — control responses are never stamped with
+        // X-RSC-Router-Id, so they are steered first and never reach here.
+        if (isForeignRouterId(response, routerId)) {
+          if (tx) {
+            browserDebugLog(tx, `router id mismatch, reloading (${source})`);
+          }
+          resolveStreamComplete();
+          window.location.href = targetUrl;
+          return new Promise<Response>(() => {});
+        }
+
         return response;
       };
 
@@ -193,6 +215,11 @@ export function createNavigationClient(
         }
 
         return fetch(fetchUrl, {
+          // During an action's flight the state is not rotated, so the old
+          // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
+          // it so a genuine mid-action navigation fetches fresh instead of being
+          // served the stale prefetched bytes.
+          ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
           headers: {
             "X-RSC-Router-Client-Path": previousUrl,
             "X-Rango-State": getRangoState(),

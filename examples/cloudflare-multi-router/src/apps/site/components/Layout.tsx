@@ -12,6 +12,9 @@ export function SiteLayout() {
         <Link to="/about" data-testid="site-nav-about">
           About
         </Link>
+        <Link to="/app-a" data-testid="site-nav-app-a">
+          App A
+        </Link>
       </nav>
       <Outlet />
     </>

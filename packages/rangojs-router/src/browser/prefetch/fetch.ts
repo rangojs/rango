@@ -27,10 +27,11 @@ import {
   type DecodedPrefetch,
 } from "./cache.js";
 import { getRangoState } from "../rango-state.js";
+import { isActionFenceActive } from "../action-fence.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 import { debugLog } from "../logging.js";
-import { teeWithCompletion } from "../response-adapter.js";
+import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import type { RscPayload } from "../types.js";
 
 /**
@@ -139,6 +140,7 @@ function executePrefetchFetch(
   sourceKey: string,
   fetchUrl: string,
   forceSourceScope: boolean,
+  expectedRouterId?: string,
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
   const gen = currentGeneration();
@@ -149,6 +151,12 @@ function executePrefetchFetch(
 
   const promise: Promise<DecodedPrefetch | null> = fetch(fetchUrl, {
     priority: "low" as RequestPriority,
+    // During an action's flight the state is not rotated, so the old
+    // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass it so
+    // a prefetch fetches fresh rather than warming the map with stale bytes (the
+    // fence's HTTP-cache-bypass requirement applies to prefetch as well as
+    // navigation fetches).
+    ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
     signal,
     headers: {
       "X-Rango-State": getRangoState(),
@@ -164,6 +172,12 @@ function executePrefetchFetch(
         response.headers.has("X-RSC-Reload") ||
         response.headers.has("X-RSC-Redirect")
       ) {
+        return null;
+      }
+      // Integrity check: never warm (or decode/import the chunks of) a foreign
+      // app's payload. A speculative prefetch must never reload — just drop it;
+      // navigation re-fetches and the server steers it.
+      if (isForeignRouterId(response, expectedRouterId)) {
         return null;
       }
 
@@ -282,6 +296,7 @@ export function prefetchDirect(
     sourceKey,
     targetUrl.toString(),
     forceSourceScope,
+    routerId,
   );
 }
 
@@ -334,6 +349,7 @@ export function prefetchQueued(
       sourceKey,
       fetchUrlStr,
       forceSourceScope,
+      routerId,
       signal,
     ).then(() => {});
   });

@@ -81,6 +81,78 @@ cache(
 );
 ```
 
+## Tag-Based Invalidation
+
+Tag cached entries, then invalidate them on demand. Tags can be attached three ways:
+
+```typescript
+// 1. Static tags in the cache() DSL
+cache({ ttl: 300, tags: ["products"] }, () => [path("/products", List)]);
+
+// 2. Dynamic tags (function of ctx)
+cache(
+  { ttl: 300, tags: (ctx) => [`product:${ctx.params.id}`, "products"] },
+  () => [path("/products/:id", Detail)],
+);
+
+// 3. Runtime tags inside a "use cache" function
+async function getProduct(id: string) {
+  "use cache";
+  cacheTag(`product:${id}`, "products"); // variadic, additive
+  return db.getProduct(id);
+}
+```
+
+Invalidate with one of two server-only verbs (both variadic, imported from
+`@rangojs/router`):
+
+```typescript
+// Server Action — read-your-own-writes. Await it so the action's own re-render
+// (and the next navigation) sees fresh data.
+async function updateProduct(formData: FormData) {
+  "use server";
+  await db.updateProduct(formData);
+  await updateTag("products");
+}
+
+// Route handler / webhook — background, non-blocking (waitUntil). Hard-purge:
+// the next read re-renders fresh (NOT stale-while-revalidate).
+export async function POST() {
+  "use server";
+  revalidateTag("products");
+  return new Response("ok");
+}
+```
+
+| API                      | Timing                      | Use in                    | Semantics                                             |
+| ------------------------ | --------------------------- | ------------------------- | ----------------------------------------------------- |
+| `updateTag(...tags)`     | awaitable (`Promise<void>`) | server actions            | immediate; next read is fresh                         |
+| `revalidateTag(...tags)` | background (`void`)         | route handlers / webhooks | background (non-blocking); next read re-renders fresh |
+
+Both built-in stores support tags. For `CFCacheStore`, distributed (cross-colo)
+invalidation requires a `kv` namespace — the tag-invalidation markers live in
+that same namespace; there is **no** separate tag-invalidation store to wire.
+If no tag-capable store is configured, `updateTag`/`revalidateTag` warn and no-op.
+
+By default `CFCacheStore` reads the KV marker on every tagged cache read
+(strongest invalidation latency). To cut KV reads on hot tagged routes, set
+`tagCacheTtl` (seconds) to cache each marker in the per-colo edge cache for that
+window — the colo running `updateTag`/`revalidateTag` writes the fresh marker
+into its own edge cache immediately (read-your-own-writes), while other colos
+converge within `tagCacheTtl` (the **maximum extra cross-colo invalidation
+latency** when no purge is wired). Keep it small (e.g. 30–60), or wire a purge
+(below) and set it large. (Contrast `tagInvalidationTtl`, which must be _large_
+— it bounds how long the KV marker itself lives and must exceed your max entry
+TTL+SWR.)
+
+To make other colos prompt without a short `tagCacheTtl`, pass `onRevalidateTag`:
+each cached marker carries a namespaced Cloudflare `Cache-Tag`, and the hook is
+handed exactly those tags (batched, once per `updateTag`/`revalidateTag` call) to
+feed Cloudflare's purge-by-tag API — evicting the cached lookups everywhere.
+Purge-by-tag is available on all plans (since April 2025), subject to per-plan
+rate limits, so the batched single call matters. With a purge wired, `tagCacheTtl`
+becomes a pure read-cost reducer + fallback window.
+
 ## Named Profile Shorthand
 
 Use a named cache profile string instead of an options object. The profile must be
@@ -212,6 +284,80 @@ const router = createRouter<AppBindings>({
 KV entries require `expirationTtl >= 60s`. Short-lived entries (< 60s total TTL)
 are only cached in L1.
 
+### Resilience & latency budgets
+
+Every cache read is **fail-safe**: a degraded tier never stalls or fails the
+request — it degrades to the next tier (L1 → L2 → render). Three optional latency
+budgets (milliseconds) bound each tier so a slow colo or KV namespace cannot pin
+a request behind it:
+
+| Option                | Default | Bounds                              |
+| --------------------- | ------- | ----------------------------------- |
+| `edgeLookupTimeoutMs` | `10`    | L1 `cache.match` (the lookup)       |
+| `edgeReadTimeoutMs`   | `20`    | L1 body read (CF streams it lazily) |
+| `kvReadTimeoutMs`     | `170`   | L2 / KV read                        |
+
+Set any to `0` (or a negative value) to disable that budget and always await the
+read. A non-finite value (e.g. `Number(env.UNSET)`) falls back to the default.
+The tag-invalidation marker reads inherit these same budgets and **fail open** on
+a KV timeout — the entry is served rather than wrongly treated as invalidated.
+
+```typescript
+new CFCacheStore({
+  ctx,
+  kv: env.CACHE_KV,
+  defaults: { ttl: 60, swr: 300 },
+  // Raise a budget only if your HEALTHY reads legitimately run slower (large
+  // Flight payloads, far-from-colo regions); measure the p99 first. These are
+  // degradation guard-rails, not tuning levers for "slow is normal here".
+  kvReadTimeoutMs: 250,
+});
+```
+
+Failure handling, by kind — none of these fail the request:
+
+| Failure                         | Behavior                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transient read error (5xx/blip) | Degrade to the next tier; entry left intact                                                                                                       |
+| Read budget exceeded (timeout)  | Abandon the read, degrade to the next tier                                                                                                        |
+| Corrupt / unparseable L1 entry  | Reported corrupt; degrade to L2 (served if present). The L1 entry is evicted ONLY when L2 has no copy — so the evict can't race the L2→L1 promote |
+| Corrupt / unparseable KV entry  | Reported corrupt; evicted (self-heal) + render (no tier below it)                                                                                 |
+| Write failure                   | No-op (entry simply not cached); never throws                                                                                                     |
+
+Each is surfaced to the router's `onError` callback (phase `"cache"`, with
+`metadata.category` one of `cache-read`, `cache-corrupt`, `cache-write`,
+`cache-delete`, `cache-invalidate`, `stale-revalidation`) so you can observe
+cache health without affecting users.
+
+### Validating cache behavior with `debug`
+
+Pass `debug` to emit one structured event per L1 read — use it to confirm on a
+real deployment (via `wrangler tail`) that the store behaves as expected before
+relying on it. It is intended for validation, not steady-state production.
+
+```typescript
+new CFCacheStore({
+  ctx,
+  kv: env.CACHE_KV,
+  debug: true, // logs each CFCacheReadDebugEvent to the console
+  // ...or capture programmatically:
+  // debug: (event) => myTelemetry.record(event),
+});
+```
+
+Each event reports which tier answered and why (`outcome`: `l1-fresh`,
+`l1-stale-revalidate`, `l1-revalidating-guarded`, `match-timeout`, `match-error`,
+`body-timeout`, `body-error`, `non-200`, `tag-invalidated`, `l1-miss`, `kv-fresh`,
+`kv-stale`, `kv-stale-suppressed`, `kv-miss`, `kv-timeout`, `error`), the
+staleness / revalidating timestamps, and the measured per-tier durations:
+`matchMs` (the L1 `match`), `markerMs` (the tag-marker resolution tail for a
+tagged entry, between `matchMs` and `bodyReadMs`; absent or 0 for an untagged
+entry or a per-request memo hit), and `bodyReadMs` (the L1 body read). A
+persistently large `markerMs` signals a degraded KV namespace; on a healthy
+deployment KV keeps markers hot in its per-colo edge cache, so it stays a few
+milliseconds. `match-error` (a transient `cache.match` rejection that falls
+through to L2) is kept distinct from a plain `l1-miss`.
+
 ## Cache purity & tainted objects
 
 A `cache()` boundary caches everything except loaders, so anything read inside a
@@ -325,6 +471,7 @@ cache({ store: checkoutCache }, () => [
 ```typescript
 import { urls } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import * as CartActions from "./actions/cart";
 
 // Custom store for checkout (short TTL)
 const checkoutCache = new MemorySegmentCacheStore({
@@ -353,7 +500,7 @@ export const urlpatterns = urls(({ path, layout, cache, loader, revalidate }) =>
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
       loader(ProductLoader, () => [cache({ ttl: 120 })]),
       loader(CartLoader, () => [
-        revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
       ]),
     ]),
   ]),

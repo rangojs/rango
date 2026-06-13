@@ -16,14 +16,37 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
+import { recordRequestTags } from "./cache-tag.js";
+import { reportCacheError } from "./cache-error.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
-import { captureHandles, restoreHandles } from "./handle-snapshot.js";
+import {
+  captureHandles,
+  restoreHandles,
+  encodeHandles,
+  decodeHandles,
+} from "./handle-snapshot.js";
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
   resolveCacheKey,
   resolveCacheStore,
+  resolveTagsOption,
 } from "./cache-policy.js";
+import type { RequestContext } from "../server/request-context.js";
+
+/**
+ * Resolve tags for a cache() boundary from its config (static array or
+ * function of ctx). Thin wrapper over the shared resolveTagsOption so the
+ * cache() DSL and loader caching resolve tags identically.
+ * @internal
+ */
+export function resolveCacheTags(
+  config: PartialCacheOptions | false,
+  ctx: RequestContext | undefined,
+): string[] | undefined {
+  if (config === false) return undefined;
+  return resolveTagsOption(config.tags, ctx, "CacheScope");
+}
 
 function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
@@ -248,13 +271,43 @@ export class CacheScope {
 
       const { data: cached, shouldRevalidate } = result;
 
-      // Deserialize segments
-      const segments = await deserializeSegments(cached.segments);
+      // Deserialize segments. A failure means the cached segments are corrupt/
+      // partial: evict the entry (self-heal - the re-render re-caches under the
+      // same key) and report it as corruption, distinct from a transient infra
+      // error (handled by the outer catch).
+      let segments: ResolvedSegment[];
+      try {
+        segments = await deserializeSegments(cached.segments);
+      } catch (error) {
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          `[CacheScope] ${key}: corrupt cached segments, evicting`,
+        );
+        await store
+          .delete(key)
+          .catch((e) =>
+            reportCacheError(e, "cache-delete", `[CacheScope] ${key}: evict`),
+          );
+        return null;
+      }
 
-      // Replay handle data
+      // A hit serves content that was tagged at write time, so the document
+      // tag union must include this entry's tags for updateTag()/revalidateTag()
+      // to invalidate any full-page entry built on top of it. The write path
+      // records via cacheRoute (resolveCacheTags); the hit path records here.
+      recordRequestTags(cached.tags);
+
+      // Replay handle data. An empty string means the route pushed no handles —
+      // skip the decode entirely (the common case). Otherwise decode the
+      // Flight-encoded blob; a decode failure skips handle restore but keeps the
+      // valid cached segments.
       const handleStore = _getRequestContext()?._handleStore;
-      if (handleStore) {
-        restoreHandles(cached.handles, handleStore);
+      if (handleStore && cached.handles) {
+        const handlesRecord = await decodeHandles(cached.handles);
+        if (handlesRecord) {
+          restoreHandles(handlesRecord, handleStore);
+        }
       }
 
       if (INTERNAL_RANGO_DEBUG) {
@@ -268,7 +321,7 @@ export class CacheScope {
 
       return { segments, shouldRevalidate };
     } catch (error) {
-      console.error(`[CacheScope] Failed to lookup ${key}:`, error);
+      reportCacheError(error, "cache-read", `[CacheScope] lookup ${key}`);
       return null;
     }
   }
@@ -310,6 +363,10 @@ export class CacheScope {
 
     // Resolve cache key early (while request context is available)
     const key = await this.resolveKey(pathname, params, isIntercept);
+
+    // Resolve tags early (while request context is available, before waitUntil)
+    const tags = resolveCacheTags(this.config, requestCtx);
+    recordRequestTags(tags, requestCtx);
 
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
@@ -367,13 +424,19 @@ export class CacheScope {
           );
         }
 
-        // Serialize non-loader segments only
-        const serializedSegments = await serializeSegments(nonLoaderSegments);
+        // Serialize segments and Flight-encode handles in parallel. Handles go
+        // through the codec (not raw into the entry) so Promise/ReactNode handle
+        // values survive a JSON-serializing store — see encodeHandles.
+        const [serializedSegments, encodedHandles] = await Promise.all([
+          serializeSegments(nonLoaderSegments),
+          encodeHandles(handles),
+        ]);
 
         const data: CachedEntryData = {
           segments: serializedSegments,
-          handles,
+          handles: encodedHandles,
           expiresAt: Date.now() + ttl * 1000,
+          tags,
         };
 
         if (INTERNAL_RANGO_DEBUG) {
@@ -391,7 +454,11 @@ export class CacheScope {
           );
         }
       } catch (error) {
-        console.error(`[CacheScope] Failed to cache ${key}:`, error);
+        reportCacheError(
+          error,
+          "cache-write",
+          `[CacheScope] Failed to cache ${key}`,
+        );
       }
     });
   }

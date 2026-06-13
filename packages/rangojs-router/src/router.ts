@@ -111,6 +111,7 @@ import {
   matchForPrerender as _matchForPrerender,
   renderStaticSegment as _renderStaticSegment,
 } from "./router/prerender-match.js";
+import { resolveStateCookieName } from "./router/state-cookie-name.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -150,6 +151,7 @@ export function createRouter<TEnv = any>(
     nonce,
     version,
     prefetchCacheTTL: prefetchCacheTTLOption,
+    stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
@@ -217,6 +219,14 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+
+  // Resolve the rango state cookie name once, here, so the two cookie writers
+  // (the client document.cookie writer and the server Set-Cookie writer)
+  // consume one pre-composed name and cannot drift.
+  const resolvedStateCookieName = resolveStateCookieName(
+    stateCookiePrefixOption,
+    routerId,
+  );
 
   // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes)
   // Clamp to a non-negative integer for valid Cache-Control max-age.
@@ -947,6 +957,10 @@ export function createRouter<TEnv = any>(
     // Expose prefetch cache settings
     prefetchCacheControl,
     prefetchCacheTTL,
+
+    // Expose the resolved rango state cookie name for the server-side writer
+    // (invalidateClientCache) and for shipping to the client in metadata.
+    resolvedStateCookieName,
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,

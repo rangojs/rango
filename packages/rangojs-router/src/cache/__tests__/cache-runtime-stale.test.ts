@@ -33,10 +33,17 @@ vi.mock("../segment-codec.js", () => ({
   deserializeResult: vi.fn((v: string) => JSON.parse(v)),
 }));
 
-// Mock handle snapshot
+// Mock handle snapshot. encodeHandles/decodeHandles stand in for the Flight
+// codec: encode produces the stored string, decode reverses it. decode tolerates
+// a raw object too, so existing fixtures that set `handles` as a Record still
+// drive restoreHandles with the same reference.
 const mockRestoreHandles = vi.fn();
 vi.mock("../handle-snapshot.js", () => ({
   restoreHandles: (...args: any[]) => mockRestoreHandles(...args),
+  encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
+  decodeHandles: vi.fn(async (s: any) =>
+    typeof s === "string" ? JSON.parse(s) : s,
+  ),
 }));
 
 // Mock internal debug
@@ -136,6 +143,80 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(setItemOptions.handles).toBeDefined();
     expect(setItemOptions.ttl).toBe(60);
     expect(setItemOptions.swr).toBe(120);
+  });
+
+  it("re-tags the entry on stale background revalidation so it stays invalidatable (#7)", async () => {
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      // Profile carries a static tag; the fn adds a runtime tag below.
+      _cacheProfiles: { tagged: { ttl: 60, swr: 120, tags: ["products"] } },
+      _handleStore: mockHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+
+    // Stale hit -> background revalidation re-runs the fn.
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      handles: {},
+      shouldRevalidate: true,
+      tags: ["products"],
+    });
+
+    const { cacheTag } = await import("../cache-tag.js");
+    const fn = async (_locale: string) => {
+      cacheTag("featured"); // runtime tag added on the refresh
+      return "fresh-result";
+    };
+
+    const cached = registerCachedFunction(fn, "retag-fn", "tagged");
+    const result = await cached("en");
+    expect(result).toBe("stale-result");
+
+    // Run the background revalidation.
+    expect(waitUntilFns).toHaveLength(1);
+    await waitUntilFns[0]();
+
+    // The refreshed entry must be re-tagged with BOTH the profile tag and the
+    // runtime cacheTag() tag — otherwise the silently-re-cached entry would no
+    // longer be invalidatable by updateTag("featured"/"products").
+    expect(mockStore.setItem).toHaveBeenCalledTimes(1);
+    const opts = mockStore.setItem.mock.calls[0][2];
+    expect(opts.tags).toEqual(expect.arrayContaining(["products", "featured"]));
+  });
+
+  it("cacheTag() inside a use cache fn does not throw when no item-capable store is configured", async () => {
+    // No _cacheStore -> registerCachedFunction takes the uncached bypass.
+    // cacheTag() must still find a tag scope and degrade to a no-op rather than
+    // throwing "must be called inside a use cache function".
+    mockGetRequestContext.mockReturnValue({
+      _cacheProfiles: { default: { ttl: 60 } },
+      waitUntil: (fn: () => Promise<void>) => fn(),
+    });
+
+    const { cacheTag } = await import("../cache-tag.js");
+
+    const fn = async () => {
+      cacheTag("products", "catalog");
+      return "ok";
+    };
+
+    const cached = registerCachedFunction(fn, "test-no-store-tag", "default");
+    await expect(cached()).resolves.toBe("ok");
   });
 
   it("stamps INSIDE_CACHE_EXEC on tainted args during stale background revalidation", async () => {
@@ -281,7 +362,8 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(mockStore.setItem).toHaveBeenCalledTimes(1);
     const setItemOptions = mockStore.setItem.mock.calls[0][2];
     expect(setItemOptions).toBeDefined();
-    // handles should be an object (possibly empty if nothing was pushed)
+    // handles is the encoded string produced by encodeHandles when a capture
+    // exists (the raw Record is never stored — it would corrupt non-scalars)
     expect(setItemOptions.handles).toBeDefined();
   });
 

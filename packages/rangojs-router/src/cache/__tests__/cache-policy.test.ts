@@ -5,6 +5,7 @@ import {
   computeExpiration,
   resolveCacheKey,
   resolveCacheStore,
+  resolveTagsOption,
   DEFAULT_ROUTE_TTL,
   DEFAULT_FUNCTION_TTL,
 } from "../cache-policy.js";
@@ -217,5 +218,31 @@ describe("resolveCacheStore", () => {
   it("returns null when request context has no cache store", () => {
     setMockCtx({});
     expect(resolveCacheStore(undefined)).toBeNull();
+  });
+});
+
+describe("resolveTagsOption tag normalization (N3)", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("drops empty/whitespace-only tags from a static array (write/invalidate parity)", () => {
+    expect(resolveTagsOption(["", "  ", "products"], undefined, "T")).toEqual([
+      "products",
+    ]);
+  });
+
+  it("returns undefined when a static array has no usable tags", () => {
+    expect(resolveTagsOption(["", "   "], undefined, "T")).toBeUndefined();
+  });
+
+  it("normalizes tags returned by a dynamic function too", () => {
+    const ctx = {} as any;
+    expect(resolveTagsOption(() => ["a", " ", "b"], ctx, "T")).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("returns undefined for an undefined tags option", () => {
+    expect(resolveTagsOption(undefined, undefined, "T")).toBeUndefined();
   });
 });

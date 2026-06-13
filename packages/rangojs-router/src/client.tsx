@@ -358,12 +358,6 @@ export {
   type SegmentsState,
 } from "./browser/react/use-segments.js";
 
-// Client cache controls hook
-export {
-  useClientCache,
-  type ClientCacheControls,
-} from "./browser/react/use-client-cache.js";
-
 // Provider
 export {
   NavigationProvider,

@@ -12,10 +12,7 @@ import type {
   ActionStateListener,
   HandleData,
 } from "./types.js";
-import {
-  clearPrefetchCache,
-  clearPrefetchCacheLocal,
-} from "./prefetch/cache.js";
+import { clearPrefetchCache } from "./prefetch/cache.js";
 
 /**
  * Default action state (idle with no payload)
@@ -133,14 +130,14 @@ export interface NavigationStoreConfig {
 
   /**
    * Enable cross-tab cache invalidation via BroadcastChannel (default: true)
-   * When cache is cleared (via server actions or useClientCache().clear()),
+   * When cache is cleared (via server actions or invalidateClientCache()),
    * other tabs will also clear their cache
    */
   crossTabSync?: boolean;
 
   /**
    * Auto-refresh when another tab mutates data on the same path (default: true)
-   * Triggered when cache is cleared via server actions or useClientCache().clear()
+   * Triggered when cache is cleared via server actions or invalidateClientCache()
    * Requires crossTabSync to be enabled
    */
   crossTabAutoRefresh?: boolean;
@@ -338,24 +335,24 @@ export function createNavigationStore(
   }
 
   /**
-   * Drop this tab's navigation + prefetch caches without broadcasting or
-   * rotating shared state. Used when the local session changes in a way that
-   * doesn't affect other tabs — e.g. this tab crosses into a different app
-   * via a cross-router navigation. Other tabs in the old app keep their
-   * caches and their X-Rango-State token.
+   * Mark every history entry stale WITHOUT touching the prefetch caches or the
+   * rango state. Used by the jar-divergence observer: an external rotation has
+   * already changed the state value (so prefetch/HTTP entries strand under the
+   * retired key), and this tab must NOT re-rotate — only the history cache,
+   * which is not state-keyed, needs marking.
    */
-  function clearCacheInternalLocal(): void {
-    historyCache.length = 0;
-    clearPrefetchCacheLocal();
-  }
-
-  /**
-   * Mark all cache entries as stale (internal - does not broadcast)
-   */
-  function markCacheAsStaleInternal(): void {
+  function markHistoryStale(): void {
     for (let i = 0; i < historyCache.length; i++) {
       historyCache[i][2] = true;
     }
+  }
+
+  /**
+   * Mark all cache entries as stale (internal - does not broadcast). Also
+   * clears the prefetch caches, which rotates the rango state.
+   */
+  function markCacheAsStaleInternal(): void {
+    markHistoryStale();
     clearPrefetchCache();
   }
 
@@ -675,6 +672,16 @@ export function createNavigationStore(
     },
 
     /**
+     * Mark every history entry stale WITHOUT clearing the prefetch caches or
+     * rotating the rango state. The jar-divergence observer calls this after an
+     * external rotation has already changed the state value, so re-rotating
+     * here would ping-pong with the tab that rotated.
+     */
+    markHistoryCacheStale(): void {
+      markHistoryStale();
+    },
+
+    /**
      * Clear the history cache and broadcast to other tabs
      * Use this for hard invalidation when data is definitely stale
      */
@@ -683,28 +690,11 @@ export function createNavigationStore(
     },
 
     /**
-     * Drop this tab's navigation + prefetch caches locally without
-     * broadcasting or rotating shared state. Intended for cross-app
-     * transitions where the session state diverges for this tab only.
-     */
-    clearHistoryCacheLocal(): void {
-      clearCacheInternalLocal();
-    },
-
-    /**
      * Mark cache as stale and broadcast to other tabs
      * Called after server actions - allows SWR pattern for popstate
      */
     markCacheAsStaleAndBroadcast(): void {
       markStaleAndBroadcast();
-    },
-
-    /**
-     * Broadcast cache invalidation to other tabs without clearing local cache
-     * Used after consolidation fetch where local cache has fresh data
-     */
-    broadcastCacheInvalidation(): void {
-      broadcastInvalidation();
     },
 
     /**

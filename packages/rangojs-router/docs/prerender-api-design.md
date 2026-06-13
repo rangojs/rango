@@ -152,7 +152,12 @@ module default-exports a `PrerenderEntry`:
 ```typescript
 interface PrerenderEntry {
   segments: SerializedSegmentData[];
-  handles: Record<string, SegmentHandleData>;
+  // RSC-encoded handle map ("" when none). Encoded via the Flight codec
+  // (handle-snapshot.ts encodeHandles) so Promise/ReactNode handle values
+  // survive the JSON-serialized build artifact / dev wire — the same codec the
+  // runtime cache uses. The producer (matchForPrerender, in the RSC env) encodes;
+  // the node-side build/dev sinks persist the string as-is; cache-lookup decodes.
+  handles: string;
 }
 ```
 
@@ -342,6 +347,19 @@ functions handle this after `yieldFromStore` yields cached segments.
 Orthogonal to pre-rendering. Runtime cache operates on segments resolved at
 request time. Pre-rendered segments bypass the runtime cache entirely (the
 prerender lookup happens first in `cache-lookup.ts`).
+
+### Tag invalidation (`cacheTag` / `updateTag` / `revalidateTag`)
+
+Disjoint from pre-rendering. `updateTag()` / `revalidateTag()` invalidate
+runtime cache entries (segment / `"use cache"` item / document caches) via the
+store's tag markers; they do NOT refresh a pre-rendered (B-segment) route's
+build-time Flight payload, because that payload is served from the prerender
+store before the tag system is consulted. A `cacheTag()` call inside a
+`"use cache"` function that runs during pre-rendering has no runtime effect (the
+result is frozen into the prerendered payload, not stored as a tagged runtime
+entry). To make a tag-invalidatable route, serve it from the runtime cache (a
+`Passthrough()` route, or a non-prerendered route with `cache()` / `cacheTag`)
+rather than pre-rendering it.
 
 ### Middleware
 

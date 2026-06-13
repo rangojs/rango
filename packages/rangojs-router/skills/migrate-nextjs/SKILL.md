@@ -288,21 +288,40 @@ export const Product = Passthrough(ProductDef, async (ctx) => {
 Use `Passthrough()` whenever the Next.js route has `dynamicParams: true` (the
 default) or serves an open-ended param space. See `/prerender` for full API.
 
-### Revalidation: different model
+### Revalidation: two distinct axes
 
-Next.js uses path/tag-based cache invalidation (`revalidatePath`, `revalidateTag`)
-to bust cached responses. Rango does not currently have a direct equivalent.
+Next.js conflates two things under "revalidation." Rango separates them — and
+tag-based cache invalidation now maps directly.
 
-In Rango, separate these two concepts:
-
-**Partial rendering revalidation** — `revalidate()` controls which segments
-(layouts, paths, loaders, parallels) should re-run during partial action
-re-rendering. This is about the segment tree, not cache invalidation:
+**1. Cache invalidation (bust cached values) — direct equivalent.** Tag entries
+with `cache({ tags })` or, inside a `"use cache"` function, runtime
+`cacheTag(...tags)`. Then invalidate by tag:
 
 ```typescript
+// Next.js                    Rango
+// revalidateTag("products")  →  await updateTag("products")  // in a server action: awaitable,
+//                                                            // read-your-own-writes (next render is fresh)
+//                            or  revalidateTag("products")    // in a route handler / webhook:
+//                                                            // background, non-blocking (hard-purge)
+```
+
+`updateTag` is awaitable and immediate; `revalidateTag` is fire-and-forget. Both
+hard-purge (the next read re-renders fresh); the only difference is awaitability —
+despite the Next.js name, `revalidateTag` here is NOT stale-while-revalidate.
+Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) index by tag. Next's
+`revalidatePath` has no path-based equivalent — tag the relevant entries instead.
+
+**2. Partial-render selection (which segments re-run after an action).** This is
+NOT cache invalidation — it is `revalidate()`, controlling which segments
+(layouts, paths, loaders, parallels) recompute during partial action
+re-rendering:
+
+```typescript
+import { updateBlog } from "./actions/blog";
+
 // Re-run this layout when a blog action fires
 layout(BlogLayout, () => [
-  revalidate(({ actionId }) => actionId?.includes("updateBlog") || undefined),
+  revalidate((ctx) => ctx.isAction(updateBlog) || undefined),
   path("/blog/:slug", BlogPost, { name: "blogPost" }),
 ]);
 
@@ -323,15 +342,18 @@ cache({ ttl: 60, swr: 300 }, () => [
 ]);
 ```
 
-The key shift is:
+The two axes compose: `updateTag()` / `revalidateTag()` bust cached values;
+`revalidate()` selects which segments re-render and stream to the client after an
+action.
 
-- Next.js asks "which cached path or tag should I invalidate?"
-- Rango asks "which segments should re-run after this action?"
+When migrating:
 
-When migrating `revalidatePath()` / `revalidateTag()` usage, the Rango version
-usually is not a 1:1 API replacement. Instead, decide which layouts, routes,
-loaders, or parallels should recompute after an action and declare
-`revalidate()` at those segment boundaries.
+- `revalidateTag(tag)` → `await updateTag(tag)` (in a server action) or
+  `revalidateTag(tag)` (in a route handler / webhook). Effectively 1:1.
+- `revalidatePath(path)` → no path-based equivalent; tag the entries on that
+  route (`cache({ tags })` / `cacheTag(...)`) and invalidate by tag.
+- To also force specific segments to re-render after the action (independent of
+  cache busting), attach a `revalidate()` rule at those segment boundaries.
 
 ## 4. Middleware
 
@@ -463,7 +485,7 @@ Server actions work the same way — `"use server"` directive, `useActionState`,
 
 Key difference: in Rango, route middleware does NOT wrap action execution. Actions only see global middleware context. Use `getRequestContext()` in actions to access `ctx.set()`/`ctx.get()`.
 
-Next.js's `revalidatePath()` / `revalidateTag()` have no direct equivalent — Rango partially re-renders matched route segments (path/layout/parallel/intercept) and re-resolves their loaders, and you scope re-runs by attaching a `revalidate(({ actionId }) => ...)` rule to any segment or loader registration. See `/server-actions` for the full pattern (validation, error handling, file uploads) and `/loader` for revalidation rule semantics.
+Next.js's `revalidateTag()` maps directly: tag entries via `cache({ tags })` / `cacheTag(...)`, then invalidate. **In a server action use `await updateTag(tag)`** — it is read-your-own-writes, so the action's own re-render sees fresh data; `revalidateTag(tag)` is a background (non-blocking) hard-purge and is NOT read-your-own-writes, so reserve it for route handlers / webhooks (calling it from an action can leave that action's re-render stale). `revalidatePath()` has no path-based equivalent — tag the route's entries instead. Separately, to force specific matched segments (path/layout/parallel/intercept) and their loaders to re-render after an action, attach a `revalidate(({ actionId }) => ...)` rule to that segment or loader registration. See `/server-actions` for the full pattern (validation, error handling, file uploads), `/caching` for tag invalidation, and `/loader` for revalidation rule semantics.
 
 ## 8. Metadata / Head
 

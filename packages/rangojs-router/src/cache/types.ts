@@ -136,12 +136,14 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param response - Response to cache (will be cloned)
    * @param ttl - Time-to-live in seconds
    * @param swr - Optional stale-while-revalidate window in seconds
+   * @param tags - Optional cache tags for invalidation
    */
   putResponse?(
     key: string,
     response: Response,
     ttl: number,
     swr?: number,
+    tags?: string[],
   ): Promise<void>;
 
   // ============================================================================
@@ -167,6 +169,20 @@ export interface SegmentCacheStore<TEnv = unknown> {
     value: string,
     options?: CacheItemOptions,
   ): Promise<void>;
+
+  // ============================================================================
+  // Tag-based Invalidation (optional)
+  // ============================================================================
+
+  /**
+   * Invalidate every cache entry (segment, response, item) tagged with any of
+   * `tags`. Store-level primitive that the public updateTag()/revalidateTag()
+   * APIs delegate to. Receives ALL of one invalidation call's tags at once so
+   * stores can batch their work (e.g. a single CDN purge request rather than
+   * one per tag). Stores that do not support tags simply omit this method.
+   * @param tags - The cache tags to invalidate
+   */
+  invalidateTags?(tags: string[]): Promise<void>;
 }
 
 /**
@@ -175,18 +191,27 @@ export interface SegmentCacheStore<TEnv = unknown> {
 export interface CacheItemResult {
   /** RSC-serialized return value */
   value: string;
-  /** Handle data captured during execution (breadcrumbs, metadata, etc.) */
-  handles?: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle data captured during execution (breadcrumbs, metadata,
+   *  etc.). Encoded via the Flight codec so Promise/ReactNode handle values
+   *  survive JSON-serializing stores — see handle-snapshot.ts encodeHandles. */
+  handles?: string;
   /** Whether the entry is stale and should be revalidated */
   shouldRevalidate: boolean;
+  /**
+   * The entry's cache tags (including runtime cacheTag() tags), surfaced on read
+   * so a "use cache" HIT can still contribute its tags to the request-scoped tag
+   * set used by document-level caching. On a hit the cached function is not
+   * re-run, so its runtime tags are only available here, not from re-execution.
+   */
+  tags?: string[];
 }
 
 /**
  * Options for setItem() for function-level caching ("use cache").
  */
 export interface CacheItemOptions {
-  /** Handle data to store alongside the value */
-  handles?: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle data to store alongside the value (see encodeHandles). */
+  handles?: string;
   /** Time-to-live in seconds */
   ttl?: number;
   /** Stale-while-revalidate window in seconds */
@@ -227,10 +252,16 @@ export interface SerializedSegmentData {
 export interface CachedEntryData {
   /** Serialized segments for this entry */
   segments: SerializedSegmentData[];
-  /** Handle data keyed by segment ID */
-  handles: Record<string, SegmentHandleData>;
+  /** RSC-encoded handle data keyed by segment ID. Encoded via the Flight codec
+   *  (see handle-snapshot.ts encodeHandles) so Promise/ReactNode handle values
+   *  round-trip through JSON-serializing stores instead of being flattened. */
+  handles: string;
   /** Expiration timestamp (ms since epoch) */
   expiresAt: number;
+  /** Cache tags for invalidation */
+  tags?: string[];
+  /** Timestamp (ms since epoch) when tags were attached, for distributed invalidation */
+  taggedAt?: number;
 }
 
 // ============================================================================

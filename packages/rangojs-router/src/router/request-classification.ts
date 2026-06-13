@@ -40,6 +40,12 @@ interface VersionMismatchPlan<TEnv = any> {
   reloadUrl: string;
 }
 
+interface AppSwitchReloadPlan {
+  mode: "app-switch";
+  /** Clean target URL (internal _rsc_* params stripped) to navigate to. */
+  reloadUrl: string;
+}
+
 interface ResponseRoutePlan<TEnv = any> {
   mode: "response";
   route: RouteSnapshot<TEnv>;
@@ -86,6 +92,7 @@ interface PartialRenderPlan<TEnv = any> {
 export type RequestPlan<TEnv = any> =
   | RedirectPlan<TEnv>
   | VersionMismatchPlan<TEnv>
+  | AppSwitchReloadPlan
   | ResponseRoutePlan<TEnv>
   | LoaderFetchPlan<TEnv>
   | PeRenderPlan<TEnv>
@@ -94,12 +101,13 @@ export type RequestPlan<TEnv = any> =
   | PartialRenderPlan<TEnv>;
 
 /**
- * Plans that have passed the terminal-check gate (version-mismatch handled)
- * and are ready for execution. Always have a `route` field.
+ * Plans that have passed the terminal-check gate (version-mismatch and
+ * app-switch reloads handled) and are ready for execution. Always have a
+ * `route` field.
  */
 export type ExecutableRequestPlan<TEnv = any> = Exclude<
   RequestPlan<TEnv>,
-  VersionMismatchPlan<TEnv>
+  VersionMismatchPlan<TEnv> | AppSwitchReloadPlan
 >;
 
 /**
@@ -179,6 +187,30 @@ export async function classifyRequest<TEnv = any>(
     };
   }
 
+  // App switch — also runs BEFORE route resolution (like version-mismatch
+  // above), and for the same reason: a cross-app SPA navigation must reload
+  // even when the target route does NOT exist in the target app. If we resolved
+  // first, a missing route would throw RouteNotFoundError and the 404 would
+  // render in-place under the SOURCE app's document — violating the invariant
+  // that crossing a host-router app boundary is always a full document load.
+  // A mismatched routerId (_rsc_rid) means the navigation crossed an app
+  // boundary; force a real document navigation. A soft swap can't faithfully
+  // re-establish the target app's document (stylesheets shared across apps are
+  // dropped by React 19's by-href dedup; theme/warmup/prefetch-TTL are
+  // document-lifetime — see browser/app-shell.ts). Only SPA (`_rsc_partial`)
+  // requests need this; a direct full load already IS the document navigation.
+  const clientRouterId = url.searchParams.get("_rsc_rid");
+  if (
+    clientRouterId &&
+    clientRouterId !== deps.routerId &&
+    url.searchParams.has("_rsc_partial")
+  ) {
+    return {
+      mode: "app-switch",
+      reloadUrl: stripInternalParams(url).toString(),
+    };
+  }
+
   // No metricsStore — classification is a lightweight gating step.
   // Route-matching and manifest-loading metrics belong in the match path
   // (createMatchContextForFull/Partial) which runs the authoritative resolution.
@@ -252,12 +284,7 @@ export async function classifyRequest<TEnv = any>(
     return { mode: "pe-render", route: snapshot };
   }
 
-  // App switch: client's routerId doesn't match this router
-  const clientRouterId = url.searchParams.get("_rsc_rid");
-  const isAppSwitch = !!(clientRouterId && clientRouterId !== deps.routerId);
-  const isPartial = url.searchParams.has("_rsc_partial") && !isAppSwitch;
-
-  if (isPartial) {
+  if (url.searchParams.has("_rsc_partial")) {
     return { mode: "partial-render", route: snapshot, negotiated };
   }
 

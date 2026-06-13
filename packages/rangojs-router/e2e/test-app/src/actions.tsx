@@ -1,7 +1,14 @@
 "use server";
 
 import { ReactNode } from "react";
-import { cookies, getRequestContext, redirect } from "@rangojs/router";
+import {
+  cookies,
+  getRequestContext,
+  invalidateClientCache,
+  keepClientCache,
+  redirect,
+  updateTag,
+} from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
 import {
   getCurrentCart,
@@ -311,6 +318,24 @@ export async function actionSetSessionCookie(): Promise<void> {
 }
 
 /**
+ * Action that explicitly suppresses the bridge's automatic cache invalidation
+ * via keepClientCache(). Used to verify the rango state value is NOT rotated.
+ */
+export async function actionKeepCache(): Promise<void> {
+  keepClientCache();
+}
+
+/**
+ * Action that explicitly forces invalidation via invalidateClientCache() in
+ * addition to keepClientCache(): invalidation must still win (the explicit
+ * Set-Cookie lands regardless of the suppressed automatic path).
+ */
+export async function actionKeepThenInvalidate(): Promise<void> {
+  keepClientCache();
+  invalidateClientCache();
+}
+
+/**
  * Action for the revalidation-contract fixture.
  * It mutates a cookie so the child route has a visible signal that the action
  * follow-up render happened, without repopulating upstream ctx.set() state.
@@ -484,3 +509,18 @@ export async function authBoundaryFormAction(
  */
 export async function isActionTargetAction(): Promise<void> {}
 export async function isActionDecoyAction(): Promise<void> {}
+
+/**
+ * Server action that invalidates a cache tag (read-your-own-writes).
+ * Awaits updateTag so cached entries are gone before the action returns,
+ * making the subsequent render fresh. Used by InvalidateTagButton.
+ */
+export async function invalidateTagAction(
+  _prev: { tag: string } | null,
+  formData: FormData,
+): Promise<{ tag: string }> {
+  "use server";
+  const tag = String(formData.get("tag") ?? "");
+  await updateTag(tag);
+  return { tag };
+}

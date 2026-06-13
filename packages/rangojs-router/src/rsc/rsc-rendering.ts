@@ -53,6 +53,7 @@ export async function handleRscRendering<TEnv>(
       handles: handleStore.stream(),
       version: ctx.version,
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+      stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       initialTheme: reqCtx.theme,
     },
@@ -83,6 +84,11 @@ export async function handleRscRendering<TEnv>(
       payload = {
         metadata: {
           pathname: url.pathname,
+          // routerId is serialized on every payload (including within-session
+          // ones) so the frontend can read the current app/router identity. It
+          // always equals the current app's id: a cross-app navigation is
+          // intercepted server-side (X-RSC-Reload) and never delivers a
+          // different-router payload to the client.
           routerId: ctx.router.id,
           segments: result.segments,
           matched: result.matched,
@@ -94,6 +100,7 @@ export async function handleRscRendering<TEnv>(
           handles: handleStore.stream(),
           version: ctx.version,
           prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+          stateCookieName: ctx.router.resolvedStateCookieName,
         },
       };
     }
@@ -180,6 +187,11 @@ export async function handleRscRendering<TEnv>(
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
+      // Router identity, so the client can verify pre-decode (before importing
+      // chunks) that this content payload belongs to its app and refuse a
+      // foreign one (cache/proxy/bug). Control-only reload/redirect responses
+      // are deliberately NOT stamped. See browser/response-adapter.ts.
+      "X-RSC-Router-Id": ctx.router.id,
     };
     // Tell the client's prefetch cache to scope this response to its source
     // URL (instead of the default source-agnostic wildcard). Intercept

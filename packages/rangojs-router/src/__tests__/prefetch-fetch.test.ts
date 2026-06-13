@@ -12,6 +12,7 @@ import {
 } from "../browser/prefetch/fetch";
 import { clearPrefetchCache } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
+import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
 // Prefetch eagerly decodes the fetched response (createFromFetch) to warm the
 // route's client chunks. The cache stores the decoded entry, not the raw
@@ -245,6 +246,29 @@ describe("prefetch fetch reduced-data behavior", () => {
         "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1",
       ),
     ).toBeNull();
+  });
+
+  it("does not warm (or decode) a response whose router id does not match", async () => {
+    setupBrowser({ saveData: false, reducedData: false });
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", {
+          status: 200,
+          headers: { "X-RSC-Router-Id": "other-app" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+    // This client is router "client-app"; the response belongs to "other-app"
+    // (a stale/edge-cache or proxy mix-up). The foreign payload must be dropped
+    // before decode — never warmed, no chunks imported.
+    prefetchDirect("/blog", ["A0"], "v1", "client-app");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(decodeMock).not.toHaveBeenCalled();
   });
 });
 
@@ -530,18 +554,21 @@ describe('prefetchKey=":source" opt-out', () => {
     const adopted = consumeInflightPrefetch(sourceKeyA);
     expect(adopted).not.toBeNull();
 
-    // Resolve the fetch so .finally runs clearPrefetchInflight. The
-    // response has no `x-rsc-prefetch-scope` header, so it stores under
-    // wildcardKey — drain that cache entry to leave no cache trace.
+    // Resolve the fetch so .finally runs clearPrefetchInflight. The response
+    // has no `x-rsc-prefetch-scope` header, so it would store under wildcardKey
+    // — but because the in-flight promise was adopted, storePrefetch must NOT
+    // publish the now-owned (single-use) entry to the cache. A leftover here is
+    // exactly the bug that drops a route's handles on a later navigation served
+    // the drained entry.
     resolveFetch!(
       new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
     );
     await adopted;
     await new Promise((r) => setTimeout(r, 0));
-    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+    expect(consumePrefetch(wildcardKey)).toBeNull();
 
-    // With the cache entry drained, neither key should report prefetched —
-    // any lingering `true` here would come from a stuck inflight flag.
+    // No cache entry was published and no inflight flag is stuck — neither key
+    // reports prefetched after an adopted+resolved fetch.
     expect(hasPrefetch(sourceKeyA)).toBe(false);
     expect(hasPrefetch(wildcardKey)).toBe(false);
 
@@ -664,6 +691,50 @@ describe('prefetchKey=":source" opt-out', () => {
     resolveFetch!(
       new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
     );
+  });
+});
+
+describe("prefetch fetch options (credentials + action fence)", () => {
+  beforeEach(() => {
+    setupBrowser();
+    __resetActionFence();
+  });
+
+  afterEach(() => {
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    __resetActionFence();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  function prefetchInit(): RequestInit {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    return fetchMock.mock.calls[0]![1]!;
+  }
+
+  it("does not set credentials to omit (the rango-state Set-Cookie must apply)", () => {
+    const init = prefetchInit();
+    expect(init.credentials).toBeUndefined();
+  });
+
+  it("uses cache:no-store while an action fence is active", () => {
+    // Bypass the Vary-keyed HTTP cache so a prefetch during an action's flight
+    // fetches fresh rather than warming the map with soon-to-be-stale bytes.
+    enterActionFence();
+    const init = prefetchInit();
+    expect(init.cache).toBe("no-store");
+  });
+
+  it("does not override the cache mode when no action fence is active", () => {
+    const init = prefetchInit();
+    expect(init.cache).toBeUndefined();
   });
 });
 

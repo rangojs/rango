@@ -540,7 +540,6 @@ export async function renderRoute(
     registerLinkInterception: () => () => {},
     getVersion: () => undefined,
     updateVersion: () => {},
-    updateAppShell: () => {},
   };
 
   const initialMetadata = makeMetadata(

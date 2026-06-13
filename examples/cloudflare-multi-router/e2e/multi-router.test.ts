@@ -5,19 +5,21 @@ import {
   expectNoPageError,
   testId,
   expectNoReload,
+  expectFullReload,
 } from "./helper";
 
 test.describe.configure({ mode: "serial" });
 
-// rango-state is stored under `rango-state:{routerId}` so sibling apps on
-// the same origin don't collide. Find the namespaced key without hard-coding
-// the router id.
+// rango state lives in a session cookie named `{prefix}_{routerId}` (default
+// prefix `rango-state`) so sibling apps on the same origin don't collide. Find
+// the namespaced cookie name without hard-coding the router id.
 async function findRangoStateKey(page: Page): Promise<string> {
   return await page.evaluate(() => {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key === "rango-state" || key?.startsWith("rango-state:")) {
-        return key;
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      const eq = trimmed.indexOf("=");
+      if (eq > 0 && trimmed.slice(0, eq).startsWith("rango-state")) {
+        return trimmed.slice(0, eq);
       }
     }
     return "rango-state";
@@ -26,9 +28,15 @@ async function findRangoStateKey(page: Page): Promise<string> {
 
 async function readRangoStateAt(
   page: Page,
-  key: string,
+  name: string,
 ): Promise<string | null> {
-  return await page.evaluate((k) => localStorage.getItem(k), key);
+  return await page.evaluate((n) => {
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed.startsWith(n + "=")) return trimmed.slice(n.length + 1);
+    }
+    return null;
+  }, name);
 }
 
 // ----- DEV MODE -----
@@ -363,7 +371,7 @@ test.describe("multi-router (dev)", () => {
       expect(crossAppRid).toBe(appARid); // client still thinks it's app-a
     });
 
-    test("cross-app SPA navigation swaps rootLayout without full reload", async ({
+    test("cross-app SPA navigation triggers a full document reload", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -377,17 +385,159 @@ test.describe("multi-router (dev)", () => {
         "a",
       );
 
-      await using __ = await expectNoReload(page);
+      // Crossing the app boundary is a HARD document navigation, not a soft
+      // swap — the server returns X-RSC-Reload for an app switch so the target
+      // app's whole document (shell, CSS, theme, warmup, prefetch-TTL) is
+      // re-established. See request-classification.ts (mode "app-switch").
+      await using __ = await expectFullReload(page);
 
       await testId(page, "app-a-nav-app-b").click();
       await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
 
-      // After app switch, the Document (rootLayout) must be app-b's, not
-      // app-a's closure-captured one.
+      // After the reload, the Document (rootLayout) is app-b's.
       await expect(testId(page, "app-shell-marker")).toHaveAttribute(
         "data-app-shell",
         "b",
       );
+    });
+
+    test("cross-app reload re-establishes the target app's document CSS", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      const bodyBg = () =>
+        page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+
+      // app-a's document-level stylesheet applies on a direct load.
+      expect(await bodyBg()).toBe("rgb(10, 20, 30)");
+
+      // The cross-app navigation is a full document reload, so app-b's document
+      // <head> stylesheet applies cleanly — no React resource-dedup drop (the
+      // soft-switch bug that motivated forcing the reload).
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      await expect.poll(bodyBg, { timeout: 5000 }).toBe("rgb(40, 50, 60)");
+    });
+
+    // Regression for the cross-app THEME drop (the other half of the document-
+    // fidelity bug). app-b opts into the theme system; app-a does not. Under the
+    // old soft switch app-b's segment tree rendered under app-a's (absent) theme
+    // runtime, so app-b's <html data-theme> never applied. The full document
+    // reload mounts app-b's own theme runtime, so the attribute applies.
+    test("cross-app reload re-establishes the target app's theme", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      const htmlTheme = () =>
+        page.evaluate(() =>
+          document.documentElement.getAttribute("data-theme"),
+        );
+
+      // app-a does not configure the theme system.
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      expect(await htmlTheme()).toBeNull();
+
+      // Cross-app navigation into app-b (theme: data-theme/dark) is a full
+      // reload, so app-b's theme runtime mounts and sets the <html> attribute.
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      await expect.poll(htmlTheme, { timeout: 5000 }).toBe("dark");
+    });
+
+    // Regression for the cross-app -> target-404 reload bypass: navigating
+    // across an app boundary to a route that does NOT exist in the target app
+    // must still hard-reload, not render the target's 404 in-place under the
+    // source app's document. The app-switch reload check runs BEFORE route
+    // resolution (see request-classification.ts), so a missing target route
+    // reloads instead of throwing RouteNotFoundError and 404-ing in place.
+    test("cross-app navigation to a missing target route reloads (no in-place 404)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b-404").click();
+
+      // The reload navigates to the target URL and replaces app-a's document
+      // (its shell is gone). The prior soft fallback would have rendered the
+      // target's 404 in place, leaving app-a's document mounted.
+      await page.waitForURL(/\/app-b\/does-not-exist/, { timeout: 10000 });
+      await expect(page.locator('[data-app-shell="a"]')).toHaveCount(0);
+    });
+
+    // A 404 WITHIN the current app must stay a SOFT in-place update — only
+    // crossing an app boundary reloads. The app-switch reload keys on the
+    // routerId mismatch, so a same-app 404 (matching routerId) must NOT reload.
+    test("same-app navigation to a missing route stays soft (no reload)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectNoReload(page);
+      await testId(page, "app-a-nav-self-404").click();
+
+      // Soft, in-place: the URL changes but app-a's document stays mounted and
+      // there is no full document reload (the expectNoReload marker survives).
+      await page.waitForURL(/\/app-a\/does-not-exist/, { timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+    });
+
+    // Regression for the cross-app shared-stylesheet drop. site (source)
+    // renders a SHARED href UNMANAGED (no precedence); app-a (target) renders
+    // the SAME href MANAGED (precedence). Under the old SOFT switch, React 19's
+    // by-href resource dedup dropped it (removed site's unmanaged link, declined
+    // to insert app-a's managed one) and app-a rendered unstyled. Forcing a full
+    // document reload on the app switch fixes it: app-a loads fresh and its
+    // stylesheet applies regardless of how the source rendered the href.
+    // This test pins the consumer-visible outcome (shared stylesheet applies
+    // after the switch) and the reload mechanism (expectFullReload). With the
+    // reload in place the by-href dedup path is unreachable by construction, so
+    // the cross-app missing-route (404 bypass) test is what catches a disabled
+    // app-switch check.
+    test("cross-app reload re-applies a stylesheet shared across apps", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const bodyBg = () =>
+        page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+
+      // The shared stylesheet applies on the source (site) app.
+      expect(await bodyBg()).toBe("rgb(10, 20, 30)");
+
+      // Cross-app navigation is a full document reload, so app-a's stylesheet
+      // (the same shared href) applies cleanly instead of being dropped.
+      await using __ = await expectFullReload(page);
+      await testId(page, "site-nav-app-a").click();
+      await expect(testId(page, "app-a-home")).toBeVisible({ timeout: 10000 });
+
+      await expect.poll(bodyBg, { timeout: 5000 }).toBe("rgb(10, 20, 30)");
     });
 
     test("back navigation across apps restores previous rootLayout", async ({
@@ -416,12 +566,12 @@ test.describe("multi-router (dev)", () => {
     test("cross-tab app isolation: tab2 invalidating A does not clobber tab1's B state", async ({
       context,
     }) => {
-      // Two tabs in the same origin share localStorage. Tab 1 smooth-
-      // switches A → B; tab 2 stays in A and simulates a server action
-      // invalidation (writes a rotated A token to app A's namespaced key).
-      // The storage event fires in tab 1, but tab 1 is listening on app B's
-      // key, so its in-memory state must not be overwritten — and its next
-      // SPA request must send B's token, not the rotated A token.
+      // Two tabs in the same origin share the cookie jar. Tab 1 navigates A → B
+      // (a full document reload across the app boundary); tab 2 stays in A and
+      // simulates a server-action invalidation (rotates app A's rango state
+      // cookie). rango state cookies are namespaced per app, so tab 1 (now app
+      // B, watching its own cookie name) must ignore tab 2's app-A rotation —
+      // its next SPA request must send B's token, not the rotated A token.
       const tab1 = await context.newPage();
       const tab2 = await context.newPage();
       try {
@@ -431,11 +581,11 @@ test.describe("multi-router (dev)", () => {
         await waitForHydration(tab2);
 
         const appAKey = await findRangoStateKey(tab2);
-        expect(appAKey).toMatch(/^rango-state:/);
+        expect(appAKey).toMatch(/^rango-state_/);
         const appAInitial = await readRangoStateAt(tab2, appAKey);
         expect(appAInitial).toBeTruthy();
 
-        // Tab 1: smooth cross-app switch A → B
+        // Tab 1: cross-app navigation A → B (a full document reload).
         await testId(tab1, "app-a-nav-app-b").click();
         await expect(testId(tab1, "app-b-home")).toBeVisible({
           timeout: 10000,
@@ -445,11 +595,9 @@ test.describe("multi-router (dev)", () => {
           "b",
         );
 
-        // Smooth switch does NOT write localStorage (by design), so we can't
-        // observe tab 1's new namespace via `findRangoStateKey` — localStorage
-        // still holds only app A's key. The behavior we really care about is
-        // that tab 1's in-memory state is isolated from tab 2's writes; that
-        // is asserted below via the sent X-Rango-State header.
+        // Tab 1 is now fully app B (with its own namespaced rango-state key).
+        // The property under test: tab 2's app-A token rotation must not surface
+        // in tab 1's app-B requests, asserted below via the X-Rango-State header.
 
         const tab1HeaderPromise = new Promise<string | null>((resolve) => {
           tab1.on("request", (req) => {
@@ -460,12 +608,15 @@ test.describe("multi-router (dev)", () => {
           });
         });
 
-        // Tab 2 (still in A) writes a rotated A token — simulating a
-        // server action invalidation. This fires a `storage` event in tab 1,
-        // but the key is app A's namespace, which tab 1 ignores.
+        // Tab 2 (still in A) rotates app A's rango state cookie — simulating a
+        // server action invalidation. The jar is shared, but the cookie name is
+        // app A's namespace, so tab 1 (app B, watching its own cookie name)
+        // ignores it.
         const rotatedAState = `${appAInitial!.split(":")[0]}:${Date.now() + 999999}`;
         await tab2.evaluate(
-          ([key, val]) => localStorage.setItem(key, val),
+          ([name, val]) => {
+            document.cookie = `${name}=${val}; Path=/; SameSite=Lax`;
+          },
           [appAKey, rotatedAState],
         );
         await tab1.waitForTimeout(150);
@@ -792,7 +943,7 @@ test.describe("multi-router (production)", () => {
       expect(crossAppRid).toBe(appARid);
     });
 
-    test("cross-app SPA navigation swaps rootLayout without full reload", async ({
+    test("cross-app SPA navigation triggers a full document reload", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -805,7 +956,10 @@ test.describe("multi-router (production)", () => {
         "a",
       );
 
-      await using __ = await expectNoReload(page);
+      // Crossing the app boundary is a HARD document navigation (server returns
+      // X-RSC-Reload for an app switch), so the target app's whole document is
+      // re-established. See request-classification.ts (mode "app-switch").
+      await using __ = await expectFullReload(page);
 
       await testId(page, "app-a-nav-app-b").click();
       await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
@@ -814,6 +968,145 @@ test.describe("multi-router (production)", () => {
         "data-app-shell",
         "b",
       );
+    });
+
+    test("cross-app reload re-establishes the target app's document CSS", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      const bodyBg = () =>
+        page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+
+      // app-a's document-level stylesheet applies on a direct load.
+      expect(await bodyBg()).toBe("rgb(10, 20, 30)");
+
+      // The cross-app navigation is a full document reload, so app-b's document
+      // <head> stylesheet applies cleanly — no React resource-dedup drop (the
+      // soft-switch bug that motivated forcing the reload).
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      await expect.poll(bodyBg, { timeout: 5000 }).toBe("rgb(40, 50, 60)");
+    });
+
+    // Regression for the cross-app THEME drop (the other half of the document-
+    // fidelity bug). app-b opts into the theme system; app-a does not. Under the
+    // old soft switch app-b's segment tree rendered under app-a's (absent) theme
+    // runtime, so app-b's <html data-theme> never applied. The full document
+    // reload mounts app-b's own theme runtime, so the attribute applies.
+    test("cross-app reload re-establishes the target app's theme", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      const htmlTheme = () =>
+        page.evaluate(() =>
+          document.documentElement.getAttribute("data-theme"),
+        );
+
+      // app-a does not configure the theme system.
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      expect(await htmlTheme()).toBeNull();
+
+      // Cross-app navigation into app-b (theme: data-theme/dark) is a full
+      // reload, so app-b's theme runtime mounts and sets the <html> attribute.
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      await expect.poll(htmlTheme, { timeout: 5000 }).toBe("dark");
+    });
+
+    // Regression for the cross-app -> target-404 reload bypass: navigating
+    // across an app boundary to a route that does NOT exist in the target app
+    // must still hard-reload, not render the target's 404 in-place under the
+    // source app's document. The app-switch reload check runs BEFORE route
+    // resolution (see request-classification.ts), so a missing target route
+    // reloads instead of throwing RouteNotFoundError and 404-ing in place.
+    test("cross-app navigation to a missing target route reloads (no in-place 404)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectFullReload(page);
+      await testId(page, "app-a-nav-app-b-404").click();
+
+      // The reload navigates to the target URL and replaces app-a's document
+      // (its shell is gone). The prior soft fallback would have rendered the
+      // target's 404 in place, leaving app-a's document mounted.
+      await page.waitForURL(/\/app-b\/does-not-exist/, { timeout: 10000 });
+      await expect(page.locator('[data-app-shell="a"]')).toHaveCount(0);
+    });
+
+    // A 404 WITHIN the current app must stay a SOFT in-place update — only
+    // crossing an app boundary reloads. The app-switch reload keys on the
+    // routerId mismatch, so a same-app 404 (matching routerId) must NOT reload.
+    test("same-app navigation to a missing route stays soft (no reload)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectNoReload(page);
+      await testId(page, "app-a-nav-self-404").click();
+
+      // Soft, in-place: the URL changes but app-a's document stays mounted and
+      // there is no full document reload (the expectNoReload marker survives).
+      await page.waitForURL(/\/app-a\/does-not-exist/, { timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+    });
+
+    // Regression for the cross-app shared-stylesheet drop. site (source)
+    // renders a SHARED href UNMANAGED (no precedence); app-a (target) renders
+    // the SAME href MANAGED (precedence). Under the old SOFT switch, React 19's
+    // by-href resource dedup dropped it (removed site's unmanaged link, declined
+    // to insert app-a's managed one) and app-a rendered unstyled. Forcing a full
+    // document reload on the app switch fixes it: app-a loads fresh and its
+    // stylesheet applies regardless of how the source rendered the href.
+    // This test pins the consumer-visible outcome (shared stylesheet applies
+    // after the switch) and the reload mechanism (expectFullReload). With the
+    // reload in place the by-href dedup path is unreachable by construction, so
+    // the cross-app missing-route (404 bypass) test is what catches a disabled
+    // app-switch check.
+    test("cross-app reload re-applies a stylesheet shared across apps", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const bodyBg = () =>
+        page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+
+      // The shared stylesheet applies on the source (site) app.
+      expect(await bodyBg()).toBe("rgb(10, 20, 30)");
+
+      // Cross-app navigation is a full document reload, so app-a's stylesheet
+      // (the same shared href) applies cleanly instead of being dropped.
+      await using __ = await expectFullReload(page);
+      await testId(page, "site-nav-app-a").click();
+      await expect(testId(page, "app-a-home")).toBeVisible({ timeout: 10000 });
+
+      await expect.poll(bodyBg, { timeout: 5000 }).toBe("rgb(10, 20, 30)");
     });
 
     test("back navigation across apps restores previous rootLayout", async ({
@@ -851,7 +1144,7 @@ test.describe("multi-router (production)", () => {
         await waitForHydration(tab2);
 
         const appAKey = await findRangoStateKey(tab2);
-        expect(appAKey).toMatch(/^rango-state:/);
+        expect(appAKey).toMatch(/^rango-state_/);
         const appAInitial = await readRangoStateAt(tab2, appAKey);
         expect(appAInitial).toBeTruthy();
 
@@ -864,11 +1157,9 @@ test.describe("multi-router (production)", () => {
           "b",
         );
 
-        // Smooth switch does NOT write localStorage (by design), so we can't
-        // observe tab 1's new namespace via `findRangoStateKey` — localStorage
-        // still holds only app A's key. The behavior we really care about is
-        // that tab 1's in-memory state is isolated from tab 2's writes; that
-        // is asserted below via the sent X-Rango-State header.
+        // Tab 1 is now fully app B (with its own namespaced rango-state key).
+        // The property under test: tab 2's app-A token rotation must not surface
+        // in tab 1's app-B requests, asserted below via the X-Rango-State header.
 
         const tab1HeaderPromise = new Promise<string | null>((resolve) => {
           tab1.on("request", (req) => {
@@ -881,7 +1172,9 @@ test.describe("multi-router (production)", () => {
 
         const rotatedAState = `${appAInitial!.split(":")[0]}:${Date.now() + 999999}`;
         await tab2.evaluate(
-          ([key, val]) => localStorage.setItem(key, val),
+          ([name, val]) => {
+            document.cookie = `${name}=${val}; Path=/; SameSite=Lax`;
+          },
           [appAKey, rotatedAState],
         );
         await tab1.waitForTimeout(150);

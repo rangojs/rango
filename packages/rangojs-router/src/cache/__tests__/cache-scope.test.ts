@@ -51,6 +51,12 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
 // Import AFTER mocks are registered so vitest applies them.
 const { serializeSegments, deserializeSegments } =
   await import("../segment-codec.js");
+const { CacheScope } = await import("../cache-scope.js");
+const { createRequestContext, runWithRequestContext } =
+  await import("../../server/request-context.js");
+
+import type { SegmentCacheStore, CachedEntryData } from "../types.js";
+import type { PartialCacheOptions } from "../../types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -284,5 +290,73 @@ describe("serializeSegments / deserializeSegments", () => {
       // Restore
       (rscModule as any).createFromReadableStream = originalFn;
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// lookupRoute records the cached entry's tags on a hit (cache-tag invalidation)
+// ---------------------------------------------------------------------------
+
+describe("CacheScope.lookupRoute - records hit tags into request tag union", () => {
+  // Minimal store: only get() participates in lookupRoute. Returns a hit whose
+  // CachedEntryData carries the supplied tags, mirroring MemorySegmentCacheStore
+  // /CFCacheStore which return tags in data on a hit.
+  async function makeHitStore(
+    tags: string[] | undefined,
+  ): Promise<SegmentCacheStore> {
+    const segments = await serializeSegments([makeSegment()]);
+    const data: CachedEntryData = {
+      segments,
+      handles: "",
+      expiresAt: Date.now() + 60_000,
+      tags,
+    };
+    return {
+      get: async () => ({ data, shouldRevalidate: false }),
+    } as unknown as SegmentCacheStore;
+  }
+
+  function makeCtx(store: SegmentCacheStore) {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com/products"),
+      url: new URL("https://example.com/products"),
+      variables: {},
+      cacheStore: store,
+    });
+  }
+
+  function makeScope(
+    store: SegmentCacheStore,
+  ): InstanceType<typeof CacheScope> {
+    const config: PartialCacheOptions = { ttl: 60, store };
+    return new CacheScope(config);
+  }
+
+  it("records a tagged hit's tags into _requestTags", async () => {
+    const store = await makeHitStore(["products"]);
+    const ctx = makeCtx(store);
+
+    const result = await runWithRequestContext(ctx, () =>
+      makeScope(store).lookupRoute("/products", {}),
+    );
+
+    // The hit must succeed (segments deserialized) AND the entry's tags must now
+    // be in the request tag union so document caching tags the full-page entry.
+    expect(result).not.toBeNull();
+    expect(result?.segments).toHaveLength(1);
+    expect([...ctx._requestTags]).toEqual(["products"]);
+  });
+
+  it("leaves _requestTags empty for an untagged hit", async () => {
+    const store = await makeHitStore(undefined);
+    const ctx = makeCtx(store);
+
+    const result = await runWithRequestContext(ctx, () =>
+      makeScope(store).lookupRoute("/products", {}),
+    );
+
+    expect(result).not.toBeNull();
+    expect(ctx._requestTags.size).toBe(0);
   });
 });

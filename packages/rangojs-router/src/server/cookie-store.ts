@@ -8,7 +8,7 @@
  */
 
 import type { CookieOptions } from "../router/middleware-types.js";
-import { getRequestContext } from "./request-context.js";
+import { getRequestContext, _getRequestContext } from "./request-context.js";
 import { isInsideCacheScope } from "./context.js";
 import { INSIDE_CACHE_EXEC } from "../cache/taint.js";
 
@@ -166,6 +166,57 @@ export function headers(): ReadonlyHeaders {
       return typeof value === "function" ? value.bind(target) : value;
     },
   }) as unknown as ReadonlyHeaders;
+}
+
+/**
+ * Force the calling client's caches to miss from now on, from the server seat:
+ * write a rotated `Set-Cookie` for the rango state. The responding client
+ * applies it on receipt, and its history cache is marked stale by the
+ * jar-divergence observer at its next read. Per-client and lazy — it rotates
+ * only the client that receives this response, not every client.
+ *
+ * Idempotent within a request (one `Set-Cookie`). Inert (a dev warning) when
+ * called outside a request context. Like `cookies()`, it throws inside a
+ * `"use cache"` / `cache()` boundary, but is allowed from a loader (loaders are
+ * the dynamic holes of a cached document).
+ */
+export function invalidateClientCache(): void {
+  const ctx = _getRequestContext();
+  if (!ctx) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "[rango] invalidateClientCache() was called outside a request context; ignored.",
+      );
+    }
+    return;
+  }
+  assertNotInsideCacheContext(ctx, "invalidateClientCache");
+  ctx._rotateStateCookie();
+}
+
+/**
+ * Suppress a server action's automatic client-cache invalidation: tell the
+ * action bridge this action changed nothing a route renders, so it should leave
+ * the client's state and caches alone (no rotation, no prefetch wipe, no
+ * broadcast, no revalidation refetch). Per-response, not per-action-definition —
+ * only the execution knows whether anything changed.
+ *
+ * Sets an internal response header the bridge reads. Idempotent within a
+ * request. Inert (a dev warning) outside a request context — there is no
+ * automatic invalidation to suppress.
+ */
+export function keepClientCache(): void {
+  const ctx = _getRequestContext();
+  if (!ctx) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "[rango] keepClientCache() was called outside a request context; ignored.",
+      );
+    }
+    return;
+  }
+  assertNotInsideCacheContext(ctx, "keepClientCache");
+  ctx._setKeepCacheDirective();
 }
 
 /**

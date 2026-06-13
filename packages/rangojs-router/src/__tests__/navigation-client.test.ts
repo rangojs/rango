@@ -52,6 +52,7 @@ vi.mock("../browser/prefetch/cache", () => ({
 }));
 
 import { createNavigationClient } from "../browser/navigation-client";
+import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
 describe("navigation-client", () => {
   beforeEach(() => {
@@ -110,6 +111,68 @@ describe("navigation-client", () => {
     );
 
     await expect(result.streamComplete).resolves.toBeUndefined();
+  });
+
+  it("reloads to the navigation target when the response router id does not match", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 200,
+          headers: { "X-RSC-Router-Id": "other-app" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(async () => ({
+      metadata: { isPartial: true },
+    }));
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    // Client is "client-app"; the response belongs to "other-app" (a stale/edge
+    // cache or proxy mix-up). The integrity check reloads to the target instead
+    // of decoding + applying the foreign payload.
+    client
+      .fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        routerId: "client-app",
+      })
+      .catch(() => {});
+
+    await vi.waitFor(() =>
+      expect((window as any).location.href).toBe("/products"),
+    );
+  });
+
+  it("lets the reload header win over a router-id mismatch (no double reload)", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 200,
+          headers: {
+            "X-RSC-Reload": "http://localhost/reloaded",
+            "X-RSC-Router-Id": "other-app",
+          },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(async () => ({ metadata: {} }));
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    client
+      .fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        routerId: "client-app",
+      })
+      .catch(() => {});
+
+    // The reload header is handled first (ordered before the routerId check),
+    // so we reload to the header's URL, not the navigation target.
+    await vi.waitFor(() =>
+      expect((window as any).location.href).toBe("http://localhost/reloaded"),
+    );
   });
 
   it("wraps network failures as NetworkError", async () => {
@@ -376,6 +439,52 @@ describe("navigation-client", () => {
       expect(consumePrefetchMock).not.toHaveBeenCalled();
       expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("fetch options (credentials + action fence)", () => {
+    afterEach(() => __resetActionFence());
+
+    async function freshFetchInit(): Promise<RequestInit> {
+      const fetchMock = vi.fn(
+        async (_url: string | URL, _init?: RequestInit) =>
+          new Response(null, { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: { matched: [], diff: [], isPartial: true } };
+        },
+      } as any);
+      // staleRevalidation skips the prefetch cache, so this always hits the
+      // fresh-fetch path where the cache mode and credentials are decided.
+      await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        staleRevalidation: true,
+      });
+      return (fetchMock.mock.calls[0]?.[1] ?? {}) as RequestInit;
+    }
+
+    it("does not set credentials to omit (the rango-state Set-Cookie must apply)", async () => {
+      const init = await freshFetchInit();
+      // Absent => the fetch default (same-origin) credentials, so a Set-Cookie
+      // on the navigation response is applied. `omit` would silently drop the
+      // server's state rotation.
+      expect(init.credentials).toBeUndefined();
+    });
+
+    it("uses cache:no-store during an active action fence", async () => {
+      enterActionFence();
+      const init = await freshFetchInit();
+      expect(init.cache).toBe("no-store");
+    });
+
+    it("does not override the cache mode when no action fence is active", async () => {
+      const init = await freshFetchInit();
+      expect(init.cache).toBeUndefined();
     });
   });
 });
