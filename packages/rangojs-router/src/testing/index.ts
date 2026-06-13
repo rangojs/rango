@@ -40,9 +40,10 @@ export type {
   RunMiddlewareOptions,
   RunMiddlewareResult,
 } from "./run-middleware.js";
-export { runLoader } from "./run-loader.js";
+export { runLoader, runLoaderResult } from "./run-loader.js";
 export type {
   RunLoaderOptions,
+  RunLoaderResult,
   UseResolver,
   TestLoaderContext,
 } from "./run-loader.js";
@@ -67,6 +68,16 @@ export type {
   CacheStatusTarget,
   CacheSink,
 } from "./cache-status.js";
+// The telemetry event types a cache-status assertion inspects (createCacheSink
+// records CacheDecisionEvents; filterCacheDecisions narrows them). Re-exported
+// here so a test can annotate the events without reaching past `@rangojs/router/testing`.
+export type {
+  TelemetryEvent,
+  TelemetrySink,
+  CacheDecisionEvent,
+  CacheSegmentSignal,
+  CacheSegmentStatus,
+} from "../router/telemetry.js";
 
 // Cross-cutting: handle collect/accumulator
 export { collectHandle } from "./collect-handle.js";

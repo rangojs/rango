@@ -113,6 +113,7 @@ it("resolves params + reverse + Outlet through the layout chain", async () => {
 - Use `mount` only for an `include()` prefix. An OPTIONAL param in the matched pattern (`/:locale?/c/:group` at `/en/c/wine`) auto-fills `locale` from the match — production parity, `useReverse` merges `useParams()` — so no `mount` is needed; a locale "dropping" from a reversed URL is usually a missing `mount` seed, not an auto-fill gap.
 - Needs a DOM env (`// @vitest-environment happy-dom`, or jsdom) and `@testing-library/react` (optional peers).
 - Don't hand-roll a `NavigationProvider`/router-context mock to test a client component — `renderRoute` mounts the REAL provider, so a hand-mock both duplicates effort and drifts from the production context shape.
+- MULTI-APP `href` typing. When a `renderRoute` suite imports client components across apps, the global `Rango.GeneratedRouteMap` augmentations collide and `href()` stops typechecking (app A's route union rejects app B's name). Runtime is unaffected — it is purely the global `href` typing. Keep the suite single-app, or split tsconfig programs per app (see [`./reverse-and-types.md`](./reverse-and-types.md) and `/typesafety`).
 
 ## See also
 

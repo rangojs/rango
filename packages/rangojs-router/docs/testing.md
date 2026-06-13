@@ -51,6 +51,7 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | ------------------------------------------------ | ------------------------------------------------------------------ | ------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile                        | unit + types        | call directly; `@ts-expect-error`                                                                        | `/typesafety`, `/links`                  |
 | a `loader()` body                                | data logic given params/env/vars/search                            | unit (node)         | `runLoader` (handle or raw fn)                                                                           | `/loader`                                |
+| a loader's cookie / header / redirect output     | `Set-Cookie`, response headers, `throw redirect()` (auth loaders)  | unit (node)         | `runLoaderResult` (envelope sibling of `runLoader`)                                                      | `/loader`                                |
 | `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                       | unit (node)         | `runMiddleware`                                                                                          | `/middleware`                            |
 | a client component reading router context        | it renders given params/loaderData/Outlet                          | unit (DOM)          | `renderRoute`                                                                                            | `/hooks`                                 |
 | a component reading `useLocationState`           | it renders the seeded location-state value                         | unit (DOM)          | `renderRoute` (`locationState` option)                                                                   | `/hooks`                                 |
@@ -376,6 +377,27 @@ it("returns the product and a self link", async () => {
 
 // Or pass the raw body — identical behavior, no createLoader needed:
 //   const data = await runLoader(async (ctx) => ({ ... }), { params: { id: "42" } });
+```
+
+`runLoader` returns the data only. To assert a loader's EFFECTS — a `Set-Cookie`,
+a response header, or a `throw redirect(...)` (the auth-loader pattern: validate,
+set a session cookie, redirect) — reach for the sibling **`runLoaderResult`**.
+Same options, but it returns the same envelope `runInRequestContext` does
+(`{ data, thrown, response, cookies, headers, locationState, stateCookieName }`):
+
+```ts
+import { runLoaderResult } from "@rangojs/router/testing";
+
+it("sets a session cookie and redirects", async () => {
+  const { thrown, response, cookies } = await runLoaderResult(AuthLoader, {
+    request: new Request("https://app.test/login?token=ok"),
+  });
+  expect((thrown as Response).headers.get("Location")).toBe("/"); // throw redirect("/")
+  expect(cookies.session).toBeDefined(); // the cookie set before the throw
+  expect(
+    response.headers.getSetCookie().some((c) => c.startsWith("session=")),
+  ).toBe(true);
+});
 ```
 
 Options: `params` (also surfaced as `routeParams`), `search`/`searchData`, `env`,
@@ -1156,6 +1178,15 @@ runLoader<T>(
 // In the body, ctx.reverse accepts any routeMap name and ctx.get any string/ContextVar.
 // rendered: true mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.use(H) with the POST-collect value (NOT raw pushes; cf renderRoute).
 // const data = await runLoader(ProductLoader, { params: { id: "1" }, env }); // or runLoader(rawBody, ...)
+
+runLoaderResult<T>(                       // sibling of runLoader for EFFECT-setting loaders (same opts)
+  loader: ((ctx) => T | Promise<T>) | LoaderDefinition<T>,
+  opts?: { /* identical to runLoader */ },
+): Promise<{ data: T | undefined; thrown: unknown; response: Response;
+             cookies: Record<string, string>; headers: Record<string, string>;
+             locationState: Record<string, unknown>; stateCookieName: string }>;
+// Use when the loader sets a cookie / header or `throw redirect(...)` (auth loaders) and you must assert that output.
+// const { thrown, cookies } = await runLoaderResult(AuthLoader, { request: new Request(url) }); // thrown = the redirect Response
 
 // Component — @rangojs/router/testing/dom (DOM env + @testing-library/react)
 renderRoute(                            // async; lazy-loads RTL at call time

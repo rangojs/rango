@@ -159,6 +159,11 @@ export interface RenderRouteOptions {
    * effect on your input object; a handle reused across tests keeps that id.
    *
    * @example
+   * // useLoader returns an ENVELOPE — destructure `data`, it is not the bare value.
+   * function CartBadge() {
+   *   const { data } = useLoader(CartLoader); // NOT `useLoader(CartLoader).itemCount`
+   *   return <span>{data.itemCount}</span>;
+   * }
    * renderRoute([{ path: "/cart", Component: CartBadge }], {
    *   loaders: [[CartLoader, { itemCount: 3, total: 89.97 }]],
    * });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { isClientComponent, assertClientComponent } from "../component-utils";
 
 describe("component-utils", () => {
@@ -71,6 +71,44 @@ describe("component-utils", () => {
       expect(() => assertClientComponent(ServerComponent, "myLayout")).toThrow(
         "myLayout must be a client component",
       );
+    });
+
+    describe("allowServerInTest (T3: bare-test router import)", () => {
+      afterEach(() => {
+        vi.unstubAllEnvs();
+      });
+
+      it("accepts a server component under a test runner when allowServerInTest", () => {
+        // VITEST is set in this process, so isUnderTestRunner() is true.
+        const ServerComponent = () => null;
+        expect(() =>
+          assertClientComponent(ServerComponent, "document", {
+            allowServerInTest: true,
+          }),
+        ).not.toThrow();
+      });
+
+      it("still throws for a server component OUTSIDE a test runner (build safety net)", () => {
+        vi.stubEnv("VITEST", ""); // simulate a real build: isUnderTestRunner() -> false
+        const ServerComponent = () => null;
+        expect(() =>
+          assertClientComponent(ServerComponent, "document", {
+            allowServerInTest: true,
+          }),
+        ).toThrow(
+          'document must be a client component with "use client" directive',
+        );
+      });
+
+      it("still throws for a non-function (JSX element) even with allowServerInTest", () => {
+        // The relaxation only waives the "use client" requirement, not the
+        // "pass the component, not a JSX element" guard.
+        expect(() =>
+          assertClientComponent({}, "document", { allowServerInTest: true }),
+        ).toThrow(
+          'document must be a client component function with "use client" directive',
+        );
+      });
     });
   });
 });

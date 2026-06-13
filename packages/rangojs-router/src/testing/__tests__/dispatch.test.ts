@@ -855,4 +855,28 @@ describe("dispatch", () => {
       expect(res.headers.get("x-on-response")).toBe("ran");
     });
   });
+
+  describe("a router built with a document (T3)", () => {
+    it("constructs and dispatches with a server-component document (no 'use client' throw under the test runner)", async () => {
+      // Almost every real app sets `document`. In a bare test the "use client"
+      // transform has not run, so the document has no client marker — pre-T3
+      // this threw at createRouter and blocked importing the real router for
+      // dispatch/assertGeneratedRoutesMatch. It must now construct (dispatch
+      // never renders the document).
+      function AppDocument() {
+        return null;
+      }
+      const router = createRouter({ document: AppDocument }).routes(
+        urls(({ path }) => [
+          path.json("/api/data", () => ({ hello: "world" }), {
+            name: "api.data",
+          }),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/data" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ hello: "world" });
+    });
+  });
 });

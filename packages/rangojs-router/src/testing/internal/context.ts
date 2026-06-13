@@ -258,7 +258,7 @@ export function headersToObject(headers: Headers): Record<string, string> {
  * its status/Location preserved. Otherwise snapshot the stub (status + headers).
  * The `Response`/`Headers` constructors copy, so the result is immutable.
  */
-function buildRunResponse<TEnv>(
+export function buildRunResponse<TEnv>(
   ctx: RequestContext<TEnv>,
   thrown: unknown,
 ): Response {
@@ -275,6 +275,32 @@ function buildRunResponse<TEnv>(
     return new Response(null, { status: thrown.status, headers });
   }
   return new Response(null, { status: stub.status, headers: stub.headers });
+}
+
+/**
+ * Snapshot the shared run-result envelope fields (everything except the primary
+ * value) from what a run left on `ctx`: the captured `thrown`, the merged
+ * `response`, the effective `cookies`/`headers` views, the `locationState`, and
+ * the resolved `stateCookieName`. Shared by `runInRequestContext` and
+ * `runLoaderResult` so the snapshot sequence lives once; each spreads it next to
+ * its own primary field (`result` / `data`).
+ */
+export function buildRunSnapshot<TEnv>(
+  ctx: RequestContext<TEnv>,
+  thrown: unknown,
+  stateCookieName: string,
+): {
+  thrown: unknown;
+  response: Response;
+  cookies: Record<string, string>;
+  headers: Record<string, string>;
+  locationState: Record<string, unknown>;
+  stateCookieName: string;
+} {
+  const { cookies, locationState } = snapshotRunEffects(ctx);
+  const response = buildRunResponse(ctx, thrown);
+  const headers = headersToObject(response.headers);
+  return { thrown, response, cookies, headers, locationState, stateCookieName };
 }
 
 /**
@@ -325,25 +351,12 @@ export async function runInRequestContext<T, TEnv = unknown>(
   const { ctx, stateCookieName } = createTestRequestContext<TEnv>(opts);
   let result: T | undefined;
   let thrown: unknown;
-  let didThrow = false;
   try {
     result = (await runWithRequestContext(ctx, () => fn(ctx))) as T;
   } catch (error) {
     // Capture (do NOT re-throw): a redirect/notFound action throws its Response
     // on the SUCCESS path, and its cookie/flash output must stay observable.
-    didThrow = true;
     thrown = error;
   }
-  const { cookies, locationState } = snapshotRunEffects(ctx);
-  const response = buildRunResponse(ctx, didThrow ? thrown : undefined);
-  const headers = headersToObject(response.headers);
-  return {
-    result,
-    thrown,
-    response,
-    cookies,
-    headers,
-    locationState,
-    stateCookieName,
-  };
+  return { result, ...buildRunSnapshot(ctx, thrown, stateCookieName) };
 }

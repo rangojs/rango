@@ -274,9 +274,14 @@ export function createRouter<TEnv = any>(
     invokeOnError(onError, error, phase, context, "Router");
   }
 
-  // Validate document is a client component
+  // Validate document is a client component. Under a test runner the "use
+  // client" transform has not run, so a real exported document has no marker;
+  // allowServerInTest lets the router construct in a bare unit test (for
+  // dispatch / assertGeneratedRoutesMatch) while a real build still throws.
   if (documentOption !== undefined) {
-    assertClientComponent(documentOption, "document");
+    assertClientComponent(documentOption, "document", {
+      allowServerInTest: true,
+    });
   }
 
   // Use default document if none provided (keeps internal name as rootLayout)

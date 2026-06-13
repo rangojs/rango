@@ -75,6 +75,7 @@ For a large type-only suite, collect recipe-1/2 assertions in `*.test-d.ts` file
 - Type tests run at TYPECHECK time (`tsc --noEmit`), NOT in the vitest runner. They are their own layer — wire them into CI as a real step (`pnpm run typecheck`). A type test nobody runs is just a comment.
 - `@ts-expect-error` ERRORS if the line below it ever starts compiling, so a regressed guard fails the typecheck. A runtime test cannot assert "this should not type-check".
 - `assertGeneratedRoutesMatch` force-expands lazy `include()`d routes (calls `findMatch` on a concrete path derived from each generated pattern) before diffing — otherwise every included route reads as a false `missing`. This makes the whole-app drift check work in a plain unit test. Routers without `findMatch` (a bare `{ routeMap }`) are left as-is.
+- MULTI-APP route-map isolation. `href()`/`reverse()` typing is GLOBAL — each app's generated file augments the one `Rango.GeneratedRouteMap` interface. A `renderRoute` suite that imports a client component from app B (which calls `href("/b-route")`) won't typecheck if the same tsconfig program also carries app A's augmentation: A's route union rejects B's name. `renderRoute` is app-agnostic at RUNTIME; the collision is purely the global `href` typing. Keep a `renderRoute` suite single-app, or give each app its OWN tsconfig program (see `/typesafety`); a quick sidestep is to probe `useMount`/`useHref` inline instead of importing the cross-app component.
 
 ## See also
 

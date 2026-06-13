@@ -189,11 +189,25 @@ Logs pattern matching, route registration, and cookie override decisions to cons
 ## Testing
 
 ```typescript
-import { createTestRequest, testPattern } from "@rangojs/router/host/testing";
+import {
+  createTestRequest,
+  testPattern,
+  matchesHost,
+} from "@rangojs/router/host/testing";
 
-// Test pattern matching
+// Test pattern matching (host-only)
 testPattern("admin.*", "admin.example.com"); // true
 testPattern([".", "www.*"], "example.com"); // true
+
+// Path-based patterns need the third pathname arg (defaults to "/", so a
+// host-only pattern still works with two args):
+testPattern("**.workers.dev/admin", "foo.workers.dev", "/admin"); // true
+
+// Or match a pattern against a real Request (hostname + pathname from the URL):
+matchesHost(
+  "**.workers.dev/admin",
+  new Request("https://foo.workers.dev/admin"),
+); // true
 
 // Create requests for integration tests
 const request = createTestRequest({

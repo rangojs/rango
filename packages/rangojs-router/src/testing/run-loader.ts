@@ -48,6 +48,7 @@ import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
 import {
   createTestRequestContext,
+  buildRunSnapshot,
   type CreateTestContextOptions,
   type VarsInit,
   type StateCookieSeed,
@@ -251,12 +252,12 @@ function resolveLoaderFn<T>(
  * const b = await runLoader(ProductLoader, { params: { id: "42" } });
  * ```
  */
-export async function runLoader<T>(
-  loader: RunnableLoader<T>,
-  opts: RunLoaderOptions = {},
-): Promise<T> {
-  const loaderFn = resolveLoaderFn(loader);
-  const ctxOpts: CreateTestContextOptions<any> = {
+// Build the createTestRequestContext options from runLoader's options. Shared by
+// runLoader (returns the loader data) and runLoaderResult (also snapshots effects).
+function buildLoaderCtxOpts(
+  opts: RunLoaderOptions,
+): CreateTestContextOptions<any> {
+  return {
     env: opts.env,
     // Bake opts.search into the request URL itself so ctx.request.url, ctx.url,
     // and ctx.searchParams all agree (production carries the query string on the
@@ -273,11 +274,16 @@ export async function runLoader<T>(
     cacheProfiles: opts.cacheProfiles,
     stateCookie: opts.stateCookie,
   };
+}
 
-  const { ctx } = createTestRequestContext(ctxOpts);
-
-  const reqCtx = ctx as RequestContext<any>;
-
+// Enter `reqCtx` and run `fn` with a seeded TestLoaderContext (the same ctx shape
+// a real loader receives). The single place the loader context is built, so
+// runLoader and runLoaderResult share identical loader-context semantics.
+function runWithLoaderContext<R>(
+  reqCtx: RequestContext<any>,
+  opts: RunLoaderOptions,
+  fn: (ctx: TestLoaderContext) => R,
+): R {
   // Seed values for ctx.use(SomeHandle), matched by handle reference (so a real
   // handle resolves regardless of its build-injected $$id).
   const handleSeeds = new Map<unknown, unknown>(opts.handles ?? []);
@@ -307,7 +313,7 @@ export async function runLoader<T>(
       params: opts.params ?? {},
       routeParams: (opts.params ?? {}) as Record<string, string>,
       request: reqCtx.request,
-      searchParams: ctx.searchParams,
+      searchParams: reqCtx.searchParams,
       search: opts.searchData ?? {},
       pathname: reqCtx.pathname,
       url: reqCtx.url,
@@ -367,6 +373,98 @@ export async function runLoader<T>(
             },
     };
 
-    return Promise.resolve(loaderFn(loaderCtx));
+    return fn(loaderCtx);
   });
+}
+
+/**
+ * Run a loader and return its resolved data.
+ *
+ * Effects the loader sets (cookies, response headers, a thrown redirect) are NOT
+ * observable here — use {@link runLoaderResult} for an auth-style loader that
+ * sets a `Set-Cookie` and/or `throw redirect(...)`.
+ */
+export async function runLoader<T>(
+  loader: RunnableLoader<T>,
+  opts: RunLoaderOptions = {},
+): Promise<T> {
+  const loaderFn = resolveLoaderFn(loader);
+  const { ctx } = createTestRequestContext(buildLoaderCtxOpts(opts));
+  return runWithLoaderContext(ctx as RequestContext<any>, opts, (loaderCtx) =>
+    Promise.resolve(loaderFn(loaderCtx)),
+  );
+}
+
+/**
+ * What a loader run accumulated: its data PLUS the response effects it produced,
+ * surfaced as PUBLIC values (parity with `runMiddleware`/`runInRequestContext`)
+ * so an effect-setting loader is assertable without casting through the
+ * `@internal` request context.
+ */
+export interface RunLoaderResult<T> {
+  /** The loader's resolved data, or `undefined` if it threw (see {@link thrown}). */
+  data: T | undefined;
+  /**
+   * What the loader threw (commonly a `Response` from `throw redirect(...)` on a
+   * success path) — captured, NOT re-thrown; assert on it. `undefined` if the
+   * loader returned normally.
+   */
+  thrown: unknown;
+  /**
+   * The merged `Response` (status + headers + Set-Cookie). On a thrown redirect,
+   * that redirect's `Location` merged with the accumulated cookies/headers — so a
+   * loader that sets a session cookie then `throw redirect("/")` exposes BOTH.
+   */
+  response: Response;
+  /** Effective cookie view: request cookies + the loader's mutations, last-write-wins. */
+  cookies: Record<string, string>;
+  /** Response headers as `{ name: value }`, EXCLUDING set-cookie (use `cookies`). Lowercased. */
+  headers: Record<string, string>;
+  /** Location state the loader set (`ctx.setLocationState()` / `redirect({ state })`). */
+  locationState: Record<string, unknown>;
+  /** The resolved rango state cookie name seeded for the run (default `rango-state_router_0`). */
+  stateCookieName: string;
+}
+
+/**
+ * Run a loader AND surface the response effects it produced. The richer sibling
+ * of {@link runLoader} (which returns the bare data): use this when the loader
+ * sets a cookie / response header / location-state, or `throw redirect(...)`, and
+ * the test must assert that output.
+ *
+ * @example
+ * ```ts
+ * // AuthLoader: validates, sets a `session` cookie, then `throw redirect("/")`.
+ * const { thrown, response, cookies } = await runLoaderResult(AuthLoader, {
+ *   request: new Request("https://app.test/login?token=ok"),
+ * });
+ * expect((thrown as Response).headers.get("Location")).toBe("/");
+ * expect(cookies.session).toBeDefined();
+ * expect(
+ *   response.headers.getSetCookie().some((c) => c.startsWith("session=")),
+ * ).toBe(true);
+ * ```
+ */
+export async function runLoaderResult<T>(
+  loader: RunnableLoader<T>,
+  opts: RunLoaderOptions = {},
+): Promise<RunLoaderResult<T>> {
+  const loaderFn = resolveLoaderFn(loader);
+  const { ctx, stateCookieName } = createTestRequestContext(
+    buildLoaderCtxOpts(opts),
+  );
+  const reqCtx = ctx as RequestContext<any>;
+  let data: T | undefined;
+  let thrown: unknown;
+  try {
+    data = await runWithLoaderContext(reqCtx, opts, (loaderCtx) =>
+      Promise.resolve(loaderFn(loaderCtx)),
+    );
+  } catch (error) {
+    // Capture (do NOT re-throw): a loader's success path is often
+    // `throw redirect(...)`, and the cookie/flash it set before the throw must
+    // stay observable (parity with runInRequestContext).
+    thrown = error;
+  }
+  return { data, ...buildRunSnapshot(reqCtx, thrown, stateCookieName) };
 }

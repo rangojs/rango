@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { runLoader } from "../run-loader.js";
+import { runLoader, runLoaderResult } from "../run-loader.js";
 import { createVar } from "../../context-var.js";
 import { createHandle } from "../../handle.js";
 import { getRequestContext } from "../../server/request-context.js";
+import { cookies, invalidateClientCache } from "../../server/cookie-store.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { registerFetchableLoader } from "../../server/fetchable-loader-store.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { LoaderContext, LoaderDefinition } from "../../types.js";
@@ -354,5 +356,79 @@ describe("runLoader accepts a registered createLoader handle", () => {
   it("still accepts a raw loader body (unchanged)", async () => {
     const data = await runLoader(async (ctx) => ({ m: ctx.method }));
     expect(data).toEqual({ m: "GET" });
+  });
+});
+
+describe("runLoaderResult — effect observability (cookies/headers/redirect)", () => {
+  it("returns data and undefined thrown when the loader returns normally", async () => {
+    const { data, thrown } = await runLoaderResult(async () => ({
+      items: [1, 2, 3],
+    }));
+    expect(data).toEqual({ items: [1, 2, 3] });
+    expect(thrown).toBeUndefined();
+  });
+
+  it("surfaces a Set-Cookie a loader set on response + cookies", async () => {
+    const {
+      data,
+      response,
+      cookies: jar,
+    } = await runLoaderResult(async () => {
+      cookies().set("prefs", "dark", { path: "/" });
+      return { ok: true };
+    });
+    expect(data).toEqual({ ok: true });
+    expect(jar.prefs).toBe("dark");
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith("prefs=dark")),
+    ).toBe(true);
+  });
+
+  it("captures an auth loader's set-cookie-then-redirect (the login pattern)", async () => {
+    // The exact gap the finding documents: today runLoader only lets you check
+    // the redirect, not the Set-Cookie. runLoaderResult exposes BOTH.
+    const {
+      data,
+      thrown,
+      response,
+      cookies: jar,
+    } = await runLoaderResult(
+      async () => {
+        cookies().set("session", "tok", { path: "/", httpOnly: true });
+        throw redirect("/");
+      },
+      { request: new Request("https://app.test/login?token=ok") },
+    );
+    expect(data).toBeUndefined();
+    expect(thrown).toBeInstanceOf(Response);
+    expect((thrown as Response).headers.get("Location")).toBe("/");
+    // response merges the redirect's Location AND the accumulated Set-Cookie.
+    expect(response.headers.get("Location")).toBe("/");
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith("session=tok")),
+    ).toBe(true);
+    expect(jar.session).toBe("tok");
+  });
+
+  it("surfaces a loader's invalidateClientCache() rotation via stateCookieName", async () => {
+    const { response, stateCookieName } = await runLoaderResult(async () => {
+      invalidateClientCache();
+      return null;
+    });
+    expect(stateCookieName).toBe("rango-state_router_0");
+    expect(
+      response.headers
+        .getSetCookie()
+        .some((c) => c.startsWith(stateCookieName + "=")),
+    ).toBe(true);
+  });
+
+  it("preserves the full loader context (params, ctx.use seeding) on the rich path", async () => {
+    const Other = createVar<{ n: number }>();
+    const { data } = await runLoaderResult(
+      async (ctx) => ({ id: ctx.params.id, n: ctx.get(Other)?.n }),
+      { params: { id: "7" }, vars: [[Other, { n: 5 }]] },
+    );
+    expect(data).toEqual({ id: "7", n: 5 });
   });
 });

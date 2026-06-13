@@ -74,12 +74,18 @@ import { createLoader, createRouter } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { createHostRouter } from "@rangojs/router/host";
+import {
+  createTestRequest,
+  testPattern,
+  matchesHost,
+} from "@rangojs/router/host/testing";
 import { useTheme } from "@rangojs/router/theme";
 import { rango, type RangoOptions } from "@rangojs/router/vite";
 import { createRSCHandler } from "@rangojs/router/rsc";
 import { createSSRHandler } from "@rangojs/router/ssr";
 import {
   runLoader,
+  runLoaderResult,
   dispatch,
   createTestRequestContext,
   runInRequestContext,
@@ -99,11 +105,15 @@ void createRouter;
 void Link;
 void MemorySegmentCacheStore;
 void createHostRouter;
+void createTestRequest;
+void testPattern;
+void matchesHost;
 void useTheme;
 void rango;
 void createRSCHandler;
 void createSSRHandler;
 void runLoader;
+void runLoaderResult;
 void rangoTestAliases;
 void rangoTestConfig;
 void createTestRequestContext;

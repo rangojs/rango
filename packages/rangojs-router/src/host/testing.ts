@@ -4,7 +4,7 @@
  * Helper functions for testing host routing.
  */
 
-import { matchPattern } from "./pattern-matcher.js";
+import { matchPattern, parseRequest } from "./pattern-matcher.js";
 
 export interface CreateTestRequestOptions {
   host: string;
@@ -52,28 +52,57 @@ export function createTestRequest(options: CreateTestRequestOptions): Request {
   });
 }
 
+// Try each pattern (a single pattern or any in an array) against the already
+// parsed host + path. Shared by testPattern and matchesHost so the
+// normalize-and-loop lives once.
+function matchPatterns(
+  pattern: string | string[],
+  hostname: string,
+  pathname: string,
+  parts: string[],
+): boolean {
+  const patterns = Array.isArray(pattern) ? pattern : [pattern];
+  return patterns.some((p) => matchPattern(p, hostname, pathname, parts));
+}
+
 /**
- * Test if a pattern matches a hostname
+ * Test if a pattern matches a hostname (and, for path-based patterns, a pathname).
+ *
+ * `pathname` defaults to `"/"`, so a host-only pattern works with two args. Pass
+ * the third arg to test a path-based pattern (`**.workers.dev/admin`,
+ * `localhost/shop`) — without it those patterns can never match.
  *
  * @example
  * ```ts
- * expect(testPattern('admin.*', 'admin.example.com')).toBe(true);
- * expect(testPattern(['*', 'www.*'], 'example.com')).toBe(true);
+ * expect(testPattern("admin.*", "admin.example.com")).toBe(true);
+ * expect(testPattern(["*", "www.*"], "example.com")).toBe(true);
+ * expect(testPattern("**.workers.dev/admin", "foo.workers.dev", "/admin")).toBe(true);
  * ```
  */
 export function testPattern(
   pattern: string | string[],
   hostname: string,
+  pathname: string = "/",
 ): boolean {
-  const patterns = Array.isArray(pattern) ? pattern : [pattern];
-  const parts = hostname.split(".");
-  const pathname = "/";
+  return matchPatterns(pattern, hostname, pathname, hostname.split("."));
+}
 
-  for (const p of patterns) {
-    if (matchPattern(p, hostname, pathname, parts)) {
-      return true;
-    }
-  }
-
-  return false;
+/**
+ * Test if a pattern matches a `Request` — the hostname AND pathname are taken
+ * from the request URL (via the same `parseRequest` the host router uses), so a
+ * path-based pattern is tested against a real request without splitting the URL
+ * by hand.
+ *
+ * @example
+ * ```ts
+ * const req = new Request("https://foo.workers.dev/admin");
+ * expect(matchesHost("**.workers.dev/admin", req)).toBe(true);
+ * ```
+ */
+export function matchesHost(
+  pattern: string | string[],
+  request: Request,
+): boolean {
+  const { hostname, pathname, parts } = parseRequest(request);
+  return matchPatterns(pattern, hostname, pathname, parts);
 }

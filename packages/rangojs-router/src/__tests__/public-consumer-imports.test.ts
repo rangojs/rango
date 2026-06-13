@@ -133,11 +133,13 @@ void createCacheScope;
 `,
       "host-consumer.ts": `
 import { NoRouteMatchError, createHostRouter } from "@rangojs/router/host";
-import { createTestRequest } from "@rangojs/router/host/testing";
+import { createTestRequest, testPattern, matchesHost } from "@rangojs/router/host/testing";
 
 void NoRouteMatchError;
 void createHostRouter;
 void createTestRequest;
+void testPattern;
+void matchesHost;
 `,
       "theme-consumer.tsx": `
 import { THEME_COOKIE, ThemeScript, useTheme } from "@rangojs/router/theme";
@@ -181,6 +183,7 @@ type _RenderOptions = SSRRenderOptions;
 import {
   runMiddleware,
   runLoader,
+  runLoaderResult,
   dispatch,
   assertCacheStatus,
   assertGeneratedRoutesMatch,
@@ -190,14 +193,35 @@ import {
   runInRequestContext,
   runWithRequestContext,
 } from "@rangojs/router/testing";
+import type {
+  RunLoaderResult,
+  CacheDecisionEvent,
+  CacheSegmentSignal,
+  CacheSegmentStatus,
+  TelemetryEvent as TestTelemetryEvent,
+} from "@rangojs/router/testing";
+import type { TelemetryEvent, RequestStartEvent } from "@rangojs/router";
 import { rangoTestConfig, rangoTestAliases, rangoInlineDeps } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
 import { renderToFlightString } from "@rangojs/router/testing/flight";
 import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
+// Telemetry event member types (T5) + the runLoaderResult envelope (T2) must be
+// nameable at a consumer call site, not just structurally reachable.
+type _TelemetryTypesReachable = [
+  RunLoaderResult<unknown>,
+  CacheDecisionEvent,
+  CacheSegmentSignal,
+  CacheSegmentStatus,
+  TestTelemetryEvent,
+  TelemetryEvent,
+  RequestStartEvent,
+];
+
 void runMiddleware;
 void runLoader;
+void runLoaderResult;
 void dispatch;
 void rangoTestConfig;
 void rangoTestAliases;

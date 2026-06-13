@@ -58,10 +58,16 @@
 
 The loader data DIRECTLY (no envelope). `T` is the loader's return type.
 
+To assert a loader's EFFECTS — a `Set-Cookie`, a response header, or a
+`throw redirect(...)` (the auth-loader pattern) — use the sibling
+**`runLoaderResult(loader, opts)`** instead. Same options, but it returns an
+envelope: `{ data, thrown, response, cookies, headers, locationState, stateCookieName }`
+(parity with `runInRequestContext`). `runLoader` discards those effects.
+
 ## Recipe
 
 ```ts
-import { runLoader } from "@rangojs/router/testing";
+import { runLoader, runLoaderResult } from "@rangojs/router/testing";
 import { createLoader, createVar } from "@rangojs/router";
 
 const User = createVar<{ name: string }>();
@@ -88,6 +94,18 @@ it("builds a self link via reverse", async () => {
     { params: { id: "42" }, routeMap: { product: "/products/:id" } },
   );
   expect(data.self).toBe("/products/42");
+});
+
+it("asserts a loader's set-cookie + redirect (runLoaderResult)", async () => {
+  // AuthLoader validates, sets a `session` cookie, then `throw redirect("/")`.
+  const { thrown, response, cookies } = await runLoaderResult(AuthLoader, {
+    request: new Request("https://app.test/login?token=ok"),
+  });
+  expect((thrown as Response).headers.get("Location")).toBe("/");
+  expect(cookies.session).toBeDefined();
+  expect(
+    response.headers.getSetCookie().some((c) => c.startsWith("session=")),
+  ).toBe(true);
 });
 ```
 

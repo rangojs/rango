@@ -57,7 +57,8 @@
  *   untouched, so it does NOT crash the server React build. The router's OWN
  *   Flight tests omit it only because they import via RELATIVE paths, not the
  *   bare specifier; a consumer importing the bare specifier must include it. See
- *   the testing guide for the full Flight config.
+ *   the testing skill (`skills/testing/setup.md`, shipped in the package) for
+ *   the complete Flight config.
  * - `renderRoute` (`@rangojs/router/testing/dom`) tests run in this same project
  *   under a DOM environment (`happy-dom`/`jsdom`); the alias does not affect them.
  * - A router using `Prerender()` / `createLoader()` / `Static()` now CONSTRUCTS in
@@ -217,20 +218,39 @@ interface FlightTransformPlugin {
  * module is imported as a plain (unmarked) function and would render server-side,
  * so you must list islands via `renderServerTree(..., { clientComponents })`.
  *
- * Add it to your react-server Vitest project:
+ * Add it to your react-server Vitest project. This is the COMPLETE config — the
+ * alias, `server.deps.inline`, and `NODE_ENV` are load-bearing, not optional (see
+ * the inline notes). The testing skill (`skills/testing/setup.md`, shipped in the
+ * package) has the annotated walkthrough.
  *
  * ```ts
  * // vitest.rsc.config.ts
  * import { defineConfig } from "vitest/config";
- * import { rangoUseClientTransform } from "@rangojs/router/testing/vitest";
+ * import {
+ *   rangoUseClientTransform,
+ *   rangoTestAliases,
+ *   rangoInlineDeps,
+ * } from "@rangojs/router/testing/vitest";
+ *
+ * // Flight serialization needs React's production build; the dev build's jsxDEV
+ * // crashes / yields unstable snapshots.
+ * process.env.NODE_ENV = "production";
  *
  * export default defineConfig({
- *   resolve: { conditions: ["react-server"] },
  *   plugins: [rangoUseClientTransform()],
+ *   resolve: {
+ *     conditions: ["react-server"],
+ *     // Bare `@rangojs/router` -> its react-server build, so a handler/component
+ *     // reading getRequestContext()/cookies() resolves the real impl, not the
+ *     // throwing stub. Pass { preset: "cloudflare" } for a CF app.
+ *     alias: rangoTestAliases(),
+ *   },
  *   test: {
  *     include: ["test/**\/*.rsc-test.{ts,tsx}"],
  *     pool: "forks",
  *     execArgv: ["--conditions=react-server"],
+ *     // Required for an INSTALLED consumer on Node >= 23 (rango ships TS source).
+ *     server: { deps: { inline: rangoInlineDeps } },
  *   },
  * });
  * ```
