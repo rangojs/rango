@@ -16,6 +16,7 @@ import {
   formatNestedRouterConflictError,
   findNestedRouterConflict,
   findRouterFiles,
+  createScanFilter,
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
@@ -326,6 +327,12 @@ export function createRouterDiscoveryPlugin(
 
     configResolved(config) {
       s.projectRoot = config.root;
+      // Compile the optional discovery scan filter (glob include/exclude) now
+      // that the project root is known. findRouterFiles() below — and the
+      // build/HMR rediscovery paths — honor s.scanFilter.
+      s.scanFilter = opts?.discovery
+        ? createScanFilter(s.projectRoot, opts.discovery)
+        : undefined;
       s.isBuildMode = config.command === "build";
       viteCommand = config.command as "serve" | "build";
       viteMode = config.mode;

@@ -1,9 +1,11 @@
 /**
- * Cache Profile Registry
+ * Cache profile resolution.
  *
- * Named cache profiles for "use cache" directive.
- * Profiles define TTL, SWR, and optional default tags.
- * Set by createRouter() at startup, read by registerCachedFunction() at runtime.
+ * Named cache profiles for the "use cache" directive define TTL, SWR, and
+ * optional default tags. createRouter() resolves the user's profiles once via
+ * resolveCacheProfiles() and threads the resulting map onto each request
+ * context; the "use cache: <profile>" runtime path reads it from there
+ * (request-scoped) — there is no global registry.
  */
 
 export interface CacheProfile {
@@ -16,10 +18,6 @@ export interface CacheProfile {
 }
 
 const DEFAULT_PROFILE: CacheProfile = { ttl: 900, swr: 1800 };
-
-let _profiles: Record<string, CacheProfile> = {
-  default: DEFAULT_PROFILE,
-};
 
 const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 
@@ -48,30 +46,4 @@ export function resolveCacheProfiles(
     }
   }
   return merged;
-}
-
-/**
- * Set all cache profiles in the global registry.
- * Called by createRouter() at startup for DSL-time resolution
- * (cache("profileName") reads from this during route definition).
- *
- * WARNING: This is global mutable state. It exists only for DSL-time
- * reads. Runtime resolution (registerCachedFunction) uses request-scoped
- * profiles and does NOT read from this registry.
- */
-export function setCacheProfiles(profiles: Record<string, CacheProfile>): void {
-  _profiles = resolveCacheProfiles(profiles);
-}
-
-/**
- * Read a profile out of the global registry by name.
- *
- * There is currently no production reader: the "use cache: <profile>" runtime
- * path resolves from the request-scoped _cacheProfiles map (see
- * cache-runtime.ts), and the route DSL has no cache("profileName") form (see
- * dsl-helpers.ts). This accessor exists so tests can assert what
- * setCacheProfiles() wrote into the global registry.
- */
-export function getCacheProfile(name: string): CacheProfile | undefined {
-  return _profiles[name];
 }

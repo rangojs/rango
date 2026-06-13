@@ -125,6 +125,20 @@ interface RangoBaseOptions {
    * @default true
    */
   clientChunks?: ClientChunks;
+
+  /**
+   * Filter which files route discovery scans, by glob. Paths are matched
+   * root-relative (e.g. `src/routes/**`). `include` restricts discovery to
+   * matching files; `exclude` removes matches (the defaults cover tests, dist,
+   * coverage, etc.). Mirrors the CLI's `--include`/`--exclude`.
+   *
+   * @example
+   * rango({ discovery: { include: ["src/routes/**"] } })
+   */
+  discovery?: {
+    include?: string[];
+    exclude?: string[];
+  };
 }
 
 /**

@@ -7,20 +7,16 @@ import { USE_CACHE_DIRECTIVE_RE } from "../../vite/plugins/use-cache-transform.j
 // ============================================================================
 
 describe("cache profile validation", () => {
-  let setCacheProfiles: typeof import("../profile-registry.js").setCacheProfiles;
-  let getCacheProfile: typeof import("../profile-registry.js").getCacheProfile;
   let resolveCacheProfiles: typeof import("../profile-registry.js").resolveCacheProfiles;
 
   beforeEach(async () => {
     const mod = await import("../profile-registry.js");
-    setCacheProfiles = mod.setCacheProfiles;
-    getCacheProfile = mod.getCacheProfile;
     resolveCacheProfiles = mod.resolveCacheProfiles;
   });
 
   it("accepts names with letters, digits, hyphens, and underscores", () => {
     expect(() =>
-      setCacheProfiles({
+      resolveCacheProfiles({
         default: { ttl: 60 },
         short: { ttl: 10 },
         "long-lived": { ttl: 3600 },
@@ -32,7 +28,7 @@ describe("cache profile validation", () => {
 
   it("rejects names with spaces", () => {
     expect(() =>
-      setCacheProfiles({
+      resolveCacheProfiles({
         default: { ttl: 60 },
         "bad name": { ttl: 10 },
       }),
@@ -41,7 +37,7 @@ describe("cache profile validation", () => {
 
   it("rejects names with special characters", () => {
     expect(() =>
-      setCacheProfiles({
+      resolveCacheProfiles({
         default: { ttl: 60 },
         "bad.name": { ttl: 10 },
       }),
@@ -50,7 +46,7 @@ describe("cache profile validation", () => {
 
   it("rejects empty string name", () => {
     expect(() =>
-      setCacheProfiles({
+      resolveCacheProfiles({
         default: { ttl: 60 },
         "": { ttl: 10 },
       }),
@@ -58,16 +54,14 @@ describe("cache profile validation", () => {
   });
 
   it("always ensures a default profile exists", () => {
-    setCacheProfiles({ short: { ttl: 10 } });
-    const defaultProfile = getCacheProfile("default");
-    expect(defaultProfile).toBeDefined();
-    expect(defaultProfile!.ttl).toBe(900);
+    const resolved = resolveCacheProfiles({ short: { ttl: 10 } });
+    expect(resolved.default).toBeDefined();
+    expect(resolved.default.ttl).toBe(900);
   });
 
   it("preserves user-defined default profile", () => {
-    setCacheProfiles({ default: { ttl: 42 } });
-    const defaultProfile = getCacheProfile("default");
-    expect(defaultProfile!.ttl).toBe(42);
+    const resolved = resolveCacheProfiles({ default: { ttl: 42 } });
+    expect(resolved.default.ttl).toBe(42);
   });
 
   describe("resolveCacheProfiles", () => {
@@ -101,30 +95,31 @@ describe("cache profile validation", () => {
 // ============================================================================
 
 describe("multi-router profile isolation", () => {
-  let setCacheProfiles: typeof import("../profile-registry.js").setCacheProfiles;
-  let getCacheProfile: typeof import("../profile-registry.js").getCacheProfile;
+  let resolveCacheProfiles: typeof import("../profile-registry.js").resolveCacheProfiles;
 
   beforeEach(async () => {
     const mod = await import("../profile-registry.js");
-    setCacheProfiles = mod.setCacheProfiles;
-    getCacheProfile = mod.getCacheProfile;
+    resolveCacheProfiles = mod.resolveCacheProfiles;
   });
 
-  it("setCacheProfiles replaces previous profiles entirely", () => {
-    setCacheProfiles({
+  it("each router resolves an independent profile map (no shared global)", () => {
+    const routerA = resolveCacheProfiles({
       default: { ttl: 60 },
       routerA: { ttl: 100 },
     });
-    expect(getCacheProfile("routerA")).toBeDefined();
-
-    // Second router replaces profiles
-    setCacheProfiles({
+    const routerB = resolveCacheProfiles({
       default: { ttl: 30 },
       routerB: { ttl: 200 },
     });
 
-    expect(getCacheProfile("routerB")).toBeDefined();
-    expect(getCacheProfile("routerA")).toBeUndefined();
+    // Each router's map carries only its own profiles — resolving one does not
+    // leak into or overwrite the other (the global registry was removed).
+    expect(routerA.routerA).toBeDefined();
+    expect(routerA.routerB).toBeUndefined();
+    expect(routerB.routerB).toBeDefined();
+    expect(routerB.routerA).toBeUndefined();
+    expect(routerA.default.ttl).toBe(60);
+    expect(routerB.default.ttl).toBe(30);
   });
 });
 

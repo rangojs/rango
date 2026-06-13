@@ -21,6 +21,11 @@ export interface PluginOptions {
   /** Deployment preset (needed for buildEnv "auto" resolution). */
   preset?: "node" | "cloudflare";
   /**
+   * Route-discovery scan filter (glob include/exclude) from rango() config.
+   * Compiled into `DiscoveryState.scanFilter` once `projectRoot` is known.
+   */
+  discovery?: { include?: string[]; exclude?: string[] };
+  /**
    * Shared context the built-in clientChunks strategy reads. Discovery populates
    * it (registered fallback hashes + single-router name) before the client build
    * invokes the strategy. Present only when the built-in strategy is active
