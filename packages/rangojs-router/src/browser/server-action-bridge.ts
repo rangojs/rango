@@ -161,6 +161,15 @@ export function createServerActionBridge(
     // Whether the action's response carried the keepClientCache() directive.
     // Set when the response arrives; gates the deferred invalidation below.
     let keepCache = false;
+    // Whether a Response actually settled from the network (the server saw the
+    // request). Set true as the first statement in the fetch .then() below.
+    // Gates the automatic invalidation: a pre-dispatch failure (encodeReply
+    // throw or a fetch rejection — server unreachable/DNS/connection refused)
+    // leaves this false, so finalizeAction() must NOT invalidate or broadcast —
+    // nothing reached the server, so nothing could have mutated. A failed Flight
+    // DECODE after the response arrived keeps it true (the mutation may have
+    // committed, so invalidating the now-possibly-stale client cache is correct).
+    let responseReceived = false;
     // Single deferred invalidation + fence release, run exactly ONCE however the
     // action terminates (normal, redirect, error, abort, intercept, concurrent).
     // This replaces main's eager clear at action start: every directive-free
@@ -176,7 +185,10 @@ export function createServerActionBridge(
       actionFinalized = true;
       // finally so a throw in invalidation cannot leak the fence (latch is set).
       try {
-        if (!keepCache && !skipInvalidation) {
+        // responseReceived gates the automatic invalidation: a pre-dispatch
+        // failure (serialize throw / fetch reject) never reached the server, so
+        // marking the cache stale + broadcasting cross-tab would be spurious.
+        if (responseReceived && !keepCache && !skipInvalidation) {
           store.markCacheAsStaleAndBroadcast();
         }
       } finally {
@@ -263,6 +275,12 @@ export function createServerActionBridge(
         body: encodedBody,
         signal: fetchAbort.signal,
       }).then(async (response) => {
+        // A settled fetch promise means the request reached the server and a
+        // Response came back (true for 2xx, 4xx, AND 5xx — fetch only rejects
+        // on network-layer failure, never on HTTP status). Record it as the
+        // first statement so every downstream terminal can invalidate; a
+        // pre-dispatch failure never gets here and stays gated out.
+        responseReceived = true;
         // Response arrived — disconnect fetch abort from handle abort so
         // abortAllActions() doesn't disrupt the in-progress Flight stream.
         handle.signal.removeEventListener("abort", onHandleAbort);

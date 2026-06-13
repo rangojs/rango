@@ -717,3 +717,92 @@ describe("server-action-bridge simple-redirect finalization (latch)", () => {
     expect(store.markCacheAsStaleAndBroadcast).not.toHaveBeenCalled();
   });
 });
+
+// A server action can fail BEFORE any bytes reach the server: argument
+// serialization throws (encodeReply) or the fetch itself rejects (server
+// unreachable / DNS / connection refused). The action still terminates through
+// the same latched finalizeAction(), which previously invalidated the client
+// cache + broadcast cross-tab staleness even though nothing reached the server.
+// The responseReceived gate now suppresses that: no Response settled, so no
+// mutation could have committed. The fence is still always released.
+describe("server-action-bridge pre-dispatch failure finalization", () => {
+  beforeEach(() => {
+    setupWindow();
+    __resetActionFence();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    __resetActionFence();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+  });
+
+  const payload: RscPayload = {
+    metadata: { isPartial: true, matched: ["root"], diff: [], segments: [] },
+    returnValue: { ok: true, data: "ignored" },
+  } as any;
+
+  it("does NOT invalidate or broadcast when arg serialization throws (never reached server)", async () => {
+    const store = createMockStore();
+    const { controller } = createMockEventController();
+
+    const { deps, getActionCallback } = createMockDeps(payload);
+    // encodeReply runs before fetch — a throw here means nothing was sent.
+    deps.encodeReply = vi.fn(() => Promise.reject(new Error("serialize boom")));
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+    });
+    bridge.register();
+
+    await expect(getActionCallback()("test-action", [])).rejects.toThrow(
+      /serialize boom/,
+    );
+
+    // Nothing reached the server: no invalidation, no cross-tab broadcast.
+    expect(store.markCacheAsStaleAndBroadcast).not.toHaveBeenCalled();
+    // The fence is always released, even on a pre-dispatch failure.
+    expect(isActionFenceActive()).toBe(false);
+  });
+
+  it("does NOT invalidate or broadcast when the fetch rejects (server unreachable)", async () => {
+    const store = createMockStore();
+    const { controller } = createMockEventController();
+
+    // createMockDeps stubs fetch to resolve; awaitResponse makes the mock
+    // decoder await responsePromise so the rejection surfaces into the bridge.
+    const { deps, getActionCallback } = createMockDeps(payload, {
+      awaitResponse: true,
+    });
+    // Re-stub fetch to reject as if the network never reached the server. The
+    // file mocks toNetworkError -> null, so the raw TypeError re-throws; it
+    // still lands in the same finally, leaving responseReceived false.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+    });
+    bridge.register();
+
+    await expect(getActionCallback()("test-action", [])).rejects.toThrow(
+      /Failed to fetch/,
+    );
+
+    expect(store.markCacheAsStaleAndBroadcast).not.toHaveBeenCalled();
+    expect(isActionFenceActive()).toBe(false);
+  });
+});

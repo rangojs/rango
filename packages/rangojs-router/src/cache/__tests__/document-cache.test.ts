@@ -336,6 +336,59 @@ describe("createDocumentCacheMiddleware", () => {
 
       expect(mockStore.cache.size).toBe(0);
     });
+
+    it("should not store a private response in the shared cache even with s-maxage (RFC 7234)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // `private` forbids shared storage and MUST win over the contradictory
+      // s-maxage. The store must stay empty and the response must pass through
+      // untagged (directives parse to null, so not even a MISS is recorded).
+      const next = vi.fn().mockResolvedValue(
+        new Response("private body", {
+          headers: { "Cache-Control": "private, s-maxage=60" },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.cache.size).toBe(0);
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+    });
+
+    it("should not store a no-store response in the shared cache even with s-maxage (RFC 7234)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      const next = vi.fn().mockResolvedValue(
+        new Response("no-store body", {
+          headers: { "Cache-Control": "no-store, s-maxage=60" },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.cache.size).toBe(0);
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+    });
   });
 
   describe("cache hit", () => {

@@ -329,6 +329,18 @@ export async function matchForPrerender<TEnv = any>(
         const interceptResolvedSegments: typeof nonLoaderSegments = [];
 
         for (const { intercept, entry: parentEntry } of foundIntercepts) {
+          // setupBuildUse keys handle pushes by ctx._currentSegmentId. The main
+          // resolveAllSegments pass left it on the route's segment id, so pin it
+          // to THIS intercept's slot id before resolving the handler/layout --
+          // otherwise the intercept's ctx.use() handle pushes land in the wrong
+          // bucket and getDataForSegment(seg.id) below drops them from the baked
+          // artifact. Re-pinned per iteration so multiple intercepts targeting
+          // the same route each get their own id (mirrors fresh.ts parallel-slot
+          // pinning).
+          const interceptSegmentId = `${parentEntry.shortCode}.${intercept.slotName}`;
+          (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+            interceptSegmentId;
+
           // Resolve handler
           const handlerRaw =
             typeof intercept.handler === "function"
@@ -355,7 +367,7 @@ export async function matchForPrerender<TEnv = any>(
           }
 
           interceptResolvedSegments.push({
-            id: `${parentEntry.shortCode}.${intercept.slotName}`,
+            id: interceptSegmentId,
             namespace: `intercept:${intercept.routeName}`,
             type: "parallel" as const,
             index: 0,

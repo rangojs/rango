@@ -4,6 +4,8 @@ import { PrerenderInterceptLayout } from "../components/layouts/index.js";
 import { FreshTimestampLoader } from "../loaders.js";
 import { FreshDataDisplay } from "../components/FreshDataDisplay.js";
 import { Modal } from "../components/Modal.js";
+import { InterceptCrumbs } from "./intercept-crumbs.handle.js";
+import { InterceptHandleDisplay } from "../components/InterceptHandleDisplay.js";
 import type { Handler } from "@rangojs/router";
 
 // Index page with links to pre-rendered items
@@ -69,6 +71,7 @@ function PrerenderInterceptModalHandler(ctx: {
       <h2 data-testid="pri-modal-title">{ctx.params.slug}</h2>
       <p data-testid="pri-modal-indicator">Intercepted</p>
       <p data-testid="pri-modal-render-time">{renderTime}</p>
+      <InterceptHandleDisplay />
       <FreshDataDisplay loader={FreshTimestampLoader} />
       <Link
         to={`/prerender-intercept/${ctx.params.slug}`}
@@ -92,12 +95,20 @@ export const prerenderInterceptPatterns = urls(
       intercept(
         "@modal",
         ".detail",
-        async (ctx) => (
-          <PrerenderInterceptModalHandler
-            params={ctx.params}
-            pathname={ctx.pathname}
-          />
-        ),
+        async (ctx) => {
+          // Push a handle from the intercept handler. The fix pins
+          // _currentSegmentId to the intercept slot id at build time, so this
+          // push lands in the intercept segment's bucket and survives the baked
+          // artifact (read by InterceptHandleDisplay in the modal).
+          const push = ctx.use(InterceptCrumbs);
+          push(`modal-handle:${ctx.params.slug}`);
+          return (
+            <PrerenderInterceptModalHandler
+              params={ctx.params}
+              pathname={ctx.pathname}
+            />
+          );
+        },
         () => [
           when(({ from }) => from.pathname.startsWith("/prerender-intercept")),
           loader(FreshTimestampLoader),

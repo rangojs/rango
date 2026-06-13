@@ -55,6 +55,16 @@ interface CacheDirectives {
 function parseCacheControl(header: string | null): CacheDirectives | null {
   if (!header) return null;
 
+  // RFC 7234: in a SHARED cache, `private` and `no-store` forbid storage and
+  // MUST win over `s-maxage` even though `private, s-maxage` is contradictory.
+  // The document cache is a shared edge store, so refuse both regardless of any
+  // s-maxage / stale-while-revalidate also present. Match standalone directive
+  // tokens (start/end, whitespace, comma, semicolon, or `=` bounded), not a
+  // substring, so a value containing "private" cannot false-veto.
+  if (/(^|[\s,;])(private|no-store)(?=$|[\s,;=])/i.test(header)) {
+    return null;
+  }
+
   const directives: CacheDirectives = {};
 
   // Parse s-maxage
