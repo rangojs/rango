@@ -34,6 +34,7 @@ import {
 import { resolveLoaderData } from "./loader-cache.js";
 import {
   handleHandlerResult,
+  warnOnStreamedResponse,
   tryStaticHandler,
   tryStaticSlot,
   resolveLayoutComponent,
@@ -523,6 +524,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           const result =
             typeof handler === "function" ? handler(context) : handler;
           if (result instanceof Promise) {
+            warnOnStreamedResponse(result, parallelId);
             const tracked = deps.trackHandler(result, {
               segmentId: parallelId,
               segmentType: "parallel",
@@ -721,6 +723,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       if (!actionContext) {
         const result = handleHandlerResult(handler(context));
         if (result instanceof Promise) {
+          warnOnStreamedResponse(result, routeEntry.id);
           result.finally(doneHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
             segmentId: entry.shortCode,
@@ -1233,6 +1236,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
           const result =
             typeof handler === "function" ? handler(context) : handler;
           if (result instanceof Promise) {
+            warnOnStreamedResponse(result, parallelId);
             const tracked = deps.trackHandler(result, {
               segmentId: parallelId,
               segmentType: "parallel",

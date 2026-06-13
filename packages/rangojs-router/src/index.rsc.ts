@@ -214,7 +214,13 @@ export { updateTag, revalidateTag } from "./cache/tag-invalidation.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Middleware context types
-export type { MiddlewareContext, CookieOptions } from "./router/middleware.js";
+export type {
+  MiddlewareContext,
+  CookieOptions,
+  // The function type of a middleware. Public so the documented "extract the
+  // middleware and unit-test it with runMiddleware" pattern has a nameable type.
+  MiddlewareFn,
+} from "./router/middleware.js";
 
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
 export type {

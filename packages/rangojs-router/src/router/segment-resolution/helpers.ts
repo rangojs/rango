@@ -68,16 +68,22 @@ export function warnOnStreamedResponse(
   entryId: string,
 ): void {
   if (process.env.NODE_ENV === "production") return;
-  result.catch((thrown) => {
-    if (thrown instanceof Response) {
+  // A Response can surface either as a rejection (handleHandlerResult rethrows a
+  // resolved Response) or as a resolved value (the raw parallel-slot handler is
+  // not run through handleHandlerResult). Check both so every streamed path is
+  // covered. Each handler is an independent observer; it does not consume the
+  // rejection for the trackHandler/observeStreamedHandler chains.
+  const check = (value: unknown) => {
+    if (value instanceof Response) {
       console.warn(
-        `[rango] Handler on route "${entryId}" returned a Response (e.g. ` +
-          `redirect()), but the route declares loading(): the Response is ` +
-          `rendered into the RSC stream, NOT sent as an HTTP redirect. Issue ` +
-          `redirects from middleware, a loader, or a synchronous handler return.`,
+        `[rango] Handler for "${entryId}" returned a Response (e.g. ` +
+          `redirect()), but it declares loading(): the Response is rendered ` +
+          `into the RSC stream, NOT sent as an HTTP redirect. Issue redirects ` +
+          `from middleware, a loader, or a synchronous handler return.`,
       );
     }
-  });
+  };
+  result.then(check, check);
 }
 
 // ---------------------------------------------------------------------------

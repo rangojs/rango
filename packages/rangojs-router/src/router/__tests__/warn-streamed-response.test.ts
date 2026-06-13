@@ -32,4 +32,14 @@ describe("warnOnStreamedResponse (M9)", () => {
     await flush();
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it("warns when a streamed handler RESOLVES with a Response (raw parallel-slot/intercept path)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    warnOnStreamedResponse(
+      Promise.resolve(new Response(null, { status: 302 })),
+      "intercept @modal",
+    );
+    await flush();
+    expect(warn).toHaveBeenCalledOnce();
+  });
 });

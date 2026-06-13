@@ -37,6 +37,7 @@ vi.mock("../segment-resolution/loader-cache.js", () => ({
 
 vi.mock("../segment-resolution/helpers.js", () => ({
   handleHandlerResult: vi.fn((x: any) => x),
+  warnOnStreamedResponse: vi.fn(),
   tryStaticHandler: vi.fn(),
   tryStaticSlot: vi.fn(),
   resolveLayoutComponent: vi.fn(() => Promise.resolve(null)),

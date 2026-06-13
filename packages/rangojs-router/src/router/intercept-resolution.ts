@@ -21,7 +21,10 @@ import { getRequestContext } from "../server/request-context.js";
 import { executeInterceptMiddleware } from "./middleware.js";
 import { createReverseFunction } from "./handler-context.js";
 import { getGlobalRouteMap } from "../route-map-builder.js";
-import { handleHandlerResult } from "./segment-resolution.js";
+import {
+  handleHandlerResult,
+  warnOnStreamedResponse,
+} from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
 import { runInsideLoaderScope } from "../server/context.js";
@@ -228,6 +231,12 @@ export async function resolveInterceptEntry<TEnv>(
   let loaderDataPromise: Promise<any[]> | any[] | undefined;
 
   if (interceptEntry.loading && loaderPromises.length > 0) {
+    if (handlerResult instanceof Promise) {
+      warnOnStreamedResponse(
+        handlerResult,
+        `intercept ${interceptEntry.slotName}`,
+      );
+    }
     component =
       handlerResult instanceof Promise
         ? handlerResult
