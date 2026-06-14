@@ -3,6 +3,12 @@ import {
   extractRedirectResponse,
   warnNonRedirectPeResponse,
 } from "../rsc/runtime-warnings.js";
+import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
+import {
+  EXTERNAL_REDIRECT_MARKER,
+  markExternalRedirect,
+  isExternalRedirect,
+} from "../redirect-origin.js";
 
 describe("W3: PE action redirect handling", () => {
   it("extracts redirect from a 302 Response", () => {
@@ -64,6 +70,81 @@ describe("W3: PE action redirect handling", () => {
     expect(result!.headers.get("X-Request-Id")).toBe("req-99");
     // Location is on the wrapper, not carried over from source
     expect(result!.headers.get("Location")).toBe("/login");
+  });
+
+  // Regression: a PE action that does redirect(url, { external: true }) reaches
+  // the browser via extractRedirectResponse. The out-of-band brand MUST transfer
+  // onto the rebuilt Response so the downstream guard honors the off-host
+  // opt-in; if it is dropped here, the guard neutralizes the redirect to root
+  // and the documented { external: true } escape silently breaks for the entire
+  // no-JS PE channel.
+  it("transfers the external-redirect brand through extraction", () => {
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "https://accounts.example.com/oauth" },
+    });
+    markExternalRedirect(response);
+    const result = extractRedirectResponse(response)!;
+    expect(isExternalRedirect(result)).toBe(true);
+    // The brand is out-of-band: no wire header is introduced by extraction.
+    expect(result.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+  });
+
+  // Finding #1 regression on the PE channel: a forged marker header (e.g. from a
+  // proxied upstream response) is NOT the opt-in and must NOT survive
+  // extraction, nor brand the rebuilt Response.
+  it("does NOT carry a forged marker header (or brand) through extraction", () => {
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://evil.example/phish",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+      },
+    });
+    // No markExternalRedirect: the header is the only (forged) signal.
+    const result = extractRedirectResponse(response)!;
+    expect(result.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+    expect(isExternalRedirect(result)).toBe(false);
+  });
+
+  it("end-to-end: a PE external redirect (branded) survives extraction AND the guard allows it", () => {
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "https://accounts.example.com/oauth" },
+    });
+    markExternalRedirect(response);
+    // PE path: extract, then the single handler chokepoint guards the result.
+    const extracted = extractRedirectResponse(response)!;
+    const guarded = guardOutgoingRedirect(
+      extracted,
+      "https://myapp.example",
+      undefined,
+    );
+    // Off-host target allowed (NOT rewritten to root) and no marker leaks.
+    expect(guarded.headers.get("Location")).toBe(
+      "https://accounts.example.com/oauth",
+    );
+    expect(guarded.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+  });
+
+  it("end-to-end: a forged-marker PE redirect is neutralized by the guard", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://evil.example/phish",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+      },
+    });
+    const extracted = extractRedirectResponse(response)!;
+    const guarded = guardOutgoingRedirect(
+      extracted,
+      "https://myapp.example",
+      undefined,
+    );
+    expect(guarded.headers.get("Location")).toBe("/");
+    expect(guarded.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+    spy.mockRestore();
   });
 });
 

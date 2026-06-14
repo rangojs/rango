@@ -258,6 +258,7 @@ export const NamedRoutes = {
   "proactiveCache.itemB": "/proactive-cache/item-b",
   "product.detail": "/product/:productId",
   progressiveEnhancement: "/progressive-enhancement",
+  "redirectGuard.go": "/redirect-guard/go",
   "refTest.bothProps": "/ref-test/both-props",
   "refTest.handleProp": "/ref-test/handle-prop",
   "refTest.loaderProp": "/ref-test/loader-prop",

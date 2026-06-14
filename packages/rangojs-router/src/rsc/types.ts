@@ -53,8 +53,12 @@ export interface RscPayload {
     basename?: string;
     /** Whether connection warmup is enabled */
     warmupEnabled?: boolean;
-    /** Server-side redirect with optional state (for partial requests) */
-    redirect?: { url: string };
+    /**
+     * Server-side redirect with optional state (for partial requests).
+     * `external: true` (from redirect(url, { external: true })) tells the client
+     * to hard-navigate to an off-host target instead of validating same-origin.
+     */
+    redirect?: { url: string; external?: boolean };
     /** Server-set location state to include in history.pushState */
     locationState?: Record<string, unknown>;
   };

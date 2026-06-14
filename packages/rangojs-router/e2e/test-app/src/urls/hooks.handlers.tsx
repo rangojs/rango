@@ -381,7 +381,12 @@ export const ParityCounterHandler: Handler<"parityCounter"> = async () => {
 };
 
 export const PeRedirectHandler: Handler<"peRedirect"> = async () => {
-  const { peReturnRedirect, peThrowRedirect } = await import("../actions.js");
+  const {
+    peReturnRedirect,
+    peThrowRedirect,
+    peExternalRedirectBlocked,
+    peExternalRedirectAllowed,
+  } = await import("../actions.js");
 
   return (
     <div data-testid="pe-redirect-page">
@@ -407,6 +412,26 @@ export const PeRedirectHandler: Handler<"peRedirect"> = async () => {
       >
         <button type="submit" data-testid="pe-throw-redirect-btn">
           Throw redirect
+        </button>
+      </form>
+
+      <form
+        action={peExternalRedirectBlocked}
+        method="post"
+        data-testid="pe-external-redirect-form"
+      >
+        <button type="submit" data-testid="pe-external-redirect-btn">
+          Cross-origin redirect (must be blocked)
+        </button>
+      </form>
+
+      <form
+        action={peExternalRedirectAllowed}
+        method="post"
+        data-testid="pe-external-allowed-form"
+      >
+        <button type="submit" data-testid="pe-external-allowed-btn">
+          Cross-origin redirect with external:true (must be allowed)
         </button>
       </form>
     </div>

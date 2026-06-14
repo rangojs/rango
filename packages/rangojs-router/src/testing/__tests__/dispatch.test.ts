@@ -15,6 +15,7 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 
 import { dispatch } from "../dispatch.js";
 import { createRouter } from "../../router.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { urls } from "../../urls/urls-function.js";
 import { cookies } from "../../server/cookie-store.js";
 import { getRequestContext } from "../../server/request-context.js";
@@ -298,6 +299,241 @@ describe("dispatch", () => {
     const res = await dispatch(router, { request: "/api/data" });
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/login");
+  });
+
+  // The server-side open-redirect guard (rsc/redirect-guard.ts) is applied at
+  // dispatch's final return, mirroring production's single handler chokepoint,
+  // so a consumer can unit-test the same-origin contract for browser-followed
+  // (document-native) redirects through the public primitive.
+  describe("open-redirect guard (document-native)", () => {
+    function routerWithMw(mw: MiddlewareFn) {
+      return createRouter<{}>({})
+        .use("/api/*", mw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+    }
+
+    it("blocks a cross-origin middleware redirect, rewriting Location to root", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mw: MiddlewareFn = () => redirect("https://evil.com/phish");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("blocks a protocol-relative cross-origin redirect", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mw: MiddlewareFn = () => redirect("//evil.com/phish");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("allows a cross-origin redirect opted in with { external: true } and strips the marker", async () => {
+      const mw: MiddlewareFn = () =>
+        redirect("https://accounts.example.com/oauth", { external: true });
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      // Internal opt-in marker never reaches the browser.
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    it("passes a same-origin middleware redirect through unchanged", async () => {
+      const mw: MiddlewareFn = () => redirect("/login");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/login");
+    });
+
+    it("blocks a cross-origin redirect returned from a response-route handler", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json("/go", () => redirect("https://evil.com/phish"), {
+            name: "go",
+          }),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("allows an external redirect returned from a response-route handler (brand survives rewrap)", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/go",
+            () =>
+              redirect("https://accounts.example.com/oauth", {
+                external: true,
+              }),
+            { name: "go" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Finding #1 regression (forgeable opt-in): the external opt-in is an
+    // out-of-band brand on the Response object, NOT the wire header. A
+    // proxy-style response route that returns an attacker-controlled upstream
+    // response carrying a forged `x-rango-redirect-external` header must NOT be
+    // able to bypass the same-origin guard -- the app never called
+    // redirect(..., { external: true }), so the off-host target is neutralized.
+    it("does NOT honor a forged external marker header from a response-route handler", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/proxy",
+            () =>
+              // Simulates returning a proxied upstream 302 whose headers an
+              // attacker controls. The forged marker is the ONLY external signal
+              // (no redirect(..., { external: true }) brand).
+              new Response(null, {
+                status: 302,
+                headers: {
+                  Location: "https://evil.example/phish",
+                  "x-rango-redirect-external": "1",
+                },
+              }),
+            { name: "proxy" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/proxy" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/");
+      // The forged header never reaches the browser.
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      spy.mockRestore();
+    });
+
+    // Brand-drop regression: an onResponse callback that returns a NEW Response
+    // drops the object-identity brand. finalizeResponse must re-mark it so a
+    // legit redirect(url, { external: true }) is still allowed off-host (not
+    // silently neutralized to root) when the app also uses ctx.onResponse().
+    it("preserves { external: true } when an onResponse callback rebuilds the Response", async () => {
+      const mw: MiddlewareFn = () => {
+        const ctx = getRequestContext();
+        // Rebuild the Response (e.g. to add a header). The new object loses the
+        // brand unless drainOnResponseCallbacks re-applies it.
+        ctx.onResponse(
+          (res) =>
+            new Response(res.body, {
+              status: res.status,
+              headers: new Headers(res.headers),
+            }),
+        );
+        return redirect("https://accounts.example.com/oauth", {
+          external: true,
+        });
+      };
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Header-leak regression (defense-in-depth): the reserved marker must never
+    // reach the browser, even on a non-3xx response the 3xx-only guard does not
+    // touch. mergeResponse strips it from the base response on the middleware path.
+    it("strips a forged external marker header from a non-3xx middleware response", async () => {
+      const mw: MiddlewareFn = () =>
+        new Response("ok", {
+          status: 200,
+          headers: {
+            "x-rango-redirect-external": "1",
+            "content-type": "text/plain",
+          },
+        });
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Header-leak via the STUB (ctx.header), not the base response. Stripping the
+    // base in mergeResponse is not enough -- the stub-merge primitives re-add it.
+    // mergeStubHeaders must refuse to copy the reserved marker.
+    it("strips a reserved marker set via ctx.header() on a non-3xx middleware short-circuit", async () => {
+      const mw: MiddlewareFn = (ctx) => {
+        ctx.header("x-rango-redirect-external", "1");
+        return new Response("ok", { status: 200 });
+      };
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Same leak via a response route's ctx.header() on a 200: the serialized
+    // result flows through createResponseWithMergedHeaders -> applyStubHeaders,
+    // which must refuse to copy the reserved marker.
+    it("strips a reserved marker set via ctx.header() on a response-route 200", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/h",
+            () => {
+              getRequestContext().header("x-rango-redirect-external", "1");
+              return { ok: true };
+            },
+            { name: "h" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/h" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      expect(await res.json()).toEqual({ ok: true });
+    });
+
+    // Same leak via the request-context stub merged through the middleware chain
+    // (mergeReqCtxStub) on a 200 downstream response.
+    it("strips a reserved marker set on the request-context stub through the middleware chain", async () => {
+      const mw: MiddlewareFn = (_ctx, next) => {
+        getRequestContext().header("x-rango-redirect-external", "1");
+        return next();
+      };
+      const router = createRouter<{}>({})
+        .use(mw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+      const res = await dispatch(router, {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
   });
 
   it("lets global middleware pass through to the response route", async () => {

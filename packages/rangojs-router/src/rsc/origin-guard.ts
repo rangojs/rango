@@ -86,10 +86,16 @@ export function defaultOriginCheck(request: Request, url: URL): boolean {
 
   if (requestOrigin === "null") return false;
 
-  const expectedHost = request.headers.get("host") || url.host;
-  const expectedProtocol = url.protocol;
+  // An Origin/Referer is present, so this is a browser request worth checking.
+  // Establish the expected origin from the Host header only -- browsers always
+  // send Host alongside Origin (runtimes synthesize it from the HTTP/2
+  // :authority), so a missing Host here is anomalous. Fail closed rather than
+  // fall back to url.host (derived from the request line) when the trusted Host
+  // cannot be established.
+  const expectedHost = request.headers.get("host");
+  if (!expectedHost) return false;
 
-  const expectedOrigin = `${expectedProtocol}//${expectedHost}`;
+  const expectedOrigin = `${url.protocol}//${expectedHost}`;
 
   return requestOrigin.toLowerCase() === expectedOrigin.toLowerCase();
 }

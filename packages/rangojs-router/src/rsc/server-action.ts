@@ -85,7 +85,10 @@ export async function executeServerAction<TEnv>(
       args = await ctx.decodeReply(body, { temporaryReferences });
     }
   } catch (error) {
-    throw new Error(`Failed to decode action arguments: ${error}`, {
+    // Keep the original error as `cause` for server-side logging, but do not
+    // interpolate it into the message: that string can surface to the client
+    // and may leak decode internals.
+    throw new Error("Failed to decode action arguments", {
       cause: error,
     });
   }

@@ -570,6 +570,90 @@ describe("partial-update", () => {
       expect(renderSegments).not.toHaveBeenCalled();
       expect(consoleError).toHaveBeenCalled();
     });
+
+    it("hard-navigates an external:true redirect payload via location.assign", async () => {
+      const assign = vi.fn();
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost", assign },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: {
+            url: "https://accounts.example.com/oauth",
+            external: true,
+          },
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      // External opt-in: a hard navigation, NOT a ServerRedirect throw, and no
+      // same-origin validation block.
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      expect(assign).toHaveBeenCalledWith("https://accounts.example.com/oauth");
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+    });
+
+    // Finding #2 regression: external:true waives the same-origin check, NOT
+    // scheme safety. A javascript: target (forged payload, or a mistaken
+    // redirect(..., { external: true })) must NEVER reach location.assign.
+    it("does NOT location.assign an external:true payload with a javascript: scheme", async () => {
+      const assign = vi.fn();
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost", assign },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: {
+            url: "javascript:alert(document.cookie)",
+            external: true,
+          },
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      // Blocked: no scriptable navigation, no render, console.error logged.
+      expect(assign).not.toHaveBeenCalled();
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalled();
+    });
   });
 
   describe("router id integrity guard", () => {

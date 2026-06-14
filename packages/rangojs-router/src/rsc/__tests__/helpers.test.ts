@@ -14,6 +14,11 @@ import {
   carryOverRedirectHeaders,
 } from "../helpers.js";
 import { isWebSocketUpgradeResponse } from "../../response-utils.js";
+import {
+  EXTERNAL_REDIRECT_MARKER,
+  markExternalRedirect,
+  isExternalRedirect,
+} from "../../redirect-origin.js";
 
 describe("createResponseWithMergedHeaders", () => {
   it("should create response without context", () => {
@@ -704,6 +709,64 @@ describe("finalizeResponse", () => {
     expect(called).toBe(true);
     expect(result).toBe(response);
   });
+
+  // Brand-drop regression: an onResponse callback that returns a NEW Response
+  // loses the out-of-band external-redirect brand (it is keyed on Response
+  // object identity). finalizeResponse must re-apply it so a
+  // redirect(url, { external: true }) opt-in is not silently neutralized at the
+  // guard chokepoint when the app also registers an onResponse callback.
+  it("preserves the external-redirect brand across a callback that rebuilds the Response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.onResponse(
+      (res) =>
+        new Response(res.body, {
+          status: res.status,
+          headers: new Headers(res.headers),
+        }),
+    );
+
+    const branded = new Response(null, {
+      status: 302,
+      headers: { Location: "https://accounts.example.com/oauth" },
+    });
+    markExternalRedirect(branded);
+
+    const result = runWithRequestContext(ctx, () => finalizeResponse(branded));
+    // The callback rebuilt the Response (new identity), but the brand survives.
+    expect(result).not.toBe(branded);
+    expect(isExternalRedirect(result)).toBe(true);
+  });
+
+  it("does NOT brand a plain response just because a callback rebuilt it", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.onResponse(
+      (res) =>
+        new Response(res.body, {
+          status: res.status,
+          headers: new Headers(res.headers),
+        }),
+    );
+
+    const plain = new Response(null, {
+      status: 302,
+      headers: { Location: "/dashboard" },
+    });
+
+    const result = runWithRequestContext(ctx, () => finalizeResponse(plain));
+    expect(isExternalRedirect(result)).toBe(false);
+  });
 });
 
 describe("onResponse callback drain semantics", () => {
@@ -923,6 +986,103 @@ describe("interceptRedirectForPartial", () => {
     expect(result).not.toBeNull();
     expect(result!.headers.get("X-RSC-Redirect")).toBe("/target");
   });
+
+  it("routes an externally-branded redirect through the Flight path with external=true", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // redirect(url, { external: true }) brands the Response out-of-band.
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "https://accounts.example.com/oauth" },
+    });
+    markExternalRedirect(response);
+
+    let captured: { url: string; external?: boolean } | undefined;
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(response, (url, _state, external) => {
+        captured = { url, external };
+        return new Response(`flight:${url}`, {
+          headers: { "content-type": "text/x-component" },
+        });
+      }),
+    );
+
+    expect(result).not.toBeNull();
+    // External redirects must take the Flight payload path (so the client does
+    // a hard navigation), NOT the X-RSC-Redirect simple path.
+    expect(captured).toEqual({
+      url: "https://accounts.example.com/oauth",
+      external: true,
+    });
+    // The reserved marker never rides the client-facing 200/204.
+    expect(result!.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+  });
+
+  it("does NOT route a forged-marker-header redirect through the external Flight path", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // A forged wire header (e.g. proxied from an attacker upstream) is NOT the
+    // opt-in -- only the out-of-band brand is. The intercept must fall back to
+    // the simple X-RSC-Redirect path, not signal external to the client.
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://evil.example/phish",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+      },
+    });
+
+    let factoryCalled = false;
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(response, (url) => {
+        factoryCalled = true;
+        return new Response(`flight:${url}`);
+      }),
+    );
+
+    expect(factoryCalled).toBe(false);
+    expect(result!.headers.get("X-RSC-Redirect")).toBe(
+      "https://evil.example/phish",
+    );
+    expect(result!.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+  });
+
+  it("uses the simple X-RSC-Redirect path (no Flight factory) for a normal redirect", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "/dashboard" },
+    });
+
+    let factoryCalled = false;
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(response, (url) => {
+        factoryCalled = true;
+        return new Response(`flight:${url}`);
+      }),
+    );
+
+    // No location state and no external marker -> simple path; the Flight
+    // factory is never invoked.
+    expect(factoryCalled).toBe(false);
+    expect(result!.headers.get("X-RSC-Redirect")).toBe("/dashboard");
+  });
 });
 
 describe("carryOverRedirectHeaders", () => {
@@ -976,6 +1136,49 @@ describe("carryOverRedirectHeaders", () => {
 
     expect(target.headers.get("Location")).toBeNull();
     expect(target.headers.get("X-RSC-Redirect")).toBe("/new-target");
+    expect(target.headers.get("X-Keep")).toBe("yes");
+  });
+
+  it("transfers the out-of-band external brand (not a wire header) onto the target", () => {
+    // carryOverRedirectHeaders is shared by document-native rebuilds
+    // (extractRedirectResponse, the guard's neutralize) that MUST carry the
+    // external opt-in through to the guard chokepoint. The opt-in is the
+    // out-of-band brand, so it transfers the brand -- it never copies a wire
+    // header for it.
+    const source = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://accounts.example.com/oauth",
+        "X-Keep": "yes",
+      },
+    });
+    markExternalRedirect(source);
+    const target = new Response(null, { status: 302 });
+
+    carryOverRedirectHeaders(source, target);
+
+    expect(isExternalRedirect(target)).toBe(true);
+    expect(target.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+    expect(target.headers.get("X-Keep")).toBe("yes");
+  });
+
+  it("never copies the reserved external marker header (forged values do not propagate)", () => {
+    // A forged marker header (e.g. from a proxied upstream) is not a trust
+    // signal and must not ride a rebuilt response to the browser, nor brand it.
+    const source = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://evil.example/phish",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+        "X-Keep": "yes",
+      },
+    });
+    const target = new Response(null, { status: 302 });
+
+    carryOverRedirectHeaders(source, target);
+
+    expect(target.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+    expect(isExternalRedirect(target)).toBe(false);
     expect(target.headers.get("X-Keep")).toBe("yes");
   });
 

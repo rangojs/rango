@@ -181,7 +181,17 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
 
 ### Error and Control Flow
 
-- `redirect()` with optional state and location state integration
+- `redirect()` with optional state and location state integration. Same-origin by
+  default: every browser-followed redirect (no-JS PE, full-page GET, middleware
+  short-circuit, response-route 3xx) is validated by the server open-redirect
+  guard at the single `handler.ts` chokepoint and cross-origin targets are
+  neutralized to the basename root; `redirect(url, { external: true })` opts a
+  single redirect off-host but only to an `http(s)` target (a `javascript:`/`data:`
+  target is neutralized). The opt-in is an out-of-band brand on the Response
+  object (`WeakSet`, not a wire header) so a proxied upstream's forged header
+  cannot forge it. Two shared rules (`redirect-origin.ts`:
+  `resolveSameOriginRedirect`, `resolveExternalRedirect`) back both the client
+  validators and the server guard. See `docs/internal/security-checklist.md`.
 - Typed error model: `RouteNotFoundError`, `DataNotFoundError`, etc.
 - Not-found and error boundary propagation across the route tree
 

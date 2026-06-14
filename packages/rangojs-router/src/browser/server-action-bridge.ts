@@ -23,7 +23,10 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
-import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  validateRedirectOrigin,
+  validateExternalRedirect,
+} from "./validate-redirect-origin.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
@@ -83,6 +86,9 @@ export function createServerActionBridge(
 
   // SPA-navigate when onNavigate is set, else hard-reload. state is omitted (not
   // passed as undefined) to match the header path's prior call shape.
+  // Callers pass an already same-origin-validated url; the hard-reload fallback
+  // re-validates defensively so this leaf cannot become an open redirect if a
+  // future caller forgets (the SPA path validates inside the navigation bridge).
   async function dispatchRedirect(url: string, state?: unknown): Promise<void> {
     if (onNavigate) {
       await onNavigate(url, {
@@ -91,7 +97,10 @@ export function createServerActionBridge(
         _skipCache: true,
       });
     } else {
-      window.location.href = url;
+      const safe = validateRedirectOrigin(url, window.location.origin);
+      if (safe) {
+        window.location.href = safe;
+      }
     }
   }
 
@@ -417,6 +426,27 @@ export function createServerActionBridge(
       // Check handle.signal.aborted to avoid redirecting from a stale action
       // when the user has already navigated away.
       if (metadata?.redirect && !handle.signal.aborted) {
+        // Explicit off-host redirect (redirect(url, { external: true })):
+        // hard-navigate, but still scheme-validate (http/https only). external
+        // waives the same-origin check, NOT scheme safety, so a forged payload
+        // carrying a javascript:/data: URL cannot script via location.assign.
+        if (metadata.redirect.external) {
+          const externalUrl = validateExternalRedirect(
+            metadata.redirect.url,
+            window.location.origin,
+          );
+          if (!externalUrl) {
+            log("blocked external action redirect payload", {
+              url: metadata.redirect.url,
+            });
+            handle.complete(returnValue?.data);
+            return returnValue?.data;
+          }
+          log("external action redirect", { url: externalUrl });
+          handle.complete(returnValue?.data);
+          window.location.assign(externalUrl);
+          return returnValue?.data;
+        }
         const redirectUrl = validateRedirectOrigin(
           metadata.redirect.url,
           window.location.origin,
