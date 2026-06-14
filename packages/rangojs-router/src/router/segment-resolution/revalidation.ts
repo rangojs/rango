@@ -14,6 +14,7 @@ import {
   getParallelEntries,
   getParallelSlotEntries,
   type EntryData,
+  type ParallelEntryData,
 } from "../../server/context";
 import type {
   HandlerContext,
@@ -387,6 +388,97 @@ export function buildEntryRevalidateMap(
 }
 
 /**
+ * Resolve the component for a single parallel slot on the revalidation path.
+ * Pure component resolution shared verbatim by
+ * resolveParallelSegmentsWithRevalidation and the orphan-inlined loop in
+ * resolveOrphanLayoutWithRevalidation: try the static slot cache, else run the
+ * slot handler (pinning _currentSegmentId to the slot id so handle pushes land
+ * in the slot's own bucket, and wrapping a streamed handler). Returns the
+ * resolved component and whether the handler actually ran. Does NOT touch the
+ * revalidate-default policy (the caller decides shouldResolve, including the
+ * orphan-vs-main defaultOverride divergence) or loader-resolution ordering.
+ */
+async function resolveParallelSlotComponent<TEnv>(args: {
+  shouldResolve: boolean;
+  parallelEntry: ParallelEntryData;
+  slot: string;
+  parallelId: string;
+  handler:
+    | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
+    | ReactNode
+    | undefined;
+  context: HandlerContext<any, TEnv>;
+  deps: SegmentResolutionDeps<TEnv>;
+  routeKey: string;
+  params: Record<string, string>;
+}): Promise<{ component: ReactNode | undefined; handlerRan: boolean }> {
+  const {
+    shouldResolve,
+    parallelEntry,
+    slot,
+    parallelId,
+    handler,
+    context,
+    deps,
+    routeKey,
+    params,
+  } = args;
+
+  let component: ReactNode | undefined;
+  let handlerRan = false;
+  if (shouldResolve) {
+    component = await tryStaticSlot(parallelEntry, slot, parallelId);
+    // tryStaticSlot returning a value means the static cache supplied the
+    // component — handler did NOT run. handlerRan stays false.
+  }
+  if (component === undefined) {
+    const hasLoadingFallback =
+      parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+    if (!shouldResolve) {
+      component = null;
+    } else if (handler === undefined) {
+      // Handler evicted (production static slot) but static lookup missed.
+      // Nothing to render — use null so the client keeps its cached version.
+      component = null;
+    } else {
+      // Slot-keyed pushes — slot owns its own bucket, parent layout owns its
+      // own. On slot-only revalidations the partial merge updates only the
+      // slot's bucket; the parent's bucket stays intact.
+      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+        parallelId;
+      handlerRan = true;
+      if (hasLoadingFallback) {
+        const result =
+          typeof handler === "function" ? handler(context) : handler;
+        if (result instanceof Promise) {
+          warnOnStreamedResponse(result, parallelId);
+          const tracked = deps.trackHandler(result, {
+            segmentId: parallelId,
+            segmentType: "parallel",
+          });
+          observeStreamedHandler(
+            tracked,
+            parallelId,
+            "parallel",
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked as ReactNode;
+        } else {
+          component = result as ReactNode;
+        }
+      } else {
+        component =
+          typeof handler === "function" ? await handler(context) : handler;
+      }
+    }
+  }
+
+  return { component, handlerRan };
+}
+
+/**
  * Resolve parallel segments with revalidation.
  */
 export async function resolveParallelSegmentsWithRevalidation<TEnv>(
@@ -497,56 +589,17 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       shouldResolve,
     );
 
-    let component: ReactNode | undefined;
-    let handlerRan = false;
-    if (shouldResolve) {
-      component = await tryStaticSlot(parallelEntry, slot, parallelId);
-      // tryStaticSlot returning a value means the static cache supplied the
-      // component — handler did NOT run. handlerRan stays false.
-    }
-    if (component === undefined) {
-      const hasLoadingFallback =
-        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
-      if (!shouldResolve) {
-        component = null;
-      } else if (handler === undefined) {
-        // Handler evicted (production static slot) but static lookup missed.
-        // Nothing to render — use null so the client keeps its cached version.
-        component = null;
-      } else {
-        // Slot-keyed pushes — slot owns its own bucket, parent layout owns
-        // its own. On slot-only revalidations the partial merge updates only
-        // the slot's bucket; the parent's bucket stays intact.
-        (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-          parallelId;
-        handlerRan = true;
-        if (hasLoadingFallback) {
-          const result =
-            typeof handler === "function" ? handler(context) : handler;
-          if (result instanceof Promise) {
-            warnOnStreamedResponse(result, parallelId);
-            const tracked = deps.trackHandler(result, {
-              segmentId: parallelId,
-              segmentType: "parallel",
-            });
-            observeStreamedHandler(
-              tracked,
-              parallelId,
-              "parallel",
-              context.pathname,
-              routeKey,
-              params,
-            );
-            component = tracked as ReactNode;
-          } else {
-            component = result as ReactNode;
-          }
-        } else {
-          component =
-            typeof handler === "function" ? await handler(context) : handler;
-        }
-      }
-    }
+    const { component, handlerRan } = await resolveParallelSlotComponent({
+      shouldResolve,
+      parallelEntry,
+      slot,
+      parallelId,
+      handler,
+      context,
+      deps,
+      routeKey,
+      params,
+    });
 
     segments.push({
       id: parallelId,
@@ -1213,51 +1266,17 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       shouldResolve,
     );
 
-    let component: ReactNode | undefined;
-    let handlerRan = false;
-    if (shouldResolve) {
-      component = await tryStaticSlot(parallelEntry, slot, parallelId);
-    }
-    if (component === undefined) {
-      const hasLoadingFallback =
-        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
-      if (!shouldResolve) {
-        component = null;
-      } else if (handler === undefined) {
-        // Handler evicted (production static slot) but static lookup missed.
-        component = null;
-      } else {
-        // Slot-keyed pushes — see resolveParallelSegmentsWithRevalidation.
-        (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-          parallelId;
-        handlerRan = true;
-        if (hasLoadingFallback) {
-          const result =
-            typeof handler === "function" ? handler(context) : handler;
-          if (result instanceof Promise) {
-            warnOnStreamedResponse(result, parallelId);
-            const tracked = deps.trackHandler(result, {
-              segmentId: parallelId,
-              segmentType: "parallel",
-            });
-            observeStreamedHandler(
-              tracked,
-              parallelId,
-              "parallel",
-              context.pathname,
-              routeKey,
-              params,
-            );
-            component = tracked as ReactNode;
-          } else {
-            component = result as ReactNode;
-          }
-        } else {
-          component =
-            typeof handler === "function" ? await handler(context) : handler;
-        }
-      }
-    }
+    const { component, handlerRan } = await resolveParallelSlotComponent({
+      shouldResolve,
+      parallelEntry,
+      slot,
+      parallelId,
+      handler,
+      context,
+      deps,
+      routeKey,
+      params,
+    });
 
     segments.push({
       id: parallelId,

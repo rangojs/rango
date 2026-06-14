@@ -326,6 +326,29 @@ function mergeReqCtxStub(
   });
 }
 
+// Clone `base` with stub headers merged into a fresh Headers (the clone keeps
+// the body mutable for post-next() modifications). Set-Cookie is always
+// appended; other headers obey stubOverridesNonCookie (see mergeStubHeaders).
+// mergeReqCtx folds in RequestContext stub cookies/headers; the intercept
+// short-circuit path passes false (its reqCtx headers are not merged here),
+// which is the one deliberate divergence between the call sites.
+function mergeResponse(
+  base: Response,
+  stub: Headers,
+  opts: { stubOverridesNonCookie: boolean; mergeReqCtx: boolean },
+): Response {
+  const mergedHeaders = new Headers(base.headers);
+  mergeStubHeaders(mergedHeaders, stub, opts.stubOverridesNonCookie);
+  if (opts.mergeReqCtx) {
+    mergeReqCtxStub(mergedHeaders, _getRequestContext());
+  }
+  return new Response(base.body, {
+    status: base.status,
+    statusText: base.statusText,
+    headers: mergedHeaders,
+  });
+}
+
 /**
  * Execute middleware chain
  *
@@ -364,20 +387,16 @@ export async function executeMiddleware<TEnv>(
       // End of chain - call actual RSC handler
       const response = await finalHandler();
 
-      const mergedHeaders = new Headers(response.headers);
-      mergeStubHeaders(mergedHeaders, stubResponse.headers, true);
-      mergeReqCtxStub(mergedHeaders, _getRequestContext());
-
       if (isWebSocketUpgradeResponse(response)) {
         responseHolder.response = response;
         return response;
       }
 
-      // Clone response with merged headers (mutable for post-next() modifications)
-      responseHolder.response = new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: mergedHeaders,
+      // Chain ran to completion: stub headers overwrite (stubOverridesNonCookie)
+      // and reqCtx stub headers are merged in.
+      responseHolder.response = mergeResponse(response, stubResponse.headers, {
+        stubOverridesNonCookie: true,
+        mergeReqCtx: true,
       });
 
       return responseHolder.response;
@@ -476,13 +495,11 @@ export async function executeMiddleware<TEnv>(
         responseHolder.response = result;
         return result;
       }
-      const mergedHeaders = new Headers(result.headers);
-      mergeStubHeaders(mergedHeaders, stubResponse.headers, false);
-      mergeReqCtxStub(mergedHeaders, _getRequestContext());
-      const merged = new Response(result.body, {
-        status: result.status,
-        statusText: result.statusText,
-        headers: mergedHeaders,
+      // Explicit short-circuit: the returned Response's own headers win
+      // (stubOverridesNonCookie=false); reqCtx stub headers still merge in.
+      const merged = mergeResponse(result, stubResponse.headers, {
+        stubOverridesNonCookie: false,
+        mergeReqCtx: true,
       });
       responseHolder.response = merged;
       return merged;
@@ -637,15 +654,13 @@ export async function executeInterceptMiddleware<TEnv>(
     });
 
     if (hasStubHeaders) {
-      // Clone and merge headers from stub into early response.
-      // Only fill in missing headers — the returned Response's explicit
-      // headers take precedence, matching executeMiddleware behavior.
-      const mergedHeaders = new Headers(response.headers);
-      mergeStubHeaders(mergedHeaders, stubResponse.headers, false);
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: mergedHeaders,
+      // Only fill in missing headers — the returned Response's explicit headers
+      // take precedence (stubOverridesNonCookie=false), matching executeMiddleware.
+      // mergeReqCtx=false: the intercept path deliberately does NOT merge reqCtx
+      // stub headers here (pinned by intercept-middleware-headers.test.ts).
+      return mergeResponse(response, stubResponse.headers, {
+        stubOverridesNonCookie: false,
+        mergeReqCtx: false,
       });
     }
     return response;

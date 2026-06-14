@@ -93,7 +93,7 @@
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
-import { getRouterContext } from "../router-context.js";
+import { getRouterContext, type RouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
@@ -150,6 +150,81 @@ async function ensurePrerenderDeps() {
  * Deserializes segments, replays handle data, yields segments with partial
  * navigation nullification, and resolves fresh loaders.
  */
+// Resolve loaders fresh on a cache hit (loaders are NEVER cached) and yield
+// the loader segments, updating state.matchedIds and pushing the loader-resolve
+// + cache-hit metrics. Shared verbatim by the prerender-store path
+// (yieldFromStore) and the runtime cache-hit path (withCacheLookup). The router
+// resolve fns are passed in (captured early by the callers) rather than re-read
+// from getRouterContext() here, because that is ALS-backed and the callers run
+// awaits before reaching this point (workerd can disrupt ALS mid-pipeline).
+async function* resolveFreshLoadersAndYield<TEnv>(
+  ctx: MatchContext<TEnv>,
+  state: MatchPipelineState,
+  pipelineStart: number,
+  ms: MatchContext<TEnv>["metricsStore"],
+  resolveLoadersOnly: RouterContext<TEnv>["resolveLoadersOnly"],
+  resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
+): AsyncGenerator<ResolvedSegment> {
+  const loaderStart = performance.now();
+
+  if (ctx.isFullMatch) {
+    if (resolveLoadersOnly) {
+      const loaderSegments = await ctx.Store.run(() =>
+        resolveLoadersOnly(ctx.entries, ctx.handlerContext),
+      );
+      state.matchedIds = state.cachedMatchedIds!;
+      for (const segment of loaderSegments) {
+        yield segment;
+      }
+    } else {
+      state.matchedIds = state.cachedMatchedIds!;
+    }
+  } else {
+    if (resolveLoadersOnlyWithRevalidation) {
+      const loaderResult = await ctx.Store.run(() =>
+        resolveLoadersOnlyWithRevalidation(
+          ctx.entries,
+          ctx.handlerContext,
+          ctx.clientSegmentSet,
+          ctx.prevParams,
+          ctx.request,
+          ctx.prevUrl,
+          ctx.url,
+          ctx.routeKey,
+          ctx.actionContext,
+          // Loaders are never cached in the segment cache, so segment staleness
+          // must not propagate; browser-sent staleness (ctx.stale) still must.
+          ctx.stale || undefined,
+        ),
+      );
+      state.matchedIds = [
+        ...state.cachedMatchedIds!,
+        ...loaderResult.matchedIds,
+      ];
+      for (const segment of loaderResult.segments) {
+        yield segment;
+      }
+    } else {
+      state.matchedIds = state.cachedMatchedIds!;
+    }
+  }
+
+  if (ms) {
+    const loaderEnd = performance.now();
+    ms.metrics.push({
+      label: "pipeline:loader-resolve",
+      duration: loaderEnd - loaderStart,
+      startTime: loaderStart - ms.requestStart,
+      depth: 1,
+    });
+    ms.metrics.push({
+      label: "pipeline:cache-hit",
+      duration: loaderEnd - pipelineStart,
+      startTime: pipelineStart - ms.requestStart,
+    });
+  }
+}
+
 async function* yieldFromStore<TEnv>(
   entry: PrerenderEntry,
   ctx: MatchContext<TEnv>,
@@ -216,64 +291,15 @@ async function* yieldFromStore<TEnv>(
     yield segment;
   }
 
-  // Resolve loaders fresh (loaders are never pre-rendered/cached)
-  const ms = ctx.metricsStore;
-  const loaderStart = performance.now();
-
-  if (ctx.isFullMatch) {
-    if (resolveLoadersOnly) {
-      const loaderSegments = await ctx.Store.run(() =>
-        resolveLoadersOnly(ctx.entries, ctx.handlerContext),
-      );
-      state.matchedIds = state.cachedMatchedIds!;
-      for (const segment of loaderSegments) {
-        yield segment;
-      }
-    } else {
-      state.matchedIds = state.cachedMatchedIds!;
-    }
-  } else {
-    if (resolveLoadersOnlyWithRevalidation) {
-      const loaderResult = await ctx.Store.run(() =>
-        resolveLoadersOnlyWithRevalidation(
-          ctx.entries,
-          ctx.handlerContext,
-          ctx.clientSegmentSet,
-          ctx.prevParams,
-          ctx.request,
-          ctx.prevUrl,
-          ctx.url,
-          ctx.routeKey,
-          ctx.actionContext,
-          ctx.stale || undefined,
-        ),
-      );
-      state.matchedIds = [
-        ...state.cachedMatchedIds!,
-        ...loaderResult.matchedIds,
-      ];
-      for (const segment of loaderResult.segments) {
-        yield segment;
-      }
-    } else {
-      state.matchedIds = state.cachedMatchedIds!;
-    }
-  }
-
-  if (ms) {
-    const loaderEnd = performance.now();
-    ms.metrics.push({
-      label: "pipeline:loader-resolve",
-      duration: loaderEnd - loaderStart,
-      startTime: loaderStart - ms.requestStart,
-      depth: 1,
-    });
-    ms.metrics.push({
-      label: "pipeline:cache-hit",
-      duration: loaderEnd - pipelineStart,
-      startTime: pipelineStart - ms.requestStart,
-    });
-  }
+  // Resolve loaders fresh (loaders are never pre-rendered/cached).
+  yield* resolveFreshLoadersAndYield(
+    ctx,
+    state,
+    pipelineStart,
+    ctx.metricsStore,
+    resolveLoadersOnly,
+    resolveLoadersOnlyWithRevalidation,
+  );
 }
 
 /**
@@ -550,71 +576,15 @@ export function withCacheLookup<TEnv>(
       barrierReqCtx._resolveRenderBarrier(cacheResult.segments);
     }
 
-    const Store = ctx.Store;
-    const loaderStart = performance.now();
-
-    if (ctx.isFullMatch) {
-      if (resolveLoadersOnly) {
-        const loaderSegments = await Store.run(() =>
-          resolveLoadersOnly(ctx.entries, ctx.handlerContext),
-        );
-
-        state.matchedIds = state.cachedMatchedIds!;
-
-        for (const segment of loaderSegments) {
-          yield segment;
-        }
-      } else {
-        state.matchedIds = state.cachedMatchedIds!;
-      }
-    } else {
-      if (resolveLoadersOnlyWithRevalidation) {
-        const loaderResult = await Store.run(() =>
-          resolveLoadersOnlyWithRevalidation(
-            ctx.entries,
-            ctx.handlerContext,
-            ctx.clientSegmentSet,
-            ctx.prevParams,
-            ctx.request,
-            ctx.prevUrl,
-            ctx.url,
-            ctx.routeKey,
-            ctx.actionContext,
-            // Loaders are never cached in the segment cache, so segment
-            // staleness (cacheResult.shouldRevalidate) must not propagate.
-            // But browser-sent staleness (ctx.stale) — indicating an action
-            // happened in this or another tab — must still reach loaders.
-            ctx.stale || undefined,
-          ),
-        );
-
-        // Update state with fresh loader matchedIds
-        state.matchedIds = [
-          ...state.cachedMatchedIds!,
-          ...loaderResult.matchedIds,
-        ];
-
-        // Yield fresh loader segments
-        for (const segment of loaderResult.segments) {
-          yield segment;
-        }
-      } else {
-        state.matchedIds = state.cachedMatchedIds!;
-      }
-    }
-    if (ms) {
-      const loaderEnd = performance.now();
-      ms.metrics.push({
-        label: "pipeline:loader-resolve",
-        duration: loaderEnd - loaderStart,
-        startTime: loaderStart - ms.requestStart,
-        depth: 1,
-      });
-      ms.metrics.push({
-        label: "pipeline:cache-hit",
-        duration: loaderEnd - pipelineStart,
-        startTime: pipelineStart - ms.requestStart,
-      });
-    }
+    // Resolve loaders fresh (loaders are never cached). Shared with the
+    // prerender-store path via resolveFreshLoadersAndYield.
+    yield* resolveFreshLoadersAndYield(
+      ctx,
+      state,
+      pipelineStart,
+      ms,
+      resolveLoadersOnly,
+      resolveLoadersOnlyWithRevalidation,
+    );
   };
 }

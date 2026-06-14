@@ -432,6 +432,18 @@ export type InternalHandlerContext<
   _responseType?: string;
   /** Route name for cache key scoping (prevents cross-route collisions). */
   _routeName?: string;
+  /**
+   * @internal Loader-cache override table: loaderId -> memoized data promise.
+   * A single stable ctx.use interceptor consults this instead of chaining one
+   * wrapper per cached loader (avoids O(N) dispatch). See loader-cache.ts.
+   */
+  _loaderCacheOverrides?: Map<string, Promise<any>>;
+  /**
+   * @internal ctx.use captured before the loader-cache interceptor was installed.
+   * The cache-miss execute runs the loader through this, bypassing the override
+   * table (so a loader cannot await its own in-flight memoized promise).
+   */
+  _loaderCacheOriginalUse?: (item: any) => any;
 };
 
 /**
