@@ -41,6 +41,17 @@ async function Boom(): Promise<React.ReactElement> {
   throw new Error("KABOOM from server component");
 }
 
+// Simulates the missing-rsc-alias trap: when `rangoTestAliases` is not wired,
+// a server component reading getRequestContext()/cookies()/headers() resolves
+// the out-of-react-server stub (index.ts), which throws this exact message.
+async function StubReader(): Promise<React.ReactElement> {
+  await Promise.resolve();
+  throw new Error(
+    'cookies() is only available from "@rangojs/router" in a react-server/RSC ' +
+      'environment. For client hooks and components, import from "@rangojs/router/client".',
+  );
+}
+
 describe("renderToFlightString (Flight RSC)", () => {
   it("vendored serializer subpath resolves", () => {
     expect(() => assertFlightRuntimeAvailable()).not.toThrow();
@@ -97,6 +108,26 @@ describe("renderToFlightString (Flight RSC)", () => {
     // does not hang (the bug took the full default 5s timeout).
     await expect(renderToFlightString(<Boom />)).rejects.toThrow(
       "KABOOM from server component",
+    );
+  }, 2000);
+
+  it("reclassifies the missing-rsc-alias stub error with actionable guidance", async () => {
+    // Without rangoTestAliases, a context-reading server component hits the
+    // out-of-react-server stub and the raw message is opaque. The Flight path
+    // now self-diagnoses, naming rangoTestAliases like renderHandler does.
+    await expect(renderToFlightString(<StubReader />)).rejects.toThrow(
+      /rangoTestAliases/,
+    );
+  });
+
+  it("does NOT reclassify a genuine server-component error", async () => {
+    // Non-vacuity for the predicate: a normal render error keeps its message and
+    // is never rewritten with the rsc-alias guidance.
+    await expect(renderToFlightString(<Boom />)).rejects.toThrow(
+      /KABOOM from server component/,
+    );
+    await expect(renderToFlightString(<Boom />)).rejects.not.toThrow(
+      /rangoTestAliases/,
     );
   }, 2000);
 

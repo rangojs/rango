@@ -42,7 +42,13 @@ import {
 } from "./internal/seed-vars.js";
 
 export type { StateCookieSeed } from "./internal/seed-vars.js";
-import { assertNoLegacyUrlOption, serializeNodeToFlight } from "./flight.js";
+import {
+  assertNoLegacyUrlOption,
+  serializeNodeToFlight,
+  isServerOnlyStubError,
+} from "./flight.js";
+import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheProfile } from "../cache/profile-registry.js";
 import {
   deserializeFlight,
   makeClientManifest,
@@ -95,6 +101,19 @@ export interface RenderHandlerOptions<TEnv = any> {
    * `result.stateCookieName`.
    */
   stateCookie?: StateCookieSeed;
+  /**
+   * Segment cache store backing a `"use cache"` function the handler invokes
+   * (e.g. `new MemorySegmentCacheStore()`). Without it, `registerCachedFunction`
+   * takes the uncached bypass and the cached path is NOT exercised (the runtime
+   * emits a one-time warning under the test runner). Pair with `cacheProfiles`
+   * so the profile the directive names resolves.
+   */
+  cacheStore?: SegmentCacheStore;
+  /**
+   * Cache profiles in the `createRouter({ cacheProfiles })` shape, required for
+   * `"use cache: profileName"` resolution once a `cacheStore` is wired.
+   */
+  cacheProfiles?: Record<string, CacheProfile>;
 }
 
 /** Result of {@link renderHandler}. */
@@ -141,14 +160,6 @@ function headersToObject(headers: Headers): Record<string, string> {
     if (name.toLowerCase() !== "set-cookie") out[name] = value;
   });
   return out;
-}
-
-function isServerOnlyStubError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.message.includes("is only available from") &&
-    error.message.includes("react-server")
-  );
 }
 
 function toRequest(
@@ -212,6 +223,8 @@ export async function renderHandler<TEnv = any>(
     variables: seedVariables({}, opts.vars),
     stateCookieName,
     version: opts.stateCookie?.version,
+    cacheStore: opts.cacheStore,
+    cacheProfiles: opts.cacheProfiles,
   });
 
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);

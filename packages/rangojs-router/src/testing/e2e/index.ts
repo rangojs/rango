@@ -32,6 +32,7 @@ import { createRangoMatchers, type RangoMatchers } from "./matchers.js";
 
 export {
   assertCacheStatus,
+  assertCacheDecision,
   parseCacheHeader,
   createCacheSink,
   filterCacheDecisions,

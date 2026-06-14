@@ -219,6 +219,39 @@ describe("use cache stale revalidation handle preservation", () => {
     await expect(cached()).resolves.toBe("ok");
   });
 
+  it("warns once per fn id when running uncached under the test runner", async () => {
+    // Test-ergonomics guard: a "use cache" fn that bypasses (no item-capable
+    // store) under VITEST warns so the author knows the cached path is untested.
+    // Advisory only — the fn still runs — and deduped per id.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mockGetRequestContext.mockReturnValue({
+        _cacheProfiles: { default: { ttl: 60 } },
+        waitUntil: (fn: () => Promise<void>) => fn(),
+      });
+      const body = vi.fn(async () => "ok");
+      const cached = registerCachedFunction(
+        body,
+        "test-bypass-warn",
+        "default",
+      );
+
+      await expect(cached()).resolves.toBe("ok");
+      await cached();
+
+      const hits = warn.mock.calls.filter((c) =>
+        String(c[0]).includes("test-bypass-warn"),
+      );
+      expect(hits).toHaveLength(1);
+      expect(String(hits[0][0])).toMatch(/no cacheStore was seeded/);
+      // The body still executed both times (uncached), proving the warn is
+      // advisory and does not short-circuit.
+      expect(body).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("stamps INSIDE_CACHE_EXEC on tainted args during stale background revalidation", async () => {
     const waitUntilFns: Array<() => Promise<void>> = [];
 

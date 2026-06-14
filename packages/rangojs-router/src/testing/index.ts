@@ -52,6 +52,7 @@ export type { DispatchOptions } from "./dispatch.js";
 
 export {
   assertCacheStatus,
+  assertCacheDecision,
   parseCacheHeader,
   createCacheSink,
   filterCacheDecisions,

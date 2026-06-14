@@ -20,6 +20,8 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 | `loaders`          | `ReadonlyArray<readonly [LoaderDefinition, unknown]>`  | Seed the data `ctx.use(SomeLoader)` returns. Matched by loader reference; NO real loader runs.                                                                                                                                                                                                                                                                                       |
 | `clientComponents` | `Record<string, unknown>`                              | `"use client"` components in the handler's RSC, so they serialize as real boundaries when `rangoUseClientTransform()` is not wired. Keyed by name.                                                                                                                                                                                                                                   |
 | `stateCookie`      | `StateCookieSeed` (`{ prefix?, routerId?, version? }`) | Customize the rango state cookie a handler calling `invalidateClientCache()` rotates. The name is ALWAYS seeded (default `rango-state_router_0`) so the rotation `Set-Cookie` fires like production rather than no-opping; override `prefix`/`routerId` to match your `createRouter({ stateCookiePrefix, id })`, or `version` (the value is `{version}:{timestamp}`, default `"0"`). |
+| `cacheStore`       | `SegmentCacheStore`                                    | Segment cache store backing a `"use cache"` function the handler invokes (e.g. `new MemorySegmentCacheStore()`). WITHOUT it, `registerCachedFunction` takes the uncached bypass and the cached path is NOT exercised (the runtime emits a one-time warning under the test runner). Pair with `cacheProfiles`.                                                                        |
+| `cacheProfiles`    | `Record<string, CacheProfile>`                         | Cache profiles in the `createRouter({ cacheProfiles })` shape, required for `"use cache: profileName"` resolution once a `cacheStore` is wired.                                                                                                                                                                                                                                      |
 
 ### Context — `HandlerContext` (what your handler receives)
 
@@ -110,6 +112,7 @@ it("asserts the client-cache directives", async () => {
 - A `throw redirect()` is captured on `thrown` (with `tree` undefined, since it produced a `Response`) — assert on `thrown`/`response`, no try/catch needed.
 - No hydration and no interaction — for clicks, forms, and navigation use e2e.
 - `renderHandler` runs a handler FUNCTION `(ctx) => rsc`; for a plain ELEMENT `<Page/>` use `renderServerTree` (see [`./server-tree.md`](./server-tree.md)).
+- A handler that calls a `"use cache"` function runs UNCACHED unless you seed `cacheStore` (and `cacheProfiles` for a named profile). With nothing seeded the runtime bypasses to the live body and warns once under the test runner — assert real cache behavior by passing `{ cacheStore: new MemorySegmentCacheStore(), cacheProfiles: { default: { ttl: 60 } } }`.
 
 ## See also
 

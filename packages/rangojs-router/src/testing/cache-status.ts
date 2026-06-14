@@ -12,7 +12,14 @@
  * 2. Telemetry path — `createCacheSink` returns a `{ sink, events }` pair the
  *    consumer wires via `createRouter({ telemetry: sink })`. This has ZERO
  *    production surface: no header, just structured `cache.decision` events
- *    (which carry the same coarse `segments` cache signal).
+ *    (which carry the same coarse `segments` cache signal). Assert with
+ *    `assertCacheDecision(events, routeKey, expected)` (the one-call counterpart
+ *    of `assertCacheStatus`) or filter raw via `filterCacheDecisions`.
+ *
+ * Both paths report the SAME coarse route-level signal — pick by TRANSPORT, not
+ * by meaning: the header is the only signal a black-box Playwright `Response`
+ * carries (needs the debug gate ON); the sink is the only zero-production-surface
+ * option and the only one exposing per-segment `shouldRevalidate`.
  *
  * v1 cache status is COARSE (route-level): the router reports a single entry
  * keyed by the route key (the route NAME), not per individual segment.
@@ -116,4 +123,40 @@ export function filterCacheDecisions(
   return events.filter(
     (e): e is CacheDecisionEvent => e.type === "cache.decision",
   );
+}
+
+/**
+ * Telemetry-path counterpart of {@link assertCacheStatus}: assert a captured
+ * `cache.decision` event reported `expected` for the segment keyed by `routeKey`
+ * (the route NAME, the same coarse key the header path uses). Throws an
+ * actionable error when no matching segment was captured, or on a mismatch.
+ *
+ * Pairs with {@link createCacheSink}: wire `createRouter({ telemetry: sink })`,
+ * drive an RSC request, then assert against the recorded `events`. This is the
+ * zero-production-surface path (no header to enable). NOTE: `events` accumulates
+ * across requests, so the FIRST matching segment wins — slice or recreate the
+ * sink between requests for the same `routeKey`.
+ */
+export function assertCacheDecision(
+  events: readonly TelemetryEvent[],
+  routeKey: string,
+  expected: ExpectedCacheStatus,
+): void {
+  const segments = filterCacheDecisions(events).flatMap(
+    (d) => d.segments ?? [],
+  );
+  const seg = segments.find((s) => s.id === routeKey);
+  if (seg === undefined) {
+    const known = segments.map((s) => s.id);
+    throw new Error(
+      `assertCacheDecision: no cache.decision segment for routeKey "${routeKey}". ` +
+        `Seen: ${known.length > 0 ? known.join(", ") : "(none)"}. Wire ` +
+        `createRouter({ telemetry: createCacheSink().sink }) and drive an RSC request.`,
+    );
+  }
+  if (seg.cacheStatus !== expected) {
+    throw new Error(
+      `assertCacheDecision: routeKey "${routeKey}" expected "${expected}" but got "${seg.cacheStatus}".`,
+    );
+  }
 }
