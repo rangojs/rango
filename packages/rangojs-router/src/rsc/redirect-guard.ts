@@ -18,16 +18,26 @@
  *
  * Behavior on a `Location` header:
  * - same-origin / relative  -> passes through unchanged
- * - `redirect(url, { external: true })` (marker present) -> marker stripped, the
- *   off-host target is allowed (explicit, auditable opt-in)
- * - cross-origin without the marker -> Location rewritten to the basename root
+ * - `redirect(url, { external: true })` (out-of-band brand present) and an
+ *   http(s) target -> allowed (explicit, auditable, unforgeable opt-in)
+ * - branded but a non-http(s) target (e.g. `javascript:`) -> neutralized: the
+ *   opt-in waives the same-origin rule, NOT scheme safety
+ * - cross-origin without the brand -> Location rewritten to the basename root
  *   (a safe same-origin landing, the document analog of the client's "stay put");
  *   dev logs the blocked target and points to `{ external: true }`.
+ *
+ * The opt-in is an out-of-band brand on the Response object (isExternalRedirect),
+ * never a wire header: a header is forgeable by an attacker-controlled upstream
+ * response a proxy-style response route copies through, which would defeat the
+ * guard without app code ever opting in. The reserved header name is stripped
+ * defensively so a forged value can never reach the browser.
  */
 
 import { isRedirectResponse } from "../response-utils.js";
 import {
   resolveSameOriginRedirect,
+  resolveExternalRedirect,
+  isExternalRedirect,
   EXTERNAL_REDIRECT_MARKER,
 } from "../redirect-origin.js";
 import { carryOverRedirectHeaders } from "./helpers.js";
@@ -42,25 +52,33 @@ export function guardOutgoingRedirect(
     return response;
   }
 
-  // Explicit opt-in via redirect(url, { external: true }): strip the internal
-  // marker and let the off-host target through.
-  if (response.headers.get(EXTERNAL_REDIRECT_MARKER) !== null) {
-    try {
-      response.headers.delete(EXTERNAL_REDIRECT_MARKER);
-    } catch {
-      // Some platform responses carry immutable headers. The marker is internal
-      // and inert on the browser, so a failed strip is harmless.
-    }
-    return response;
+  // The reserved marker is never a trust signal. Strip any value -- forged by a
+  // proxied upstream or otherwise -- so it can never reach the browser. Trust
+  // comes solely from the out-of-band brand below.
+  try {
+    response.headers.delete(EXTERNAL_REDIRECT_MARKER);
+  } catch {
+    // Some platform responses carry immutable headers; the header is inert on
+    // the browser, so a failed strip is harmless.
   }
 
   // isRedirectResponse guarantees a truthy Location.
   const location = response.headers.get("Location")!;
-  if (resolveSameOriginRedirect(location, requestOrigin) !== null) {
+
+  // Explicit opt-in via redirect(url, { external: true }): allow an off-host
+  // target, but only an http(s) one. external waives the same-origin rule, not
+  // scheme safety -- a branded javascript:/data: target falls through to be
+  // neutralized so it can never become a scriptable navigation downstream.
+  if (isExternalRedirect(response)) {
+    if (resolveExternalRedirect(location, requestOrigin) !== null) {
+      return response;
+    }
+  } else if (resolveSameOriginRedirect(location, requestOrigin) !== null) {
     return response;
   }
 
-  // Cross-origin without opt-in: neutralize to a safe same-origin landing.
+  // Cross-origin (or unsafe-scheme external): neutralize to a safe same-origin
+  // landing.
   const safeTarget = basename && basename !== "/" ? basename : "/";
   if (process.env.NODE_ENV !== "production") {
     console.error(

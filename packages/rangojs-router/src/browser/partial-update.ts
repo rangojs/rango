@@ -21,7 +21,10 @@ import {
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
-import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  validateRedirectOrigin,
+  validateExternalRedirect,
+} from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
 
 function toScrollPayload(
@@ -212,10 +215,21 @@ export function createPartialUpdater(
         return;
       }
       // Explicit off-host redirect (redirect(url, { external: true })):
-      // hard-navigate without the same-origin check the app opted out of.
+      // hard-navigate, but still scheme-validate (http/https only). external
+      // waives the same-origin check the app opted out of, NOT scheme safety, so
+      // a forged payload carrying a javascript:/data: URL cannot script via
+      // location.assign.
       if (payload.metadata.redirect.external) {
+        const externalUrl = validateExternalRedirect(
+          payload.metadata.redirect.url,
+          window.location.origin,
+        );
+        if (!externalUrl) {
+          debugLog("[Browser] Ignoring blocked external redirect payload");
+          return;
+        }
         debugLog("[Browser] External redirect (hard navigation)");
-        window.location.assign(payload.metadata.redirect.url);
+        window.location.assign(externalUrl);
         return;
       }
       const redirectUrl = validateRedirectOrigin(

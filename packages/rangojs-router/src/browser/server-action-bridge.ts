@@ -23,7 +23,10 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
-import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  validateRedirectOrigin,
+  validateExternalRedirect,
+} from "./validate-redirect-origin.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
@@ -424,11 +427,24 @@ export function createServerActionBridge(
       // when the user has already navigated away.
       if (metadata?.redirect && !handle.signal.aborted) {
         // Explicit off-host redirect (redirect(url, { external: true })):
-        // hard-navigate without the same-origin check the app opted out of.
+        // hard-navigate, but still scheme-validate (http/https only). external
+        // waives the same-origin check, NOT scheme safety, so a forged payload
+        // carrying a javascript:/data: URL cannot script via location.assign.
         if (metadata.redirect.external) {
-          log("external action redirect", { url: metadata.redirect.url });
+          const externalUrl = validateExternalRedirect(
+            metadata.redirect.url,
+            window.location.origin,
+          );
+          if (!externalUrl) {
+            log("blocked external action redirect payload", {
+              url: metadata.redirect.url,
+            });
+            handle.complete(returnValue?.data);
+            return returnValue?.data;
+          }
+          log("external action redirect", { url: externalUrl });
           handle.complete(returnValue?.data);
-          window.location.assign(metadata.redirect.url);
+          window.location.assign(externalUrl);
           return returnValue?.data;
         }
         const redirectUrl = validateRedirectOrigin(

@@ -4,7 +4,7 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
-import { EXTERNAL_REDIRECT_MARKER } from "../redirect-origin.js";
+import { markExternalRedirect } from "../redirect-origin.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit
@@ -118,12 +118,18 @@ export function redirect(
     Location: resolvedUrl,
     "X-RSC-Redirect": "soft",
   };
-  // Mark an explicit off-host redirect so the same-origin guard
-  // (rsc/redirect-guard.ts) lets it through. The marker is internal and is
-  // stripped before the response leaves the server.
+
+  const response = new Response(null, { status, headers });
+
+  // Mark an explicit off-host redirect with an out-of-band brand so the
+  // same-origin guard (rsc/redirect-guard.ts) lets it through. The brand is a
+  // WeakSet membership on this Response object -- NOT a wire header -- so the
+  // opt-in cannot be forged by an attacker-controlled upstream response a
+  // proxy-style response route might copy. The internal redirect-rebuild paths
+  // transfer the brand; the guard reads and clears it (see markExternalRedirect).
   if (external) {
-    headers[EXTERNAL_REDIRECT_MARKER] = "1";
+    markExternalRedirect(response);
   }
 
-  return new Response(null, { status, headers });
+  return response;
 }

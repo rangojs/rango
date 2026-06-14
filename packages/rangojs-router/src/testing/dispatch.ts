@@ -96,6 +96,11 @@ import {
   mergeStubHeadersAndFinalize,
 } from "../rsc/helpers.js";
 import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
+import {
+  EXTERNAL_REDIRECT_MARKER,
+  isExternalRedirect,
+  markExternalRedirect,
+} from "../redirect-origin.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import type { Rango } from "../router/router-interfaces.js";
 
@@ -257,16 +262,27 @@ function rewrapHandlerResponse(result: Response): Response {
   }
   const headers = new Headers();
   result.headers.forEach((value, key) => {
+    // Mirror production: never copy the reserved external-redirect marker off a
+    // handler result (it is not a trust signal; the opt-in is the out-of-band
+    // brand transferred below).
+    if (key.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
     if (key.toLowerCase() === "set-cookie") {
       headers.append(key, value);
     } else {
       headers.set(key, value);
     }
   });
-  return createResponseWithMergedHeaders(result.body, {
+  const rewrapped = createResponseWithMergedHeaders(result.body, {
     status: result.status,
     headers,
   });
+  // Mirror production's rewrapResponse: transfer the out-of-band external brand
+  // only from a genuinely branded result (a real redirect(url, { external:
+  // true })), never from a proxied upstream's forged header.
+  if (isExternalRedirect(result)) {
+    markExternalRedirect(rewrapped);
+  }
+  return rewrapped;
 }
 
 /**

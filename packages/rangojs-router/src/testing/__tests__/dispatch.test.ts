@@ -374,7 +374,7 @@ describe("dispatch", () => {
       spy.mockRestore();
     });
 
-    it("allows an external redirect returned from a response-route handler (marker survives rewrap)", async () => {
+    it("allows an external redirect returned from a response-route handler (brand survives rewrap)", async () => {
       const router = createRouter<{}>({}).routes(
         urls(({ path }) => [
           path.json(
@@ -391,6 +391,89 @@ describe("dispatch", () => {
       expect(res.headers.get("Location")).toBe(
         "https://accounts.example.com/oauth",
       );
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Finding #1 regression (forgeable opt-in): the external opt-in is an
+    // out-of-band brand on the Response object, NOT the wire header. A
+    // proxy-style response route that returns an attacker-controlled upstream
+    // response carrying a forged `x-rango-redirect-external` header must NOT be
+    // able to bypass the same-origin guard -- the app never called
+    // redirect(..., { external: true }), so the off-host target is neutralized.
+    it("does NOT honor a forged external marker header from a response-route handler", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/proxy",
+            () =>
+              // Simulates returning a proxied upstream 302 whose headers an
+              // attacker controls. The forged marker is the ONLY external signal
+              // (no redirect(..., { external: true }) brand).
+              new Response(null, {
+                status: 302,
+                headers: {
+                  Location: "https://evil.example/phish",
+                  "x-rango-redirect-external": "1",
+                },
+              }),
+            { name: "proxy" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/proxy" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/");
+      // The forged header never reaches the browser.
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      spy.mockRestore();
+    });
+
+    // Brand-drop regression: an onResponse callback that returns a NEW Response
+    // drops the object-identity brand. finalizeResponse must re-mark it so a
+    // legit redirect(url, { external: true }) is still allowed off-host (not
+    // silently neutralized to root) when the app also uses ctx.onResponse().
+    it("preserves { external: true } when an onResponse callback rebuilds the Response", async () => {
+      const mw: MiddlewareFn = () => {
+        const ctx = getRequestContext();
+        // Rebuild the Response (e.g. to add a header). The new object loses the
+        // brand unless drainOnResponseCallbacks re-applies it.
+        ctx.onResponse(
+          (res) =>
+            new Response(res.body, {
+              status: res.status,
+              headers: new Headers(res.headers),
+            }),
+        );
+        return redirect("https://accounts.example.com/oauth", {
+          external: true,
+        });
+      };
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Header-leak regression (defense-in-depth): the reserved marker must never
+    // reach the browser, even on a non-3xx response the 3xx-only guard does not
+    // touch. mergeResponse strips it on the middleware path.
+    it("strips a forged external marker header from a non-3xx middleware response", async () => {
+      const mw: MiddlewareFn = () =>
+        new Response("ok", {
+          status: 200,
+          headers: {
+            "x-rango-redirect-external": "1",
+            "content-type": "text/plain",
+          },
+        });
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
       expect(res.headers.get("x-rango-redirect-external")).toBeNull();
     });
   });

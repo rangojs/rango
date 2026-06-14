@@ -403,6 +403,51 @@ describe("server-action-bridge payload redirect origin validation", () => {
     expect(result).toBe("ext-result");
   });
 
+  // Finding #2 regression: an external:true action redirect to a javascript:
+  // target waives the same-origin check, NOT scheme safety, so it must never
+  // reach location.assign. The action still completes (returns its data).
+  it("does NOT location.assign an external:true action redirect with a javascript: scheme", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const store = createMockStore();
+    const { controller, completeFn } = createMockEventController();
+    const onNavigate = vi.fn(() => Promise.resolve());
+
+    const payload: RscPayload = {
+      metadata: {
+        redirect: {
+          url: "javascript:alert(document.cookie)",
+          external: true,
+        },
+      },
+      returnValue: { ok: true, data: "ext-result" },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload);
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+      onNavigate,
+    });
+    bridge.register();
+
+    const result = await getActionCallback()("test-action", []);
+
+    // Blocked: no scriptable navigation, no SPA navigation; action completes.
+    expect(locationAssign).not.toHaveBeenCalled();
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(completeFn).toHaveBeenCalledWith("ext-result");
+    expect(result).toBe("ext-result");
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("hard-nav fallback (no onNavigate) re-validates and follows a same-origin redirect", async () => {
     const store = createMockStore();
     const { controller, completeFn } = createMockEventController();

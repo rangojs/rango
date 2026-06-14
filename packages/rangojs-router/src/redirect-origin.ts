@@ -34,8 +34,67 @@ export function resolveSameOriginRedirect(
 }
 
 /**
- * Internal marker header set by `redirect(url, { external: true })` to opt a
- * single redirect out of the same-origin guard. The server guard strips it
- * before the response leaves; it is never sent to the browser.
+ * Validate an explicit off-origin redirect target (`redirect(url, { external:
+ * true })`).
+ *
+ * `external` opts out of the same-origin rule, but NOT out of scheme safety:
+ * only `http:`/`https:` targets are allowed. A redirect ultimately reaches the
+ * browser via `window.location.assign()` on the SPA/action client paths, so a
+ * forged or mistaken `redirect("javascript:...", { external: true })` would be a
+ * scriptable navigation if the scheme were not checked here. Returns the
+ * normalized href for an http(s) target (same- or cross-origin), or `null`
+ * otherwise. Pure: no logging, no side effects.
+ */
+export function resolveExternalRedirect(
+  url: string,
+  currentOrigin: string,
+): string | null {
+  try {
+    const target = new URL(url, currentOrigin);
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      return null;
+    }
+    return target.href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Out-of-band brand for `redirect(url, { external: true })`.
+ *
+ * The external opt-in MUST be settable only by app code calling `redirect(...,
+ * { external: true })`, never by an attacker. An earlier design carried the
+ * opt-in as a wire header (`x-rango-redirect-external`), but a wire header is
+ * forgeable: a proxy-style response route that copies an attacker-controlled
+ * upstream response's headers would let `302 Location: https://evil` plus that
+ * header bypass the same-origin guard without app code ever opting in. So the
+ * opt-in is now an out-of-band brand on the Response object itself, tracked in a
+ * `WeakSet` that cannot cross the wire. `redirect()` brands the Response; the
+ * small set of internal redirect-rebuild paths (middleware `mergeResponse`,
+ * `carryOverRedirectHeaders`, the response-route rewrap) transfer the brand onto
+ * the rebuilt Response; the guard and the SPA intercept read it. An upstream
+ * Response an app proxies is never branded, so its forged header is inert.
+ *
+ * Fail-closed: if a rebuild path ever drops the brand, the redirect is
+ * neutralized to the app root rather than allowed off-host.
+ */
+const externalRedirects = new WeakSet<Response>();
+
+/** Brand a Response as an explicit `{ external: true }` redirect (out-of-band). */
+export function markExternalRedirect(response: Response): void {
+  externalRedirects.add(response);
+}
+
+/** Read the out-of-band `{ external: true }` brand off a Response. */
+export function isExternalRedirect(response: Response): boolean {
+  return externalRedirects.has(response);
+}
+
+/**
+ * Reserved internal header name. No longer a trust signal -- the external
+ * opt-in is the out-of-band brand above. It is kept only so the redirect-rebuild
+ * paths and the guard can defensively strip any value (e.g. one forged by a
+ * proxied upstream) and guarantee it never reaches the browser.
  */
 export const EXTERNAL_REDIRECT_MARKER: string = "x-rango-redirect-external";

@@ -9,7 +9,10 @@ import {
   getLocationState,
 } from "../../server/request-context.js";
 import { redirect } from "../redirect.js";
-import { EXTERNAL_REDIRECT_MARKER } from "../../redirect-origin.js";
+import {
+  EXTERNAL_REDIRECT_MARKER,
+  isExternalRedirect,
+} from "../../redirect-origin.js";
 import type { LocationStateEntry } from "../../browser/react/location-state-shared.js";
 
 /** Minimal location state entry for testing. */
@@ -56,29 +59,34 @@ describe("redirect()", () => {
   });
 
   describe("external opt-in", () => {
-    it("does NOT set the external marker by default", () => {
-      expect(
-        redirect("/target").headers.get(EXTERNAL_REDIRECT_MARKER),
-      ).toBeNull();
-      expect(
-        redirect("https://accounts.example.com/oauth").headers.get(
-          EXTERNAL_REDIRECT_MARKER,
-        ),
-      ).toBeNull();
+    // The opt-in is an out-of-band brand on the Response object (a WeakSet
+    // membership), NOT a wire header -- a header would be forgeable by an
+    // attacker-controlled upstream response. No external wire header is ever set.
+    it("does NOT brand or set any external wire header by default", () => {
+      const relative = redirect("/target");
+      expect(isExternalRedirect(relative)).toBe(false);
+      expect(relative.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+
+      const absolute = redirect("https://accounts.example.com/oauth");
+      expect(isExternalRedirect(absolute)).toBe(false);
+      expect(absolute.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
     });
 
-    it("stamps the external marker when external: true", () => {
+    it("brands the Response when external: true (no wire header)", () => {
       const res = redirect("https://accounts.example.com/oauth", {
         external: true,
       });
-      expect(res.headers.get(EXTERNAL_REDIRECT_MARKER)).toBe("1");
+      expect(isExternalRedirect(res)).toBe(true);
+      // The opt-in never rides a wire header.
+      expect(res.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
       expect(res.headers.get("Location")).toBe(
         "https://accounts.example.com/oauth",
       );
     });
 
-    it("does not stamp the marker when external is false", () => {
+    it("does not brand when external is false", () => {
       const res = redirect("/target", { external: false });
+      expect(isExternalRedirect(res)).toBe(false);
       expect(res.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
     });
   });

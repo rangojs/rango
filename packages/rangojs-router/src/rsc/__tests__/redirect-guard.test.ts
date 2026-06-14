@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { guardOutgoingRedirect } from "../redirect-guard.js";
 import {
   resolveSameOriginRedirect,
+  resolveExternalRedirect,
+  markExternalRedirect,
   EXTERNAL_REDIRECT_MARKER,
 } from "../../redirect-origin.js";
 
@@ -46,6 +48,43 @@ describe("resolveSameOriginRedirect (shared rule)", () => {
 
   it("rejects unparseable input", () => {
     expect(resolveSameOriginRedirect("http://[bad", ORIGIN)).toBeNull();
+  });
+});
+
+describe("resolveExternalRedirect (external scheme rule)", () => {
+  it("accepts off-origin http(s) targets", () => {
+    expect(
+      resolveExternalRedirect("https://accounts.example.com/oauth", ORIGIN),
+    ).toBe("https://accounts.example.com/oauth");
+    expect(resolveExternalRedirect("http://other.example/x", ORIGIN)).toBe(
+      "http://other.example/x",
+    );
+  });
+
+  it("accepts same-origin http(s) targets (external is a superset)", () => {
+    expect(resolveExternalRedirect("/dash", ORIGIN)).toBe(
+      "https://app.example.com/dash",
+    );
+  });
+
+  it("rejects javascript:, data:, and other non-http(s) schemes", () => {
+    expect(
+      resolveExternalRedirect("javascript:alert(document.cookie)", ORIGIN),
+    ).toBeNull();
+    expect(
+      resolveExternalRedirect(
+        "data:text/html,<script>alert(1)</script>",
+        ORIGIN,
+      ),
+    ).toBeNull();
+    expect(resolveExternalRedirect("vbscript:msgbox(1)", ORIGIN)).toBeNull();
+    expect(
+      resolveExternalRedirect("blob:https://app.example.com/x", ORIGIN),
+    ).toBeNull();
+  });
+
+  it("rejects unparseable input", () => {
+    expect(resolveExternalRedirect("http://[bad", ORIGIN)).toBeNull();
   });
 });
 
@@ -105,17 +144,63 @@ describe("guardOutgoingRedirect", () => {
     expect(out.headers.get("Location")).toBe("/");
   });
 
-  it("allows an off-host redirect carrying the external marker and strips it", () => {
-    const res = redirectResponse("https://accounts.example.com/oauth", {
-      headers: { [EXTERNAL_REDIRECT_MARKER]: "1" },
-    });
+  it("allows an off-host redirect carrying the out-of-band external brand and clears the marker", () => {
+    const res = redirectResponse("https://accounts.example.com/oauth");
+    markExternalRedirect(res);
     const out = guardOutgoingRedirect(res, ORIGIN, undefined);
     expect(out).toBe(res);
     expect(out.headers.get("Location")).toBe(
       "https://accounts.example.com/oauth",
     );
-    // Internal marker never leaves the server.
+    // The reserved marker never leaves the server.
     expect(out.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+  });
+
+  it("allows a branded same-origin redirect (external is a superset of same-origin)", () => {
+    const res = redirectResponse("/dashboard");
+    markExternalRedirect(res);
+    const out = guardOutgoingRedirect(res, ORIGIN, undefined);
+    expect(out).toBe(res);
+    expect(out.headers.get("Location")).toBe("/dashboard");
+  });
+
+  // Finding #1 regression (forgeable opt-in): the external opt-in is an
+  // out-of-band brand, NOT the wire header. A proxy-style response route that
+  // copies an attacker-controlled upstream response's headers must NOT be able
+  // to opt a redirect out of the same-origin guard by injecting this header.
+  it("does NOT trust a forged external marker header; neutralizes the off-host target", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = redirectResponse("https://evil.example/phish", {
+      headers: { [EXTERNAL_REDIRECT_MARKER]: "1" },
+    });
+    // Note: NOT branded -- the header is the only (forged) signal.
+    const out = guardOutgoingRedirect(res, ORIGIN, undefined);
+    expect(out).not.toBe(res);
+    expect(out.headers.get("Location")).toBe("/");
+    // The forged header is never propagated to the browser either.
+    expect(out.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+  });
+
+  // Finding #2 regression (unvalidated scheme): the external opt-in waives the
+  // same-origin rule, NOT scheme safety. A branded redirect to a non-http(s)
+  // target must still be neutralized so it can never reach the client's
+  // window.location.assign() as a scriptable navigation.
+  it("neutralizes a branded redirect to a javascript: target", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = redirectResponse("javascript:alert(document.cookie)");
+    markExternalRedirect(res);
+    const out = guardOutgoingRedirect(res, ORIGIN, undefined);
+    expect(out).not.toBe(res);
+    expect(out.headers.get("Location")).toBe("/");
+  });
+
+  it("neutralizes a branded redirect to a data: target", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = redirectResponse("data:text/html,<script>alert(1)</script>");
+    markExternalRedirect(res);
+    const out = guardOutgoingRedirect(res, ORIGIN, "/admin");
+    expect(out).not.toBe(res);
+    expect(out.headers.get("Location")).toBe("/admin");
   });
 
   it("logs the blocked target in dev", () => {

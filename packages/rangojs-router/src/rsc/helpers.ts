@@ -11,7 +11,11 @@ import {
 import type { RequestContext } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { isRedirectResponse } from "../response-utils.js";
-import { EXTERNAL_REDIRECT_MARKER } from "../redirect-origin.js";
+import {
+  EXTERNAL_REDIRECT_MARKER,
+  isExternalRedirect,
+  markExternalRedirect,
+} from "../redirect-origin.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
 import type { RscPayload } from "./types.js";
@@ -65,9 +69,18 @@ function drainOnResponseCallbacks(
   const callbacks = ctx._onResponseCallbacks;
   if (callbacks.length === 0) return response;
   ctx._onResponseCallbacks = [];
+  // An onResponse callback may return a NEW Response (e.g. to add a header),
+  // which drops the out-of-band external-redirect brand (brand is keyed on
+  // Response object identity). Preserve a redirect(url, { external: true })
+  // opt-in across that rebuild so a callback can't silently neutralize the
+  // off-host redirect at the guard chokepoint.
+  const wasExternal = isExternalRedirect(response);
   let result = response;
   for (const callback of callbacks) {
     result = callback(result) ?? result;
+  }
+  if (wasExternal && !isExternalRedirect(result)) {
+    markExternalRedirect(result);
   }
   return result;
 }
@@ -140,13 +153,16 @@ export function createSimpleRedirectResponse(redirectUrl: string): Response {
  * appends Set-Cookie to avoid clobbering multiple cookie headers.
  *
  * This is a GENERIC copier used by every redirect-rebuild path (PE
- * extractRedirectResponse, the SPA intercept below, response-route rewrap), so
- * it must preserve the internal external-redirect marker: a document-native
- * rebuild has to carry it through to the guard chokepoint, which is what strips
- * it. Stripping the marker here instead would silently defeat
- * redirect(url, { external: true }) on any rebuild path. The two browser-facing
- * exits strip it: `guardOutgoingRedirect` (document 3xx) and the SPA intercept
- * below (200/204).
+ * extractRedirectResponse, the SPA intercept below, the guard's neutralize
+ * rebuild), so it has two redirect-specific jobs:
+ *
+ * 1. NEVER copy the reserved external-redirect header: it is no longer a trust
+ *    signal (the opt-in is the out-of-band brand), and a forged value from a
+ *    proxied upstream must not ride a rebuilt response to the browser.
+ * 2. Transfer the out-of-band external brand: a rebuilt document-native redirect
+ *    has to carry the opt-in to the guard chokepoint, which reads and clears it.
+ *    Without this transfer, redirect(url, { external: true }) would be silently
+ *    neutralized on any rebuild path (fail-closed, but a feature regression).
  */
 export function carryOverRedirectHeaders(
   source: Response,
@@ -155,12 +171,16 @@ export function carryOverRedirectHeaders(
   source.headers.forEach((value, name) => {
     const lower = name.toLowerCase();
     if (lower === "location" || lower === "x-rsc-redirect") return;
+    if (lower === EXTERNAL_REDIRECT_MARKER) return;
     if (lower === "set-cookie") {
       target.headers.append(name, value);
     } else if (!target.headers.has(name)) {
       target.headers.set(name, value);
     }
   });
+  if (isExternalRedirect(source)) {
+    markExternalRedirect(target);
+  }
 }
 
 /**
@@ -181,10 +201,12 @@ export function interceptRedirectForPartial(
     return null;
   }
   const redirectUrl = response.headers.get("Location")!;
-  // redirect(url, { external: true }) marks an explicit off-host redirect. On
-  // the SPA/action channel it must travel as a Flight payload so the client
-  // does a hard navigation (location.assign) rather than a partial fetch.
-  const external = response.headers.get(EXTERNAL_REDIRECT_MARKER) !== null;
+  // redirect(url, { external: true }) marks an explicit off-host redirect via
+  // the out-of-band brand (not a wire header). On the SPA/action channel the
+  // intent must travel as a Flight payload (metadata.redirect.external) so the
+  // client does a scheme-validated hard navigation (location.assign) rather than
+  // a partial fetch. The client re-validates the scheme; see partial-update.ts.
+  const external = isExternalRedirect(response);
   const locationState = getLocationState();
   let intercepted: Response;
   if (locationState) {
@@ -200,10 +222,16 @@ export function interceptRedirectForPartial(
   }
 
   carryOverRedirectHeaders(response, intercepted);
-  // Browser-facing exit for the SPA channel: the external intent now rides in
-  // metadata.redirect.external (Flight), so the internal marker must not leak on
-  // the 200/204. (The document channel is stripped by guardOutgoingRedirect.)
-  intercepted.headers.delete(EXTERNAL_REDIRECT_MARKER);
+  // Defense-in-depth at the SPA browser-facing exit: carryOverRedirectHeaders
+  // already refuses to copy the reserved marker, but strip any value that might
+  // exist on `intercepted` so a forged header can never ride the 200/204 to the
+  // browser. The external intent travels in metadata.redirect.external (Flight),
+  // where the client re-validates the scheme.
+  try {
+    intercepted.headers.delete(EXTERNAL_REDIRECT_MARKER);
+  } catch {
+    // Immutable headers: the marker was never copied here, so this is inert.
+  }
 
   return intercepted;
 }

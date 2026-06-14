@@ -508,8 +508,11 @@ throw redirect("https://accounts.google.com/o/oauth2/v2/auth?...", {
 ```
 
 `{ external: true }` is the audit point: passing user input with it re-opens the
-risk and is your responsibility (the Rails `allow_other_host: true` model). Omit
-it and off-host targets stay blocked.
+cross-origin risk and is your responsibility (the Rails `allow_other_host: true`
+model). Omit it and off-host targets stay blocked. `external` only waives the
+**same-origin** rule, not scheme safety: the target must be `http(s)` — a
+`javascript:` or `data:` URL is still neutralized, so a forged or mistaken
+`external` target can never become a scriptable navigation.
 
 ## Error Handling
 

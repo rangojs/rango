@@ -30,6 +30,11 @@ import {
   mergeStubHeadersAndFinalize,
 } from "./helpers.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
+import {
+  EXTERNAL_REDIRECT_MARKER,
+  isExternalRedirect,
+  markExternalRedirect,
+} from "../redirect-origin.js";
 
 export interface ResponseRouteMatch {
   responseType: string;
@@ -110,16 +115,29 @@ export async function handleResponseRoute<TEnv>(
       }
       const headers = new Headers();
       result.headers.forEach((value, key) => {
+        // Never copy the reserved external-redirect marker off a handler result.
+        // It is not a trust signal -- the opt-in is the out-of-band brand below
+        // -- and a proxy-style route returning an attacker-controlled upstream
+        // response must not let a forged value ride through to the browser.
+        if (key.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
         if (key.toLowerCase() === "set-cookie") {
           headers.append(key, value);
         } else {
           headers.set(key, value);
         }
       });
-      return createResponseWithMergedHeaders(result.body, {
+      const rewrapped = createResponseWithMergedHeaders(result.body, {
         status: result.status,
         headers,
       });
+      // Transfer the out-of-band external brand only when the handler result is
+      // genuinely branded (a real redirect(url, { external: true })). A proxied
+      // upstream Response is never branded, so an attacker cannot opt a response
+      // route's redirect out of the same-origin guard by injecting the header.
+      if (isExternalRedirect(result)) {
+        markExternalRedirect(rewrapped);
+      }
+      return rewrapped;
     };
 
     try {
