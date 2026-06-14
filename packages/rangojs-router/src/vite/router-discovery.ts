@@ -31,6 +31,7 @@ import {
 } from "./plugins/expose-internal-ids.js";
 import { hashClientRefs } from "./plugins/client-ref-hashing.js";
 import { hashServerRefs } from "./plugins/server-ref-hashing.js";
+import { defineEncryptionKeyExpr } from "./encryption-key.js";
 import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
   createDiscoveryState,
@@ -165,9 +166,13 @@ async function createTempRscServer(
           ssr: "virtual:entry-ssr",
           rsc: state.resolvedEntryPath!,
         },
-        // EXPERIMENT: consistent encryption key so build-time prerender bound
-        // args decrypt at runtime (preserve experiment).
-        defineEncryptionKey: "process.env.RANGO_EXP_ENC_KEY",
+        // Build prerender/static encrypts inline-action bound args; give the temp
+        // server the SAME key as the main build so they decrypt at runtime. Build
+        // only -- dev prerender renders in the main dev server, so no coordination
+        // is needed there.
+        ...(options.forceBuild
+          ? { defineEncryptionKey: defineEncryptionKeyExpr() }
+          : {}),
       }),
       // hashClientRefs/hashServerRefs only in build mode — production bundles
       // need hashed refs. hashServerRefs is the server-side analog: it rewrites
