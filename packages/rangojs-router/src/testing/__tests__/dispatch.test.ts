@@ -745,6 +745,36 @@ describe("dispatch", () => {
       expect(body.type).toBeUndefined();
     });
 
+    // Parity regression (#572 / #582): a json route that returns a nested
+    // unresolved Promise (forgotten await) must reject EXACTLY like production.
+    // Pre-fix, dispatch did a bare JSON.stringify and shipped `{"data":{}}` green
+    // while production throws RESPONSE_NOT_SERIALIZABLE and 500s. The shared
+    // stringifyJsonRouteResult guard makes dispatch fail where production fails.
+    it("rejects a json route returning a nested Promise (forgotten await) as a problem+json 500, like production", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/forgot-await",
+            // The cast mimics an `as`-cast or untyped (JS) handler slipping a
+            // Promise past the compile-time nested-Promise rejection.
+            (() => ({ data: Promise.resolve("late") })) as any,
+            { name: "api.forgotAwait" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/forgot-await" });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toBe(
+        "application/problem+json;charset=utf-8",
+      );
+      const body = await res.json();
+      expect(body.code).toBe("RESPONSE_NOT_SERIALIZABLE");
+      expect(body.status).toBe(500);
+      // The silent forgotten-await body must NEVER ship.
+      expect(body).not.toHaveProperty("data");
+    });
+
     it("sanitizes a thrown generic Error on a json route to a problem+json 500 in production", async () => {
       const prev = process.env.NODE_ENV;
       process.env.NODE_ENV = "production";

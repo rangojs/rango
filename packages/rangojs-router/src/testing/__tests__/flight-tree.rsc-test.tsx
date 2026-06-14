@@ -59,6 +59,20 @@ describe("renderServerTree", () => {
     expect(json).toContain("root");
   });
 
+  // #572 / #582 item: renderServerTree inherits the scoped `routeMap` option
+  // (shared serializeToFlightString path), so ctx.reverse() resolves against the
+  // provided map, not the order-dependent global route map.
+  test("scopes ctx.reverse() to the provided routeMap option", async () => {
+    async function ReverseEcho() {
+      const ctx = getRequestContext();
+      return <a href={ctx.reverse("product", { id: "7" })}>go</a>;
+    }
+    const { tree } = await renderServerTree(<ReverseEcho />, {
+      routeMap: { product: "/scoped/products/:id" },
+    });
+    expect(JSON.stringify(tree)).toContain("/scoped/products/7");
+  });
+
   test("client island auto-discovered as an I-row (not inlined)", async () => {
     // No clientComponents: the transform registers Counter from its import.
     function Page() {

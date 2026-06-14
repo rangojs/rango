@@ -477,6 +477,7 @@ export function _getRequestContext<TEnv = DefaultEnv>():
 export function setRequestContextParams(
   params: Record<string, string>,
   routeName?: string,
+  routeMap?: Record<string, string>,
 ): void {
   const ctx = requestContextStorage.getStore();
   if (ctx) {
@@ -489,9 +490,13 @@ export function setRequestContextParams(
           : undefined
       ) as DefaultRouteName | undefined;
     }
-    // Update reverse with scoped resolution now that route is known
+    // Update reverse with scoped resolution now that route is known. Production
+    // omits routeMap and uses the global map (routes are registered globally);
+    // the testing primitives (renderToFlightString/renderServerTree) pass a
+    // scoped routeMap so `ctx.reverse` is not order-dependent on whatever router
+    // registered last.
     ctx.reverse = createReverseFunction(
-      getGlobalRouteMap(),
+      routeMap ?? getGlobalRouteMap(),
       routeName,
       params,
       routeName ? isRouteRootScoped(routeName) : undefined,

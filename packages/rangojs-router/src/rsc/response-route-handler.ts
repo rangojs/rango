@@ -30,6 +30,7 @@ import {
   mergeStubHeadersAndFinalize,
 } from "./helpers.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
+import { stringifyJsonRouteResult } from "./json-route-result.js";
 import {
   EXTERNAL_REDIRECT_MARKER,
   isExternalRedirect,
@@ -151,23 +152,9 @@ export async function handleResponseRoute<TEnv>(
       if (preview.responseType === "json") {
         // Runtime guard: the json() return type rejects nested Promises at
         // compile time, but an `as`-cast or untyped (JS) handler can still slip
-        // one through. JSON.stringify would silently emit {} for it (the
-        // forgotten-await footgun — the RSC pipeline awaits nested promises, this
-        // path does not). Throw a clear error instead of shipping empty data.
-        const body = JSON.stringify(result, (_key, value) => {
-          if (
-            value != null &&
-            typeof (value as { then?: unknown }).then === "function"
-          ) {
-            throw new RouterError(
-              "RESPONSE_NOT_SERIALIZABLE",
-              "A json() response route returned a Promise (likely a forgotten " +
-                "await). Await async values before returning so they serialize, " +
-                "instead of emitting an empty {}.",
-            );
-          }
-          return value;
-        });
+        // one through. stringifyJsonRouteResult throws a clear error instead of
+        // shipping empty data (shared with dispatch() so the two cannot drift).
+        const body = stringifyJsonRouteResult(result);
         return createResponseWithMergedHeaders(body, {
           status: 200,
           headers: { "content-type": "application/json;charset=utf-8" },
