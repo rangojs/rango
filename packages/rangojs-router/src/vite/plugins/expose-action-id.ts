@@ -17,6 +17,52 @@ interface RscPluginManager {
     }
   >;
   config: ResolvedConfig;
+  // Set by plugin-rsc during its analysis (scan) passes and cleared for the real
+  // emit passes. Used to distinguish the rsc scan from the rsc build below.
+  isScanBuild?: boolean;
+}
+
+type ServerReferenceMeta = RscPluginManager["serverReferenceMetaMap"][string];
+
+// plugin-rsc builds in passes that share ONE serverReferenceMetaMap: the rsc
+// scan ADDS inline-action entries, the ssr scan DELETES any module without a
+// file-level "use server" directive, then the rsc build emits the virtual
+// "vite-rsc/server-references" manifest. That manifest is eagerly imported by
+// the rsc runtime, so it snapshots the map BEFORE the lazily-loaded route module
+// is re-transformed and re-added -- the entry never makes it into the manifest.
+//
+// An inline "use server" action defined inside a "use cache" function (or any
+// non-"use server" file) therefore vanishes from the production manifest and
+// fails with "server reference not found" on a cache HIT: the cached value is
+// deserialized without executing the body that would re-register the action at
+// runtime, so React falls back to the (empty) manifest entry.
+//
+// Workaround: capture these entries during the rsc scan and re-assert them at the
+// real rsc build's buildStart, before the manifest virtual module is generated.
+// Keyed by manager so concurrent project builds in one process stay isolated.
+// Remove once the upstream plugin-rsc race is fixed.
+const capturedInlineRefsByManager = new WeakMap<
+  RscPluginManager,
+  Map<string, ServerReferenceMeta>
+>();
+
+function captureInlineActionEntry(manager: RscPluginManager, id: string): void {
+  const meta = manager.serverReferenceMetaMap[id];
+  if (!meta) return;
+  // Module-level "use server" files survive the race (the ssr scan re-adds them
+  // via the client-proxy branch). Only inline-action modules need rescuing.
+  if (isUseServerModule(id.split("?")[0]!)) return;
+
+  let map = capturedInlineRefsByManager.get(manager);
+  if (!map) {
+    map = new Map();
+    capturedInlineRefsByManager.set(manager, map);
+  }
+  map.set(id, {
+    importId: meta.importId,
+    referenceKey: meta.referenceKey,
+    exportNames: [...meta.exportNames],
+  });
 }
 
 interface RscPluginApi {
@@ -232,6 +278,24 @@ export function exposeActionId(): Plugin {
 
       if (!isBuild) return;
 
+      // Re-assert inline-action entries that the ssr scan dropped, before the
+      // real rsc build generates the "vite-rsc/server-references" manifest. This
+      // buildStart fires before the eagerly-imported manifest virtual module
+      // loads, so the rescued entries are present when it is generated. Scoped to
+      // the rsc environment's real build (isScanBuild === false) so we never
+      // disturb the analysis passes. See capturedInlineRefsByManager.
+      const manager = rscPluginApi.manager;
+      if (this.environment?.name === "rsc" && !manager.isScanBuild) {
+        const captured = capturedInlineRefsByManager.get(manager);
+        if (captured) {
+          for (const [id, meta] of captured) {
+            if (!manager.serverReferenceMetaMap[id]) {
+              manager.serverReferenceMetaMap[id] = meta;
+            }
+          }
+        }
+      }
+
       hashToFileMap = new Map();
       const { serverReferenceMetaMap } = rscPluginApi.manager;
 
@@ -257,6 +321,14 @@ export function exposeActionId(): Plugin {
     // Dev mode only: transform hook runs after RSC plugin creates server references
     // In dev mode, IDs already contain file paths, not hashes
     transform(code, id) {
+      // Capture inline-action server references seen in the rsc environment so
+      // they can be re-asserted before the manifest is generated (see the
+      // capturedInlineRefsByManager comment). enforce:"post" guarantees this runs
+      // after plugin-rsc's rsc:use-server has populated serverReferenceMetaMap.
+      if (isBuild && this.environment?.name === "rsc" && rscPluginApi) {
+        captureInlineActionEntry(rscPluginApi.manager, id);
+      }
+
       // Skip in build mode - renderChunk handles it
       if (isBuild) {
         return;

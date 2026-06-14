@@ -188,6 +188,29 @@ export async function getProducts() {
 }
 ```
 
+### Inline server actions in cached modules (server-references manifest)
+
+An inline `"use server"` action defined inside a `"use cache"` function (or any
+module without a file-level `"use server"` directive) must still appear in the
+production `virtual:vite-rsc/server-references` manifest so it can be resolved on
+a cache HIT -- when the cached value is deserialized without executing the body
+that would otherwise register the action in React's runtime registry.
+
+plugin-rsc's multi-pass build drops such modules from the shared
+`serverReferenceMetaMap`: the ssr scan deletes any module lacking a file-level
+`"use server"`, and the rsc build emits the manifest (eagerly imported by the rsc
+runtime, so it snapshots the map early) before the lazily-loaded route module is
+re-added. The entry never lands in the manifest, and the route 500s with `server
+reference not found` on a hit (dev and the cache MISS hide it -- the body runs
+and self-registers).
+
+`exposeActionId` (`src/vite/plugins/expose-action-id.ts`) works around this:
+during the rsc scan it captures inline-action entries from
+`serverReferenceMetaMap`, and at the real rsc build's `buildStart` (before the
+manifest virtual module loads) it re-asserts them. This also makes deterministic
+the ordinary inline-action modules that previously survived only by load-order
+luck. Remove once the upstream plugin-rsc race is fixed.
+
 ## Runtime: `registerCachedFunction`
 
 ```ts
@@ -210,6 +233,23 @@ registerCachedFunction(fn, id, profileName);
 ### Dev mode
 
 Caching is active in development (backed by `MemorySegmentCacheStore`). This matches production behavior and allows testing cache semantics locally. HMR invalidates the in-memory store so code changes take effect immediately.
+
+## Embedding server actions in cached components
+
+A cached function can return a component that creates an inline `"use server"`
+action -- e.g. a cached article list whose rows each have a like button. The
+contract, locked by `e2e/use-cache-inline-action.test.ts` (dev + production):
+
+| Aspect                                       | Behavior                                                                                                                                                                                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Values the action closes over (render scope) | Frozen at cache-WRITE. The closure compiles to encrypted bound args (`encryptActionBoundArgs`) captured when the entry is written, replayed verbatim on a hit. Correct for stable identities (an article id); a hazard for volatile/request-scoped values.               |
+| The action body                              | Runs live on every invocation. It is an ordinary server function once called: fresh computation, live request context. `cookies()`/`headers()` work in the body (it executes in the live request, not the cached one) -- the read guard applies only to the cached body. |
+| Cache hit                                    | The action survives serialize -> store -> deserialize and stays invocable (see the manifest re-assertion note under Build-Time).                                                                                                                                         |
+
+The freeze of captured scope is not a bug -- it is what makes a cached list with
+per-item actions work (the item identity is meant to be fixed). The hazard is
+capturing a per-request value (token, session, time) and expecting freshness;
+read those live in the action body instead.
 
 ## Interaction with Existing Caching
 

@@ -282,6 +282,47 @@ intercept("@modal", ".product", async (ctx) => {
 }),
 ```
 
+## Embedding server actions in cached components
+
+A cached function may return a component that creates an inline `"use server"`
+action. The canonical case is a cached list whose items each carry an action --
+e.g. a cached article list where every row has a like button:
+
+```typescript
+export async function ArticleList() {
+  "use cache: articles";
+  const articles = await db.query("SELECT id, title FROM articles");
+  return (
+    <ul>
+      {articles.map((a) => {
+        const articleId = a.id; // captured -> frozen with the cache entry
+        async function like() {
+          "use server";
+          // runs live on click, in the CURRENT request scope
+          const user = cookies().get("session")?.value;
+          if (user) await db.like(articleId, user);
+        }
+        return <LikeButton key={a.id} title={a.title} action={like} />;
+      })}
+    </ul>
+  );
+}
+```
+
+Three behaviors, locked by `use-cache-inline-action.test.ts` (dev + prod):
+
+| What                                            | Behavior                  | Why                                                                                                                                                                           |
+| ----------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Values the action **closes over** (`articleId`) | **Frozen** at cache-write | The closure compiles to encrypted bound args, snapshotted when the entry is written and replayed verbatim on a hit. Correct for stable identities; wrong for volatile values. |
+| The action **body**                             | **Runs live** every call  | Once invoked it is an ordinary server function: fresh computation and live request context. `cookies()` / `headers()` work here (the body executes in the live request).      |
+| Invocability on a **cache hit**                 | **Works**                 | The action survives serialize -> cache -> deserialize and stays callable.                                                                                                     |
+
+Rule of thumb: **capture stable identities, read volatile/request-scoped values
+live in the body.** Do not close over a per-request token, the current user, or
+the current time and expect freshness -- those are frozen at cache-write. The
+`cookies()`/`headers()` read guard applies to the cached function body, NOT to an
+inline action's body.
+
 ## Vite Transform
 
 The `rango:use-cache` Vite plugin detects the directive and wraps exports with
