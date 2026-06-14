@@ -220,6 +220,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         entries: finalEntries,
         serverHandler: false,
         clientChunks,
+        // EXPERIMENT: consistent encryption key (preserve experiment).
+        defineEncryptionKey: "process.env.RANGO_EXP_ENC_KEY",
       }) as PluginOption,
     );
     plugins.push(clientRefDedup());
@@ -373,6 +375,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       rsc({
         entries: finalEntries,
         clientChunks,
+        // EXPERIMENT: consistent encryption key (preserve experiment).
+        defineEncryptionKey: "process.env.RANGO_EXP_ENC_KEY",
       }) as PluginOption,
     );
     plugins.push(clientRefDedup());

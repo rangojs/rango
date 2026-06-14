@@ -3,6 +3,7 @@ import {
   CachedInlineActionForm,
   type CachedInlineActionState,
 } from "../components/CachedInlineActionForm.js";
+import { fetchRandomAsyncValue } from "../inline-action-helpers.js";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -197,20 +198,6 @@ export async function cachedCallsCtxHeadersSet(ctx: any): Promise<string> {
   "use cache";
   ctx.headers.set("X-Test", "test-value");
   return "no-throw";
-}
-
-/**
- * Plain (NON-cached) async function the embedded action calls in its body. It
- * lives at module scope, so the inline "use server" closure references it as a
- * normal binding (not a render-scope capture, so not a bound arg). It therefore
- * runs LIVE on every action invocation and returns a fresh value each call --
- * the counterpart to the frozen captured token.
- */
-async function fetchRandomAsyncValue(): Promise<string> {
-  await new Promise((r) => setTimeout(r, 5));
-  return `async-${Date.now().toString(36)}-${Math.floor(
-    Math.random() * 1e6,
-  ).toString(36)}`;
 }
 
 /**

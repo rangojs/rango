@@ -30,6 +30,7 @@ import {
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
 import { hashClientRefs } from "./plugins/client-ref-hashing.js";
+import { hashServerRefs } from "./plugins/server-ref-hashing.js";
 import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
   createDiscoveryState,
@@ -164,9 +165,18 @@ async function createTempRscServer(
           ssr: "virtual:entry-ssr",
           rsc: state.resolvedEntryPath!,
         },
+        // EXPERIMENT: consistent encryption key so build-time prerender bound
+        // args decrypt at runtime (preserve experiment).
+        defineEncryptionKey: "process.env.RANGO_EXP_ENC_KEY",
       }),
-      // hashClientRefs only in build mode — production bundles need hashed refs
-      ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
+      // hashClientRefs/hashServerRefs only in build mode — production bundles
+      // need hashed refs. hashServerRefs is the server-side analog: it rewrites
+      // registerServerReference dev-style ids to production hashes so a
+      // server-created action embedded in prerendered/static Flight resolves
+      // against the production manifest on a build-time-cache hit.
+      ...(options.forceBuild
+        ? [hashClientRefs(state.projectRoot), hashServerRefs(state.projectRoot)]
+        : []),
       createVersionPlugin(),
       createVirtualStubPlugin(),
       createCloudflareProtocolStubPlugin(),

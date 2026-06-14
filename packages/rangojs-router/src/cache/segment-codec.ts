@@ -79,7 +79,13 @@ export async function rscDeserialize<T>(
 
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
+  return createFromReadableStream<T>(stream, {
+    temporaryReferences,
+    // Preserve embedded server references on a cache/prerender HIT (plugin-rsc
+    // PR #1246) so they re-serialize to the client instead of resolving to a raw
+    // function React refuses to pass to a Client Component.
+    serverReferences: "preserve",
+  });
 }
 
 /**
@@ -107,7 +113,13 @@ export async function serializeResult(value: unknown): Promise<string | null> {
 export async function deserializeResult<T>(encoded: string): Promise<T> {
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
+  return createFromReadableStream<T>(stream, {
+    temporaryReferences,
+    // Preserve embedded server references on a cache/prerender HIT (plugin-rsc
+    // PR #1246) so they re-serialize to the client instead of resolving to a raw
+    // function React refuses to pass to a Client Component.
+    serverReferences: "preserve",
+  });
 }
 
 /**
@@ -218,6 +230,11 @@ export async function deserializeSegments(
         await Promise.all([
           createFromReadableStream(stringToStream(item.encoded), {
             temporaryReferences,
+            // Preserve embedded server references on a cache/prerender HIT
+            // (plugin-rsc PR #1246) so they re-serialize to the client instead of
+            // resolving to a raw function React refuses to pass to a Client
+            // Component.
+            serverReferences: "preserve",
           }),
           rscDeserialize(item.encodedLayout),
           rscDeserialize(item.encodedLoaderData),

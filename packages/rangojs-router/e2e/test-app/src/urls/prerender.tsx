@@ -4,10 +4,16 @@ import {
   Static,
   getRequestContext,
   Breadcrumbs,
+  cookies,
 } from "@rangojs/router";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
+import {
+  CachedInlineActionForm,
+  type CachedInlineActionState,
+} from "../components/CachedInlineActionForm.js";
+import { fetchRandomAsyncValue } from "../inline-action-helpers.js";
 // Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
 // resolve.alias. Reaching this through build-time Static/Prerender handlers
 // asserts discovery's runner honors third-party resolvers (issue #500).
@@ -131,6 +137,64 @@ export const PrerenderHandle = Prerender(async (ctx) => {
   );
 });
 
+// Static handler embedding an inline "use server" action. The action closes over
+// a BUILD-TIME token (frozen when the page is pre-rendered) and is handed to a
+// client component. At runtime the worker serves the stored Flight (a build-time
+// cache hit) WITHOUT re-running this handler, so the embedded action must resolve
+// from the server-references manifest -- the same path that 500'd for "use cache"
+// before the expose-action-id manifest re-assertion.
+export const StaticInlineActionPage = Static(() => {
+  const token = `stok-${Date.now().toString(36)}-${Math.floor(
+    Math.random() * 1e6,
+  ).toString(36)}`;
+
+  async function staticInlineAction(
+    _prev: CachedInlineActionState,
+    _formData: FormData,
+  ): Promise<CachedInlineActionState> {
+    "use server";
+    const asyncValue = await fetchRandomAsyncValue();
+    const sessionCookie = cookies().get("cai-session")?.value ?? "none";
+    return { capturedToken: token, asyncValue, sessionCookie };
+  }
+
+  return (
+    <CachedInlineActionForm
+      renderedToken={token}
+      cachedAction={staticInlineAction}
+    />
+  );
+});
+
+// Prerendered, parameterized handler embedding an inline "use server" action --
+// the canonical article-list + like-button case. Each param is pre-rendered at
+// build time with its id captured (frozen) into the action's bound args; the
+// action body runs live on click (fresh async value + live session cookie).
+// Exercises the same manifest-resolution path on a prerender (build-time cache) hit.
+export const PrerenderInlineActionPage = Prerender(
+  async () => [{ id: "a1" }, { id: "a2" }],
+  async (ctx) => {
+    const articleId = ctx.params.id;
+
+    async function likeAction(
+      _prev: CachedInlineActionState,
+      _formData: FormData,
+    ): Promise<CachedInlineActionState> {
+      "use server";
+      const asyncValue = await fetchRandomAsyncValue();
+      const sessionCookie = cookies().get("cai-session")?.value ?? "none";
+      return { capturedToken: articleId, asyncValue, sessionCookie };
+    }
+
+    return (
+      <CachedInlineActionForm
+        renderedToken={articleId}
+        cachedAction={likeAction}
+      />
+    );
+  },
+);
+
 export const prerenderPatterns = urls(({ path, loader, notFoundBoundary }) => [
   path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
   path("/docs", DocsPage, { name: "docs" }),
@@ -153,4 +217,11 @@ export const prerenderPatterns = urls(({ path, loader, notFoundBoundary }) => [
     name: "prerender-reverse",
   }),
   path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
+  // Static + Prerender handlers embedding inline "use server" actions.
+  path("/static-inline-action", StaticInlineActionPage, {
+    name: "static-inline-action",
+  }),
+  path("/prerender-inline-action/:id", PrerenderInlineActionPage, {
+    name: "prerender-inline-action",
+  }),
 ]);
