@@ -1,4 +1,8 @@
 import { cookies, headers, Breadcrumbs } from "@rangojs/router";
+import {
+  CachedInlineActionForm,
+  type CachedInlineActionState,
+} from "../components/CachedInlineActionForm.js";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -193,4 +197,61 @@ export async function cachedCallsCtxHeadersSet(ctx: any): Promise<string> {
   "use cache";
   ctx.headers.set("X-Test", "test-value");
   return "no-throw";
+}
+
+/**
+ * Plain (NON-cached) async function the embedded action calls in its body. It
+ * lives at module scope, so the inline "use server" closure references it as a
+ * normal binding (not a render-scope capture, so not a bound arg). It therefore
+ * runs LIVE on every action invocation and returns a fresh value each call --
+ * the counterpart to the frozen captured token.
+ */
+async function fetchRandomAsyncValue(): Promise<string> {
+  await new Promise((r) => setTimeout(r, 5));
+  return `async-${Date.now().toString(36)}-${Math.floor(
+    Math.random() * 1e6,
+  ).toString(36)}`;
+}
+
+/**
+ * Cached server component that creates an inline "use server" action and hands
+ * it to a client component. Pins the cache + embedded-inline-action contract on
+ * three axes at once:
+ *
+ * - capturedToken: the render-scope `token` the action CLOSES OVER is captured
+ *   into the action's bound args (encryptActionBoundArgs in production) at
+ *   cache-WRITE time. On a cache hit there is no re-render, so the action
+ *   replays the frozen write-time token, identical to the cached rendered token.
+ *   The token mixes Date.now() and Math.random() so a fresh render would differ,
+ *   making the freeze observable across a reload.
+ * - asyncValue: the action BODY runs live per invocation. Calling the module-
+ *   level fetchRandomAsyncValue() returns a fresh value on every call, proving
+ *   the body is not frozen with the cache.
+ * - sessionCookie: cookies() read in the action body resolves against the LIVE
+ *   POST request context. cookies() is forbidden inside "use cache", so it can
+ *   only be read here, at invocation -- proving the action runs in the current
+ *   request's scope, not the cached render's. See use-cache-inline-action.test.ts.
+ */
+export async function getCachedInlineActionShell(): Promise<React.ReactNode> {
+  "use cache";
+  const token = `tok-${Date.now().toString(36)}-${Math.floor(
+    Math.random() * 1e6,
+  ).toString(36)}`;
+
+  async function cachedInlineAction(
+    _prev: CachedInlineActionState,
+    _formData: FormData,
+  ): Promise<CachedInlineActionState> {
+    "use server";
+    const asyncValue = await fetchRandomAsyncValue();
+    const sessionCookie = cookies().get("cai-session")?.value ?? "none";
+    return { capturedToken: token, asyncValue, sessionCookie };
+  }
+
+  return (
+    <CachedInlineActionForm
+      renderedToken={token}
+      cachedAction={cachedInlineAction}
+    />
+  );
 }

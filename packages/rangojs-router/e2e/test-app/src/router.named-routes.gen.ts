@@ -332,6 +332,7 @@ export const NamedRoutes = {
   "useCacheTest.loaderSegmentPages.loaderSegmentPage": { path: "/use-cache-test/loader-segments/:pageId", search: { page: "number?" } },
   "useCacheTest.useCacheTest.basic": "/use-cache-test/basic",
   "useCacheTest.useCacheTest.brandCheck": "/use-cache-test/brand-check",
+  "useCacheTest.useCacheTest.cachedInlineAction": "/use-cache-test/cached-inline-action",
   "useCacheTest.useCacheTest.cachedNode": "/use-cache-test/cached-node",
   "useCacheTest.useCacheTest.cachedParentChildSet": "/use-cache-test/cached-parent-child-set",
   "useCacheTest.useCacheTest.guardCookies": "/use-cache-test/guard-cookies",
