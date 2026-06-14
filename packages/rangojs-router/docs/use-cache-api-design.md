@@ -22,6 +22,27 @@ export async function getCategories() {
 }
 ```
 
+File-level `"use cache"` wraps **only exports the transform can statically confirm are functions** -- an `export async function` declaration, or `export const f = async () => {}`. Any export it cannot confirm is a function is rejected at build:
+
+```ts
+"use cache";
+
+export const VERSION = 1; // rejected: confirmed non-function
+export const getUser = withCache(fetchUser); // rejected: factory/HOF, result not statically a function
+export async function getData() {} // wrapped
+```
+
+The factory/HOF case is rejected **even though it returns a function at runtime**. A call-expression initializer is statically indeterminate -- the transform cannot tell `withCache(fetchUser)` (a function) from `loadConfig()` (an object) apart -- so it fails loud at build rather than wrapping a value that might break at call time. The remedy is to declare the export directly, push `"use cache"` into the function body (function-level), or move non-function exports to a separate module:
+
+```ts
+"use cache";
+
+export async function getUser(id: string) {
+  // wrapped
+  return fetchUser(id);
+}
+```
+
 ### Function-level (named profile per function)
 
 ```ts
@@ -142,6 +163,8 @@ export const getProducts = registerCachedFunction(
   "default"
 );
 ```
+
+The file-level filter wraps only exports `transformWrapExport` reports as `isFunction === true`. That field is `boolean | undefined`: `true` (confirmed function), `false` (confirmed non-function), `undefined` (cannot tell statically, e.g. a factory call). The guard is `isFunction !== true`, so both `false` and `undefined` are rejected -- this is the deliberate "statically-confirmed functions only" policy above, not an oversight. Guarding on `=== false` instead would let a statically-indeterminate export through to be wrapped once `@vitejs/plugin-rsc` [#1246](https://github.com/vitejs/vite-plugin-react/pull/1246) makes that case report `undefined` rather than `false`.
 
 ### Function-level transform
 

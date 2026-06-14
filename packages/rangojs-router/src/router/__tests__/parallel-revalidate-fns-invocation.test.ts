@@ -50,6 +50,7 @@ import {
   resolveParallelSegmentsWithRevalidation,
   resolveOrphanLayoutWithRevalidation,
 } from "../segment-resolution/revalidation.js";
+import { createLoader } from "../../loader.js";
 import type { EntryData } from "../../server/context.js";
 import type { SegmentResolutionDeps } from "../types.js";
 import type { ShouldRevalidateFn } from "../../types/handler-context.js";
@@ -477,5 +478,285 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
 
     expect(fn1).toHaveBeenCalledTimes(1);
     expect(fn2).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Pins the INTENTIONAL (A) divergence between the two parallel-slot resolvers
+// for the parent-chain case the suite above never exercised: slot NOT in the
+// client set, parent IS (isNewParent=false), belongsToRoute=false, and ZERO
+// revalidate fns — so the policy SEED is the final decision (no fn overrides it).
+//
+//   - main path  (resolveParallelSegmentsWithRevalidation): seed =
+//     belongsToRoute || isNewParent = false  -> slot SKIPPED (component null,
+//     handler not run).
+//   - orphan path (resolveOrphanLayoutWithRevalidation): seed = unconditional
+//     true -> slot FORCE-RENDERED (handler runs). This is the #482 blank-
+//     parent-chain-slot guard.
+//
+// A sentinel-returning handler (not null) makes "resolved vs skipped" observable.
+// These must stay green under any future unification: if the orphan policy is
+// carried correctly as an explicit arg, both behaviors are preserved; if it is
+// accidentally normalized, exactly one of these two tests goes red.
+describe("parallel parent-chain seed divergence (zero revalidate fns)", () => {
+  const params = { mailboxId: "x", folder: "draft", emailId: "2" };
+  const prevParams = { mailboxId: "x", folder: "draft", emailId: "1" };
+  const request = new Request("http://localhost/mailbox/x/emails/draft/2");
+  const prevUrl = new URL("http://localhost/mailbox/x/emails/draft/1");
+  const nextUrl = new URL("http://localhost/mailbox/x/emails/draft/2");
+
+  function layoutWithSlot(
+    shortCode: string,
+    handler: () => unknown,
+  ): EntryData {
+    const parallelEntry = {
+      id: `${shortCode}.parallel`,
+      type: "parallel",
+      shortCode: `${shortCode}P0`,
+      handler: { "@panel": handler },
+      loader: [],
+      layout: [],
+      parallel: {},
+      intercept: [],
+      middleware: [],
+      revalidate: [], // ZERO fns: the policy seed is the final decision
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    return {
+      id: shortCode,
+      type: "layout",
+      shortCode,
+      handler: () => null,
+      loader: [],
+      layout: [],
+      parallel: { "@panel": parallelEntry },
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      handle: [],
+    } as any;
+  }
+
+  it("main path SKIPS the parent-chain slot (seed belongsToRoute||isNewParent = false)", async () => {
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const layout = layoutWithSlot("L0", handler);
+    // Parent L0 known, slot L0.@panel not -> isNewParent=false; belongsToRoute=false.
+    const clientIds = new Set(["L0"]);
+
+    const result = await resolveParallelSegmentsWithRevalidation(
+      layout,
+      params,
+      makeContext(),
+      false, // belongsToRoute
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    // Seed false -> slot not resolved: handler never runs, component nulled.
+    expect(handler).not.toHaveBeenCalled();
+    const panelSeg = result.segments.find((s) => s.id === "L0.@panel");
+    expect(panelSeg).toBeDefined();
+    expect(panelSeg?.component).toBeNull();
+    // Still announced in matchedIds (unconditional push).
+    expect(result.matchedIds).toContain("L0.@panel");
+  });
+
+  it("orphan path FORCE-RENDERS the same slot even at belongsToRoute=false (#482 guard)", async () => {
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const orphan = layoutWithSlot("O0", handler);
+    // Same shape: parent O0 known, slot O0.@panel not. belongsToRoute=false --
+    // the divergent case the suite above never exercised.
+    const clientIds = new Set(["O0"]);
+
+    const result = await resolveOrphanLayoutWithRevalidation(
+      orphan,
+      params,
+      makeContext(),
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      false, // belongsToRoute -- orphan seeds true REGARDLESS
+      makeDeps(),
+    );
+
+    // Unconditional seed true -> slot resolved: handler runs, component is the sentinel.
+    expect(handler).toHaveBeenCalledTimes(1);
+    const panelSeg = result.segments.find((s) => s.id === "O0.@panel");
+    expect(panelSeg).toBeDefined();
+    expect(panelSeg?.component).toBe("PANEL_RESOLVED");
+    expect(result.matchedIds).toContain("O0.@panel");
+  });
+});
+
+// Pins the (B) divergence the orphan path carries as loaderOrder: "before".
+// loaderOrder only reorders the segments/matchedIds arrays (the client
+// reconciler is order-insensitive to it), so nothing else catches a flip --
+// this test locks the contract that orphan emits a slot's loaders BEFORE the
+// slot segment and the main path emits them AFTER.
+describe("parallel loaderOrder emission order (orphan 'before' vs main 'after')", () => {
+  const params = { mailboxId: "x", folder: "draft", emailId: "2" };
+  const prevParams = { mailboxId: "x", folder: "draft", emailId: "1" };
+  const request = new Request("http://localhost/mailbox/x/emails/draft/2");
+  const prevUrl = new URL("http://localhost/mailbox/x/emails/draft/1");
+  const nextUrl = new URL("http://localhost/mailbox/x/emails/draft/2");
+
+  const SlotLoader = (createLoader as Function)(
+    async () => ({ slot: true }),
+    undefined,
+    "test#SlotLoader",
+  );
+
+  function layoutWithSlotLoader(): EntryData {
+    const parallelEntry = {
+      id: "L0.parallel",
+      type: "parallel",
+      shortCode: "L0P0",
+      handler: { "@panel": () => "PANEL" },
+      loader: [{ loader: SlotLoader, revalidate: [] }],
+      layout: [],
+      parallel: {},
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    return {
+      id: "L0",
+      type: "layout",
+      shortCode: "L0",
+      handler: () => null,
+      loader: [],
+      layout: [],
+      parallel: { "@panel": parallelEntry },
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      handle: [],
+    } as any;
+  }
+
+  it("'after' (main default) emits the slot first; 'before' (orphan) emits loaders first", async () => {
+    const clientIds = new Set(["L0", "L0.@panel"]);
+
+    const afterResult = await resolveParallelSegmentsWithRevalidation(
+      layoutWithSlotLoader(),
+      params,
+      makeContext(),
+      false,
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    const beforeResult = await resolveParallelSegmentsWithRevalidation(
+      layoutWithSlotLoader(),
+      params,
+      makeContext(),
+      false,
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+      undefined,
+      undefined,
+      { loaderOrder: "before" },
+    );
+
+    // A loader id was actually emitted (otherwise the test is vacuous).
+    expect(afterResult.matchedIds.length).toBeGreaterThan(1);
+    // Same set of ids, opposite slot position.
+    expect(new Set(afterResult.matchedIds)).toEqual(
+      new Set(beforeResult.matchedIds),
+    );
+    expect(afterResult.matchedIds.indexOf("L0.@panel")).toBe(0);
+    expect(beforeResult.matchedIds.indexOf("L0.@panel")).toBe(
+      beforeResult.matchedIds.length - 1,
+    );
+    // Same correspondence in the segments array.
+    const slotIdxAfter = afterResult.segments.findIndex(
+      (s) => s.id === "L0.@panel",
+    );
+    const slotIdxBefore = beforeResult.segments.findIndex(
+      (s) => s.id === "L0.@panel",
+    );
+    expect(slotIdxAfter).toBe(0);
+    expect(slotIdxBefore).toBe(beforeResult.segments.length - 1);
+  });
+
+  it("the orphan path chooses 'before' (a slot's loaders precede its slot segment)", async () => {
+    const parallelEntry = {
+      id: "O0.parallel",
+      type: "parallel",
+      shortCode: "O0P0",
+      handler: { "@panel": () => "PANEL" },
+      loader: [{ loader: SlotLoader, revalidate: [] }],
+      layout: [],
+      parallel: {},
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    const orphan = {
+      id: "O0",
+      type: "layout",
+      shortCode: "O0",
+      handler: () => null,
+      loader: [],
+      layout: [],
+      parallel: { "@panel": parallelEntry },
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      handle: [],
+    } as any;
+    const clientIds = new Set(["O0", "O0.@panel"]);
+
+    const result = await resolveOrphanLayoutWithRevalidation(
+      orphan,
+      params,
+      makeContext(),
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      true,
+      makeDeps(),
+    );
+
+    // The slot's loader segment precedes the slot segment (loaderOrder "before").
+    const slotIdx = result.segments.findIndex((s) => s.id === "O0.@panel");
+    const loaderIdx = result.segments.findIndex(
+      (s) =>
+        s.id !== "O0.@panel" && s.id !== "O0" && s.namespace === "O0.parallel",
+    );
+    expect(slotIdx).toBeGreaterThan(-1);
+    expect(loaderIdx).toBeGreaterThan(-1);
+    expect(loaderIdx).toBeLessThan(slotIdx);
   });
 });

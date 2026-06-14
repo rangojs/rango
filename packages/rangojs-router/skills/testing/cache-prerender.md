@@ -1,8 +1,19 @@
 # Testing cache / SWR / prerender — assertCacheStatus
 
-**Layer:** e2e + signal · **Import:** the cache-status helpers (`assertCacheStatus`/`parseCacheHeader`/`createCacheSink`/`filterCacheDecisions`) are re-exported from BOTH entries — use `@rangojs/router/testing` from a Vitest unit/integration test, and `@rangojs/router/testing/e2e` from a plain Playwright runner (the e2e barrel avoids the Vite-only virtuals the main barrel pulls in). · **DSL it tests:** `cache()` / `"use cache"` / loader cache / `Prerender(...)` (see `/caching`, `/prerender`, `/use-cache`)
+**Layer:** e2e + signal · **Import:** the cache-status helpers (`assertCacheStatus`/`parseCacheHeader`/`createCacheSink`/`assertCacheDecision`/`filterCacheDecisions`) are re-exported from BOTH entries — use `@rangojs/router/testing` from a Vitest unit/integration test, and `@rangojs/router/testing/e2e` from a plain Playwright runner (the e2e barrel avoids the Vite-only virtuals the main barrel pulls in). · **DSL it tests:** `cache()` / `"use cache"` / loader cache / `Prerender(...)` (see `/caching`, `/prerender`, `/use-cache`)
 
 The router's REAL cache pipeline runs (runtime cache, SWR revalidation, prerender lookup); you SEED nothing — you drive a request through the real fetch path and read the resulting cache decision. The decision surfaces two ways: the `X-Rango-Cache` response header (a debug gate) or a captured `cache.decision` telemetry event.
+
+## Which path to use
+
+Both report the SAME coarse route-level signal (keyed by the route NAME). Pick by **transport**, not by meaning:
+
+| Path          | Helper                                                                     | Transport                                                                                       | Needs the debug gate?                             | Production surface                | Per-segment `shouldRevalidate`? |
+| ------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------------- | ------------------------------- |
+| **Header**    | `assertCacheStatus(res, routeKey, expected)` / `parseCacheHeader`          | the `X-Rango-Cache` response header — the ONLY signal a black-box Playwright `Response` carries | Yes (`debugCacheSignal` / `RANGO_TEST_SIGNALS=1`) | the header (gated off by default) | no                              |
+| **Telemetry** | `assertCacheDecision(events, routeKey, expected)` / `filterCacheDecisions` | a captured `cache.decision` event off a `createCacheSink()` sink                                | No                                                | zero                              | yes (the only path exposing it) |
+
+Use the header path when all you have is a black-box `Response` (a Playwright `APIResponse`); use the telemetry path when you can wire `createRouter({ telemetry: sink })` and want zero production surface or per-segment `shouldRevalidate`. `assertCacheDecision` is the one-call counterpart of `assertCacheStatus` (parallel `(…, routeKey, expected)` shape — captured `events` in place of a `Response`); reach for raw `filterCacheDecisions` only when you need the per-segment event fields directly.
 
 ## API
 
@@ -38,7 +49,11 @@ parseCacheHeader(headerValue: string | null | undefined): Record<string, string>
 // createCacheSink -> a sink to wire via createRouter({ telemetry: sink }), plus the array it records into.
 createCacheSink(): { sink: TelemetrySink; events: TelemetryEvent[] }
 
-// filterCacheDecisions -> narrow captured events to cache.decision events.
+// assertCacheDecision -> the one-call telemetry assert (counterpart of assertCacheStatus).
+// Throws on mismatch / no matching segment / unknown routeKey; returns void.
+assertCacheDecision(events: readonly TelemetryEvent[], routeKey: string, expected: ExpectedCacheStatus): void
+
+// filterCacheDecisions -> narrow captured events to cache.decision events (raw form).
 filterCacheDecisions(events: readonly TelemetryEvent[]): CacheDecisionEvent[]
 ```
 
@@ -74,15 +89,26 @@ parityDescribe("product page caches", (f) => {
 Zero-prod-surface alternative — the telemetry sink. No header at all; you inspect captured `cache.decision` events:
 
 ```ts
-import { createCacheSink, filterCacheDecisions } from "@rangojs/router/testing";
+import {
+  createCacheSink,
+  assertCacheDecision,
+  filterCacheDecisions,
+} from "@rangojs/router/testing";
 
 const { sink, events } = createCacheSink();
 const router = createRouter({ telemetry: sink }).routes(urlpatterns);
 // ...drive a request through the router's RSC fetch path...
+
+// One-call assert (counterpart of assertCacheStatus), keyed by the route NAME:
+assertCacheDecision(events, "product.detail", "stale");
+
+// Or read the raw event when you need per-segment fields (shouldRevalidate):
 const decision = filterCacheDecisions(events)[0];
 expect(decision.segments?.[0].cacheStatus).toBe("stale");
 expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 ```
+
+`events` accumulates across requests, so the FIRST matching segment for a `routeKey` wins — slice or recreate the sink between requests for the same route.
 
 ## Caveats
 

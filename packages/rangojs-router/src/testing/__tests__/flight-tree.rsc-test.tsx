@@ -25,6 +25,23 @@ describe("renderServerTree", () => {
     expect(() => assertFlightTreeRuntimeAvailable()).not.toThrow();
   });
 
+  test("reclassifies the missing-rsc-alias stub error with actionable guidance", async () => {
+    // renderServerTree shares serializeNodeToFlight with renderToFlightString, so
+    // it self-diagnoses the missing-rangoTestAliases trap identically. Simulate
+    // the stub by throwing its exact message from a server component.
+    async function StubReader(): Promise<never> {
+      await Promise.resolve();
+      throw new Error(
+        'getRequestContext() is only available from "@rangojs/router" in a ' +
+          "react-server/RSC environment. For client hooks and components, import " +
+          'from "@rangojs/router/client".',
+      );
+    }
+    await expect(renderServerTree(<StubReader />)).rejects.toThrow(
+      /rangoTestAliases/,
+    );
+  });
+
   test("pure server tree deserializes; no client boundaries", async () => {
     async function ServerOnly() {
       await Promise.resolve();

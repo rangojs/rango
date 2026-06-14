@@ -1,6 +1,8 @@
-# Testing an async Server Component — renderToFlightString
+# Pinning the Flight wire payload — renderToFlightString
 
 **Layer:** RSC unit (react-server project) · **Import:** `@rangojs/router/testing/flight` + `@rangojs/router/testing/flight-matchers` · **DSL it tests:** an async Server Component / Flight output (see `/route`)
+
+> **Prefer `renderServerTree` (see [`./server-tree.md`](./server-tree.md)) for assertions on a Flight render** — it deserializes to a traversable tree with TYPED boundary props (a `Date` is a `Date`, not the opaque `$D...` encoding). Reach for `renderToFlightString` + the wire matchers (`toMatchFlight`/`toMatchFlightSnapshot`) only to pin the raw wire payload SHAPE — a `toMatchFlightSnapshot` drift snapshot. That is the niche/escape-hatch case; for "testing an async Server Component (assert what it rendered)" start at `./server-tree.md`.
 
 `renderToFlightString` runs the REAL react-server-dom serializer the router uses at runtime — your async Server Component genuinely renders to its Flight wire string in plain node, with a request context active for the render. What you SEED is the request, headers, env, params, routeName, and vars that context exposes.
 
@@ -78,7 +80,7 @@ it("snapshots the normalized payload", async () => {
 
 - Leaf / server-only: a client island in the tree emits an un-hydratable `I[...]` import row against the empty client manifest. Keep Flight tests to leaf server components; test full pages at e2e.
 - Requires the react-server vitest project (see `./setup.md`): `resolve.conditions` includes `react-server`, the `@rangojs/router -> index.rsc.ts` alias, `NODE_ENV=production`, and the worker `execArgv`. Name files `*.rsc-test.{ts,tsx}` and run `pnpm test:unit:rsc`. The main vitest project must NOT set `react-server` (it would flip React to the no-hooks server build).
-- A component that imports a server API (`getRequestContext`, `cookies`) from the bare `@rangojs/router` barrel works ONLY with the `index.rsc.ts` alias wired (see `./setup.md`); without it the bare import resolves to the throwing out-of-react-server stub. Pure-leaf components that take all data as props need no barrel import and are the simplest case.
+- A component that imports a server API (`getRequestContext`, `cookies`) from the bare `@rangojs/router` barrel works ONLY with the `index.rsc.ts` alias wired (see `./setup.md`); without it the bare import resolves to the throwing out-of-react-server stub. `renderToFlightString` / `renderServerTree` self-diagnose this exact misconfiguration — they reject with an actionable message naming `rangoTestAliases`, rather than surfacing the opaque stub error. Pure-leaf components that take all data as props need no barrel import and are the simplest case.
 - `toMatchFlight` is containment (substring), not equality — the row framing (prefixes/quoting) is an internal serializer detail, so pin the rendered text/shape, not the framing. `toMatchFlightSnapshot()` snapshots the normalized payload; run under `NODE_ENV=production` for the cleanest, most stable bytes.
 - No hydration / no interaction here — that is the e2e tier. For typed assertions on a client boundary's props (a `Date` back as a `Date`), or to confirm an island actually crossed the boundary, use `renderServerTree` (see `./server-tree.md`).
 

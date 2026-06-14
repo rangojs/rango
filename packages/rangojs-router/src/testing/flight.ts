@@ -82,6 +82,44 @@ export interface RenderToFlightStringOptions {
 
 const DEFAULT_URL = "http://localhost/";
 
+/**
+ * True when `error` is the out-of-react-server stub thrown by index.ts's
+ * server-only exports (getRequestContext/cookies/headers/...) — i.e. the bare
+ * `@rangojs/router` specifier resolved to index.ts, not index.rsc.ts, because
+ * the rsc Vitest project is missing the `rangoTestAliases` alias. Matches both
+ * substrings of `serverOnlyStubError` (index.ts) so a normal app error cannot
+ * over-match. Shared with render-handler.ts so the two Flight primitives report
+ * the same misconfiguration identically.
+ */
+export function isServerOnlyStubError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("is only available from") &&
+    error.message.includes("react-server")
+  );
+}
+
+/**
+ * Rethrow a server tree render error. When it is the missing-rsc-alias stub
+ * (above), rethrow an actionable message naming `rangoTestAliases` instead of
+ * the opaque stub text; otherwise rethrow the original unchanged. Classify the
+ * ORIGINAL error before constructing the wrapper so the wrapper's `Original: ...`
+ * echo (which re-embeds the matched substrings) never re-triggers the predicate.
+ */
+function rethrowFlightRenderError(error: unknown): never {
+  if (isServerOnlyStubError(error)) {
+    throw new Error(
+      `The server component called a server-only API ` +
+        `(getRequestContext/cookies/headers/...) but "@rangojs/router" resolved to ` +
+        `the out-of-react-server stub. Add rangoTestAliases({ preset }) to your ` +
+        `vitest.rsc.config.ts \`resolve.alias\` so the bare specifier maps to ` +
+        `index.rsc.ts (the real react-server implementations). ` +
+        `Original: ${(error as Error).message}`,
+    );
+  }
+  throw error;
+}
+
 export function assertNoLegacyUrlOption(opts: object, fnName: string): void {
   if ("url" in opts) {
     throw new Error(
@@ -170,7 +208,7 @@ export async function serializeNodeToFlight(
     },
   });
   const text = await new Response(stream).text();
-  if (didError) throw renderError;
+  if (didError) rethrowFlightRenderError(renderError);
   return text;
 }
 

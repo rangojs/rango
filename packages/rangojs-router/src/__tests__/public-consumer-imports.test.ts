@@ -186,8 +186,10 @@ import {
   runLoaderResult,
   dispatch,
   assertCacheStatus,
+  assertCacheDecision,
   assertGeneratedRoutesMatch,
   createCacheSink,
+  filterCacheDecisions,
   collectHandle,
   createTestRequestContext,
   runInRequestContext,
@@ -231,8 +233,10 @@ void runInRequestContext;
 void runWithRequestContext;
 void renderRoute;
 void assertCacheStatus;
+void assertCacheDecision;
 void assertGeneratedRoutesMatch;
 void createCacheSink;
+void filterCacheDecisions;
 void collectHandle;
 void createRangoE2E;
 void renderToFlightString;

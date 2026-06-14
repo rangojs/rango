@@ -241,6 +241,31 @@ describe("cache-hit parallel loaders", () => {
     expect(result.matchedIds).toEqual(["L0D0.parallel-loader"]);
   });
 
+  it("resolveLoadersOnlyWithRevalidation keeps a SKIPPED loader in matchedIds but drops it from segments", async () => {
+    // The reval-only divergence vs the fresh path: when a loader's gate says
+    // skip (it's already in the client set and revalidate() returned false), the
+    // loader is NOT re-fetched (absent from segments) but its id STAYS in
+    // matchedIds so the client keeps advertising it and it stays eligible for
+    // future revalidation (otherwise it gets pruned -> force-refetched -> churn).
+    mockEvaluateRevalidation.mockClear();
+    mockEvaluateRevalidation.mockReturnValueOnce(false); // loader revalidate -> skip
+
+    const result = await resolveLoadersOnlyWithRevalidation(
+      [makeParallelLoaderEntry()],
+      makeContext(),
+      new Set(["L0D0.parallel-loader"]), // loader IS in the client set
+      {},
+      new Request("http://localhost/blog"),
+      new URL("http://localhost/blog"),
+      new URL("http://localhost/blog?page=2"),
+      "blog",
+      makeDeps(),
+    );
+
+    expect(result.segments).toHaveLength(0); // not re-fetched
+    expect(result.matchedIds).toEqual(["L0D0.parallel-loader"]); // still matched
+  });
+
   it("buildEntryRevalidateMap keys parallel slots by the parent shortCode", () => {
     const map = buildEntryRevalidateMap([makeParallelLoaderEntry()]);
 
