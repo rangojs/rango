@@ -31,6 +31,7 @@ export interface HandlerContext<TEnv = unknown> {
   createRedirectFlightResponse: (
     redirectUrl: string,
     locationState?: Record<string, unknown>,
+    external?: boolean,
   ) => Response;
 
   /**

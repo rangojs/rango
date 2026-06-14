@@ -393,6 +393,27 @@ export async function peThrowRedirect(_formData: FormData): Promise<void> {
   throw redirect("/progressive-enhancement");
 }
 
+export async function peExternalRedirectBlocked(
+  _formData: FormData,
+): Promise<void> {
+  // A cross-origin redirect with NO external opt-in. On the no-JS PE path the
+  // browser would natively follow the Location header, so the server-side
+  // open-redirect guard must neutralize it: the no-JS user lands on the app
+  // root, never on the off-host target.
+  return redirect("https://evil.example/phish") as any;
+}
+
+export async function peExternalRedirectAllowed(
+  _formData: FormData,
+): Promise<void> {
+  // A cross-origin redirect WITH the explicit opt-in. The guard must let it
+  // through on the no-JS PE path too (the marker has to survive PE's
+  // extractRedirectResponse rebuild to reach the guard).
+  return redirect("https://accounts.example.com/oauth", {
+    external: true,
+  }) as any;
+}
+
 export async function mwChainFormAction(_formData: FormData): Promise<void> {
   const ctx = getRequestContext();
   cookies().set("chain-action", "av", { path: "/", maxAge: 86400 });

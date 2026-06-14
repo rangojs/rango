@@ -68,11 +68,13 @@ function restoreGlobalProperty(
 
 function setupWindow() {
   const locationHrefSetter = vi.fn();
+  const locationAssign = vi.fn();
 
   const location = {
     href: "http://localhost:3000/",
     origin: "http://localhost:3000",
     pathname: "/",
+    assign: locationAssign,
   };
   Object.defineProperty(location, "href", {
     get: () => "http://localhost:3000/",
@@ -94,7 +96,7 @@ function setupWindow() {
     },
   });
 
-  return { locationHrefSetter };
+  return { locationHrefSetter, locationAssign };
 }
 
 // ---------------------------------------------------------------------------
@@ -245,9 +247,10 @@ function createMockDeps(
 
 describe("server-action-bridge payload redirect origin validation", () => {
   let locationHrefSetter: ReturnType<typeof vi.fn>;
+  let locationAssign: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    ({ locationHrefSetter } = setupWindow());
+    ({ locationHrefSetter, locationAssign } = setupWindow());
   });
 
   afterEach(() => {
@@ -358,6 +361,77 @@ describe("server-action-bridge payload redirect origin validation", () => {
       _skipCache: true,
     });
     expect(result).toBe("redirect-result");
+  });
+
+  it("hard-navigates an external:true payload redirect via location.assign (bypasses same-origin check)", async () => {
+    const store = createMockStore();
+    const { controller, completeFn } = createMockEventController();
+    const onNavigate = vi.fn(() => Promise.resolve());
+
+    // redirect(url, { external: true }) arrives as metadata.redirect.external.
+    const payload: RscPayload = {
+      metadata: {
+        redirect: {
+          url: "https://accounts.example.com/oauth",
+          external: true,
+        },
+      },
+      returnValue: { ok: true, data: "ext-result" },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload);
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+      onNavigate,
+    });
+    bridge.register();
+
+    const result = await getActionCallback()("test-action", []);
+
+    // Off-host opt-in: hard navigation, NOT the same-origin SPA path.
+    expect(locationAssign).toHaveBeenCalledWith(
+      "https://accounts.example.com/oauth",
+    );
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(completeFn).toHaveBeenCalledWith("ext-result");
+    expect(result).toBe("ext-result");
+  });
+
+  it("hard-nav fallback (no onNavigate) re-validates and follows a same-origin redirect", async () => {
+    const store = createMockStore();
+    const { controller, completeFn } = createMockEventController();
+
+    const payload: RscPayload = {
+      metadata: { redirect: { url: "/dashboard" } },
+      returnValue: { ok: true, data: "fallback-result" },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload);
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+      // No onNavigate -> dispatchRedirect's window.location.href fallback.
+    });
+    bridge.register();
+
+    await getActionCallback()("test-action", []);
+
+    expect(completeFn).toHaveBeenCalledWith("fallback-result");
+    // Same-origin passes the defensive re-validation and the fallback fires.
+    expect(locationHrefSetter).toHaveBeenCalledWith(
+      "http://localhost:3000/dashboard",
+    );
   });
 
   it("bails out of post-payload mutations when action is aborted", async () => {

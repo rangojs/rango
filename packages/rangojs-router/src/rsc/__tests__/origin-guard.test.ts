@@ -111,6 +111,29 @@ describe("defaultOriginCheck", () => {
     });
     expect(defaultOriginCheck(request, url)).toBe(false);
   });
+
+  it("fails closed when an Origin is present but no Host header establishes the expected origin", () => {
+    const { request, url } = makeRequest("https://example.com/action", {
+      Origin: "https://example.com",
+      // No Host header: a browser always sends Host with Origin, so this is
+      // anomalous. Do not fall back to url.host -- reject.
+    });
+    expect(request.headers.get("host")).toBeNull();
+    expect(defaultOriginCheck(request, url)).toBe(false);
+  });
+
+  it("fails closed when a cross-origin Referer is present but Host is absent", () => {
+    const { request, url } = makeRequest("https://example.com/action", {
+      Referer: "https://example.com/page",
+    });
+    expect(request.headers.get("host")).toBeNull();
+    expect(defaultOriginCheck(request, url)).toBe(false);
+  });
+
+  it("still allows when neither Origin/Referer nor Host is present (non-browser client)", () => {
+    const { request, url } = makeRequest("https://example.com/action", {});
+    expect(defaultOriginCheck(request, url)).toBe(true);
+  });
 });
 
 describe("checkRequestOrigin", () => {

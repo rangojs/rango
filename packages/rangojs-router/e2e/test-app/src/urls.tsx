@@ -46,6 +46,7 @@ import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { prerenderLoadingPatterns } from "./urls/prerender-loading.js";
 import { loadingRedirectPatterns } from "./urls/loading-redirect.js";
+import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { clientReversePatterns } from "./urls/client-reverse.js";
@@ -954,6 +955,11 @@ export const urlpatterns = urls(
       // Auth boundary test (route mw vs global mw, actions, response routes)
       include("/auth-boundary", authBoundaryPatterns, {
         name: "authBoundary",
+      }),
+
+      // Open-redirect guard fixtures (same-origin / blocked / external).
+      include("/redirect-guard", redirectGuardPatterns, {
+        name: "redirectGuard",
       }),
 
       // Content ownership / negotiation edge cases

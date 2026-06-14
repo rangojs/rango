@@ -570,6 +570,45 @@ describe("partial-update", () => {
       expect(renderSegments).not.toHaveBeenCalled();
       expect(consoleError).toHaveBeenCalled();
     });
+
+    it("hard-navigates an external:true redirect payload via location.assign", async () => {
+      const assign = vi.fn();
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost", assign },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: {
+            url: "https://accounts.example.com/oauth",
+            external: true,
+          },
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      // External opt-in: a hard navigation, NOT a ServerRedirect throw, and no
+      // same-origin validation block.
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      expect(assign).toHaveBeenCalledWith("https://accounts.example.com/oauth");
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+    });
   });
 
   describe("router id integrity guard", () => {

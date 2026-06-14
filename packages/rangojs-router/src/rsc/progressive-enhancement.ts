@@ -155,6 +155,14 @@ export async function handleProgressiveEnhancement<TEnv>(
   } else if (isDirectAction && directActionId) {
     const temporaryReferences = ctx.createTemporaryReferenceSet();
 
+    // INTENTIONAL JS/PE divergence (do NOT "fix" to match the JS reject path).
+    // On the JS path React Flight-encodes the action args, so decodeReply
+    // succeeds or a failure means a malformed body (rejected). On the no-JS PE
+    // path the browser submits a raw <form action={fn}> POST with NO encoded
+    // args, so decodeReply throws by design and the raw FormData IS the action
+    // argument (the React form-action convention: fn(formData)). Removing this
+    // fallback breaks every unbound no-JS form action (verified: it fails the
+    // progressive-enhancement dev+prod e2e suite). See #572 (decided: keep).
     let args: unknown[] = [];
     try {
       args = await ctx.decodeReply(formData, { temporaryReferences });

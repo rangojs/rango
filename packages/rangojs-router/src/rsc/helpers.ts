@@ -11,6 +11,7 @@ import {
 import type { RequestContext } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { isRedirectResponse } from "../response-utils.js";
+import { EXTERNAL_REDIRECT_MARKER } from "../redirect-origin.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
 import type { RscPayload } from "./types.js";
@@ -135,8 +136,17 @@ export function createSimpleRedirectResponse(redirectUrl: string): Response {
 
 /**
  * Carry over headers from a source redirect Response to a wrapper Response.
- * Skips Location and X-RSC-Redirect (intentionally replaced by the wrapper)
- * and appends Set-Cookie to avoid clobbering multiple cookie headers.
+ * Skips Location and X-RSC-Redirect (intentionally replaced by the wrapper) and
+ * appends Set-Cookie to avoid clobbering multiple cookie headers.
+ *
+ * This is a GENERIC copier used by every redirect-rebuild path (PE
+ * extractRedirectResponse, the SPA intercept below, response-route rewrap), so
+ * it must preserve the internal external-redirect marker: a document-native
+ * rebuild has to carry it through to the guard chokepoint, which is what strips
+ * it. Stripping the marker here instead would silently defeat
+ * redirect(url, { external: true }) on any rebuild path. The two browser-facing
+ * exits strip it: `guardOutgoingRedirect` (document 3xx) and the SPA intercept
+ * below (200/204).
  */
 export function carryOverRedirectHeaders(
   source: Response,
@@ -164,24 +174,36 @@ export function interceptRedirectForPartial(
   createRedirectFlightResponse: (
     redirectUrl: string,
     locationState?: Record<string, unknown>,
+    external?: boolean,
   ) => Response,
 ): Response | null {
   if (!isRedirectResponse(response)) {
     return null;
   }
   const redirectUrl = response.headers.get("Location")!;
+  // redirect(url, { external: true }) marks an explicit off-host redirect. On
+  // the SPA/action channel it must travel as a Flight payload so the client
+  // does a hard navigation (location.assign) rather than a partial fetch.
+  const external = response.headers.get(EXTERNAL_REDIRECT_MARKER) !== null;
   const locationState = getLocationState();
   let intercepted: Response;
   if (locationState) {
     intercepted = createRedirectFlightResponse(
       redirectUrl,
       resolveLocationStateEntries(locationState),
+      external,
     );
+  } else if (external) {
+    intercepted = createRedirectFlightResponse(redirectUrl, undefined, true);
   } else {
     intercepted = createSimpleRedirectResponse(redirectUrl);
   }
 
   carryOverRedirectHeaders(response, intercepted);
+  // Browser-facing exit for the SPA channel: the external intent now rides in
+  // metadata.redirect.external (Flight), so the internal marker must not leak on
+  // the 200/204. (The document channel is stripped by guardOutgoingRedirect.)
+  intercepted.headers.delete(EXTERNAL_REDIRECT_MARKER);
 
   return intercepted;
 }

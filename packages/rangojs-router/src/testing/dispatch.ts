@@ -37,6 +37,10 @@
  *   (?_rsc_partial / ?_rsc_action): converted to a 204 + X-RSC-Redirect via the
  *   real interceptRedirectForPartial, so fetch() does not auto-follow the 3xx —
  *   identical to production's no-location-state path.
+ * - The open-redirect guard (rsc/redirect-guard.ts) on full (browser-followed)
+ *   redirects: a cross-origin Location is rewritten to the basename root unless
+ *   redirect(url, { external: true }) opted out, mirroring production's single
+ *   handler chokepoint. Soft partial/action redirects are 204 and pass through.
  *
  * What dispatch DOES NOT support (and why):
  * - RSC component routes — rendering requires the Flight serializer + React
@@ -91,6 +95,7 @@ import {
   interceptRedirectForPartial,
   mergeStubHeadersAndFinalize,
 } from "../rsc/helpers.js";
+import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import type { Rango } from "../router/router-interfaces.js";
 
@@ -568,13 +573,23 @@ export async function dispatch<TEnv = any>(
     // callbacks via finalizeResponse. dispatch is RSC-free, so the
     // createRedirectFlightResponse stand-in falls back to the no-state
     // 204 + X-RSC-Redirect (see the location-state divergence in the header).
+    let finalResponse: Response;
     if (isPartial || isAction) {
       const intercepted = interceptRedirectForPartial(
         mwResponse,
         (redirectUrl) => createSimpleRedirectResponse(redirectUrl),
       );
-      return finalizeResponse(intercepted ?? mwResponse);
+      finalResponse = finalizeResponse(intercepted ?? mwResponse);
+    } else {
+      finalResponse = finalizeResponse(mwResponse);
     }
-    return finalizeResponse(mwResponse);
+
+    // Mirror production's single open-redirect chokepoint (handler.ts): every
+    // browser-followed (3xx + Location) redirect is same-origin guarded before
+    // it leaves -- a cross-origin Location is rewritten to the basename root
+    // unless redirect(url, { external: true }) opted out. Soft partial/action
+    // redirects are 204 + X-RSC-Redirect and pass through untouched (the client
+    // validates them), so this is a no-op for them.
+    return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
   });
 }

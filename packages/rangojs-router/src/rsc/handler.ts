@@ -31,6 +31,7 @@ import {
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
+import { guardOutgoingRedirect } from "./redirect-guard.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import {
   handleResponseRoute,
@@ -292,12 +293,13 @@ export function createRSCHandler<
   function createRedirectFlightResponse(
     redirectUrl: string,
     locationState?: Record<string, unknown>,
+    external?: boolean,
   ): Response {
     const redirectPayload: RscPayload = {
       metadata: {
         pathname: redirectUrl,
         segments: [],
-        redirect: { url: redirectUrl },
+        redirect: { url: redirectUrl, ...(external && { external: true }) },
         ...(locationState && { locationState }),
       },
     };
@@ -570,7 +572,12 @@ export function createRSCHandler<
         response.headers.set("Server-Timing", fullTiming);
       }
 
-      return response;
+      // Single open-redirect chokepoint: every response (PE, full-page,
+      // middleware short-circuit, response-route) funnels through here, so
+      // guarding browser-followed (3xx) redirects once covers them all and any
+      // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
+      // through untouched (validated client-side instead).
+      return guardOutgoingRedirect(response, url.origin, router.basename);
     });
   };
 

@@ -83,6 +83,9 @@ export function createServerActionBridge(
 
   // SPA-navigate when onNavigate is set, else hard-reload. state is omitted (not
   // passed as undefined) to match the header path's prior call shape.
+  // Callers pass an already same-origin-validated url; the hard-reload fallback
+  // re-validates defensively so this leaf cannot become an open redirect if a
+  // future caller forgets (the SPA path validates inside the navigation bridge).
   async function dispatchRedirect(url: string, state?: unknown): Promise<void> {
     if (onNavigate) {
       await onNavigate(url, {
@@ -91,7 +94,10 @@ export function createServerActionBridge(
         _skipCache: true,
       });
     } else {
-      window.location.href = url;
+      const safe = validateRedirectOrigin(url, window.location.origin);
+      if (safe) {
+        window.location.href = safe;
+      }
     }
   }
 
@@ -417,6 +423,14 @@ export function createServerActionBridge(
       // Check handle.signal.aborted to avoid redirecting from a stale action
       // when the user has already navigated away.
       if (metadata?.redirect && !handle.signal.aborted) {
+        // Explicit off-host redirect (redirect(url, { external: true })):
+        // hard-navigate without the same-origin check the app opted out of.
+        if (metadata.redirect.external) {
+          log("external action redirect", { url: metadata.redirect.url });
+          handle.complete(returnValue?.data);
+          window.location.assign(metadata.redirect.url);
+          return returnValue?.data;
+        }
         const redirectUrl = validateRedirectOrigin(
           metadata.redirect.url,
           window.location.origin,

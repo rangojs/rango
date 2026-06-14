@@ -8,6 +8,7 @@ import {
   generateHistoryKey,
 } from "./navigation-store.js";
 import { createEventController } from "./event-controller.js";
+import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
@@ -280,7 +281,13 @@ export async function initBrowserApp(
     renderSegments,
     onNavigate: (url, options) => {
       if (!navigateFn) {
-        window.location.href = url;
+        // Navigation bridge not wired yet: hard-navigate, but re-validate
+        // same-origin defensively so this init-window fallback cannot become an
+        // open redirect (the normal path validates inside the navigation bridge).
+        const safe = validateRedirectOrigin(url, window.location.origin);
+        if (safe) {
+          window.location.href = safe;
+        }
         return Promise.resolve();
       }
       return navigateFn(url, options);

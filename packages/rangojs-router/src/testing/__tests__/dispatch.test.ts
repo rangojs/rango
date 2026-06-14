@@ -15,6 +15,7 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 
 import { dispatch } from "../dispatch.js";
 import { createRouter } from "../../router.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { urls } from "../../urls/urls-function.js";
 import { cookies } from "../../server/cookie-store.js";
 import { getRequestContext } from "../../server/request-context.js";
@@ -298,6 +299,100 @@ describe("dispatch", () => {
     const res = await dispatch(router, { request: "/api/data" });
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/login");
+  });
+
+  // The server-side open-redirect guard (rsc/redirect-guard.ts) is applied at
+  // dispatch's final return, mirroring production's single handler chokepoint,
+  // so a consumer can unit-test the same-origin contract for browser-followed
+  // (document-native) redirects through the public primitive.
+  describe("open-redirect guard (document-native)", () => {
+    function routerWithMw(mw: MiddlewareFn) {
+      return createRouter<{}>({})
+        .use("/api/*", mw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+    }
+
+    it("blocks a cross-origin middleware redirect, rewriting Location to root", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mw: MiddlewareFn = () => redirect("https://evil.com/phish");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("blocks a protocol-relative cross-origin redirect", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mw: MiddlewareFn = () => redirect("//evil.com/phish");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("allows a cross-origin redirect opted in with { external: true } and strips the marker", async () => {
+      const mw: MiddlewareFn = () =>
+        redirect("https://accounts.example.com/oauth", { external: true });
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      // Internal opt-in marker never reaches the browser.
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    it("passes a same-origin middleware redirect through unchanged", async () => {
+      const mw: MiddlewareFn = () => redirect("/login");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/login");
+    });
+
+    it("blocks a cross-origin redirect returned from a response-route handler", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json("/go", () => redirect("https://evil.com/phish"), {
+            name: "go",
+          }),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("allows an external redirect returned from a response-route handler (marker survives rewrap)", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/go",
+            () =>
+              redirect("https://accounts.example.com/oauth", {
+                external: true,
+              }),
+            { name: "go" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
   });
 
   it("lets global middleware pass through to the response route", async () => {

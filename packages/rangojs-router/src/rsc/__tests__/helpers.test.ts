@@ -14,6 +14,7 @@ import {
   carryOverRedirectHeaders,
 } from "../helpers.js";
 import { isWebSocketUpgradeResponse } from "../../response-utils.js";
+import { EXTERNAL_REDIRECT_MARKER } from "../../redirect-origin.js";
 
 describe("createResponseWithMergedHeaders", () => {
   it("should create response without context", () => {
@@ -923,6 +924,71 @@ describe("interceptRedirectForPartial", () => {
     expect(result).not.toBeNull();
     expect(result!.headers.get("X-RSC-Redirect")).toBe("/target");
   });
+
+  it("routes an external-marked redirect through the Flight path with external=true", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // redirect(url, { external: true }) stamps the internal marker.
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://accounts.example.com/oauth",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+      },
+    });
+
+    let captured: { url: string; external?: boolean } | undefined;
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(response, (url, _state, external) => {
+        captured = { url, external };
+        return new Response(`flight:${url}`, {
+          headers: { "content-type": "text/x-component" },
+        });
+      }),
+    );
+
+    expect(result).not.toBeNull();
+    // External redirects must take the Flight payload path (so the client does
+    // a hard navigation), NOT the X-RSC-Redirect simple path.
+    expect(captured).toEqual({
+      url: "https://accounts.example.com/oauth",
+      external: true,
+    });
+    // The internal marker is consumed here and never carried to the client.
+    expect(result!.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+  });
+
+  it("uses the simple X-RSC-Redirect path (no Flight factory) for a normal redirect", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "/dashboard" },
+    });
+
+    let factoryCalled = false;
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(response, (url) => {
+        factoryCalled = true;
+        return new Response(`flight:${url}`);
+      }),
+    );
+
+    // No location state and no external marker -> simple path; the Flight
+    // factory is never invoked.
+    expect(factoryCalled).toBe(false);
+    expect(result!.headers.get("X-RSC-Redirect")).toBe("/dashboard");
+  });
 });
 
 describe("carryOverRedirectHeaders", () => {
@@ -976,6 +1042,28 @@ describe("carryOverRedirectHeaders", () => {
 
     expect(target.headers.get("Location")).toBeNull();
     expect(target.headers.get("X-RSC-Redirect")).toBe("/new-target");
+    expect(target.headers.get("X-Keep")).toBe("yes");
+  });
+
+  it("preserves the external-redirect marker (generic copier; exits strip it)", () => {
+    // carryOverRedirectHeaders is shared by document-native rebuilds
+    // (extractRedirectResponse) that MUST carry the marker through to the guard
+    // chokepoint. Stripping it here would silently defeat external redirects on
+    // the PE/no-JS channel. The two browser-facing exits (guardOutgoingRedirect
+    // and interceptRedirectForPartial) strip it instead.
+    const source = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://accounts.example.com/oauth",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+        "X-Keep": "yes",
+      },
+    });
+    const target = new Response(null, { status: 302 });
+
+    carryOverRedirectHeaders(source, target);
+
+    expect(target.headers.get(EXTERNAL_REDIRECT_MARKER)).toBe("1");
     expect(target.headers.get("X-Keep")).toBe("yes");
   });
 

@@ -3,6 +3,8 @@ import {
   extractRedirectResponse,
   warnNonRedirectPeResponse,
 } from "../rsc/runtime-warnings.js";
+import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
+import { EXTERNAL_REDIRECT_MARKER } from "../redirect-origin.js";
 
 describe("W3: PE action redirect handling", () => {
   it("extracts redirect from a 302 Response", () => {
@@ -64,6 +66,45 @@ describe("W3: PE action redirect handling", () => {
     expect(result!.headers.get("X-Request-Id")).toBe("req-99");
     // Location is on the wrapper, not carried over from source
     expect(result!.headers.get("Location")).toBe("/login");
+  });
+
+  // Regression: a PE action that does redirect(url, { external: true }) reaches
+  // the browser via extractRedirectResponse. The internal marker MUST survive
+  // the rebuild so the downstream guard honors the off-host opt-in; if it is
+  // dropped here, the guard neutralizes the redirect to root and the documented
+  // { external: true } escape silently breaks for the entire no-JS PE channel.
+  it("preserves the external-redirect marker through extraction", () => {
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://accounts.example.com/oauth",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+      },
+    });
+    const result = extractRedirectResponse(response);
+    expect(result!.headers.get(EXTERNAL_REDIRECT_MARKER)).toBe("1");
+  });
+
+  it("end-to-end: a PE external redirect survives extraction AND the guard allows it", () => {
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://accounts.example.com/oauth",
+        [EXTERNAL_REDIRECT_MARKER]: "1",
+      },
+    });
+    // PE path: extract, then the single handler chokepoint guards the result.
+    const extracted = extractRedirectResponse(response)!;
+    const guarded = guardOutgoingRedirect(
+      extracted,
+      "https://myapp.example",
+      undefined,
+    );
+    // Off-host target allowed (NOT rewritten to root) and the marker stripped.
+    expect(guarded.headers.get("Location")).toBe(
+      "https://accounts.example.com/oauth",
+    );
+    expect(guarded.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
   });
 });
 

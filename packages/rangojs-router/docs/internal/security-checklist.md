@@ -70,13 +70,16 @@ transport behavior, or request/response ownership.
 
 The `originCheck` option (default: `true`) rejects cross-origin requests to
 server actions, loader fetches, and PE form submissions. The guard compares
-the `Origin` header (or `Referer` fallback) against the `Host` header (falling
-back to the request URL host) plus `url.protocol`. `X-Forwarded-Host` and
-`X-Forwarded-Proto` are deliberately NOT trusted — they are client-controllable
-unless a trusted proxy strips them; honoring them on a non-standard proxy setup
-requires the `originCheck` function escape hatch. Requests without either
-`Origin` or `Referer` header are allowed (same-origin navigations, non-browser
-clients).
+the `Origin` header (or `Referer` fallback) against the `Host` header plus
+`url.protocol`. `X-Forwarded-Host` and `X-Forwarded-Proto` are deliberately NOT
+trusted — they are client-controllable unless a trusted proxy strips them;
+honoring them on a non-standard proxy setup requires the `originCheck` function
+escape hatch. Requests without either `Origin` or `Referer` header are allowed
+(same-origin navigations, non-browser clients). When an `Origin`/`Referer` IS
+present but no `Host` header can establish the expected origin, the guard now
+**fails closed** (rejects) rather than trusting `url.host` (the request line) —
+a browser always sends `Host` alongside `Origin`, so a missing `Host` here is
+anomalous.
 
 Implementation: `src/rsc/origin-guard.ts`, integrated in `src/rsc/handler.ts`
 in `coreRequestHandler()` after request classification and the
@@ -87,6 +90,64 @@ Covered by:
 
 - Unit: `src/rsc/__tests__/origin-guard.test.ts`
 - E2E: `e2e/origin-guard.test.ts` (dev + production)
+
+## Outgoing Redirect Guard (Open-Redirect Protection)
+
+`originCheck` validates the INCOMING request origin (CSRF). The redirect guard
+is the orthogonal OUTGOING half: it validates where a redirect sends the user.
+
+The client already blocks cross-origin redirect targets on the JS/fetch channel
+(`validateRedirectOrigin`, consumed by the navigation/partial/action bridges).
+But that guard only runs where Rango's JS decides to navigate. A redirect the
+**browser follows natively** — a no-JS PE form POST, a full-page GET
+`match.redirect`, a middleware `redirect()` short-circuit, a response-route 3xx —
+has no client in the loop, so historically those paths could open-redirect while
+the JS path could not.
+
+The fix moves the SAME same-origin rule to the server. Every browser-followed
+redirect funnels through one chokepoint — the single `return` in
+`createRSCHandler` (`handler.ts`) — so `guardOutgoingRedirect` there covers all
+of them and any future redirect exit:
+
+- same-origin / relative `Location` → passes through unchanged;
+- cross-origin without opt-in → `Location` rewritten to the basename root (a safe
+  same-origin landing, the document analog of the client's "stay put"); dev logs
+  the blocked target;
+- `redirect(url, { external: true })` → an internal marker header
+  (`x-rango-redirect-external`) opts the redirect out; the guard strips the
+  marker and lets the off-host target through. On the SPA channel the marker
+  rides in `metadata.redirect.external` so the client does a hard
+  `location.assign` instead of a partial fetch.
+
+The marker is set by app code at the call site only; the attacker controls the
+URL value, never whether the app wrote `{ external: true }` — so
+`redirect(userInput)` stays safe (Rails `allow_other_host: true` model).
+
+Soft SPA/Flight redirects are `200`/`204` responses (`X-RSC-Redirect` header /
+`metadata.redirect` payload), not 3xx, so they never reach the server guard —
+they stay validated client-side.
+
+The ONE shared rule lives in `src/redirect-origin.ts`
+(`resolveSameOriginRedirect`), imported by both the client validator and the
+server guard so the two sides cannot drift.
+
+Implementation: `src/redirect-origin.ts` (shared rule),
+`src/rsc/redirect-guard.ts` (server guard), wired at the `handler.ts` chokepoint;
+`redirect()` opt-in in `src/route-definition/redirect.ts`; SPA propagation in
+`src/rsc/helpers.ts` (`interceptRedirectForPartial`) and client honoring in
+`src/browser/server-action-bridge.ts` / `src/browser/partial-update.ts`. Two
+client init-window hard-nav fallbacks (`server-action-bridge.ts`,
+`rsc-router.tsx`) re-validate defensively.
+
+Covered by:
+
+- Unit: `src/rsc/__tests__/redirect-guard.test.ts` (guard + shared rule),
+  `src/route-definition/__tests__/redirect.test.ts` (external opt-in marker),
+  `src/rsc/__tests__/helpers.test.ts` (SPA external propagation),
+  `src/testing/__tests__/dispatch.test.ts` (userland, via the `dispatch`
+  primitive which mirrors the chokepoint)
+- E2E: `e2e/redirect-guard.test.ts` (dev + production): full-page middleware
+  block/allow/external + no-JS PE form action block
 
 ## Phase 5 Regression Coverage
 

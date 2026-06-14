@@ -9,6 +9,7 @@ import {
   getLocationState,
 } from "../../server/request-context.js";
 import { redirect } from "../redirect.js";
+import { EXTERNAL_REDIRECT_MARKER } from "../../redirect-origin.js";
 import type { LocationStateEntry } from "../../browser/react/location-state-shared.js";
 
 /** Minimal location state entry for testing. */
@@ -52,6 +53,34 @@ describe("redirect()", () => {
   it("accepts an options object with status", () => {
     const res = redirect("/target", { status: 307 });
     expect(res.status).toBe(307);
+  });
+
+  describe("external opt-in", () => {
+    it("does NOT set the external marker by default", () => {
+      expect(
+        redirect("/target").headers.get(EXTERNAL_REDIRECT_MARKER),
+      ).toBeNull();
+      expect(
+        redirect("https://accounts.example.com/oauth").headers.get(
+          EXTERNAL_REDIRECT_MARKER,
+        ),
+      ).toBeNull();
+    });
+
+    it("stamps the external marker when external: true", () => {
+      const res = redirect("https://accounts.example.com/oauth", {
+        external: true,
+      });
+      expect(res.headers.get(EXTERNAL_REDIRECT_MARKER)).toBe("1");
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+    });
+
+    it("does not stamp the marker when external is false", () => {
+      const res = redirect("/target", { external: false });
+      expect(res.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+    });
   });
 
   describe("state", () => {

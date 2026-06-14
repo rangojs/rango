@@ -211,6 +211,13 @@ export function createPartialUpdater(
         debugLog("[Browser] Ignoring stale redirect (aborted)");
         return;
       }
+      // Explicit off-host redirect (redirect(url, { external: true })):
+      // hard-navigate without the same-origin check the app opted out of.
+      if (payload.metadata.redirect.external) {
+        debugLog("[Browser] External redirect (hard navigation)");
+        window.location.assign(payload.metadata.redirect.url);
+        return;
+      }
       const redirectUrl = validateRedirectOrigin(
         payload.metadata.redirect.url,
         window.location.origin,
