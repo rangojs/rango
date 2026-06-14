@@ -96,6 +96,7 @@ import {
   mergeStubHeadersAndFinalize,
 } from "../rsc/helpers.js";
 import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
+import { stringifyJsonRouteResult } from "../rsc/json-route-result.js";
 import {
   EXTERNAL_REDIRECT_MARKER,
   isExternalRedirect,
@@ -164,7 +165,8 @@ function toRequest(request: Request | string): Request {
 /**
  * Serialize a NON-Response response-route handler result, mirroring the
  * router's handleResponseRoute() contract:
- * - "json" serializes the value verbatim (bare) with application/json,
+ * - "json" serializes the value (bare) with application/json, rejecting a nested
+ *   unresolved Promise via the shared stringifyJsonRouteResult guard,
  * - text/html/xml/md stringify with the mapped MIME type.
  *
  * A handler-returned Response is NOT routed here — callHandler re-wraps it via
@@ -177,7 +179,12 @@ function serializeResponseRouteResult(
   responseType: string,
 ): Response {
   if (responseType === "json") {
-    return new Response(JSON.stringify(result), {
+    // Serialize through the SAME guard production uses: a nested unresolved
+    // Promise (forgotten await) throws RESPONSE_NOT_SERIALIZABLE here, caught by
+    // callHandler's catch and mapped to the identical typed 500 production
+    // returns -- so a dispatch json test fails exactly where production would,
+    // instead of silently emitting {} and passing.
+    return new Response(stringifyJsonRouteResult(result), {
       status: 200,
       headers: { "content-type": "application/json;charset=utf-8" },
     });

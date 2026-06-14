@@ -236,7 +236,11 @@ export async function renderHandler<TEnv = any>(
   let didThrow = false;
 
   await runWithRequestContext(reqCtx as RequestContext<TEnv>, async () => {
-    setRequestContextParams(opts.params ?? {}, opts.routeName);
+    // Scope the request-context reverse to opts.routeMap too (not just the
+    // handler context built below), so a nested server component reading
+    // getRequestContext().reverse() resolves against the same map as the
+    // handler's ctx.reverse -- matching renderToFlightString/renderServerTree.
+    setRequestContextParams(opts.params ?? {}, opts.routeName, opts.routeMap);
     const hctx = createHandlerContext<TEnv>(
       opts.params ?? {},
       reqCtx.request,

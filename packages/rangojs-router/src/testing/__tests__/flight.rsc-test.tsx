@@ -35,6 +35,13 @@ async function ParamEcho(): Promise<React.ReactElement> {
   return <span>id={ctx.params.id}</span>;
 }
 
+// A Server Component that reverses a route name, proving ctx.reverse resolves
+// against the SCOPED routeMap option rather than the global route map.
+async function ReverseEcho(): Promise<React.ReactElement> {
+  const ctx = getRequestContext();
+  return <span>url={ctx.reverse("product", { id: "5" })}</span>;
+}
+
 // A Server Component that throws during render.
 async function Boom(): Promise<React.ReactElement> {
   await Promise.resolve();
@@ -81,6 +88,18 @@ describe("renderToFlightString (Flight RSC)", () => {
     });
     expect(flight).toMatchFlight("id=");
     expect(flight).toMatchFlight("42");
+  });
+
+  // #572 / #582 item: ctx.reverse() must resolve against the SCOPED routeMap
+  // option, not the global route map (which is order-dependent on whatever
+  // router registered last). With no router registered in this bare RSC test,
+  // the global map has no "product", so only the scoped option can resolve it.
+  it("scopes ctx.reverse() to the provided routeMap option", async () => {
+    const flight = await renderToFlightString(<ReverseEcho />, {
+      routeMap: { product: "/scoped/products/:id" },
+    });
+    expect(flight).toMatchFlight("url=");
+    expect(flight).toMatchFlight("/scoped/products/5");
   });
 
   it("normalizeFlight scrubs the dev reference row and file paths", () => {

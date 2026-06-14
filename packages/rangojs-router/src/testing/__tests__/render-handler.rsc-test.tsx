@@ -49,6 +49,28 @@ describe("renderHandler", () => {
     expect(json).toContain("9");
   });
 
+  // #582 parity: renderHandler scopes the request-context reverse to the
+  // routeMap option (not only the handler context), so a NESTED server component
+  // reading getRequestContext().reverse() resolves against the same map as the
+  // handler's ctx.reverse -- consistent with renderToFlightString/renderServerTree.
+  test("a nested server component's getRequestContext().reverse scopes to the routeMap option", async () => {
+    async function NestedReverse() {
+      const ctx = getRequestContext();
+      return <a href={ctx.reverse("product", { id: "9" })}>go</a>;
+    }
+    function Page() {
+      return (
+        <main>
+          <NestedReverse />
+        </main>
+      );
+    }
+    const { tree } = await renderHandler(Page, {
+      routeMap: { product: "/scoped/products/:id" },
+    });
+    expect(JSON.stringify(tree)).toContain("/scoped/products/9");
+  });
+
   test("captures handle pushes (ctx.use(Meta)) without crashing", async () => {
     function Page(ctx: HandlerContext) {
       const meta = ctx.use(Meta);

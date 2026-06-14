@@ -71,6 +71,14 @@ export interface RenderToFlightStringOptions {
   /** Matched route name (drives `ctx.routeName` and scoped reverse). */
   routeName?: string;
   /**
+   * Route name -> pattern map enabling a SCOPED `ctx.reverse()` (like
+   * `renderHandler`). Without it, a server component that reverses resolves
+   * against the GLOBAL route map and is order-dependent on whatever router
+   * registered last. Pass the router-under-test's map to make reversing
+   * deterministic.
+   */
+  routeMap?: Record<string, string>;
+  /**
    * Context variables visible to the rendered tree via `ctx.get(...)` — as a
    * prior middleware would have set them. Seeds the SAME way the handler-test
    * primitives (`runInRequestContext`/`runLoader`) do, so a server component
@@ -186,7 +194,7 @@ export async function serializeToFlightString(
   });
 
   return runWithRequestContext(ctx, () => {
-    setRequestContextParams(opts.params ?? {}, opts.routeName);
+    setRequestContextParams(opts.params ?? {}, opts.routeName, opts.routeMap);
     return serializeNodeToFlight(element, clientManifest, url.pathname);
   });
 }
