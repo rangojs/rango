@@ -495,9 +495,30 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
   stale?: boolean,
+  options?: {
+    /**
+     * Seed for an unknown parent-chain slot (slot not in clientSegmentIds) when
+     * there are no deciding revalidate fns. "type-derived" (default, main path):
+     * `belongsToRoute || isNewParent`. "force-render" (orphan path): always
+     * `true` — orphan parallels always belong to the route and must render
+     * unless the user opts out via revalidate(); the #482 blank-parent-chain-
+     * slot guard.
+     */
+    parentChainDefault?: "type-derived" | "force-render";
+    /**
+     * When a slot's loaders are resolved relative to the slot segment push.
+     * "after" (default, main path) pushes the slot segment first; "before"
+     * (orphan path) resolves loaders first. This only changes the
+     * segments/matchedIds emission ORDER (the client reconciler is insensitive
+     * to it: loader sub-ids are filtered out and slots are re-grouped by parent).
+     */
+    loaderOrder?: "after" | "before";
+  },
 ): Promise<SegmentRevalidationResult> {
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
+  const parentChainDefault = options?.parentChainDefault ?? "type-derived";
+  const loaderOrder = options?.loaderOrder ?? "after";
 
   const resolvedParallelEntries = new Set<string>();
   for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
@@ -522,6 +543,34 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
     const isFullRefetch = clientSegmentIds.size === 0;
     const isNewParent = !clientSegmentIds.has(entry.shortCode);
+
+    // A slot's loaders (never cached) are deduped per parallel entry and
+    // emitted either before or after the slot segment per loaderOrder.
+    const resolveSlotLoaders = async () => {
+      if (resolvedParallelEntries.has(parallelEntry.id)) return;
+      const loaderResult = await resolveLoadersWithRevalidation(
+        parallelEntry,
+        context,
+        belongsToRoute,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        deps,
+        actionContext,
+        entry.shortCode,
+        stale,
+      );
+      segments.push(...loaderResult.segments);
+      matchedIds.push(...loaderResult.matchedIds);
+      resolvedParallelEntries.add(parallelEntry.id);
+    };
+
+    if (loaderOrder === "before") {
+      await resolveSlotLoaders();
+    }
     // Always announce the slot in matchedIds — it's unconditionally appended
     // to `segments` below, and a segment present in segments but missing from
     // matched lets the client prune it (then it's missing from clientSegmentIds
@@ -541,7 +590,10 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       // soft chain seeds with the right "new segment" / "parent-chain" value.
       let defaultOverride: { value: boolean; reason: string } | undefined;
       if (!clientSegmentIds.has(parallelId)) {
-        const value = belongsToRoute || isNewParent;
+        const value =
+          parentChainDefault === "force-render"
+            ? true
+            : belongsToRoute || isNewParent;
         defaultOverride = {
           value,
           reason: value ? "new-segment" : "skip-parent-chain",
@@ -622,28 +674,9 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         : {}),
     });
 
-    if (resolvedParallelEntries.has(parallelEntry.id)) {
-      continue;
+    if (loaderOrder === "after") {
+      await resolveSlotLoaders();
     }
-
-    const loaderResult = await resolveLoadersWithRevalidation(
-      parallelEntry,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-      entry.shortCode,
-      stale,
-    );
-    segments.push(...loaderResult.segments);
-    matchedIds.push(...loaderResult.matchedIds);
-    resolvedParallelEntries.add(parallelEntry.id);
   }
 
   return { segments, matchedIds };
@@ -1165,140 +1198,33 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
-  const resolvedParallelEntries = new Set<string>();
-  for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
-    orphan.parallel,
-  )) {
-    invariant(
-      parallelEntry.type === "parallel",
-      `Expected parallel entry, got: ${parallelEntry.type}`,
-    );
-
-    if (!resolvedParallelEntries.has(parallelEntry.id)) {
-      // shortCodeOverride must match the parent layout, not the parallel entry.
-      const loaderResult = await resolveLoadersWithRevalidation(
-        parallelEntry,
-        context,
-        belongsToRoute,
-        clientSegmentIds,
-        prevParams,
-        request,
-        prevUrl,
-        nextUrl,
-        routeKey,
-        deps,
-        actionContext,
-        orphan.shortCode,
-        stale,
-      );
-      segments.push(...loaderResult.segments);
-      matchedIds.push(...loaderResult.matchedIds);
-      resolvedParallelEntries.add(parallelEntry.id);
-    }
-
-    const slots = parallelEntry.handler as Record<
-      `@${string}`,
-      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
-      | ReactNode
-    >;
-    // Handler may be undefined in production after static handler eviction.
-    const handler = slots[slot];
-
-    // Use orphan.shortCode (the parent layout) to match the SSR path
-    // (resolveParallelEntry receives parentShortCode = orphan.shortCode).
-    // Using parallelEntry.shortCode would generate IDs the client doesn't know about.
-    const parallelId = `${orphan.shortCode}.${slot}`;
-    matchedIds.push(parallelId);
-
-    const isFullRefetch = clientSegmentIds.size === 0;
-    let shouldResolve: boolean;
-    if (isFullRefetch) {
-      // Same load-bearing rationale as the main parallel path: full refetch
-      // means the client has nothing to fall back to, so the slot must render.
-      traceFullRefetchedParallelSlot(parallelId, belongsToRoute);
-      shouldResolve = true;
-    } else {
-      // When slot is unknown to the client, seed the soft chain with `true`
-      // (orphan parallels always belong to the route — we want them rendered
-      // unless the user explicitly opts out via revalidate()).
-      const defaultOverride = clientSegmentIds.has(parallelId)
-        ? undefined
-        : { value: true, reason: "new-segment" };
-
-      const dummySegment: ResolvedSegment = {
-        id: parallelId,
-        namespace: parallelEntry.id,
-        type: "parallel",
-        index: 0,
-        component: null as any,
-        params,
-        slot,
-        belongsToRoute,
-        parallelName: `${parallelEntry.id}.${slot}`,
-        ...(parallelEntry.mountPath
-          ? { mountPath: parallelEntry.mountPath }
-          : {}),
-      };
-
-      shouldResolve = await evaluateRevalidation({
-        segment: dummySegment,
-        prevParams,
-        getPrevSegment: null,
-        request,
-        prevUrl,
-        nextUrl,
-        revalidations: parallelEntry.revalidate.map((fn, i) => ({
-          name: `revalidate${i}`,
-          fn,
-        })),
-        routeKey,
-        context,
-        actionContext,
-        stale,
-        traceSource: "parallel",
-        defaultOverride,
-      });
-    }
-    emitRevalidationDecision(
-      parallelId,
-      context.pathname,
-      routeKey,
-      shouldResolve,
-    );
-
-    const { component, handlerRan } = await resolveParallelSlotComponent({
-      shouldResolve,
-      parallelEntry,
-      slot,
-      parallelId,
-      handler,
-      context,
-      deps,
-      routeKey,
-      params,
-    });
-
-    segments.push({
-      id: parallelId,
-      namespace: parallelEntry.id,
-      type: "parallel",
-      index: 0,
-      component,
-      loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-      transition: applyViewTransitionDefault(
-        parallelEntry.transition,
-        deps.viewTransitionDefault,
-      ),
-      params,
-      slot,
-      _handlerRan: handlerRan,
-      belongsToRoute,
-      parallelName: `${parallelEntry.id}.${slot}`,
-      ...(parallelEntry.mountPath
-        ? { mountPath: parallelEntry.mountPath }
-        : {}),
-    });
-  }
+  // Resolve the orphan layout's parallel slots through the shared main-path
+  // helper. The orphan policy is carried by explicit args, byte-for-byte:
+  //   - parentChainDefault "force-render": an unknown parent-chain slot seeds
+  //     `true` (orphan parallels always belong to the route — the #482 guard),
+  //     where the main path would seed `belongsToRoute || isNewParent`.
+  //   - loaderOrder "before": a slot's loaders are emitted before the slot
+  //     segment, matching the prior inlined order.
+  // `entry.shortCode` inside the helper is `orphan.shortCode` (orphan is passed
+  // as `entry`), so the parallel ids + loader shortCodeOverride are unchanged.
+  const parallelResult = await resolveParallelSegmentsWithRevalidation(
+    orphan,
+    params,
+    context,
+    belongsToRoute,
+    clientSegmentIds,
+    prevParams,
+    request,
+    prevUrl,
+    nextUrl,
+    routeKey,
+    deps,
+    actionContext,
+    stale,
+    { parentChainDefault: "force-render", loaderOrder: "before" },
+  );
+  segments.push(...parallelResult.segments);
+  matchedIds.push(...parallelResult.matchedIds);
 
   return { segments, matchedIds };
 }
