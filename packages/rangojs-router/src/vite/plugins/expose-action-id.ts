@@ -3,6 +3,7 @@ import MagicString from "magic-string";
 import path from "node:path";
 import fs from "node:fs";
 import { normalizePath } from "./expose-id-utils.js";
+import { registerServerReferenceRegex } from "./server-reference-pattern.js";
 import { createRangoDebugger, createCounter, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.transform);
@@ -179,8 +180,7 @@ function applyRegisterReferenceWrapping(
     return false;
   }
 
-  const pattern =
-    /registerServerReference\(([^,]+),\s*"([^"]+)",\s*"([^"]+)"\)/g;
+  const pattern = registerServerReferenceRegex();
 
   let hasChanges = false;
   let match: RegExpExecArray | null;

@@ -1,23 +1,16 @@
 import type { Plugin } from "vite";
 import { createRangoDebugger, createCounter, NS } from "../debug.js";
 import { computeProductionHash } from "./client-ref-hashing.js";
+import { registerServerReferenceRegex } from "./server-reference-pattern.js";
 
 const debug = createRangoDebugger(NS.transform);
 
-// plugin-rsc's rsc:use-server transform emits
-//   registerServerReference(<value>, "<id>", "<name>")
-// where <id> is the module's normalized id. In a real build (command === "build")
-// that id is the production hash; in a dev/serve server it is the dev-style
-// module path (e.g. "/src/urls/prerender.tsx"). The leading <value> is a hoisted
-// identifier (no top-level comma), and a trailing .bind(null,
-// encryptActionBoundArgs(...)) lies OUTSIDE this call -- so matching only the
-// call and replacing group 2 leaves the function and its bound args untouched.
-const REGISTER_SERVER_REF_RE =
-  /registerServerReference\(([^,]+),\s*"([^"]+)",\s*"([^"]+)"\)/g;
-
 /**
- * Replace dev-style server-reference ids with their production hashes. Exported
- * for testing; used by hashServerRefs. Returns null if nothing changed.
+ * Replace dev-style server-reference ids with their production hashes. The temp
+ * server renders Static/Prerender in a dev/serve Vite server, so plugin-rsc mints
+ * a dev-style id (e.g. "/src/urls/prerender.tsx"); rewriting only the id (group 2)
+ * leaves the hoisted function and its trailing encrypted .bind(...) untouched.
+ * Exported for testing; used by hashServerRefs. Returns null if nothing changed.
  */
 export function transformServerRefs(
   code: string,
@@ -27,7 +20,7 @@ export function transformServerRefs(
 
   let hasReplacement = false;
   const result = code.replace(
-    REGISTER_SERVER_REF_RE,
+    registerServerReferenceRegex(),
     (match, _value: string, refKey: string) => {
       // The temp server is not a long-lived HMR server, so ids are bare; strip a
       // query suffix defensively so the hash matches plugin-rsc's manifest key.

@@ -379,32 +379,28 @@ export function withCacheLookup<TEnv>(
     } = getRouterContext<TEnv>();
 
     const isHmr = !!ctx.request.headers.get("X-RSC-HMR");
-    // Actions normally re-render fresh and skip the prerender store. But a pure
-    // Prerender route's handler is evicted at build, so there is no fresh handler
-    // to run on an action re-render -- without this, the re-render falls through
-    // to the evicted handler and throws "No prerender data found". Fall back to
-    // the prerendered entry (the action ran already; its result is applied
-    // client-side via useActionState). Passthrough routes keep a liveHandler, so
-    // they still re-render fresh on actions and must NOT short-circuit here.
-    const isPassthroughPrerenderRoute = ctx.entries.some(
-      (entry) => entry.type === "route" && entry.isPassthrough === true,
-    );
-    const allowActionPrerenderFallback =
-      ctx.isAction && !isPassthroughPrerenderRoute;
-    if (
-      (!ctx.isAction || allowActionPrerenderFallback) &&
-      !isHmr &&
-      ctx.matched.pr
-    ) {
-      await ensurePrerenderDeps();
-      if (prerenderStoreInstance) {
-        const served = yield* tryPrerenderLookup(
-          ctx,
-          state,
-          pipelineStart,
-          handleStoreRef,
-        );
-        if (served) return;
+    if (!isHmr && ctx.matched.pr) {
+      // Actions normally re-render fresh and skip the prerender store. But a pure
+      // Prerender route's handler is evicted at build, so there is no fresh
+      // handler to run on an action re-render -- without the fallback the
+      // re-render falls through to the evicted handler and throws "No prerender
+      // data found". Serve the prerendered entry instead (the action ran already;
+      // its result is applied client-side via useActionState). Passthrough routes
+      // keep a liveHandler, so they still re-render fresh on actions.
+      const isPassthroughPrerenderRoute = ctx.entries.some(
+        (entry) => entry.type === "route" && entry.isPassthrough === true,
+      );
+      if (!ctx.isAction || !isPassthroughPrerenderRoute) {
+        await ensurePrerenderDeps();
+        if (prerenderStoreInstance) {
+          const served = yield* tryPrerenderLookup(
+            ctx,
+            state,
+            pipelineStart,
+            handleStoreRef,
+          );
+          if (served) return;
+        }
       }
     }
 

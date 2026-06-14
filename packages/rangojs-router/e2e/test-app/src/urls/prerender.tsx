@@ -4,7 +4,6 @@ import {
   Static,
   getRequestContext,
   Breadcrumbs,
-  cookies,
 } from "@rangojs/router";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
@@ -13,7 +12,7 @@ import {
   CachedInlineActionForm,
   type CachedInlineActionState,
 } from "../components/CachedInlineActionForm.js";
-import { fetchRandomAsyncValue } from "../inline-action-helpers.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
 // Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
 // resolve.alias. Reaching this through build-time Static/Prerender handlers
 // asserts discovery's runner honors third-party resolvers (issue #500).
@@ -153,9 +152,7 @@ export const StaticInlineActionPage = Static(() => {
     _formData: FormData,
   ): Promise<CachedInlineActionState> {
     "use server";
-    const asyncValue = await fetchRandomAsyncValue();
-    const sessionCookie = cookies().get("cai-session")?.value ?? "none";
-    return { capturedToken: token, asyncValue, sessionCookie };
+    return buildInlineActionState(token);
   }
 
   return (
@@ -181,9 +178,7 @@ export const PrerenderInlineActionPage = Prerender(
       _formData: FormData,
     ): Promise<CachedInlineActionState> {
       "use server";
-      const asyncValue = await fetchRandomAsyncValue();
-      const sessionCookie = cookies().get("cai-session")?.value ?? "none";
-      return { capturedToken: articleId, asyncValue, sessionCookie };
+      return buildInlineActionState(articleId);
     }
 
     return (

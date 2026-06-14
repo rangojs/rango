@@ -16,6 +16,12 @@ import {
 } from "@vitejs/plugin-rsc/rsc";
 import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 
+// Preserve embedded server references on a cache/prerender HIT (plugin-rsc PR
+// #1246) so they re-serialize to the client instead of resolving to a raw
+// function React refuses to pass to a Client Component. Shared across the
+// deserialize sites so the decode policy has a single owner.
+const PRESERVE_SERVER_REFS = { serverReferences: "preserve" } as const;
+
 /**
  * Convert a ReadableStream to a string.
  */
@@ -81,10 +87,7 @@ export async function rscDeserialize<T>(
   const stream = stringToStream(encoded);
   return createFromReadableStream<T>(stream, {
     temporaryReferences,
-    // Preserve embedded server references on a cache/prerender HIT (plugin-rsc
-    // PR #1246) so they re-serialize to the client instead of resolving to a raw
-    // function React refuses to pass to a Client Component.
-    serverReferences: "preserve",
+    ...PRESERVE_SERVER_REFS,
   });
 }
 
@@ -115,10 +118,7 @@ export async function deserializeResult<T>(encoded: string): Promise<T> {
   const stream = stringToStream(encoded);
   return createFromReadableStream<T>(stream, {
     temporaryReferences,
-    // Preserve embedded server references on a cache/prerender HIT (plugin-rsc
-    // PR #1246) so they re-serialize to the client instead of resolving to a raw
-    // function React refuses to pass to a Client Component.
-    serverReferences: "preserve",
+    ...PRESERVE_SERVER_REFS,
   });
 }
 
@@ -230,11 +230,7 @@ export async function deserializeSegments(
         await Promise.all([
           createFromReadableStream(stringToStream(item.encoded), {
             temporaryReferences,
-            // Preserve embedded server references on a cache/prerender HIT
-            // (plugin-rsc PR #1246) so they re-serialize to the client instead of
-            // resolving to a raw function React refuses to pass to a Client
-            // Component.
-            serverReferences: "preserve",
+            ...PRESERVE_SERVER_REFS,
           }),
           rscDeserialize(item.encodedLayout),
           rscDeserialize(item.encodedLoaderData),

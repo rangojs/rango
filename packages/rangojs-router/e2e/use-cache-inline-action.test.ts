@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, testId } from "./helper";
+import { waitForHydration, expectNoPageError } from "./helper";
+import {
+  inlineAction,
+  readAsync,
+  readRendered,
+  setSession,
+} from "./inline-action.helpers";
 
 // Pins the behavior of an inline `"use server"` action that is CREATED INSIDE a
 // `"use cache"` server component and handed to a client component. Three axes
@@ -42,80 +48,68 @@ function defineSpec(label: string, mode: "dev" | "build") {
 
       const url = f.url("/use-cache-test/cached-inline-action");
 
-      const captured = () => testId(page, "cached-inline-captured-token");
-      const asyncVal = () => testId(page, "cached-inline-async-value");
-      const session = () => testId(page, "cached-inline-session-cookie");
-
-      const readAsync = async () =>
-        (await asyncVal().textContent())!.replace(/^async:/, "");
-
-      // Set the cookie the action's live cookies() read will observe. Same
-      // name -> overwrites, so each submit sees a distinct value.
-      const setSession = (value: string) =>
-        page.context().addCookies([{ name: "cai-session", value, url }]);
-
       // First load: populates (miss) or serves (hit) the cache entry.
-      await setSession("sess-1");
+      await setSession(page, url, "sess-1");
       await page.goto(url);
       await waitForHydration(page);
-      await expect(testId(page, "cached-inline-action-page")).toBeVisible();
+      await expect(inlineAction.page(page)).toBeVisible();
 
-      const rendered1 = (await testId(
-        page,
-        "cached-inline-rendered-token",
-      ).textContent())!.replace(/^rendered:/, "");
+      const rendered1 = await readRendered(page);
       expect(rendered1).toMatch(/^tok-/);
 
       // Nothing invoked yet.
-      await expect(captured()).toHaveText("captured:none");
-      await expect(asyncVal()).toHaveText("async:none");
-      await expect(session()).toHaveText("session:none");
+      await expect(inlineAction.captured(page)).toHaveText("captured:none");
+      await expect(inlineAction.asyncValue(page)).toHaveText("async:none");
+      await expect(inlineAction.session(page)).toHaveText("session:none");
 
       // First invocation. Settle on the deterministic live-cookie value.
-      await testId(page, "cached-inline-action-submit").click();
-      await expect(session()).toHaveText("session:sess-1");
+      await inlineAction.submit(page).click();
+      await expect(inlineAction.session(page)).toHaveText("session:sess-1");
 
       // Captured render scope is frozen: equals the cached rendered token.
-      await expect(captured()).toHaveText(`captured:${rendered1}`);
+      await expect(inlineAction.captured(page)).toHaveText(
+        `captured:${rendered1}`,
+      );
       // Body ran live: async value present and shaped.
-      const async1 = await readAsync();
+      const async1 = await readAsync(page);
       expect(async1).toMatch(/^async-/);
 
       // Second invocation with a DIFFERENT cookie.
-      await setSession("sess-2");
-      await testId(page, "cached-inline-action-submit").click();
+      await setSession(page, url, "sess-2");
+      await inlineAction.submit(page).click();
       // Live request scope: action reads the NEW cookie, not the render scope.
-      await expect(session()).toHaveText("session:sess-2");
+      await expect(inlineAction.session(page)).toHaveText("session:sess-2");
 
       // Capture still frozen (identical to write-time).
-      await expect(captured()).toHaveText(`captured:${rendered1}`);
+      await expect(inlineAction.captured(page)).toHaveText(
+        `captured:${rendered1}`,
+      );
       // Body ran live AGAIN: async value differs from the previous invocation.
-      const async2 = await readAsync();
+      const async2 = await readAsync(page);
       expect(async2).toMatch(/^async-/);
       expect(async2).not.toBe(async1);
 
       // Reload -> forces a fresh request -> cache HIT. The rendered (cached)
       // token is the SAME despite mixing Date.now()+random: the cached output
       // (and the action's captured scope) is frozen.
-      await setSession("sess-3");
+      await setSession(page, url, "sess-3");
       await page.goto(url);
       await waitForHydration(page);
-      const rendered2 = (await testId(
-        page,
-        "cached-inline-rendered-token",
-      ).textContent())!.replace(/^rendered:/, "");
+      const rendered2 = await readRendered(page);
       expect(rendered2).toBe(rendered1);
 
       // State resets on reload.
-      await expect(session()).toHaveText("session:none");
+      await expect(inlineAction.session(page)).toHaveText("session:none");
 
       // Invoke after the cache hit.
-      await testId(page, "cached-inline-action-submit").click();
-      await expect(session()).toHaveText("session:sess-3");
+      await inlineAction.submit(page).click();
+      await expect(inlineAction.session(page)).toHaveText("session:sess-3");
       // Capture is STILL the write-time token across a cache hit.
-      await expect(captured()).toHaveText(`captured:${rendered1}`);
+      await expect(inlineAction.captured(page)).toHaveText(
+        `captured:${rendered1}`,
+      );
       // Body still live: fresh async value, different again.
-      const async3 = await readAsync();
+      const async3 = await readAsync(page);
       expect(async3).not.toBe(async2);
     });
   });

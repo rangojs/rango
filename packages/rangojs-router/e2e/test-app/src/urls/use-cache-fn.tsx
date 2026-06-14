@@ -3,7 +3,7 @@ import {
   CachedInlineActionForm,
   type CachedInlineActionState,
 } from "../components/CachedInlineActionForm.js";
-import { fetchRandomAsyncValue } from "../inline-action-helpers.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -230,9 +230,7 @@ export async function getCachedInlineActionShell(): Promise<React.ReactNode> {
     _formData: FormData,
   ): Promise<CachedInlineActionState> {
     "use server";
-    const asyncValue = await fetchRandomAsyncValue();
-    const sessionCookie = cookies().get("cai-session")?.value ?? "none";
-    return { capturedToken: token, asyncValue, sessionCookie };
+    return buildInlineActionState(token);
   }
 
   return (
