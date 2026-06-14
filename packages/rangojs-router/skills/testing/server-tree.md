@@ -2,7 +2,7 @@
 
 **Layer:** RSC unit (react-server project) · **Import:** `@rangojs/router/testing/flight` · **DSL it tests:** client islands across the boundary + server-rendered host content (see `/route`)
 
-`renderServerTree` serializes the real Flight (identical bytes to `renderToFlightString`) and then deserializes it back to an inspectable React element tree you traverse — that serialize/deserialize round-trip is REAL; what you SEED is the element you render plus the request context (`request`/`headers`/`params`/`vars`/`env`). The win over the wire string: a client boundary's props come back as real JS values (a `Date` is a `Date`, not the opaque `$D...` encoding) and you can confirm a `"use client"` component actually crossed the boundary (an `I` row) instead of being inlined. There is NO hydration and NO interaction — boundaries are inert placeholders carrying props.
+`renderServerTree` is the DEFAULT way to assert on a Flight render; `renderToFlightString` (see [`./flight.md`](./flight.md)) is the escape hatch for pinning the raw wire bytes. It serializes the real Flight (identical bytes to `renderToFlightString`) and then deserializes it back to an inspectable React element tree you traverse — that serialize/deserialize round-trip is REAL; what you SEED is the element you render plus the request context (`request`/`headers`/`params`/`vars`/`env`). The win over the wire string: a client boundary's props come back as real JS values (a `Date` is a `Date`, not the opaque `$D...` encoding) and you can confirm a `"use client"` component actually crossed the boundary (an `I` row) instead of being inlined. There is NO hydration and NO interaction — boundaries are inert placeholders carrying props.
 
 ## API
 

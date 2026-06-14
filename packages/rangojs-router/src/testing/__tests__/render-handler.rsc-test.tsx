@@ -12,6 +12,8 @@ import {
 } from "../../server/cookie-store.js";
 import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { Counter } from "./fixtures/Counter.js";
+import { getRequestContext } from "../../server/request-context.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { HandlerContext } from "../../types/handler-context.js";
 
 const Tenant = createVar<{ name: string }>();
@@ -390,5 +392,30 @@ describe("renderHandler: ctx.use(Handle).defer()", () => {
     const [slot] = handles.get(Breadcrumbs) ?? [];
     expect(slot).toBeInstanceOf(Promise);
     expect(await slot).toEqual({ label: "Forgotten", href: "/forgotten" });
+  });
+
+  test('forwards cacheStore/cacheProfiles into the request context (so "use cache" does not bypass)', async () => {
+    // Dogfood the new renderHandler { cacheStore, cacheProfiles } options. The
+    // bypass-vs-cached decision in registerCachedFunction keys on
+    // requestCtx._cacheStore, so asserting the options reach it proves a handler
+    // invoking a "use cache" fn would take the cached path instead of the
+    // (warned) uncached bypass. (The bypass/warn behavior itself is pinned in
+    // cache/__tests__/cache-runtime-stale.test.ts, where @vitejs/plugin-rsc/rsc
+    // is mocked; it is not resolvable in a bare worker.)
+    const store = new MemorySegmentCacheStore();
+    function Page() {
+      const ctx = getRequestContext() as unknown as {
+        _cacheStore?: unknown;
+        _cacheProfiles?: Record<string, unknown>;
+      };
+      const hasStore = ctx._cacheStore === store;
+      const hasProfile = Boolean(ctx._cacheProfiles?.fast);
+      return <main>{`store=${hasStore} profile=${hasProfile}`}</main>;
+    }
+    const { tree } = await renderHandler(Page, {
+      cacheStore: store,
+      cacheProfiles: { fast: { ttl: 60 } },
+    });
+    expect(JSON.stringify(tree)).toContain("store=true profile=true");
   });
 });

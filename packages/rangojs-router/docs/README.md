@@ -51,7 +51,9 @@ that route tree.
   `@rangojs/router/testing/dom` (`renderRoute`),
   `@rangojs/router/testing/e2e` (`createRangoE2E` -> `parityDescribe`,
   `expectParity`), `@rangojs/router/testing/flight`
-  (`renderToFlightString`, real Flight under the react-server condition), and
+  (`renderServerTree` — the default for asserting a Flight render, typed boundary
+  props — and `renderToFlightString`, the escape hatch for pinning the raw wire
+  payload; real Flight under the react-server condition), and
   `@rangojs/router/testing/flight-matchers` (`flightMatchers`). See also the
   [`/testing` skill](../skills/testing/SKILL.md).
 

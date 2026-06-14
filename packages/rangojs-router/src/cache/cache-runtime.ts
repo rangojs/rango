@@ -21,6 +21,7 @@ import {
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
 import { getRequestContext } from "../server/request-context.js";
+import { isUnderTestRunner } from "../runtime-env.js";
 import {
   isTainted,
   CACHED_FN_SYMBOL,
@@ -59,6 +60,10 @@ async function replyToCacheKey(encoded: string | FormData): Promise<string> {
   return text;
 }
 
+// Cached-fn ids already warned about running uncached under a test runner, so
+// the test-ergonomics warning fires once per fn rather than once per call.
+const warnedUncachedUnderTest = new Set<string>();
+
 // ============================================================================
 // Core: registerCachedFunction
 // ============================================================================
@@ -91,6 +96,22 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // and nothing is lost on a (non-existent) hit. Same applies to the
     // non-serializable-args bypass below.
     if (!store?.getItem) {
+      // Test-ergonomics guard: under a test runner, a "use cache" function that
+      // executes with no item-capable store seeded is exercising the UNCACHED
+      // path — a green test that proves nothing about caching. Warn once per fn
+      // id so the author knows to seed a cacheStore. Advisory (never throws), so
+      // a test that DELIBERATELY runs uncached is unaffected. Gated on the test
+      // runner (process.env.VITEST, not folded) so production never evaluates it.
+      if (isUnderTestRunner() && !warnedUncachedUnderTest.has(id)) {
+        warnedUncachedUnderTest.add(id);
+        console.warn(
+          `[rango] "use cache" function "${id}" executed but no cacheStore was ` +
+            `seeded; the cached path is NOT under test (it ran uncached). Pass ` +
+            `{ cacheStore, cacheProfiles } to runLoader/runMiddleware/renderHandler/` +
+            `runInRequestContext (or configure createRouter({ cache }) for dispatch) ` +
+            `to exercise it.`,
+        );
+      }
       const scoped = runWithCacheTagScope(() => fn.apply(this, args));
       const result = await scoped.result;
       // Still record the runtime tags into the request set so a cacheTag() in an

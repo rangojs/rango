@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { Suspense, use } from "react";
 import { cleanup } from "@testing-library/react";
 import { Outlet } from "../../client.js";
@@ -494,5 +494,137 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
     );
     expect(getByTestId("crumbs").textContent).toBe("Home>P");
     expect(getByTestId("leaf").textContent).toBe("leaf");
+  });
+});
+
+describe("renderRoute navigation lifecycle is frozen at idle", () => {
+  // navigate() commits synchronously (no server fetch / Flight stream), so the
+  // transition state useNavigation/useLinkStatus/useAction read never leaves
+  // "idle". A test that asserts a non-idle state would silently pass; the helper
+  // warns once so that false-confidence trap is loud.
+  it("stays idle across navigate() and warns once, naming the affected hooks", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      function Page() {
+        const nav = useNavigation();
+        return <span data-testid="state">{nav.state}</span>;
+      }
+      const { getByTestId, router } = await renderRoute(
+        [{ path: "/a", Component: Page }],
+        { request: "/a" },
+      );
+
+      expect(getByTestId("state").textContent).toBe("idle");
+      await router.navigate("/a");
+      // Contract: the transition state is frozen at idle even after navigate().
+      expect(getByTestId("state").textContent).toBe("idle");
+      await router.navigate("/a");
+
+      const navWarns = warn.mock.calls.filter((c) =>
+        String(c[0]).includes("navigate()"),
+      );
+      expect(navWarns).toHaveLength(1);
+      expect(String(navWarns[0][0])).toMatch(/useNavigation\(\)\.state/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("renderRoute request/leaf validation", () => {
+  function Probe() {
+    const { slug } = useParams<{ slug?: string }>();
+    return <span data-testid="slug">{slug ?? "none"}</span>;
+  }
+
+  it("rejects a request that does not match the leaf route", async () => {
+    await expect(
+      renderRoute([{ path: "/c/:slug", Component: Probe }], {
+        request: "/typo/wine",
+      }),
+    ).rejects.toThrow(/does not match the leaf route/);
+  });
+
+  it("rejects a mount-PREFIXED request (paths are include-relative)", async () => {
+    // The classic mistake: assuming the mount auto-prefixes the request. It does
+    // not — resolve() matches the request against the leaf as-is, so a prefixed
+    // request would silently yield empty params. Reject it with guidance.
+    await expect(
+      renderRoute([{ path: "/c/:slug", Component: Probe }], {
+        mount: "/en",
+        request: "/en/c/wine",
+      }),
+    ).rejects.toThrow(/A mount does NOT auto-rewrite the request/);
+  });
+
+  it("accepts the relative request under a dynamic mount and extracts params", async () => {
+    function LocaleProbe() {
+      const { slug } = useParams<{ slug?: string }>();
+      return (
+        <div>
+          <span data-testid="slug">{slug ?? "none"}</span>
+          <span data-testid="mount">{useMount()}</span>
+        </div>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/:slug", Component: LocaleProbe }],
+      { mount: "/en", request: "/c/wine" },
+    );
+    expect(getByTestId("slug").textContent).toBe("wine");
+    expect(getByTestId("mount").textContent).toBe("/en");
+  });
+
+  it("accepts a non-matching request when explicit params are supplied", async () => {
+    // The params docstring blesses passing `params` "to avoid relying on URL
+    // parsing". Such a test legitimately wants `request` for search/path context
+    // while seeding params by hand, so the leaf-match guard must NOT fire — the
+    // explicit params, not the URL, are the param source.
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/:slug", Component: Probe }],
+      { request: "/some/other/path?ref=email", params: { slug: "wine" } },
+    );
+    expect(getByTestId("slug").textContent).toBe("wine");
+  });
+
+  it("still rejects a non-matching request when params is empty", async () => {
+    // An empty params object provides no param source, so the trap (silent empty
+    // params) still applies and the guard fires.
+    await expect(
+      renderRoute([{ path: "/c/:slug", Component: Probe }], {
+        request: "/typo/wine",
+        params: {},
+      }),
+    ).rejects.toThrow(/does not match the leaf route/);
+  });
+
+  it("accepts an optional :locale? leaf that the request omits", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/:locale?/c/:slug", Component: Probe }],
+      { request: "/c/wine" },
+    );
+    expect(getByTestId("slug").textContent).toBe("wine");
+  });
+
+  it("is inert when no request is passed (defaults from the leaf static prefix)", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/wine", Component: Probe }],
+      { mount: "/shop" },
+    );
+    expect(getByTestId("slug").textContent).toBe("none");
+  });
+
+  it("is silent off the test runner (production gate)", async () => {
+    vi.stubEnv("VITEST", "");
+    try {
+      const { getByTestId } = await renderRoute(
+        [{ path: "/c/:slug", Component: Probe }],
+        { request: "/typo/wine" },
+      );
+      // A typo that WOULD throw under the runner renders empty params instead.
+      expect(getByTestId("slug").textContent).toBe("none");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

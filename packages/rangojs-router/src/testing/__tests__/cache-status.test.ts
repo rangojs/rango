@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   parseCacheHeader,
   assertCacheStatus,
+  assertCacheDecision,
   createCacheSink,
   filterCacheDecisions,
 } from "../cache-status.js";
 import type {
   CacheDecisionEvent,
+  CacheSegmentStatus,
   RequestStartEvent,
 } from "../../router/telemetry.js";
 
@@ -226,5 +228,65 @@ describe("createCacheSink (telemetry capture path)", () => {
       "hit",
       "miss",
     ]);
+  });
+});
+
+describe("assertCacheDecision (telemetry assert path)", () => {
+  function sinkWith(
+    ...segments: Array<{ id: string; cacheStatus: CacheSegmentStatus }>
+  ): ReturnType<typeof createCacheSink>["events"] {
+    const { sink, events } = createCacheSink();
+    sink.emit({
+      type: "request.start",
+      timestamp: 1,
+      method: "GET",
+      pathname: "/x",
+      transaction: "match",
+      isPartial: false,
+    });
+    sink.emit({
+      type: "cache.decision",
+      timestamp: 2,
+      pathname: "/x",
+      routeKey: "/x",
+      hit: true,
+      shouldRevalidate: false,
+      source: "runtime",
+      segments: segments.map((s) => ({
+        id: s.id,
+        type: "route",
+        cacheStatus: s.cacheStatus,
+      })),
+    });
+    return events;
+  }
+
+  it("passes when a captured decision segment matches id + status", () => {
+    const events = sinkWith({ id: "product", cacheStatus: "hit" });
+    expect(() => assertCacheDecision(events, "product", "hit")).not.toThrow();
+  });
+
+  it("throws on a status mismatch, naming expected and actual", () => {
+    const events = sinkWith({ id: "product", cacheStatus: "miss" });
+    expect(() => assertCacheDecision(events, "product", "hit")).toThrow(
+      /expected "hit" but got "miss"/,
+    );
+  });
+
+  it("throws an actionable error when no segment matches the routeKey, listing seen ids", () => {
+    const events = sinkWith(
+      { id: "a", cacheStatus: "hit" },
+      { id: "b", cacheStatus: "miss" },
+    );
+    expect(() => assertCacheDecision(events, "product", "hit")).toThrow(
+      /no cache\.decision segment for routeKey "product"\. Seen: a, b/,
+    );
+  });
+
+  it('reports "(none)" when there are no cache decisions at all', () => {
+    const { events } = createCacheSink();
+    expect(() => assertCacheDecision(events, "product", "hit")).toThrow(
+      /Seen: \(none\)/,
+    );
   });
 });
