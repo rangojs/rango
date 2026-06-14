@@ -32,7 +32,7 @@ describe("use-cache-transform: file-level non-function exports", () => {
         code,
         "/project/src/data.ts",
       ),
-    ).rejects.toThrow(/non-function export.*"VERSION"/);
+    ).rejects.toThrow(/statically-confirmed functions.*"VERSION"/);
   });
 
   it("throws listing all non-function exports", async () => {
@@ -46,7 +46,29 @@ describe("use-cache-transform: file-level non-function exports", () => {
         code,
         "/project/src/multi.ts",
       ),
-    ).rejects.toThrow(/non-function exports.*"A".*"B"/);
+    ).rejects.toThrow(/statically-confirmed functions.*"A".*"B"/);
+  });
+
+  it("throws on a factory/HOF export (statically indeterminate function)", async () => {
+    // Deliberate policy (2026-06-14): file-level "use cache" wraps only
+    // statically-confirmed functions, so a factory/HOF export is rejected at
+    // build even though it returns a function at runtime. The user rewrites it
+    // as a direct async function. A call-expression initializer is reported
+    // isFunction:false by the pinned plugin-rsc and isFunction:undefined after
+    // #1246; `isFunction !== true` rejects it in both versions. (Also a bump
+    // regression guard: the pre-fix `=== false` guard would wrap it once the
+    // value becomes undefined.)
+    const plugin = initPlugin();
+
+    const code = `"use cache";\nexport const getUser = withCache(fetchUser);\nexport async function getData() { return 42; }`;
+
+    await expect(
+      plugin.transform.call(
+        { environment: rscEnv },
+        code,
+        "/project/src/factory.ts",
+      ),
+    ).rejects.toThrow(/statically-confirmed functions.*"getUser"/);
   });
 
   it("allows file-level 'use cache' when all exports are functions", async () => {

@@ -132,7 +132,7 @@ function transformFileLevelUseCache(
   isLayoutOrTemplate: boolean,
   transformWrapExport: (typeof import("@vitejs/plugin-rsc/transforms"))["transformWrapExport"],
 ) {
-  const nonFunctionExports: string[] = [];
+  const unconfirmedExports: string[] = [];
 
   const { exportNames, output } = transformWrapExport(code, ast, {
     runtime: (value: string, name: string) => {
@@ -142,22 +142,33 @@ function transformFileLevelUseCache(
     rejectNonAsyncFunction: false,
     filter: (name: string, meta: { isFunction?: boolean }) => {
       if (name === "default" && isLayoutOrTemplate) return false;
-      if (meta.isFunction === false) {
-        nonFunctionExports.push(name);
+      // isFunction is boolean | undefined: true = confirmed function, false =
+      // confirmed non-function, undefined = cannot tell statically (e.g. a
+      // factory/HOF initializer `const x = makeCached(fn)`). Deliberate policy:
+      // require a confirmed function and reject everything else, including
+      // indeterminate initializers that may be functions at runtime -- rewrite
+      // those as direct async functions. (Pre-#1246 plugin-rsc reported false,
+      // not undefined, here, so === false would wrongly wrap them post-bump.)
+      if (meta.isFunction !== true) {
+        unconfirmedExports.push(name);
         return false;
       }
       return true;
     },
   });
 
-  if (nonFunctionExports.length > 0) {
+  if (unconfirmedExports.length > 0) {
+    const plural = unconfirmedExports.length > 1;
     throw new Error(
-      `[rango:use-cache] File-level "use cache" in ${sourceId} cannot wrap ` +
-        `non-function export${nonFunctionExports.length > 1 ? "s" : ""}: ` +
-        `${nonFunctionExports.map((n) => `"${n}"`).join(", ")}. ` +
-        `Only function exports can be cached. Either remove "use cache" from ` +
-        `the file level and add it inside individual functions, or move the ` +
-        `non-function exports to a separate module.`,
+      `[rango:use-cache] File-level "use cache" in ${sourceId} only wraps ` +
+        `exports that are statically-confirmed functions. ` +
+        `${plural ? "These exports are" : "This export is"} not: ` +
+        `${unconfirmedExports.map((n) => `"${n}"`).join(", ")}. ` +
+        `Declare them directly (export async function foo() {} or ` +
+        `export const foo = async () => {}). A factory or otherwise ` +
+        `statically-indeterminate initializer (export const foo = makeCached(fn)) ` +
+        `is rejected even if it returns a function at runtime -- rewrite it as a ` +
+        `direct async function, or move non-function exports to a separate module.`,
     );
   }
 
