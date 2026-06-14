@@ -251,6 +251,17 @@ per-item actions work (the item identity is meant to be fixed). The hazard is
 capturing a per-request value (token, session, time) and expecting freshness;
 read those live in the action body instead.
 
+**Same-process vs cross-process hits.** This round-trips on a hit served by the
+same process that wrote the entry (node/memory store): the cache miss executed
+the function, registering the action in React's runtime registry, so the hit
+resolves a re-serializable reference. A hit served from an entry populated by a
+_different_ process (e.g. Cloudflare `CFCacheStore` across workers, or the first
+hit after a deploy) instead resolves via the build manifest to a raw function
+React refuses to re-serialize to a Client Component. Closing that gap needs
+plugin-rsc `serverReferences: "preserve"` (PR #1246) on the cache deserialize.
+The same `preserve` path is what lets `Static()`/`Prerender()` embed
+server-created actions -- see `prerender-api-design.md`.
+
 ## Interaction with Existing Caching
 
 | Mechanism                  | Granularity          | Side effects                                                                | When       |

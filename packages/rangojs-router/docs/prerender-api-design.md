@@ -402,6 +402,46 @@ Actions do not re-render pre-rendered segments. The frozen handler output
 stays. Loaders can be revalidated by actions. With `Passthrough()` routes and
 `revalidate()`, the live handler can re-render.
 
+#### Embedding a server-created action in prerendered/static output
+
+A Static/Prerender handler may create an inline `"use server"` action (closing
+over build-time scope, e.g. an article id) and pass it to a client component --
+the canonical cached-list + like-button case. Because prerender = build-time
+cache, the action is serialized into the stored Flight at build and must survive
+serialize -> store -> deserialize -> re-serialize-to-client -> invoke. Four
+things must line up; all are handled, but step 3 depends on a plugin-rsc feature:
+
+1. **Stable id.** The build-discovery temp server renders these handlers in a
+   dev/serve Vite server, so plugin-rsc would mint a dev-style server-reference
+   id the production hash-keyed manifest can't resolve. `hashServerRefs`
+   (`src/vite/plugins/server-ref-hashing.ts`, the server analog of
+   `hashClientRefs`) rewrites it to the production hash at build.
+2. **Manifest entry.** `exposeActionId` re-asserts inline-action entries into the
+   server-references manifest (a plugin-rsc multi-pass race otherwise drops
+   modules without a file-level `"use server"`).
+3. **Re-serializable on hit.** On a hit the producing handler does not run, so
+   resolving the reference yields a raw function React refuses to pass to a
+   Client Component. `segment-codec` deserializes with
+   `serverReferences: "preserve"` (plugin-rsc PR #1246) so the reference re-emits
+   to the client intact. **This is the one external dependency**: until a
+   plugin-rsc release ships `preserve`, embedded server actions in prerendered/
+   static output do not round-trip in production.
+4. **Decryptable bound args.** The captured scope is encrypted at build; the temp
+   server and the main build must share an encryption key or
+   `decryptActionBoundArgs` fails at invocation. Rango passes one
+   `defineEncryptionKey` (`src/vite/encryption-key.ts`) to both.
+
+Plus the action re-render fallback: a pure (non-Passthrough) Prerender route has
+no live handler, so an action re-render falls back to the prerendered entry
+instead of the build-evicted handler (`cache-lookup.ts`); the action already ran,
+and its result is applied client-side via `useActionState`. Passthrough routes
+keep a `liveHandler` and still re-render fresh.
+
+Contract (same as the `"use cache"` embedded-action case): the captured scope is
+frozen at build (correct for stable identities like an id); the action body runs
+live on invocation (fresh computation, live request context). Covered by
+`e2e/prerender-inline-action.test.ts` (dev + production).
+
 ### Handle Data
 
 Values pushed via `ctx.use()` during pre-rendering are baked into the Flight
