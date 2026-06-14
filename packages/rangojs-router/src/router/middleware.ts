@@ -300,6 +300,10 @@ function mergeStubHeaders(
   stubOverridesNonCookie: boolean,
 ): void {
   stub.forEach((value, name) => {
+    // The reserved external-redirect marker is internal and never a trust
+    // signal; never copy a stub value (e.g. a stray ctx.header() call) onto a
+    // browser-facing response. The opt-in is the out-of-band brand.
+    if (name.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
     if (name.toLowerCase() === "set-cookie") {
       target.append(name, value);
     } else if (stubOverridesNonCookie || !target.has(name)) {
@@ -325,6 +329,8 @@ function mergeReqCtxStub(
     }
   }
   reqCtx.res.headers.forEach((value, name) => {
+    // Never propagate the reserved external-redirect marker (see mergeStubHeaders).
+    if (name.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
     if (name !== "set-cookie" && !target.has(name)) {
       target.set(name, value);
     }

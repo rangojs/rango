@@ -460,7 +460,7 @@ describe("dispatch", () => {
 
     // Header-leak regression (defense-in-depth): the reserved marker must never
     // reach the browser, even on a non-3xx response the 3xx-only guard does not
-    // touch. mergeResponse strips it on the middleware path.
+    // touch. mergeResponse strips it from the base response on the middleware path.
     it("strips a forged external marker header from a non-3xx middleware response", async () => {
       const mw: MiddlewareFn = () =>
         new Response("ok", {
@@ -471,6 +471,64 @@ describe("dispatch", () => {
           },
         });
       const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Header-leak via the STUB (ctx.header), not the base response. Stripping the
+    // base in mergeResponse is not enough -- the stub-merge primitives re-add it.
+    // mergeStubHeaders must refuse to copy the reserved marker.
+    it("strips a reserved marker set via ctx.header() on a non-3xx middleware short-circuit", async () => {
+      const mw: MiddlewareFn = (ctx) => {
+        ctx.header("x-rango-redirect-external", "1");
+        return new Response("ok", { status: 200 });
+      };
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Same leak via a response route's ctx.header() on a 200: the serialized
+    // result flows through createResponseWithMergedHeaders -> applyStubHeaders,
+    // which must refuse to copy the reserved marker.
+    it("strips a reserved marker set via ctx.header() on a response-route 200", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/h",
+            () => {
+              getRequestContext().header("x-rango-redirect-external", "1");
+              return { ok: true };
+            },
+            { name: "h" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/h" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      expect(await res.json()).toEqual({ ok: true });
+    });
+
+    // Same leak via the request-context stub merged through the middleware chain
+    // (mergeReqCtxStub) on a 200 downstream response.
+    it("strips a reserved marker set on the request-context stub through the middleware chain", async () => {
+      const mw: MiddlewareFn = (_ctx, next) => {
+        getRequestContext().header("x-rango-redirect-external", "1");
+        return next();
+      };
+      const router = createRouter<{}>({})
+        .use(mw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+      const res = await dispatch(router, {
         request: "http://localhost/api/data",
       });
       expect(res.status).toBe(200);

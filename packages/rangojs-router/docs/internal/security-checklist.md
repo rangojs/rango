@@ -133,12 +133,16 @@ small set of internal redirect-rebuild paths transfer the brand
 (`mergeResponse` in `middleware.ts`, `carryOverRedirectHeaders` and the response-
 route `rewrapResponse`); the guard and the SPA intercept read it. A proxied
 upstream Response is never branded, so its forged header is inert — and the
-reserved header name is stripped defensively at every browser-facing exit so a
-forged value never reaches the browser. The brand is set by app code at the call
-site only; the attacker controls the URL value, never whether the app wrote
-`{ external: true }` — so `redirect(userInput)` stays safe (Rails
-`allow_other_host: true` model). Brand transfer is **fail-closed**: if a rebuild
-path ever drops it, the redirect is neutralized to root, never opened off-host.
+reserved header name is stripped defensively so a forged value (or a stray
+`ctx.header("x-rango-redirect-external", …)`) never reaches the browser: the guard
+deletes it on 3xx, and the stub/header-merge primitives that build every
+browser-facing response refuse to copy it (`applyStubHeaders` in `helpers.ts`,
+`mergeStubHeaders` + `mergeReqCtxStub` in `middleware.ts`, plus the redirect-
+rebuild copiers). The brand is set by app code at the call site only; the attacker
+controls the URL value, never whether the app wrote `{ external: true }` — so
+`redirect(userInput)` stays safe (Rails `allow_other_host: true` model). Brand
+transfer is **fail-closed**: if a rebuild path ever drops it, the redirect is
+neutralized to root, never opened off-host.
 
 Soft SPA/Flight redirects are `200`/`204` responses (`X-RSC-Redirect` header /
 `metadata.redirect` payload), not 3xx, so they never reach the server guard —

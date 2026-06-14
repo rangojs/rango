@@ -46,6 +46,10 @@ function applyCacheSignalHeader(target: Headers, ctx: RequestContext): void {
 function applyStubHeaders(target: Headers, stub: Headers): void {
   stub.forEach((value, name) => {
     try {
+      // The reserved external-redirect marker is internal and never a trust
+      // signal; never copy a stub value (e.g. a stray ctx.header() call) onto a
+      // browser-facing response. The opt-in is the out-of-band brand.
+      if (name.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
       if (name.toLowerCase() === "set-cookie") {
         target.append(name, value);
       } else if (!target.has(name)) {
