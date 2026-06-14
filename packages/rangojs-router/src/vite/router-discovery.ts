@@ -166,13 +166,17 @@ async function createTempRscServer(
           ssr: "virtual:entry-ssr",
           rsc: state.resolvedEntryPath!,
         },
-        // Build prerender/static encrypts inline-action bound args; give the temp
-        // server the SAME key as the main build so they decrypt at runtime. Build
-        // only -- dev prerender renders in the main dev server, so no coordination
-        // is needed there.
-        ...(options.forceBuild
-          ? { defineEncryptionKey: defineEncryptionKeyExpr() }
-          : {}),
+        // The temp server renders Static/Prerender output and encrypts inline-
+        // action bound args. Give it the SAME key as the main build/dev runtime
+        // (defineEncryptionKeyExpr is process-cached) so those args decrypt at
+        // invocation. Unconditional, NOT build-only: under Cloudflare/workerd dev
+        // the RSC env has no module runner, so prerender is rendered by THIS temp
+        // server (via /__rsc_prerender), and the action decrypts in the main
+        // runtime with the rango.ts key -- gating on forceBuild left dev encrypting
+        // with the temp server's own random key, failing decryptActionBoundArgs.
+        // (hashServerRefs stays build-only: dev keeps dev-style ids the dev runtime
+        // resolves directly.)
+        defineEncryptionKey: defineEncryptionKeyExpr(),
       }),
       // hashClientRefs/hashServerRefs only in build mode — production bundles
       // need hashed refs. hashServerRefs is the server-side analog: it rewrites

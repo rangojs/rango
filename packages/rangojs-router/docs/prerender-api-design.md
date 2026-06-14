@@ -442,6 +442,19 @@ frozen at build (correct for stable identities like an id); the action body runs
 live on invocation (fresh computation, live request context). Covered by
 `e2e/prerender-inline-action.test.ts` (dev + production).
 
+Note (layer 4 is also why Cloudflare/workerd **dev** needs the key): under
+workerd dev the RSC env has no module runner, so prerender is rendered by the
+Node discovery temp server (via `/__rsc_prerender`), not the main dev server.
+That temp server must therefore share the runtime's key too -- `defineEncryptionKey`
+is passed to it unconditionally, not only on build (`router-discovery.ts`).
+
+**Deployment**: `defineEncryptionKey` defaults to a fresh random key per build
+(`buildEncryptionKey()`), emitted into the build output. Within one build the temp
+server and main build share it, so single-build previews decrypt fine. But across
+**separate builds / rolling deploys / multiple worker instances**, the keys differ
+and bound args encrypted by build N will not decrypt under build N+1's worker. For
+multi-instance production, set a stable `RANGO_ENCRYPTION_KEY` (base64, 32 bytes).
+
 ### Handle Data
 
 Values pushed via `ctx.use()` during pre-rendering are baked into the Flight
