@@ -9,9 +9,10 @@ Build Output API looks like. It is the sibling of [`caching.md`](./caching.md)
 tag-invalidation flow); read those first if you have not.
 
 Status: the **store** (`VercelCacheStore`) is implemented and exported from
-`@rangojs/router/cache`. The **deployment** (a rango `vercel` preset + example
-app) is designed here but not yet built — see "What ships, what is deferred" at
-the end.
+`@rangojs/router/cache`. The **deployment** is prototyped, working, and locally
+verified in `examples/vercel-basic` (node preset + an app-local Build Output API
+assembler). A first-class rango `vercel` preset is still designed-only — see
+"What ships, what is deferred" at the end.
 
 ## Why the Runtime Cache is the right backend, and why this store is small
 
@@ -354,25 +355,41 @@ as designed, this is not a concern: it lives entirely in the Runtime Cache layer
 
 ## What ships, what is deferred
 
-Shipped in this pass:
+Shipped:
 
 - `VercelCacheStore` + its types, exported from `@rangojs/router/cache`
   (`src/cache/vercel/`).
+- A white-box unit suite (`src/cache/vercel/__tests__/vercel-cache-store.test.ts`)
+  over a fake `VercelRuntimeCache`: SWR fresh/stale/expired transitions, the
+  herd-dampening re-stamp, tag invalidation + the `invalidateTags`
+  throw-on-failure, comma/over-length tag drop, the 64-tag clamp, the 2 MB skip,
+  Set-Cookie stripping, version keyspace isolation, family non-collision.
+- A working, locally verified deployment prototype: **`examples/vercel-basic`**
+  (node preset; `scripts/vercel-build.mjs` assembles `.vercel/output`;
+  `scripts/func-entry.mjs` is the `srvx`/`toNodeHandler` launcher;
+  `scripts/smoke.mjs` serves the assembled function over `node:http` and asserts
+  rendering + static serving + a segment-cache hit, without deploying).
 - This design doc.
 
-Deferred (the follow-up — the "fully tested + shippable" and "deployment" tiers):
+Deferred (the follow-up):
 
+- **First-class `rango({ preset: "vercel" })`**: promote the app-local assembler
+  (`examples/vercel-basic/scripts/`) into the published Vite plugin — add the
+  `"vercel"` preset branch in `src/vite/rango.ts`, widen `RangoOptions`
+  (`src/vite/plugin-types.ts`), and emit `.vercel/output` from a plugin hook
+  (note rango's prerender/static emitters hardcode `dist/rsc`, so build to
+  `dist/` then restructure). Kept app-local for now per the API-hygiene rule
+  (don't ship public API before the pattern is proven).
 - **Userland test coverage** through the `@rangojs/router/testing` primitives
-  (`renderHandler` / `dispatch` with a `VercelCacheStore` over a fake
-  `VercelRuntimeCache`), plus a white-box unit suite mirroring
-  `cf-cache-store.test.ts` — SWR transitions, the 2 MB skip, tag clamping, the
-  `invalidateTags` throw-on-failure, corrupt-envelope self-heal.
+  (`renderHandler` / `dispatch` with a `VercelCacheStore`), in addition to the
+  white-box suite above.
 - **Docs-surface registration**: add the store to
   `packages/rangojs-router/docs/internal/feature-map.md` and
   `feature-file-map.md`, and move "Vercel / other adapters" out of the *Planned*
   section of [`caching.md`](./caching.md).
-- **Deployment**: the `vercel` preset, an `examples/vercel-basic` (+
-  `tests/vercel-basic`) app, the Build Output emission, and dev+prod e2e coverage.
+- **Real-Vercel e2e**: a `tests/vercel-basic` dev+prod suite, plus confirming
+  `getCache`/`expireTag`/`waitUntil` runtime behavior and streaming under the
+  actual Node launcher on a live deployment.
 
 ## Open questions to confirm against the installed `@vercel/functions`
 
