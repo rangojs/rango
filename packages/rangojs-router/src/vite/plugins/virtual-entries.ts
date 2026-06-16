@@ -96,6 +96,50 @@ export default function handler(request, env) {
 `.trim();
 }
 
+export function getVirtualEntryRSCHost(hostEntryPath: string): string {
+  return `
+import * as __hostEntry from "${hostEntryPath}";
+import { NoRouteMatchError } from "@rangojs/router/host";
+
+// Register every sub-app's fetchable loaders + route manifests at startup, same
+// as the single-router entry. Discovery's host fallback populates these for all
+// mounted sub-apps, so the aggregate manifests cover the whole host tree.
+import "virtual:rsc-router/loader-manifest";
+import "virtual:rsc-router/routes-manifest";
+
+// The host entry module must export the HostRouter instance (createHostRouter()),
+// as a default export or a named \`hostRouter\`/\`router\` export. A Cloudflare-style
+// \`export default { fetch }\` object is not a HostRouter and is rejected here.
+const __defaultExport = __hostEntry.default;
+const hostRouter =
+  __defaultExport && typeof __defaultExport.match === "function"
+    ? __defaultExport
+    : __hostEntry.hostRouter ?? __hostEntry.router;
+
+if (!hostRouter || typeof hostRouter.match !== "function") {
+  throw new Error(
+    "[rango] The host entry (${hostEntryPath}) must export a HostRouter instance for the node/vercel preset: a default export, or a named 'hostRouter'/'router' export (e.g. export default createHostRouter()). A Cloudflare-style 'export default { fetch }' object is not supported on this preset."
+  );
+}
+
+// input = { env, ctx } from the launcher / node server. The host router threads
+// it unchanged to each matched sub-app's handler and cache factory.
+// On node/vercel rango owns this entry, so there is no user worker to translate
+// an unmatched host into a response: catch NoRouteMatchError and return 404
+// (parity with the documented Cloudflare catch). Other errors propagate.
+export default async function handler(request, input) {
+  try {
+    return await hostRouter.match(request, input);
+  } catch (err) {
+    if (err instanceof NoRouteMatchError) {
+      return new Response("Not Found", { status: 404 });
+    }
+    throw err;
+  }
+}
+`.trim();
+}
+
 export const VIRTUAL_IDS = {
   browser: "virtual:rsc-router/entry.browser.js",
   ssr: "virtual:rsc-router/entry.ssr.js",

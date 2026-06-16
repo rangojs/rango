@@ -562,6 +562,73 @@ export function findRouterFiles(root: string, filter?: ScanFilter): string[] {
   return result;
 }
 
+const HOST_ROUTER_CALL_PATTERN = /\bcreateHostRouter\s*[<(]/;
+const HOST_ROUTER_CALL_PATTERN_G = /\bcreateHostRouter\s*[<(]/g;
+
+function findHostRouterFilesRecursive(
+  dir: string,
+  filter: ScanFilter | undefined,
+  results: string[],
+): void {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    console.warn(
+      `[rango] Failed to scan directory ${dir}: ${(err as Error).message}`,
+    );
+    return;
+  }
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (
+        entry.name === "node_modules" ||
+        entry.name === "dist" ||
+        entry.name === "coverage" ||
+        entry.name === "__tests__" ||
+        entry.name === "__mocks__" ||
+        entry.name.startsWith(".")
+      )
+        continue;
+      // Unlike createRouter scanning, do NOT stop at router roots: the host entry
+      // lives above the sub-app router directories, so descend the whole tree.
+      findHostRouterFilesRecursive(fullPath, filter, results);
+      continue;
+    }
+
+    if (!isRoutableSourceFile(entry.name)) continue;
+    if (filter && !filter(fullPath)) continue;
+
+    try {
+      const source = readFileSync(fullPath, "utf-8");
+      if (
+        HOST_ROUTER_CALL_PATTERN.test(source) &&
+        firstCodeMatchIndex(source, HOST_ROUTER_CALL_PATTERN_G) >= 0
+      ) {
+        results.push(fullPath);
+      }
+    } catch {
+      continue;
+    }
+  }
+}
+
+/**
+ * Scan for files containing createHostRouter() and return their paths. Unlike
+ * findRouterFiles, this does NOT stop at the first router-root directory -- a host
+ * entry typically sits above the sub-app router roots, so the whole tree is scanned.
+ */
+export function findHostRouterFiles(
+  root: string,
+  filter?: ScanFilter,
+): string[] {
+  const result: string[] = [];
+  findHostRouterFilesRecursive(root, filter, result);
+  return result;
+}
+
 /**
  * Write named-routes.gen.ts files from static source parsing.
  * Dev-only: provides initial .gen.ts files for IDE types before runtime

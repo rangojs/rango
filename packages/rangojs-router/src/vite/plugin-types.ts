@@ -151,6 +151,20 @@ export interface RangoNodeOptions extends RangoBaseOptions {
   preset?: "node";
 
   /**
+   * Path to a host-router entry (a module that calls `createHostRouter()` and
+   * exports the instance) to serve instead of a single `createRouter()` app.
+   * Root-relative (e.g. `"./src/worker.rsc.tsx"`).
+   *
+   * Set this when the app is a multi-app host router: auto-discovery otherwise
+   * finds the sub-apps' multiple `createRouter()` files and cannot pick an entry.
+   * When omitted, rango auto-detects a single `createHostRouter()` file if the
+   * app has several `createRouter()` files. The host module must export the
+   * `HostRouter` instance (default export or a named `hostRouter`/`router`
+   * export), not a Cloudflare-style `{ fetch }` object.
+   */
+  hostRouter?: string;
+
+  /**
    * Environment bindings available to Prerender and Static handlers at build
    * time via `ctx.env`. Shared across all prerender invocations for the build.
    *
@@ -225,6 +239,21 @@ export interface RangoVercelOptions extends RangoBaseOptions {
    * Deployment preset for Vercel Functions.
    */
   preset: "vercel";
+
+  /**
+   * Path to a host-router entry (a module that calls `createHostRouter()` and
+   * exports the instance) to serve instead of a single `createRouter()` app.
+   * Root-relative (e.g. `"./src/worker.rsc.tsx"`).
+   *
+   * Set this when the app is a multi-app host router: auto-discovery otherwise
+   * finds the sub-apps' multiple `createRouter()` files and cannot pick an entry.
+   * When omitted, rango auto-detects a single `createHostRouter()` file if the
+   * app has several `createRouter()` files. The host module must export the
+   * `HostRouter` instance (default export or a named `hostRouter`/`router`
+   * export), not a Cloudflare-style `{ fetch }` object. The Vercel function then
+   * runs `hostRouter.match()` for every request (single-function deploy).
+   */
+  hostRouter?: string;
 
   /**
    * Environment bindings available to Prerender and Static handlers at build

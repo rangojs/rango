@@ -12,6 +12,9 @@ const webkitConfig = {
 
 const DEV_SERVER_PORT = 5188;
 const PREVIEW_SERVER_PORT = 5189;
+// Host-router fixture servers (e2e/test-app/.host-fixture) for host-routing.test.ts.
+const HOST_DEV_PORT = 5198;
+const HOST_PREVIEW_PORT = 5199;
 
 const isUIMode = process.argv.includes("--ui");
 
@@ -36,6 +39,23 @@ export default defineConfig({
       command: `pnpm preview --port ${PREVIEW_SERVER_PORT}`,
       cwd: "./e2e/test-app",
       port: PREVIEW_SERVER_PORT,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      // Host-router fixture (e2e/test-app/.host-fixture), node preset. Dev server
+      // for host-routing.test.ts "(dev)". Self-contained (vite dev generates its
+      // own manifests).
+      command: `pnpm host:dev --port ${HOST_DEV_PORT}`,
+      cwd: "./e2e/test-app",
+      port: HOST_DEV_PORT,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      // Host-router fixture preview (built) for host-routing.test.ts
+      // "(production)". Builds then serves the .vercel/output-equivalent node build.
+      command: `pnpm host:build && pnpm host:preview --port ${HOST_PREVIEW_PORT}`,
+      cwd: "./e2e/test-app",
+      port: HOST_PREVIEW_PORT,
       reuseExistingServer: !process.env.CI,
     },
   ],

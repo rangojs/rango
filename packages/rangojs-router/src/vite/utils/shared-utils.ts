@@ -6,6 +6,7 @@ import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
   getVirtualEntryRSC,
+  getVirtualEntryRSCHost,
   getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "../plugins/virtual-entries.js";
@@ -60,7 +61,7 @@ export const sharedRolldownOptions: {
  */
 export function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  routerPathRef?: { path?: string },
+  routerPathRef?: { path?: string; kind?: "router" | "host" },
 ): Plugin {
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
@@ -108,7 +109,9 @@ export function createVirtualEntriesPlugin(
             : routerPathRef.path;
           // Normalize backslashes for Windows (path.join/slice preserve native separators)
           const absoluteRouterPath = raw.replaceAll("\\", "/");
-          return getVirtualEntryRSC(absoluteRouterPath);
+          return routerPathRef.kind === "host"
+            ? getVirtualEntryRSCHost(absoluteRouterPath)
+            : getVirtualEntryRSC(absoluteRouterPath);
         }
       }
       return null;

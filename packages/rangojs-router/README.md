@@ -956,6 +956,21 @@ export default {
 
 Use `.lazy(() => import("./sub-app"))` to mount a lazily-imported sub-app (a module whose `default` export is a handler or nested host router), and `.map((request) => Response)` for an inline request handler. Only `.lazy()` mounts are imported during build-time discovery; `.map(() => import(...))` is a type error. Each sub-app has its own `createRouter()` and `urls()`. Patterns are matched in registration order — register more specific patterns (subdomains) before catch-alls.
 
+The example above is the **Cloudflare** shape, where you own the worker entry. On the **node/vercel** presets rango owns the served entry, so export the `HostRouter` instance instead of a `{ fetch }` object, and point `rango()` at it (a host app has several `createRouter()` sub-apps, so set `hostRouter`; rango also auto-detects a lone `createHostRouter()` file):
+
+```tsx
+// worker.rsc.tsx
+export const hostRouter = createHostRouter();
+hostRouter.host(["admin.*"]).lazy(() => import("./apps/admin/handler.js"));
+hostRouter.host(["."]).lazy(() => import("./apps/site/handler.js"));
+export default hostRouter; // the instance — the generated entry calls match()
+
+// vite.config.ts
+rango({ preset: "vercel", hostRouter: "./src/worker.rsc.tsx" });
+```
+
+On Vercel this is a single function running `hostRouter.match()` for every request. See the `host-router` and `vercel` skills.
+
 ## Meta Tags
 
 Accumulate meta tags across route segments using the built-in `Meta` handle:
