@@ -1,24 +1,20 @@
 import { test, expect } from "@playwright/test";
 import { waitForHydration } from "./helper";
 
-// Proves a node/vercel host-router app renders through rango's generated host RSC
-// entry (hostRouter.match()), in BOTH dev and production. The fixture lives at
-// e2e/test-app/.host-fixture and is served by the host webServer entries in
-// playwright.config.ts.
+// Proves a node/vercel host-router app renders AND hydrates through rango's
+// generated host RSC entry (hostRouter.match()), in BOTH dev and production. The
+// fixture lives at e2e/test-app/.host-fixture and is served by the host webServer
+// entries in playwright.config.ts.
 //
 // Routing is driven by the host-override COOKIE on a single localhost origin (the
-// supported dev workflow): one origin keeps client modules same-origin. Real
-// Host-header routing of the Vercel Build Output is covered separately by
-// examples/vercel-multi-router's smoke.
-//
-// Client boot (waitForHydration) is asserted in PRODUCTION only: there the browser
-// entry is a pre-built static asset and hydration is fast/reliable. The dev server
-// compiles that entry on demand, so hydration timing is not a stable signal there
-// (it is not a routing concern -- dev still asserts the SSR dispatch + 404).
+// supported dev workflow): one origin keeps client modules same-origin. The
+// host-dev-warmup project primes the dev server's dep optimizer first, so dev
+// client boot is fast (no cold-import noise). Real Host-header routing of the
+// Vercel Build Output is covered separately by examples/vercel-multi-router's smoke.
 const HOST_DEV_PORT = 5198;
 const HOST_PREVIEW_PORT = 5199;
 
-function hostRoutingTests(port: number, proveHydration: boolean) {
+function hostRoutingTests(port: number) {
   const visit = async (page: import("@playwright/test").Page, host: string) => {
     await page.context().clearCookies();
     await page
@@ -33,12 +29,13 @@ function hostRoutingTests(port: number, proveHydration: boolean) {
     const a = await visit(page, "a.localhost");
     expect(a?.status()).toBe(200);
     await expect(page.getByTestId("app")).toHaveText("App A home");
-    if (proveHydration) await waitForHydration(page);
+    // Prove the client booted (not just SSR text), and let hydration settle.
+    await waitForHydration(page);
 
     const b = await visit(page, "b.localhost");
     expect(b?.status()).toBe(200);
     await expect(page.getByTestId("app")).toHaveText("App B home");
-    if (proveHydration) await waitForHydration(page);
+    await waitForHydration(page);
   });
 
   test("returns 404 for an unmatched host (generated entry catches NoRouteMatchError)", async ({
@@ -50,7 +47,7 @@ function hostRoutingTests(port: number, proveHydration: boolean) {
 }
 
 test.describe("host router on node preset (dev)", () =>
-  hostRoutingTests(HOST_DEV_PORT, false));
+  hostRoutingTests(HOST_DEV_PORT));
 
 test.describe("host router on node preset (production)", () =>
-  hostRoutingTests(HOST_PREVIEW_PORT, true));
+  hostRoutingTests(HOST_PREVIEW_PORT));

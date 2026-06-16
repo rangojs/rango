@@ -183,6 +183,16 @@ export default defineConfig({
           dependencies: ["build"],
         },
         {
+          // Primes the host-router dev server's dep optimizer before the
+          // host-routing "(dev)" tests, so their client boot is fast and quiet.
+          name: "host-dev-warmup",
+          testMatch: "**/host-warmup.setup.ts",
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${HOST_DEV_PORT}`,
+          },
+        },
+        {
           name: "dev",
           // Exclude production tests (by test name) and HMR test files (by file name)
           grep: /^(?!.*\(production)/,
@@ -204,7 +214,7 @@ export default defineConfig({
             ...browserConfig,
             baseURL: `http://localhost:${DEV_SERVER_PORT}`,
           },
-          dependencies: ["dev-warmup"],
+          dependencies: ["dev-warmup", "host-dev-warmup"],
         },
         {
           name: "production",
