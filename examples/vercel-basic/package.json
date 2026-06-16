@@ -1,0 +1,30 @@
+{
+  "name": "rangojs-vercel-basic",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node ./scripts/vercel-build.mjs",
+    "vercel-build": "node ./scripts/vercel-build.mjs",
+    "preview": "vite preview",
+    "smoke": "node ./scripts/smoke.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rangojs/router": "workspace:*",
+    "@vercel/functions": "^3.7.1",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "esbuild": "^0.27.0",
+    "srvx": "^0.11.15",
+    "typescript": "^5.3.0",
+    "vite": "catalog:"
+  }
+}
