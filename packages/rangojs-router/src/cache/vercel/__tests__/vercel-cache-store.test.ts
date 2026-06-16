@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   VercelCacheStore,
   VERCEL_MAX_ITEM_BYTES,
+  VERCEL_MAX_TAGS_PER_ITEM,
   type VercelRuntimeCache,
 } from "../vercel-cache-store.js";
 import type { CachedEntryData } from "../../types.js";
@@ -199,15 +200,21 @@ describe("VercelCacheStore", () => {
       expect(await s.get("k")).toBeNull();
     });
 
-    it("clamps to 64 tags per item on write; the 65th cannot invalidate", async () => {
+    it("clamps tags per item on write; tags beyond the cap cannot invalidate", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
-      const tags = Array.from({ length: 65 }, (_, i) => `t${i}`);
+      const overflow = VERCEL_MAX_TAGS_PER_ITEM + 1;
+      const tags = Array.from({ length: overflow }, (_, i) => `t${i}`);
       await s.set("k", segment(tags), 60, 300);
-      await s.invalidateTags(["t64"]); // dropped on write
+      // The (cap+1)th tag is dropped on write, so it cannot invalidate.
+      await s.invalidateTags([`t${VERCEL_MAX_TAGS_PER_ITEM}`]);
       expect(await s.get("k")).not.toBeNull();
-      await s.invalidateTags(["t0"]); // kept
+      await s.invalidateTags(["t0"]); // kept (within the cap)
       expect(await s.get("k")).toBeNull();
+    });
+
+    it("documents the per-item tag cap as Vercel's getCache limit (128)", () => {
+      expect(VERCEL_MAX_TAGS_PER_ITEM).toBe(128);
     });
   });
 

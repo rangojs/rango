@@ -79,12 +79,12 @@ export interface VercelRuntimeCache {
 export const VERCEL_MAX_ITEM_BYTES: number = 2 * 1024 * 1024;
 
 /**
- * Per-item tag ceiling. Vercel's docs disagree (the API reference says 128, the
- * Runtime Cache page says 64); 64 is the safe floor. Tags beyond this are dropped
- * with a warning at write time. Does NOT cap invalidateTags() - an invalidation
- * must reach every requested tag.
+ * Per-item tag ceiling. Vercel's getCache API reference lists 128 tags per item
+ * (https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#getcache).
+ * Tags beyond this are dropped with a warning at write time. Does NOT cap
+ * invalidateTags() - an invalidation must reach every requested tag.
  */
-export const VERCEL_MAX_TAGS_PER_ITEM: number = 64;
+export const VERCEL_MAX_TAGS_PER_ITEM: number = 128;
 
 /** Max tag length in UTF-8 bytes accepted by Vercel; longer tags are skipped. */
 export const VERCEL_MAX_TAG_BYTES: number = 256;
