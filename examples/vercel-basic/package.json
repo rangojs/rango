@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node ./scripts/vercel-build.mjs",
-    "vercel-build": "node ./scripts/vercel-build.mjs",
+    "build": "vite build",
     "preview": "vite preview",
     "smoke": "node ./scripts/smoke.mjs",
     "typecheck": "tsc --noEmit"
@@ -22,8 +21,6 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
-    "esbuild": "^0.27.0",
-    "srvx": "^0.11.15",
     "typescript": "^5.3.0",
     "vite": "catalog:"
   }

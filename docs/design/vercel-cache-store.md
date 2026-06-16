@@ -8,11 +8,11 @@ Build Output API looks like. It is the sibling of [`caching.md`](./caching.md)
 (the segment-cache design) and [`cache-tags-flow.md`](./cache-tags-flow.md) (the
 tag-invalidation flow); read those first if you have not.
 
-Status: the **store** (`VercelCacheStore`) is implemented and exported from
-`@rangojs/router/cache`. The **deployment** is prototyped, working, and locally
-verified in `examples/vercel-basic` (node preset + an app-local Build Output API
-assembler). A first-class rango `vercel` preset is still designed-only — see
-"What ships, what is deferred" at the end.
+Status: both shipped. The **store** (`VercelCacheStore`) is exported from
+`@rangojs/router/cache`. The **deployment** is the first-class
+**`rango({ preset: "vercel" })`** preset (`src/vite/rango.ts` +
+`src/vite/plugins/vercel-output.ts`), used by `examples/vercel-basic` and locally
+verified. See "What ships, what is deferred" at the end.
 
 ## Why the Runtime Cache is the right backend, and why this store is small
 
@@ -240,7 +240,12 @@ the structured `VercelCacheReadDebugEvent` (`op`, `key`, `outcome`,
 oversized skips, dropped tags, and corrupt-entry evictions all route through
 `reportCacheError`, so they reach the router's `onError` as well as the console.
 
-## Deployment: Node serverless via the Build Output API (planned)
+## Deployment: Node serverless via the Build Output API (shipped)
+
+This is implemented as `rango({ preset: "vercel" })`
+(`src/vite/plugins/vercel-output.ts`): a plain `vite build` assembles the
+`.vercel/output` described below. The rest of this section is the design it
+realizes.
 
 The chosen target is a **Node serverless function with response streaming** — the
 natural analogue to the Cloudflare worker, and the runtime where `getCache`, full
@@ -364,22 +369,21 @@ Shipped:
   herd-dampening re-stamp, tag invalidation + the `invalidateTags`
   throw-on-failure, comma/over-length tag drop, the 64-tag clamp, the 2 MB skip,
   Set-Cookie stripping, version keyspace isolation, family non-collision.
-- A working, locally verified deployment prototype: **`examples/vercel-basic`**
-  (node preset; `scripts/vercel-build.mjs` assembles `.vercel/output`;
-  `scripts/func-entry.mjs` is the `srvx`/`toNodeHandler` launcher;
+- The first-class **`rango({ preset: "vercel" })`** preset: `src/vite/rango.ts`
+  (the `else`/node-like branch with NODE_ENV folding + banner) plus
+  `src/vite/plugins/vercel-output.ts` (the `buildApp`-hook emitter — `buildApp`
+  runs once after all environments build, unlike `closeBundle` which fires
+  per-env and twice for ssr). `RangoVercelOptions` / `VercelPresetOptions` are
+  exported from `@rangojs/router/vite`. `srvx` is a router dependency;
+  `@vercel/functions` is an optional peer; esbuild is resolved from the app's
+  Vite install (no new heavy router dep).
+- **`examples/vercel-basic`**: a Rango app on `preset: "vercel"`;
   `scripts/smoke.mjs` serves the assembled function over `node:http` and asserts
-  rendering + static serving + a segment-cache hit, without deploying).
+  rendering + static serving + a segment-cache hit, without deploying.
 - This design doc.
 
 Deferred (the follow-up):
 
-- **First-class `rango({ preset: "vercel" })`**: promote the app-local assembler
-  (`examples/vercel-basic/scripts/`) into the published Vite plugin — add the
-  `"vercel"` preset branch in `src/vite/rango.ts`, widen `RangoOptions`
-  (`src/vite/plugin-types.ts`), and emit `.vercel/output` from a plugin hook
-  (note rango's prerender/static emitters hardcode `dist/rsc`, so build to
-  `dist/` then restructure). Kept app-local for now per the API-hygiene rule
-  (don't ship public API before the pattern is proven).
 - **Userland test coverage** through the `@rangojs/router/testing` primitives
   (`renderHandler` / `dispatch` with a `VercelCacheStore`), in addition to the
   white-box suite above.

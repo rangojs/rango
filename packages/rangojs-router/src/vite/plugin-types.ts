@@ -12,7 +12,7 @@ export interface BuildEnvFactoryContext {
   /** Vite command ("serve" for dev, "build" for production). */
   command: "serve" | "build";
   /** Router deployment preset. */
-  preset: "node" | "cloudflare";
+  preset: "node" | "cloudflare" | "vercel";
 }
 
 /**
@@ -191,6 +191,59 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
 }
 
 /**
+ * Per-function knobs for the Vercel deployment, written into the generated
+ * `.vc-config.json` (and `config.json` for `functionName`).
+ */
+export interface VercelPresetOptions {
+  /** Node runtime for the function. @default "nodejs22.x" */
+  runtime?: string;
+  /** Max execution time in seconds. @default 30 */
+  maxDuration?: number;
+  /** Function memory in MB (platform default when omitted). */
+  memory?: number;
+  /** Regions to pin the function to (platform default when omitted). */
+  regions?: string[];
+  /**
+   * Function name — the `<name>.func` directory and the `config.json` route
+   * destination. @default "index"
+   */
+  functionName?: string;
+}
+
+/**
+ * Options for Vercel Functions deployment.
+ *
+ * Builds like the node preset (Vercel runs Node Functions, not Workers): rango
+ * owns the RSC entry, `process.env.NODE_ENV` is folded for the build, and after
+ * the build a `.vercel/output` directory (Build Output API v3) is assembled from
+ * `dist/` — a single streaming Node Function plus the static client assets. The
+ * app must install `@vercel/functions` (used by `VercelCacheStore` and the
+ * generated function launcher).
+ */
+export interface RangoVercelOptions extends RangoBaseOptions {
+  /**
+   * Deployment preset for Vercel Functions.
+   */
+  preset: "vercel";
+
+  /**
+   * Environment bindings available to Prerender and Static handlers at build
+   * time via `ctx.env`. `"auto"` is Cloudflare-only; pass an object or a factory.
+   *
+   * @default false
+   */
+  buildEnv?: Exclude<BuildEnvOption, "auto">;
+
+  /**
+   * Vercel function configuration written into the Build Output.
+   */
+  vercel?: VercelPresetOptions;
+}
+
+/**
  * Options for rango() Vite plugin
  */
-export type RangoOptions = RangoNodeOptions | RangoCloudflareOptions;
+export type RangoOptions =
+  | RangoNodeOptions
+  | RangoCloudflareOptions
+  | RangoVercelOptions;

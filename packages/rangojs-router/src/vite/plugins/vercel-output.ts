@@ -1,0 +1,235 @@
+/**
+ * Vercel Build Output (Build Output API v3) emitter for `preset: "vercel"`.
+ *
+ * After the full app build, restructures dist/ into .vercel/output:
+ *
+ *   .vercel/output/
+ *     config.json                       routing: static first, else the function
+ *     static/                           dist/client (browser assets, served at /)
+ *     functions/<name>.func/
+ *       .vc-config.json                 Node serverless, response streaming
+ *       index.mjs                       bundled launcher (srvx + @vercel/functions)
+ *       rsc/                            dist/rsc (self-contained RSC server bundle)
+ *       ssr/                            dist/ssr (rsc imports ../ssr/index.js)
+ *
+ * A prebuilt .vercel/output gets no `npm install`, so everything the function
+ * imports must physically live inside the .func directory. dist/rsc/index.js is
+ * already fully self-contained (every import relative); the launcher is bundled
+ * with srvx (the Web->Node streaming bridge, a @rangojs/router dependency) and
+ * @vercel/functions (resolved from the app) inlined, keeping the RSC bundle a
+ * runtime-relative external.
+ *
+ * Timing: this runs in the `buildApp` hook (order "post"), which fires once
+ * after every environment has built, so dist/{client,rsc,ssr} all exist.
+ * closeBundle is unusable here — it fires per environment, and twice for ssr
+ * (the server-reference scan and the real build), so it would run before
+ * dist/client exists. rango's own prerender/static emitters hardcode dist/rsc,
+ * so we build to dist/ and restructure here rather than retargeting outDir.
+ */
+
+import type { Plugin } from "vite";
+import { rm, mkdir, cp, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import type { RangoVercelOptions } from "../plugin-types.js";
+
+// Minimal structural types for the esbuild API we use, resolved dynamically from
+// the app so @rangojs/router does not depend on esbuild's type package.
+interface EsbuildPluginBuild {
+  onResolve(
+    options: { filter: RegExp },
+    callback: () => { path: string; external: boolean },
+  ): void;
+}
+type EsbuildBuild = (options: Record<string, unknown>) => Promise<unknown>;
+interface EsbuildModule {
+  build?: EsbuildBuild;
+  default?: { build?: EsbuildBuild };
+}
+
+const LAUNCHER_SOURCE = `import { toNodeHandler } from "srvx/node";
+import { waitUntil } from "@vercel/functions";
+import rscHandler from "./rsc/index.js";
+
+// The Vercel Node launcher invokes a Node (req, res) handler, not a Web fetch
+// handler. srvx's toNodeHandler bridges the Rango Web fetch handler and pipes
+// the streamed Response to the Node response (set supportsResponseStreaming).
+const onVercel = Boolean(process.env.VERCEL);
+
+const fetchHandler = (request) =>
+  rscHandler(request, {
+    env: process.env,
+    // Forward Vercel's waitUntil so cache writes / revalidation run off the
+    // response path. Omitted off-platform so those writes settle inline.
+    ctx: onVercel ? { waitUntil } : undefined,
+  });
+
+export default toNodeHandler(fetchHandler);
+`;
+
+async function assemble(
+  root: string,
+  options: RangoVercelOptions,
+): Promise<void> {
+  const dist = join(root, "dist");
+  for (const dir of ["client", "rsc", "ssr"]) {
+    if (!existsSync(join(dist, dir))) {
+      throw new Error(
+        `[rango] preset "vercel": missing dist/${dir}. Run the production build first.`,
+      );
+    }
+  }
+
+  const vercel = options.vercel ?? {};
+  const functionName = vercel.functionName ?? "index";
+  const out = join(root, ".vercel", "output");
+  const funcDir = join(out, "functions", `${functionName}.func`);
+
+  await rm(out, { recursive: true, force: true });
+  await mkdir(funcDir, { recursive: true });
+
+  // 1. Static client assets -> served from the CDN at the root.
+  await cp(join(dist, "client"), join(out, "static"), { recursive: true });
+
+  // 2. Server bundle into the function. Preserve the rsc -> ../ssr/index.js
+  //    relative import by mirroring the dist/{rsc,ssr} layout inside the func.
+  await cp(join(dist, "rsc"), join(funcDir, "rsc"), { recursive: true });
+  await cp(join(dist, "ssr"), join(funcDir, "ssr"), { recursive: true });
+
+  // Prerender/static payload manifests (present only when routes are prerendered).
+  if (existsSync(join(dist, "static"))) {
+    await cp(join(dist, "static"), join(funcDir, "static"), {
+      recursive: true,
+    });
+  }
+
+  // 3. Bundle the Node launcher. srvx (a @rangojs/router dependency) is aliased
+  //    to its resolved path; @vercel/functions resolves from the app; the RSC
+  //    server bundle stays a runtime-relative external.
+  const rangoRequire = createRequire(import.meta.url);
+  let srvxNodePath: string;
+  try {
+    srvxNodePath = rangoRequire.resolve("srvx/node");
+  } catch {
+    throw new Error(
+      '[rango] preset "vercel" requires "srvx" (a dependency of @rangojs/router). Reinstall dependencies.',
+    );
+  }
+
+  // esbuild ships with Vite; resolve it from the app so we never add it as a
+  // @rangojs/router dependency. Minimal structural types avoid coupling to
+  // esbuild's type package at compile time.
+  const appRequire = createRequire(join(root, "package.json"));
+  let esbuildModule: EsbuildModule;
+  try {
+    esbuildModule = (await import(
+      pathToFileURL(appRequire.resolve("esbuild")).href
+    )) as EsbuildModule;
+  } catch {
+    throw new Error(
+      '[rango] preset "vercel" requires "esbuild" to bundle the function launcher. It ships with Vite; reinstall dependencies.',
+    );
+  }
+  const esbuildBuild = esbuildModule.build ?? esbuildModule.default?.build;
+  if (typeof esbuildBuild !== "function") {
+    throw new Error('[rango] preset "vercel": could not load esbuild.build.');
+  }
+
+  try {
+    await esbuildBuild({
+      stdin: {
+        contents: LAUNCHER_SOURCE,
+        resolveDir: root,
+        sourcefile: "func-entry.mjs",
+        loader: "js",
+      },
+      outfile: join(funcDir, "index.mjs"),
+      bundle: true,
+      format: "esm",
+      platform: "node",
+      target: "node18",
+      alias: { "srvx/node": srvxNodePath },
+      plugins: [
+        {
+          name: "external-rsc-entry",
+          setup(b: EsbuildPluginBuild) {
+            b.onResolve({ filter: /^\.\/rsc\/index\.js$/ }, () => ({
+              path: "./rsc/index.js",
+              external: true,
+            }));
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/@vercel\/functions/.test(message)) {
+      throw new Error(
+        '[rango] preset "vercel": could not resolve "@vercel/functions". Add it to your app dependencies (it also backs VercelCacheStore).\n' +
+          message,
+      );
+    }
+    throw error;
+  }
+
+  // 4. Function config: Node serverless with response streaming.
+  const vcConfig: Record<string, unknown> = {
+    runtime: vercel.runtime ?? "nodejs22.x",
+    handler: "index.mjs",
+    launcherType: "Nodejs",
+    shouldAddHelpers: false,
+    supportsResponseStreaming: true,
+    maxDuration: vercel.maxDuration ?? 30,
+  };
+  if (vercel.memory != null) vcConfig.memory = vercel.memory;
+  if (vercel.regions != null) vcConfig.regions = vercel.regions;
+  await writeFile(
+    join(funcDir, ".vc-config.json"),
+    JSON.stringify(vcConfig, null, 2) + "\n",
+  );
+
+  // 5. Routing: filesystem (static/) first, then everything to the function.
+  await writeFile(
+    join(out, "config.json"),
+    JSON.stringify(
+      {
+        version: 3,
+        routes: [
+          { handle: "filesystem" },
+          { src: "/(.*)", dest: `/${functionName}` },
+        ],
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  console.log(
+    `[rango] assembled .vercel/output (function: ${functionName}.func)`,
+  );
+}
+
+export function createVercelOutputPlugin(options: RangoVercelOptions): Plugin {
+  let root = process.cwd();
+  let isBuild = false;
+  return {
+    name: "@rangojs/router:vercel-output",
+    configResolved(config) {
+      root = resolve(config.root);
+      isBuild = config.command === "build";
+    },
+    // buildApp runs once after the whole multi-environment build (rsc, client,
+    // ssr), so dist/ is complete here. closeBundle is unusable for this: it
+    // fires per environment, and twice for ssr (the server-reference scan and
+    // the real build), so it would run before dist/client exists.
+    buildApp: {
+      order: "post",
+      async handler() {
+        if (!isBuild) return;
+        await assemble(root, options);
+      },
+    },
+  };
+}

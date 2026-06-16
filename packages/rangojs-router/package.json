@@ -175,6 +175,7 @@
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.3",
     "rsc-html-stream": "^0.0.7",
+    "srvx": "^0.11.15",
     "tinyexec": "^0.3.2"
   },
   "devDependencies": {
@@ -197,6 +198,7 @@
     "@cloudflare/vite-plugin": "^1.38.0",
     "@playwright/test": "^1.49.1",
     "@testing-library/react": ">=16",
+    "@vercel/functions": "^3.0.0",
     "@vitejs/plugin-rsc": "^0.5.26",
     "react": ">=19.2.6 <20",
     "react-dom": ">=19.2.6 <20",
@@ -211,6 +213,9 @@
       "optional": true
     },
     "@testing-library/react": {
+      "optional": true
+    },
+    "@vercel/functions": {
       "optional": true
     },
     "vite": {

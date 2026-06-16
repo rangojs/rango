@@ -27,7 +27,8 @@ import {
   resolveClientChunks,
   type ClientChunkContext,
 } from "./utils/client-chunks.js";
-import type { RangoOptions } from "./plugin-types.js";
+import type { RangoOptions, RangoVercelOptions } from "./plugin-types.js";
+import { createVercelOutputPlugin } from "./plugins/vercel-output.js";
 import { printBanner, rangoVersion } from "./utils/banner.js";
 import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
@@ -263,8 +264,18 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       name: "@rangojs/router:rsc-integration",
       enforce: "pre",
 
-      config() {
+      config(_userConfig, configEnv) {
+        // Fold NODE_ENV for the vercel preset's build. The cloudflare plugin
+        // does this automatically and node apps do it themselves; vercel has no
+        // platform plugin, so without this React's CJS dev branch survives and
+        // doubles the SSR/RSC bundle (Bundle Hygiene rule #2). Only the exact
+        // `process.env.NODE_ENV` token is replaced.
+        const vercelDefine =
+          preset === "vercel" && configEnv.command === "build"
+            ? { "process.env.NODE_ENV": JSON.stringify("production") }
+            : undefined;
         return {
+          ...(vercelDefine ? { define: vercelDefine } : {}),
           optimizeDeps: {
             exclude: excludeDeps,
             rolldownOptions: sharedRolldownOptions,
@@ -350,7 +361,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                 ? "preview"
                 : "dev"
               : "build";
-          printBanner(mode, "node", rangoVersion);
+          printBanner(
+            mode,
+            preset === "vercel" ? "vercel" : "node",
+            rangoVersion,
+          );
         }
 
         const rscMinimalCount = config.plugins.filter(
@@ -432,6 +447,15 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       clientChunkCtx,
     }),
   );
+
+  // Vercel preset: assemble .vercel/output from dist/ after the build. Pushed
+  // last so its (ssr-gated) closeBundle runs after the discovery plugin's
+  // rsc-env postprocess and after every environment has been written.
+  if (preset === "vercel") {
+    plugins.push(
+      createVercelOutputPlugin(resolvedOptions as RangoVercelOptions),
+    );
+  }
 
   debugConfig?.(
     "rango(%s) setup done: %d plugin(s) (%sms)",

@@ -12,6 +12,8 @@ export { poke } from "./plugins/refresh-cmd.js";
 export type {
   RangoNodeOptions,
   RangoCloudflareOptions,
+  RangoVercelOptions,
+  VercelPresetOptions,
   RangoOptions,
   ClientChunks,
   ClientChunkMeta,
