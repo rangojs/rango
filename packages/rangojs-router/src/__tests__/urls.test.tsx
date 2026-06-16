@@ -1042,4 +1042,62 @@ describe("urls()", () => {
       ).toThrow(/middleware\(\[fn1, fn2/);
     });
   });
+
+  describe("slot name validation", () => {
+    // urls() builds lazily; the DSL helpers (and this guard) run when
+    // urlPatterns.handler() executes inside a RangoContext, like the
+    // middleware-form tests above.
+    let manifest: Map<string, EntryData>;
+    let patterns: Map<string, string>;
+
+    beforeEach(() => {
+      manifest = new Map();
+      patterns = new Map();
+    });
+
+    const build = (urlPatterns: { handler: () => unknown }) =>
+      RangoContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => urlPatterns.handler(),
+      );
+
+    it("rejects a parallel slot name containing '.' (the segment-id separator)", () => {
+      // "@D3.foo" would mis-cut loaderParentId (strips at the first `D<index>.`),
+      // silently dropping the loader's data. Reject it at definition time.
+      const urlPatterns = urls(({ layout, parallel }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [parallel({ "@D3.foo": () => <div /> })],
+        ),
+      ]);
+      expect(() => build(urlPatterns)).toThrow(/must not contain "\."/);
+    });
+
+    it("rejects an intercept slot name containing '.'", () => {
+      const urlPatterns = urls(({ layout, intercept }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [intercept("@D3.foo", ".x", () => <div />)],
+        ),
+      ]);
+      expect(() => build(urlPatterns)).toThrow(/must not contain "\."/);
+    });
+
+    it("accepts a slot name with a bare 'D' and digits but no '.' (non-vacuity)", () => {
+      // "@D3foo"/"@Detail" match no `D<digits>.` (no dot), so loaderParentId
+      // strips correctly and the guard must NOT reject them.
+      const urlPatterns = urls(({ layout, parallel }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            parallel({
+              "@D3foo": () => <div />,
+              "@Detail": () => <div />,
+            }),
+          ],
+        ),
+      ]);
+      expect(() => build(urlPatterns)).not.toThrow();
+    });
+  });
 });

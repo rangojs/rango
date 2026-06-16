@@ -391,6 +391,15 @@ entry). To make a tag-invalidatable route, serve it from the runtime cache (a
 `Passthrough()` route, or a non-prerendered route with `cache()` / `cacheTag`)
 rather than pre-rendering it.
 
+By the same rule the prerender serve path (`yieldFromStore`) records no
+`cache({ tags })` into the request-scoped document tag union (`ctx._requestTags`)
+on a hit — so if a pre-rendered route is also wrapped in document caching, its
+document-cache entry carries an empty tag union and is not reached by
+`updateTag` / `revalidateTag`. This is intentional, not a gap: the baked payload
+is immutable until the next build, so invalidating the document-cache wrapper
+would only re-serve the identical prerendered body. Tag-invalidate the document
+by serving the route from the runtime cache instead of pre-rendering it.
+
 ### Middleware
 
 Skipped during pre-rendering (no request object). Middleware runs at request

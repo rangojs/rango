@@ -524,6 +524,22 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
   } as MiddlewareItem;
 };
 
+// Slot names become part of segment ids: a parallel/intercept slot is encoded
+// as `${shortCode}.${slotName}`, and loader segments append `D${index}.${loaderId}`.
+// A "." in the slot name collides with that separator -- loaderParentId
+// (segment-system.tsx) strips from the FIRST `D<index>.`, so a name like
+// "@D3.foo" is mis-cut to "@" and the loader's data is silently dropped. Reject
+// the dot at definition time so the failure is loud, not a corrupted tree at
+// runtime. (A bare "D" without a trailing dot -- e.g. "@Detail" -- is fine.)
+function assertValidSlotName(slotName: string): void {
+  invariant(
+    !slotName.includes("."),
+    `Slot name "${slotName}" must not contain ".". The dot is a reserved ` +
+      `segment-id separator; a name like "@D3.foo" corrupts loader segment-id ` +
+      `parsing and silently drops the loader's data. Rename the slot.`,
+  );
+}
+
 const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   const { store, ctx } = requireDslContext(
     "parallel() must be called inside urls()",
@@ -539,6 +555,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   );
 
   const slotNames = Object.keys(slots as Record<string, any>) as `@${string}`[];
+  for (const slotName of slotNames) assertValidSlotName(slotName);
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
 
@@ -697,6 +714,8 @@ const intercept = (
     ctx.parent.type !== "parallel",
     "intercept() cannot be used inside parallel()",
   );
+
+  assertValidSlotName(slotName);
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
 

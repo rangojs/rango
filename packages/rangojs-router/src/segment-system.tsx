@@ -504,7 +504,10 @@ export async function renderSegments(
 // slot name is user-controlled (`@${string}`) and may contain an uppercase "D"
 // (e.g. "@Detail"). Strip from the first `D<index>.` separator so the slot name
 // is preserved; splitting on a bare "D" mis-cut "@Detail" to "@" and silently
-// dropped the loader's data.
+// dropped the loader's data. The first-`D<index>.` strip is only correct because
+// slot names cannot contain "." -- assertValidSlotName (route-definition/
+// dsl-helpers.ts) rejects a "." at definition time, so a name like "@D3.foo"
+// (which WOULD mis-cut here) can never reach this function.
 function loaderParentId(loaderSegmentId: string): string {
   return loaderSegmentId.replace(/D\d+\..*$/, "");
 }
