@@ -168,6 +168,18 @@ export function withCacheStore<TEnv>(
     if (!requestCtx) return;
 
     const cacheScope = ctx.cacheScope;
+
+    // Record the route's segment-DSL cache tags into the request tag union NOW,
+    // synchronously in the pipeline. The actual store write (cacheRoute) runs in
+    // requestCtx.waitUntil() below — and the proactive path re-resolves the whole
+    // tree first — so cacheRoute's own tag recording races the document cache's
+    // post-body-drain snapshot of _requestTags. On a first-write miss the document
+    // tag union could miss these tags and revalidateTag()/updateTag() would not
+    // invalidate the cached document. Recording here (before the snapshot) closes
+    // the window for both the direct and proactive write paths; the duplicate
+    // record inside cacheRoute is idempotent.
+    cacheScope.recordTags(requestCtx);
+
     const reqId = INTERNAL_RANGO_DEBUG
       ? getOrCreateRequestId(ctx.request)
       : undefined;
