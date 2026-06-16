@@ -35,9 +35,14 @@ describe("getVirtualEntryRSCHost", () => {
     expect(code).toContain("hostRouter.match(request, input)");
     // It must NOT wrap a single router in createRSCHandler like the router entry.
     expect(code).not.toContain("createRSCHandler");
-    // Accepts the instance as default or a named hostRouter/router export.
-    expect(code).toContain("__hostEntry.default");
-    expect(code).toContain("__hostEntry.hostRouter");
+    // Accepts the instance as default or a named hostRouter/router export,
+    // resolved DYNAMICALLY (m[name]) so Rollup does not warn IMPORT_IS_UNDEFINED
+    // for the named exports a default-only host module omits.
+    expect(code).toContain('"default"');
+    expect(code).toContain('"hostRouter"');
+    expect(code).toContain('"router"');
+    expect(code).not.toContain("__hostEntry.hostRouter");
+    expect(code).not.toContain("__hostEntry.router");
     // Rejects a Cloudflare-style { fetch } object with a clear error.
     expect(code).toContain("must export a HostRouter instance");
     // Still registers all sub-app manifests/loaders at startup.
