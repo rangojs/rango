@@ -131,18 +131,35 @@ async function assemble(
     );
   }
 
-  // esbuild ships with Vite; resolve it from the app so we never add it as a
-  // @rangojs/router dependency. Minimal structural types avoid coupling to
+  // esbuild ships with Vite, so we never add it as a @rangojs/router dependency.
+  // It is a DIRECT dependency of Vite but only a TRANSITIVE one from the app's
+  // view, so under strict pnpm it is NOT resolvable from the app root. Resolve it
+  // through Vite's module location (Vite is a direct app dependency, and esbuild
+  // is a direct dependency of Vite). Minimal structural types avoid coupling to
   // esbuild's type package at compile time.
   const appRequire = createRequire(join(root, "package.json"));
+  const resolveEsbuildPath = (): string => {
+    try {
+      const viteRequire = createRequire(appRequire.resolve("vite"));
+      return viteRequire.resolve("esbuild");
+    } catch {
+      // Intentionally empty: fall through to the app/rango fallbacks below.
+    }
+    try {
+      return appRequire.resolve("esbuild");
+    } catch {
+      // Intentionally empty: last resort is @rangojs/router's own resolver.
+    }
+    return rangoRequire.resolve("esbuild");
+  };
   let esbuildModule: EsbuildModule;
   try {
     esbuildModule = (await import(
-      pathToFileURL(appRequire.resolve("esbuild")).href
+      pathToFileURL(resolveEsbuildPath()).href
     )) as EsbuildModule;
   } catch {
     throw new Error(
-      '[rango] preset "vercel" requires "esbuild" to bundle the function launcher. It ships with Vite; reinstall dependencies.',
+      '[rango] preset "vercel" requires "esbuild" to bundle the function launcher. It ships with Vite; reinstall dependencies (or add esbuild to your app dependencies).',
     );
   }
   const esbuildBuild = esbuildModule.build ?? esbuildModule.default?.build;
