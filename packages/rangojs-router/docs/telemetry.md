@@ -443,6 +443,55 @@ export default {
 };
 ```
 
+## Cloudflare custom spans (`createCloudflareTracing`)
+
+On Cloudflare, you can emit the router's performance phases as **native
+Cloudflare custom spans** instead of (or alongside) the OTel sink. These show
+up in the Workers trace waterfall and OpenTelemetry exports next to the
+platform's automatic spans (KV reads, D1 queries, fetch calls).
+
+```typescript
+import { createRouter } from "@rangojs/router";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+export const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  // All phases on by default; turn individual phases off as needed.
+  tracing: createCloudflareTracing({ spans: { ssr: false } }),
+});
+```
+
+Emitted spans: `rango.request`, `rango.middleware`, `rango.loader`,
+`rango.render`, `rango.ssr`. Unlike the OTel sink (which builds spans from
+lifecycle _events_ after the fact), `createCloudflareTracing` **wraps the actual
+work** with `executionContext.tracing.enterSpan`, so spans nest by async context
+and the platform's automatic KV/D1/fetch spans land under the right phase.
+
+Key properties:
+
+- **Import-free.** It reads `executionContext.tracing` lazily — no
+  `cloudflare:workers` import and no `@cloudflare/workers-types` dependency.
+- **Transparent off-Cloudflare.** With no `executionContext.tracing` (Node, dev
+  without a tracing destination, an older runtime), every span call falls
+  through to the work directly, so the request behaves exactly as if tracing
+  were off. Whether spans are _recorded_ is governed by the `observability` /
+  tracing block in your wrangler config.
+- **Setup-to-stream-handoff durations.** The streaming phases
+  (`rango.request`/`render`/`ssr`) end when the Response/stream is constructed,
+  not when the body finishes draining; loader/Suspense work that settles during
+  the drain extends past the parent span. Phase spans bound setup time, not full
+  request duration.
+- **First-cut coverage.** Intercept-route middleware and action-revalidation
+  renders are not yet span-wrapped, so an action revalidation's loaders surface
+  as `rango.loader` spans without a `rango.render` parent.
+
+Relationship to `createOTelSink`: both can emit `rango.request` and
+`rango.loader`, but they are **separate spans** (different attributes and
+mechanics), not a name conflict. Running both produces duplicate same-named
+spans — on Cloudflare prefer `createCloudflareTracing` unless you specifically
+want the OTel event-sink path too.
+
 ## Combining Sinks
 
 To send events to multiple backends, compose sinks:

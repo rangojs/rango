@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { normalizePath, findMatchingParen } from "../expose-id-utils.js";
 import { getImportedFnNames } from "./export-analysis.js";
+import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
 import { createRangoDebugger, createCounter, NS } from "../../debug.js";
 
 const debug = createRangoDebugger(NS.transform);
@@ -28,7 +29,16 @@ export function transformRouter(
   const routeNamesImport = `./${basename}.named-routes.gen.js`;
   const routeNamesVar = `__rsc_rn`;
 
+  // Only inject at call sites in REAL code, not inside comments or string
+  // literals — e.g. a `createRouter({ ... })` snippet in a JSDoc example must
+  // not get a `$$id`/`.named-routes.gen` import injected. The sibling analysis
+  // path (export-analysis.ts) already uses this same comment/string-aware scan;
+  // the raw `pat.exec(code)` loop below would otherwise match in comments too.
+  const codeOffsets = new Set(codeMatchIndices(code, pat));
+  pat.lastIndex = 0;
+
   while ((match = pat.exec(code)) !== null) {
+    if (!codeOffsets.has(match.index)) continue;
     const callStart = match.index;
     const parenPos = match.index + match[0].length - 1;
 

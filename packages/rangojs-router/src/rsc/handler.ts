@@ -84,6 +84,7 @@ import {
   appendMetric,
   buildMetricsTiming,
 } from "../router/metrics.js";
+import { traceSpan } from "../router/tracing.js";
 import {
   startSSRSetup,
   getSSRSetup,
@@ -499,86 +500,101 @@ export function createRSCHandler<
     // Store basename on request context (scoped per-request via existing ALS)
     requestContext._basename = router.basename;
 
-    return runWithRequestContext(requestContext, async () => {
-      // Core handler logic (wrapped by middleware)
-      const coreHandler = async (): Promise<Response> => {
-        return coreRequestHandler(request, env, url, variables, nonce);
-      };
+    // Resolved span tracing for this request (read at each traced phase).
+    requestContext._tracing = router.tracing;
 
-      // Execute middleware chain if any, otherwise call core handler directly
-      let response: Response;
-      if (matchedMiddleware.length > 0) {
-        const mwResponse = await executeMiddleware(
-          matchedMiddleware,
-          request,
-          env,
-          variables,
-          coreHandler,
-          createReverseFunction(getRequiredRouteMap()),
-        );
+    // The "rango.request" span is opened inside the request context so the
+    // Cloudflare runner can read executionContext.tracing, and so every nested
+    // phase span (and the platform's automatic KV/D1/fetch spans) nests under
+    // it. When tracing is off this is a direct pass-through.
+    return runWithRequestContext(requestContext, () =>
+      traceSpan(router.tracing, "request", "rango.request", async (span) => {
+        span.setAttribute("http.method", request.method);
+        // The matched route template is not known until match() runs later, so
+        // emit the concrete path as url.path (low-level), NOT http.route — the
+        // latter is reserved for the low-cardinality template (OTel convention).
+        span.setAttribute("url.path", url.pathname);
 
-        if (
-          url.searchParams.has("_rsc_partial") ||
-          url.searchParams.has("_rsc_action")
-        ) {
-          const intercepted = interceptRedirectForPartial(
-            mwResponse,
-            createRedirectFlightResponse,
+        // Core handler logic (wrapped by middleware)
+        const coreHandler = async (): Promise<Response> => {
+          return coreRequestHandler(request, env, url, variables, nonce);
+        };
+
+        // Execute middleware chain if any, otherwise call core handler directly
+        let response: Response;
+        if (matchedMiddleware.length > 0) {
+          const mwResponse = await executeMiddleware(
+            matchedMiddleware,
+            request,
+            env,
+            variables,
+            coreHandler,
+            createReverseFunction(getRequiredRouteMap()),
           );
-          response = intercepted ?? finalizeResponse(mwResponse);
+
+          if (
+            url.searchParams.has("_rsc_partial") ||
+            url.searchParams.has("_rsc_action")
+          ) {
+            const intercepted = interceptRedirectForPartial(
+              mwResponse,
+              createRedirectFlightResponse,
+            );
+            response = intercepted ?? finalizeResponse(mwResponse);
+          } else {
+            response = finalizeResponse(mwResponse);
+          }
         } else {
-          response = finalizeResponse(mwResponse);
+          response = await coreHandler();
         }
-      } else {
-        response = await coreHandler();
-      }
 
-      // Finalize metrics after all middleware (including post-next work)
-      // has completed so :post spans are captured in the timeline.
-      // Handler timing parts are always emitted (even without debug metrics)
-      // so non-debug requests still get bootstrap Server-Timing entries.
-      const handlerTimingArr: string[] = variables.__handlerTiming || [];
-      // Preserve any existing Server-Timing set by response routes or middleware
-      const existingTiming = response.headers.get("Server-Timing");
-      const timingParts = existingTiming
-        ? [existingTiming, ...handlerTimingArr]
-        : [...handlerTimingArr];
+        // Finalize metrics after all middleware (including post-next work)
+        // has completed so :post spans are captured in the timeline.
+        // Handler timing parts are always emitted (even without debug metrics)
+        // so non-debug requests still get bootstrap Server-Timing entries.
+        const handlerTimingArr: string[] = variables.__handlerTiming || [];
+        // Preserve any existing Server-Timing set by response routes or middleware
+        const existingTiming = response.headers.get("Server-Timing");
+        const timingParts = existingTiming
+          ? [existingTiming, ...handlerTimingArr]
+          : [...handlerTimingArr];
 
-      const metricsStore = requestContext._metricsStore;
-      if (metricsStore) {
-        // When the store was created at handler start (earlyMetricsStore),
-        // handler:total covers the full request. When ctx.debugPerformance()
-        // created the store mid-request, use its requestStart to avoid a
-        // negative startTime offset.
-        const totalStart = earlyMetricsStore
-          ? handlerStart
-          : metricsStore.requestStart;
-        appendMetric(
-          metricsStore,
-          "handler:total",
-          totalStart,
-          performance.now() - totalStart,
-        );
-        const metricsTiming = buildMetricsTiming(
-          request.method,
-          url.pathname,
-          metricsStore,
-        );
-        if (metricsTiming) timingParts.push(metricsTiming);
-      }
+        const metricsStore = requestContext._metricsStore;
+        if (metricsStore) {
+          // When the store was created at handler start (earlyMetricsStore),
+          // handler:total covers the full request. When ctx.debugPerformance()
+          // created the store mid-request, use its requestStart to avoid a
+          // negative startTime offset.
+          const totalStart = earlyMetricsStore
+            ? handlerStart
+            : metricsStore.requestStart;
+          appendMetric(
+            metricsStore,
+            "handler:total",
+            totalStart,
+            performance.now() - totalStart,
+          );
+          const metricsTiming = buildMetricsTiming(
+            request.method,
+            url.pathname,
+            metricsStore,
+          );
+          if (metricsTiming) timingParts.push(metricsTiming);
+        }
 
-      const fullTiming = timingParts.join(", ");
-      if (fullTiming && !isWebSocketUpgradeResponse(response)) {
-        response.headers.set("Server-Timing", fullTiming);
-      }
+        const fullTiming = timingParts.join(", ");
+        if (fullTiming && !isWebSocketUpgradeResponse(response)) {
+          response.headers.set("Server-Timing", fullTiming);
+        }
 
-      // Single open-redirect chokepoint: every response (PE, full-page,
-      // middleware short-circuit, response-route) funnels through here, so
-      // guarding browser-followed (3xx) redirects once covers them all and any
-      // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
-      // through untouched (validated client-side instead).
-      return guardOutgoingRedirect(response, url.origin, router.basename);
-    });
+        // Single open-redirect chokepoint: every response (PE, full-page,
+        // middleware short-circuit, response-route) funnels through here, so
+        // guarding browser-followed (3xx) redirects once covers them all and any
+        // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
+        // through untouched (validated client-side instead).
+        return guardOutgoingRedirect(response, url.origin, router.basename);
+      }),
+    );
   };
 
   // Core request handling logic (separated for middleware wrapping).

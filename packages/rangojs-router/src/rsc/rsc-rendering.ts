@@ -11,6 +11,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
+import { traceSpan } from "../router/tracing.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { MatchResult } from "../types.js";
@@ -21,7 +22,32 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
-export async function handleRscRendering<TEnv>(
+export function handleRscRendering<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  isPartial: boolean,
+  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  nonce: string | undefined,
+): Promise<Response> {
+  // Wrap the whole render phase in a "rango.render" span. Loaders kicked off
+  // during matching nest under it; the SSR HTML pass below opens "rango.ssr".
+  const reqCtx = requireRequestContext();
+  return traceSpan(reqCtx._tracing, "render", "rango.render", () =>
+    handleRscRenderingInner(
+      ctx,
+      request,
+      env,
+      url,
+      isPartial,
+      handleStore,
+      nonce,
+    ),
+  );
+}
+
+async function handleRscRenderingInner<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
   env: TEnv,
@@ -221,10 +247,12 @@ export async function handleRscRendering<TEnv>(
   );
 
   const ssrRenderStart = performance.now();
-  const htmlStream = await ssrModule.renderHTML(rscStream, {
-    nonce,
-    streamMode,
-  });
+  const htmlStream = await traceSpan(reqCtx._tracing, "ssr", "rango.ssr", () =>
+    ssrModule.renderHTML(rscStream, {
+      nonce,
+      streamMode,
+    }),
+  );
   const ssrRenderDur = performance.now() - ssrRenderStart;
   appendMetric(metricsStore, "ssr-render-html", ssrRenderStart, ssrRenderDur);
 

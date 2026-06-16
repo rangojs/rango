@@ -99,6 +99,41 @@ export const loader = createLoader(() => null);
     expect(result).toBeNull();
   });
 
+  it("does not inject for a createRouter() that only appears in a comment", () => {
+    // Regression: a module that imports createRouter for a real value (e.g. an
+    // option factory) but whose only createRouter(...) call-shaped text is in a
+    // JSDoc example must NOT get a `$$id` or a `.named-routes.gen` import — that
+    // gen file does not exist next to such a module and the build would fail.
+    const plugin = initPlugin();
+    const code = `import { createRouter } from "@rangojs/router";
+/**
+ * Usage:
+ *   export const router = createRouter({ tracing: createCloudflareTracing() });
+ */
+export function helper() {
+  return 1;
+}
+`;
+    const result = plugin.transform(code, "/project/src/cloudflare/tracing.ts");
+    expect(result).toBeNull();
+  });
+
+  it("injects into the real call but ignores a createRouter() in a comment/string", () => {
+    const plugin = initPlugin();
+    const code = `import { createRouter } from "@rangojs/router";
+// example: createRouter({ a: 1 })
+const note = "see createRouter({ b: 2 })";
+export const router = createRouter({ routes: [] });
+`;
+    const result = plugin.transform(code, "/project/src/router.tsx");
+    expect(result).toBeDefined();
+    // Exactly one $$id injection — the real call, not the comment or string.
+    const ids = result.code.match(/\$\$id:/g) ?? [];
+    expect(ids).toHaveLength(1);
+    // The injected id sits on the real call's config object.
+    expect(result.code).toMatch(/createRouter\(\{\s*\$\$id:[^}]*routes:/);
+  });
+
   it("skips files in node_modules", () => {
     const plugin = initPlugin();
     const code = `import { createRouter } from "@rangojs/router";

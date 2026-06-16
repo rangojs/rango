@@ -283,6 +283,16 @@ export type {
   OriginCheckRejectedEvent,
 } from "./router/telemetry.js";
 
+// Span tracing config types. The Cloudflare runner factory lives at
+// "@rangojs/router/cloudflare" so non-Cloudflare consumers never import it.
+export type {
+  RouterTracingConfig,
+  TracePhase,
+  TracePhaseToggles,
+  SpanRunner,
+  TraceSpan,
+} from "./router/tracing.js";
+
 // Timeout types and error class
 export { RouterTimeoutError } from "./router/timeout.js";
 export type {

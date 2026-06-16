@@ -14,6 +14,7 @@ import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
 import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
+import type { ResolvedTracing } from "./tracing.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -319,6 +320,12 @@ export interface RangoInternal<
    * Used by the request handler to create metrics before middleware runs.
    */
   readonly debugPerformance?: boolean;
+
+  /**
+   * Resolved span tracing (Cloudflare custom spans), or undefined when off.
+   * Threaded onto the request context and read at each traced phase.
+   */
+  readonly tracing?: ResolvedTracing;
 
   /**
    * Whether ?__debug_manifest is allowed in production.

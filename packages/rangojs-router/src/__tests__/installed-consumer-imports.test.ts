@@ -73,6 +73,7 @@ describe("installed consumer imports", () => {
 import { createLoader, createRouter } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
 import { createHostRouter } from "@rangojs/router/host";
 import {
   createTestRequest,
@@ -104,6 +105,7 @@ void createLoader;
 void createRouter;
 void Link;
 void MemorySegmentCacheStore;
+void createCloudflareTracing;
 void createHostRouter;
 void createTestRequest;
 void testPattern;

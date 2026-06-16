@@ -46,6 +46,7 @@ import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
+import type { ResolvedTracing } from "../router/tracing.js";
 import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import { THEME_COOKIE } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
@@ -362,6 +363,9 @@ export interface RequestContext<
 
   /** @internal Request-scoped performance metrics store */
   _metricsStore?: MetricsStore;
+
+  /** @internal Resolved span tracing for this request (Cloudflare custom spans) */
+  _tracing?: ResolvedTracing;
 
   /** @internal Router basename for this request (used by redirect()) */
   _basename?: string;

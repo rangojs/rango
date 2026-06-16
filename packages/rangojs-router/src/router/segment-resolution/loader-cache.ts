@@ -21,7 +21,11 @@
 import type { LoaderEntry } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
-import { getRequestContext } from "../../server/request-context.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "../../server/request-context.js";
+import { traceSpan } from "../tracing.js";
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
@@ -115,6 +119,21 @@ function getLoaderStore(
  * When cached, checks store first and stores on miss via waitUntil.
  */
 export function resolveLoaderData<TEnv>(
+  loaderEntry: LoaderEntry,
+  ctx: HandlerContext<any, TEnv>,
+  pathname: string,
+): Promise<any> {
+  // Wrap the loader in a "rango.loader" span. The work (ctx.use / cache lookup)
+  // runs inside the span callback, so the platform's automatic KV/D1/fetch
+  // spans nest under it. Pass-through when tracing is off.
+  const tracing = _getRequestContext()?._tracing;
+  return traceSpan(tracing, "loader", "rango.loader", (span) => {
+    span.setAttribute("rango.loader_id", loaderEntry.loader.$$id);
+    return resolveLoaderDataInner(loaderEntry, ctx, pathname);
+  });
+}
+
+function resolveLoaderDataInner<TEnv>(
   loaderEntry: LoaderEntry,
   ctx: HandlerContext<any, TEnv>,
   pathname: string,

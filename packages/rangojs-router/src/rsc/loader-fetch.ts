@@ -14,6 +14,7 @@
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { requireRequestContext } from "../server/request-context.js";
+import { traceSpan } from "../router/tracing.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -162,7 +163,19 @@ export async function handleLoaderFetch<TEnv>(
             ...(loaderFormData ? { formData: loaderFormData } : {}),
           };
 
-          const result = await fn(loaderCtx);
+          // Wrap the fetchable-loader execution in the same "rango.loader" span
+          // the render-time path emits (resolveLoaderData), so useFetchLoader()
+          // requests also surface the loader phase and nest their KV/D1/fetch
+          // spans under it. Pass-through when tracing is off.
+          const result = await traceSpan(
+            reqCtx._tracing,
+            "loader",
+            "rango.loader",
+            (span) => {
+              span.setAttribute("rango.loader_id", loaderId);
+              return fn(loaderCtx);
+            },
+          );
 
           interface LoaderPayload {
             loaderResult: unknown;

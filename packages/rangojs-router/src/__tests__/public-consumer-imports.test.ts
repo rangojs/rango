@@ -46,6 +46,7 @@ function runConsumerTypecheck(files: Record<string, string>) {
             "@rangojs/router": [publicTypeEntry(".")],
             "@rangojs/router/client": [publicTypeEntry("./client")],
             "@rangojs/router/cache": [publicTypeEntry("./cache")],
+            "@rangojs/router/cloudflare": [publicTypeEntry("./cloudflare")],
             "@rangojs/router/host": [publicTypeEntry("./host")],
             "@rangojs/router/host/testing": [publicTypeEntry("./host/testing")],
             "@rangojs/router/theme": [publicTypeEntry("./theme")],
@@ -130,6 +131,22 @@ import {
 void CFCacheStore;
 void MemorySegmentCacheStore;
 void createCacheScope;
+`,
+      "cloudflare-consumer.ts": `
+import {
+  createCloudflareTracing,
+  type CloudflareTracingOptions,
+} from "@rangojs/router/cloudflare";
+import type {
+  RouterTracingConfig,
+  TracePhaseToggles,
+} from "@rangojs/router";
+
+const opts: CloudflareTracingOptions = { spans: { ssr: false } };
+const config: RouterTracingConfig = createCloudflareTracing(opts);
+const phases: TracePhaseToggles = { loader: true };
+void config;
+void phases;
 `,
       "host-consumer.ts": `
 import { NoRouteMatchError, createHostRouter } from "@rangojs/router/host";

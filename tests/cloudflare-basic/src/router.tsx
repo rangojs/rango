@@ -3,6 +3,7 @@ import {
   createDocumentCacheMiddleware,
   CFCacheStore,
 } from "@rangojs/router/cache";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
@@ -17,6 +18,13 @@ export const router = createRouter<AppBindings>({
   // exercised against a real response in e2e (see e2e/cache-signal.test.ts).
   // The header is additive; never enable this in a real production app.
   debugCacheSignal: true,
+  // Cloudflare custom spans: emit "rango.*" spans for the request/middleware/
+  // loader/render/ssr phases. On a tracing-enabled deployment these show up in
+  // the Workers trace waterfall; here they are also exercised in e2e via the
+  // ?__trace_debug recording tracer injected by the worker entry. When the
+  // runtime provides no executionContext.tracing (the default), every span call
+  // is a transparent pass-through.
+  tracing: createCloudflareTracing(),
   // Enable theme support with system detection
   theme: {
     defaultTheme: "light",

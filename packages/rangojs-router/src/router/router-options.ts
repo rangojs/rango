@@ -11,6 +11,7 @@ import type { UrlPatterns } from "../urls.js";
 import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
 import type { TelemetrySink } from "./telemetry.js";
+import type { RouterTracingConfig } from "./tracing.js";
 import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
 
 /**
@@ -603,6 +604,29 @@ export interface RangoOptions<TEnv = any> {
    * ```
    */
   telemetry?: TelemetrySink;
+
+  /**
+   * Span tracing for the router's performance phases (request, middleware,
+   * loaders, render, ssr). Connects the same phases shown in the
+   * `debugPerformance` timeline to the host platform's tracing system.
+   *
+   * Cloudflare preset only: pass `createCloudflareTracing()` from
+   * `@rangojs/router/cloudflare` to emit Cloudflare custom spans, which appear
+   * in the Workers trace waterfall and OpenTelemetry exports alongside the
+   * automatic KV/D1/fetch spans. Off-Cloudflare (or when the worker has no
+   * tracing destination configured in wrangler) every span call falls through
+   * to the work directly, so the request behaves exactly as if tracing were off.
+   *
+   * @example
+   * ```typescript
+   * import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+   *
+   * const router = createRouter({
+   *   tracing: createCloudflareTracing({ spans: { ssr: false } }),
+   * });
+   * ```
+   */
+  tracing?: RouterTracingConfig;
 
   /**
    * SSR configuration options.
