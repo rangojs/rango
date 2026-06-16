@@ -254,6 +254,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             ? "./" + abs.slice(root.length + 1)
             : abs
           ).replaceAll("\\", "/");
+        const bulletList = (files: string[]) =>
+          files.map((f) => "  - " + toRootRelative(f)).join("\n");
 
         // 1. Explicit host entry wins: serve the createHostRouter() instance.
         if (explicitHostRouter) {
@@ -275,11 +277,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           return;
         }
         if (hostCandidates.length > 1) {
-          const list = hostCandidates
-            .map((f) => "  - " + toRootRelative(f))
-            .join("\n");
           throw new Error(
-            `[rango] Multiple host routers found:\n${list}\n\n` +
+            `[rango] Multiple host routers found:\n${bulletList(hostCandidates)}\n\n` +
               `Set the \`hostRouter\` option to the entry to serve, e.g. rango({ preset: "${preset}", hostRouter: "./src/worker.rsc.tsx" }).`,
           );
         }
@@ -292,11 +291,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           return;
         }
         if (candidates.length > 1) {
-          const list = candidates
-            .map((f) => "  - " + toRootRelative(f))
-            .join("\n");
           throw new Error(
-            `[rango] Multiple routers found:\n${list}\n\n` +
+            `[rango] Multiple routers found:\n${bulletList(candidates)}\n\n` +
               `If this is a multi-app host router, export a createHostRouter() instance and set the \`hostRouter\` option (e.g. rango({ preset: "${preset}", hostRouter: "./src/worker.rsc.tsx" })), or use preset: "cloudflare" where you own the worker entry.`,
           );
         }
