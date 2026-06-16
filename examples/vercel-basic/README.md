@@ -12,7 +12,9 @@ response, plus the static client assets served from the CDN.
 ```ts
 // vite.config.ts
 import { rango } from "@rangojs/router/vite";
-export default defineConfig({ plugins: [react(), rango({ preset: "vercel" })] });
+export default defineConfig({
+  plugins: [react(), rango({ preset: "vercel" })],
+});
 ```
 
 The app installs `@vercel/functions` (used by `VercelCacheStore` and bundled into
@@ -21,12 +23,12 @@ the generated function launcher). `srvx` (the Web→Node streaming bridge) and t
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `pnpm dev` | Vite dev server (in-memory cache store). |
-| `pnpm build` | `vite build` — the preset assembles `.vercel/output`. |
-| `pnpm smoke` | Serves the assembled function over `node:http` and asserts the pages render + a static asset loads. No deploy. |
-| `pnpm preview` | `vite preview` (plugin-rsc's Node server; in-memory cache store). |
+| Command        | What it does                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`     | Vite dev server (in-memory cache store).                                                                       |
+| `pnpm build`   | `vite build` — the preset assembles `.vercel/output`.                                                          |
+| `pnpm smoke`   | Serves the assembled function over `node:http` and asserts the pages render + a static asset loads. No deploy. |
+| `pnpm preview` | `vite preview` (plugin-rsc's Node server; in-memory cache store).                                              |
 
 ## Local verification (no Vercel account)
 

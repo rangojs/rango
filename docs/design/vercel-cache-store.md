@@ -21,7 +21,7 @@ A fair first reaction to "we need a Vercel store" is to expect another
 memoization, per-tier timeout budgets. It is not. `CFCacheStore` is large because
 Cloudflare hands you raw primitives — a per-colo Cache API and a global KV — and
 you build a distributed, tag-aware cache out of them yourself. Vercel's Runtime
-Cache already *is* that cache.
+Cache already _is_ that cache.
 
 `getCache()` from `@vercel/functions` returns a handle with exactly the four
 operations the store needs:
@@ -29,7 +29,11 @@ operations the store needs:
 ```ts
 interface RuntimeCache {
   get(key: string): Promise<unknown>;
-  set(key: string, value: unknown, options?: { ttl?: number; tags?: string[]; name?: string }): Promise<void>;
+  set(
+    key: string,
+    value: unknown,
+    options?: { ttl?: number; tags?: string[]; name?: string },
+  ): Promise<void>;
   delete(key: string): Promise<void>;
   expireTag(tag: string | string[]): Promise<void>;
 }
@@ -43,7 +47,7 @@ everywhere. So `VercelCacheStore` sits much closer to `MemorySegmentCacheStore`
 in size than to `CFCacheStore` — the platform does the distribution and the tag
 fan-out for us.
 
-The store exists to supply the three things the raw primitive does *not* give us.
+The store exists to supply the three things the raw primitive does _not_ give us.
 The rest of this doc is mostly those three.
 
 ## The store: `VercelCacheStore`
@@ -57,13 +61,13 @@ exported).
 
 It implements the full `SegmentCacheStore` surface (`src/cache/types.ts`):
 
-| Method | Backed by | Notes |
-|---|---|---|
-| `get` / `set` / `delete` | `getCache().get/set/delete` (family `s`) | Segment-tree cache, the `cache()` DSL. |
-| `getItem` / `setItem` | same (family `i`) | `"use cache"` function results. |
-| `getResponse` / `putResponse` | same (family `r`) | Whole-`Response` document cache; body base64-encoded. |
-| `invalidateTags` | `getCache().expireTag` | One call per invalidation batch. |
-| `defaults` / `keyGenerator` | config passthrough | ttl/swr inheritance and key segmentation. |
+| Method                        | Backed by                                | Notes                                                 |
+| ----------------------------- | ---------------------------------------- | ----------------------------------------------------- |
+| `get` / `set` / `delete`      | `getCache().get/set/delete` (family `s`) | Segment-tree cache, the `cache()` DSL.                |
+| `getItem` / `setItem`         | same (family `i`)                        | `"use cache"` function results.                       |
+| `getResponse` / `putResponse` | same (family `r`)                        | Whole-`Response` document cache; body base64-encoded. |
+| `invalidateTags`              | `getCache().expireTag`                   | One call per invalidation batch.                      |
+| `defaults` / `keyGenerator`   | config passthrough                       | ttl/swr inheritance and key segmentation.             |
 
 `clear()` is deliberately **not** implemented: `getCache` has no key enumeration,
 so a wipe-all is impossible. `clear` is optional in the interface and only used by
@@ -79,7 +83,11 @@ its constructor, typed against a local structural shape:
 ```ts
 export interface VercelRuntimeCache {
   get(key: string): Promise<unknown>;
-  set(key: string, value: unknown, options?: { ttl?: number; tags?: string[]; name?: string }): Promise<void>;
+  set(
+    key: string,
+    value: unknown,
+    options?: { ttl?: number; tags?: string[]; name?: string },
+  ): Promise<void>;
   delete(key: string): Promise<void>;
   expireTag(tag: string | string[]): Promise<void>;
 }
@@ -117,7 +125,7 @@ single-keyspace backend; the prefix is what prevents it.
 `getCache` has no stale-but-serve. A TTL'd entry is fresh until it expires, then
 it is simply gone — there is no window where you can serve the old value while
 refreshing. Rango's SWR contract needs that window, and the `SegmentCacheStore`
-contract makes the *store* responsible for it: `get` returns
+contract makes the _store_ responsible for it: `get` returns
 `{ data, shouldRevalidate }`, and `shouldRevalidate: true` means "serve this, but
 kick off a refresh."
 
@@ -144,7 +152,7 @@ fresh while one of them revalidates. `CFCacheStore` does the same with its
 `MAX_REVALIDATION_INTERVAL` re-arm, but it has the Cache API's atomicity to lean
 on. `getCache` has no compare-and-set and storage is regional, so two readers can
 still both read the stale value before either re-stamps and both trigger a
-refresh. That is acceptable — the contract only asks that we *try* to prevent a
+refresh. That is acceptable — the contract only asks that we _try_ to prevent a
 thundering herd, and a duplicated revalidation is a cost overrun, not a
 correctness bug. The re-stamp runs through `waitUntil` (off the response path)
 when one is provided, fire-and-forget otherwise.
@@ -164,7 +172,7 @@ marker model:
 
 There is no companion tag store, no `taggedAt` bookkeeping for invalidation
 (we keep tags on the read-side result so a hit still contributes them to the
-document tag union, but they are not used to *decide* invalidation — Vercel
+document tag union, but they are not used to _decide_ invalidation — Vercel
 already did). This is why the store is small.
 
 `invalidateTags` is also the **one method that is allowed to throw**. Every other
@@ -179,13 +187,13 @@ reporting a false success. That is the read-your-own-writes honesty rule from
 These are the limits that will silently cost you correctness or capacity if you
 forget them. The store handles each; this is what it is doing and why.
 
-| Limit | Value | What the store does |
-|---|---|---|
-| Max item size | **2 MB** (writes above silently no-op) | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace. |
-| Tags per item | **64** (docs say 64 *or* 128; 64 is the floor) | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag. |
-| Tag length | **256 bytes**, no commas | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning. |
+| Limit                       | Value                                                             | What the store does                                                                                                                                                                                                                         |
+| --------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.                                                      |
+| Tags per item               | **64** (docs say 64 _or_ 128; 64 is the floor)                    | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                        |
+| Tag length                  | **256 bytes**, no commas                                          | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning.                                                                                                                     |
 | Cross-deploy reconciliation | **none** — TTL/tag updates are not reconciled between deployments | Fold a build id into the key. Use the `version` option (`v/{version}/...` prefix) or, better, the `getCache({ namespace })` argument. Without it, an entry written by a prior deploy with a now-changed shape can be served after a deploy. |
-| Storage consistency | **regional** | A write in region A is not visible to a read in region B until B warms. Plan for per-region cold starts; every `get` is best-effort regardless. |
+| Storage consistency         | **regional**                                                      | A write in region A is not visible to a read in region B until B warms. Plan for per-region cold starts; every `get` is best-effort regardless.                                                                                             |
 
 The 2 MB cap is the one most likely to surprise you. On Cloudflare an oversized
 entry just fails the KV write; on Vercel the `set` resolves successfully and the
@@ -272,10 +280,7 @@ shape:
 ```json
 {
   "version": 3,
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/render" }
-  ]
+  "routes": [{ "handle": "filesystem" }, { "src": "/(.*)", "dest": "/render" }]
 }
 ```
 
@@ -330,7 +335,7 @@ worker specifics:
    the SSR and RSC builds.** This is Bundle Hygiene rule #2 and it is easy to
    miss: the Cloudflare plugin folds `NODE_ENV` automatically, but vanilla
    `vite build` only folds it for the client environment. If the SSR/RSC builds
-   do not fold it, React's CJS keeps *both* its dev and prod branches and the
+   do not fold it, React's CJS keeps _both_ its dev and prod branches and the
    server bundle roughly doubles. The bundle guard in
    `e2e/build-test-app.setup.ts` catches a `react*.development*.js` chunk — wire
    the equivalent check for the Vercel output.
@@ -342,7 +347,7 @@ test) — a local in-place run is masked by the app's own `package.json` and
 `node_modules` up the directory tree, so it passes while the deployed,
 filesystem-isolated function fails.
 
-1. **The rsc/ssr builds must be fully bundled.** The node preset *externalizes*
+1. **The rsc/ssr builds must be fully bundled.** The node preset _externalizes_
    `node_modules` deps (the Vite SSR default), which is fine under `vite preview`
    where `node_modules` exists, but leaves bare imports (`@vercel/functions`,
    `react-dom/server.edge`, `@rangojs/router`, …) that a prebuilt function — which
@@ -366,12 +371,12 @@ The `examples/vercel-basic` smoke test (`scripts/smoke.mjs`) copies
 `.vercel/output` to an OS temp dir **outside** the monorepo before serving it, so
 it reproduces the isolated function filesystem and catches both regressions.
 
-### What is *not* a static file
+### What is _not_ a static file
 
 Carry over the prerender principle from [`prerender-api-design.md`](../../packages/rangojs-router/docs/prerender-api-design.md):
 pre-rendering is a build-time cache, and the **function** serves every request.
 There are no `.html`/`.rsc` files in `static/` that the CDN returns directly — the
-prerender and static manifests are bundled *inside* the function, which looks up
+prerender and static manifests are bundled _inside_ the function, which looks up
 the stored Flight payloads at runtime exactly as it would a cache hit. The browser
 cannot tell a prerendered route from a cached one. (Vercel's own Prerender
 Functions / ISR are a separate CDN-level mechanism; if we ever map Rango's
@@ -385,7 +390,7 @@ Vercel has two cache layers and they do **not** share tags. The Runtime Cache
 separate thing with its own tag API (`addCacheTag` / `invalidateByTag`).
 Per Vercel's docs: Runtime Cache tags do not apply to ISR pages, Runtime Cache
 TTLs do not affect ISR revalidation, and `expireTag` does not touch the CDN cache.
-If a future deployment caches at *both* layers, an invalidation has to fan out to
+If a future deployment caches at _both_ layers, an invalidation has to fan out to
 both APIs — using the same tag string for both does not unify them. For the store
 as designed, this is not a concern: it lives entirely in the Runtime Cache layer.
 
@@ -420,7 +425,7 @@ Deferred (the follow-up):
   white-box suite above.
 - **Docs-surface registration**: add the store to
   `packages/rangojs-router/docs/internal/feature-map.md` and
-  `feature-file-map.md`, and move "Vercel / other adapters" out of the *Planned*
+  `feature-file-map.md`, and move "Vercel / other adapters" out of the _Planned_
   section of [`caching.md`](./caching.md).
 - **Real-Vercel e2e**: a `tests/vercel-basic` dev+prod suite, plus confirming
   `getCache`/`expireTag`/`waitUntil` runtime behavior and streaming under the
@@ -433,8 +438,7 @@ installed package at implementation time, as they affect edge-case behavior:
 
 1. **`get` miss return type** — docs guard with `if (value)`; confirm a miss
    resolves to `undefined` (the store treats any nullish value as a miss).
-2. **Exact tag-per-item limit** — 64 vs 128 across two doc pages; the store uses
-   64. Raise `VERCEL_MAX_TAGS_PER_ITEM` if the installed package confirms 128.
+2. **Exact tag-per-item limit** — 64 vs 128 across two doc pages; the store uses 64. Raise `VERCEL_MAX_TAGS_PER_ITEM` if the installed package confirms 128.
 3. **Value serialization** — `set` types `value: unknown`. The store's envelopes
    are JSON-safe (response bodies are base64), so this should be fine, but confirm
    the runtime does not require pre-stringified values.
