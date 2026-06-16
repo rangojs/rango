@@ -274,6 +274,37 @@ jobs:
           path: packages/rangojs-router/playwright-report/
           retention-days: 7
 
+  # Validates the Vercel preset's Build Output (.vercel/output) for a multi-app
+  # host router: builds the app, then drives the isolated function with Host
+  # headers, asserting each sub-app renders and an unmatched host returns 404
+  # through the generated host entry. Pure Node (no Playwright).
+  vercel-smoke:
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Smoke the Vercel host Build Output
+        run: pnpm --filter rangojs-vercel-multi-router smoke
+
   rangojs-router-e2e:
     needs: [install-playwright]
     if: |
