@@ -1,6 +1,8 @@
-# @rangojs/router
+# Rango
 
-Named-route RSC router with structural composability and type-safe partial rendering for Vite.
+React RSC Route Wrangler
+
+A code-first, type-safe React Server Components router
 
 > **Experimental:** This package is under active development. APIs may change between releases. Install with `@experimental` tag.
 
@@ -1042,9 +1044,9 @@ APIs, use their dedicated subpaths.
 
 ## Examples
 
-See the `examples/` directory for full working applications:
+See the example and demo apps for full working applications:
 
-- [`cloudflare-basic`](../../examples/cloudflare-basic) — Cloudflare Workers with caching, loaders, theme, and pre-rendering
+- [`cloudflare-basic`](../../tests/cloudflare-basic) — Cloudflare Workers with caching, loaders, theme, and pre-rendering
 - [`cloudflare-multi-router`](../../examples/cloudflare-multi-router) — Multi-app host routing
 
 ## License

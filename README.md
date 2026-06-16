@@ -1,6 +1,8 @@
-# RSC Router
+# Rango
 
-A code-first, type-safe React Server Components router for serverless deployments.
+React RSC Route Wrangler
+
+A code-first, type-safe React Server Components router
 
 ## Features
 
@@ -24,8 +26,11 @@ A code-first, type-safe React Server Components router for serverless deployment
 .
 ├── packages/
 │   └── rangojs-router/    # Main RSC router package
-├── examples/
-│   └── vite-rsc-demo/     # Demo app
+├── tests/                 # Demo + e2e apps (vite-rsc-demo, cloudflare-basic, ...)
+├── examples/              # Cloudflare example apps (cloudflare-basic-nonce, cloudflare-multi-router)
+├── apps/
+│   └── site/              # Documentation site
+├── tools/                 # Repo tooling and bundle scripts
 └── docs/                  # Design documents
 ```
 
@@ -120,12 +125,12 @@ This produces structured output for server-side and client-side router operation
 - `pnpm dev` - Start development mode
 - `pnpm build` - Build all packages
 - `pnpm preview` - Preview production builds
-- `pnpm type-check` - Run TypeScript type checking
+- `pnpm typecheck` - Run TypeScript type checking
 
 ## Built With
 
 - [React 19](https://react.dev/) - React Server Components
-- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-rsc)
+- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc)
 - [TypeScript](https://www.typescriptlang.org/)
 
 ## License
