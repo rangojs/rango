@@ -139,6 +139,31 @@ interface RangoBaseOptions {
     include?: string[];
     exclude?: string[];
   };
+
+  /**
+   * What to do when a `Prerender` route's or `Static` handler's render throws at
+   * build time. Otherwise the route error boundary catches it and the rendered
+   * error page is baked as the artifact, then served as an HTTP 200 — a silent,
+   * user-visible breakage (issue #587). Independent of this setting, a render may
+   * `throw new Skip()` (from `@rangojs/router`) to skip a single URL/handler.
+   *
+   * - `"fail"` (**default**): fail the build, naming the URL/handler and the
+   *   original render error.
+   * - `"warn"`: log a warning and skip baking the artifact — it is never served as a
+   *   baked 200 error page. `"warn"` is a build-unblock, NOT a runtime contract for
+   *   the skipped entry: the route falls through to normal resolution, which may
+   *   render live (its handler is still bundled — e.g. when nothing else baked) or
+   *   404 (once prerender handler eviction has run for other baked entries), so the
+   *   outcome depends on the rest of the build, and a skipped `Static()` handler's
+   *   evicted code can surface as an error. For DEFINED runtime behavior use
+   *   `Passthrough()` (a live fallback) or `throw new Skip()` (an intentional skip);
+   *   otherwise prefer the default `"fail"`.
+   *
+   * @default "fail"
+   */
+  prerender?: {
+    onError?: "fail" | "warn";
+  };
 }
 
 /**

@@ -137,6 +137,42 @@ export function notifyOnError(
   }
 }
 
+/**
+ * Resolve a thrown build-time render error into the prerender build's policy and
+ * log a per-entry line. A `Skip` (or any render error under `prerender.onError:
+ * "warn"`) logs and returns so the caller skips the entry; a render error under
+ * the default "fail" logs FAIL, notifies `onError`, and re-throws to fail the
+ * build. Shared by `expandPrerenderRoutes` (prerender) and `renderStaticHandlers`
+ * (static) so the Skip/warn/fail policy lives in one place. `label` is the padded
+ * URL / handler name for the log line; `elapsed` is the per-entry duration string.
+ */
+export function resolvePrerenderError(
+  registry: Map<string, any>,
+  error: any,
+  onError: "fail" | "warn",
+  label: string,
+  elapsed: string,
+  phase: "prerender" | "static",
+  routeKey?: string,
+  pathname?: string,
+): void {
+  const isSkip = error?.name === "Skip";
+  if (isSkip || onError === "warn") {
+    if (isSkip) {
+      console.log(`[rango]   SKIP ${label} (${elapsed}ms) - ${error.message}`);
+    } else {
+      console.warn(
+        `[rango]   WARN ${label} (${elapsed}ms) - render error, not pre-rendered (prerender.onError: "warn"): ${error.message}`,
+      );
+    }
+    notifyOnError(registry, error, phase, routeKey, pathname, true);
+    return;
+  }
+  console.error(`[rango]   FAIL ${label} (${elapsed}ms) - ${error.message}`);
+  notifyOnError(registry, error, phase, routeKey, pathname);
+  throw error;
+}
+
 function getStagedAssetDir(projectRoot: string): string {
   return resolve(projectRoot, "node_modules/.rangojs-router-build/rsc-assets");
 }

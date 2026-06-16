@@ -13,6 +13,7 @@ import {
   runWithConcurrency,
   groupByConcurrency,
   notifyOnError,
+  resolvePrerenderError,
   stageBuildAssetModule,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
@@ -231,6 +232,10 @@ export async function expandPrerenderRoutes(
   const manifestEntries: Record<string, string> = {};
   let doneCount = 0;
   let skipCount = 0;
+  // #587: a render error reaches here (matchForPrerender now re-throws it rather
+  // than baking the error boundary). Default "fail" fails the build; "warn" logs
+  // and skips baking the URL.
+  const prerenderOnError = state.opts?.prerenderOnError ?? "fail";
   const startTotal = performance.now();
 
   // Group entries by concurrency for batched rendering.
@@ -297,35 +302,22 @@ export async function expandPrerenderRoutes(
             doneCount++;
             break;
           } catch (err: any) {
-            if (err.name === "Skip") {
-              const elapsed = (performance.now() - startUrl).toFixed(0);
-              console.log(
-                `[rango]   SKIP ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
-              );
-              skipCount++;
-              notifyOnError(
-                registry,
-                err,
-                "prerender",
-                entry.routeName,
-                entry.urlPath,
-                true,
-              );
-              break;
-            }
-            // Regular error: log, notify, and fail the build
+            // Skip, or a render error under prerender.onError "warn": skip the
+            // URL (never bake the error page, #587). A render error under the
+            // default "fail" re-throws below to fail the build.
             const elapsed = (performance.now() - startUrl).toFixed(0);
-            console.error(
-              `[rango]   FAIL ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
-            );
-            notifyOnError(
+            resolvePrerenderError(
               registry,
               err,
+              prerenderOnError,
+              entry.urlPath.padEnd(40),
+              elapsed,
               "prerender",
               entry.routeName,
               entry.urlPath,
             );
-            throw err;
+            skipCount++;
+            break;
           }
         }
       },
@@ -378,6 +370,7 @@ export async function renderStaticHandlers(
   let staticDone = 0;
   let staticSkip = 0;
   let totalStaticCount = 0;
+  const prerenderOnError = state.opts?.prerenderOnError ?? "fail";
 
   // Count handlers for the log header
   for (const [, exportNames] of state.resolvedStaticModules) {
@@ -434,23 +427,19 @@ export async function renderStaticHandlers(
             break;
           }
         } catch (err: any) {
-          if (err.name === "Skip") {
-            const elapsed = (performance.now() - startHandler).toFixed(0);
-            console.log(
-              `[rango]   SKIP ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
-            );
-            staticSkip++;
-            notifyOnError(registry, err, "static", undefined, undefined, true);
-            handled = true;
-            break;
-          }
-          // Regular error: log, notify, and fail the build
+          // Same Skip/warn/fail policy as the prerender loop (shared helper).
           const elapsed = (performance.now() - startHandler).toFixed(0);
-          console.error(
-            `[rango]   FAIL ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
+          resolvePrerenderError(
+            registry,
+            err,
+            prerenderOnError,
+            name.padEnd(40),
+            elapsed,
+            "static",
           );
-          notifyOnError(registry, err, "static");
-          throw err;
+          staticSkip++;
+          handled = true;
+          break;
         }
       }
       if (!handled) {

@@ -151,6 +151,15 @@ export async function resolveLoaders<TEnv>(
 export interface ResolveSegmentOptions {
   /** When true, skip resolveLoaders() calls (used for pre-rendering) */
   skipLoaders?: boolean;
+  /**
+   * When true, a thrown render error is re-thrown instead of being converted
+   * into an error-boundary segment. Set only by the pre-render path so a
+   * build-time render failure (and a `throw new Skip()` inside a render fn)
+   * surfaces to the build instead of being silently baked into a frozen error
+   * page served as a 200 (issue #587). The live request path leaves this unset,
+   * so error boundaries keep catching at request time.
+   */
+  throwOnError?: boolean;
 }
 
 /**
@@ -635,6 +644,7 @@ export async function resolveAllSegments<TEnv>(
       deps,
       { request: safeRequest, url: context.url, routeKey, telemetry },
       context.pathname,
+      options?.throwOnError,
     );
     doneEntry();
     // Deduplicate by segment ID. include() scopes can produce entries that

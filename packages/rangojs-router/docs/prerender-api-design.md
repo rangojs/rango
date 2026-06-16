@@ -29,6 +29,9 @@ route was pre-rendered.
 - **Loader freshness** - Loaders always run at request time (never pre-rendered)
 - **Dev mode** - On-demand rendering via `/__rsc_prerender` endpoint
 - **Intercept pre-rendering** - Intercept variants stored under `/i` key
+- **Render-error handling** - a build-time render throw surfaces to the build (fail
+  by default, or `prerender.onError: "warn"` to skip the URL); `throw new Skip()`
+  in a render fn skips one URL. See [Render Errors](#render-errors).
 
 ### Remaining
 
@@ -232,6 +235,54 @@ When `buildEnv` is configured in the rango() Vite plugin options, `ctx.env`
 provides the build-time bindings (e.g., KV, D1). This is NOT the live request
 env — it is shared across all prerender invocations for the build. Without
 `buildEnv`, accessing `ctx.env` throws with a clear error message.
+
+---
+
+## Render Errors
+
+If a `Prerender` route's render throws at build time, you want to hear about it —
+not ship a frozen error page. This started as a bug (#587): the throw was caught by
+the route's error boundary _inside_ segment resolution, turned into a normal
+`type: "error"` segment, serialized, and baked as the artifact. The build logged
+`OK`, exited 0, and at runtime the baked error page was served as a healthy 200.
+Status/CI checks saw a valid 200, so a fully broken page looked fine.
+
+The fix: pre-rendering resolves segments with a build-only `throwOnError` flag
+(`matchForPrerender` → `resolveAllSegments` → `resolveWithErrorBoundary`, threaded
+through `ResolveSegmentOptions`). With it set, a thrown render error is re-thrown
+instead of converted into an error segment, so it reaches the build loop
+(`expandPrerenderRoutes`). The live request path leaves the flag unset, so runtime
+error boundaries are unchanged.
+
+What the build then does is `prerender.onError` (a rango() plugin option):
+
+| build handler outcome             | `"fail"` (default)                      | `"warn"`                  |
+| --------------------------------- | --------------------------------------- | ------------------------- |
+| render throws                     | build fails, names the URL + the error  | warn, skip baking the URL |
+| `throw new Skip()` in the render  | URL skipped (logged `SKIP`)             | URL skipped               |
+| `ctx.passthrough()` (Passthrough) | defer to the live handler (no artifact) | defer to the live handler |
+
+`throw new Skip()` is the per-URL escape hatch: a render that knows it can't run at
+build (needs request-time env, say) skips just that URL. This used to be broken too
+— a `Skip` thrown in a _render fn_ was swallowed by the same error boundary; it now
+propagates correctly (the `getParams()` Skip path always worked).
+
+`"warn"` is a build-unblock, NOT a runtime contract for the skipped entry. At runtime
+the route falls through to normal resolution, which may render live (its handler is
+still bundled — e.g. when nothing else baked, so handler eviction never ran) or 404
+(once eviction has run for other baked entries) — so the outcome depends on the rest
+of the build, and a skipped `Static()` segment's evicted code can surface as an error.
+For DEFINED runtime behavior use `Passthrough()` (a live fallback) or `throw new
+Skip()` (an intentional skip); otherwise prefer the default `"fail"`.
+
+Why no `"dynamic"` or `"bake"` option? `"bake"` is the bug. A clean `"dynamic"`
+(always serve live) can't be offered for a plain `Prerender()` route because handler
+eviction removes its code when other entries bake; `Passthrough()` is the explicit,
+defined way to keep a live fallback. So a render error is either "fail" or "warn".
+
+The same `matchForPrerender` powers the dev `/__rsc_prerender` endpoint, so a render
+error in dev surfaces there too: the endpoint logs it and falls through to a live
+render rather than serving a frozen error page.
 
 ---
 
