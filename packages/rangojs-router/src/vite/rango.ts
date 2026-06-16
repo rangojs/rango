@@ -274,6 +274,15 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           preset === "vercel" && configEnv.command === "build"
             ? { "process.env.NODE_ENV": JSON.stringify("production") }
             : undefined;
+        // The vercel preset's deployed function has no node_modules, so the
+        // server bundles must be fully self-contained. Bundle every dependency
+        // into the rsc + ssr builds instead of externalizing them (the node
+        // default, which only works because `vite preview` runs where
+        // node_modules exists). node: builtins stay external automatically.
+        const vercelServerEnv =
+          preset === "vercel"
+            ? { resolve: { noExternal: true as const } }
+            : undefined;
         return {
           ...(vercelDefine ? { define: vercelDefine } : {}),
           optimizeDeps: {
@@ -318,6 +327,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               },
             },
             ssr: {
+              ...(vercelServerEnv ?? {}),
               optimizeDeps: {
                 entries: [VIRTUAL_IDS.ssr],
                 include: [
@@ -336,6 +346,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               },
             },
             rsc: {
+              ...(vercelServerEnv ?? {}),
               optimizeDeps: {
                 entries: [VIRTUAL_IDS.rsc],
                 include: [

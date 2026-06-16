@@ -13,11 +13,24 @@
  *       ssr/                            dist/ssr (rsc imports ../ssr/index.js)
  *
  * A prebuilt .vercel/output gets no `npm install`, so everything the function
- * imports must physically live inside the .func directory. dist/rsc/index.js is
- * already fully self-contained (every import relative); the launcher is bundled
- * with srvx (the Web->Node streaming bridge, a @rangojs/router dependency) and
- * @vercel/functions (resolved from the app) inlined, keeping the RSC bundle a
- * runtime-relative external.
+ * imports must physically live inside the .func directory. This relies on two
+ * things the vercel preset arranges (each is a failure only a real deploy — or
+ * the isolated smoke test — catches, since a local in-place run is masked by the
+ * app's own package.json + node_modules up the tree):
+ *
+ *   1. The rsc/ssr builds are fully bundled (`resolve.noExternal`, set in
+ *      rango.ts for this preset). The node default externalizes node_modules
+ *      deps, which works under `vite preview` but leaves bare imports
+ *      (@vercel/functions, react-dom/server.edge, ...) that have no node_modules
+ *      to resolve against on Vercel.
+ *   2. A `package.json` with `"type": "module"` is written into the .func dir.
+ *      The rsc/ssr bundles are ESM but use a `.js` extension; without a
+ *      type:module in scope the deployed (isolated) function loads them as
+ *      CommonJS and fails on the first `import`.
+ *
+ * The launcher is bundled with srvx (the Web->Node streaming bridge, a
+ * @rangojs/router dependency) and @vercel/functions (resolved from the app)
+ * inlined, keeping the RSC bundle a runtime-relative external.
  *
  * Timing: this runs in the `buildApp` hook (order "post"), which fires once
  * after every environment has built, so dist/{client,rsc,ssr} all exist.
@@ -173,6 +186,16 @@ async function assemble(
     }
     throw error;
   }
+
+  // 3b. Mark the function as ESM. The rsc/ssr bundles are .js ESM files with no
+  //     package.json in scope on the deployed function (it is isolated at
+  //     /var/task), so Node would load them as CommonJS and fail on `import`.
+  //     Locally this is masked because the func inherits the app's
+  //     "type": "module" up the tree; the deployed func has nothing above it.
+  await writeFile(
+    join(funcDir, "package.json"),
+    JSON.stringify({ type: "module" }, null, 2) + "\n",
+  );
 
   // 4. Function config: Node serverless with response streaming.
   const vcConfig: Record<string, unknown> = {

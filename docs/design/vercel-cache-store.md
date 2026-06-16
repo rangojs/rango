@@ -335,6 +335,37 @@ worker specifics:
    `e2e/build-test-app.setup.ts` catches a `react*.development*.js` chunk — wire
    the equivalent check for the Vercel output.
 
+### Two things that make the function actually run on Vercel (scar tissue)
+
+Both of these were caught only by deploying (and then by the isolated smoke
+test) — a local in-place run is masked by the app's own `package.json` and
+`node_modules` up the directory tree, so it passes while the deployed,
+filesystem-isolated function fails.
+
+1. **The rsc/ssr builds must be fully bundled.** The node preset *externalizes*
+   `node_modules` deps (the Vite SSR default), which is fine under `vite preview`
+   where `node_modules` exists, but leaves bare imports (`@vercel/functions`,
+   `react-dom/server.edge`, `@rangojs/router`, …) that a prebuilt function — which
+   gets no `npm install` — cannot resolve. The vercel preset sets
+   `resolve.noExternal: true` on the rsc and ssr environments so every dependency
+   is inlined (the same self-containment the Cloudflare worker has). `node:`
+   builtins stay external (available on Vercel); `ws`'s optional native deps
+   (`bufferutil`/`utf-8-validate`) are guarded `require`s that fall back to pure
+   JS and are never hit on the HTTP path.
+2. **The function needs `package.json` `{ "type": "module" }`.** The rsc/ssr
+   bundles are ESM but use a `.js` extension. The handler is `.mjs` (always ESM),
+   but when it imports `./rsc/index.js`, Node decides that file's module type from
+   the nearest `package.json` — and the deployed function has none in scope, so
+   `.js` defaults to CommonJS and the first `import` throws
+   `SyntaxError: Cannot use import statement outside a module`. The emitter writes
+   a `package.json` `{ "type": "module" }` into the `.func` dir to mark the whole
+   function ESM. (Nitro sidesteps this by bundling everything into one `index.mjs`;
+   we keep the multi-file rsc/ssr layout, so the marker is required.)
+
+The `examples/vercel-basic` smoke test (`scripts/smoke.mjs`) copies
+`.vercel/output` to an OS temp dir **outside** the monorepo before serving it, so
+it reproduces the isolated function filesystem and catches both regressions.
+
 ### What is *not* a static file
 
 Carry over the prerender principle from [`prerender-api-design.md`](../../packages/rangojs-router/docs/prerender-api-design.md):
