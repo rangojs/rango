@@ -14,12 +14,22 @@
  * actual work — not a post-hoc event — so spans nest by async context and the
  * platform's automatic spans (KV/D1/fetch) nest under the right phase.
  *
- * Wrapped phases and their span boundaries:
- *   - rango.request    rsc/handler.ts        whole pipeline (inside the request context)
- *   - rango.middleware router/middleware.ts  per global/route/loader middleware (onion)
- *   - rango.loader     segment-resolution/loader-cache.ts  per loader execution
- *   - rango.render     rsc/rsc-rendering.ts  the match + serialize pass
- *   - rango.ssr        rsc/rsc-rendering.ts  the SSR HTML render
+ * Most phases are instrumented through the unified measurePhase() primitive
+ * (instrument.ts), which co-emits the span AND the debugPerformance perf metric
+ * from one wrap site so the two surfaces can't drift:
+ *   - rango.loader  (loader:<id>)    loader-cache.ts resolveLoaderData + loader-fetch.ts
+ *   - rango.render  (render:total)   rsc/rsc-rendering.ts (match + serialize + SSR)
+ *   - rango.ssr     (ssr-render-html) rsc/rsc-rendering.ts (the SSR HTML render)
+ *
+ * Two phases still open their span directly via traceSpan(), because their perf
+ * metric uses a finer decomposition than a single wrap (both surfaces still
+ * cover them — this is granularity, not divergence):
+ *   - rango.request   (handler:total)   rsc/handler.ts — span wraps the pipeline
+ *     inside the request context; handler:total is the grand total incl. the
+ *     pre-context bootstrap timings.
+ *   - rango.middleware (middleware:<name>:pre/:post) router/middleware.ts — the
+ *     span is the inclusive onion; the metric is the middleware's exclusive
+ *     own-time (before/after next()).
  *
  * Not yet wrapped (first cut, deliberate): intercept-route middleware
  * (executeInterceptMiddleware) and action-revalidation renders

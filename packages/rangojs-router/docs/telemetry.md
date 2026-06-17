@@ -156,18 +156,19 @@ repeated imports resolve instantly.
 
 ### Metric reference
 
-| Metric                        | Phase      | Description                                                                 |
-| ----------------------------- | ---------- | --------------------------------------------------------------------------- |
-| `handler:total`               | Handler    | Full request duration from handler entry to response                        |
-| `route-matching`              | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined) |
-| `route-matching:nav`          | Matching   | Prev + intercept-source lookups (partial reuse path)                        |
-| `manifest-loading`            | Matching   | Async manifest load (when not cached)                                       |
-| `ssr:module-load`             | SSR setup  | Dynamic import of the SSR module                                            |
-| `ssr:stream-mode`             | SSR setup  | Stream mode resolution (sync or async)                                      |
-| `rsc-serialize`               | Rendering  | Synchronous RSC stream creation                                             |
-| `ssr-render-html`             | Rendering  | SSR HTML rendering from RSC stream                                          |
-| `render:total`                | Rendering  | End-to-end render (serialize + SSR)                                         |
-| `middleware:{name}@{pattern}` | Middleware | Combined pre + post duration                                                |
+| Metric                        | Phase      | Description                                                                              |
+| ----------------------------- | ---------- | ---------------------------------------------------------------------------------------- |
+| `handler:total`               | Handler    | Full request duration from handler entry to response                                     |
+| `route-matching`              | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined)              |
+| `route-matching:nav`          | Matching   | Prev + intercept-source lookups (partial reuse path)                                     |
+| `manifest-loading`            | Matching   | Async manifest load (when not cached)                                                    |
+| `ssr:module-load`             | SSR setup  | Dynamic import of the SSR module                                                         |
+| `ssr:stream-mode`             | SSR setup  | Stream mode resolution (sync or async)                                                   |
+| `rsc-serialize`               | Rendering  | Synchronous RSC stream creation                                                          |
+| `ssr-render-html`             | Rendering  | SSR HTML rendering from RSC stream (co-emitted with the `rango.ssr` span)                |
+| `render:total`                | Rendering  | Whole render phase: match + serialize + SSR (co-emitted with `rango.render`)             |
+| `loader:{id}`                 | Loader     | Per-loader execution, every loader path incl. fetchable (co-emitted with `rango.loader`) |
+| `middleware:{name}@{pattern}` | Middleware | Combined pre + post duration                                                             |
 
 ### Zero overhead when disabled
 
@@ -467,6 +468,14 @@ Emitted spans: `rango.request`, `rango.middleware`, `rango.loader`,
 lifecycle _events_ after the fact), `createCloudflareTracing` **wraps the actual
 work** with `executionContext.tracing.enterSpan`, so spans nest by async context
 and the platform's automatic KV/D1/fetch spans land under the right phase.
+
+These spans and the `debugPerformance` perf timeline above are **one
+instrumentation model, not two**: the loader, render, and ssr phases are emitted
+through a single internal `measurePhase()` wrap site that records the perf
+metric (`loader:<id>` / `render:total` / `ssr-render-html`) AND opens the span
+together. The span set is therefore a subset of the perf phases — they cannot
+drift (e.g. a fetchable `_rsc_loader` request appears in both surfaces, not just
+one).
 
 Key properties:
 

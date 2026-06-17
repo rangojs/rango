@@ -11,7 +11,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
-import { traceSpan } from "../router/tracing.js";
+import { measurePhase } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { MatchResult } from "../types.js";
@@ -31,19 +31,27 @@ export function handleRscRendering<TEnv>(
   handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
   nonce: string | undefined,
 ): Promise<Response> {
-  // Wrap the whole render phase in a "rango.render" span. Loaders kicked off
-  // during matching nest under it; the SSR HTML pass below opens "rango.ssr".
-  const reqCtx = requireRequestContext();
-  return traceSpan(reqCtx._tracing, "render", "rango.render", () =>
-    handleRscRenderingInner(
-      ctx,
-      request,
-      env,
-      url,
-      isPartial,
-      handleStore,
-      nonce,
-    ),
+  // Instrument the whole render phase once through the unified API: it records
+  // the "render:total" perf metric AND opens the "rango.render" span from the
+  // same boundary (match -> serialize -> SSR), so the two surfaces agree.
+  // Loaders kicked off during matching nest under the span; the SSR HTML pass
+  // below opens "rango.ssr" the same way.
+  return measurePhase(
+    {
+      metricLabel: "render:total",
+      tracePhase: "render",
+      spanName: "rango.render",
+    },
+    () =>
+      handleRscRenderingInner(
+        ctx,
+        request,
+        env,
+        url,
+        isPartial,
+        handleStore,
+        nonce,
+      ),
   );
 }
 
@@ -184,7 +192,6 @@ async function handleRscRenderingInner<TEnv>(
   }
 
   const metricsStore = reqCtx._metricsStore;
-  const renderStart = performance.now();
 
   // Serialize to RSC stream
   const rscSerializeStart = performance.now();
@@ -203,8 +210,7 @@ async function handleRscRenderingInner<TEnv>(
   );
 
   if (isRscRequest(request, url, isPartial)) {
-    const renderDur = performance.now() - renderStart;
-    appendMetric(metricsStore, "render:total", renderStart, renderDur);
+    // render:total is recorded by the measurePhase wrapper around this function.
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
@@ -246,18 +252,20 @@ async function handleRscRenderingInner<TEnv>(
     metricsStore,
   );
 
-  const ssrRenderStart = performance.now();
-  const htmlStream = await traceSpan(reqCtx._tracing, "ssr", "rango.ssr", () =>
-    ssrModule.renderHTML(rscStream, {
-      nonce,
-      streamMode,
-    }),
+  // ssr-render-html metric + rango.ssr span from one boundary. render:total is
+  // recorded by the measurePhase wrapper around this function.
+  const htmlStream = await measurePhase(
+    {
+      metricLabel: "ssr-render-html",
+      tracePhase: "ssr",
+      spanName: "rango.ssr",
+    },
+    () =>
+      ssrModule.renderHTML(rscStream, {
+        nonce,
+        streamMode,
+      }),
   );
-  const ssrRenderDur = performance.now() - ssrRenderStart;
-  appendMetric(metricsStore, "ssr-render-html", ssrRenderStart, ssrRenderDur);
-
-  const renderDur = performance.now() - renderStart;
-  appendMetric(metricsStore, "render:total", renderStart, renderDur);
 
   return createResponseWithMergedHeaders(htmlStream, {
     headers: { "content-type": "text/html;charset=utf-8" },

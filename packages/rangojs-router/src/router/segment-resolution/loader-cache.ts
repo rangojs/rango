@@ -21,11 +21,11 @@
 import type { LoaderEntry } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
-import {
-  getRequestContext,
-  _getRequestContext,
-} from "../../server/request-context.js";
-import { traceSpan } from "../tracing.js";
+import { getRequestContext } from "../../server/request-context.js";
+import { measurePhase } from "../instrument.js";
+
+// Loader perf-timeline indentation depth (loaders nest under the render phase).
+const LOADER_METRIC_DEPTH = 2;
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
@@ -123,14 +123,25 @@ export function resolveLoaderData<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   pathname: string,
 ): Promise<any> {
-  // Wrap the loader in a "rango.loader" span. The work (ctx.use / cache lookup)
-  // runs inside the span callback, so the platform's automatic KV/D1/fetch
-  // spans nest under it. Pass-through when tracing is off.
-  const tracing = _getRequestContext()?._tracing;
-  return traceSpan(tracing, "loader", "rango.loader", (span) => {
-    span.setAttribute("rango.loader_id", loaderEntry.loader.$$id);
-    return resolveLoaderDataInner(loaderEntry, ctx, pathname);
-  });
+  // Instrument the loader once through the unified phase API: it records the
+  // "loader:<id>" perf metric AND opens the "rango.loader" span from the same
+  // boundary, so the two surfaces always agree. The work (ctx.use / cache
+  // lookup) runs inside the callback, so the platform's automatic KV/D1/fetch
+  // spans nest under the span. This is the single loader-metering site for every
+  // loader path (streaming, non-streaming, and the fetchable _rsc_loader path),
+  // replacing the old per-path appendMetric in fresh.ts.
+  return measurePhase(
+    {
+      metricLabel: `loader:${loaderEntry.loader.$$id}`,
+      depth: LOADER_METRIC_DEPTH,
+      tracePhase: "loader",
+      spanName: "rango.loader",
+    },
+    (span) => {
+      span.setAttribute("rango.loader_id", loaderEntry.loader.$$id);
+      return resolveLoaderDataInner(loaderEntry, ctx, pathname);
+    },
+  );
 }
 
 function resolveLoaderDataInner<TEnv>(

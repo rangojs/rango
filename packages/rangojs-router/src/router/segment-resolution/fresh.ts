@@ -19,8 +19,6 @@ import type {
 } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { resolveLoaderData } from "./loader-cache.js";
-import { _getRequestContext } from "../../server/request-context.js";
-import { appendMetric } from "../metrics.js";
 import {
   handleHandlerResult,
   tryStaticHandler,
@@ -59,7 +57,6 @@ export async function resolveLoaders<TEnv>(
   const shortCode = shortCodeOverride ?? entry.shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
-  const ms = _getRequestContext()?._metricsStore;
 
   if (!loadingDisabled) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
@@ -102,7 +99,6 @@ export async function resolveLoaders<TEnv>(
   const pendingLoaderData = loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
-    const start = performance.now();
     const wrapped = deps.wrapLoaderPromise(
       runInsideLoaderScope(() =>
         resolveLoaderData(loaderEntry, ctx, ctx.pathname),
@@ -111,26 +107,16 @@ export async function resolveLoaders<TEnv>(
       segmentId,
       ctx.pathname,
     );
-    return { wrapped, start, segmentId, loaderId: loader.$$id };
+    return { wrapped, segmentId };
   });
   await Promise.all(pendingLoaderData.map((p) => p.wrapped));
 
   return loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const pending = pendingLoaderData[i]!;
-    if (ms && !ms.metrics.some((m) => m.label === `loader:${loader.$$id}`)) {
-      // All loaders ran in parallel via Promise.all — each span covers
-      // from its own kickoff to the batch settlement, giving a ceiling
-      // on that loader's contribution to the overall wait.
-      const batchEnd = performance.now();
-      appendMetric(
-        ms,
-        `loader:${loader.$$id}`,
-        pending.start,
-        batchEnd - pending.start,
-        2,
-      );
-    }
+    // The "loader:<id>" perf metric is recorded by measurePhase inside
+    // resolveLoaderData (the single loader-metering site), with the real
+    // per-loader duration rather than a Promise.all batch ceiling.
     return {
       id: pending.segmentId,
       namespace: entry.id,

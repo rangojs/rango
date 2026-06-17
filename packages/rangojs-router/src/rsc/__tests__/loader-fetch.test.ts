@@ -14,8 +14,8 @@ vi.mock("../../server/loader-registry.js", () => ({
   })),
 }));
 
-vi.mock("../../server/request-context.js", () => ({
-  requireRequestContext: () => ({
+vi.mock("../../server/request-context.js", () => {
+  const make = () => ({
     env: {},
     request: new Request("http://localhost/"),
     url: new URL("http://localhost/"),
@@ -28,8 +28,14 @@ vi.mock("../../server/request-context.js", () => ({
     _routeName: "products",
     _onResponseCallbacks: [],
     res: { headers: new Headers(), status: 200 },
-  }),
-}));
+  });
+  return {
+    requireRequestContext: make,
+    // measurePhase (loader instrumentation) reads store + tracing from here;
+    // the mock context has neither, so it is a pass-through and the loader runs.
+    _getRequestContext: make,
+  };
+});
 
 vi.mock("../../router/middleware.js", () => ({
   executeLoaderMiddleware: vi.fn(
