@@ -231,29 +231,50 @@ export async function evaluateRevalidation<TEnv>(
       : undefined;
 
   for (const { name, fn } of revalidations) {
-    const result = fn({
-      currentParams: prevSegment?.params || prevParams, // Use segment params if available, else route params
-      currentUrl: prevUrl,
-      nextParams,
-      nextUrl,
-      defaultShouldRevalidate: currentSuggestion,
-      context,
-      // Segment metadata (which segment is being evaluated)
-      segmentType: segment.type,
-      layoutName: segment.layoutName,
-      slotName: segment.slot,
-      // Action context (only populated when triggered by server action)
-      actionId: actionContext?.actionId,
-      isAction: makeIsAction(actionContext?.actionId),
-      actionUrl: actionContext?.actionUrl,
-      actionResult: actionContext?.actionResult,
-      formData: actionContext?.formData,
-      method: request.method,
-      routeName: toRouteName,
-      fromRouteName,
-      toRouteName,
-      stale,
-    });
+    let result: any;
+    try {
+      result = fn({
+        currentParams: prevSegment?.params || prevParams, // Use segment params if available, else route params
+        currentUrl: prevUrl,
+        nextParams,
+        nextUrl,
+        defaultShouldRevalidate: currentSuggestion,
+        context,
+        // Segment metadata (which segment is being evaluated)
+        segmentType: segment.type,
+        layoutName: segment.layoutName,
+        slotName: segment.slot,
+        // Action context (only populated when triggered by server action)
+        actionId: actionContext?.actionId,
+        isAction: makeIsAction(actionContext?.actionId),
+        actionUrl: actionContext?.actionUrl,
+        actionResult: actionContext?.actionResult,
+        formData: actionContext?.formData,
+        method: request.method,
+        routeName: toRouteName,
+        fromRouteName,
+        toRouteName,
+        stale,
+      });
+    } catch (error) {
+      // A thrown Response is control flow (e.g. `throw redirect(...)`), not a
+      // failure: re-throw it so the handler chokepoint (match-handlers.ts)
+      // turns it into the intended redirect/response. This mirrors how that
+      // catch special-cases `error instanceof Response`.
+      if (error instanceof Response) throw error;
+      // Fail open for genuine errors: a buggy user revalidate fn must not
+      // collapse the whole entry's loader batch into a failed partial render.
+      // Mirror the dynamic-tags fail-open in cache/cache-policy.ts: log and
+      // defer to the current default decision, leaving currentSuggestion
+      // unchanged. TODO: route through callOnError(phase "revalidation") once
+      // evaluateRevalidation is given the onError seam (today the error only
+      // reaches onError via the entry-collapse path in match-handlers.ts).
+      console.error(
+        `[revalidate] "${name}" threw for segment "${segment.id}"; using default decision:`,
+        error,
+      );
+      continue;
+    }
 
     if (typeof result === "boolean") {
       debugLog("revalidation", "hard decision", {
