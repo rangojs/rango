@@ -163,7 +163,7 @@
     "tag": "experimental"
   },
   "scripts": {
-    "build": "pnpm dlx esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm dlx esbuild src/testing/vitest.ts --bundle --format=esm --outfile=dist/testing/vitest.js --platform=node --packages=external && pnpm dlx esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js",
+    "build": "pnpm exec esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm exec esbuild src/testing/vitest.ts --bundle --format=esm --outfile=dist/testing/vitest.js --platform=node --packages=external && pnpm exec esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.strict-check.json --noEmit && tsc -p tsconfig.augment-check.json --noEmit",
     "test": "playwright test",
