@@ -43,7 +43,7 @@ import {
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
-import { resolveSink, safeEmit } from "../telemetry.js";
+import { observeEvent } from "../instrument.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
@@ -87,23 +87,14 @@ function emitRevalidationDecision(
   routeKey: string,
   shouldRevalidate: boolean,
 ): void {
-  let routerCtx;
-  try {
-    routerCtx = getRouterContext();
-  } catch {
-    return;
-  }
-  if (routerCtx?.telemetry) {
-    safeEmit(resolveSink(routerCtx.telemetry), {
-      type: "revalidation.decision",
-      timestamp: performance.now(),
-      requestId: routerCtx.requestId,
-      segmentId,
-      pathname,
-      routeKey,
-      shouldRevalidate,
-    });
-  }
+  observeEvent({
+    type: "revalidation.decision",
+    timestamp: performance.now(),
+    segmentId,
+    pathname,
+    routeKey,
+    shouldRevalidate,
+  });
 }
 
 // ---------------------------------------------------------------------------

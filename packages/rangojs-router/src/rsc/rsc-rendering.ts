@@ -11,6 +11,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { MatchResult } from "../types.js";
@@ -21,7 +22,34 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
-export async function handleRscRendering<TEnv>(
+export function handleRscRendering<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  isPartial: boolean,
+  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  nonce: string | undefined,
+): Promise<Response> {
+  // Instrument the whole render phase once through the unified API: it records
+  // the "render:total" perf metric AND opens the "rango.render" span from the
+  // same boundary (match -> serialize -> SSR), so the two surfaces agree.
+  // Loaders kicked off during matching nest under the span; the SSR HTML pass
+  // below opens "rango.ssr" the same way.
+  return observePhase(PHASES.render, () =>
+    handleRscRenderingInner(
+      ctx,
+      request,
+      env,
+      url,
+      isPartial,
+      handleStore,
+      nonce,
+    ),
+  );
+}
+
+async function handleRscRenderingInner<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
   env: TEnv,
@@ -158,7 +186,6 @@ export async function handleRscRendering<TEnv>(
   }
 
   const metricsStore = reqCtx._metricsStore;
-  const renderStart = performance.now();
 
   // Serialize to RSC stream
   const rscSerializeStart = performance.now();
@@ -177,8 +204,7 @@ export async function handleRscRendering<TEnv>(
   );
 
   if (isRscRequest(request, url, isPartial)) {
-    const renderDur = performance.now() - renderStart;
-    appendMetric(metricsStore, "render:total", renderStart, renderDur);
+    // render:total is recorded by the observePhase wrapper around this function.
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
@@ -220,16 +246,14 @@ export async function handleRscRendering<TEnv>(
     metricsStore,
   );
 
-  const ssrRenderStart = performance.now();
-  const htmlStream = await ssrModule.renderHTML(rscStream, {
-    nonce,
-    streamMode,
-  });
-  const ssrRenderDur = performance.now() - ssrRenderStart;
-  appendMetric(metricsStore, "ssr-render-html", ssrRenderStart, ssrRenderDur);
-
-  const renderDur = performance.now() - renderStart;
-  appendMetric(metricsStore, "render:total", renderStart, renderDur);
+  // ssr-render-html metric + rango.ssr span from one boundary. render:total is
+  // recorded by the observePhase wrapper around this function.
+  const htmlStream = await observePhase(PHASES.ssr, () =>
+    ssrModule.renderHTML(rscStream, {
+      nonce,
+      streamMode,
+    }),
+  );
 
   return createResponseWithMergedHeaders(htmlStream, {
     headers: { "content-type": "text/html;charset=utf-8" },

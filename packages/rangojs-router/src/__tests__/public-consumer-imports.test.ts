@@ -46,6 +46,7 @@ function runConsumerTypecheck(files: Record<string, string>) {
             "@rangojs/router": [publicTypeEntry(".")],
             "@rangojs/router/client": [publicTypeEntry("./client")],
             "@rangojs/router/cache": [publicTypeEntry("./cache")],
+            "@rangojs/router/cloudflare": [publicTypeEntry("./cloudflare")],
             "@rangojs/router/host": [publicTypeEntry("./host")],
             "@rangojs/router/host/testing": [publicTypeEntry("./host/testing")],
             "@rangojs/router/theme": [publicTypeEntry("./theme")],
@@ -98,13 +99,34 @@ describe("public consumer imports", () => {
     const result = runConsumerTypecheck({
       "root-consumer.ts": `
 import { createLoader, createRouter, redirect, urls } from "@rangojs/router";
-import type { ActionRef } from "@rangojs/router";
+import {
+  createConsoleSink,
+  createOTelSink,
+  createOTelTracing,
+} from "@rangojs/router";
+import type {
+  ActionRef,
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelTracingOptions,
+} from "@rangojs/router";
 
 void createLoader;
 void createRouter;
 void redirect;
 void urls;
+void createConsoleSink;
 type _ActionRef = ActionRef;
+
+// Pin the server-only observability export surface the docs/JSDoc promise:
+// the tracing slot (createOTelTracing) and the event sink (createOTelSink)
+// imported from the bare root entry, with their public types.
+type _OTelOpts = OTelTracingOptions;
+declare const tracer: OTelTracer & OTelActiveSpanTracer;
+const tracing = createOTelTracing(tracer);
+const sink = createOTelSink(tracer);
+void tracing;
+void sink;
 `,
       "client-consumer.tsx": `
 import { Link, Outlet, href, useLoader, useRouter } from "@rangojs/router/client";
@@ -130,6 +152,22 @@ import {
 void CFCacheStore;
 void MemorySegmentCacheStore;
 void createCacheScope;
+`,
+      "cloudflare-consumer.ts": `
+import {
+  createCloudflareTracing,
+  type CloudflareTracingOptions,
+} from "@rangojs/router/cloudflare";
+import type {
+  RouterTracingConfig,
+  TracePhaseToggles,
+} from "@rangojs/router";
+
+const opts: CloudflareTracingOptions = { spans: { ssr: false } };
+const config: RouterTracingConfig = createCloudflareTracing(opts);
+const phases: TracePhaseToggles = { loader: true };
+void config;
+void phases;
 `,
       "host-consumer.ts": `
 import { NoRouteMatchError, createHostRouter } from "@rangojs/router/host";

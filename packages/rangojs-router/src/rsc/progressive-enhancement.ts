@@ -13,6 +13,7 @@ import {
 import { getSSRSetup } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -124,7 +125,11 @@ export async function handleProgressiveEnhancement<TEnv>(
       const boundAction = await ctx.decodeAction(formData);
       // React's custom .bind() preserves $$id on server references.
       useActionStateId = (boundAction as { $$id?: string }).$$id ?? undefined;
-      actionResult = await boundAction();
+      // Meter the no-JS form action as the action phase, same as the JS path.
+      actionResult = await observePhase(
+        PHASES.action(useActionStateId ?? "useActionState"),
+        () => boundAction(),
+      );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);
@@ -172,7 +177,9 @@ export async function handleProgressiveEnhancement<TEnv>(
 
     try {
       const loadedAction = await ctx.loadServerAction(directActionId);
-      actionResult = await loadedAction.apply(null, args);
+      actionResult = await observePhase(PHASES.action(directActionId), () =>
+        loadedAction.apply(null, args),
+      );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);

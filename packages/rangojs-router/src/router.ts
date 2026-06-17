@@ -73,6 +73,7 @@ import {
   traverseBack,
 } from "./router/pattern-matching.js";
 import { resolveSink, safeEmit, getRequestId } from "./router/telemetry.js";
+import { resolveTracing } from "./router/tracing.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
   type RouterContext,
@@ -152,6 +153,7 @@ export function createRouter<TEnv = any>(
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
+    tracing: tracingOption,
     ssr: ssrOption,
     timeout: timeoutShorthand,
     timeouts: timeoutsOption,
@@ -177,6 +179,10 @@ export function createRouter<TEnv = any>(
 
   // Resolve telemetry sink (no-op when not configured)
   const telemetry = resolveSink(telemetrySink);
+
+  // Resolve span tracing (undefined when not configured; every traceSpan() call
+  // is then a direct pass-through with zero behavior change).
+  const resolvedTracing = resolveTracing(tracingOption);
 
   // Resolve cache profiles: merge user config with the guaranteed default
   // profile. This resolved map is threaded onto each request context; the
@@ -967,6 +973,9 @@ export function createRouter<TEnv = any>(
 
     // Expose router-wide performance debugging for request-level metrics setup
     debugPerformance,
+
+    // Expose resolved span tracing for the handler (Cloudflare custom spans)
+    tracing: resolvedTracing,
 
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,

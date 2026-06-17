@@ -43,7 +43,7 @@ start      dur  span                    timeline
  0.02ms  0.04ms    ssr:stream-mode     |#.......................................|
  0.08ms  3.20ms    route-matching      |#####...................................|
  3.28ms  0.12ms    rsc-serialize       |.....#..................................|
- 3.40ms  8.70ms    ssr-render-html     |.....##############.....................|
+ 3.40ms  8.70ms    ssr:render-html     |.....##############.....................|
  0.00ms 12.22ms    render:total        |##################......................|
  0.00ms 24.53ms    handler:total       |########################################|
 ```
@@ -156,18 +156,20 @@ repeated imports resolve instantly.
 
 ### Metric reference
 
-| Metric                        | Phase      | Description                                                                 |
-| ----------------------------- | ---------- | --------------------------------------------------------------------------- |
-| `handler:total`               | Handler    | Full request duration from handler entry to response                        |
-| `route-matching`              | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined) |
-| `route-matching:nav`          | Matching   | Prev + intercept-source lookups (partial reuse path)                        |
-| `manifest-loading`            | Matching   | Async manifest load (when not cached)                                       |
-| `ssr:module-load`             | SSR setup  | Dynamic import of the SSR module                                            |
-| `ssr:stream-mode`             | SSR setup  | Stream mode resolution (sync or async)                                      |
-| `rsc-serialize`               | Rendering  | Synchronous RSC stream creation                                             |
-| `ssr-render-html`             | Rendering  | SSR HTML rendering from RSC stream                                          |
-| `render:total`                | Rendering  | End-to-end render (serialize + SSR)                                         |
-| `middleware:{name}@{pattern}` | Middleware | Combined pre + post duration                                                |
+| Metric                                                 | Phase      | Description                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handler:total`                                        | Handler    | Full request duration from handler entry to response                                                                                                                                                                                                               |
+| `route-matching`                                       | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined)                                                                                                                                                                                        |
+| `route-matching:nav`                                   | Matching   | Prev + intercept-source lookups (partial reuse path)                                                                                                                                                                                                               |
+| `manifest-loading`                                     | Matching   | Async manifest load (when not cached)                                                                                                                                                                                                                              |
+| `ssr:module-load`                                      | SSR setup  | Dynamic import of the SSR module                                                                                                                                                                                                                                   |
+| `ssr:stream-mode`                                      | SSR setup  | Stream mode resolution (sync or async)                                                                                                                                                                                                                             |
+| `rsc-serialize`                                        | Rendering  | Synchronous RSC stream creation                                                                                                                                                                                                                                    |
+| `ssr:render-html`                                      | Rendering  | SSR HTML rendering from RSC stream (co-emitted with the `rango.ssr` span). Server-Timing folds the colon to a hyphen (`ssr-render-html`)                                                                                                                           |
+| `action:{id}`                                          | Action     | Server-action execution (decode args + run the action body), before the revalidation render (co-emitted with `rango.action`); `{id}` is the action $$id, so the timeline shows which action ran. JS and no-JS/PE form actions                                      |
+| `render:total:{route}`                                 | Rendering  | Whole render phase: match + serialize + SSR (co-emitted with `rango.render`); `{route}` is the matched route name (resolved at record time), falling back to bare `render:total` for unmatched / auto-named routes. Also emitted for an action-revalidation render |
+| `loader:{id}`                                          | Loader     | Per-loader EXECUTION, every executing path incl. fetchable (co-emitted with `rango.loader`). A loader-cache HIT does not execute, so it emits no `loader:` entry                                                                                                   |
+| `middleware:{name}@{scope}` / `middleware:{scope}#{n}` | Middleware | Combined pre + post own-time. Named handlers use `{name}@{scope}`; anonymous handlers use `{scope}#{ordinal}`. `scope` is the registered pattern or `*`. Span-only via `observePhase`; this metric is recorded directly                                            |
 
 ### Zero overhead when disabled
 
@@ -211,22 +213,57 @@ Output:
 [telemetry] request.end GET /blog 15.1ms segments=3 cache=false
 ```
 
-### OpenTelemetry Sink (Production)
+### Which tracing factory for my platform
+
+Phase **spans** always come from the `tracing` slot. Pick the factory by platform:
+
+| Platform                               | `tracing` slot              | Phase spans? |
+| -------------------------------------- | --------------------------- | ------------ |
+| Cloudflare Workers                     | `createCloudflareTracing()` | yes (native) |
+| Any platform with an OpenTelemetry SDK | `createOTelTracing(tracer)` | yes (OTel)   |
+| Node / anywhere, no tracing slot wired | _(unset)_                   | no           |
+
+The `telemetry` slot (`createConsoleSink` / `createOTelSink` / custom) is
+independent and only emits discrete-fact **events**, never phase spans — so
+`createOTelSink` alone yields no phase spans; pair it with `createOTelTracing`.
+
+### OpenTelemetry (Production)
+
+OpenTelemetry plugs into BOTH observability slots, and they do different jobs:
+
+- `tracing: createOTelTracing(tracer)` — the **phase spans** (the canonical span
+  layer). Bridges the router's phases (request/middleware/action/loader/render/ssr)
+  onto OTel's callback-bound `startActiveSpan`, so they nest by async context and
+  a loader's own OTel spans (db/fetch) land under `rango.loader`. This is the
+  OTel equivalent of `createCloudflareTracing`.
+- `telemetry: createOTelSink(tracer)` — the **discrete-fact** instant spans
+  (handler errors, cache decisions, revalidation decisions, timeouts, origin
+  rejections). It does NOT emit request/loader phase spans — those belong to the
+  tracing slot above — so running both does not double up.
 
 ```typescript
-import { createRouter, createOTelSink } from "@rangojs/router";
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
 import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
 
 const router = createRouter({
   document: Document,
   urls: urlpatterns,
-  telemetry: createOTelSink(trace.getTracer("my-app")),
+  tracing: createOTelTracing(tracer), // phase spans (callback-bound)
+  telemetry: createOTelSink(tracer), // discrete-fact instant spans
 });
 ```
 
-The OTel adapter maps router events to spans with the `rango.*` attribute
-namespace. It is structurally typed against the `@opentelemetry/api` `Tracer`
-interface, so any compatible tracer works without version coupling.
+Both adapters are structurally typed against the `@opentelemetry/api` `Tracer`
+interface, so any compatible tracer works without version coupling. Faithful
+nesting from `createOTelTracing` requires an OTel async context manager
+(`AsyncLocalStorageContextManager`) in your OTel setup — standard for any
+`startActiveSpan`-based instrumentation.
 
 ### Custom Sink
 
@@ -395,37 +432,45 @@ during segment resolution.
 
 ## OTel Span Mapping
 
-The `createOTelSink` adapter maps events to OpenTelemetry spans:
+The `createOTelSink` adapter maps the router's **discrete-fact events** to
+**instant** OpenTelemetry spans (one span per fact):
 
-| Span Name                     | Type     | Key Attributes                                                                                                    |
-| ----------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `rango.request`               | Duration | `http.method`, `http.route`, `rango.transaction`, `rango.segment_count`, `rango.cache.hit`                        |
-| `rango.loader`                | Duration | `rango.segment_id`, `rango.loader_name`, `rango.duration_ms`, `rango.loader.ok`                                   |
-| `rango.handler.error`         | Instant  | `rango.segment_id`, `rango.segment_type`, `rango.route_key`, `rango.handled_by_boundary` (handler/segment errors) |
-| `rango.cache.decision`        | Instant  | `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source`                                          |
-| `rango.revalidation.decision` | Instant  | `rango.segment_id`, `rango.route_key`, `rango.revalidate`                                                         |
+| Span Name                       | Key Attributes                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `rango.handler.error`           | `rango.segment_id`, `rango.segment_type`, `rango.route_key`, `rango.handled_by_boundary` (error status) |
+| `rango.cache.decision`          | `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source`                                |
+| `rango.revalidation.decision`   | `rango.segment_id`, `rango.route_key`, `rango.revalidate`                                               |
+| `rango.request.timeout`         | `rango.phase`, `http.route`, `rango.duration_ms`, `rango.timeout.custom_handler` (error status)         |
+| `rango.request.origin-rejected` | `http.method`, `http.route`, `rango.phase`, `rango.origin` (error status)                               |
 
-Duration spans are started on `*.start` events and ended on `*.end` or `*.error`.
-Instant spans are created and ended immediately for point-in-time events.
-
-### Span Correlation
-
-The adapter correlates start/end events using composite keys. Request spans
-use `requestId + pathname + transaction`. Loader spans use
-`requestId + segmentId + loaderName + pathname`. When a request ID header
-is present, concurrent requests to the same path are correctly correlated
-even if they complete out of order.
+The **phase** spans — `rango.request`, `rango.middleware`, `rango.action`,
+`rango.loader`, `rango.render`, `rango.ssr` — are NOT produced by the sink. They are duration
+spans owned by the `tracing` slot (`createOTelTracing` / `createCloudflareTracing`),
+which wraps the actual work via the callback boundary so they nest by async
+context. `createOTelSink` therefore ignores the `request.start/end/error` and
+`loader.start/end/error` phase events — emitting them here would duplicate the
+tracing-slot spans. This is the one-owner-per-surface rule (see _Cloudflare
+custom spans_ below).
 
 ### Error Recording
 
-Error spans call `span.recordException(error)` and set
-`SpanStatusCode.ERROR` with the error message. Loader errors that occur without
-a matching `loader.start` event produce a standalone error span.
+Error spans (`rango.handler.error`, `rango.request.timeout`,
+`rango.request.origin-rejected`) call `span.recordException(error)` where an
+error object is present and set `SpanStatusCode.ERROR` with a message.
 
 ## Cloudflare Workers Example
 
+On Cloudflare, prefer `createCloudflareTracing()` for phase spans (it bridges
+onto the platform's native span API). Use OTel when you export to an
+OTel-compatible backend instead. Either way, the phase spans come from the
+`tracing` slot; `createOTelSink` only adds the discrete-fact spans:
+
 ```typescript
-import { createRouter, createOTelSink } from "@rangojs/router";
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
 import { trace } from "@opentelemetry/api";
 
 const tracer = trace.getTracer("my-app", "1.0.0");
@@ -433,7 +478,8 @@ const tracer = trace.getTracer("my-app", "1.0.0");
 export const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
-  telemetry: createOTelSink(tracer),
+  tracing: createOTelTracing(tracer), // phase spans (request/loader/render/…)
+  telemetry: createOTelSink(tracer), // discrete-fact spans (errors, cache, …)
 });
 
 export default {
@@ -442,6 +488,94 @@ export default {
   },
 };
 ```
+
+## Cloudflare custom spans (`createCloudflareTracing`)
+
+On Cloudflare, you can emit the router's performance phases as **native
+Cloudflare custom spans** instead of (or alongside) the OTel sink. These show
+up in the Workers trace waterfall and OpenTelemetry exports next to the
+platform's automatic spans (KV reads, D1 queries, fetch calls).
+
+```typescript
+import { createRouter } from "@rangojs/router";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+export const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  // All phases on by default; turn individual phases off as needed.
+  tracing: createCloudflareTracing({ spans: { ssr: false } }),
+});
+```
+
+Emitted spans: `rango.request`, `rango.middleware`, `rango.action`,
+`rango.loader`, `rango.render`, `rango.ssr`. Unlike the OTel sink (which builds spans from
+lifecycle _events_ after the fact), `createCloudflareTracing` **wraps the actual
+work** with `executionContext.tracing.enterSpan`, so spans nest by async context
+and the platform's automatic KV/D1/fetch spans land under the right phase.
+
+<a id="one-instrumentation-model"></a>
+
+### One instrumentation model
+
+These spans and the `debugPerformance` perf timeline above are **one model, not
+two**. Every router phase is wrapped exactly once by the internal
+`observePhase()` primitive (`src/router/instrument.ts`), which from a single
+wrap site opens the span AND — unless the phase meters its own perf metric —
+records the perf metric, reading the metrics store and tracing config off the
+request context. So the span set is always a subset of the perf phases and the
+two surfaces cannot drift (e.g. a fetchable `_rsc_loader` request appears in
+both, not one).
+
+Two phases pass `metric: false` to `observePhase` and record their own perf
+metric with a finer decomposition — still one owner per surface, just not a
+single combined metric:
+
+- `rango.request` — `handler:total` is the grand total incl. the pre-context
+  bootstrap timings.
+- `rango.middleware` — the metric is the middleware's exclusive `:pre`/`:post`
+  own-time (before/after `next()`); the span is the inclusive onion.
+
+Discrete facts (cache decisions, handler errors, timeouts, …) are the **other**
+surface — `observeEvent()` → the `TelemetrySink`. Spans drive; events are
+emitted alongside. Events are never the parent abstraction: a callback-bound
+span's async-context nesting cannot be reconstructed from after-the-fact
+start/end events.
+
+Loaders are metered at the `ctx.use` execution funnel via `observePhase`. Both
+`ctx.use` implementations — the render-pipeline executor (`useLoader`) and the
+base request-context one (`createUseFunction`) — plus the fetchable
+`_rsc_loader` path, go through `observePhase`, and memoization makes each loader
+execute once, so DSL render-time, handler-invoked, and loader-to-loader loaders
+are each measured exactly once. A **loader-cache HIT emits no loader phase** —
+the loader did not execute (the hit is a LoaderCache debug log; it produces no
+loader-level telemetry event — `cache.decision` events come from the route /
+segment match pipeline, keyed by route, not loader).
+
+Key properties:
+
+- **Import-free.** It reads `executionContext.tracing` lazily — no
+  `cloudflare:workers` import and no `@cloudflare/workers-types` dependency.
+- **Transparent off-Cloudflare.** With no `executionContext.tracing` (Node, dev
+  without a tracing destination, an older runtime), every span call falls
+  through to the work directly, so the request behaves exactly as if tracing
+  were off. Whether spans are _recorded_ is governed by the `observability` /
+  tracing block in your wrangler config.
+- **Setup-to-stream-handoff durations.** The streaming phases
+  (`rango.request`/`render`/`ssr`) end when the Response/stream is constructed,
+  not when the body finishes draining; loader/Suspense work that settles during
+  the drain extends past the parent span. Phase spans bound setup time, not full
+  request duration.
+- **Full phase coverage.** Intercept-route middleware emits `rango.middleware`,
+  and action-revalidation renders emit `rango.render`, so an action
+  revalidation's loaders nest under a `rango.render` parent like a normal
+  navigation.
+
+Relationship to `createOTelSink`: the OTel _sink_ is the event surface and emits
+only discrete-fact instant spans; the phase spans (`rango.request`/`loader`/…)
+come from the `tracing` slot (`createOTelTracing` or `createCloudflareTracing`).
+There is no overlap, so you can run a tracing adapter and `createOTelSink`
+together without duplicate phase spans.
 
 ## Combining Sinks
 
@@ -481,14 +615,20 @@ All telemetry APIs are exported from the root `@rangojs/router` server/RSC
 entrypoint:
 
 ```typescript
-// Sink factories
-import { createConsoleSink, createOTelSink } from "@rangojs/router";
+// Event-sink factories (telemetry slot) + OTel phase-span adapter (tracing slot)
+import {
+  createConsoleSink,
+  createOTelSink,
+  createOTelTracing,
+} from "@rangojs/router";
 
 // Types
 import type {
   TelemetrySink,
   TelemetryEvent,
   OTelTracer,
+  OTelActiveSpanTracer,
+  OTelTracingOptions,
   OTelSpan,
   RequestStartEvent,
   RequestEndEvent,

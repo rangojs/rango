@@ -113,6 +113,11 @@ function getLoaderStore(
  *
  * When the LoaderEntry has no cache config, delegates directly to ctx.use(loader).
  * When cached, checks store first and stores on miss via waitUntil.
+ *
+ * Loader metering is NOT done here — it lives at the ctx.use execution funnel
+ * (observePhase; see instrument.ts). A cache HIT returns without calling ctx.use,
+ * so it emits no loader phase (the loader did not execute; the hit is only a
+ * LoaderCache debug log).
  */
 export function resolveLoaderData<TEnv>(
   loaderEntry: LoaderEntry,

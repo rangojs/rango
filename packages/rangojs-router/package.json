@@ -110,6 +110,11 @@
       "react-server": "./src/cache/cache-runtime.ts",
       "default": "./src/cache/cache-runtime.ts"
     },
+    "./cloudflare": {
+      "types": "./src/cloudflare/index.ts",
+      "react-server": "./src/cloudflare/index.ts",
+      "default": "./src/cloudflare/index.ts"
+    },
     "./theme": {
       "types": "./src/theme/index.ts",
       "default": "./src/theme/index.ts"

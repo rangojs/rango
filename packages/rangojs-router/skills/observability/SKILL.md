@@ -73,16 +73,25 @@ const router = createRouter({
 });
 ```
 
-For OpenTelemetry:
+For OpenTelemetry — phase spans come from the `tracing` slot
+(`createOTelTracing`), discrete-fact spans from the `telemetry` sink
+(`createOTelSink`):
 
 ```typescript
-import { createRouter, createOTelSink } from "@rangojs/router";
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
 import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
 
 const router = createRouter({
   document: Document,
   urls: urlpatterns,
-  telemetry: createOTelSink(trace.getTracer("my-app")),
+  tracing: createOTelTracing(tracer), // request/loader/render/… phase spans
+  telemetry: createOTelSink(tracer), // handler errors, cache decisions, …
 });
 ```
 

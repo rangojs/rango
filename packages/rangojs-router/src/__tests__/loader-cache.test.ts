@@ -33,6 +33,7 @@ vi.mock("../internal-debug.js", () => ({
 }));
 
 import { resolveLoaderData } from "../router/segment-resolution/loader-cache";
+import { createMetricsStore } from "../router/metrics";
 import { serializeResult, deserializeResult } from "../cache/segment-codec";
 import {
   getRequestContext,
@@ -110,6 +111,65 @@ describe("loader-cache", () => {
       await resolveLoaderData(entry, ctx, "/test");
 
       expect(ctx.use).toHaveBeenCalledWith(loader);
+    });
+  });
+
+  // ==========================================================================
+  // Single metering site: resolveLoaderData must NOT record the loader metric
+  // itself. Metering lives at the execution funnel (useLoader, reached via
+  // ctx.use), so resolveLoaderData adding its own appendMetric would double-count
+  // every render-time DSL loader. This pins the de-dup that the unified
+  // instrumentation relies on. The mock ctx.use here is a plain recorder (no
+  // metering), so a "loader:" entry could only come from resolveLoaderData.
+  // ==========================================================================
+
+  describe("instrumentation (single metering site)", () => {
+    it("records no loader perf metric of its own (delegates metering to ctx.use)", async () => {
+      const store = createMetricsStore(true)!;
+      mockRequestCtx._metricsStore = store;
+      try {
+        const loader = createMockLoader("Meter#default");
+        const entry = createLoaderEntry(loader);
+        const ctx = createMockCtx();
+
+        await resolveLoaderData(entry, ctx, "/test");
+
+        expect(ctx.use).toHaveBeenCalledWith(loader);
+        expect(
+          store.metrics.filter((m) => m.label.startsWith("loader:")),
+        ).toHaveLength(0);
+      } finally {
+        mockRequestCtx._metricsStore = undefined;
+      }
+    });
+
+    it("records no loader perf metric on a cache hit (no execution to meter)", async () => {
+      const store = createMetricsStore(true)!;
+      mockRequestCtx._metricsStore = store;
+      try {
+        // Store returns a cached value -> readThroughItem short-circuits, ctx.use
+        // is never called, and no loader metric is recorded (the loader did not
+        // run). The hit is a cache.decision fact, not a loader phase.
+        const cacheStore = createMockStore({
+          getItem: vi.fn(
+            async (): Promise<CacheItemResult> => ({
+              value: JSON.stringify({ data: "cached" }),
+              shouldRevalidate: false,
+            }),
+          ),
+        });
+        const loader = createMockLoader("Hit#default");
+        const entry = createLoaderEntry(loader, { store: cacheStore });
+        const ctx = createMockCtx();
+
+        await resolveLoaderData(entry, ctx, "/test");
+
+        expect(
+          store.metrics.filter((m) => m.label.startsWith("loader:")),
+        ).toHaveLength(0);
+      } finally {
+        mockRequestCtx._metricsStore = undefined;
+      }
     });
   });
 

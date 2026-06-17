@@ -14,6 +14,7 @@
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { requireRequestContext } from "../server/request-context.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -162,7 +163,12 @@ export async function handleLoaderFetch<TEnv>(
             ...(loaderFormData ? { formData: loaderFormData } : {}),
           };
 
-          const result = await fn(loaderCtx);
+          // Meter the fetchable-loader execution via observePhase, the sole
+          // funnel for this path (fn is called directly, not via ctx.use).
+          // depth:1 — a fetchable request has no render-phase parent.
+          const result = await observePhase(PHASES.loader(loaderId, 1), () =>
+            fn(loaderCtx),
+          );
 
           interface LoaderPayload {
             loaderResult: unknown;

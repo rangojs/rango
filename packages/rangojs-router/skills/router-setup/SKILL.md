@@ -469,14 +469,22 @@ const router = createRouter({
 ```
 
 ```typescript
-// OpenTelemetry for production
-import { createRouter, createOTelSink } from "@rangojs/router";
+// OpenTelemetry for production: phase spans via the tracing slot,
+// discrete-fact spans via the telemetry sink.
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
 import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
 
 const router = createRouter({
   document: Document,
   urls: urlpatterns,
-  telemetry: createOTelSink(trace.getTracer("my-app")),
+  tracing: createOTelTracing(tracer),
+  telemetry: createOTelSink(tracer),
 });
 ```
 

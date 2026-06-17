@@ -46,8 +46,6 @@ import {
   createReverseFunction,
   stripInternalParams,
 } from "../router/handler-context.js";
-import { getRouterContext } from "../router/router-context.js";
-import { resolveSink, safeEmit } from "../router/telemetry.js";
 import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
@@ -84,6 +82,7 @@ import {
   appendMetric,
   buildMetricsTiming,
 } from "../router/metrics.js";
+import { observePhase, observeEvent, PHASES } from "../router/instrument.js";
 import {
   startSSRSetup,
   getSSRSetup,
@@ -244,24 +243,16 @@ export function createRSCHandler<
       metadata: { timeout: true, phase, durationMs },
     });
 
-    try {
-      const routerCtx = getRouterContext();
-      if (routerCtx?.telemetry) {
-        safeEmit(resolveSink(routerCtx.telemetry), {
-          type: "request.timeout" as const,
-          timestamp: performance.now(),
-          requestId: routerCtx.requestId,
-          phase,
-          pathname: url.pathname,
-          routeKey,
-          actionId,
-          durationMs,
-          customHandler: !!router.onTimeout,
-        });
-      }
-    } catch {
-      // Router context may not be available
-    }
+    observeEvent({
+      type: "request.timeout",
+      timestamp: performance.now(),
+      phase,
+      pathname: url.pathname,
+      routeKey,
+      actionId,
+      durationMs,
+      customHandler: !!router.onTimeout,
+    });
 
     if (router.onTimeout) {
       try {
@@ -499,86 +490,103 @@ export function createRSCHandler<
     // Store basename on request context (scoped per-request via existing ALS)
     requestContext._basename = router.basename;
 
-    return runWithRequestContext(requestContext, async () => {
-      // Core handler logic (wrapped by middleware)
-      const coreHandler = async (): Promise<Response> => {
-        return coreRequestHandler(request, env, url, variables, nonce);
-      };
+    // Resolved span tracing for this request (read at each traced phase).
+    requestContext._tracing = router.tracing;
 
-      // Execute middleware chain if any, otherwise call core handler directly
-      let response: Response;
-      if (matchedMiddleware.length > 0) {
-        const mwResponse = await executeMiddleware(
-          matchedMiddleware,
-          request,
-          env,
-          variables,
-          coreHandler,
-          createReverseFunction(getRequiredRouteMap()),
-        );
+    // The "rango.request" span is opened inside the request context so the
+    // Cloudflare runner can read executionContext.tracing, and so every nested
+    // phase span (and the platform's automatic KV/D1/fetch spans) nests under
+    // it. metric:false — handler:total is metered directly below (a grand total
+    // incl. the pre-context bootstrap timings, finer than a single wrap). When
+    // tracing is off this is a direct pass-through.
+    return runWithRequestContext(requestContext, () =>
+      observePhase(PHASES.request, async (span) => {
+        span.setAttribute("http.method", request.method);
+        // The matched route template is not known until match() runs later, so
+        // emit the concrete path as url.path (low-level), NOT http.route — the
+        // latter is reserved for the low-cardinality template (OTel convention).
+        span.setAttribute("url.path", url.pathname);
 
-        if (
-          url.searchParams.has("_rsc_partial") ||
-          url.searchParams.has("_rsc_action")
-        ) {
-          const intercepted = interceptRedirectForPartial(
-            mwResponse,
-            createRedirectFlightResponse,
+        // Core handler logic (wrapped by middleware)
+        const coreHandler = async (): Promise<Response> => {
+          return coreRequestHandler(request, env, url, variables, nonce);
+        };
+
+        // Execute middleware chain if any, otherwise call core handler directly
+        let response: Response;
+        if (matchedMiddleware.length > 0) {
+          const mwResponse = await executeMiddleware(
+            matchedMiddleware,
+            request,
+            env,
+            variables,
+            coreHandler,
+            createReverseFunction(getRequiredRouteMap()),
           );
-          response = intercepted ?? finalizeResponse(mwResponse);
+
+          if (
+            url.searchParams.has("_rsc_partial") ||
+            url.searchParams.has("_rsc_action")
+          ) {
+            const intercepted = interceptRedirectForPartial(
+              mwResponse,
+              createRedirectFlightResponse,
+            );
+            response = intercepted ?? finalizeResponse(mwResponse);
+          } else {
+            response = finalizeResponse(mwResponse);
+          }
         } else {
-          response = finalizeResponse(mwResponse);
+          response = await coreHandler();
         }
-      } else {
-        response = await coreHandler();
-      }
 
-      // Finalize metrics after all middleware (including post-next work)
-      // has completed so :post spans are captured in the timeline.
-      // Handler timing parts are always emitted (even without debug metrics)
-      // so non-debug requests still get bootstrap Server-Timing entries.
-      const handlerTimingArr: string[] = variables.__handlerTiming || [];
-      // Preserve any existing Server-Timing set by response routes or middleware
-      const existingTiming = response.headers.get("Server-Timing");
-      const timingParts = existingTiming
-        ? [existingTiming, ...handlerTimingArr]
-        : [...handlerTimingArr];
+        // Finalize metrics after all middleware (including post-next work)
+        // has completed so :post spans are captured in the timeline.
+        // Handler timing parts are always emitted (even without debug metrics)
+        // so non-debug requests still get bootstrap Server-Timing entries.
+        const handlerTimingArr: string[] = variables.__handlerTiming || [];
+        // Preserve any existing Server-Timing set by response routes or middleware
+        const existingTiming = response.headers.get("Server-Timing");
+        const timingParts = existingTiming
+          ? [existingTiming, ...handlerTimingArr]
+          : [...handlerTimingArr];
 
-      const metricsStore = requestContext._metricsStore;
-      if (metricsStore) {
-        // When the store was created at handler start (earlyMetricsStore),
-        // handler:total covers the full request. When ctx.debugPerformance()
-        // created the store mid-request, use its requestStart to avoid a
-        // negative startTime offset.
-        const totalStart = earlyMetricsStore
-          ? handlerStart
-          : metricsStore.requestStart;
-        appendMetric(
-          metricsStore,
-          "handler:total",
-          totalStart,
-          performance.now() - totalStart,
-        );
-        const metricsTiming = buildMetricsTiming(
-          request.method,
-          url.pathname,
-          metricsStore,
-        );
-        if (metricsTiming) timingParts.push(metricsTiming);
-      }
+        const metricsStore = requestContext._metricsStore;
+        if (metricsStore) {
+          // When the store was created at handler start (earlyMetricsStore),
+          // handler:total covers the full request. When ctx.debugPerformance()
+          // created the store mid-request, use its requestStart to avoid a
+          // negative startTime offset.
+          const totalStart = earlyMetricsStore
+            ? handlerStart
+            : metricsStore.requestStart;
+          appendMetric(
+            metricsStore,
+            "handler:total",
+            totalStart,
+            performance.now() - totalStart,
+          );
+          const metricsTiming = buildMetricsTiming(
+            request.method,
+            url.pathname,
+            metricsStore,
+          );
+          if (metricsTiming) timingParts.push(metricsTiming);
+        }
 
-      const fullTiming = timingParts.join(", ");
-      if (fullTiming && !isWebSocketUpgradeResponse(response)) {
-        response.headers.set("Server-Timing", fullTiming);
-      }
+        const fullTiming = timingParts.join(", ");
+        if (fullTiming && !isWebSocketUpgradeResponse(response)) {
+          response.headers.set("Server-Timing", fullTiming);
+        }
 
-      // Single open-redirect chokepoint: every response (PE, full-page,
-      // middleware short-circuit, response-route) funnels through here, so
-      // guarding browser-followed (3xx) redirects once covers them all and any
-      // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
-      // through untouched (validated client-side instead).
-      return guardOutgoingRedirect(response, url.origin, router.basename);
-    });
+        // Single open-redirect chokepoint: every response (PE, full-page,
+        // middleware short-circuit, response-route) funnels through here, so
+        // guarding browser-followed (3xx) redirects once covers them all and any
+        // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
+        // through untouched (validated client-side instead).
+        return guardOutgoingRedirect(response, url.origin, router.basename);
+      }),
+    );
   };
 
   // Core request handling logic (separated for middleware wrapping).
@@ -715,23 +723,15 @@ export function createRSCHandler<
           },
         });
 
-        try {
-          const routerCtx = getRouterContext();
-          if (routerCtx?.telemetry) {
-            safeEmit(resolveSink(routerCtx.telemetry), {
-              type: "request.origin-rejected" as const,
-              timestamp: performance.now(),
-              requestId: routerCtx.requestId,
-              method: request.method,
-              pathname: url.pathname,
-              phase: originPhase,
-              origin: request.headers.get("origin"),
-              host: request.headers.get("host"),
-            });
-          }
-        } catch {
-          // Router context may not be available
-        }
+        observeEvent({
+          type: "request.origin-rejected",
+          timestamp: performance.now(),
+          method: request.method,
+          pathname: url.pathname,
+          phase: originPhase,
+          origin: request.headers.get("origin"),
+          host: request.headers.get("host"),
+        });
 
         return originResult;
       }
@@ -773,23 +773,15 @@ export function createRSCHandler<
         params: reqCtx.params as Record<string, string>,
         handledByBoundary: true,
       });
-      try {
-        const routerCtx = getRouterContext();
-        if (routerCtx?.telemetry) {
-          safeEmit(resolveSink(routerCtx.telemetry), {
-            type: "handler.error" as const,
-            timestamp: performance.now(),
-            requestId: routerCtx.requestId,
-            error,
-            handledByBoundary: true,
-            pathname: url.pathname,
-            routeKey: reqCtx._routeName,
-            params: reqCtx.params as Record<string, string>,
-          });
-        }
-      } catch {
-        // Router context may not be available (e.g. prerender path)
-      }
+      observeEvent({
+        type: "handler.error",
+        timestamp: performance.now(),
+        error,
+        handledByBoundary: true,
+        pathname: url.pathname,
+        routeKey: reqCtx._routeName,
+        params: reqCtx.params as Record<string, string>,
+      });
     };
 
     // Set route params early so all execution paths can access ctx.params.
@@ -894,14 +886,20 @@ export function createRSCHandler<
     if (plan.mode === "action") {
       let actionContinuation: ActionContinuation | undefined;
       try {
+        // Instrument the action execution as its own phase (action:<actionId> +
+        // rango.action), so a POST shows the mutation time AND which action ran,
+        // not just the downstream revalidation render. The action's own
+        // loaders/fetches nest under rango.action.
         const actionOutcome = await withTimeout(
-          executeServerAction(
-            handlerCtx,
-            request,
-            env,
-            url,
-            plan.actionId,
-            handleStore,
+          observePhase(PHASES.action(plan.actionId), () =>
+            executeServerAction(
+              handlerCtx,
+              request,
+              env,
+              url,
+              plan.actionId,
+              handleStore,
+            ),
           ),
           router.timeouts.actionMs,
           "action",
