@@ -81,8 +81,10 @@ describe("revalidateAfterAction tracing", () => {
     );
 
     expect(spans).toContain("rango.render");
+    // The render metric label carries the resolved route name (matchPartial
+    // returned routeName "home" above).
     expect(reqCtx._metricsStore!.metrics.map((m) => m.label)).toContain(
-      "render:total",
+      "render:total:home",
     );
   });
 });

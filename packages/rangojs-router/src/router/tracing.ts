@@ -26,7 +26,7 @@
  * metered directly), rango.middleware (span-only incl. intercept middleware;
  * pre/post metered directly), rango.action (action:<id>; server-action
  * execution, JS + no-JS/PE), rango.loader (loader:<id>; single metering site at
- * useLoader, plus the fetchable path), rango.render (render:total; normal AND
+ * useLoader, plus the fetchable path), rango.render (render:total:<route>; normal AND
  * action-revalidation renders), rango.ssr (ssr:render-html).
  *
  * Span-duration caveat: a span ends when its callback's value (or promise)

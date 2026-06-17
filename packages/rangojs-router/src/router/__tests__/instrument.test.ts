@@ -177,8 +177,23 @@ describe("PHASES registry", () => {
 
   it("request is span-only; render/ssr carry their metric labels", () => {
     expect(PHASES.request.metric).toBe(false);
-    expect(PHASES.render.metric).toEqual({ label: "render:total" });
     expect(PHASES.ssr.metric).toEqual({ label: "ssr:render-html" });
+    // render's label is lazy (it resolves the route name at record time);
+    // with no request context it falls back to the bare label.
+    const renderMetric = PHASES.render.metric;
+    expect(renderMetric).not.toBe(false);
+    if (renderMetric !== false) {
+      expect(typeof renderMetric.label).toBe("function");
+      expect((renderMetric.label as () => string)()).toBe("render:total");
+    }
+  });
+
+  it("render label includes the route name when set: render:total:<route>", () => {
+    const label = runWithRequestContext({ _routeName: "home" } as never, () => {
+      const m = PHASES.render.metric;
+      return m === false || typeof m.label !== "function" ? "" : m.label();
+    });
+    expect(label).toBe("render:total:home");
   });
 });
 
