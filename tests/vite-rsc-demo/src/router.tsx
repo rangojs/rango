@@ -1,4 +1,4 @@
-import { createRouter } from "@rangojs/router";
+import { createRouter, type Middleware } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { RootLayout } from "./layouts/RootLayout.js";
 
@@ -62,6 +62,21 @@ declare global {
 }
 
 /**
+ * Top-level (app-wide) middleware, registered via `.use()`. It has no pattern,
+ * so it runs on every route (global scope) and appears in the `debugPerformance`
+ * timeline as `middleware:appTimer@*` — the `@*` marks it global, distinguishing
+ * it from route-level `middleware()` (which prints as `middleware:*#n`). It
+ * records a `:pre` segment (before `next()`) and, since it also does work after
+ * `next()` resolves, a disjoint `:post` segment (here, stamping a response
+ * header). Both phases merge into one `middleware:appTimer@*` row.
+ */
+const appTimer: Middleware = async (ctx, next) => {
+  const start = Date.now();
+  await next();
+  ctx.headers.set("X-App-Response-Time", `${Date.now() - start}ms`);
+};
+
+/**
  * Create and configure the router with type-safe context.
  * All routes are defined using the Django-style urls() API.
  */
@@ -69,7 +84,9 @@ const router = createRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
   cache: { store: cacheStore },
-}).routes(urlpatterns);
+})
+  .use(appTimer)
+  .routes(urlpatterns);
 
 /**
  * Export the router and type-safe reverse for server components.
