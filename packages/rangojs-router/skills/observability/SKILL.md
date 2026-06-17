@@ -95,6 +95,31 @@ const router = createRouter({
 });
 ```
 
+On **Cloudflare Workers**, use `createCloudflareTracing` for the `tracing` slot
+instead — it emits the same phases as native Cloudflare custom spans (in the
+Workers trace waterfall, next to the automatic KV/D1/fetch spans), with no
+`@opentelemetry/api` dependency:
+
+```typescript
+import { createRouter } from "@rangojs/router";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing: createCloudflareTracing(), // all phases on by default
+  // tracing: createCloudflareTracing({ spans: { ssr: false } }), // toggle phases
+});
+```
+
+Both factories return a `RouterTracingConfig` for the same `tracing` slot;
+`telemetry` stays independent (events only, no phase spans). Phase spans:
+`rango.request`, `rango.middleware`, `rango.action`, `rango.loader`,
+`rango.render`, `rango.ssr` — the same phases the `debugPerformance` timeline
+shows, co-emitted from one site. Off-platform (no Cloudflare tracing destination
+/ no OTel SDK) every span call is a transparent pass-through, so the request
+behaves as if tracing were off.
+
 Custom sinks implement `emit(event)`:
 
 ```typescript
@@ -112,7 +137,8 @@ const router = createRouter({
 ```
 
 Events include `request.start/end/error`, `loader.start/end/error`,
-`handler.error`, `cache.decision`, and `revalidation.decision`.
+`handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`,
+and `request.origin-rejected`.
 
 ## Debugging revalidation and stale data
 

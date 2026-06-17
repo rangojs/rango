@@ -489,6 +489,18 @@ const router = createRouter({
 ```
 
 ```typescript
+// On Cloudflare Workers, swap the tracing factory for native custom spans
+// (no @opentelemetry/api dependency); the telemetry slot is unchanged.
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing: createCloudflareTracing(), // { spans: { ssr: false } } to toggle phases
+});
+```
+
+```typescript
 // Custom sink
 const router = createRouter({
   telemetry: {
