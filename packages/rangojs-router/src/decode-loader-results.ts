@@ -28,7 +28,17 @@ export function decodeLoaderResults(
     if (result.fallback) {
       errorFallback = result.fallback;
     } else {
-      throw new Error(result.error.message);
+      // No boundary: rethrow preserving the ErrorInfo identity (name/stack/
+      // code/cause) instead of a stripped generic Error.
+      const info = result.error;
+      const err = new Error(
+        info.message,
+        info.cause !== undefined ? { cause: info.cause } : undefined,
+      );
+      if (info.name) err.name = info.name;
+      if (info.stack) err.stack = info.stack;
+      if (info.code !== undefined) (err as { code?: string }).code = info.code;
+      throw err;
     }
   }
 
