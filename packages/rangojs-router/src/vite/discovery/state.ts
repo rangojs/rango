@@ -26,6 +26,12 @@ export interface PluginOptions {
    */
   discovery?: { include?: string[]; exclude?: string[] };
   /**
+   * What to do when a Prerender/Static render throws at build time, from
+   * rango({ prerender: { onError } }). "fail" (default) fails the build; "warn"
+   * logs and skips baking the URL. See {@link import("../plugin-types.js").RangoOptions}.
+   */
+  prerenderOnError?: "fail" | "warn";
+  /**
    * Shared context the built-in clientChunks strategy reads. Discovery populates
    * it (registered fallback hashes + single-router name) before the client build
    * invokes the strategy. Present only when the built-in strategy is active

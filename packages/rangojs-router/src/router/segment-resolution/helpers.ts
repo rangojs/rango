@@ -284,11 +284,17 @@ export async function resolveWithErrorBoundary<TEnv, TResult>(
   deps: SegmentResolutionDeps<TEnv>,
   report?: ErrorReportContext,
   pathname?: string,
+  throwOnError?: boolean,
 ): Promise<TResult> {
   try {
     return await resolveFn();
   } catch (error) {
     if (error instanceof Response) throw error;
+    // Pre-render surfaces render failures to the build instead of baking the
+    // error boundary as a frozen 200 (issue #587). A `throw new Skip()` in a
+    // render fn also propagates here so the build can skip that URL rather than
+    // bake its error page. The live request path leaves throwOnError unset.
+    if (throwOnError) throw error;
     const segment = catchSegmentError(
       error,
       entry,

@@ -912,9 +912,15 @@ export function createRouterDiscoveryPlugin(
             logResult(200, `match ${result.routeName}`);
             return;
           } catch (err: any) {
-            console.warn(
-              `[rango] Dev prerender failed for ${pathname}: ${err.message}`,
-            );
+            // matchForPrerender now re-throws render failures instead of baking
+            // an error page (issue #587). In dev there is no frozen artifact, so
+            // we fall through (404 -> live handler). A `throw new Skip()` is the
+            // expected "skip this URL" signal, not a failure, so it stays quiet.
+            if (err?.name !== "Skip") {
+              console.warn(
+                `[rango] Dev prerender error for ${pathname} (serving live instead): ${err.message}`,
+              );
+            }
           }
         }
 

@@ -17,6 +17,7 @@ import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
+import type { ResolveSegmentOptions } from "./segment-resolution.js";
 import { runWithRouterContext } from "./router-context.js";
 import type { EntryData, InterceptEntry } from "../server/context";
 import type {
@@ -40,7 +41,7 @@ export interface PrerenderMatchDeps<TEnv = any> {
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    options?: { skipLoaders?: boolean },
+    options?: ResolveSegmentOptions,
   ) => Promise<ResolvedSegment[]>;
 }
 
@@ -257,7 +258,9 @@ export async function matchForPrerender<TEnv = any>(
         matchedParams,
         buildCtx,
         loaderPromises,
-        { skipLoaders: true },
+        // throwOnError: a render failure (or `throw new Skip()`) must reach the
+        // build/dev caller, not be baked into a frozen error page (issue #587).
+        { skipLoaders: true, throwOnError: true },
       );
 
       // 9. Detect passthrough sentinel: handler returned ctx.passthrough().

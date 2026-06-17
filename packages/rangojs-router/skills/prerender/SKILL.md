@@ -343,14 +343,31 @@ export const TocSidebar = Static(() => {
 
 ### Error behavior at build time
 
-| Handler outcome             | Effect                                                |
-| --------------------------- | ----------------------------------------------------- |
-| JSX / `null`                | Normal prerender entry, log OK                        |
-| `return ctx.passthrough()`  | Skip entry, log PASS, continue (Passthrough routes)   |
-| `throw new Skip("reason")`  | Skip entry, log SKIP, continue with remaining entries |
-| `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail the build      |
+When a render throws a non-`Skip` error, it is **surfaced to the build** — never
+baked into a frozen error page served as a 200 (issue #587). What happens next is
+controlled by `prerender.onError` in your `rango()` options:
 
-Both error types propagate to the router's `onError` callback with phase
+```ts
+rango({ prerender: { onError: "warn" } }); // default is "fail"
+```
+
+| Handler outcome             | `onError: "fail"` (default)                  | `onError: "warn"`                |
+| --------------------------- | -------------------------------------------- | -------------------------------- |
+| JSX / `null`                | Normal prerender entry, log OK               | Normal prerender entry, log OK   |
+| `return ctx.passthrough()`  | Skip entry, log PASS (Passthrough routes)    | Skip entry, log PASS             |
+| `throw new Skip("reason")`  | Skip entry, log SKIP, continue               | Skip entry, log SKIP, continue   |
+| `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+
+With `"warn"` the errored entry is logged and left un-baked (never served as a baked
+200 error page). `"warn"` is a build-unblock, not a runtime contract: the route falls
+through to normal resolution — it may render live (its handler is still bundled) or
+404 (once other baked entries trigger prerender handler eviction), so the outcome
+depends on the rest of the build, and a skipped `Static()` handler's evicted code can
+surface as an error. For DEFINED runtime behavior reach for `Passthrough()` (a live
+fallback) or `throw new Skip()` (an intentional skip — works in the render fn, not
+only `getParams()`); otherwise prefer the default `"fail"`.
+
+Both `Skip` and hard errors propagate to the router's `onError` callback with phase
 `"prerender"` or `"static"`.
 
 ### Build logs
@@ -370,9 +387,11 @@ The build produces per-URL timing logs:
 [rango] Static render complete: 2 done, 1 skipped (120ms total)
 ```
 
-A `FAIL` line is logged per-URL when a handler throws a non-Skip error. The
-error is re-thrown immediately, so no summary line is printed — the build
-stops at the first failure.
+A `FAIL` line is logged per-URL when a handler throws a non-Skip error (with the
+default `prerender.onError: "fail"`). The error is re-thrown immediately, so no
+summary line is printed — the build stops at the first failure. Under
+`prerender.onError: "warn"` the same case logs a `WARN` line, skips that URL, and
+the build continues.
 
 ### Dev mode behavior
 
