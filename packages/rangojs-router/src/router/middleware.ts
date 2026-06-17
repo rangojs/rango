@@ -1,6 +1,7 @@
 /// <reference types="vite/types/importMeta.d.ts" />
 
 import { contextGet, contextSet } from "../context-var.js";
+import { escapeRegExp } from "../regex-escape.js";
 import { safeDecodeURIComponent } from "./url-params.js";
 import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import type {
@@ -74,7 +75,7 @@ export function parsePattern(pattern: string): {
       regexStr += "/([^/]+)";
     } else {
       // Literal
-      regexStr += "/" + escapeRegex(part);
+      regexStr += "/" + escapeRegExp(part);
     }
   }
 
@@ -86,13 +87,6 @@ export function parsePattern(pattern: string): {
   }
 
   return { regex: new RegExp(regexStr), paramNames };
-}
-
-/**
- * Escape special regex characters
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

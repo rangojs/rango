@@ -243,6 +243,4 @@ export function findStatementEnd(code: string, pos: number): number {
   return i;
 }
 
-export function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+export { escapeRegExp } from "../../regex-escape.js";
