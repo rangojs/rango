@@ -300,6 +300,26 @@ export class CacheScope {
   }
 
   /**
+   * Record this scope's segment-DSL cache({ tags }) into the request tag union
+   * synchronously, under the same gate cacheRoute() uses for a write.
+   *
+   * cacheRoute() already records these tags, but it is invoked inside
+   * requestCtx.waitUntil() by the cache-store middleware (and the proactive path
+   * re-resolves the whole tree before calling it), so its recording is deferred
+   * and RACES the document cache's post-body-drain snapshot of _requestTags. On a
+   * first-write (segment-cache miss) the document tag union could miss these
+   * tags, and updateTag()/revalidateTag() would then fail to invalidate the
+   * cached document until a later write reseeded it. Calling this synchronously
+   * in the request pipeline (before the snapshot) closes that window. Idempotent
+   * (the tag union is a Set), so the duplicate record in cacheRoute is harmless.
+   */
+  recordTags(requestCtx: RequestContext | undefined): void {
+    if (!this.enabled) return;
+    if (!this.conditionAllows("write")) return;
+    recordRequestTags(resolveCacheTags(this.config, requestCtx), requestCtx);
+  }
+
+  /**
    * Cache all segments for a route (non-blocking via waitUntil)
    * Single cache entry per route request.
    * Loaders are excluded - they're always fresh unless they have their own cache() config.

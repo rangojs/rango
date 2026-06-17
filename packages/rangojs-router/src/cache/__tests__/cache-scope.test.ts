@@ -360,3 +360,73 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
     expect(ctx._requestTags.size).toBe(0);
   });
 });
+
+describe("CacheScope.recordTags - first-write tags land in the request tag union synchronously", () => {
+  // The miss/first-write counterpart of the hit-path test above. On a hit the
+  // tags come back in the cached entry and lookupRoute records them; on a first
+  // write there is no entry yet, so cache-store records the route's config tags
+  // synchronously (this method) BEFORE the document cache snapshots _requestTags.
+  // cacheRoute() also records them, but it runs inside requestCtx.waitUntil(),
+  // racing that snapshot — recordTags() is what closes the window.
+  function makeCtx() {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com/products"),
+      url: new URL("https://example.com/products"),
+      variables: {},
+    });
+  }
+
+  it("records static cache({ tags }) into _requestTags with no cache write", () => {
+    const ctx = makeCtx();
+    const scope = new CacheScope({ ttl: 60, tags: ["products"] });
+
+    expect(ctx._requestTags.size).toBe(0);
+    runWithRequestContext(ctx, () => scope.recordTags(ctx));
+
+    // Tags are in the union synchronously — no cacheRoute()/waitUntil needed — so
+    // the document cache's tag snapshot catches them on the very first request.
+    expect([...ctx._requestTags]).toEqual(["products"]);
+  });
+
+  it("resolves dynamic tags against the request context", () => {
+    const ctx = makeCtx();
+    const scope = new CacheScope({
+      ttl: 60,
+      tags: (c) => [`path:${new URL(c.request.url).pathname}`],
+    });
+
+    runWithRequestContext(ctx, () => scope.recordTags(ctx));
+
+    expect([...ctx._requestTags]).toEqual(["path:/products"]);
+  });
+
+  it("records nothing when the scope's write condition returns false", () => {
+    const ctx = makeCtx();
+    const scope = new CacheScope({
+      ttl: 60,
+      tags: ["products"],
+      condition: () => false,
+    });
+
+    runWithRequestContext(ctx, () => scope.recordTags(ctx));
+
+    // Matches cacheRoute's gate: a disallowed write records no tags, so the
+    // document is not tagged for content the segment cache will not store.
+    expect(ctx._requestTags.size).toBe(0);
+  });
+
+  it("records nothing for a disabled scope or untagged config", () => {
+    const disabled = makeCtx();
+    runWithRequestContext(disabled, () =>
+      new CacheScope(false).recordTags(disabled),
+    );
+    expect(disabled._requestTags.size).toBe(0);
+
+    const untagged = makeCtx();
+    runWithRequestContext(untagged, () =>
+      new CacheScope({ ttl: 60 }).recordTags(untagged),
+    );
+    expect(untagged._requestTags.size).toBe(0);
+  });
+});
