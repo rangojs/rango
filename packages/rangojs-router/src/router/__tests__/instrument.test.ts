@@ -165,6 +165,16 @@ describe("PHASES registry", () => {
     expect(spec.attributes).toEqual({ "rango.middleware_name": "auth@*" });
   });
 
+  it("action(id) co-emits action:<id> with the rango.action span", () => {
+    const spec = PHASES.action("submitOrder#default");
+    expect(spec.spanName).toBe("rango.action");
+    expect(spec.tracePhase).toBe("action");
+    expect(spec.metric).toEqual({ label: "action:submitOrder#default" });
+    expect(spec.attributes).toEqual({
+      "rango.action_id": "submitOrder#default",
+    });
+  });
+
   it("request is span-only; render/ssr carry their metric labels", () => {
     expect(PHASES.request.metric).toBe(false);
     expect(PHASES.render.metric).toEqual({ label: "render:total" });

@@ -156,19 +156,20 @@ repeated imports resolve instantly.
 
 ### Metric reference
 
-| Metric                                                 | Phase      | Description                                                                                                                                                                                                             |
-| ------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `handler:total`                                        | Handler    | Full request duration from handler entry to response                                                                                                                                                                    |
-| `route-matching`                                       | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined)                                                                                                                                             |
-| `route-matching:nav`                                   | Matching   | Prev + intercept-source lookups (partial reuse path)                                                                                                                                                                    |
-| `manifest-loading`                                     | Matching   | Async manifest load (when not cached)                                                                                                                                                                                   |
-| `ssr:module-load`                                      | SSR setup  | Dynamic import of the SSR module                                                                                                                                                                                        |
-| `ssr:stream-mode`                                      | SSR setup  | Stream mode resolution (sync or async)                                                                                                                                                                                  |
-| `rsc-serialize`                                        | Rendering  | Synchronous RSC stream creation                                                                                                                                                                                         |
-| `ssr:render-html`                                      | Rendering  | SSR HTML rendering from RSC stream (co-emitted with the `rango.ssr` span). Server-Timing folds the colon to a hyphen (`ssr-render-html`)                                                                                |
-| `render:total`                                         | Rendering  | Whole render phase: match + serialize + SSR (co-emitted with `rango.render`); also emitted for an action-revalidation render                                                                                            |
-| `loader:{id}`                                          | Loader     | Per-loader EXECUTION, every executing path incl. fetchable (co-emitted with `rango.loader`). A loader-cache HIT does not execute, so it emits no `loader:` entry                                                        |
-| `middleware:{name}@{scope}` / `middleware:{scope}#{n}` | Middleware | Combined pre + post own-time. Named handlers use `{name}@{scope}`; anonymous handlers use `{scope}#{ordinal}`. `scope` is the registered pattern or `*`. Span-only via `observePhase`; this metric is recorded directly |
+| Metric                                                 | Phase      | Description                                                                                                                                                                                                                   |
+| ------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handler:total`                                        | Handler    | Full request duration from handler entry to response                                                                                                                                                                          |
+| `route-matching`                                       | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined)                                                                                                                                                   |
+| `route-matching:nav`                                   | Matching   | Prev + intercept-source lookups (partial reuse path)                                                                                                                                                                          |
+| `manifest-loading`                                     | Matching   | Async manifest load (when not cached)                                                                                                                                                                                         |
+| `ssr:module-load`                                      | SSR setup  | Dynamic import of the SSR module                                                                                                                                                                                              |
+| `ssr:stream-mode`                                      | SSR setup  | Stream mode resolution (sync or async)                                                                                                                                                                                        |
+| `rsc-serialize`                                        | Rendering  | Synchronous RSC stream creation                                                                                                                                                                                               |
+| `ssr:render-html`                                      | Rendering  | SSR HTML rendering from RSC stream (co-emitted with the `rango.ssr` span). Server-Timing folds the colon to a hyphen (`ssr-render-html`)                                                                                      |
+| `action:{id}`                                          | Action     | Server-action execution (decode args + run the action body), before the revalidation render (co-emitted with `rango.action`); `{id}` is the action $$id, so the timeline shows which action ran. JS and no-JS/PE form actions |
+| `render:total`                                         | Rendering  | Whole render phase: match + serialize + SSR (co-emitted with `rango.render`); also emitted for an action-revalidation render                                                                                                  |
+| `loader:{id}`                                          | Loader     | Per-loader EXECUTION, every executing path incl. fetchable (co-emitted with `rango.loader`). A loader-cache HIT does not execute, so it emits no `loader:` entry                                                              |
+| `middleware:{name}@{scope}` / `middleware:{scope}#{n}` | Middleware | Combined pre + post own-time. Named handlers use `{name}@{scope}`; anonymous handlers use `{scope}#{ordinal}`. `scope` is the registered pattern or `*`. Span-only via `observePhase`; this metric is recorded directly       |
 
 ### Zero overhead when disabled
 
@@ -231,7 +232,7 @@ independent and only emits discrete-fact **events**, never phase spans — so
 OpenTelemetry plugs into BOTH observability slots, and they do different jobs:
 
 - `tracing: createOTelTracing(tracer)` — the **phase spans** (the canonical span
-  layer). Bridges the router's phases (request/middleware/loader/render/ssr)
+  layer). Bridges the router's phases (request/middleware/action/loader/render/ssr)
   onto OTel's callback-bound `startActiveSpan`, so they nest by async context and
   a loader's own OTel spans (db/fetch) land under `rango.loader`. This is the
   OTel equivalent of `createCloudflareTracing`.
@@ -442,8 +443,8 @@ The `createOTelSink` adapter maps the router's **discrete-fact events** to
 | `rango.request.timeout`         | `rango.phase`, `http.route`, `rango.duration_ms`, `rango.timeout.custom_handler` (error status)         |
 | `rango.request.origin-rejected` | `http.method`, `http.route`, `rango.phase`, `rango.origin` (error status)                               |
 
-The **phase** spans — `rango.request`, `rango.middleware`, `rango.loader`,
-`rango.render`, `rango.ssr` — are NOT produced by the sink. They are duration
+The **phase** spans — `rango.request`, `rango.middleware`, `rango.action`,
+`rango.loader`, `rango.render`, `rango.ssr` — are NOT produced by the sink. They are duration
 spans owned by the `tracing` slot (`createOTelTracing` / `createCloudflareTracing`),
 which wraps the actual work via the callback boundary so they nest by async
 context. `createOTelSink` therefore ignores the `request.start/end/error` and
@@ -507,8 +508,8 @@ export const router = createRouter<AppBindings>({
 });
 ```
 
-Emitted spans: `rango.request`, `rango.middleware`, `rango.loader`,
-`rango.render`, `rango.ssr`. Unlike the OTel sink (which builds spans from
+Emitted spans: `rango.request`, `rango.middleware`, `rango.action`,
+`rango.loader`, `rango.render`, `rango.ssr`. Unlike the OTel sink (which builds spans from
 lifecycle _events_ after the fact), `createCloudflareTracing` **wraps the actual
 work** with `executionContext.tracing.enterSpan`, so spans nest by async context
 and the platform's automatic KV/D1/fetch spans land under the right phase.

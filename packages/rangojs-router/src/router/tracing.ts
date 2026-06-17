@@ -1,7 +1,7 @@
 /**
  * Span tracing hook (platform-agnostic).
  *
- * The core router emits its existing performance phases (request, middleware,
+ * The core router emits its existing performance phases (request, middleware, action,
  * loaders, render, ssr) as spans by calling traceSpan() at a small set of
  * execution boundaries. When no tracing is configured the call is a direct
  * pass-through: fn is invoked with a no-op span, with no wrapper and no
@@ -24,9 +24,10 @@
  *
  * Phase coverage (all via observePhase): rango.request (span-only; handler:total
  * metered directly), rango.middleware (span-only incl. intercept middleware;
- * pre/post metered directly), rango.loader (loader:<id>; single metering site at
+ * pre/post metered directly), rango.action (action:<id>; server-action
+ * execution, JS + no-JS/PE), rango.loader (loader:<id>; single metering site at
  * useLoader, plus the fetchable path), rango.render (render:total; normal AND
- * action-revalidation renders), rango.ssr (ssr-render-html).
+ * action-revalidation renders), rango.ssr (ssr:render-html).
  *
  * Span-duration caveat: a span ends when its callback's value (or promise)
  * settles. For the streaming phases (request/render/ssr) that is when the
@@ -56,12 +57,19 @@ export interface TraceSpan {
 export type SpanRunner = <T>(name: string, fn: (span: TraceSpan) => T) => T;
 
 /** The router phases that can be wrapped in a span. */
-export type TracePhase = "request" | "middleware" | "loader" | "render" | "ssr";
+export type TracePhase =
+  | "request"
+  | "middleware"
+  | "action"
+  | "loader"
+  | "render"
+  | "ssr";
 
 /** Per-phase span toggles. Omitted phases default to enabled. */
 export interface TracePhaseToggles {
   request?: boolean;
   middleware?: boolean;
+  action?: boolean;
   loader?: boolean;
   render?: boolean;
   ssr?: boolean;
@@ -97,6 +105,7 @@ export const NOOP_TRACE_SPAN: TraceSpan = {
 const ALL_PHASES_ON: Record<TracePhase, boolean> = {
   request: true,
   middleware: true,
+  action: true,
   loader: true,
   render: true,
   ssr: true,
@@ -123,6 +132,7 @@ export function resolveTracing(
       ? {
           request: spans.request ?? true,
           middleware: spans.middleware ?? true,
+          action: spans.action ?? true,
           loader: spans.loader ?? true,
           render: spans.render ?? true,
           ssr: spans.ssr ?? true,

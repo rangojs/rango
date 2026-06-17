@@ -86,6 +86,17 @@ export const PHASES = {
     attributes: { "rango.middleware_name": metricLabel },
   }),
 
+  /** The server-action execution (decode args + run the action body), before
+   * the revalidation render. The metric label carries the action id (the
+   * _rsc_action / action $$id) so the perf timeline shows WHICH action ran, not
+   * just "an action"; the span also gets it as rango.action_id. */
+  action: (id: string): PhaseSpec => ({
+    metric: { label: `action:${id}` },
+    tracePhase: "action",
+    spanName: "rango.action",
+    attributes: { "rango.action_id": id },
+  }),
+
   /**
    * One loader execution. `depth` is the perf-timeline indentation: 2 (default)
    * for render-time loaders that nest under the render phase; 1 for a standalone

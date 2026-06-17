@@ -621,7 +621,7 @@ export interface RangoOptions<TEnv = any> {
   telemetry?: TelemetrySink;
 
   /**
-   * Span tracing for the router's performance phases (request, middleware,
+   * Span tracing for the router's performance phases (request, middleware, action,
    * loaders, render, ssr). Connects the same phases shown in the
    * `debugPerformance` timeline to the host platform's tracing system. This is
    * the SPAN surface (the `telemetry` option above is the event surface).

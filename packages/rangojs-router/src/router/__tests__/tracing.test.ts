@@ -76,6 +76,7 @@ describe("resolveTracing", () => {
     expect(resolved?.phases).toEqual({
       request: true,
       middleware: true,
+      action: true,
       loader: true,
       render: true,
       ssr: true,
@@ -90,6 +91,7 @@ describe("resolveTracing", () => {
     expect(resolved?.phases).toEqual({
       request: true,
       middleware: true,
+      action: true,
       loader: false,
       render: true,
       ssr: false,

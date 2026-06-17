@@ -886,14 +886,20 @@ export function createRSCHandler<
     if (plan.mode === "action") {
       let actionContinuation: ActionContinuation | undefined;
       try {
+        // Instrument the action execution as its own phase (action:<actionId> +
+        // rango.action), so a POST shows the mutation time AND which action ran,
+        // not just the downstream revalidation render. The action's own
+        // loaders/fetches nest under rango.action.
         const actionOutcome = await withTimeout(
-          executeServerAction(
-            handlerCtx,
-            request,
-            env,
-            url,
-            plan.actionId,
-            handleStore,
+          observePhase(PHASES.action(plan.actionId), () =>
+            executeServerAction(
+              handlerCtx,
+              request,
+              env,
+              url,
+              plan.actionId,
+              handleStore,
+            ),
           ),
           router.timeouts.actionMs,
           "action",

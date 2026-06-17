@@ -1,8 +1,8 @@
 /**
  * Cloudflare custom-spans integration.
  *
- * Bridges the router's performance phases (request, middleware, loaders,
- * render, ssr) onto Cloudflare Workers custom spans so they show up in the
+ * Bridges the router's performance phases (request, middleware, action,
+ * loaders, render, ssr) onto Cloudflare Workers custom spans so they show up in the
  * trace waterfall and OpenTelemetry exports next to the platform's automatic
  * spans (KV reads, D1 queries, fetch calls), with correct parent-child nesting.
  *
@@ -92,7 +92,8 @@ const cloudflareSpanRunner: SpanRunner = (name, fn) => {
 /**
  * Create the tracing config for a Cloudflare router. Pass the result to
  * `createRouter({ tracing })`. Spans are emitted for the request, middleware,
- * loaders, render, and ssr phases; pass `spans` to turn individual phases off.
+ * action, loaders, render, and ssr phases; pass `spans` to turn individual
+ * phases off.
  *
  * @see createOTelTracing (`@rangojs/router`) for the same slot on any platform
  *   with an OpenTelemetry SDK.
