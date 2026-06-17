@@ -6,29 +6,10 @@ import {
   InvalidHostnameError,
   HostValidationError,
 } from "./errors.js";
+import { parseCookiesFromHeader } from "../server/cookie-parse.js";
 
 export function parseCookies(request: Request): Record<string, string> {
-  const cookieHeader = request.headers.get("cookie");
-  if (!cookieHeader) {
-    return {};
-  }
-
-  const cookies: Record<string, string> = {};
-  const pairs = cookieHeader.split(";");
-
-  for (const pair of pairs) {
-    const [name, ...rest] = pair.trim().split("=");
-    if (name && rest.length > 0) {
-      const value = rest.join("=");
-      try {
-        cookies[name] = decodeURIComponent(value);
-      } catch {
-        cookies[name] = value;
-      }
-    }
-  }
-
-  return cookies;
+  return parseCookiesFromHeader(request.headers.get("cookie"));
 }
 
 export function getCookie(request: Request, name: string): string | undefined {
