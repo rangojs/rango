@@ -99,13 +99,34 @@ describe("public consumer imports", () => {
     const result = runConsumerTypecheck({
       "root-consumer.ts": `
 import { createLoader, createRouter, redirect, urls } from "@rangojs/router";
-import type { ActionRef } from "@rangojs/router";
+import {
+  createConsoleSink,
+  createOTelSink,
+  createOTelTracing,
+} from "@rangojs/router";
+import type {
+  ActionRef,
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelTracingOptions,
+} from "@rangojs/router";
 
 void createLoader;
 void createRouter;
 void redirect;
 void urls;
+void createConsoleSink;
 type _ActionRef = ActionRef;
+
+// Pin the server-only observability export surface the docs/JSDoc promise:
+// the tracing slot (createOTelTracing) and the event sink (createOTelSink)
+// imported from the bare root entry, with their public types.
+type _OTelOpts = OTelTracingOptions;
+declare const tracer: OTelTracer & OTelActiveSpanTracer;
+const tracing = createOTelTracing(tracer);
+const sink = createOTelSink(tracer);
+void tracing;
+void sink;
 `,
       "client-consumer.tsx": `
 import { Link, Outlet, href, useLoader, useRouter } from "@rangojs/router/client";

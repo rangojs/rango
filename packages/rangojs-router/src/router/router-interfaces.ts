@@ -322,8 +322,9 @@ export interface RangoInternal<
   readonly debugPerformance?: boolean;
 
   /**
-   * Resolved span tracing (Cloudflare custom spans), or undefined when off.
-   * Threaded onto the request context and read at each traced phase.
+   * Resolved platform phase-span tracing (Cloudflare custom spans or OTel), or
+   * undefined when off. Threaded onto the request context and read at each
+   * traced phase.
    */
   readonly tracing?: ResolvedTracing;
 

@@ -8,33 +8,25 @@
  * allocation, so a non-traced request behaves exactly as before.
  *
  * A platform integration supplies a SpanRunner that wraps fn in a real span.
- * The only shipped runner is the Cloudflare one (createCloudflareTracing in
- * src/cloudflare/tracing.ts), which bridges these phases onto Cloudflare's
- * custom-spans API (executionContext.tracing.enterSpan). The runner wraps the
- * actual work — not a post-hoc event — so spans nest by async context and the
- * platform's automatic spans (KV/D1/fetch) nest under the right phase.
+ * Two runners ship: the Cloudflare one (createCloudflareTracing in
+ * src/cloudflare/tracing.ts), which bridges onto executionContext.tracing.
+ * enterSpan, and the OTel one (createOTelTracing in router/telemetry-otel.ts),
+ * which bridges onto tracer.startActiveSpan. Both wrap the actual work — not a
+ * post-hoc event — so spans nest by async context and the platform's automatic
+ * spans (KV/D1/fetch) nest under the right phase.
  *
- * Most phases are instrumented through the unified measurePhase() primitive
- * (instrument.ts), which co-emits the span AND the debugPerformance perf metric
- * from one wrap site so the two surfaces can't drift:
- *   - rango.loader  (loader:<id>)    loader-cache.ts resolveLoaderData + loader-fetch.ts
- *   - rango.render  (render:total)   rsc/rsc-rendering.ts (match + serialize + SSR)
- *   - rango.ssr     (ssr-render-html) rsc/rsc-rendering.ts (the SSR HTML render)
+ * traceSpan() below is the low-level wrap primitive. It is INTERNAL: the only
+ * caller is observePhase() (instrument.ts), the single phase-instrumentation
+ * API, which co-emits the span AND the debugPerformance perf metric from one
+ * wrap site (or just the span, for metric:false phases) so the two surfaces
+ * can't drift. Every router phase routes through observePhase via the PHASES
+ * registry; do not call traceSpan directly from new code.
  *
- * Two phases still open their span directly via traceSpan(), because their perf
- * metric uses a finer decomposition than a single wrap (both surfaces still
- * cover them — this is granularity, not divergence):
- *   - rango.request   (handler:total)   rsc/handler.ts — span wraps the pipeline
- *     inside the request context; handler:total is the grand total incl. the
- *     pre-context bootstrap timings.
- *   - rango.middleware (middleware:<name>:pre/:post) router/middleware.ts — the
- *     span is the inclusive onion; the metric is the middleware's exclusive
- *     own-time (before/after next()).
- *
- * Not yet wrapped (first cut, deliberate): intercept-route middleware
- * (executeInterceptMiddleware) and action-revalidation renders
- * (revalidateAfterAction). An action's revalidation loaders therefore still emit
- * rango.loader spans, but without a rango.render parent.
+ * Phase coverage (all via observePhase): rango.request (span-only; handler:total
+ * metered directly), rango.middleware (span-only incl. intercept middleware;
+ * pre/post metered directly), rango.loader (loader:<id>; single metering site at
+ * useLoader, plus the fetchable path), rango.render (render:total; normal AND
+ * action-revalidation renders), rango.ssr (ssr-render-html).
  *
  * Span-duration caveat: a span ends when its callback's value (or promise)
  * settles. For the streaming phases (request/render/ssr) that is when the
@@ -44,8 +36,8 @@
  * rango.loader child can end after its parent. This is the streaming + end-on-
  * settle contract, not a defect; phase spans bound setup-to-stream-handoff.
  *
- * This mirrors the OTel adapter (createOTelSink): the core stays agnostic and
- * the platform-specific bridge lives at the edge.
+ * Both shipped runners (Cloudflare, OTel) keep the core agnostic: the
+ * platform-specific bridge lives at the edge behind the SpanRunner contract.
  */
 
 /**
@@ -155,4 +147,42 @@ export function traceSpan<T>(
     return fn(NOOP_TRACE_SPAN);
   }
   return tracing.runner(name, fn);
+}
+
+/**
+ * Run `fn` once and invoke `onSettle` exactly once when it terminates — on a
+ * synchronous return, a synchronous throw, an async resolution, or an async
+ * rejection. `onSettle` receives the error (or `undefined` on success). fn's
+ * value is returned and errors propagate unchanged.
+ *
+ * Centralizes the run-once-then-settle control flow shared by the two span
+ * surfaces: observePhase records the perf metric on settle, and the OTel runner
+ * ends (or error-marks) the span on settle. The Cloudflare runner delegates
+ * settling to enterSpan, so it does not use this.
+ */
+export function runThenSettle<T>(
+  fn: () => T,
+  onSettle: (error: unknown) => void,
+): T {
+  let out: T;
+  try {
+    out = fn();
+  } catch (error) {
+    onSettle(error);
+    throw error;
+  }
+  if (out instanceof Promise) {
+    return out.then(
+      (value) => {
+        onSettle(undefined);
+        return value;
+      },
+      (error) => {
+        onSettle(error);
+        throw error;
+      },
+    ) as unknown as T;
+  }
+  onSettle(undefined);
+  return out;
 }

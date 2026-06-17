@@ -94,7 +94,7 @@
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
-import { resolveSink, safeEmit } from "../telemetry.js";
+import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
@@ -546,19 +546,14 @@ export function withCacheLookup<TEnv>(
         traceSource: "cache-hit",
       });
 
-      const routerCtx = getRouterContext<TEnv>();
-      if (routerCtx.telemetry) {
-        const tSink = resolveSink(routerCtx.telemetry);
-        safeEmit(tSink, {
-          type: "revalidation.decision",
-          timestamp: performance.now(),
-          requestId: routerCtx.requestId,
-          segmentId: segment.id,
-          pathname: ctx.pathname,
-          routeKey: ctx.routeKey,
-          shouldRevalidate,
-        });
-      }
+      observeEvent({
+        type: "revalidation.decision",
+        timestamp: performance.now(),
+        segmentId: segment.id,
+        pathname: ctx.pathname,
+        routeKey: ctx.routeKey,
+        shouldRevalidate,
+      });
 
       if (!shouldRevalidate) {
         segment.component = null;

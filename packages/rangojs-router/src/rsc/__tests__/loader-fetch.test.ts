@@ -31,7 +31,7 @@ vi.mock("../../server/request-context.js", () => {
   });
   return {
     requireRequestContext: make,
-    // measurePhase (loader instrumentation) reads store + tracing from here;
+    // observePhase (loader instrumentation) reads store + tracing from here;
     // the mock context has neither, so it is a pass-through and the loader runs.
     _getRequestContext: make,
   };

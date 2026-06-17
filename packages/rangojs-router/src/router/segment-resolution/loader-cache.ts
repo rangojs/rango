@@ -22,10 +22,6 @@ import type { LoaderEntry } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getRequestContext } from "../../server/request-context.js";
-import { measurePhase } from "../instrument.js";
-
-// Loader perf-timeline indentation depth (loaders nest under the render phase).
-const LOADER_METRIC_DEPTH = 2;
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
@@ -117,34 +113,13 @@ function getLoaderStore(
  *
  * When the LoaderEntry has no cache config, delegates directly to ctx.use(loader).
  * When cached, checks store first and stores on miss via waitUntil.
+ *
+ * Loader metering is NOT done here — it lives at the ctx.use execution funnel
+ * (observePhase; see instrument.ts). A cache HIT returns without calling ctx.use,
+ * so it emits no loader phase (the loader did not execute; the hit is only a
+ * LoaderCache debug log).
  */
 export function resolveLoaderData<TEnv>(
-  loaderEntry: LoaderEntry,
-  ctx: HandlerContext<any, TEnv>,
-  pathname: string,
-): Promise<any> {
-  // Instrument the loader once through the unified phase API: it records the
-  // "loader:<id>" perf metric AND opens the "rango.loader" span from the same
-  // boundary, so the two surfaces always agree. The work (ctx.use / cache
-  // lookup) runs inside the callback, so the platform's automatic KV/D1/fetch
-  // spans nest under the span. This is the single loader-metering site for every
-  // loader path (streaming, non-streaming, and the fetchable _rsc_loader path),
-  // replacing the old per-path appendMetric in fresh.ts.
-  return measurePhase(
-    {
-      metricLabel: `loader:${loaderEntry.loader.$$id}`,
-      depth: LOADER_METRIC_DEPTH,
-      tracePhase: "loader",
-      spanName: "rango.loader",
-    },
-    (span) => {
-      span.setAttribute("rango.loader_id", loaderEntry.loader.$$id);
-      return resolveLoaderDataInner(loaderEntry, ctx, pathname);
-    },
-  );
-}
-
-function resolveLoaderDataInner<TEnv>(
   loaderEntry: LoaderEntry,
   ctx: HandlerContext<any, TEnv>,
   pathname: string,

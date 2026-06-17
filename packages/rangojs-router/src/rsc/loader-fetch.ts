@@ -14,7 +14,7 @@
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { requireRequestContext } from "../server/request-context.js";
-import { measurePhase } from "../router/instrument.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -163,22 +163,11 @@ export async function handleLoaderFetch<TEnv>(
             ...(loaderFormData ? { formData: loaderFormData } : {}),
           };
 
-          // Instrument the fetchable-loader execution through the same unified
-          // phase API the render-time path uses (resolveLoaderData), so
-          // useFetchLoader() requests surface the loader phase on BOTH the perf
-          // report and as a span (nesting their KV/D1/fetch spans under it),
-          // identically to render-time loaders. Pass-through when both are off.
-          const result = await measurePhase(
-            {
-              metricLabel: `loader:${loaderId}`,
-              depth: 1,
-              tracePhase: "loader",
-              spanName: "rango.loader",
-            },
-            (span) => {
-              span.setAttribute("rango.loader_id", loaderId);
-              return fn(loaderCtx);
-            },
+          // Meter the fetchable-loader execution via observePhase, the sole
+          // funnel for this path (fn is called directly, not via ctx.use).
+          // depth:1 — a fetchable request has no render-phase parent.
+          const result = await observePhase(PHASES.loader(loaderId, 1), () =>
+            fn(loaderCtx),
           );
 
           interface LoaderPayload {

@@ -114,9 +114,10 @@ export async function resolveLoaders<TEnv>(
   return loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const pending = pendingLoaderData[i]!;
-    // The "loader:<id>" perf metric is recorded by measurePhase inside
-    // resolveLoaderData (the single loader-metering site), with the real
-    // per-loader duration rather than a Promise.all batch ceiling.
+    // The "loader:<id>" perf metric is recorded by observePhase at the single
+    // loader-metering site (useLoader, reached via ctx.use during
+    // resolveLoaderData), with the real per-loader duration rather than a
+    // Promise.all batch ceiling.
     return {
       id: pending.segmentId,
       namespace: entry.id,

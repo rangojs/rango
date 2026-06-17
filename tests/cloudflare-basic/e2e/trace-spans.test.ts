@@ -53,12 +53,13 @@ function runTraceSpec(f: Fixture): void {
     // /blog renders SSR and has a layout-level loader (BlogSidebarLoader), so
     // the request/render/ssr/loader phases all run. Accept: text/html forces
     // the full-page SSR branch (a bare fetch would take the RSC-payload path).
-    // A unique cb= busts the document cache (its key includes search params),
-    // so this always misses and renders even after earlier blog tests warmed
-    // the cache — otherwise a HIT short-circuits before rango.render/ssr.
-    const cb = `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    // __no_cache disables the cache store for this request, so the document
+    // cache misses (render + ssr run) AND the cached BlogSidebarLoader executes
+    // fresh rather than hitting the loader cache. The loader phase = execution,
+    // so without this a warm loader-cache HIT (cb= only busts the document
+    // cache, not the loader cache) would emit no rango.loader span.
     const res = await page.request.get(
-      f.url(`/blog?__trace_debug=1&cb=${cb}`),
+      f.url(`/blog?__trace_debug=1&__no_cache=1`),
       { headers: { accept: "text/html" } },
     );
     expect(res.status()).toBe(200);

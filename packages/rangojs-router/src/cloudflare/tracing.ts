@@ -93,6 +93,9 @@ const cloudflareSpanRunner: SpanRunner = (name, fn) => {
  * Create the tracing config for a Cloudflare router. Pass the result to
  * `createRouter({ tracing })`. Spans are emitted for the request, middleware,
  * loaders, render, and ssr phases; pass `spans` to turn individual phases off.
+ *
+ * @see createOTelTracing (`@rangojs/router`) for the same slot on any platform
+ *   with an OpenTelemetry SDK.
  */
 export function createCloudflareTracing(
   options: CloudflareTracingOptions = {},

@@ -344,7 +344,12 @@ export {
 // bundle analysis output and slow build-time module resolution. Consumers
 // who need the values in non-RSC contexts can import from
 // `@rangojs/router/server`.
-export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
+export type {
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelSpan,
+  OTelTracingOptions,
+} from "./router/telemetry-otel.js";
 // The full TelemetryEvent union PLUS its member types, so a consumer writing a
 // TelemetrySink can annotate a per-`type` handler (or construct an event literal
 // in a test) instead of only narrowing the opaque union.
@@ -366,14 +371,14 @@ export type {
   OriginCheckRejectedEvent,
 } from "./router/telemetry.js";
 
-// Span tracing config types. The Cloudflare runner factory lives at
-// "@rangojs/router/cloudflare" so non-Cloudflare consumers never import it.
+// Span tracing config types a consumer annotates. SpanRunner/TraceSpan are the
+// internal runner contract (consumers go through createOTelTracing /
+// createCloudflareTracing, which return a ready RouterTracingConfig) and are not
+// exported.
 export type {
   RouterTracingConfig,
   TracePhase,
   TracePhaseToggles,
-  SpanRunner,
-  TraceSpan,
 } from "./router/tracing.js";
 
 // Timeout types and error class

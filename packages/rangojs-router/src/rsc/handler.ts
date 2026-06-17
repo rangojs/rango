@@ -46,8 +46,6 @@ import {
   createReverseFunction,
   stripInternalParams,
 } from "../router/handler-context.js";
-import { getRouterContext } from "../router/router-context.js";
-import { resolveSink, safeEmit } from "../router/telemetry.js";
 import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
@@ -84,7 +82,7 @@ import {
   appendMetric,
   buildMetricsTiming,
 } from "../router/metrics.js";
-import { traceSpan } from "../router/tracing.js";
+import { observePhase, observeEvent, PHASES } from "../router/instrument.js";
 import {
   startSSRSetup,
   getSSRSetup,
@@ -245,24 +243,16 @@ export function createRSCHandler<
       metadata: { timeout: true, phase, durationMs },
     });
 
-    try {
-      const routerCtx = getRouterContext();
-      if (routerCtx?.telemetry) {
-        safeEmit(resolveSink(routerCtx.telemetry), {
-          type: "request.timeout" as const,
-          timestamp: performance.now(),
-          requestId: routerCtx.requestId,
-          phase,
-          pathname: url.pathname,
-          routeKey,
-          actionId,
-          durationMs,
-          customHandler: !!router.onTimeout,
-        });
-      }
-    } catch {
-      // Router context may not be available
-    }
+    observeEvent({
+      type: "request.timeout",
+      timestamp: performance.now(),
+      phase,
+      pathname: url.pathname,
+      routeKey,
+      actionId,
+      durationMs,
+      customHandler: !!router.onTimeout,
+    });
 
     if (router.onTimeout) {
       try {
@@ -506,9 +496,11 @@ export function createRSCHandler<
     // The "rango.request" span is opened inside the request context so the
     // Cloudflare runner can read executionContext.tracing, and so every nested
     // phase span (and the platform's automatic KV/D1/fetch spans) nests under
-    // it. When tracing is off this is a direct pass-through.
+    // it. metric:false — handler:total is metered directly below (a grand total
+    // incl. the pre-context bootstrap timings, finer than a single wrap). When
+    // tracing is off this is a direct pass-through.
     return runWithRequestContext(requestContext, () =>
-      traceSpan(router.tracing, "request", "rango.request", async (span) => {
+      observePhase(PHASES.request, async (span) => {
         span.setAttribute("http.method", request.method);
         // The matched route template is not known until match() runs later, so
         // emit the concrete path as url.path (low-level), NOT http.route — the
@@ -731,23 +723,15 @@ export function createRSCHandler<
           },
         });
 
-        try {
-          const routerCtx = getRouterContext();
-          if (routerCtx?.telemetry) {
-            safeEmit(resolveSink(routerCtx.telemetry), {
-              type: "request.origin-rejected" as const,
-              timestamp: performance.now(),
-              requestId: routerCtx.requestId,
-              method: request.method,
-              pathname: url.pathname,
-              phase: originPhase,
-              origin: request.headers.get("origin"),
-              host: request.headers.get("host"),
-            });
-          }
-        } catch {
-          // Router context may not be available
-        }
+        observeEvent({
+          type: "request.origin-rejected",
+          timestamp: performance.now(),
+          method: request.method,
+          pathname: url.pathname,
+          phase: originPhase,
+          origin: request.headers.get("origin"),
+          host: request.headers.get("host"),
+        });
 
         return originResult;
       }
@@ -789,23 +773,15 @@ export function createRSCHandler<
         params: reqCtx.params as Record<string, string>,
         handledByBoundary: true,
       });
-      try {
-        const routerCtx = getRouterContext();
-        if (routerCtx?.telemetry) {
-          safeEmit(resolveSink(routerCtx.telemetry), {
-            type: "handler.error" as const,
-            timestamp: performance.now(),
-            requestId: routerCtx.requestId,
-            error,
-            handledByBoundary: true,
-            pathname: url.pathname,
-            routeKey: reqCtx._routeName,
-            params: reqCtx.params as Record<string, string>,
-          });
-        }
-      } catch {
-        // Router context may not be available (e.g. prerender path)
-      }
+      observeEvent({
+        type: "handler.error",
+        timestamp: performance.now(),
+        error,
+        handledByBoundary: true,
+        pathname: url.pathname,
+        routeKey: reqCtx._routeName,
+        params: reqCtx.params as Record<string, string>,
+      });
     };
 
     // Set route params early so all execution paths can access ctx.params.

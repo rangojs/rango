@@ -20,6 +20,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -256,7 +257,32 @@ export async function executeServerAction<TEnv>(
  * provide. Redirects are the only non-partial outcome and are handled via
  * X-RSC-Redirect headers before Flight deserialization.
  */
-export async function revalidateAfterAction<TEnv>(
+export function revalidateAfterAction<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  continuation: ActionContinuation,
+): Promise<Response> {
+  // Instrument the action-revalidation render through the unified phase API,
+  // exactly like a normal navigation render (handleRscRendering). It records
+  // "render:total" AND opens "rango.render" from one boundary covering
+  // matchPartial -> serialize, so the revalidation loaders' rango.loader spans
+  // nest under a rango.render parent instead of dangling at the request root.
+  return observePhase(PHASES.render, () =>
+    revalidateAfterActionInner(
+      ctx,
+      request,
+      env,
+      url,
+      handleStore,
+      continuation,
+    ),
+  );
+}
+
+async function revalidateAfterActionInner<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
   env: TEnv,
@@ -335,13 +361,8 @@ export async function revalidateAfterAction<TEnv>(
   });
   const rscSerializeDur = performance.now() - renderStart;
   // This measures synchronous stream creation, not end-to-end stream consumption.
+  // render:total is recorded by the observePhase wrapper in revalidateAfterAction.
   appendMetric(metricsStore, "rsc-serialize", renderStart, rscSerializeDur);
-  appendMetric(
-    metricsStore,
-    "render:total",
-    renderStart,
-    performance.now() - renderStart,
-  );
 
   return createResponseWithMergedHeaders(rscStream, {
     status: actionStatus,

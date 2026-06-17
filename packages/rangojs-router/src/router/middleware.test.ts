@@ -19,7 +19,21 @@ import {
   serializeCookieValue as serializeCookie,
 } from "../server/request-context.js";
 import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
+import { resolveTracing } from "./tracing.js";
 import type { MetricsStore } from "../server/context.js";
+
+function recordingTracing() {
+  const spans: string[] = [];
+  return {
+    spans,
+    tracing: resolveTracing({
+      runner: (name, fn) => {
+        spans.push(name);
+        return fn({ setAttribute() {} });
+      },
+    }),
+  };
+}
 
 function createMetrics(): MetricsStore {
   return { enabled: true, requestStart: performance.now(), metrics: [] };
@@ -1335,6 +1349,40 @@ describe("middleware", () => {
       expect(result).toBeInstanceOf(Response);
       expect(result!.status).toBe(403);
       expect(await result!.text()).toBe("Blocked");
+    });
+
+    it("opens a rango.middleware span per intercept middleware when tracing is on", async () => {
+      // Intercept middleware previously ran un-instrumented (no span). It now
+      // emits rango.middleware (span-only, metric:false) like the main chain, so
+      // an intercept's middleware shows up in the trace waterfall under the
+      // render phase it runs inside.
+      const { spans, tracing } = recordingTracing();
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+      const stubResponse = reqCtx.res;
+
+      const middleware: MiddlewareFn<unknown> = async (_ctx, next) => {
+        await next();
+      };
+
+      await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware(
+          [middleware],
+          request,
+          {},
+          {},
+          {},
+          stubResponse,
+        ),
+      );
+
+      expect(spans).toContain("rango.middleware");
     });
 
     it("should apply cookies to short-circuit Response", async () => {

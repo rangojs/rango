@@ -272,13 +272,14 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 ### Telemetry and Observability
 
 - `telemetry` router option — pluggable `TelemetrySink` for structured lifecycle events
-- `createConsoleSink()` — development logger for all 10 event types
-- `createOTelSink(tracer)` — OpenTelemetry adapter mapping events to `rango.*` spans
-- Event types: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`
+- `createConsoleSink()` — development logger for every `TelemetryEvent` variant (11 today, incl. request.timeout and request.origin-rejected)
+- `createOTelSink(tracer)` — OpenTelemetry **event** adapter: maps the discrete-fact events (handler error, cache/revalidation decisions, timeout, origin-rejected) to instant `rango.*` spans. Does NOT emit request/loader phase spans (those are the `tracing` slot's, via `createOTelTracing`) — so running it alongside a tracing adapter does not duplicate phase spans
+- Event types: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`, `request.origin-rejected`
 - Zero overhead when no sink is configured (no-op singleton)
 - Structurally typed OTel interfaces (`OTelTracer`, `OTelSpan`) — no `@opentelemetry/api` dependency
-- `tracing` router option — span wrapping for the request/middleware/loader/render/ssr phases via a platform `SpanRunner` (`traceSpan()` is a direct pass-through when unset, so a non-traced request behaves identically)
+- `tracing` router option — span wrapping for the request/middleware/loader/render/ssr phases via a platform `SpanRunner`; routed through the internal `observePhase()` primitive (instrument.ts) which co-emits the debugPerformance perf metric, so spans and the perf timeline are one model. Pass-through (`NOOP_TRACE_SPAN`) when unset
 - `createCloudflareTracing()` (`@rangojs/router/cloudflare`) — emits Cloudflare custom spans (`rango.*`) by wrapping each phase with `executionContext.tracing.enterSpan`, so they nest by async context and appear next to the platform's automatic KV/D1/fetch spans; import-free (no `cloudflare:workers` import, no `@cloudflare/workers-types` dependency)
+- `createOTelTracing(tracer)` — OpenTelemetry **phase-span** adapter for the `tracing` slot: bridges the phases onto `tracer.startActiveSpan` (callback-bound, faithful async-context nesting). `OTelTracingOptions` (`enabled`, per-phase `spans`)
 
 ### Dev and HMR
 

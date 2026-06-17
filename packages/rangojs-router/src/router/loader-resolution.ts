@@ -5,8 +5,8 @@
  */
 
 import type { ReactNode } from "react";
-import { track } from "../server/context";
 import type { EntryData } from "../server/context";
+import { observePhase, PHASES } from "./instrument.js";
 import { contextGet } from "../context-var.js";
 import type {
   ResolvedSegment,
@@ -382,7 +382,11 @@ function createLoaderExecutor<TEnv>(
       },
     };
 
-    const doneLoader = track(`loader:${loader.$$id}`, 2);
+    // Meter this loader once via observePhase (loader:<id> perf metric +
+    // rango.loader span); loaderFn runs inside the span callback so its KV/D1/
+    // fetch spans nest under it. This is one of the observePhase loader funnels —
+    // see instrument.ts for the single-metering contract.
+    //
     // Run the loader body inside loader scope so request-scoped reads
     // (cookies()/headers() and non-cacheable ctx.get) are exempt from the
     // cache-purity guards: loaders always run fresh, so their reads never leak
@@ -392,14 +396,15 @@ function createLoaderExecutor<TEnv>(
     // throw. rendered() gating uses the captured isDslLoader (above), so this
     // does not grant rendered() to handler-invoked loaders. Uses a body-only
     // scope, so isInsideLoaderScope() / barrier / deadlock gating is unchanged.
-    const promise = Promise.resolve(
-      runInsideLoaderBodyScope(() =>
-        loaderFn(loaderCtx as LoaderContext<any, TEnv>),
-      ),
-    ).finally(() => {
-      pendingLoaders.delete(loader.$$id);
-      doneLoader();
-    });
+    const promise = observePhase(PHASES.loader(loader.$$id), () =>
+      Promise.resolve(
+        runInsideLoaderBodyScope(() =>
+          loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+        ),
+      ).finally(() => {
+        pendingLoaders.delete(loader.$$id);
+      }),
+    );
 
     loaderPromises.set(loader.$$id, promise);
     return promise;

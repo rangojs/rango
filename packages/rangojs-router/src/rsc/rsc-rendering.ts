@@ -11,7 +11,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
-import { measurePhase } from "../router/instrument.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { MatchResult } from "../types.js";
@@ -36,22 +36,16 @@ export function handleRscRendering<TEnv>(
   // same boundary (match -> serialize -> SSR), so the two surfaces agree.
   // Loaders kicked off during matching nest under the span; the SSR HTML pass
   // below opens "rango.ssr" the same way.
-  return measurePhase(
-    {
-      metricLabel: "render:total",
-      tracePhase: "render",
-      spanName: "rango.render",
-    },
-    () =>
-      handleRscRenderingInner(
-        ctx,
-        request,
-        env,
-        url,
-        isPartial,
-        handleStore,
-        nonce,
-      ),
+  return observePhase(PHASES.render, () =>
+    handleRscRenderingInner(
+      ctx,
+      request,
+      env,
+      url,
+      isPartial,
+      handleStore,
+      nonce,
+    ),
   );
 }
 
@@ -210,7 +204,7 @@ async function handleRscRenderingInner<TEnv>(
   );
 
   if (isRscRequest(request, url, isPartial)) {
-    // render:total is recorded by the measurePhase wrapper around this function.
+    // render:total is recorded by the observePhase wrapper around this function.
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
@@ -253,18 +247,12 @@ async function handleRscRenderingInner<TEnv>(
   );
 
   // ssr-render-html metric + rango.ssr span from one boundary. render:total is
-  // recorded by the measurePhase wrapper around this function.
-  const htmlStream = await measurePhase(
-    {
-      metricLabel: "ssr-render-html",
-      tracePhase: "ssr",
-      spanName: "rango.ssr",
-    },
-    () =>
-      ssrModule.renderHTML(rscStream, {
-        nonce,
-        streamMode,
-      }),
+  // recorded by the observePhase wrapper around this function.
+  const htmlStream = await observePhase(PHASES.ssr, () =>
+    ssrModule.renderHTML(rscStream, {
+      nonce,
+      streamMode,
+    }),
   );
 
   return createResponseWithMergedHeaders(htmlStream, {

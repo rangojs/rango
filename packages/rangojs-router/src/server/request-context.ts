@@ -41,7 +41,8 @@ import {
 } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { withDefer } from "../defer.js";
-import { track, type MetricsStore } from "./context.js";
+import { type MetricsStore } from "./context.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
@@ -364,7 +365,7 @@ export interface RequestContext<
   /** @internal Request-scoped performance metrics store */
   _metricsStore?: MetricsStore;
 
-  /** @internal Resolved span tracing for this request (Cloudflare custom spans) */
+  /** @internal Resolved platform phase-span tracing for this request (Cloudflare or OTel) */
   _tracing?: ResolvedTracing;
 
   /** @internal Router basename for this request (used by redirect()) */
@@ -1118,10 +1119,13 @@ export function createUseFunction<TEnv>(
       },
     };
 
-    const doneLoader = track(`loader:${loader.$$id}`, 2);
-    const promise = Promise.resolve(loaderFn(loaderCtx)).finally(() => {
-      doneLoader();
-    });
+    // Meter through the same unified phase API as the loader-resolution funnel
+    // (observePhase), so a loader resolved via this base request-context ctx.use
+    // co-emits the "loader:<id>" perf metric AND the "rango.loader" span — no
+    // drift between the two ctx.use implementations.
+    const promise = observePhase(PHASES.loader(loader.$$id), () =>
+      Promise.resolve(loaderFn(loaderCtx)),
+    );
 
     loaderPromises.set(loader.$$id, promise);
 
