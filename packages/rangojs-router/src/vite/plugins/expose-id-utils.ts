@@ -246,3 +246,80 @@ export function findStatementEnd(code: string, pos: number): number {
 export function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/**
+ * Given an index pointing just past a `create*` callee identifier, return the
+ * index of the call's opening `(`, accounting for an optional generic type
+ * argument list `<...>` with arbitrarily nested `<>`. Returns -1 when the next
+ * non-trivia token is neither `<` nor `(` (i.e. not a call site).
+ *
+ * Replaces the single-level `<[^>]*>` regex assumption, which stopped at the
+ * first `>` and so never reached `(` for `createRouter<Config<Env>>(`.
+ *
+ * Whitespace, comments, and strings between the callee and `(` are skipped via
+ * skipStringOrComment. The `<...>` scan only balances angle brackets; it does
+ * not attempt to parse full TS type syntax (sufficient for locating the paren).
+ */
+export function findCallParenAfterGenerics(
+  code: string,
+  afterCalleeIndex: number,
+): number {
+  let i = afterCalleeIndex;
+  // Skip leading whitespace/comments/strings before `<` or `(`.
+  while (i < code.length) {
+    const skipped = skipStringOrComment(code, i);
+    if (skipped > i) {
+      i = skipped;
+      continue;
+    }
+    if (/\s/.test(code[i])) {
+      i++;
+      continue;
+    }
+    break;
+  }
+
+  if (i >= code.length) return -1;
+
+  if (code[i] === "(") return i;
+
+  if (code[i] === "<") {
+    let depth = 0;
+    while (i < code.length) {
+      const skipped = skipStringOrComment(code, i);
+      if (skipped > i) {
+        i = skipped;
+        continue;
+      }
+      const ch = code[i];
+      if (ch === "<") {
+        depth++;
+      } else if (ch === ">") {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+      i++;
+    }
+    if (depth !== 0) return -1;
+    // After the balanced generic list, skip trivia and expect `(`.
+    while (i < code.length) {
+      const skipped = skipStringOrComment(code, i);
+      if (skipped > i) {
+        i = skipped;
+        continue;
+      }
+      if (/\s/.test(code[i])) {
+        i++;
+        continue;
+      }
+      break;
+    }
+    if (i < code.length && code[i] === "(") return i;
+    return -1;
+  }
+
+  return -1;
+}
