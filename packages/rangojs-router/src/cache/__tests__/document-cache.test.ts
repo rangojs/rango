@@ -779,7 +779,7 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
     });
 
-    it("should ignore internal _rsc* and __* query params in default key", async () => {
+    it("should ignore internal _rsc* and __no_cache query params in default key", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
 
@@ -790,9 +790,11 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      // Cache entry with internal query params present
+      // Cache entry with internal query params present. A4: only `_rsc*` and the
+      // reserved `__no_cache` are internal; a generic `__`-prefixed param is a
+      // consumer param and keys the cache, so it is no longer used here.
       const withInternal = createMockMiddlewareContext(
-        "http://localhost/page?tab=all&__debug_manifest=1&_rsc_v=abc",
+        "http://localhost/page?tab=all&__no_cache=1&_rsc_v=abc",
       );
       const next1 = vi.fn().mockResolvedValue(
         new Response("Tabbed", {

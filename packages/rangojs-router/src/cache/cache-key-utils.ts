@@ -6,24 +6,35 @@
  * document-cache, and loader-cache.
  */
 
+import { encodeKV } from "../encode-kv.js";
+
+/**
+ * Reserved URL query params that the router owns and must never key the cache
+ * on. `_rsc*` is the router's internal navigation/action/loader prefix (matched
+ * by prefix). `__no_cache` is the single `__`-prefixed param the router reads
+ * (handler.ts / testing dispatch.ts use it to bypass the store); it is matched
+ * by an EXACT allowlist, not a blanket `__` prefix. A blanket `__` filter would
+ * silently collapse consumer params like `__variant=a` vs `__variant=b` onto one
+ * cache slot, since the router owns no other `__` param.
+ */
+function isReservedSearchParam(key: string): boolean {
+  return key.startsWith("_rsc") || key === "__no_cache";
+}
+
 /**
  * Build a sorted, deterministic query string from URLSearchParams,
- * excluding internal _rsc* and __* params.
+ * excluding the router's reserved params (see isReservedSearchParam).
  *
  * Returns empty string when no user-facing params exist.
  */
 export function sortedSearchString(searchParams: URLSearchParams): string {
   const pairs: [string, string][] = [];
   for (const [k, v] of searchParams) {
-    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
+    if (!isReservedSearchParam(k)) {
       pairs.push([k, v]);
     }
   }
-  if (pairs.length === 0) return "";
-  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return pairs
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
+  return encodeKV(pairs, { sort: true });
 }
 
 /**
@@ -35,10 +46,5 @@ export function sortedRouteParams(
   params: Record<string, string> | undefined,
 ): string {
   if (!params) return "";
-  const entries = Object.entries(params);
-  if (entries.length === 0) return "";
-  return entries
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
+  return encodeKV(Object.entries(params), { sort: true });
 }

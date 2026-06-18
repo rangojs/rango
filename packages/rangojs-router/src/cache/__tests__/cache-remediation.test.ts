@@ -313,11 +313,11 @@ describe("cache key search param handling (via CacheScope)", () => {
     expect(key1).not.toBe(key2);
   });
 
-  it("excludes _rsc* and __* params from key", async () => {
+  it("excludes _rsc* and the reserved __no_cache param but keeps consumer __ params (A4)", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
     mockGetRequestContext.mockReturnValue(
-      makeRequestContext("?page=1&_rsc_partial=1&__debug=true"),
+      makeRequestContext("?page=1&_rsc_partial=1&__no_cache=1&__variant=a"),
     );
     const scope = new CacheScope({ store } as any);
     await scope.lookupRoute("/test", {});
@@ -325,7 +325,10 @@ describe("cache key search param handling (via CacheScope)", () => {
 
     expect(key).toContain("page=1");
     expect(key).not.toContain("_rsc");
-    expect(key).not.toContain("__debug");
+    // __no_cache is reserved (handler bypass flag) and filtered; a `__`-prefixed
+    // consumer param is NOT reserved and must key the cache.
+    expect(key).not.toContain("__no_cache");
+    expect(key).toContain("__variant=a");
   });
 
   it("sorts params deterministically", async () => {

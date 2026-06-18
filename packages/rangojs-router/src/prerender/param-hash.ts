@@ -4,16 +4,17 @@
  * DJB2-based; works in all JS environments without crypto imports.
  */
 
+import { encodeKV } from "../encode-kv.js";
+
 // For static routes (no params), returns "_".
 export function hashParams(params: Record<string, string>): string {
   const entries = Object.entries(params);
   if (entries.length === 0) return "_";
 
-  const sorted = entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const str = sorted
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-  return djb2Hex(str);
+  // Byte-order sort + encodeURIComponent join (see encodeKV); output is
+  // byte-identical to the prior inline implementation, so build-time and
+  // runtime hashes stay stable.
+  return djb2Hex(encodeKV(entries, { sort: true }));
 }
 
 /**
