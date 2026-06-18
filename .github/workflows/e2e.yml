@@ -126,9 +126,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build rangojs-router
-        run: pnpm --filter @rangojs/router build
-
+      # No router build: typecheck resolves @rangojs/router types from src
+      # (the exports map `types` points at ./src/*), so dist/ is not needed.
       - name: Run typecheck
         run: pnpm typecheck
 
@@ -152,6 +151,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      # The build is needed here: generate-cli.test.ts spawns the built CLI
+      # (dist/bin/rango.js) as a subprocess, so the unit suite needs dist/.
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
 
