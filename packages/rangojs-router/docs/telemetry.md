@@ -440,7 +440,7 @@ The `createOTelSink` adapter maps the router's **discrete-fact events** to
 | ------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `rango.handler.error`           | `rango.segment_id`, `rango.segment_type`, `rango.route_key`, `rango.handled_by_boundary` (error status) |
 | `rango.cache.decision`          | `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source`                                |
-| `rango.revalidation.decision`   | `rango.segment_id`, `rango.route_key`, `rango.revalidate`                                               |
+| `rango.revalidation.decision`   | `rango.segment_id`, `http.route`, `rango.route_key`, `rango.revalidate`                                 |
 | `rango.request.timeout`         | `rango.phase`, `http.route`, `rango.duration_ms`, `rango.timeout.custom_handler` (error status)         |
 | `rango.request.origin-rejected` | `http.method`, `http.route`, `rango.phase`, `rango.origin` (error status)                               |
 
@@ -647,5 +647,7 @@ import type {
   HandlerErrorEvent,
   CacheDecisionEvent,
   RevalidationDecisionEvent,
+  RequestTimeoutEvent,
+  OriginCheckRejectedEvent,
 } from "@rangojs/router";
 ```

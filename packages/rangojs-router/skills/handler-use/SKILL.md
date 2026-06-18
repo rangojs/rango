@@ -40,7 +40,7 @@ ProductPage.use = () => [
   loading(<ProductSkeleton />),
   middleware(async (ctx, next) => {
     await next();
-    ctx.header("Cache-Control", "private, max-age=60");
+    ctx.headers.set("Cache-Control", "private, max-age=60");
   }),
 ];
 ```

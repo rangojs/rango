@@ -346,6 +346,10 @@ state persists on back/forward. See `/hooks` for details.
 Attach location state to any server response (not just redirects):
 
 ```typescript
+import { createLocationState } from "@rangojs/router";
+
+const ServerInfo = createLocationState<{ data: string }>();
+
 path("/dashboard", (ctx) => {
   ctx.setLocationState(ServerInfo({ data: "welcome" }));
   return <Dashboard />;

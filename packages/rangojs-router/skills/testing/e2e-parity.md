@@ -49,7 +49,7 @@ This is full-stack: the harness builds and serves your real app (`pnpm dev` or `
 
 `createRangoE2E(...)` -> `RangoE2E`:
 
-- `useFixture(options)` -> `Fixture` (`{ mode, root, url(path?), proc() }`). `url(path)` resolves against the running server.
+- `useFixture(options)` -> `Fixture` (`{ mode, root, url(url?), proc() }`). `url(path)` resolves against the running server.
 - `parityDescribe(name, (f) => { ... }, options?)` -> registers a dev describe `name` AND a production describe `` `${name} (production)` ``. Body runs once per describe with that describe's `Fixture`.
 - `expectParity(page, intent, opts) => Promise<void>` — runs `intent` over the JS page and a fresh no-JS context, asserts observed testids' text + pathname/search/hash + `document.cookie` are equal. `opts` is the required `observe` plus optional `baseURL`, `waitFor`, and `ignoreCookies` (the rango state cookie is excluded automatically).
 - `rangoMatchers` — `{ toHaveRangoPathname }` only (pass to `expect.extend`).

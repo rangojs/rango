@@ -382,10 +382,12 @@ the value is non-cacheable.
 - `ctx.get(nonCacheableVar)` inside cache scope: throws.
 - `ctx.set(var, value)` inside cache scope: allowed for cacheable vars (children
   are also inside the cache boundary).
-- Response-level side effects (`ctx.header()`, `ctx.setCookie()`, `ctx.setStatus()`,
-  `ctx.onResponse()`) throw inside cache scope **for handlers**, regardless of
-  cache-safety flag. `ctx.headers.set/append/delete()` also throws via the
-  guarded Headers proxy. DSL loaders are exempt — see below.
+- Response-level side effects throw inside cache scope regardless of cache-safety
+  flag: from a handler, `ctx.headers.set/append/delete()` (the guarded Headers
+  proxy) and `cookies().set/delete()` (the cookie-store guard); from middleware
+  wrapping the cached render, `ctx.header()` / `ctx.headers.*`. (`setStatus()` /
+  `setCookie()` / `onResponse()` live on the full request context, not the handler
+  or middleware `ctx`.) DSL loaders are exempt — see below.
 
 ### Loader access paths and cache safety
 

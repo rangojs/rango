@@ -119,6 +119,8 @@ interface BuildContext<TParams> {
   use: <T>(handle: Handle<T>) => (data: T) => void; // Push handle data
   url: URL; // Synthetic URL from pattern + params
   pathname: string; // Pathname from synthetic URL
+  searchParams: URLSearchParams; // URLSearchParams from the synthetic URL (always empty for prerender)
+  search: {}; // Typed search params -- always {} for prerender (no real query string)
   set(key: string, value: any): void; // Set context variable (string key)
   set<T>(contextVar: ContextVar<T>, value: T): void; // Set typed context variable
   get(key: string): any; // Read context variable (string key)

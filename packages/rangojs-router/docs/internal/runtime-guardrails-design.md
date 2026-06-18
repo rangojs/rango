@@ -70,11 +70,11 @@ The same action produces different response behavior depending on whether
 the request came from a JavaScript-enabled client (Flight payload) or a
 progressive enhancement form submission (full HTML re-render).
 
-JS path: `handler.ts:418-447` executes action, then `449-491` renders
-Flight payload wrapped in route middleware.
+JS path: `handler.ts` executes action via `executeServerAction` (called
+around line 914), then renders Flight payload wrapped in route middleware.
 
-PE path: `progressive-enhancement.ts:77-113` executes action, then
-`128-192` re-renders full HTML page wrapped in route middleware.
+PE path: `progressive-enhancement.ts` executes action (lines ~116-223),
+then re-renders full HTML page wrapped in route middleware.
 
 Both paths execute actions and wrap rendering with middleware identically,
 so the _rendering_ is consistent. The divergence risk is in **action return
@@ -99,10 +99,10 @@ a Response instance, since PE silently drops it.
 ### Warning text
 
 ```
-[rango] Server action returned a Response object during progressive
-enhancement (no-JS) request. The redirect/response will be ignored — the
-page will re-render at the current URL instead. To handle PE redirects,
-use redirect() in the action. See: progressive-enhancement docs
+[rango] Server action returned a non-redirect Response during progressive
+enhancement (no-JS) request. The Response will be ignored — the page
+will re-render at the current URL instead. To handle PE redirects, use
+redirect() in the action. See: progressive-enhancement docs
 ```
 
 ### Confidence / false-positive risk
@@ -139,7 +139,7 @@ contradict each other. Examples:
 when both cache config and revalidation rules are present on the same
 entry, validate compatibility.
 
-`cache-scope.ts:104-118` creates the scope with config. The revalidation
+`cache-scope.ts` creates the scope via `createCacheScope` (line 523). The revalidation
 rules are evaluated later in `evaluateRevalidation()`. Detection would need
 to happen where both are visible — in the match pipeline
 (`match-middleware/cache-lookup.ts` + `revalidation.ts`).

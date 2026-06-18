@@ -153,10 +153,11 @@ Purge-by-tag is available on all plans (since April 2025), subject to per-plan
 rate limits, so the batched single call matters. With a purge wired, `tagCacheTtl`
 becomes a pure read-cost reducer + fallback window.
 
-## Named Profile Shorthand
+## Named Cache Profiles
 
-Use a named cache profile string instead of an options object. The profile must be
-defined in `createRouter({ cacheProfiles })`. Unknown names throw at boot time.
+Define named profiles in `createRouter({ cacheProfiles })` so the same TTL/SWR
+values can be shared across the DSL and `"use cache"` functions without repetition.
+Unknown names throw at boot time.
 
 ```typescript
 // Define profiles in router
@@ -167,19 +168,25 @@ createRouter({
     long: { ttl: 3600, swr: 7200 },
   },
 });
+```
 
-// Use by name in urls
+In the DSL, pass the profile's options directly to `cache()`:
+
+```typescript
 export const urlpatterns = urls(({ path, cache }) => [
-  cache("long", () => [path("/blog", BlogIndex, { name: "blog" })]),
+  cache({ ttl: 3600, swr: 7200 }, () => [
+    path("/blog", BlogIndex, { name: "blog" }),
+  ]),
 
-  // Also works without children (orphan cache boundary)
-  cache("short"),
+  // Orphan cache boundary (covers subsequent siblings)
+  cache({ ttl: 60, swr: 120 }),
   path("/feed", FeedPage, { name: "feed" }),
 ]);
 ```
 
-These profile names are shared with the `"use cache: <name>"` directive. See
-`/use-cache` for function-level caching.
+The DSL `cache()` helper does NOT accept a string profile name — strings are only
+valid in the `"use cache: <name>"` directive inside server functions. See
+`/use-cache` for function-level caching with named profiles.
 
 ## Loader-Level Caching
 

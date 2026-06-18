@@ -15,12 +15,12 @@ to Node streams should read this first.
   (`src/ssr/index.tsx:344`, `:354`, `:358`) — all Web Streams APIs.
 - **Flight / RSC layer** uses `@vitejs/plugin-rsc/rsc` (re-exported via
   `src/deps/rsc.ts`), whose `renderToReadableStream` comes from the vendored
-  `react-server-dom-webpack/server.edge`. Call site: `src/rsc/rsc-rendering.ts:163`.
+  `react-server-dom-webpack/server.edge`. Call site: `src/rsc/rsc-rendering.ts:197`.
 - Both stream bodies are handed to `new Response(...)` as a Web `ReadableStream`
-  via `createResponseWithMergedHeaders` (`src/rsc/helpers.ts:74`); RSC-only
-  responses return the raw Web `rscStream` (`src/rsc/rsc-rendering.ts:202`), HTML
+  via `createResponseWithMergedHeaders` (`src/rsc/helpers.ts:117`); RSC-only
+  responses return the raw Web `rscStream` (`src/rsc/rsc-rendering.ts:240`), HTML
   responses return `htmlStream` after `pipeThrough(injectRSCPayload(...))`
-  (`src/rsc/rsc-rendering.ts:217-227`).
+  (`src/ssr/index.tsx:359`).
 
 `react-dom@19.x` `./server.edge` exports **only** `renderToReadableStream`.
 `./server.node` exports **both** `renderToPipeableStream` _and_

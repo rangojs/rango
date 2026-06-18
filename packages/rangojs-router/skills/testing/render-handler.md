@@ -39,7 +39,7 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 | `get`              | `(Var) => value`                     | Read a seeded `vars` variable.                                                                 |
 | `headers`          | `Headers`                            | Response headers; set via `ctx.headers.set(...)` (merged into `result.response`).              |
 | `setLocationState` | `(entries) => void`                  | Set location state (surfaced on `result.locationState`).                                       |
-| `waitUntil`        | `(promise) => void`                  | Register background work.                                                                      |
+| `waitUntil`        | `(fn: () => Promise<void>) => void`  | Register background work.                                                                      |
 
 ### Returns — `RenderHandlerResult`
 

@@ -89,7 +89,7 @@ If the user does a full navigation after a shallow one, the server receives the 
 
 ## Implementation
 
-- `revalidate?: boolean` on `NavigateOptions` and `LinkProps` (`types.ts`)
+- `revalidate?: boolean` on `NavigateOptions` (`browser/types.ts` line 272) and `LinkProps` (`browser/react/Link.tsx` line 116); consumer-facing type is `RouterNavigateOptions` from `@rangojs/router/client`
 - Early return in `navigation-bridge.ts` `navigate()` when `revalidate === false` and same pathname
 - Preserves intercept context, scroll restoration, and `useLocationState()` dispatch
 - `data-revalidate="false"` on `<a>` tags via `link-interceptor.ts`

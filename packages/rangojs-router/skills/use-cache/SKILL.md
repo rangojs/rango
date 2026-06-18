@@ -52,8 +52,9 @@ export async function ProductCard({ id }: { id: string }) {
 
 ## Named Cache Profiles
 
-Define profiles in createRouter. Profile names map to `"use cache: <name>"` and
-`cache('<name>')` in the DSL.
+Define profiles in createRouter. Profile names map to `"use cache: <name>"` in
+the directive. The DSL `cache()` does not accept a string profile name; use an
+options object (`cache({ ttl: 60 })`) or the `"use cache: <name>"` directive.
 
 ```typescript
 createRouter({
@@ -340,13 +341,13 @@ that same namespace). The separate `revalidate()` export is the client-update ax
 
 ## Interaction with Other Caching
 
-| Mechanism          | Granularity        | When       | Use case                                        |
-| ------------------ | ------------------ | ---------- | ----------------------------------------------- |
-| `"use cache"`      | Function/component | Runtime    | Cache individual data fetches or components     |
-| `cache()` DSL      | Route segment      | Runtime    | Cache entire route subtrees with children       |
-| `cache('profile')` | Route segment      | Runtime    | Same as cache() with a named profile            |
-| `Static()`         | Route segment      | Build-time | Render once, never re-render                    |
-| `Prerender()`      | Route segment      | Build-time | Pre-render known params, optional live fallback |
+| Mechanism            | Granularity        | When       | Use case                                        |
+| -------------------- | ------------------ | ---------- | ----------------------------------------------- |
+| `"use cache"`        | Function/component | Runtime    | Cache individual data fetches or components     |
+| `cache()` DSL        | Route segment      | Runtime    | Cache entire route subtrees with children       |
+| `cache({ ttl })` DSL | Route segment      | Runtime    | Cache a route subtree with explicit options     |
+| `Static()`           | Route segment      | Build-time | Render once, never re-render                    |
+| `Prerender()`        | Route segment      | Build-time | Pre-render known params, optional live fallback |
 
 ## Dev Mode
 

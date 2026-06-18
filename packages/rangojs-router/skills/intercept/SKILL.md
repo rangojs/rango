@@ -23,7 +23,7 @@ function ShopLayout() {
   );
 }
 
-export const urlpatterns = urls(({ path, layout, intercept, loader }) => [
+export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) => [
   layout(<ShopLayout />, () => [
     // Intercept product detail - shows modal during soft navigation
     intercept(
