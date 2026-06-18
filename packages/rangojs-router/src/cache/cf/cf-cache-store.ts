@@ -1177,6 +1177,45 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     else void write();
   }
 
+  /**
+   * Document-tier counterpart of markRevalidating for getResponse's herd guard.
+   * The segment/item tiers JSON-parse the body, so they re-put with a string
+   * body; document bodies are streamed verbatim, so we re-put with a CLONED
+   * response body (`response.clone()`) supplied by the caller -- the original
+   * body still streams to the client while the marker carries the clone. Same
+   * REVALIDATING status header, same revalidating-at stamp, same
+   * remainingCacheControl re-put math as markRevalidating, so the document tier
+   * suppresses concurrent revalidation for the identical MAX_REVALIDATION_INTERVAL
+   * window the segment tier does. Best-effort and non-blocking: a failed marker
+   * write must not affect the served stale read.
+   * @internal
+   */
+  private markResponseRevalidating(
+    cache: Cache,
+    request: Request,
+    clonedResponse: Response,
+  ): void {
+    const reputNow = Date.now();
+    const headers = new Headers(clonedResponse.headers);
+    headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
+    headers.set(CACHE_REVALIDATING_AT_HEADER, String(reputNow));
+    headers.set("Cache-Control", remainingCacheControl(headers, reputNow));
+    const markerResponse = new Response(clonedResponse.body, {
+      status: clonedResponse.status,
+      statusText: clonedResponse.statusText,
+      headers,
+    });
+    const write = async (): Promise<void> => {
+      try {
+        await cache.put(request, markerResponse);
+      } catch {
+        // Best-effort: see markRevalidating.
+      }
+    };
+    if (this.waitUntil) this.waitUntil(write);
+    else void write();
+  }
+
   // ============================================================================
   // Segment Cache Methods
   // ============================================================================
@@ -1592,7 +1631,23 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // Check staleness
       const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) || 0);
-      const isStale = staleAt > 0 && Date.now() > staleAt;
+      const now = Date.now();
+      const isStale = staleAt > 0 && now > staleAt;
+
+      // Thundering-herd guard, mirroring the segment (get) and item (getItem)
+      // tiers. Without it, every concurrent stale reader returned
+      // shouldRevalidate=true and document-cache.ts scheduled a fresh render for
+      // each one. Recency comes from our own revalidating-at stamp, not CF's Age
+      // header (see CACHE_REVALIDATING_AT_HEADER); an absent/zero stamp counts as
+      // "not recent" so a dropped revalidation re-arms instead of pinning.
+      const status = response.headers.get(CACHE_STATUS_HEADER);
+      const revalidatingAt = Number(
+        response.headers.get(CACHE_REVALIDATING_AT_HEADER) ?? "0",
+      );
+      const isRevalidating =
+        status === "REVALIDATING" &&
+        revalidatingAt > 0 &&
+        now - revalidatingAt < MAX_REVALIDATION_INTERVAL * 1000;
 
       // L1 document bodies are streamed through verbatim - unlike the segment/
       // item tiers (which JSON-parse and so structurally detect corruption) and
@@ -1601,9 +1656,25 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // response atomically or fails, so a truncated body is not served back. We
       // deliberately do NOT buffer+hash the body to re-verify it: that would
       // defeat streaming the document and add a full read to every cache hit.
+
+      if (isStale && !isRevalidating) {
+        // First stale reader within the window: mark REVALIDATING (non-blocking,
+        // best-effort) so concurrent readers below see the guard and suppress,
+        // then return shouldRevalidate=true so this caller revalidates. Clone the
+        // matched response for the marker since its original body must still
+        // stream to the client.
+        this.markResponseRevalidating(cache, request, response.clone());
+        return {
+          response: this.toClientResponse(response),
+          shouldRevalidate: true,
+        };
+      }
+
+      // Fresh, or stale-but-already-REVALIDATING: serve without scheduling a
+      // (re-)revalidation. A recent marker already has a render in flight.
       return {
         response: this.toClientResponse(response),
-        shouldRevalidate: isStale,
+        shouldRevalidate: false,
       };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getResponse");
@@ -1630,6 +1701,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     headers.delete(CACHE_STATUS_HEADER);
     headers.delete(CACHE_TAGS_HEADER);
     headers.delete(CACHE_TAGGED_AT_HEADER);
+    // Internal stale-path bookkeeping (hard-expiry deadline + REVALIDATING
+    // stamp). Carried on doc L1 entries for the herd guard; never serve them.
+    headers.delete(CACHE_EXPIRES_AT_HEADER);
+    headers.delete(CACHE_REVALIDATING_AT_HEADER);
     // Finding #3 (read side): strip per-client signals a pre-fix or
     // pinned-version L1 entry may carry. See the read-side note in the design doc.
     stripPerClientSignals(headers);
@@ -1683,6 +1758,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
       headers.set("Cache-Control", `public, max-age=${totalTtl}`);
       headers.set(CACHE_STALE_AT_HEADER, String(staleAt));
+      // Absolute hard-expiry deadline so a stale-path REVALIDATING re-put can
+      // recompute a shrinking max-age (remainingCacheControl) instead of
+      // restarting retention. Mirrors set()/setItem(). Stripped by
+      // toClientResponse before serving.
+      headers.set(CACHE_EXPIRES_AT_HEADER, String(staleAt + swrWindow * 1000));
       // Internal tag headers (stripped by toClientResponse before serving).
       this.setTagHeaders(headers, tags, taggedAt);
 
@@ -1710,7 +1790,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // L2: persist to KV (KV requires expirationTtl >= 60s)
       if (this.kv && this.waitUntil && totalTtl >= 60) {
-        const kvKey = this.toKVKey(`doc:${key}`);
+        const kvKey = this.toDocKVKey(key);
         // Finding #3: never persist a per-client signal in the KV envelope.
         const headersArray: [string, string][] = [];
         response.headers.forEach((v, k) => {
@@ -2040,6 +2120,37 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
+   * Host token for the current request, used to namespace the document KV key.
+   * Derived from the same resolveBaseUrl() that namespaces the L1 (Cache API)
+   * tier, so a doc entry's KV twin lands under the identical host bucket.
+   * Falls back to "_" if the base URL cannot be parsed (it always carries a
+   * trailing-slash origin, so parsing succeeds in practice).
+   * @internal
+   */
+  private docKVHost(): string {
+    try {
+      return new URL(this.resolveBaseUrl()).host || "_";
+    } catch {
+      return "_";
+    }
+  }
+
+  /**
+   * Convert a document key to its host-namespaced KV key. The L1 tier already
+   * namespaces document entries by host via keyToRequest/resolveBaseUrl, but the
+   * KV fallback keyed only on `doc:{key}`, so two hosts serving the same path
+   * could collide on the KV tier (one host serving another's cached document).
+   * Prefixing the host closes that cross-host collision. Deterministic per
+   * (host, key). Segment/fn/tag-marker KV keys keep toKVKey unchanged: tag
+   * markers are intentionally global (invalidation must cross hosts), and the
+   * document tier is the one with a request-host context here.
+   * @internal
+   */
+  private toDocKVKey(key: string): string {
+    return this.toKVKey(`h/${this.docKVHost()}/doc:${key}`);
+  }
+
+  /**
    * Best-effort delete of a single KV key, reporting (not swallowing) a delete
    * failure as cache-delete. Used by the corrupt-entry self-heal paths.
    * @internal
@@ -2203,9 +2314,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const rawTaggedAt = headers.get(CACHE_TAGGED_AT_HEADER);
     if (!rawTags || !rawTaggedAt) return {};
     try {
+      const taggedAt = Number(rawTaggedAt);
+      // A corrupt/non-numeric tagged-at header yields NaN. isGloballyInvalidated
+      // short-circuits on a falsy taggedAt (NaN is falsy), so returning
+      // { taggedAt: NaN } would make the entry permanently NON-invalidatable -
+      // a revalidateTag could never evict it. Treat a non-finite stamp the same
+      // as the missing-header case (untagged): drop both tags and taggedAt so the
+      // entry is re-rendered/re-tagged rather than silently un-invalidatable.
+      if (!Number.isFinite(taggedAt)) return {};
       return {
         tags: JSON.parse(decodeURIComponent(rawTags)) as string[],
-        taggedAt: Number(rawTaggedAt),
+        taggedAt,
       };
     } catch {
       return {};
@@ -2858,7 +2977,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = this.toKVKey(`doc:${key}`);
+      const kvKey = this.toDocKVKey(key);
       // The document path is debug-silent (op is only get/getItem): a KV-read
       // timeout here is bounded for resilience parity (kvGetOrEvict applies the
       // budget) but emits no kv-timeout event, so its absence from the debug
@@ -2951,6 +3070,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           }
           headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
           headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
+          // Carry the hard-expiry deadline so the document herd guard's
+          // markResponseRevalidating re-put can compute the remaining window
+          // (matches promoteSegmentToL1/promoteItemToL1); without it a stale
+          // re-put would floor to max-age=1 and churn the KV-promoted twin.
+          headers.set(CACHE_EXPIRES_AT_HEADER, String(envelope.e));
           // Re-attach the internal tag headers (envelope.hd is client-facing
           // and intentionally excludes them) so the promoted entry stays
           // invalidatable.

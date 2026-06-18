@@ -116,6 +116,13 @@ export async function handleProgressiveEnhancement<TEnv>(
   // Execute action and return HTML
   let actionResult: unknown = undefined;
   let reactFormState: ReactFormState | null = null;
+  // Status for the fall-through re-render after a boundaryless action error.
+  // When an action throws and NO error boundary matches, the PE path re-renders
+  // the page (below) the same way it would after a successful action. Without
+  // this the re-render serves HTTP 200, diverging from the JS path which serves
+  // 500 (server-action.ts sets actionStatus=500 for the same boundaryless error).
+  // 500 is carried only into the final HTML response, never the redirect branch.
+  let boundarylessErrorStatus: number | undefined;
 
   if (isUseActionState) {
     // Decode and extract action identity before execution so error
@@ -156,6 +163,9 @@ export async function handleProgressiveEnhancement<TEnv>(
         handledByBoundary: false,
       });
       console.error("[RSC] Progressive enhancement action error:", error);
+      // No boundary matched — the fall-through re-render must carry 500 to match
+      // the JS path's boundaryless-error status (server-action.ts).
+      boundarylessErrorStatus = 500;
     }
   } else if (isDirectAction && directActionId) {
     const temporaryReferences = ctx.createTemporaryReferenceSet();
@@ -206,6 +216,9 @@ export async function handleProgressiveEnhancement<TEnv>(
         handledByBoundary: false,
       });
       console.error("[RSC] Progressive enhancement action error:", error);
+      // No boundary matched — the fall-through re-render must carry 500 to match
+      // the JS path's boundaryless-error status (server-action.ts).
+      boundarylessErrorStatus = 500;
     }
   }
 
@@ -300,6 +313,13 @@ export async function handleProgressiveEnhancement<TEnv>(
     });
 
     return createResponseWithMergedHeaders(htmlStream, {
+      // boundarylessErrorStatus is set only when the action threw and no error
+      // boundary matched; it makes the re-render carry 500 like the JS path.
+      // The redirect branch above returns before this, so a redirect re-render
+      // keeps its 308 and is never overridden.
+      ...(boundarylessErrorStatus !== undefined
+        ? { status: boundarylessErrorStatus }
+        : {}),
       headers: { "content-type": "text/html;charset=utf-8" },
     });
   };

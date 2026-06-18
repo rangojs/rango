@@ -10,7 +10,10 @@ import type {
   HandleData,
   StreamingToken,
 } from "./types.js";
-import { filterSegmentOrder } from "./react/filter-segment-order.js";
+import {
+  filterSegmentOrder,
+  filterRouteSegmentIds,
+} from "./react/filter-segment-order.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -703,9 +706,7 @@ export function createEventController(
     const newSegmentOrder = filterSegmentOrder(rawMatched);
     // Separate list for useSegments(): "layouts and routes only" — strip
     // parallels (".@") and loader sub-ids (D digit) without reordering.
-    const newRouteSegmentIds = rawMatched.filter(
-      (id) => !id.includes(".@") && !/D\d+\./.test(id),
-    );
+    const newRouteSegmentIds = filterRouteSegmentIds(rawMatched);
 
     if (isPartial && newSegmentOrder.length > 0) {
       // Partial update: merge new data with existing

@@ -16,13 +16,30 @@ describe("sortedSearchString", () => {
     expect(sortedSearchString(params)).toBe("page=1");
   });
 
-  it("excludes __* internal params", () => {
+  // A4: the router owns NO blanket `__` URL query param, so a `__`-prefixed
+  // consumer param must NOT be silently dropped (that collapsed `__variant=a`
+  // and `__variant=b` onto one cache slot). Only the exact reserved `__no_cache`
+  // (the handler bypass flag) is filtered.
+  it("keeps consumer __* params (no blanket __ filter)", () => {
     const params = new URLSearchParams("q=test&__internal=1");
-    expect(sortedSearchString(params)).toBe("q=test");
+    expect(sortedSearchString(params)).toBe("__internal=1&q=test");
   });
 
-  it("returns empty string when only internal params exist", () => {
-    const params = new URLSearchParams("_rsc_partial=1&__debug=true");
+  it("distinguishes consumer __ params with different values (A4 collision fix)", () => {
+    const a = sortedSearchString(new URLSearchParams("__variant=a"));
+    const b = sortedSearchString(new URLSearchParams("__variant=b"));
+    expect(a).toBe("__variant=a");
+    expect(b).toBe("__variant=b");
+    expect(a).not.toBe(b);
+  });
+
+  it("still filters the reserved __no_cache bypass param", () => {
+    const params = new URLSearchParams("page=1&__no_cache=1");
+    expect(sortedSearchString(params)).toBe("page=1");
+  });
+
+  it("returns empty string when only reserved internal params exist", () => {
+    const params = new URLSearchParams("_rsc_partial=1&__no_cache=1");
     expect(sortedSearchString(params)).toBe("");
   });
 

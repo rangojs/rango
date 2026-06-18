@@ -897,7 +897,11 @@ const transition = (
     "transition() must be called inside urls()",
   );
 
-  const name = `$${store.getNextIndex("transition")}`;
+  // Allocate a single index for this transition() call (used in all paths),
+  // mirroring cache() — the child form uses it for the name, the wrapper form
+  // reuses it for the namespace, so no index is burned.
+  const transitionIndex = store.getNextIndex("transition");
+  const name = `$${transitionIndex}`;
 
   if (!children) {
     // Position 1: child of path() — attach to parent entry
@@ -910,7 +914,7 @@ const transition = (
   }
 
   // Position 2: wrapper — create a transparent layout with transition config
-  const namespace = `${ctx.namespace}.${store.getNextIndex("transition")}`;
+  const namespace = `${ctx.namespace}.${transitionIndex}`;
   const entry = {
     ...emptySegmentBase(),
     id: namespace,

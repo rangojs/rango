@@ -114,7 +114,7 @@ describe("segment cache key generation", () => {
     });
   });
 
-  describe("_rsc and __ param exclusion", () => {
+  describe("_rsc and reserved param exclusion", () => {
     it("should exclude _rsc* params from cache key", async () => {
       const store = {
         get: vi.fn().mockResolvedValue(null),
@@ -134,22 +134,61 @@ describe("segment cache key generation", () => {
       expect(key).not.toContain("_rsc");
     });
 
-    it("should exclude __ prefixed params from cache key", async () => {
+    // A4: a `__`-prefixed consumer param is NOT reserved and must key the cache
+    // (it used to be silently dropped by a blanket `__` filter, collapsing
+    // distinct consumer values onto one slot). Only `__no_cache` is reserved.
+    it("should keep consumer __ prefixed params in the cache key", async () => {
       const store = {
         get: vi.fn().mockResolvedValue(null),
         set: vi.fn(),
       };
 
       mockGetRequestContext.mockReturnValue(
-        makeRequestContext("?page=1&__debug=true&__trace=abc"),
+        makeRequestContext("?page=1&__variant=a"),
       );
       const scope = new CacheScope({ store } as any);
       await scope.lookupRoute("/test", {});
       const key = store.get.mock.calls[0][0];
 
       expect(key).toContain("page=1");
-      expect(key).not.toContain("__debug");
-      expect(key).not.toContain("__trace");
+      expect(key).toContain("__variant=a");
+    });
+
+    it("should produce different keys for different __ consumer param values", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(makeRequestContext("?__variant=a"));
+      const scope1 = new CacheScope({ store } as any);
+      await scope1.lookupRoute("/test", {});
+      const key1 = store.get.mock.calls[0][0];
+
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(makeRequestContext("?__variant=b"));
+      const scope2 = new CacheScope({ store } as any);
+      await scope2.lookupRoute("/test", {});
+      const key2 = store.get.mock.calls[0][0];
+
+      expect(key1).not.toBe(key2);
+    });
+
+    it("should still exclude the reserved __no_cache param", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("?page=1&__no_cache=1"),
+      );
+      const scope = new CacheScope({ store } as any);
+      await scope.lookupRoute("/test", {});
+      const key = store.get.mock.calls[0][0];
+
+      expect(key).toContain("page=1");
+      expect(key).not.toContain("__no_cache");
     });
 
     it("should produce same query component with and without internal params", async () => {

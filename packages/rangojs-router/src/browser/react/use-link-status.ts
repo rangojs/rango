@@ -102,7 +102,7 @@ export function useLinkStatus(): LinkStatus {
       return;
     }
 
-    return ctx.eventController.subscribe(() => {
+    const update = () => {
       const state = ctx.eventController.getState();
       const isPending = isPendingFor(linkTo, state.pendingUrl, origin);
 
@@ -119,7 +119,15 @@ export function useLinkStatus(): LinkStatus {
         // Always update base state
         setBasePending(isPending);
       }
-    });
+    };
+
+    // Catch-up: re-read state synchronously on mount before subscribing, so a
+    // navigation that started between the seeding render and this effect commit
+    // isn't dropped until the next (debounced) notify. Mirrors usePathname /
+    // useSearchParams.
+    update();
+
+    return ctx.eventController.subscribe(update);
   }, [linkTo, origin]);
 
   // If not inside a Link, return not pending

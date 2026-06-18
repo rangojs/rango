@@ -141,6 +141,35 @@ describe("collectHandle on the built-in Meta handle", () => {
     ).toBe("Acme");
   });
 
+  it("inserts a child title containing $-sequences literally into the template", () => {
+    // String.prototype.replace would interpret $&, $', $`, $$, $n in the
+    // replacement; the template must insert the raw title verbatim.
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "Save $5 & more" }],
+      ]),
+    ).toBe("Save $5 & more | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "Buy $& now" }],
+      ]),
+    ).toBe("Buy $& now | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "100$$ deal" }],
+      ]),
+    ).toBe("100$$ deal | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "a$'b" }],
+      ]),
+    ).toBe("a$'b | Acme");
+  });
+
   it("an absolute title bypasses the template", () => {
     expect(
       titleOf([

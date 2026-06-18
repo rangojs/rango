@@ -51,3 +51,20 @@ export function filterSegmentOrder(matched: string[]): string[] {
   }
   return result;
 }
+
+/**
+ * Build the "layouts and routes only" id list for useSegments().segmentIds.
+ *
+ * Strips parallel slot ids (contain ".@") and loader sub-ids ("D" followed by
+ * a digit, e.g. "M0L0D1.user") without reordering. Distinct from
+ * filterSegmentOrder, which also reorders slots after their parent for handle
+ * collection.
+ *
+ * Shared by SSR (ssr/index.tsx) and the client event controller
+ * (event-controller.ts) so both produce identical output; if they diverge,
+ * useSegments().segmentIds rendered during SSR and after hydration disagree
+ * and React reports a hydration mismatch.
+ */
+export function filterRouteSegmentIds(matched: string[]): string[] {
+  return matched.filter((id) => !id.includes(".@") && !/D\d+\./.test(id));
+}

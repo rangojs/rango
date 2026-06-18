@@ -38,7 +38,7 @@ A code-first, type-safe React Server Components router
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js `^20.19.0 || >=22.12.0` (the `@rangojs/router` `engines` floor, matching Vite 8); CI tests on Node 24 (see `.nvmrc`)
 - pnpm 10+
 
 ### Installation

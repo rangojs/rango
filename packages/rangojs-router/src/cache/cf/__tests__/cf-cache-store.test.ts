@@ -1747,6 +1747,136 @@ describe("CFCacheStore", () => {
   });
 
   // ==========================================================================
+  // Document-tier thundering-herd guard (A2)
+  // ==========================================================================
+  // Mirrors the segment (get) / item (getItem) REVALIDATING guard for the
+  // document tier. Before this, every concurrent stale getResponse returned
+  // shouldRevalidate=true, so document-cache.ts scheduled a fresh render for
+  // each one (a herd). Now the first stale reader marks REVALIDATING and a
+  // recent marker suppresses shouldRevalidate for subsequent readers.
+
+  describe("getResponse document-tier herd guard", () => {
+    it("first stale getResponse marks REVALIDATING and returns shouldRevalidate=true", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-herd", new Response("body"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Past TTL, within SWR.
+      vi.advanceTimersByTime(120 * 1000);
+
+      const first = await store.getResponse("doc-herd");
+      expect(first!.shouldRevalidate).toBe(true);
+      expect(await first!.response.text()).toBe("body");
+
+      // The L1 entry is now stamped REVALIDATING.
+      const cache = mockCaches.default;
+      const request = new Request(
+        "https://rsc-dummy-host-1.com/" + encodeURIComponent("doc:doc-herd"),
+      );
+      const marked = await cache.match(request);
+      expect(marked?.headers.get(CACHE_STATUS_HEADER)).toBe("REVALIDATING");
+      // The served stale body must survive the clone-for-marker round-trip.
+      expect(await marked!.text()).toBe("body");
+    });
+
+    it("only ONE of N concurrent stale getResponse reads sees shouldRevalidate=true", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-herd-seq", new Response("body"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000);
+
+      // Sequential reads model the herd: the first re-puts the REVALIDATING
+      // marker (synchronously via waitUntil), the rest see it and suppress.
+      const r1 = await store.getResponse("doc-herd-seq");
+      const r2 = await store.getResponse("doc-herd-seq");
+      const r3 = await store.getResponse("doc-herd-seq");
+
+      const revalidators = [r1, r2, r3].filter((r) => r!.shouldRevalidate);
+      expect(revalidators.length).toBe(1);
+      expect(r1!.shouldRevalidate).toBe(true);
+      expect(r2!.shouldRevalidate).toBe(false);
+      expect(r3!.shouldRevalidate).toBe(false);
+      // Every reader still gets the full stale body.
+      expect(await r1!.response.text()).toBe("body");
+      expect(await r2!.response.text()).toBe("body");
+      expect(await r3!.response.text()).toBe("body");
+    });
+
+    it("re-arms revalidation after the REVALIDATING stamp ages past MAX_REVALIDATION_INTERVAL", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      // Long SWR so the entry stays stale-but-servable across the whole window.
+      await store.putResponse("doc-rearm", new Response("body"), 60, 3000);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000); // stale
+      expect((await store.getResponse("doc-rearm"))!.shouldRevalidate).toBe(
+        true,
+      );
+      // Guarded immediately after.
+      expect((await store.getResponse("doc-rearm"))!.shouldRevalidate).toBe(
+        false,
+      );
+
+      // Past the recency window: the next stale read re-arms.
+      vi.advanceTimersByTime((MAX_REVALIDATION_INTERVAL + 1) * 1000);
+      expect((await store.getResponse("doc-rearm"))!.shouldRevalidate).toBe(
+        true,
+      );
+    });
+
+    it("returns the stale response (shouldRevalidate=true) even when the marker write fails", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-marker-fail", new Response("body"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000);
+
+      // Fail the (best-effort) marker re-put. The served stale read must be
+      // unaffected; it simply re-arms on the next stale read.
+      vi.spyOn(mockCaches.default, "put").mockRejectedValue(
+        new Error("cache.put failed"),
+      );
+
+      const result = await store.getResponse("doc-marker-fail");
+      expect(result!.shouldRevalidate).toBe(true);
+      expect(await result!.response.text()).toBe("body");
+    });
+
+    it("does not leak the internal expires-at / revalidating-at headers to the client", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-leak", new Response("body"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000);
+      const result = await store.getResponse("doc-leak");
+      // A2 stamps CACHE_EXPIRES_AT_HEADER on the doc entry and the marker adds
+      // CACHE_REVALIDATING_AT_HEADER; toClientResponse must strip both.
+      expect(
+        result!.response.headers.get("x-edge-cache-expires-at"),
+      ).toBeNull();
+      expect(
+        result!.response.headers.get(CACHE_REVALIDATING_AT_HEADER),
+      ).toBeNull();
+    });
+  });
+
+  // ==========================================================================
   // KV L2 Cache
   // ==========================================================================
 
@@ -2183,7 +2313,10 @@ describe("CFCacheStore", () => {
           await result.value;
         }
 
-        const kvEntry = mockKV.store.get("doc:doc-key");
+        // Document KV keys are host-namespaced (A3): the L1 tier namespaces by
+        // host, so the KV twin must too, else two hosts could collide on KV.
+        // Default fallback host (no baseUrl) is rsc-dummy-host-1.com.
+        const kvEntry = mockKV.store.get("h/rsc-dummy-host-1.com/doc:doc-key");
         expect(kvEntry).toBeDefined();
         const envelope = JSON.parse(kvEntry!.value);
         // Body is stored as base64
@@ -2195,6 +2328,68 @@ describe("CFCacheStore", () => {
             ["x-custom", "value"],
           ]),
         );
+      });
+
+      it("namespaces the document KV key by host so two hosts do not collide (A3)", async () => {
+        // Two stores on different hosts write the SAME document key+path. The L1
+        // tier already namespaces by host via keyToRequest/resolveBaseUrl; the KV
+        // fallback used to key only on `doc:{key}`, so host B's write would clobber
+        // host A's KV entry (and host B could be served host A's cached document).
+        const mockCtx = createMockCtx();
+        const storeA = new CFCacheStore({
+          ctx: mockCtx,
+          kv: mockKV as any,
+          baseUrl: "https://a.example.com/",
+        });
+        const storeB = new CFCacheStore({
+          ctx: mockCtx,
+          kv: mockKV as any,
+          baseUrl: "https://b.example.com/",
+        });
+
+        await storeA.putResponse("same-path", new Response("from-A"), 60, 300);
+        await storeB.putResponse("same-path", new Response("from-B"), 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Distinct, host-prefixed KV keys; neither host clobbers the other.
+        const keyA = "h/a.example.com/doc:same-path";
+        const keyB = "h/b.example.com/doc:same-path";
+        expect(keyA).not.toBe(keyB);
+        const entryA = mockKV.store.get(keyA);
+        const entryB = mockKV.store.get(keyB);
+        expect(entryA).toBeDefined();
+        expect(entryB).toBeDefined();
+        expect(JSON.parse(entryA!.value).b).toBe(btoa("from-A"));
+        expect(JSON.parse(entryB!.value).b).toBe(btoa("from-B"));
+        // Exactly two doc entries -> no collision onto one slot.
+        const docKeys = [...mockKV.store.keys()].filter((k) =>
+          k.includes("doc:same-path"),
+        );
+        expect(docKeys.length).toBe(2);
+      });
+
+      it("reads back the host-namespaced document KV entry on L1 miss (round-trip)", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({
+          ctx: mockCtx,
+          kv: mockKV as any,
+          baseUrl: "https://roundtrip.example.com/",
+        });
+
+        await store.putResponse("doc-rt", new Response("round-trip"), 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // L1 gone; the KV read must locate the host-namespaced key, not a bare
+        // `doc:` key (which would miss and force a render).
+        mockCaches.clear();
+        const result = await store.getResponse("doc-rt");
+        expect(result).not.toBeNull();
+        expect(await result!.response.text()).toBe("round-trip");
       });
 
       it("should fall back to KV on L1 miss for getResponse()", async () => {
@@ -2267,7 +2462,9 @@ describe("CFCacheStore", () => {
         // Simulate an envelope written before the write-side strip shipped (or
         // persisted under a pinned `version`): inject per-client signals into
         // the stored headers. The read path must not replay them cross-client.
-        const kvEntry = mockKV.store.get("doc:leaky-doc")!;
+        const kvEntry = mockKV.store.get(
+          "h/rsc-dummy-host-1.com/doc:leaky-doc",
+        )!;
         const envelope = JSON.parse(kvEntry.value);
         envelope.hd.push(["set-cookie", "session=clientA"]);
         envelope.hd.push(["x-rango-keep-cache", "1"]);
@@ -2299,7 +2496,8 @@ describe("CFCacheStore", () => {
         // INSIDE the corrupt-envelope try, so the throw evicts the poisoned entry
         // rather than surfacing as a generic cache-read that leaves it to re-fail
         // every read until TTL.
-        const kvEntry = mockKV.store.get("doc:bad-hd")!;
+        const kvDocKey = "h/rsc-dummy-host-1.com/doc:bad-hd";
+        const kvEntry = mockKV.store.get(kvDocKey)!;
         const envelope = JSON.parse(kvEntry.value);
         envelope.hd.push(42);
         kvEntry.value = JSON.stringify(envelope);
@@ -2313,7 +2511,7 @@ describe("CFCacheStore", () => {
         for (const r of mockCtx.waitUntil.mock.results) {
           await r.value;
         }
-        expect(mockKV.store.has("doc:bad-hd")).toBe(false);
+        expect(mockKV.store.has(kvDocKey)).toBe(false);
       });
 
       it("should preserve binary body through KV round-trip", async () => {

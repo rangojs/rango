@@ -69,6 +69,8 @@ import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { cacheTagPatterns } from "./urls/cache-tag.js";
 import { actionCtxSetPatterns } from "./urls/action-ctx-set.js";
 import { isActionPatterns } from "./urls/is-action.js";
+import { revalFormDataPatterns } from "./urls/reval-formdata.js";
+import { actionRouteMwPatterns } from "./urls/action-route-mw.js";
 import { paramsAfterActionPatterns } from "./urls/params-after-action.js";
 import { middlewareWrappingPatterns } from "./urls/middleware-wrapping.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
@@ -937,6 +939,16 @@ export const urlpatterns = urls(
       // ctx.isAction() typed action matching in a revalidate predicate
       include("/is-action", isActionPatterns, {
         name: "isAction",
+      }),
+
+      // shouldRevalidate({ formData }) JS/PE parity in a revalidate predicate
+      include("/reval-formdata", revalFormDataPatterns, {
+        name: "revalFormData",
+      }),
+
+      // Action error-boundary render runs under route middleware (C3)
+      include("/action-route-mw", actionRouteMwPatterns, {
+        name: "actionRouteMw",
       }),
 
       // useParams survival across action → revalidation boundary
