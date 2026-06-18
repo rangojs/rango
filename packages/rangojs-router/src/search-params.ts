@@ -9,6 +9,15 @@
 
 import { encodeKV } from "./encode-kv.js";
 
+/**
+ * Decimal-number grammar for `"number"` search params: optional sign, digits
+ * with optional fraction, optional exponent. Deliberately excludes hex (`0x`),
+ * `Infinity`, and empty/whitespace so `Number()`'s lenient coercions
+ * (`Number("")===0`, `Number("0x10")===16`, `Number("Infinity")===Infinity`)
+ * do not slip non-decimal values into typed search.
+ */
+const DECIMAL_NUMBER_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
 /** Supported scalar types for search params (append ? for optional). */
 export type SearchSchemaValue =
   | "string"
@@ -161,7 +170,11 @@ type ExtractParamsFromPattern<T extends string> =
  * Parse URLSearchParams into a typed object using the given schema.
  *
  * - `"string"` / `"string?"` - kept as-is
- * - `"number"` / `"number?"` - coerced via `Number()`; NaN treated as missing
+ * - `"number"` / `"number?"` - parsed as a finite decimal number. Accepts an
+ *   optional sign, digits with optional fraction, and optional exponent
+ *   (e.g. `42`, `-3.5`, `1e3`). Empty/whitespace-only, non-decimal forms
+ *   (`0x10`), and non-finite (`Infinity`) are treated as missing (omitted),
+ *   NOT coerced to `0`/`16`/`Infinity`.
  * - `"boolean"` / `"boolean?"` - `"true"` / `"1"` -> true, `"false"` / `"0"` / `""` -> false
  *
  * Missing params (both required and optional) are omitted from the result
@@ -187,11 +200,17 @@ export function parseSearchParams<T extends SearchSchema>(
     if (baseType === "string") {
       result[key] = raw;
     } else if (baseType === "number") {
-      const num = Number(raw);
-      if (!Number.isNaN(num)) {
-        result[key] = num;
+      // Trim, then require a valid decimal numeral and a finite result.
+      // Empty/whitespace, hex (0x10), and Infinity are treated as missing
+      // (omitted) — not coerced to 0/16/Infinity by Number()'s lenient rules.
+      const trimmed = raw.trim();
+      if (trimmed !== "" && DECIMAL_NUMBER_RE.test(trimmed)) {
+        const num = Number(trimmed);
+        if (Number.isFinite(num)) {
+          result[key] = num;
+        }
       }
-      // NaN treated as missing (undefined)
+      // Anything else treated as missing (undefined)
     } else if (baseType === "boolean") {
       result[key] = raw === "true" || raw === "1";
     }

@@ -100,13 +100,68 @@ describe("RequestScope: executionContext + waitUntil", () => {
         ctx.waitUntil(async () => {
           throw new Error("background task failed");
         });
-        // Give the microtask queue a turn so the catch handler runs.
-        await Promise.resolve();
-        await Promise.resolve();
+        // Flush the microtask queue. fireAndForgetWaitUntil defers fn() via
+        // Promise.resolve().then(fn) (H2), which adds microtask hops before
+        // the rejection is caught; a macrotask boundary drains them all.
+        await new Promise((r) => setTimeout(r, 0));
         expect(errorSpy).toHaveBeenCalled();
       } finally {
         errorSpy.mockRestore();
       }
+    });
+
+    // H2: a non-async callback that throws SYNCHRONOUSLY (sync setup before its
+    // first await) must be fire-and-forget too — it must NOT escape into the
+    // caller. Without the deferral, fn() runs before .catch() is attached.
+    it("does NOT throw into the caller when a sync-throwing callback runs without an ExecutionContext", async () => {
+      const url = new URL("https://example.com/foo");
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(url),
+        url,
+        variables: {},
+      });
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(() =>
+          ctx.waitUntil((() => {
+            throw new Error("sync setup blew up");
+          }) as unknown as () => Promise<void>),
+        ).not.toThrow();
+        await new Promise((r) => setTimeout(r, 0));
+        // Still logged as a background failure, not lost.
+        expect(errorSpy).toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    // H2 (CF seat): same guarantee when an ExecutionContext IS present — the
+    // sync throw must not escape; the host's waitUntil receives a (rejected)
+    // promise instead.
+    it("does NOT throw into the caller when a sync-throwing callback runs WITH an ExecutionContext", () => {
+      const mockEC = createMockExecutionContext();
+      const url = new URL("https://example.com/foo");
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(url),
+        url,
+        variables: {},
+        executionContext: mockEC,
+      });
+
+      expect(() =>
+        ctx.waitUntil((() => {
+          throw new Error("sync setup blew up");
+        }) as unknown as () => Promise<void>),
+      ).not.toThrow();
+      // The host still received a promise to keep alive (the rejected one).
+      expect(mockEC.waitUntil).toHaveBeenCalledTimes(1);
+      const arg = mockEC.waitUntil.mock.calls[0][0];
+      expect(arg).toBeInstanceOf(Promise);
+      // Swallow the rejection so it doesn't surface as unhandled.
+      (arg as Promise<unknown>).catch(() => {});
     });
   });
 
@@ -258,8 +313,8 @@ describe("RequestScope: executionContext + waitUntil", () => {
         mwCtx.waitUntil(async () => {
           throw new Error("boom");
         });
-        await Promise.resolve();
-        await Promise.resolve();
+        // Flush microtasks for the H2 deferral (see note above).
+        await new Promise((r) => setTimeout(r, 0));
         expect(errorSpy).toHaveBeenCalled();
       } finally {
         errorSpy.mockRestore();

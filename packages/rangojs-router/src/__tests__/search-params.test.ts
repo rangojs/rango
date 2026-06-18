@@ -98,6 +98,50 @@ describe("parseSearchParams", () => {
     const result = parseSearchParams(sp, { show: "boolean?" });
     expect(result).toEqual({ show: true });
   });
+
+  // H3: tighten number coercion. Number() is too lenient — empty/whitespace
+  // coerce to 0, hex coerces to its decimal value, and Infinity passes through.
+  // None of these should land in typed search; they are treated as missing.
+  describe("number coercion is strict-decimal (H3)", () => {
+    it("omits an empty number field (?page=) instead of coercing to 0", () => {
+      const sp = new URLSearchParams("page=");
+      expect("page" in parseSearchParams(sp, { page: "number" })).toBe(false);
+      expect("page" in parseSearchParams(sp, { page: "number?" })).toBe(false);
+    });
+
+    it("omits a whitespace-only number field instead of coercing to 0", () => {
+      const sp = new URLSearchParams("page=%20%20"); // "  "
+      const result = parseSearchParams(sp, { page: "number" });
+      expect("page" in result).toBe(false);
+    });
+
+    it('omits "Infinity" instead of coercing to Infinity', () => {
+      const sp = new URLSearchParams("page=Infinity");
+      const result = parseSearchParams(sp, { page: "number" });
+      expect("page" in result).toBe(false);
+    });
+
+    it('omits hex "0x10" instead of coercing to 16', () => {
+      const sp = new URLSearchParams("page=0x10");
+      const result = parseSearchParams(sp, { page: "number" });
+      expect("page" in result).toBe(false);
+    });
+
+    it("still parses valid decimals (42, -3.5) including surrounding space", () => {
+      expect(
+        parseSearchParams(new URLSearchParams("page=42"), { page: "number" }),
+      ).toEqual({ page: 42 });
+      expect(
+        parseSearchParams(new URLSearchParams("page=-3.5"), { page: "number" }),
+      ).toEqual({ page: -3.5 });
+      // " 5 " trims to a valid decimal.
+      expect(
+        parseSearchParams(new URLSearchParams("page=%205%20"), {
+          page: "number",
+        }),
+      ).toEqual({ page: 5 });
+    });
+  });
 });
 
 // ============================================================================

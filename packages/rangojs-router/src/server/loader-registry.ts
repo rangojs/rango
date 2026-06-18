@@ -53,16 +53,16 @@ export async function getLoaderLazy(
   if (lazyLoaderImports && lazyLoaderImports.size > 0) {
     const lazyImport = lazyLoaderImports.get(id);
     if (lazyImport) {
-      try {
-        await lazyImport();
+      // A failed import is a real server breakage (broken transitive import,
+      // syntax error, throw in module top-level code), not a "loader not
+      // registered" case. Rethrow so the caller can return a 500 and route
+      // the failure through onError, instead of collapsing it to a 404.
+      await lazyImport();
 
-        const registered = getFetchableLoader(id);
-        if (registered) {
-          loaderRegistry.set(id, registered);
-          return registered;
-        }
-      } catch (error) {
-        console.error(`[LoaderRegistry] Failed to load loader "${id}":`, error);
+      const registered = getFetchableLoader(id);
+      if (registered) {
+        loaderRegistry.set(id, registered);
+        return registered;
       }
     }
   }
@@ -72,16 +72,14 @@ export async function getLoaderLazy(
   if (hashIndex !== -1) {
     const filePath = id.slice(0, hashIndex);
 
-    try {
-      await import(/* @vite-ignore */ `/${filePath}`);
+    // Same as the lazy branch: a thrown import is a server error, not a
+    // not-found. Let it propagate to the caller for a 500 + onError.
+    await import(/* @vite-ignore */ `/${filePath}`);
 
-      const registered = getFetchableLoader(id);
-      if (registered) {
-        loaderRegistry.set(id, registered);
-        return registered;
-      }
-    } catch (error) {
-      console.error(`[LoaderRegistry] Failed to load loader "${id}":`, error);
+    const registered = getFetchableLoader(id);
+    if (registered) {
+      loaderRegistry.set(id, registered);
+      return registered;
     }
   }
 

@@ -843,7 +843,11 @@ export function createRequestContext<TEnv>(
 
     waitUntil(fn: () => Promise<void>): void {
       if (executionContext?.waitUntil) {
-        executionContext.waitUntil(fn());
+        // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
+        // non-async callback becomes a rejected promise handed to the host's
+        // waitUntil (logged as a background failure), instead of escaping into
+        // the request flow. Mirrors fireAndForgetWaitUntil's deferral.
+        executionContext.waitUntil(Promise.resolve().then(fn));
       } else {
         fireAndForgetWaitUntil(fn);
       }

@@ -47,8 +47,47 @@ export async function handleLoaderFetch<TEnv>(
     });
   }
 
-  // Look up loader lazily
-  const registeredLoader = await getLoaderLazy(loaderId);
+  // Look up loader lazily. getLoaderLazy returns undefined only when the id was
+  // never registered (genuine 404). A thrown error means the loader module
+  // EXISTS but its import failed (broken transitive import, syntax error, throw
+  // in top-level code) — a real server breakage that must surface as a 500 and
+  // fire onError, not be collapsed into a misleading "not found".
+  let registeredLoader;
+  try {
+    registeredLoader = await getLoaderLazy(loaderId);
+  } catch (error) {
+    const isDev = process.env.NODE_ENV !== "production";
+    console.error(`[RSC] Loader module load failed for "${loaderId}":`, error);
+    ctx.callOnError(error, "loader", {
+      request,
+      url,
+      env,
+      loaderName: loaderId,
+      handledByBoundary: false,
+    });
+    const err = error instanceof Error ? error : new Error(String(error));
+    const errorPayload = {
+      loaderResult: null,
+      loaderError: {
+        message: isDev ? err.message : "An error occurred",
+        name: isDev ? err.name : "Error",
+      },
+    };
+    const rscStream = ctx.renderToReadableStream(errorPayload, {
+      onError: (renderError: unknown) => {
+        ctx.callOnError(renderError, "rendering", {
+          request,
+          url,
+          env,
+          loaderName: loaderId,
+        });
+      },
+    });
+    return createResponseWithMergedHeaders(rscStream, {
+      status: 500,
+      headers: { "content-type": "text/x-component;charset=utf-8" },
+    });
+  }
   if (!registeredLoader) {
     return createResponseWithMergedHeaders(
       `Loader "${loaderId}" not found in registry`,
