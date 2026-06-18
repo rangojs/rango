@@ -43,7 +43,7 @@ import {
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
-import { observeEvent, observePhase, PHASES } from "../instrument.js";
+import { observeEvent, observeHandler } from "../instrument.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
@@ -794,14 +794,14 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
           : routeEntry.handler;
       if (!routeEntry.loading) {
         const result = handleHandlerResult(
-          await observePhase(PHASES.handler(entry.id), () => handler(context)),
+          await observeHandler(entry.id, handler, context),
         );
         doneHandler();
         return result;
       }
       if (!actionContext) {
         const result = handleHandlerResult(
-          observePhase(PHASES.handler(entry.id), () => handler(context)),
+          observeHandler(entry.id, handler, context),
         );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, routeEntry.id);
@@ -827,7 +827,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         entryId: entry.id,
       });
       const actionResult = handleHandlerResult(
-        await observePhase(PHASES.handler(entry.id), () => handler(context)),
+        await observeHandler(entry.id, handler, context),
       );
       doneHandler();
       return {

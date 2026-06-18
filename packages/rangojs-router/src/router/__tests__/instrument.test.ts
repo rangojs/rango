@@ -1,10 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { observePhase, observeEvent, PHASES } from "../instrument.js";
+import {
+  observePhase,
+  observeHandler,
+  observeEvent,
+  type PhaseSpec,
+  PHASES,
+} from "../instrument.js";
 import { runWithRequestContext } from "../../server/request-context.js";
 import { runWithRouterContext } from "../router-context.js";
 import { createMetricsStore } from "../metrics.js";
-import { resolveTracing, type SpanRunner } from "../tracing.js";
+import {
+  resolveTracing,
+  NOOP_TRACE_SPAN,
+  type SpanRunner,
+} from "../tracing.js";
 import type { TelemetryEvent, TelemetrySink } from "../telemetry.js";
+
+/** A lazy-attributes render-like spec; metric:false to isolate the span path. */
+const LAZY_RENDER: PhaseSpec = {
+  metric: false,
+  tracePhase: "render",
+  spanName: "rango.render",
+  lazyAttributes: () => ({ "rango.route": "home" }),
+};
 
 function recordingTracing() {
   const spans: string[] = [];
@@ -211,6 +229,103 @@ describe("PHASES registry", () => {
       () => observePhase(PHASES.render, async () => "x"),
     );
     expect(renderAttrs["rango.route"]).toBe("home");
+  });
+});
+
+describe("observePhase lazy attributes + off-path skip", () => {
+  it("applies lazy attributes on a REJECTED async phase and still rethrows", async () => {
+    const attrs: Record<string, unknown> = {};
+    const runner: SpanRunner = <T>(name: string, fn: (s: never) => T): T =>
+      fn({
+        setAttribute(k: string, v: unknown) {
+          if (name === "rango.render") attrs[k] = v;
+        },
+      } as never);
+    const tracing = resolveTracing({ runner })!;
+    await expect(
+      runWithRequestContext({ _tracing: tracing } as never, () =>
+        observePhase(LAZY_RENDER, async () => {
+          throw new Error("boom");
+        }),
+      ),
+    ).rejects.toThrow("boom");
+    // The errored render span is still tagged with the route.
+    expect(attrs["rango.route"]).toBe("home");
+  });
+
+  it("does no attribute/lazy work when the phase span is toggled off", () => {
+    let runnerCalls = 0;
+    let lazyCalls = 0;
+    const runner: SpanRunner = (_name, fn) => {
+      runnerCalls++;
+      return fn({ setAttribute() {} });
+    };
+    const tracing = resolveTracing({ runner, spans: { render: false } })!;
+    const spec: PhaseSpec = {
+      ...LAZY_RENDER,
+      lazyAttributes: () => {
+        lazyCalls++;
+        return { "rango.route": "x" };
+      },
+    };
+    const out = runWithRequestContext({ _tracing: tracing } as never, () =>
+      observePhase(spec, () => 1),
+    );
+    expect(out).toBe(1);
+    expect(runnerCalls).toBe(0); // disabled phase: runner never invoked
+    expect(lazyCalls).toBe(0);
+  });
+
+  it("does no attribute/lazy work when the runner hands back the no-op span", () => {
+    let lazyCalls = 0;
+    const runner: SpanRunner = <T>(_n: string, fn: (s: never) => T): T =>
+      fn(NOOP_TRACE_SPAN as never);
+    const tracing = resolveTracing({ runner })!;
+    const spec: PhaseSpec = {
+      ...LAZY_RENDER,
+      lazyAttributes: () => {
+        lazyCalls++;
+        return { "rango.route": "x" };
+      },
+    };
+    const out = runWithRequestContext({ _tracing: tracing } as never, () =>
+      observePhase(spec, () => 7),
+    );
+    expect(out).toBe(7); // fn still ran
+    expect(lazyCalls).toBe(0); // off-platform no-op span: skip lazy work
+  });
+});
+
+describe("observeHandler", () => {
+  it("calls the handler directly (no span/spec) when no surface is active", () => {
+    let calls = 0;
+    const out = runWithRequestContext({} as never, () =>
+      observeHandler(
+        "seg-1",
+        (c: string) => {
+          calls++;
+          return `r:${c}`;
+        },
+        "ctx",
+      ),
+    );
+    expect(out).toBe("r:ctx");
+    expect(calls).toBe(1);
+  });
+
+  it("opens a rango.handler span tagged with the segment id when tracing is on", () => {
+    const attrs: Record<string, unknown> = {};
+    const runner: SpanRunner = (name, fn) =>
+      fn({
+        setAttribute(k, v) {
+          if (name === "rango.handler") attrs[k] = v;
+        },
+      });
+    const tracing = resolveTracing({ runner })!;
+    runWithRequestContext({ _tracing: tracing } as never, () =>
+      observeHandler("seg-1", (c) => c, "x"),
+    );
+    expect(attrs["rango.segment_id"]).toBe("seg-1");
   });
 });
 

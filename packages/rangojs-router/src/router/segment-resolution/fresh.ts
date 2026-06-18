@@ -30,7 +30,7 @@ import {
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
-import { observePhase, PHASES } from "../instrument.js";
+import { observeHandler } from "../instrument.js";
 import {
   track,
   RangoContext,
@@ -260,7 +260,7 @@ export async function resolveSegment<TEnv>(
       const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
         const result = handleHandlerResult(
-          observePhase(PHASES.handler(entry.id), () => handler(context)),
+          observeHandler(entry.id, handler, context),
         );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, entry.id);
@@ -284,7 +284,7 @@ export async function resolveSegment<TEnv>(
         }
       } else {
         component = handleHandlerResult(
-          await observePhase(PHASES.handler(entry.id), () => handler(context)),
+          await observeHandler(entry.id, handler, context),
         );
         doneRouteHandler();
       }
@@ -511,9 +511,7 @@ export async function resolveParallelEntry<TEnv>(
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function"
-            ? observePhase(PHASES.handler(`${parallelEntry.id}.${slot}`), () =>
-                handler(context),
-              )
+            ? observeHandler(`${parallelEntry.id}.${slot}`, handler, context)
             : handler;
         if (result instanceof Promise) {
           result.finally(doneParallelHandler).catch(() => {});
@@ -537,9 +535,10 @@ export async function resolveParallelEntry<TEnv>(
       } else {
         component =
           typeof handler === "function"
-            ? await observePhase(
-                PHASES.handler(`${parallelEntry.id}.${slot}`),
-                () => handler(context),
+            ? await observeHandler(
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                context,
               )
             : handler;
         doneParallelHandler();

@@ -231,26 +231,46 @@ export function observePhase<T>(
   // Neither surface active: direct call, zero overhead.
   if (!store && !tracing) return fn(NOOP_TRACE_SPAN);
 
-  // Attributes only land on a real span, so skip the wrapper when only the perf
-  // surface is active (traceSpan would apply them to NOOP_TRACE_SPAN for nothing).
-  // `lazyAttributes` resolve AFTER fn runs (e.g. rango.route, known post-match).
+  // Attributes only land on a real span. Build the attribute/lazy wrapper only
+  // when this phase's span is actually enabled (not toggled off via `spans`), and
+  // short-circuit inside when the runner hands back the no-op span (tracing
+  // configured but off at runtime — e.g. no executionContext.tracing). That keeps
+  // the "configured but effectively off" path free of per-call attribute loops
+  // and lazy `.then()` allocations. `lazyAttributes` resolve AFTER fn runs (e.g.
+  // rango.route, known post-match) and apply on BOTH success and failure so an
+  // errored phase span is still tagged.
   const attributes = spec.attributes;
   const lazy = spec.lazyAttributes;
+  const spanEnabled =
+    tracing !== undefined && tracing.phases[spec.tracePhase] !== false;
   const wrapped: (span: TraceSpan) => T =
-    (attributes || lazy) && tracing
+    (attributes || lazy) && spanEnabled
       ? (span) => {
+          if (span === NOOP_TRACE_SPAN) return fn(span);
           if (attributes) applyAttributes(span, attributes);
+          // A SYNCHRONOUS throw from fn skips applyLate — fine by design: the only
+          // lazyAttributes phase (render) is always async, so any internal throw
+          // surfaces as a rejection that the onReject branch below DOES tag. If a
+          // sync lazyAttributes phase is ever added, wrap this in try/catch.
           const out = fn(span);
           if (!lazy) return out;
+          const applyLate = () => {
+            const late = lazy();
+            if (late) applyAttributes(span, late);
+          };
           if (out instanceof Promise) {
-            return out.then((value) => {
-              const late = lazy();
-              if (late) applyAttributes(span, late);
-              return value;
-            }) as T;
+            return out.then(
+              (value) => {
+                applyLate();
+                return value;
+              },
+              (error) => {
+                applyLate();
+                throw error;
+              },
+            ) as T;
           }
-          const late = lazy();
-          if (late) applyAttributes(span, late);
+          applyLate();
           return out;
         }
       : fn;
@@ -267,6 +287,24 @@ export function observePhase<T>(
   // the old track().finally() path it replaced).
   const start = performance.now();
   return runThenSettle(runSpan, () => recordPhaseMetric(store, metric, start));
+}
+
+/**
+ * Open a rango.handler span around one segment route/layout handler call. The
+ * segment-resolution hot path runs this PER SEGMENT, so it checks the
+ * perf/tracing surface FIRST and calls the handler directly when neither is
+ * active — building neither the PhaseSpec (PHASES.handler allocates) nor the
+ * wrapper closure on the off path. The handler:<id> perf metric is owned by the
+ * track() at the call site, so this is span-only (metric:false).
+ */
+export function observeHandler<C, R>(
+  id: string,
+  handler: (ctx: C) => R,
+  ctx: C,
+): R {
+  const reqCtx = _getRequestContext();
+  if (!reqCtx?._metricsStore && !reqCtx?._tracing) return handler(ctx);
+  return observePhase(PHASES.handler(id), () => handler(ctx));
 }
 
 /**
