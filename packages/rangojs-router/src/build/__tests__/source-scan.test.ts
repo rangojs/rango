@@ -135,6 +135,35 @@ describe("source-scan: regex-literal awareness (E1)", () => {
     const idx = codeMatchIndices(code, ROUTER());
     expect(idx).toEqual([code.lastIndexOf("createRouter")]);
   });
+
+  it("finds a real createRouter after a regex that follows the `return` keyword", () => {
+    // `return` ends in a word char, so the previous-CHAR-only heuristic read the
+    // `/` as division; the regex body's inner `'`/`"` then opened a phantom
+    // string and swallowed the later real createRouter(). Keyword context (the
+    // `/` follows the `return` keyword -> regex) fixes it.
+    const code = `function f() { return /it's a "x"/g; }\ncreateRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
+
+  it("treats `/` after other expression keywords (typeof/case/throw) as a regex", () => {
+    for (const kw of ["typeof", "case", "throw"]) {
+      const code = `x; ${kw} /a'b"c/g;\nexport const r = createRouter({});`;
+      expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+        code.lastIndexOf("createRouter"),
+      );
+    }
+  });
+
+  it("still treats `/` after a value-named identifier as division (not a keyword)", () => {
+    // `returnValue` is NOT the `return` keyword: `/` after it is division, and a
+    // later quote opens a real string, exactly as before.
+    const code = `const z = returnValue / b;\nexport const r = createRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
 });
 
 describe("source-scan: line-terminator handling for // comments", () => {

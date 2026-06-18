@@ -34,21 +34,54 @@ function isLineTerminator(ch: string): boolean {
   return c === 10 || c === 13 || c === 0x2028 || c === 0x2029;
 }
 
-// A `/` is a regex-literal start (not division) when the previous significant
-// code char cannot end an expression. Value-producing terminators are
-// identifiers/digits, a closing `)`/`]`, and `$`/`_`; everything else (operators,
-// `(`, `,`, `=`, `:`, `{`, `;`, `<`, `>`, ...) and the start-of-file put `/` in
-// regex position. Conservative: a false negative only reverts to the old
-// behavior, and a false positive on real division is avoided because division's
-// left operand always ends in a value-producing char. `}` is treated as
-// value-producing to avoid swallowing an object/block followed by division;
-// the cost is only that a regex right after a block isn't skipped (rare, and
-// merely the prior behavior).
-function isRegexPositionPrev(ch: string | undefined): boolean {
-  if (ch === undefined) return true; // start of file
-  if (ch === ")" || ch === "]" || ch === "}") return false;
-  // Identifier/number continuation chars are value-producing.
-  return !/[\w$]/.test(ch);
+// Identifier-position keywords after which a `/` begins a regex literal, not
+// division: the keyword cannot be the left operand of a division, so `return
+// /re/`, `typeof /re/`, `case /re/`, etc. are regexes. After any OTHER identifier
+// or number (a value), `/` is division.
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "do",
+  "else",
+  "yield",
+  "await",
+  "case",
+  "throw",
+]);
+
+// A `/` at `slashPos` is a regex-literal start (not division) when the previous
+// significant code char cannot end an expression. A closing `)`/`]`/`}` and an
+// identifier/digit/`$`/`_` are value-producing (division); everything else
+// (operators, `(`, `,`, `=`, `:`, `{`, `;`, `<`, `>`, ...) and the start-of-file
+// put `/` in regex position. The one subtlety: an identifier that is actually a
+// regex-preceding KEYWORD (`return /re/`) ends in a word char, so the
+// previous-char-only test misread it as division and then let the regex body's
+// inner quotes open a phantom string — dropping a later real `createRouter()`.
+// So when the previous char is a word char we walk back over any whitespace and
+// the identifier and treat `/` as a regex iff that identifier is such a keyword.
+// `}` stays value-producing to avoid swallowing an object/block followed by
+// division; the cost is only that a regex right after a block isn't skipped.
+function isRegexPositionAt(
+  code: string,
+  slashPos: number,
+  prevChar: string | undefined,
+): boolean {
+  if (prevChar === undefined) return true; // start of file
+  if (prevChar === ")" || prevChar === "]" || prevChar === "}") return false;
+  if (!/[\w$]/.test(prevChar)) return true; // operator / `(` / `,` / `=` / ...
+  // Previous char ends an identifier or number: regex only after a keyword that
+  // expects an expression. Walk back over whitespace + the identifier run.
+  let k = slashPos - 1;
+  while (k >= 0 && /\s/.test(code[k])) k--;
+  const wordEnd = k + 1;
+  while (k >= 0 && /[\w$]/.test(code[k])) k--;
+  return REGEX_PRECEDING_KEYWORDS.has(code.slice(k + 1, wordEnd));
 }
 
 /**
@@ -100,7 +133,7 @@ function makeCodeClassifier(code: string): (q: number) => boolean {
         c === "/" &&
         d !== "/" &&
         d !== "*" &&
-        isRegexPositionPrev(lastSig)
+        isRegexPositionAt(code, i, lastSig)
       ) {
         // Coarse regex-literal skip. A regex literal cannot span a raw newline;
         // `/` inside a `[...]` character class is literal (not a terminator).
