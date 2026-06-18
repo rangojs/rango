@@ -27,7 +27,7 @@
   "devDependencies": {
     "@babel/core": "catalog:",
     "@cloudflare/vite-plugin": "^1.38.0",
-    "@cloudflare/workers-types": "^4.20260523.1",
+    "@cloudflare/workers-types": "^4.20260617.1",
     "@playwright/test": "^1.49.1",
     "@rolldown/plugin-babel": "catalog:",
     "@shared/e2e": "workspace:*",
@@ -43,6 +43,6 @@
     "typescript": "^5.7.0",
     "vite": "catalog:",
     "vitest": "^4.0.0",
-    "wrangler": "^4.94.0"
+    "wrangler": "^4.101.0"
   }
 }

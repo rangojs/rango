@@ -26,16 +26,20 @@
  * metered directly), rango.middleware (span-only incl. intercept middleware;
  * pre/post metered directly), rango.action (action:<id>; server-action
  * execution, JS + no-JS/PE), rango.loader (loader:<id>; single metering site at
- * useLoader, plus the fetchable path), rango.render (render:total:<route>; normal AND
+ * useLoader, plus the fetchable path), rango.handler (span-only, one per segment
+ * route/layout handler execution; the handler:<id> perf metric is owned by the
+ * track() at the call site), rango.render (render:total:<route>; normal AND
  * action-revalidation renders), rango.ssr (ssr:render-html).
  *
- * Span-duration caveat: a span ends when its callback's value (or promise)
- * settles. For the streaming phases (request/render/ssr) that is when the
- * Response / HTML / RSC stream is constructed, NOT when the body finishes
- * draining. Loader/Suspense work that settles during stream drain extends past
- * the parent span's end, so parent durations under-report streamed time and a
- * rango.loader child can end after its parent. This is the streaming + end-on-
- * settle contract, not a defect; phase spans bound setup-to-stream-handoff.
+ * Span-duration caveat (best-effort, never buffers): a span ends when its
+ * callback's value (or promise) settles. For the streaming phases (request,
+ * render, ssr) that is when the Response / HTML / RSC stream is CONSTRUCTED, not
+ * when the body finishes draining — instrumentation never wraps or buffers the
+ * response body, so it cannot regress response latency or streaming. A loader /
+ * Suspense child that resolves while the body streams therefore keeps a
+ * rango.loader span that can extend past its render parent; overlapping spans are
+ * valid (the loader really did take that long). Phase spans bound the work up to
+ * stream-handoff, which is also what the co-emitted perf metric measures.
  *
  * Both shipped runners (Cloudflare, OTel) keep the core agnostic: the
  * platform-specific bridge lives at the edge behind the SpanRunner contract.
@@ -62,6 +66,7 @@ export type TracePhase =
   | "middleware"
   | "action"
   | "loader"
+  | "handler"
   | "render"
   | "ssr";
 
@@ -71,6 +76,7 @@ export interface TracePhaseToggles {
   middleware?: boolean;
   action?: boolean;
   loader?: boolean;
+  handler?: boolean;
   render?: boolean;
   ssr?: boolean;
 }
@@ -107,6 +113,7 @@ const ALL_PHASES_ON: Record<TracePhase, boolean> = {
   middleware: true,
   action: true,
   loader: true,
+  handler: true,
   render: true,
   ssr: true,
 };
@@ -134,6 +141,7 @@ export function resolveTracing(
           middleware: spans.middleware ?? true,
           action: spans.action ?? true,
           loader: spans.loader ?? true,
+          handler: spans.handler ?? true,
           render: spans.render ?? true,
           ssr: spans.ssr ?? true,
         }

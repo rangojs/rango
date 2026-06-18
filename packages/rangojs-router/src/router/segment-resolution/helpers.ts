@@ -23,6 +23,7 @@ import type { ResolvedSegment, ErrorInfo, HandlerContext } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
+import { observeHandler } from "../instrument.js";
 import type { TelemetrySink } from "../telemetry.js";
 import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
 
@@ -130,11 +131,16 @@ export async function resolveLayoutComponent<TEnv>(
   entry: EntryData,
   context: HandlerContext<any, TEnv>,
 ): Promise<ReactNode> {
-  const component = await tryStaticHandler(entry, entry.shortCode);
-  if (component !== undefined) return component;
-  return typeof entry.handler === "function"
-    ? handleHandlerResult(await entry.handler(context))
-    : (entry.handler as ReactNode);
+  // Static/prerender hit: no handler runs, so emit no rango.handler span.
+  const staticComponent = await tryStaticHandler(entry, entry.shortCode);
+  if (staticComponent !== undefined) return staticComponent;
+  const handler = entry.handler;
+  if (typeof handler !== "function") return handler as ReactNode;
+  // Wrap ONLY the handler call in the rango.handler span (the perf metric is owned
+  // by track("handler:<id>") at the call site). handleHandlerResult stays OUTSIDE
+  // the span so a handler that returns a Response (redirect control flow, which it
+  // rethrows) is not recorded as a span error — mirrors the route-handler sites.
+  return handleHandlerResult(await observeHandler(entry.id, handler, context));
 }
 
 // ---------------------------------------------------------------------------

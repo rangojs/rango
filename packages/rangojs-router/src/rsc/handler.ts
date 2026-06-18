@@ -496,9 +496,10 @@ export function createRSCHandler<
     // The "rango.request" span is opened inside the request context so the
     // Cloudflare runner can read executionContext.tracing, and so every nested
     // phase span (and the platform's automatic KV/D1/fetch spans) nests under
-    // it. metric:false — handler:total is metered directly below (a grand total
-    // incl. the pre-context bootstrap timings, finer than a single wrap). When
-    // tracing is off this is a direct pass-through.
+    // it. Construction-bound: the span ends when the Response is built, never
+    // wrapping the streamed body. metric:false — handler:total is metered
+    // directly below (a grand total incl. the pre-context bootstrap timings).
+    // When tracing is off this is a direct pass-through.
     return runWithRequestContext(requestContext, () =>
       observePhase(PHASES.request, async (span) => {
         span.setAttribute("http.method", request.method);

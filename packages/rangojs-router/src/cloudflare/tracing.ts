@@ -2,9 +2,9 @@
  * Cloudflare custom-spans integration.
  *
  * Bridges the router's performance phases (request, middleware, action,
- * loaders, render, ssr) onto Cloudflare Workers custom spans so they show up in the
- * trace waterfall and OpenTelemetry exports next to the platform's automatic
- * spans (KV reads, D1 queries, fetch calls), with correct parent-child nesting.
+ * loaders, handler, render, ssr) onto Cloudflare Workers custom spans so they show
+ * up in the trace waterfall and OpenTelemetry exports next to the platform's
+ * automatic spans (KV reads, D1 queries, fetch calls), with correct nesting.
  *
  * Usage (Cloudflare preset only):
  *
@@ -25,14 +25,14 @@
  * request behaves exactly as if tracing were off. Whether spans are actually
  * recorded is governed by the `observability`/tracing block in wrangler config.
  *
- * Span duration note: a phase span ends when its callback's returned value (or
- * promise) settles, which for the streaming phases (request/render/ssr) is when
- * the Response or HTML/RSC stream is *constructed*, not when the body finishes
- * draining. Loader/Suspense work that settles while the body streams therefore
- * extends past the parent span's end, and platform spans emitted during that
- * drain (deferred SSR, waitUntil-scheduled cache writes) are siblings of the
- * automatic request span rather than children of rango.*. Phase spans bound
- * setup-to-stream-handoff; they are not a full request-duration measure.
+ * Span duration note: enterSpan ends a span when its callback's returned value
+ * (or promise) settles. For the streaming phases (request/render/ssr) that is at
+ * stream CONSTRUCTION, not body-drain. Instrumentation is best-effort and never
+ * wraps or buffers the response body, so it cannot regress streaming or latency.
+ * A loader/Suspense child that resolves mid-stream therefore keeps a rango.loader
+ * span that can extend past its render parent — overlapping spans are valid. Uses
+ * only the typed enterSpan API; spans bound work up to stream-handoff, matching
+ * the co-emitted perf metric.
  */
 
 import { _getRequestContext } from "../server/request-context.js";
@@ -92,8 +92,8 @@ const cloudflareSpanRunner: SpanRunner = (name, fn) => {
 /**
  * Create the tracing config for a Cloudflare router. Pass the result to
  * `createRouter({ tracing })`. Spans are emitted for the request, middleware,
- * action, loaders, render, and ssr phases; pass `spans` to turn individual
- * phases off.
+ * action, loaders, handler, render, and ssr phases; pass `spans` to turn
+ * individual phases off.
  *
  * @see createOTelTracing (`@rangojs/router`) for the same slot on any platform
  *   with an OpenTelemetry SDK.

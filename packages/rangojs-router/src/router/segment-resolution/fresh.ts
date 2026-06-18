@@ -30,6 +30,7 @@ import {
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
+import { observeHandler } from "../instrument.js";
 import {
   track,
   RangoContext,
@@ -258,7 +259,9 @@ export async function resolveSegment<TEnv>(
         !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
       const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
-        const result = handleHandlerResult(handler(context));
+        const result = handleHandlerResult(
+          observeHandler(entry.id, handler, context),
+        );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, entry.id);
           result.finally(doneRouteHandler).catch(() => {});
@@ -280,7 +283,9 @@ export async function resolveSegment<TEnv>(
           component = result;
         }
       } else {
-        component = handleHandlerResult(await handler(context));
+        component = handleHandlerResult(
+          await observeHandler(entry.id, handler, context),
+        );
         doneRouteHandler();
       }
     }
@@ -505,7 +510,9 @@ export async function resolveParallelEntry<TEnv>(
         parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (hasLoadingFallback) {
         const result =
-          typeof handler === "function" ? handler(context) : handler;
+          typeof handler === "function"
+            ? observeHandler(`${parallelEntry.id}.${slot}`, handler, context)
+            : handler;
         if (result instanceof Promise) {
           result.finally(doneParallelHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
@@ -527,7 +534,13 @@ export async function resolveParallelEntry<TEnv>(
         }
       } else {
         component =
-          typeof handler === "function" ? await handler(context) : handler;
+          typeof handler === "function"
+            ? await observeHandler(
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                context,
+              )
+            : handler;
         doneParallelHandler();
       }
     }

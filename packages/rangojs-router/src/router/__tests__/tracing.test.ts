@@ -78,6 +78,7 @@ describe("resolveTracing", () => {
       middleware: true,
       action: true,
       loader: true,
+      handler: true,
       render: true,
       ssr: true,
     });
@@ -93,6 +94,7 @@ describe("resolveTracing", () => {
       middleware: true,
       action: true,
       loader: false,
+      handler: true,
       render: true,
       ssr: false,
     });

@@ -78,6 +78,9 @@ function runTraceSpec(f: Fixture): void {
     expect(render, "expected a rango.render span").toBeTruthy();
     expect(hasDescendant(request, "rango.render")).toBe(true);
 
+    // the render span is tagged with the matched route name (resolved after match).
+    expect(render!.attributes["rango.route"]).toBe("blog");
+
     // ssr nests under render.
     expect(hasDescendant(render!, "rango.ssr")).toBe(true);
 
@@ -85,6 +88,14 @@ function runTraceSpec(f: Fixture): void {
     const loader = findNode(roots, "rango.loader");
     expect(loader, "expected a rango.loader span").toBeTruthy();
     expect(typeof loader!.attributes["rango.loader_id"]).toBe("string");
+
+    // the route/layout handler executions produce rango.handler spans (the
+    // dominant per-segment work), nested under render and tagged with the
+    // handler id — mirroring the handler:<id> perf rows.
+    const handler = findNode(roots, "rango.handler");
+    expect(handler, "expected a rango.handler span").toBeTruthy();
+    expect(typeof handler!.attributes["rango.handler_id"]).toBe("string");
+    expect(hasDescendant(render!, "rango.handler")).toBe(true);
 
     // global document-cache middleware wraps the request.
     const middleware = findNode(roots, "rango.middleware");

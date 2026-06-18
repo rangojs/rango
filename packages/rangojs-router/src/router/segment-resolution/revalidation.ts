@@ -43,7 +43,7 @@ import {
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
-import { observeEvent } from "../instrument.js";
+import { observeEvent, observeHandler } from "../instrument.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
@@ -793,12 +793,16 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
           ? routeEntry.liveHandler
           : routeEntry.handler;
       if (!routeEntry.loading) {
-        const result = handleHandlerResult(await handler(context));
+        const result = handleHandlerResult(
+          await observeHandler(entry.id, handler, context),
+        );
         doneHandler();
         return result;
       }
       if (!actionContext) {
-        const result = handleHandlerResult(handler(context));
+        const result = handleHandlerResult(
+          observeHandler(entry.id, handler, context),
+        );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, routeEntry.id);
           result.finally(doneHandler).catch(() => {});
@@ -822,7 +826,9 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       debugLog("segment.action", "resolving action route with awaited value", {
         entryId: entry.id,
       });
-      const actionResult = handleHandlerResult(await handler(context));
+      const actionResult = handleHandlerResult(
+        await observeHandler(entry.id, handler, context),
+      );
       doneHandler();
       return {
         content: Promise.resolve(actionResult),
