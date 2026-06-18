@@ -43,6 +43,10 @@ import {
 } from "../server/request-context.js";
 import { seedVariables, type VarsInit } from "./internal/seed-vars.js";
 import { normalizeFlight } from "./flight-normalize.js";
+import { resolveThemeConfig } from "../theme/constants.js";
+import type { ThemeConfig } from "../theme/types.js";
+import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheProfile } from "../cache/profile-registry.js";
 import type { RscPayload } from "../rsc/types.js";
 import type { ResolvedSegment } from "../types.js";
 
@@ -86,6 +90,23 @@ export interface RenderToFlightStringOptions {
    * Object form (`{ user }`) or `[key, value]` tuples (`[[userVar, u]]`).
    */
   vars?: VarsInit;
+  /**
+   * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
+   * or `{ themes: [...] }`). Without it `getRequestContext().theme` is `undefined`
+   * and `ctx.setTheme` is inert — pass one to render a server component that
+   * reads `ctx.theme`. Threaded into the SAME createRequestContext renderHandler
+   * uses, so the two Flight primitives expose theme identically.
+   */
+  theme?: ThemeConfig | true;
+  /**
+   * Cache store backing a `"use cache"` function the rendered server tree
+   * invokes. Without it, `registerCachedFunction` takes the uncached bypass and
+   * the cached path is NOT exercised. Pair with `cacheProfiles` so a
+   * `"use cache: profileName"` directive resolves its profile.
+   */
+  cacheStore?: SegmentCacheStore;
+  /** Cache profiles in the `createRouter({ cacheProfiles })` shape. */
+  cacheProfiles?: Record<string, CacheProfile>;
 }
 
 const DEFAULT_URL = "http://localhost/";
@@ -191,6 +212,10 @@ export async function serializeToFlightString(
     request,
     url,
     variables: seedVariables({}, opts.vars),
+    themeConfig:
+      opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
+    cacheStore: opts.cacheStore,
+    cacheProfiles: opts.cacheProfiles,
   });
 
   return runWithRequestContext(ctx, () => {

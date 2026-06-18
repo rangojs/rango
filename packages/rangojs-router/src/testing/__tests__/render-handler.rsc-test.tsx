@@ -49,6 +49,27 @@ describe("renderHandler", () => {
     expect(json).toContain("9");
   });
 
+  test("seeded ctx.use(Loader) returns a Promise (production parity)", async () => {
+    // Production ctx.use(Loader) ALWAYS returns a Promise. The seeded harness
+    // path must too, so a handler composing on the result (.then/Promise.race)
+    // behaves the same as in a real render. Before the fix it returned the raw
+    // value, so `.then` was undefined.
+    async function Page(ctx: HandlerContext) {
+      const used = ctx.use(ProductLoader);
+      const isThenable =
+        used instanceof Promise && typeof used.then === "function";
+      const product = await used;
+      // Compose the marker into a single string so it serializes contiguously
+      // (Flight splits `{a}{b}` JSX into a children array, not one string).
+      const marker = `thenable=${isThenable}:name=${product.name}`;
+      return <main>{marker}</main>;
+    }
+    const { tree } = await renderHandler(Page, {
+      loaders: [[ProductLoader, { name: "Wine", price: 9 }]],
+    });
+    expect(JSON.stringify(tree)).toContain("thenable=true:name=Wine");
+  });
+
   // #582 parity: renderHandler scopes the request-context reverse to the
   // routeMap option (not only the handler context), so a NESTED server component
   // reading getRequestContext().reverse() resolves against the same map as the

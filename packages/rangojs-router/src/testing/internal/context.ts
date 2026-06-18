@@ -12,6 +12,10 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import {
+  isExternalRedirect,
+  markExternalRedirect,
+} from "../../redirect-origin.js";
 import { resolveLocationStateEntries } from "../../browser/react/location-state-shared.js";
 import { createReverseFunction } from "../../router/handler-context.js";
 import { normalizeBasename } from "../../router/basename.js";
@@ -259,6 +263,7 @@ export function buildRunResponse<TEnv>(
   thrown: unknown,
 ): Response {
   const stub = ctx.res;
+  let response: Response;
   if (thrown instanceof Response) {
     const headers = new Headers(thrown.headers);
     for (const cookie of stub.headers.getSetCookie()) {
@@ -268,9 +273,36 @@ export function buildRunResponse<TEnv>(
       if (name.toLowerCase() === "set-cookie") return;
       if (!headers.has(name)) headers.set(name, value);
     });
-    return new Response(null, { status: thrown.status, headers });
+    response = new Response(null, { status: thrown.status, headers });
+  } else {
+    response = new Response(null, {
+      status: stub.status,
+      headers: stub.headers,
+    });
   }
-  return new Response(null, { status: stub.status, headers: stub.headers });
+  // Mirror production response finalization: every response-finalization path
+  // drains ctx.onResponse() callbacks (createResponseWithMergedHeaders /
+  // finalizeResponse). buildRunResponse runs AFTER runWithRequestContext has
+  // exited, so _getRequestContext() (and finalizeResponse) would no-op — drain
+  // ctx._onResponseCallbacks explicitly with the SAME swap-before-iterate +
+  // external-brand-preserving semantics drainOnResponseCallbacks uses in
+  // production, so a callback's header mutations / returned replacement Response
+  // are reflected on the result the harness surfaces. Inlined (not imported from
+  // rsc/helpers) to keep this internal module off helpers' runtime import graph,
+  // which transitively pulls a Vite `virtual:` module that the unit-test
+  // (non-Vite) runner cannot resolve.
+  const callbacks = ctx._onResponseCallbacks;
+  if (callbacks.length === 0) return response;
+  ctx._onResponseCallbacks = [];
+  const wasExternal = isExternalRedirect(response);
+  let result = response;
+  for (const callback of callbacks) {
+    result = callback(result) ?? result;
+  }
+  if (wasExternal && !isExternalRedirect(result)) {
+    markExternalRedirect(result);
+  }
+  return result;
 }
 
 export function buildRunSnapshot<TEnv>(

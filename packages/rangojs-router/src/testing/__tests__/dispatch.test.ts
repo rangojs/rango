@@ -341,6 +341,83 @@ describe("dispatch", () => {
     expect((await res.json()).hasStore).toBe(true);
   });
 
+  // I2: dispatch wires the production response-route cache path (resolved from
+  // the matched entry tree), so a cached path.json/path.text route hits/writes
+  // through dispatch the way it does in production — not a fresh run every call.
+  describe("cached response routes (cache() boundary)", () => {
+    // The cache WRITE is scheduled via ctx.waitUntil (a microtask without an
+    // executionContext); flush the queue so the second dispatch can observe it.
+    const flushWrites = () => new Promise((r) => setTimeout(r, 0));
+
+    it("serves a cached path.json route from the store (same body on a HIT)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached", () => ({ ts: Date.now() + Math.random() }), {
+              name: "cached.json",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached" })
+      ).json();
+
+      // A HIT returns the byte-identical cached body; a fresh re-run would carry
+      // a new ts. (Before the fix dispatch never touched the store -> different.)
+      expect(second).toEqual(first);
+    });
+
+    it("writes an entry into the store for a cached response route", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached2", () => ({ ok: true }), {
+              name: "cached2.json",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      await dispatch(router, { request: "/cached2" });
+      await flushWrites();
+
+      // The production key shape: response:{type}:{host}{path}{search}.
+      const cached = await store.getResponse("response:json:localhost/cached2");
+      expect(cached).not.toBeNull();
+      expect(cached?.response.status).toBe(200);
+    });
+
+    it("re-runs an UNcached response route every call (different body)", async () => {
+      // Non-vacuity: without a cache() boundary the handler re-executes, so the
+      // body changes — proving the equality above is caused by caching.
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path }) => [
+          path.json("/uncached", () => ({ ts: Date.now() + Math.random() }), {
+            name: "uncached.json",
+          }),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/uncached" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/uncached" })
+      ).json();
+      expect(second).not.toEqual(first);
+    });
+  });
+
   it("throws a clear error for an RSC (component) route", async () => {
     const router = buildRouter();
     await expect(dispatch(router, { request: "/" })).rejects.toThrow(

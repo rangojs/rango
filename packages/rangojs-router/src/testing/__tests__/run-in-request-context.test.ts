@@ -354,6 +354,46 @@ describe("runInRequestContext: invalidateClientCache / keepClientCache (action)"
     expect(response.headers.get("Location")).toBe("/app");
     expect(stateCookies(response)).toHaveLength(1);
   });
+
+  // ctx.onResponse() is a documented public RequestContext method. Production
+  // drains it on EVERY response-finalization path; the harness must too, or a
+  // unit test for an action/handler that registers onResponse sees none of its
+  // effects (dogfood-parity hazard). Covers both the normal-return path and the
+  // throw-redirect path.
+  it("runs an onResponse callback that mutates a header (normal return)", async () => {
+    const { response, headers } = await runInRequestContext(() => {
+      getRequestContext().onResponse((res) => {
+        res.headers.set("X-Foo", "1");
+        return res;
+      });
+      return "ok";
+    });
+    expect(response.headers.get("X-Foo")).toBe("1");
+    expect(headers["x-foo"]).toBe("1");
+  });
+
+  it("honors an onResponse callback that returns a replacement Response", async () => {
+    const { response } = await runInRequestContext(() => {
+      getRequestContext().onResponse(
+        () => new Response(null, { status: 418, headers: { "X-Teapot": "1" } }),
+      );
+      return "ok";
+    });
+    expect(response.status).toBe(418);
+    expect(response.headers.get("X-Teapot")).toBe("1");
+  });
+
+  it("runs an onResponse callback on the throw-redirect path", async () => {
+    const { response } = await runInRequestContext(() => {
+      getRequestContext().onResponse((res) => {
+        res.headers.set("X-Flash", "saved");
+        return res;
+      });
+      throw redirect("/app");
+    });
+    expect(response.headers.get("Location")).toBe("/app");
+    expect(response.headers.get("X-Flash")).toBe("saved");
+  });
 });
 
 describe("runWithRequestContext re-export", () => {

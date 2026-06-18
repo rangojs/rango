@@ -27,6 +27,11 @@
  *     status, matching handleResponseRoute (RFC 9457 problem+json body with
  *     application/problem+json for json routes, text/plain message otherwise)
  *   - content-negotiated route:                         Vary: Accept appended
+ *   - cached response route (cache({...})):             getResponse/putResponse
+ *     hit/SWR/tag write, resolved from the matched entry tree exactly as
+ *     handleResponseRoute does. The write is scheduled via ctx.waitUntil
+ *     (a microtask without an executionContext), so a HIT-asserting test must
+ *     flush microtasks between the seeding dispatch and the asserting one.
  * - Global middleware (router.use(...)) AND route-level middleware, with full
  *   next()/short-circuit/throw-Response/header+cookie-merge fidelity.
  * - Partial (client-navigation) requests to a RESPONSE route (?_rsc_partial):
@@ -84,6 +89,13 @@ import {
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
+// cache-scope is loaded LAZILY inside the response-route cache path (below):
+// its module graph pulls @vitejs/plugin-rsc/rsc (via segment-codec), which the
+// non-Vite unit-test runner cannot resolve. A static import here would drag that
+// onto the whole testing barrel's eager graph and break every consumer suite
+// that imports `@rangojs/router/testing` without mocking plugin-rsc.
+import { traverseBack } from "../router/pattern-matching.js";
+import type { EntryData } from "../server/context.js";
 import { setRouterManifest } from "../route-map-builder.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { RouterError } from "../errors.js";
@@ -93,6 +105,7 @@ import {
   createSimpleRedirectResponse,
   finalizeResponse,
   interceptRedirectForPartial,
+  isCacheableStatus,
   mergeStubHeadersAndFinalize,
 } from "../rsc/helpers.js";
 import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
@@ -134,6 +147,7 @@ interface DispatchableRouter<TEnv> {
     params?: Record<string, string>;
     routeKey?: string;
     negotiated?: boolean;
+    manifestEntry?: EntryData;
   } | null>;
   basename?: string;
   cache?:
@@ -417,7 +431,7 @@ export async function dispatch<TEnv = any>(
     // coreHandler below, mirroring production where handleResponseRoute is
     // nested inside coreHandler. Built lazily so a redirect/404 path never
     // touches it.
-    const callResponseRoute = (): Promise<Response> => {
+    const callResponseRoute = async (): Promise<Response> => {
       // Match production: a partial (client-navigation) request to a response
       // route is short-circuited to X-RSC-Reload (handleResponseRoute), BEFORE
       // route-level middleware runs. Route-level middleware is skipped on a
@@ -527,28 +541,154 @@ export async function dispatch<TEnv = any>(
       if (isPartial) {
         return partialFinalHandler();
       }
-      const routeMiddlewareEntries = (preview?.routeMiddleware ?? []).map(
-        (mw) => ({
-          entry: {
-            pattern: null,
-            regex: null,
-            paramNames: [],
-            handler: mw.handler,
-          } as MiddlewareEntry<TEnv>,
-          params: mw.params,
-        }),
-      );
-      if (routeMiddlewareEntries.length === 0) {
-        return callHandler();
+
+      // executeHandler = callHandler wrapped by route-level middleware, exactly
+      // the unit the production response cache wraps (response-route-handler.ts).
+      const executeHandler = (): Promise<Response> => {
+        const routeMiddlewareEntries = (preview?.routeMiddleware ?? []).map(
+          (mw) => ({
+            entry: {
+              pattern: null,
+              regex: null,
+              paramNames: [],
+              handler: mw.handler,
+            } as MiddlewareEntry<TEnv>,
+            params: mw.params,
+          }),
+        );
+        if (routeMiddlewareEntries.length === 0) {
+          return callHandler();
+        }
+        return executeMiddleware<TEnv>(
+          routeMiddlewareEntries,
+          req,
+          env,
+          variables,
+          callHandler,
+          reverse,
+        );
+      };
+
+      // Response-route cache path, mirroring handleResponseRoute (lines 240-373)
+      // so a cached path.json/path.text route hits/SWRs/writes tags through
+      // dispatch the way it does in production — not a fresh run every call.
+      // Resolved from the matched entry tree (preview.manifestEntry), which the
+      // router's previewMatch surfaces for response routes.
+      const manifestEntry = preview?.manifestEntry;
+      if (manifestEntry) {
+        // Lazy so the testing barrel's eager graph stays plugin-rsc-free (see the
+        // import note above). Only loaded once a response route actually matched.
+        const { createCacheScope, resolveCacheTags } =
+          await import("../cache/cache-scope.js");
+        let cacheScope: ReturnType<typeof createCacheScope> = null;
+        for (const entry of traverseBack(manifestEntry)) {
+          if (entry.cache) {
+            cacheScope = createCacheScope(entry.cache, cacheScope);
+          }
+        }
+
+        if (cacheScope?.enabled) {
+          let conditionPassed = true;
+          if (cacheScope.config !== false && cacheScope.config.condition) {
+            try {
+              conditionPassed = !!cacheScope.config.condition(requestContext);
+            } catch {
+              conditionPassed = false;
+            }
+          }
+
+          const store = cacheScope.getStore() ?? requestContext._cacheStore;
+          if (conditionPassed && store?.getResponse && store?.putResponse) {
+            let cacheKey = `response:${responseType}:${url.host}${url.pathname}${url.search}`;
+            if (cacheScope.config !== false && cacheScope.config.key) {
+              try {
+                const customKey = await cacheScope.config.key(requestContext);
+                cacheKey = `response:${customKey}`;
+              } catch {
+                // Fall back to default key on route-level key failure.
+              }
+            } else if (store.keyGenerator) {
+              try {
+                cacheKey = await store.keyGenerator(requestContext, cacheKey);
+              } catch {
+                // Fall back to default key on keyGenerator failure.
+              }
+            }
+
+            // resolveCacheTags is typed against the default-env RequestContext
+            // (it reads only env-agnostic tag config); the dispatch ctx is
+            // RequestContext<TEnv>, assignable in the router's own tsc but not
+            // when a consumer pins a concrete Env. Cast to the param type.
+            const responseTags = resolveCacheTags(
+              cacheScope.config,
+              requestContext as Parameters<typeof resolveCacheTags>[1],
+            );
+
+            // Pre-handler onResponse callbacks are applied once per serve on
+            // every path (hit + miss), exactly as handleResponseRoute does.
+            const savedCallbacks = requestContext._onResponseCallbacks;
+            requestContext._onResponseCallbacks = [];
+            const applyPreHandlerCallbacks = (response: Response): Response => {
+              let result = response;
+              for (const callback of savedCallbacks) {
+                result = callback(result) ?? result;
+              }
+              return result;
+            };
+
+            try {
+              const cached = await store.getResponse(cacheKey);
+              if (cached && isCacheableStatus(cached.response.status)) {
+                if (!cached.shouldRevalidate) {
+                  return applyPreHandlerCallbacks(cached.response);
+                }
+                requestContext.waitUntil(async () => {
+                  try {
+                    const fresh = finalizeResponse(await executeHandler());
+                    if (isCacheableStatus(fresh.status)) {
+                      await store.putResponse!(
+                        cacheKey,
+                        fresh.clone(),
+                        cacheScope!.ttl,
+                        cacheScope!.swr,
+                        responseTags,
+                      );
+                    }
+                  } catch (error) {
+                    console.error(
+                      `[ResponseCache] Revalidation failed:`,
+                      error,
+                    );
+                  }
+                });
+                return applyPreHandlerCallbacks(cached.response);
+              }
+            } catch (error) {
+              console.error(`[ResponseCache] Cache lookup failed:`, error);
+            }
+
+            const response = finalizeResponse(await executeHandler());
+            if (isCacheableStatus(response.status)) {
+              requestContext.waitUntil(async () => {
+                try {
+                  await store.putResponse!(
+                    cacheKey,
+                    response.clone(),
+                    cacheScope!.ttl,
+                    cacheScope!.swr,
+                    responseTags,
+                  );
+                } catch (error) {
+                  console.error(`[ResponseCache] Cache write failed:`, error);
+                }
+              });
+            }
+            return applyPreHandlerCallbacks(response);
+          }
+        }
       }
-      return executeMiddleware<TEnv>(
-        routeMiddlewareEntries,
-        req,
-        env,
-        variables,
-        callHandler,
-        reverse,
-      );
+
+      return executeHandler().then(finalizeResponse);
     };
 
     // coreHandler is the single terminal the global middleware chain wraps,
