@@ -215,6 +215,42 @@ describe("location-state-shared", () => {
       expect(replaceState).not.toHaveBeenCalled();
     });
 
+    /**
+     * F6: history.state may be a non-null primitive if non-Rango code called
+     * history.pushState/replaceState with a string/number/boolean. The old
+     * guard (`current == null || !(key in current)`) ran `key in <primitive>`,
+     * which throws TypeError ("Cannot use 'in' operator ... in <primitive>")
+     * and escaped delete() as an uncaught error instead of a no-op. The guard
+     * must require an object before the `in` check.
+     */
+    it("is a no-op when history.state is a non-null primitive (string)", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: { state: "some-string-state" as unknown, replaceState },
+        location: { href: "https://example.test/page" },
+      });
+
+      expect(() => ProductState.delete()).not.toThrow();
+      expect(replaceState).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when history.state is a number primitive", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: { state: 42 as unknown, replaceState },
+        location: { href: "https://example.test/page" },
+      });
+
+      expect(() => ProductState.delete()).not.toThrow();
+      expect(replaceState).not.toHaveBeenCalled();
+    });
+
     it("throws on the server (no window)", () => {
       const ProductState = createLocationState<{ id: string }>();
       (ProductState as any).__rsc_ls_key = "product";

@@ -45,6 +45,17 @@ type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
 let decoder: PrefetchDecoder | null = null;
 
 /**
+ * Hard ceiling for a hover/direct prefetch with no caller-supplied AbortSignal.
+ * prefetchDirect (hover) fetches without a signal, so a server that stalls
+ * leaves the fetch pending forever — its `.finally()` never runs,
+ * `clearPrefetchInflight` never fires, and `hasPrefetch(key)` stays true,
+ * permanently deduping every future prefetch of that URL. An internal timeout
+ * aborts the stalled fetch so it settles (rejects) and the inflight key is
+ * always released. Generous so a slow-but-live response is never cut short.
+ */
+const PREFETCH_FETCH_TIMEOUT_MS = 30_000;
+
+/**
  * Wire the RSC decoder used to eagerly decode prefetched responses. Called
  * once from initBrowserApp with the same createFromFetch the navigation client
  * uses. Until set, prefetch warming is inert (prefetches are skipped) — the
@@ -149,6 +160,19 @@ function executePrefetchFetch(
     : [wildcardKey, sourceKey];
   for (const k of inflightKeys) markPrefetchInflight(k);
 
+  // When the caller passes no AbortSignal (hover/direct prefetch), install an
+  // internal timeout so a stalled server cannot strand the inflight key. The
+  // timer aborts the fetch, which rejects it and runs the `.finally()` cleanup
+  // below — releasing the inflight flag so the URL can be prefetched again.
+  // Cleared on settle so a fast response pays no timer cost.
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let effectiveSignal = signal;
+  if (!effectiveSignal) {
+    const controller = new AbortController();
+    effectiveSignal = controller.signal;
+    timeoutId = setTimeout(() => controller.abort(), PREFETCH_FETCH_TIMEOUT_MS);
+  }
+
   const promise: Promise<DecodedPrefetch | null> = fetch(fetchUrl, {
     priority: "low" as RequestPriority,
     // During an action's flight the state is not rotated, so the old
@@ -157,7 +181,7 @@ function executePrefetchFetch(
     // fence's HTTP-cache-bypass requirement applies to prefetch as well as
     // navigation fetches).
     ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
-    signal,
+    signal: effectiveSignal,
     headers: {
       "X-Rango-State": getRangoState(),
       "X-RSC-Router-Client-Path": window.location.href,
@@ -197,7 +221,7 @@ function executePrefetchFetch(
       const tracked = teeWithCompletion(
         response,
         () => resolveStreamComplete(),
-        signal,
+        effectiveSignal,
         // Speculative prefetch: a never-consumed/aborted stream error is benign.
         true,
       );
@@ -215,6 +239,7 @@ function executePrefetchFetch(
     })
     .catch(() => null)
     .finally(() => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       clearPrefetchInflight(inflightKeys[0]!);
     });
 

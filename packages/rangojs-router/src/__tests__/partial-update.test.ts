@@ -1051,6 +1051,81 @@ describe("partial-update", () => {
       expect(renderSegments).not.toHaveBeenCalled();
       expect(onUpdate).not.toHaveBeenCalled();
     });
+
+    /**
+     * F2: the full-update fallback (isPartial=false) stale-revalidation path
+     * must apply the same history-key staleness guard the partial branch has.
+     * A background stale-revalidation that finishes after the user navigated
+     * away (history key changed) must NOT clobber the freshly committed UI.
+     * The guard runs after `await rawStreamComplete` — a real async suspension
+     * during which a new navigation can land.
+     */
+    it("skips full-update UI commit for stale revalidation when history key changed", async () => {
+      const store = createMockStore({ historyKey: "/page1" });
+      // Key matches when captured at start, then changes (user navigated away)
+      // by the time the post-stream guard re-reads it.
+      let callCount = 0;
+      store.getHistoryKey.mockImplementation(() => {
+        callCount++;
+        return callCount <= 1 ? "/page1" : "/page2";
+      });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: false,
+          segments: [seg("R0")],
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "full-tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      await updater("http://localhost/page1", [], false, undefined, tx, {
+        type: "stale-revalidation",
+      });
+
+      // Renders, but onUpdate must NOT fire because the history key changed.
+      expect(renderSegments).toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+    });
+
+    it("applies full-update stale revalidation when history key is unchanged", async () => {
+      const store = createMockStore({ historyKey: "/page1" });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: false,
+          segments: [seg("R0")],
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "full-tree"),
+      });
+
+      await updater("http://localhost/page1", [], false, undefined, tx, {
+        type: "stale-revalidation",
+      });
+
+      // Key unchanged: the update is applied.
+      expect(onUpdate).toHaveBeenCalled();
+    });
   });
 
   describe("HMR resilience", () => {

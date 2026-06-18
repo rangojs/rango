@@ -739,6 +739,101 @@ describe("prefetch fetch options (credentials + action fence)", () => {
 });
 
 /**
+ * F4: a hover/direct prefetch fetches with no caller AbortSignal. If the server
+ * stalls and the fetch never settles, the inflight key was stranded forever:
+ * `hasPrefetch(key)` stayed true, so every future prefetch of that URL was
+ * silently deduped out (no warming) until a full cache clear. An internal
+ * timeout now aborts the stalled fetch so it settles, the `.finally()` clears
+ * the inflight flag, and the URL can be prefetched again.
+ */
+describe("hover prefetch stalled-fetch timeout (F4)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  it("aborts a never-settling direct prefetch so the key can be prefetched again", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // A fetch that resolves only when its AbortSignal fires (i.e. a stalled
+    // server). Without the internal timeout, this never settles and strands
+    // the inflight key.
+    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (sig) {
+          sig.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Inflight while the fetch is pending.
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // A re-prefetch while still inflight is correctly deduped (no new fetch).
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance past the internal timeout: the stalled fetch is aborted and
+    // settles, running the `.finally()` cleanup.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    // The inflight key is released — no longer stranded.
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // A fresh prefetch of the same URL now actually hits the network again
+    // instead of being silently deduped against the dead inflight entry.
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the timeout when the fetch settles normally (no late abort)", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    // Drain the fetch + decode microtasks.
+    await vi.advanceTimersByTimeAsync(0);
+
+    const { hasPrefetch, consumePrefetch } =
+      await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    // Entry is cached (timer was cleared on settle, fetch was never aborted).
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+  });
+});
+
+/**
  * Regression: same-page cache poisoning.
  *
  * After navigating to a prefetched target, a render/viewport prefetch would
