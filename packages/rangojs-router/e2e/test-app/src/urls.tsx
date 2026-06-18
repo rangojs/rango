@@ -1119,12 +1119,20 @@ export const urlpatterns = urls(
       path.json(
         "/__test/loader-ids",
         async () => {
-          const { FetchableTestLoader, ProductsLoader, ProtectedLoader } =
-            await import("./loaders.js");
+          const {
+            FetchableTestLoader,
+            ProductsLoader,
+            ProtectedLoader,
+            ThrownRedirectLoader,
+            NamedErrorLoader,
+          } = await import("./loaders.js");
           return {
             fetchable: (FetchableTestLoader as any).$$id,
             nonFetchable: (ProductsLoader as any).$$id,
             withMiddleware: (ProtectedLoader as any).$$id,
+            // D4/D5 fetchable fixtures (thrown-redirect + named-error loaders).
+            thrownRedirect: (ThrownRedirectLoader as any).$$id,
+            namedError: (NamedErrorLoader as any).$$id,
           };
         },
         { name: "testLoaderIds" },

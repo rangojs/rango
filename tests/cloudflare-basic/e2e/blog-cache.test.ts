@@ -371,6 +371,58 @@ function describeDocumentCacheHeaders(label: string, mode: "dev" | "build") {
 describeDocumentCacheHeaders("dev", "dev");
 describeDocumentCacheHeaders("production", "build");
 
+// C3: an UNqualified `Cache-Control: no-cache` response must never be served
+// as a fresh document-cache HIT (RFC 7234 §5.2.2.2). The route stamps a render
+// timestamp and sets `no-cache, s-maxage=60`; the store must refuse to store
+// it, so the status never reaches HIT and the timestamp re-executes each time —
+// despite the s-maxage that would otherwise mark it cacheable.
+function describeNoCacheNotStored(label: string, mode: "dev" | "build") {
+  test.describe(`document-cache no-cache veto (${label})`, () => {
+    const f = useFixture({
+      root: ".",
+      mode,
+      ...(mode === "dev" ? { isolatedServer: true } : {}),
+    });
+
+    test("unqualified no-cache response is not served as a fresh HIT", async ({
+      request,
+    }) => {
+      async function fetchOnce() {
+        const res = await request.get(f.url("/document-cache-no-cache"), {
+          headers: { Accept: "text/html" },
+        });
+        expect(res.status()).toBe(200);
+        const headers = res.headers();
+        const body = await res.text();
+        // The render timestamp is an ISO string; SSR splits "Rendered at: "
+        // and the date into adjacent nodes, so match the ISO token directly.
+        const ts = body.match(/20\d{2}-\d{2}-\d{2}T[\d:.]+Z/)?.[0];
+        expect(ts, "expected a rendered timestamp in the page").toBeTruthy();
+        return { status: headers["x-document-cache-status"], ts };
+      }
+
+      // Give a (wrong) background store write the chance to land, then probe a
+      // window of requests. The fix means none of them is ever a HIT and the
+      // render timestamp keeps advancing.
+      const first = await fetchOnce();
+      const seenTimestamps = new Set<string>([first.ts!]);
+      for (let i = 0; i < 4; i++) {
+        await new Promise((r) => setTimeout(r, 60));
+        const next = await fetchOnce();
+        // The veto means the store never reports a fresh HIT for this route.
+        expect(next.status).not.toBe("HIT");
+        seenTimestamps.add(next.ts!);
+      }
+
+      // The handler re-executed: more than one distinct render timestamp.
+      expect(seenTimestamps.size).toBeGreaterThan(1);
+    });
+  });
+}
+
+describeNoCacheNotStored("dev", "dev");
+describeNoCacheNotStored("production", "build");
+
 test.describe("proactive-caching (production)", () => {
   const f = useFixture({
     root: ".",
