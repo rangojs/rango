@@ -8,6 +8,10 @@
  *
  * When theme is enabled in the router config, MetaTags also renders
  * the theme initialization script to prevent FOUC (flash of unstyled content).
+ * This makes MetaTags the sole FOUC-script injector for apps that render it;
+ * the standalone `<ThemeScript />` is only needed when MetaTags is not used.
+ * Rendering both is safe (the inline script guards listener registration) but
+ * redundant.
  *
  * @example
  * ```tsx

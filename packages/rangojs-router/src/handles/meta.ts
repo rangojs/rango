@@ -31,9 +31,20 @@
 import { createHandle, type Handle } from "../handle.js";
 import type {
   MetaDescriptor,
+  MetaDescriptorBase,
   TitleDescriptor,
   UnsetDescriptor,
 } from "../router/types.js";
+
+function isPromiseDescriptor(
+  descriptor: MetaDescriptor,
+): descriptor is Promise<MetaDescriptorBase> {
+  return (
+    typeof descriptor === "object" &&
+    descriptor !== null &&
+    typeof (descriptor as { then?: unknown }).then === "function"
+  );
+}
 
 function isUnsetDescriptor(
   descriptor: MetaDescriptor,
@@ -158,6 +169,28 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
 
   for (const descriptors of segments) {
     for (const descriptor of descriptors) {
+      // Promise descriptors cannot be inspected synchronously (their content is
+      // unknown until resolved in <MetaTags> via React's use()), so they bypass
+      // key-based dedup and title-templating: they are appended verbatim. Warn in
+      // dev when a title template is active, since a Promise<{ title }> will NOT
+      // receive the template and will produce a SECOND <title> alongside the
+      // template default — a surprising, otherwise-silent outcome.
+      if (isPromiseDescriptor(descriptor)) {
+        if (
+          titleTemplate !== undefined &&
+          process.env.NODE_ENV !== "production"
+        ) {
+          console.warn(
+            `[Meta] A Promise meta descriptor was pushed while a title template is active. ` +
+              `Async descriptors bypass deduplication and title-templating (the template ` +
+              `will not be applied and may yield a duplicate <title>). Resolve the value ` +
+              `before pushing, or push a synchronous descriptor.`,
+          );
+        }
+        result.push(descriptor);
+        continue;
+      }
+
       if (isUnsetDescriptor(descriptor)) {
         const keyToRemove = descriptor.unset;
         if (keyToIndex.has(keyToRemove)) {
@@ -222,6 +255,13 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
  *
  * Use `ctx.use(Meta)` in route handlers to push meta descriptors.
  * Use `<MetaTags />` component to render them in the document head.
+ *
+ * Deduplication and title-templating apply only to SYNCHRONOUS descriptors.
+ * A Promise descriptor (`Promise<MetaDescriptorBase>`) is appended verbatim —
+ * its content is not known until it resolves in `<MetaTags>`, so it cannot be
+ * keyed for dedup nor receive a parent title template. If you need a child title
+ * to participate in a layout's `%s` template, push the resolved string title
+ * synchronously rather than a `Promise<{ title }>`.
  */
 export const Meta: Handle<MetaDescriptor, MetaDescriptor[]> = createHandle<
   MetaDescriptor,

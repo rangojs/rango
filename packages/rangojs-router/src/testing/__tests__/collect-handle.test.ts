@@ -96,6 +96,18 @@ describe("collectHandle on the built-in Breadcrumbs handle", () => {
     ]);
   });
 
+  // G4: re-pushing an existing href (e.g. a child refreshing a parent crumb's
+  // label) must NOT reorder the crumb to the end — parent->child order is the
+  // documented contract. The href keeps its FIRST position but the LAST value.
+  it("re-pushing an existing crumb keeps parent->child order (dedup in place)", () => {
+    const homeCurrent = { label: "Home (current)", href: "/" };
+    // Home pushed first, Blog second, then Home re-pushed in a deeper segment.
+    const result = collectHandle(Breadcrumbs, [[home], [blog], [homeCurrent]]);
+    // Home stays in position 0 (with the refreshed label), Blog stays after it.
+    expect(result).toEqual([homeCurrent, blog]);
+    expect(result.map((c) => c.href)).toEqual(["/", "/blog"]);
+  });
+
   it("returns an empty array for no segments", () => {
     expect(collectHandle(Breadcrumbs, [])).toEqual([]);
   });
@@ -194,6 +206,72 @@ describe("collectHandle on the built-in Meta handle", () => {
       [{ unset: "name:description" }],
     ] as never) as Array<Record<string, unknown>>;
     expect(result.some((d) => d.name === "description")).toBe(false);
+  });
+
+  // G3: Promise descriptors cannot be inspected synchronously (collectMeta never
+  // awaits), so they are append-only: they bypass key-dedup and title-templating.
+  // The collect must (a) still pass the Promise through untouched (so MetaTags can
+  // resolve it via use()), and (b) warn in dev when a title template is active,
+  // since a Promise<{ title }> silently misses the template and yields a 2nd <title>.
+  describe("async (Promise) meta descriptors", () => {
+    it("passes a Promise descriptor through untouched (append-only)", () => {
+      const p = Promise.resolve({ property: "og:title", content: "Async" });
+      const result = collectHandle(Meta, [
+        [{ property: "og:title", content: "Sync" }],
+        [p],
+      ] as never) as Array<unknown>;
+      // The sync og:title stays; the Promise is appended as-is, NOT deduped
+      // against it (its content is unknown until it resolves).
+      expect(result).toContain(p);
+      expect(
+        (result as Array<Record<string, unknown>>).some(
+          (d) => d && typeof d === "object" && d.property === "og:title",
+        ),
+      ).toBe(true);
+    });
+
+    it("does NOT dedupe a Promise og: descriptor against a sync one", () => {
+      const p = Promise.resolve({ property: "og:title", content: "Async" });
+      const result = collectHandle(Meta, [
+        [{ property: "og:title", content: "Sync" }],
+        [p],
+      ] as never) as Array<unknown>;
+      // Both the sync descriptor and the unresolved Promise survive (2 entries).
+      const ogish = result.filter(
+        (d) =>
+          d === p ||
+          (d &&
+            typeof d === "object" &&
+            (d as Record<string, unknown>).property === "og:title"),
+      );
+      expect(ogish).toHaveLength(2);
+    });
+
+    it("warns in dev when a Promise descriptor is pushed under an active title template", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const p = Promise.resolve({ title: "Async Title" });
+      const result = collectHandle(Meta, [
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [p],
+      ] as never) as Array<unknown>;
+
+      // The template default survives as a sync <title>; the Promise is appended
+      // separately (would render a 2nd <title>), so the dev-warn fires.
+      expect(result).toContain(p);
+      expect(warn).toHaveBeenCalled();
+      expect(
+        warn.mock.calls.some((c) => /title template/i.test(String(c[0]))),
+      ).toBe(true);
+      warn.mockRestore();
+    });
+
+    it("does NOT warn for a Promise descriptor when no title template is active", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const p = Promise.resolve({ property: "og:image", content: "x.png" });
+      collectHandle(Meta, [[p]] as never);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
   });
 
   describe("JSON-LD (script:ld+json)", () => {

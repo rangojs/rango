@@ -152,6 +152,16 @@ export function ThemeProvider({
 
   const setTheme = useCallback(
     (newTheme: Theme) => {
+      // Mirror the server guard (request-context.ts setTheme): reject any value
+      // that is not "system" and not in the configured theme set, so the cookie
+      // can never hold a value the server would reinterpret as defaultTheme on
+      // the next SSR (which would desync initialTheme markup from the applied class).
+      if (newTheme !== "system" && !config.themes.includes(newTheme)) {
+        console.warn(
+          `[Theme] Invalid theme value: "${newTheme}". Valid values: system, ${config.themes.join(", ")}`,
+        );
+        return;
+      }
       setThemeState(newTheme);
       writeThemeToCookie(config.storageKey, newTheme);
       writeThemeToStorage(config.storageKey, newTheme);
