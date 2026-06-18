@@ -22,6 +22,7 @@ import {
   markPrefetchInflight,
   setInflightPromiseWithAliases,
   storePrefetch,
+  removePrefetch,
   clearPrefetchInflight,
   currentGeneration,
   type DecodedPrefetch,
@@ -162,18 +163,29 @@ function executePrefetchFetch(
     : [wildcardKey, sourceKey];
   for (const k of inflightKeys) markPrefetchInflight(k);
 
-  // Always layer a stalled-fetch timeout so a server that never responds cannot
-  // strand the inflight key — true for the hover/direct path (no caller signal)
-  // AND the queue-driven path (the queue passes its own AbortController signal,
-  // which on its own only aborts on navigation, never on a stall). The timeout
-  // aborts the fetch, which rejects it and runs the `.finally()` cleanup below,
-  // releasing the inflight flag so the URL can be prefetched again. Cleared on
-  // settle so a fast response pays no timer cost.
+  // Always layer a stall timeout. It covers BOTH "no response ever arrives"
+  // (strands the inflight key) AND "the body stalls after headers" (leaves a
+  // published entry whose payload/streamComplete never settle, that future
+  // prefetches dedupe against and navigation awaits forever). Applies to the
+  // hover/direct path (no caller signal) and the queue-driven path (whose caller
+  // signal only aborts on navigation, never on a stall). On fire it aborts the
+  // fetch/stream and evicts the published entry if one exists; it is NOT cleared
+  // when headers arrive (see below) — it is cleared when the stream completes, or
+  // in `.finally()` for paths that publish no streaming entry.
+  let publishedKey: string | undefined;
+  let publishedEntry: DecodedPrefetch | undefined;
   const timeoutController = new AbortController();
-  const timeoutId: ReturnType<typeof setTimeout> = setTimeout(
-    () => timeoutController.abort(),
-    PREFETCH_FETCH_TIMEOUT_MS,
-  );
+  const timeoutId: ReturnType<typeof setTimeout> = setTimeout(() => {
+    timeoutController.abort();
+    // Body stalled after headers: evict the published-but-never-settling entry
+    // so future prefetches/navigation refetch. Identity-guarded (pass the exact
+    // entry) so a fresh entry republished under the same key — after this one was
+    // consumed — is NOT dropped. The abort cancels the tee (its finally resolves
+    // streamComplete) and rejects the eager decode.
+    if (publishedKey !== undefined && publishedEntry !== undefined) {
+      removePrefetch(publishedKey, publishedEntry);
+    }
+  }, PREFETCH_FETCH_TIMEOUT_MS);
   let effectiveSignal: AbortSignal;
   if (!signal) {
     effectiveSignal = timeoutController.signal;
@@ -254,12 +266,23 @@ function executePrefetchFetch(
 
       const entry: DecodedPrefetch = { payload, streamComplete, scope };
       storePrefetch(storageKey, entry, gen);
+      // The stall timeout now owns the body stream: arm eviction (publishedKey)
+      // and clear the timer once the stream completes. The tee's finally resolves
+      // streamComplete on normal completion AND on abort, so a healthy body pays
+      // no lingering timer while a stalled one is evicted when the timer fires.
+      publishedKey = storageKey;
+      publishedEntry = entry;
+      streamComplete.then(() => clearTimeout(timeoutId));
       return entry;
     })
     .catch(() => null)
     .finally(() => {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
       clearPrefetchInflight(inflightKeys[0]!);
+      // Clear the stall timer here ONLY for paths that published no streaming
+      // entry (null return / fetch error / abort): the operation is fully done.
+      // When an entry WAS published, the timer stays armed to bound the body
+      // stream and is cleared on streamComplete (above) or on fire (eviction).
+      if (publishedKey === undefined) clearTimeout(timeoutId);
     });
 
   setInflightPromiseWithAliases(inflightKeys, promise);

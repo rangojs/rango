@@ -804,6 +804,115 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("evicts a published entry whose body stalls AFTER headers, so it can be re-prefetched", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // Headers arrive (the fetch resolves and the entry publishes), but the body
+    // NEVER produces or closes — a server that flushes headers then stalls
+    // mid-stream. A never-resolving `pull()` makes the tracking tee read hang, so
+    // streamComplete never resolves. Before the fix, the timeout was cleared
+    // once headers arrived, so the published entry was dedupe-d against forever
+    // and navigation awaited a payload that never settled. The stall timeout
+    // must now also bound the body and evict the entry.
+    // Fresh stalling stream per call (a teed body cannot be reused).
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              return new Promise<void>(() => {}); // never resolves -> read() hangs
+            },
+          }),
+          { status: 200, headers: { "X-Test": "1" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    // Let the fetch resolve and the `.then` publish the entry.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Headers arrived -> entry published even though the body is stalled.
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    // A re-prefetch dedupes against the published (stuck) entry — the bug.
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance past the stall timeout: the body never finished, so the fetch's
+    // stream is aborted and the published-but-never-settling entry is evicted.
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // A fresh prefetch now refetches instead of dedupe-ing against the stuck
+    // entry / awaiting a payload that never settles.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a stalled entry's eviction does NOT drop a fresh entry republished under the same key", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // Call 1 stalls (its stall timer stays armed); call 2 (after the stalled
+    // entry is consumed) republishes under the SAME key with a body that
+    // completes. When call 1's timer fires, evicting by generation alone would
+    // delete call 2's valid entry — identity-guarded eviction must spare it.
+    let call = 0;
+    const fetchMock = vi.fn(() => {
+      call += 1;
+      const body =
+        call === 1
+          ? new ReadableStream<Uint8Array>({
+              pull() {
+                return new Promise<void>(() => {}); // stall: never produces/closes
+              },
+            })
+          : "payload"; // completes immediately
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { "X-Test": "1" } }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch, consumePrefetch } =
+      await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    // A publishes (stalled); its stall timer is armed for 30s.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // Navigation consumes A (removes it) while A's timer is still armed.
+    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // B republishes under the same key; its body completes so its own timer
+    // clears, leaving only A's stale timer armed.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // A's stall timer fires: identity guard means it does NOT delete B.
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+  });
+
   it("aborts a never-settling QUEUED prefetch (caller signal) so its key clears", async () => {
     vi.useFakeTimers();
     setupBrowser();
