@@ -10,6 +10,7 @@ export const NamedRoutes = {
   errMissing: "/errors/missing",
   home: "/",
   hooks: "/hooks",
+  login: "/login",
   "products.detail": "/products/:id",
   "products.index": "/products",
   search: { path: "/search", search: { q: "string?", page: "number?" } },

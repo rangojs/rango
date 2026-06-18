@@ -96,6 +96,10 @@ export function AppNav() {
       <Link to="/secret" data-testid="nav-secret">
         Secret
       </Link>
+      {" | "}
+      <Link to="/login" data-testid="nav-login">
+        Login
+      </Link>
     </nav>
   );
 }
