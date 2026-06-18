@@ -20,7 +20,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
-import { observePhase, PHASES } from "../router/instrument.js";
+import { observeStreamingPhase, PHASES } from "../router/instrument.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -270,7 +270,7 @@ export function revalidateAfterAction<TEnv>(
   // "render:total" AND opens "rango.render" from one boundary covering
   // matchPartial -> serialize, so the revalidation loaders' rango.loader spans
   // nest under a rango.render parent instead of dangling at the request root.
-  return observePhase(PHASES.render, () =>
+  return observeStreamingPhase(PHASES.render, () =>
     revalidateAfterActionInner(
       ctx,
       request,

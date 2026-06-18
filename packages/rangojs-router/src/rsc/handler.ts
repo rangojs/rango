@@ -82,7 +82,12 @@ import {
   appendMetric,
   buildMetricsTiming,
 } from "../router/metrics.js";
-import { observePhase, observeEvent, PHASES } from "../router/instrument.js";
+import {
+  observePhase,
+  observeRequestPhase,
+  observeEvent,
+  PHASES,
+} from "../router/instrument.js";
 import {
   startSSRSetup,
   getSSRSetup,
@@ -496,11 +501,14 @@ export function createRSCHandler<
     // The "rango.request" span is opened inside the request context so the
     // Cloudflare runner can read executionContext.tracing, and so every nested
     // phase span (and the platform's automatic KV/D1/fetch spans) nests under
-    // it. metric:false — handler:total is metered directly below (a grand total
-    // incl. the pre-context bootstrap timings, finer than a single wrap). When
-    // tracing is off this is a direct pass-through.
+    // it. observeRequestPhase owns the drain barrier: it instruments the final
+    // response body so this span (and the streaming inner phases) stay open
+    // until the body drains, keeping the tree valid. metric:false — handler:total
+    // is metered directly below (a grand total incl. the pre-context bootstrap
+    // timings) and stays construction-bound (it ships as a Server-Timing header,
+    // flushed before drain). When no surface is active this is a pass-through.
     return runWithRequestContext(requestContext, () =>
-      observePhase(PHASES.request, async (span) => {
+      observeRequestPhase(PHASES.request, async (span) => {
         span.setAttribute("http.method", request.method);
         // The matched route template is not known until match() runs later, so
         // emit the concrete path as url.path (low-level), NOT http.route — the

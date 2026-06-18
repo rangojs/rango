@@ -52,9 +52,18 @@ export default {
         },
       );
       const response = await router.fetch(request, { env, ctx: tracingCtx });
+      // Buffer the body to DRAIN it before serializing: the streaming phase
+      // spans (request/render/ssr) end at body-drain, so reading the body to
+      // completion is what lets their endOrder settle and the trace capture a
+      // valid (parent-ends-after-child) tree. A debug-only request; real traffic
+      // streams untouched (the non-__trace_debug path below).
+      const buffered = await response.arrayBuffer();
+      // Let the post-drain span-settle microtasks run before snapshotting.
+      await Promise.resolve();
+      await Promise.resolve();
       const headers = new Headers(response.headers);
       headers.set("X-Rango-Trace", tracer.serialize());
-      return new Response(response.body, {
+      return new Response(buffered, {
         status: response.status,
         statusText: response.statusText,
         headers,

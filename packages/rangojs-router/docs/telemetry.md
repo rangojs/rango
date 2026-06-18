@@ -561,11 +561,16 @@ Key properties:
   through to the work directly, so the request behaves exactly as if tracing
   were off. Whether spans are _recorded_ is governed by the `observability` /
   tracing block in your wrangler config.
-- **Setup-to-stream-handoff durations.** The streaming phases
-  (`rango.request`/`render`/`ssr`) end when the Response/stream is constructed,
-  not when the body finishes draining; loader/Suspense work that settles during
-  the drain extends past the parent span. Phase spans bound setup time, not full
-  request duration.
+- **Drain-bound streaming spans.** The streaming phases
+  (`rango.request`/`middleware`/`render`/`ssr`) hand the constructed
+  Response/stream to the client immediately but keep their **span** open until the
+  response **body finishes draining**, so a span covers the full streamed request
+  and a loader/Suspense child that resolves mid-stream nests under a still-open
+  parent (valid tree). The co-emitted perf **metrics** (`render:total`, the
+  middleware own-time, `handler:total`) stay **construction-bound** — they ship in
+  the `Server-Timing` header, which flushes before the body drains — so a span
+  legitimately reads at least as long as its same-named metric, the difference
+  being the time the body spent streaming after construction.
 - **Full phase coverage.** Intercept-route middleware emits `rango.middleware`,
   and action-revalidation renders emit `rango.render`, so an action
   revalidation's loaders nest under a `rango.render` parent like a normal

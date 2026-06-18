@@ -21,6 +21,8 @@ interface SpanNode {
   name: string;
   attributes: Record<string, string | number | boolean>;
   children: SpanNode[];
+  /** Settle order: lower ended first. -1 = still open at serialize time. */
+  endOrder: number;
 }
 
 function decodeTrace(res: APIResponse): SpanNode[] {
@@ -85,6 +87,25 @@ function runTraceSpec(f: Fixture): void {
     const loader = findNode(roots, "rango.loader");
     expect(loader, "expected a rango.loader span").toBeTruthy();
     expect(typeof loader!.attributes["rango.loader_id"]).toBe("string");
+
+    // Drain-bound validity: render/ssr spans now stay open until the response
+    // body drains, so the loader (which settles when its data resolves) ends
+    // BEFORE its render parent. Under the old construction-bound spans render
+    // ended at stream construction and the loader dangled past it. Both must be
+    // settled (endOrder !== -1, since the worker drains the body before
+    // serializing) and loader must end first.
+    expect(
+      loader!.endOrder,
+      "loader span should have settled",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      render!.endOrder,
+      "render span should have settled",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      loader!.endOrder,
+      "loader must end before its drain-bound render parent (valid tree)",
+    ).toBeLessThan(render!.endOrder);
 
     // global document-cache middleware wraps the request.
     const middleware = findNode(roots, "rango.middleware");

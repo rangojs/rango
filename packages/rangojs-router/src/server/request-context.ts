@@ -368,6 +368,16 @@ export interface RequestContext<
   /** @internal Resolved platform phase-span tracing for this request (Cloudflare or OTel) */
   _tracing?: ResolvedTracing;
 
+  /**
+   * @internal Drain barrier for streaming phase spans. The request phase
+   * (observeRequestPhase) sets this to a promise that resolves when the final
+   * response body finishes draining; the streaming inner phases
+   * (observeStreamingPhase: middleware/render/ssr) await it so their span AND
+   * perf metric end at body-drain rather than at stream construction. Undefined
+   * when neither the perf store nor tracing is active (no instrumentation).
+   */
+  _finalDrain?: Promise<void>;
+
   /** @internal Router basename for this request (used by redirect()) */
   _basename?: string;
 

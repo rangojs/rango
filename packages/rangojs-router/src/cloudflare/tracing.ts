@@ -25,14 +25,17 @@
  * request behaves exactly as if tracing were off. Whether spans are actually
  * recorded is governed by the `observability`/tracing block in wrangler config.
  *
- * Span duration note: a phase span ends when its callback's returned value (or
- * promise) settles, which for the streaming phases (request/render/ssr) is when
- * the Response or HTML/RSC stream is *constructed*, not when the body finishes
- * draining. Loader/Suspense work that settles while the body streams therefore
- * extends past the parent span's end, and platform spans emitted during that
- * drain (deferred SSR, waitUntil-scheduled cache writes) are siblings of the
- * automatic request span rather than children of rango.*. Phase spans bound
- * setup-to-stream-handoff; they are not a full request-duration measure.
+ * Span duration note: enterSpan ends a span when its callback's returned value
+ * (or promise) settles. The streaming phases (request/render/ssr/middleware) are
+ * wrapped (in instrument.ts) so their callback awaits the response body's drain
+ * before settling — the constructed Response is handed to the client immediately,
+ * but the callback (hence the SPAN) stays open until the body finishes draining.
+ * So these spans cover the full streamed request and loader/Suspense children
+ * that resolve mid-stream nest under a still-open parent. This uses only the
+ * typed enterSpan API; no startActiveSpan/end. The perf METRICS (render:total,
+ * the middleware own-time, handler:total) stay construction-bound — they ship in
+ * the Server-Timing header, flushed before drain — so a span reads at least as
+ * long as its same-named metric, the difference being post-construction streaming.
  */
 
 import { _getRequestContext } from "../server/request-context.js";
