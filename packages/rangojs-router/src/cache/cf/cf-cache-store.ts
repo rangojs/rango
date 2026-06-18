@@ -51,172 +51,60 @@ import {
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
+import { bufferToBase64, base64ToBuffer } from "./cf-base64.js";
+import {
+  KV_MAX_KEY_BYTES,
+  KV_MIN_EXPIRATION_TTL,
+  kvKeyByteLength,
+  remainingCacheControl,
+} from "./cf-kv-utils.js";
+import {
+  TAG_MARKER_CACHE_PREFIX,
+  TAG_MARKER_ABSENT,
+  getTagMarkerMemo,
+  getTagMarkerInflight,
+} from "./cf-tag-marker-memo.js";
 
 // ============================================================================
 // Constants
 // ============================================================================
+//
+// Header names, KV prefixes, and timeout/interval defaults live in
+// cf-cache-constants.ts so collaborator modules can share them without a
+// circular import back to this class. They are re-exported below so existing
+// import paths (`../cf-cache-store`, `./cf-cache-store.js`) still resolve.
+import {
+  CACHE_STALE_AT_HEADER,
+  CACHE_STATUS_HEADER,
+  CACHE_TAGS_HEADER,
+  CACHE_TAGGED_AT_HEADER,
+  TAG_MARKER_PREFIX,
+  CACHE_REVALIDATING_AT_HEADER,
+  CACHE_EXPIRES_AT_HEADER,
+  CACHE_ORIG_CC_HEADER,
+  MAX_REVALIDATION_INTERVAL,
+  EDGE_LOOKUP_TIMEOUT_MS,
+  EDGE_READ_TIMEOUT_MS,
+  KV_READ_TIMEOUT_MS,
+} from "./cf-cache-constants.js";
 
-/** Header storing timestamp when entry becomes stale */
-export const CACHE_STALE_AT_HEADER = "x-edge-cache-stale-at";
+// Re-export the public constants so consumers/tests importing them from
+// cf-cache-store keep working after the move.
+export {
+  CACHE_STALE_AT_HEADER,
+  CACHE_STATUS_HEADER,
+  CACHE_TAGS_HEADER,
+  CACHE_TAGGED_AT_HEADER,
+  TAG_MARKER_PREFIX,
+  CACHE_REVALIDATING_AT_HEADER,
+  MAX_REVALIDATION_INTERVAL,
+  EDGE_LOOKUP_TIMEOUT_MS,
+  EDGE_READ_TIMEOUT_MS,
+  KV_READ_TIMEOUT_MS,
+};
 
-/** Header storing cache status: HIT | REVALIDATING */
-export const CACHE_STATUS_HEADER = "x-edge-cache-status";
-
-/**
- * Header storing this entry's cache tags as a JSON array. JSON-encoded (not the
- * comma-delimited CF `Cache-Tag` format) so tags containing commas round-trip
- * safely; the read paths parse this to run the tag-invalidation check.
- */
-export const CACHE_TAGS_HEADER = "x-edge-cache-tags";
-
-/** Header storing the ms-epoch timestamp when this entry's tags were attached. */
-export const CACHE_TAGGED_AT_HEADER = "x-edge-cache-tagged-at";
-
-/**
- * KV key prefix for tag-invalidation markers. A marker stores the ms-epoch
- * timestamp of the most recent invalidation of a tag; reads treat any entry
- * whose taggedAt is older than its tags' latest marker as invalidated. Markers
- * live in the SAME KV namespace as the cached entries - there is no separate
- * tag-invalidation store.
- */
-export const TAG_MARKER_PREFIX = "__tag__/";
-
-/**
- * Cache-API path prefix for the optional per-colo L1 cache of tag-invalidation
- * markers (enabled by tagCacheTtl). Distinct from data keys (doc:/fn:/segment)
- * and from the KV marker prefix so the two never collide.
- */
-const TAG_MARKER_CACHE_PREFIX = "__tagmarker__/";
-
-/**
- * Sentinel body for an L1-cached marker meaning "this tag has no invalidation
- * marker." Distinct from any real ms-epoch timestamp (always a large positive
- * integer). A Cache API miss (match() === undefined) always means "re-read KV",
- * never "no marker" - absence is only ever represented by this cached sentinel.
- */
-const TAG_MARKER_ABSENT = "none";
-
-/**
- * Header storing the epoch-ms timestamp when an entry was marked REVALIDATING.
- * The SWR thundering-herd guard reads this to decide whether the in-flight
- * revalidation is still recent. It replaces a prior reliance on the HTTP `Age`
- * header: CF's Cache API does not populate `Age` reliably per-colo (and our own
- * unit MockCache never set it), so an absent `Age` defaulted to 0 and made every
- * REVALIDATING entry look "just revalidated" forever -- a dropped/never-finished
- * background revalidation could then pin an entry stale until hard expiry. An
- * explicit timestamp we write ourselves (same pattern as CACHE_STALE_AT_HEADER)
- * is reliable and lets the MAX_REVALIDATION_INTERVAL re-arm actually fire.
- */
-export const CACHE_REVALIDATING_AT_HEADER = "x-edge-cache-revalidating-at";
-
-/**
- * Header storing the absolute epoch-ms hard-expiry deadline (staleAt +
- * swrWindow*1000) of an L1 entry. The stale-path REVALIDATING re-put reads this
- * to recompute a SHRINKING Cache-Control max-age instead of copying set()'s
- * original full-window max-age. Without it, every MAX_REVALIDATION_INTERVAL
- * re-arm re-puts the full window and restarts CF's retention clock, pinning a
- * perpetually-stale entry (one whose background revalidation keeps failing) past
- * its intended hard-expiry indefinitely. Mirrors the KVSegmentEnvelope `e`
- * field and the remaining-ttl math in promoteSegmentToL1/promoteItemToL1.
- * @internal
- */
-const CACHE_EXPIRES_AT_HEADER = "x-edge-cache-expires-at";
-
-/**
- * Header stashing the route author's original Cache-Control on L1 document
- * entries. putResponse/promoteResponseToL1 overwrite Cache-Control with a long
- * `max-age` so the CF Cache API retains the entry across the whole SWR window;
- * getResponse restores this original value before serving so the client and any
- * upstream CDN see the author's intended directive, not the internal edge TTL.
- */
-const CACHE_ORIG_CC_HEADER = "x-edge-cache-orig-cc";
-
-/**
- * Maximum age in seconds for REVALIDATING status before allowing new revalidation.
- * After this period, a stale entry in REVALIDATING status will trigger revalidation again.
- * @internal
- */
-export const MAX_REVALIDATION_INTERVAL = 30;
-
-/**
- * Per-request memo of tag-invalidation markers (tag -> latest invalidatedAt, or
- * null when no marker exists). Keyed first by the request context object (so it
- * is naturally request-scoped and garbage-collected with the request) and then
- * by the store INSTANCE.
- *
- * The per-store nesting matters because a single request can run more than one
- * CFCacheStore - the app-level store plus a route's `cache({ store })` override,
- * which may point at a DIFFERENT KV binding or version. A module-level map keyed
- * by request alone (the inner map keyed by the raw tag name) would let store B's
- * memoized marker for a tag mask store A's own KV marker, so A could serve an
- * entry A's own KV says is invalidated. Keying by the instance isolates them;
- * two reads through the SAME store still share the memo. A read through one
- * store never populates another's memo, so each store always consults its own KV
- * binding. Markers are read only through isGloballyInvalidated(), which already
- * short-circuits when a store has no KV, so a store without KV never allocates.
- *
- * Without the memo, isGloballyInvalidated() issues a KV read per tag on every
- * tagged cache read, so a page composed of many segments/items sharing a tag
- * pays that cost N times. The memo collapses it to one KV read per distinct tag
- * per (request, store). invalidateTags() writes through so a same-request
- * updateTag() stays read-your-own-writes consistent (the action's own re-render
- * sees its own invalidation from the memo, without a re-read).
- *
- * It does NOT span requests, so a hot single-entry route still pays one KV read
- * per request; that read hits Cloudflare KV's own edge read cache for hot keys.
- */
-const tagMarkerMemo = new WeakMap<
-  object,
-  WeakMap<object, Map<string, number | null>>
->();
-
-function getTagMarkerMemo(
-  ctx: object,
-  store: object,
-): Map<string, number | null> {
-  let byStore = tagMarkerMemo.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    tagMarkerMemo.set(ctx, byStore);
-  }
-  let memo = byStore.get(store);
-  if (!memo) {
-    memo = new Map();
-    byStore.set(store, memo);
-  }
-  return memo;
-}
-
-/**
- * Per-request map of IN-FLIGHT marker reads (tag -> the pending read promise).
- * The resolved-value memo above only collapses SEQUENTIAL reads of a tag; the
- * router resolves sibling segments in PARALLEL, so without this several
- * concurrently-resolving segments sharing a tag would each issue their own KV
- * read before any of them populates the memo. Sharing the in-flight promise
- * collapses those to a single KV read. Entries are dropped once resolved (the
- * value is then in the memo), so this only spans the concurrent read window.
- */
-const tagMarkerInflight = new WeakMap<
-  object,
-  WeakMap<object, Map<string, Promise<number | null>>>
->();
-
-function getTagMarkerInflight(
-  ctx: object,
-  store: object,
-): Map<string, Promise<number | null>> {
-  let byStore = tagMarkerInflight.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    tagMarkerInflight.set(ctx, byStore);
-  }
-  let inflight = byStore.get(store);
-  if (!inflight) {
-    inflight = new Map();
-    byStore.set(store, inflight);
-  }
-  return inflight;
-}
+// The tag-marker prefix/sentinel and per-request memo helpers (with their
+// module-singleton WeakMaps) live in cf-tag-marker-memo.ts; imported above.
 
 /**
  * Per-request memo of the derived cache-key base URL.
@@ -231,23 +119,8 @@ function getTagMarkerInflight(
  */
 const derivedBaseUrlMemo = new WeakMap<object, string>();
 
-/** KV key byte-length ceiling. Cloudflare KV rejects keys larger than this. */
-const KV_MAX_KEY_BYTES = 512;
-
-/**
- * Cloudflare KV's minimum `expirationTtl` (seconds). A `put` with a smaller
- * expirationTtl is rejected outright. Tag-invalidation markers (the only writes
- * that take a consumer-supplied TTL via tagInvalidationTtl) are floored to this
- * so a too-small value cannot make EVERY updateTag/revalidateTag throw.
- */
-const KV_MIN_EXPIRATION_TTL = 60;
-
-const kvKeyEncoder = new TextEncoder();
-
-/** UTF-8 byte length of a KV key (multibyte tags can exceed the char count). */
-function kvKeyByteLength(key: string): number {
-  return kvKeyEncoder.encode(key).length;
-}
+// Pure KV helpers (key byte-length limits, expirationTtl floor, stale-path
+// Cache-Control recompute) live in cf-kv-utils.ts; imported above.
 
 /**
  * Stores (by namespace) already warned about tag machinery configured without a
@@ -263,97 +136,26 @@ const warnedNoKvReadInvalidation = new Set<string>();
  */
 const warnedTagInvalidationTtlFloor = new Set<string>();
 
-/**
- * Maximum time (ms) to wait for an L1 edge cache (CF Cache API) read before
- * giving up and treating it as a miss. The Cache API is normally sub-millisecond
- * per-colo, so a slow `match` signals a degraded colo; we don't want it adding
- * latency to the request. On timeout the lookup is abandoned, a warning is
- * logged, and the read falls through to its normal miss path (L2/KV or render).
- *
- * This is the default; override per store via
- * `CFCacheStoreOptions.edgeLookupTimeoutMs` (<= 0 disables the budget).
- */
-export const EDGE_LOOKUP_TIMEOUT_MS = 10;
-
-/**
- * Maximum time (ms) to wait for the BODY of a matched L1 entry to be read
- * (response.json()) before treating the read as a miss.
- *
- * This is separate from {@link EDGE_LOOKUP_TIMEOUT_MS} on purpose. CF's Cache
- * API resolves `match()` with a lazily-streamed body, so a fast `match` can be
- * followed by a multi-second stall while the body bytes are fetched -- the
- * latency tail lives here, after the match budget has already passed. The
- * default bounds that tail aggressively: a healthy per-colo body read (fetch +
- * JSON parse) settles in low single-digit milliseconds, so 20ms clears a
- * healthy read while still failing fast to L2/KV (or render) on a degraded colo
- * instead of pinning the request behind a seconds-long read. Raise it per store
- * if large Flight payloads legitimately need longer.
- *
- * Override per store via `CFCacheStoreOptions.edgeReadTimeoutMs` (<= 0 disables).
- */
-export const EDGE_READ_TIMEOUT_MS = 20;
-
-/**
- * Maximum time (ms) to wait for an L2 (KV) read (`kv.get(key, {type:"json"})`)
- * before treating it as a miss. Unlike the L1 budgets, KV is a GLOBAL store: the
- * file header documents ~50ms healthy reads, and a degraded namespace can tail
- * to seconds. KV is the LAST cache tier before a full render, so an unbounded
- * read here pins the whole request behind a degraded global lookup.
- *
- * The default (170ms) sits a few multiples above the documented ~50ms healthy
- * read, leaving headroom for legitimate latency tails (larger payloads,
- * far-from-colo regions) so a healthy-but-slow read does not false-miss into a
- * render, while still abandoning a genuinely degraded namespace well before its
- * multi-second tail can pin the request. A deployment with a tighter SLA can
- * lower it, and one whose healthy p99 runs higher should raise it: measure the
- * KV read p99 (Workers Analytics) and add margin. It is a degradation
- * guard-rail, not a tuning lever for "slow KV is normal here".
- *
- * Override per store via `CFCacheStoreOptions.kvReadTimeoutMs` (<= 0 disables).
- */
-export const KV_READ_TIMEOUT_MS = 170;
-
-/**
- * Compute the Cache-Control directive for a stale-path REVALIDATING re-put from
- * the entry's stored hard-expiry deadline (CACHE_EXPIRES_AT_HEADER). Returns the
- * REMAINING ttl so the re-put preserves the original retention deadline instead
- * of restarting it -- copying set()'s original full-window max-age would reset
- * CF's retention clock on every re-arm and pin a perpetually-stale entry forever.
- * An entry lacking a valid deadline (legacy/tampered) floors to max-age=1, so it
- * hard-expires in ~1s and self-heals via KV. Mirrors promoteSegmentToL1's math.
- * @internal
- */
-function remainingCacheControl(headers: Headers, now: number): string {
-  const expiresAt = Number(headers.get(CACHE_EXPIRES_AT_HEADER));
-  const remainingTtl =
-    Number.isFinite(expiresAt) && expiresAt > 0
-      ? Math.max(1, Math.floor((expiresAt - now) / 1000))
-      : 1;
-  return `public, max-age=${remainingTtl}`;
-}
-
 // ============================================================================
 // Types
 // ============================================================================
-
-// Imported from the canonical home (also publicly exported from src/index.ts /
-// src/index.rsc.ts) so this module shares the one interface rather than
-// declaring a second that could drift.
-import type { ExecutionContext } from "../../types/request-scope.js";
-
-/**
- * Minimal Cloudflare KV Namespace interface.
- * Avoids hard dependency on @cloudflare/workers-types.
- */
-export interface KVNamespace {
-  get(key: string, options?: { type?: string }): Promise<any>;
-  put(
-    key: string,
-    value: string,
-    options?: { expirationTtl?: number },
-  ): Promise<void>;
-  delete(key: string): Promise<void>;
-}
+//
+// The shared public types (KVNamespace, CFCacheReadDebugEvent, CFCacheDebug,
+// CFCacheStoreOptions) live in cf-cache-types.ts; imported and re-exported below
+// so existing import paths still resolve. The private KV envelope interfaces
+// stay here with the methods that read/write them.
+import type {
+  KVNamespace,
+  CFCacheReadDebugEvent,
+  CFCacheDebug,
+  CFCacheStoreOptions,
+} from "./cf-cache-types.js";
+export type {
+  KVNamespace,
+  CFCacheReadDebugEvent,
+  CFCacheDebug,
+  CFCacheStoreOptions,
+};
 
 /**
  * KV envelope for segment cache entries.
@@ -408,325 +210,6 @@ interface KVResponseEnvelope {
   t?: string[];
   /** Timestamp when tags were attached (ms epoch) */
   ta?: number;
-}
-
-/**
- * One L1 read decision, surfaced when `debug` is enabled. Lets an operator
- * confirm on a real deployment (e.g. via `wrangler tail`) that the store's
- * observed inputs match its decision: which tier answered, the entry's status,
- * the stale/revalidating timestamps, the raw CF `Age` header (so its
- * unreliability can be seen next to the explicit revalidating-at stamp), and
- * the measured match/body-read durations (where the latency tail shows up).
- */
-export interface CFCacheReadDebugEvent {
-  /**
-   * Which read method produced this event. Only the JSON read paths (segment
-   * `get` and function `getItem`) participate in debug; the document
-   * `getResponse` path streams its body and is intentionally out of scope.
-   */
-  op: "get" | "getItem";
-  /** Cache key (without the internal fn:/doc: prefix or version path). */
-  key: string;
-  /**
-   * What the read resolved to:
-   * - l1-fresh / l1-stale-revalidate / l1-revalidating-guarded: L1 hit outcomes
-   * - match-timeout / body-timeout: the L1 latency budgets fired
-   * - match-error: the L1 match() itself rejected (a transient Cache API infra
-   *   error) -- a miss that falls through to L2/KV and is reported cache-read,
-   *   distinct from a genuine l1-miss (absence) so the two are separable
-   * - body-error: the L1 body read failed fast (corrupt/non-JSON body) -- a miss
-   *   that falls through to L2/KV, distinct from a body-timeout
-   * - non-200: L1 returned a non-200 (treated as a miss)
-   * - l1-miss: no L1 entry
-   * - kv-fresh / kv-stale / kv-miss: L2 fallback outcomes
-   * - kv-stale-suppressed: a stale L2 hit served WITHOUT revalidation because
-   *   the L1 fall-through was degraded (body-timeout / non-200) -- the herd
-   *   mitigation, distinct from kv-stale so the suppression is visible
-   * - kv-timeout: the L2/KV read budget fired (read abandoned, NOT a genuine
-   *   absence -- distinct from kv-miss so a degradation signal is separable)
-   * - tag-invalidated: a live L1/KV entry whose cache tags were invalidated
-   *   after it was written -- treated as a miss so the next render re-populates
-   *   it (the tag-invalidation read path, distinct from a plain miss)
-   * - error: the read threw
-   */
-  outcome:
-    | "l1-fresh"
-    | "l1-stale-revalidate"
-    | "l1-revalidating-guarded"
-    | "match-timeout"
-    | "match-error"
-    | "body-timeout"
-    | "body-error"
-    | "non-200"
-    | "tag-invalidated"
-    | "l1-miss"
-    | "kv-fresh"
-    | "kv-stale"
-    | "kv-stale-suppressed"
-    | "kv-miss"
-    | "kv-timeout"
-    | "error";
-  /** HTTP status of the matched L1 response, when one was returned. */
-  status?: number;
-  /**
-   * Stored cache status header (CACHE_STATUS_HEADER): "HIT" or "REVALIDATING".
-   * Distinct from `isRevalidating`, which also factors in stamp recency -- this
-   * is the raw stored value, so a REVALIDATING entry whose stamp aged out (so
-   * `isRevalidating` is false) is still distinguishable from a plain HIT.
-   */
-  cacheStatus?: string | null;
-  /** Epoch-ms when the entry goes stale (from CACHE_STALE_AT_HEADER). */
-  staleAt?: number;
-  /** Epoch-ms the entry was marked REVALIDATING (from the explicit stamp). */
-  revalidatingAt?: number;
-  /** Raw CF `Age` header, for comparison against revalidatingAt (may be null). */
-  ageHeader?: string | null;
-  isStale?: boolean;
-  isRevalidating?: boolean;
-  shouldRevalidate?: boolean;
-  /** Wall-clock ms spent in cache.match (bounded by edgeLookupTimeoutMs). */
-  matchMs?: number;
-  /**
-   * Wall-clock ms spent resolving the entry's tag-invalidation markers (the
-   * per-request memo -> optional per-colo L1 marker cache -> KV cascade), for a
-   * tagged entry. 0/absent for an untagged entry or a memo hit; a non-trivial
-   * value is the serial marker-read tail that sits between matchMs and
-   * bodyReadMs. Only measured when debug is enabled.
-   */
-  markerMs?: number;
-  /** Wall-clock ms spent reading the body (bounded by edgeReadTimeoutMs). */
-  bodyReadMs?: number;
-}
-
-/**
- * Debug sink. `true` logs each {@link CFCacheReadDebugEvent} to console; a
- * function receives the events for programmatic capture.
- */
-export type CFCacheDebug = boolean | ((event: CFCacheReadDebugEvent) => void);
-
-export interface CFCacheStoreOptions<TEnv = unknown> {
-  /**
-   * Cache namespace. If not provided, uses caches.default (recommended).
-   * Only set this if you need isolated cache storage.
-   */
-  namespace?: string;
-
-  /**
-   * Base URL for cache keys.
-   *
-   * If not provided, derives from request hostname via requestContext:
-   * - Production domains → uses `https://{hostname}/`
-   * - Dev/preview (localhost, workers.dev, pages.dev) → uses internal fallback URL
-   */
-  baseUrl?: string;
-
-  /** Default cache options */
-  defaults?: CacheDefaults;
-
-  /**
-   * Cloudflare ExecutionContext for non-blocking cache writes.
-   * Pass the `ctx` from your worker's fetch handler.
-   *
-   * @example
-   * ```typescript
-   * new CFCacheStore({ ctx: env.ctx })
-   * ```
-   */
-  ctx: ExecutionContext;
-
-  /**
-   * Optional KV namespace for L2 cache persistence.
-   *
-   * When provided, KV acts as a global fallback behind the per-colo Cache API.
-   * On L1 miss, KV is checked and hits are promoted back to L1.
-   * On writes, data is persisted to both L1 and KV.
-   *
-   * @example
-   * ```typescript
-   * new CFCacheStore({ ctx: env.ctx, kv: env.CACHE_KV })
-   * ```
-   *
-   * Tag-based invalidation (updateTag/revalidateTag) requires KV: the
-   * tag-invalidation markers are stored in this same namespace. There is no
-   * separate tag-invalidation store to configure.
-   */
-  kv?: KVNamespace;
-
-  /**
-   * Optional eager-purge hook, called ONCE per updateTag()/revalidateTag() with
-   * the namespaced Cloudflare Cache-Tags to purge (one batched call for the
-   * whole invalidation, not one per tag). These exactly match the `Cache-Tag`
-   * header this store writes on its tag-lookup marker entries
-   * (`rg:{namespace}:lk:{encodedTag}`), so forwarding them to Cloudflare's
-   * purge-by-tag API evicts the cached lookups in every colo - making
-   * cross-colo invalidation prompt instead of waiting out `tagCacheTtl`.
-   *
-   * Only meaningful with `tagCacheTtl > 0` (otherwise there are no cached
-   * lookups to purge). The values are pre-encoded, so commas in tag names are
-   * safe to pass straight to the purge API.
-   *
-   * @example
-   * ```ts
-   * onRevalidateTag: async (cacheTags) => {
-   *   await fetch(`https://api.cloudflare.com/client/v4/zones/${ZONE}/purge_cache`, {
-   *     method: "POST",
-   *     headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-   *     body: JSON.stringify({ tags: cacheTags }),
-   *   });
-   * }
-   * ```
-   */
-  onRevalidateTag?: (cacheTags: string[]) => Promise<void>;
-
-  /**
-   * Optional expiration (seconds) for tag-invalidation markers in KV. A marker
-   * must outlive every entry tagged before the invalidation, so this MUST
-   * exceed your largest entry TTL+SWR. Defaults to no expiration (markers
-   * persist; they are tiny - one timestamp per distinct invalidated tag).
-   *
-   * Note the opposite sizing from `tagCacheTtl` below: `tagInvalidationTtl` must
-   * be LARGE (outlive data); `tagCacheTtl` should be SMALL (a staleness ceiling).
-   *
-   * Cardinality matters: each DISTINCT invalidated tag writes one permanent KV
-   * marker (with the no-expiry default). Keep tags LOW-cardinality and never
-   * derive an invalidation tag from untrusted input (e.g.
-   * `revalidateTag(req.query.tag)`) - an attacker could otherwise grow your KV
-   * namespace without bound. Set a `tagInvalidationTtl` only if your tags are
-   * unavoidably high-cardinality AND it can still safely exceed your max entry
-   * TTL+SWR.
-   */
-  tagInvalidationTtl?: number;
-
-  /**
-   * Optional TTL (seconds) for caching tag-invalidation markers in the per-colo
-   * Cache API (L1), to avoid a KV marker read on every tagged cache read.
-   *
-   * Default `0` = disabled: the marker is read from KV on every tagged read
-   * (today's behavior), giving the strongest cross-colo invalidation latency
-   * (~KV consistency). A positive value caches each marker (including the
-   * "no marker yet" state) in L1 for that many seconds, so within the window a
-   * colo answers from L1 with no KV read.
-   *
-   * The colo that runs `updateTag`/`revalidateTag` writes the fresh marker
-   * straight into its own L1 (write-through), so the invalidating request and
-   * later reads in that colo observe the invalidation immediately. One caveat: a
-   * read already in flight when the invalidation lands (one that began its KV
-   * marker fetch first) can re-cache the PRIOR marker into L1 after the
-   * write-through, so a racing concurrent reader in the same colo may miss the
-   * invalidation for up to `tagCacheTtl` -- the Cache API exposes no
-   * compare-and-set to close this fully. `tagCacheTtl` is therefore a staleness
-   * CEILING, not a promise of zero same-colo latency; keep it small (or wire
-   * `onRevalidateTag`) when that matters. By default OTHER colos only converge
-   * when their cached marker expires, so `tagCacheTtl` is the MAXIMUM extra
-   * cross-colo invalidation latency for them. Recommended 30-60 for high-read,
-   * low-mutation tags; leave at 0 when prompt global invalidation matters and
-   * you cannot wire a purge.
-   *
-   * To make other colos prompt WITHOUT a short TTL, wire `onRevalidateTag` to a
-   * Cloudflare purge-by-tag call: each marker entry carries a namespaced
-   * `Cache-Tag`, and `onRevalidateTag` is handed exactly those tags to purge, so
-   * the cached lookups are evicted everywhere on invalidation. With a purge
-   * wired, `tagCacheTtl` becomes purely a read-cost reducer + fallback window
-   * (safe to set large) rather than the invalidation-latency ceiling.
-   */
-  tagCacheTtl?: number;
-
-  /**
-   * Cache version string override. When this changes, all cached entries are
-   * effectively invalidated (new keys won't match old entries).
-   *
-   * Defaults to the auto-generated VERSION from the `@rangojs/router:version` virtual module.
-   * Only set this if you need a custom versioning strategy.
-   */
-  version?: string;
-
-  /**
-   * Latency budget (ms) for an L1 edge cache (CF Cache API) read. A `match`
-   * slower than this is abandoned and treated as a miss, so a degraded colo
-   * cannot stall the request; the read then falls through to its normal miss
-   * path (L2/KV or render).
-   *
-   * Defaults to {@link EDGE_LOOKUP_TIMEOUT_MS} (10). Set to 0 (or any value
-   * <= 0) to disable the budget and always await `match`.
-   */
-  edgeLookupTimeoutMs?: number;
-
-  /**
-   * Latency budget (ms) for reading the BODY of a matched L1 entry
-   * (response.json()). CF streams the cache body lazily, so the multi-second
-   * tail can appear after `match` already resolved; this bounds it. On timeout
-   * the read is treated as a miss and falls through to L2/KV or render.
-   *
-   * Separate from {@link edgeLookupTimeoutMs} because a healthy body read
-   * (fetch + JSON parse of a potentially large Flight payload) takes a little
-   * longer than a `match`. Defaults to {@link EDGE_READ_TIMEOUT_MS} (20), which
-   * clears a healthy per-colo read yet fails fast on a degraded one. Set to 0
-   * (or any value <= 0) to disable and always await the body.
-   */
-  edgeReadTimeoutMs?: number;
-
-  /**
-   * Latency budget (ms) for an L2 (KV) read. KV is the last cache tier before a
-   * full render and is a global store (~50ms healthy, seconds when degraded);
-   * this bounds it so a slow namespace cannot pin the request. On timeout the
-   * read is treated as a miss (no L1 promote) and falls through to render.
-   *
-   * Defaults to {@link KV_READ_TIMEOUT_MS} (170) -- a few multiples above the
-   * ~50ms healthy read, with headroom for legitimate tails (large payloads / far
-   * regions) yet still well under a degraded namespace's multi-second tail.
-   * Lower it for a tighter SLA, raise it if your healthy KV p99 runs higher; it
-   * is a degradation guard-rail, not a tuning lever. Set to 0 (or any value
-   * <= 0) to disable and always await KV.
-   */
-  kvReadTimeoutMs?: number;
-
-  /**
-   * Emit a {@link CFCacheReadDebugEvent} per L1 read. `true` logs to console
-   * (visible via `wrangler tail`); pass a function to capture events directly.
-   * Off by default. Intended for validating cache behavior on a real
-   * deployment before relying on it; not for steady-state production.
-   */
-  debug?: CFCacheDebug;
-
-  /**
-   * Custom key generator applied to all cache operations.
-   * Receives the full RequestContext (including env) and the default-generated key.
-   * Return value becomes the final cache key (unless route overrides with `key` option).
-   *
-   * Reserved prefixes: tag-invalidation markers live in the SAME KV namespace as
-   * data, keyed `__tag__/<tag>` (and `__tagmarker__/<tag>` for the L1 cache). A
-   * returned key must NOT begin with `__tag__/` or `__tagmarker__/`, or it can
-   * collide with a tag marker and corrupt invalidation. The documented
-   * prepend-style generators below are safe.
-   *
-   * @example Using headers for user segmentation
-   * ```typescript
-   * keyGenerator: (ctx, defaultKey) => {
-   *   const segment = ctx.request.headers.get('x-user-segment') || 'default';
-   *   return `${segment}:${defaultKey}`;
-   * }
-   * ```
-   *
-   * @example Using env bindings for multi-region
-   * ```typescript
-   * keyGenerator: (ctx, defaultKey) => {
-   *   const region = ctx.env.REGION || 'us';
-   *   return `${region}:${defaultKey}`;
-   * }
-   * ```
-   *
-   * @example Using cookies for locale-aware caching
-   * ```typescript
-   * keyGenerator: (ctx, defaultKey) => {
-   *   const locale = cookies().get('locale')?.value || 'en';
-   *   return `${locale}:${defaultKey}`;
-   * }
-   * ```
-   */
-  keyGenerator?: (
-    ctx: RequestContext<TEnv>,
-    defaultKey: string,
-  ) => string | Promise<string>;
 }
 
 // ============================================================================
@@ -3094,28 +2577,4 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       ),
     );
   }
-}
-
-// ============================================================================
-// Base64 Helpers (binary-safe response body encoding for KV)
-// ============================================================================
-
-/** Encode ArrayBuffer to base64 string. */
-function bufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(binary);
-}
-
-/** Decode base64 string to ArrayBuffer. */
-function base64ToBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
 }
