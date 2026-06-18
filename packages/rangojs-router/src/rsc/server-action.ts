@@ -16,7 +16,7 @@
  */
 
 import {
-  requireRequestContext,
+  getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
@@ -74,7 +74,7 @@ export async function executeServerAction<TEnv>(
   env: TEnv,
   url: URL,
   actionId: string,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
 ): Promise<Response | ActionContinuation> {
   const temporaryReferences = ctx.createTemporaryReferenceSet();
 
@@ -279,7 +279,7 @@ export function revalidateAfterAction<TEnv>(
   request: Request,
   env: TEnv,
   url: URL,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   continuation: ActionContinuation,
 ): Promise<Response> {
   // Instrument the action-revalidation render through the unified phase API,
@@ -304,7 +304,7 @@ async function revalidateAfterActionInner<TEnv>(
   request: Request,
   env: TEnv,
   url: URL,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   continuation: ActionContinuation,
 ): Promise<Response> {
   const {
@@ -314,7 +314,7 @@ async function revalidateAfterActionInner<TEnv>(
     actionContext,
     errorBoundary,
   } = continuation;
-  const reqCtx = requireRequestContext();
+  const reqCtx = getRequestContext();
   const metricsStore = reqCtx._metricsStore;
 
   // Action threw and a boundary matched: render the (already-matched) error

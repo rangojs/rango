@@ -13,7 +13,7 @@
 
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
-import { requireRequestContext } from "../server/request-context.js";
+import { getRequestContext } from "../server/request-context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   createReverseFunction,
@@ -125,7 +125,7 @@ export async function handleLoaderFetch<TEnv>(
         loaderParams,
         variables,
         async () => {
-          const reqCtx = requireRequestContext();
+          const reqCtx = getRequestContext();
           // Merge route params (from previewMatch) with explicit loader params.
           // Explicit params take precedence over route-matched params.
           const resolvedRouteParams = routeParams ?? {};

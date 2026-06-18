@@ -536,16 +536,6 @@ export function getLocationState(): LocationStateEntry[] | undefined {
   return ctx?._locationState;
 }
 
-/**
- * Get the current request context, throwing if not available
- * @deprecated Use getRequestContext() directly — it now throws if outside context
- */
-export function requireRequestContext<
-  TEnv = DefaultEnv,
->(): RequestContext<TEnv> {
-  return getRequestContext<TEnv>();
-}
-
 export type { ExecutionContext };
 
 /**

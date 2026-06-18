@@ -7,7 +7,7 @@
  */
 
 import {
-  requireRequestContext,
+  getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
 import { getSSRSetup } from "./ssr-setup.js";
@@ -45,7 +45,7 @@ export async function handleProgressiveEnhancement<TEnv>(
   env: TEnv,
   url: URL,
   isAction: boolean,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
   routeMwInfo?: PeRouteMiddlewareInfo,
 ): Promise<Response | null> {
@@ -285,7 +285,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         stateCookieName: ctx.router.resolvedStateCookieName,
         themeConfig: ctx.router.themeConfig,
         warmupEnabled: ctx.router.warmupEnabled,
-        initialTheme: requireRequestContext().theme,
+        initialTheme: getRequestContext().theme,
       },
     };
 
@@ -354,7 +354,7 @@ async function renderPeErrorBoundary<TEnv>(
   env: TEnv,
   url: URL,
   error: unknown,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
   actionId?: string | null,
 ): Promise<Response | null> {
@@ -402,7 +402,7 @@ async function renderPeErrorBoundary<TEnv>(
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       warmupEnabled: ctx.router.warmupEnabled,
-      initialTheme: requireRequestContext().theme,
+      initialTheme: getRequestContext().theme,
     },
   };
 

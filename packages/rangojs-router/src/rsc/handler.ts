@@ -13,7 +13,6 @@ import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
-  requireRequestContext,
   getRequestContext,
   _getRequestContext,
   createRequestContext,
@@ -762,11 +761,11 @@ export function createRSCHandler<
     nonce: string | undefined,
   ): Promise<Response> {
     // Common setup
-    const handleStore = requireRequestContext()._handleStore;
+    const handleStore = getRequestContext()._handleStore;
 
     // Wire up error reporting for late streaming-handle failures
     handleStore.onError = (error: Error) => {
-      const reqCtx = requireRequestContext();
+      const reqCtx = getRequestContext();
       callOnError(error, "handler", {
         request,
         url,
@@ -790,7 +789,7 @@ export function createRSCHandler<
     // instead of calling resolveRoute again.
     if (plan.mode !== "redirect") {
       setRequestContextParams(plan.route.params, plan.route.routeKey);
-      requireRequestContext()._classifiedRoute = plan.route;
+      getRequestContext()._classifiedRoute = plan.route;
     }
 
     const routeReverse = createReverseFunction(getRequiredRouteMap());
@@ -846,7 +845,7 @@ export function createRSCHandler<
         env,
         url,
         router.debugPerformance
-          ? () => requireRequestContext()._metricsStore
+          ? () => getRequestContext()._metricsStore
           : undefined,
       );
     }
@@ -989,7 +988,7 @@ export function createRSCHandler<
     url: URL,
     variables: Record<string, any>,
     nonce: string | undefined,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+    handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
     isPartial: boolean,
     actionContinuation?: ActionContinuation,
   ): Promise<Response> {
@@ -1099,7 +1098,7 @@ export function createRSCHandler<
               stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
-              initialTheme: requireRequestContext().theme,
+              initialTheme: getRequestContext().theme,
             },
           };
 
@@ -1126,7 +1125,7 @@ export function createRSCHandler<
             request,
             env,
             url,
-            requireRequestContext()._metricsStore,
+            getRequestContext()._metricsStore,
           );
           const htmlStream = await ssrModule.renderHTML(rscStream, {
             nonce,
