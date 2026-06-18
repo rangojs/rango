@@ -175,6 +175,19 @@ export function resolveLoaderData<TEnv>(
   }
   const runMiss = internal._loaderCacheOriginalUse!;
 
+  // Dedup the cache read-through across repeated resolutions of the SAME
+  // loaderId in one request. An orphan layout with parallel slots inherits its
+  // parent route's loaders, so resolveOrphanLayout (fresh.ts) re-resolves the
+  // parent's loaders under a different shortCode — calling resolveLoaderData
+  // again for the same loaderId. The cache key (loader:{loaderId}:{host}
+  // {pathname}:{sortedParams}) does not include the shortCode and ctx/params
+  // are identical, so both resolutions produce the same data. Reuse the already
+  // in-flight dataPromise instead of issuing a second getItem/setItem (e.g. a
+  // second KV round-trip) for one logical cached loader. The shortCode only
+  // affects the emitted segmentId in resolveLoaders, not the cached value.
+  const existing = overrides.get(loaderId);
+  if (existing) return existing;
+
   const dataPromise = (async () => {
     const codec = await getCodec();
     const key = await resolveLoaderKey(
