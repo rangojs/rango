@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { exposeInternalIds } from "../plugins/expose-internal-ids.js";
 import { exposeRouterId } from "../plugins/expose-internal-ids.js";
+import { countArgs } from "../plugins/expose-id-utils.js";
 
 // Dogfood the public Vite-plugin transforms (the consumer-facing build surface)
 // for three Batch-E expose-ids fixes.
@@ -152,5 +153,47 @@ export const H = createHandle(() => []);
     const result = plugin.transform.call(rscCtx(), code, "/project/src/h.ts");
     expect(result).toBeTruthy();
     expect(result.code).toMatch(/=> \[\], "[^"]+"\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E5 producer: countArgs is the source of argCount on the regex fallback path
+// (collectCreateExportBindingsFallback). A comment-only arg region must count
+// as ZERO args so the fallback path emits `undefined, "id"` exactly like the
+// AST path — fixing the bug at the producer, not only the AST consumer.
+// ---------------------------------------------------------------------------
+
+describe("countArgs (E5 producer): comments are not arguments", () => {
+  // countArgs is called with positions just inside the parens: (start, end)
+  // span the content between `(` and `)`. Build the span from a `(...)` literal.
+  function count(arglist: string): number {
+    const code = `(${arglist})`;
+    return countArgs(code, 1, code.length - 1);
+  }
+
+  it("returns 0 for a block-comment-only arg list", () => {
+    expect(count("/* meta */")).toBe(0);
+  });
+
+  it("returns 0 for a line-comment-only arg list", () => {
+    expect(count(" // meta\n")).toBe(0);
+  });
+
+  it("returns 0 for an empty arg list", () => {
+    expect(count("")).toBe(0);
+    expect(count("   ")).toBe(0);
+  });
+
+  it("returns 1 for a single string argument", () => {
+    expect(count('"x"')).toBe(1);
+  });
+
+  it("returns 1 for a string argument preceded by a comment", () => {
+    expect(count('/* a */ "x"')).toBe(1);
+  });
+
+  it("returns the real count for multiple arguments", () => {
+    expect(count('"a", "b"')).toBe(2);
+    expect(count("() => [], { flash: true }")).toBe(2);
   });
 });

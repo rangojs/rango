@@ -23,6 +23,38 @@ export const THEME_COOKIE: {
   sameSite: "lax",
 };
 
+/**
+ * Single owner of the setTheme validity rule, shared by the client
+ * (ThemeProvider) and server (ctx.setTheme) guards so they cannot drift.
+ *
+ * A theme is valid when it is one of the configured concrete themes, OR
+ * "system" but only while system detection is enabled. Rejecting "system" when
+ * `enableSystem` is false is load-bearing: applyThemeToDocument would otherwise
+ * leave "system" unresolved and write a bogus class="system" / colorScheme
+ * ="system" on <html> (the same bogus value resolveThemeConfig coerces away for
+ * the default).
+ */
+export function isValidTheme(
+  theme: string,
+  config: Pick<ResolvedThemeConfig, "themes" | "enableSystem">,
+): boolean {
+  if (theme === "system") return config.enableSystem;
+  return config.themes.includes(theme);
+}
+
+/**
+ * Emit the shared "[Theme] Invalid theme value" warning. One owner of the
+ * message string so the client and server guards stay byte-identical.
+ */
+export function warnInvalidTheme(
+  theme: string,
+  config: Pick<ResolvedThemeConfig, "themes">,
+): void {
+  console.warn(
+    `[Theme] Invalid theme value: "${theme}". Valid values: system, ${config.themes.join(", ")}`,
+  );
+}
+
 export function resolveThemeConfig(
   config: ThemeConfig | true,
 ): ResolvedThemeConfig {

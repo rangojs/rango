@@ -210,7 +210,16 @@ export function countArgs(
   while (i < endPos) {
     const skipped = skipStringOrComment(code, i);
     if (skipped > i) {
-      hasContent = true;
+      // A comment is transparent: `createHandle(/* meta */)` has ZERO real
+      // arguments, so a comment-only region must NOT set hasContent (else the
+      // fallback path would count it as 1 arg and inject `, "id"` over an elided
+      // first slot — a syntax error). A string/template literal IS content.
+      const ch = code[i];
+      const isComment =
+        ch === "/" &&
+        i + 1 < code.length &&
+        (code[i + 1] === "/" || code[i + 1] === "*");
+      if (!isComment) hasContent = true;
       i = skipped;
       continue;
     }

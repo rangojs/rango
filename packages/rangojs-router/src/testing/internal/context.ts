@@ -12,10 +12,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
-import {
-  isExternalRedirect,
-  markExternalRedirect,
-} from "../../redirect-origin.js";
+import { drainOnResponseCallbacks } from "../../rsc/helpers.js";
 import { resolveLocationStateEntries } from "../../browser/react/location-state-shared.js";
 import { createReverseFunction } from "../../router/handler-context.js";
 import { normalizeBasename } from "../../router/basename.js";
@@ -284,25 +281,19 @@ export function buildRunResponse<TEnv>(
   // drains ctx.onResponse() callbacks (createResponseWithMergedHeaders /
   // finalizeResponse). buildRunResponse runs AFTER runWithRequestContext has
   // exited, so _getRequestContext() (and finalizeResponse) would no-op — drain
-  // ctx._onResponseCallbacks explicitly with the SAME swap-before-iterate +
-  // external-brand-preserving semantics drainOnResponseCallbacks uses in
-  // production, so a callback's header mutations / returned replacement Response
-  // are reflected on the result the harness surfaces. Inlined (not imported from
-  // rsc/helpers) to keep this internal module off helpers' runtime import graph,
-  // which transitively pulls a Vite `virtual:` module that the unit-test
-  // (non-Vite) runner cannot resolve.
-  const callbacks = ctx._onResponseCallbacks;
-  if (callbacks.length === 0) return response;
-  ctx._onResponseCallbacks = [];
-  const wasExternal = isExternalRedirect(response);
-  let result = response;
-  for (const callback of callbacks) {
-    result = callback(result) ?? result;
-  }
-  if (wasExternal && !isExternalRedirect(result)) {
-    markExternalRedirect(result);
-  }
-  return result;
+  // ctx._onResponseCallbacks explicitly. Reuses the SAME production drain
+  // (swap-before-iterate + external-redirect brand preservation) so a callback's
+  // header mutations / returned replacement Response are reflected on the result
+  // the harness surfaces. rsc/helpers is plugin-rsc-free on its eager graph
+  // (dispatch.ts in this same testing barrel already statically imports from it).
+  // drainOnResponseCallbacks is typed against the default-env RequestContext (it
+  // touches only the env-agnostic _onResponseCallbacks); the harness ctx is
+  // RequestContext<TEnv> — assignable in the router's own tsc but not when a
+  // consumer pins a concrete Env, so cast to the param type.
+  return drainOnResponseCallbacks(
+    ctx as Parameters<typeof drainOnResponseCallbacks>[0],
+    response,
+  );
 }
 
 export function buildRunSnapshot<TEnv>(

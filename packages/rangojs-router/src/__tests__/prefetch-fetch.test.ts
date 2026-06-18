@@ -804,6 +804,47 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("aborts a never-settling QUEUED prefetch (caller signal) so its key clears", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // The queue passes its own AbortController signal. Without combining that
+    // with the internal timeout, a stalled queued prefetch never settles and
+    // strands the inflight key — the bug this layered-timeout fixes.
+    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (sig) {
+          sig.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    prefetchQueued("/blog", ["A0"], "v1");
+    // Drive the queue's idle/image waits so the item actually executes.
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    // The queued fetch received a real caller signal (not undefined).
+    expect(fetchMock.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal);
+
+    // Advance past the internal timeout: the combined signal fires, the stalled
+    // fetch aborts and settles, running `.finally()` cleanup.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+  });
+
   it("clears the timeout when the fetch settles normally (no late abort)", async () => {
     vi.useFakeTimers();
     setupBrowser();

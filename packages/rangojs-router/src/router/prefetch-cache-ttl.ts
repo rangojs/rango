@@ -9,8 +9,12 @@
  * treated as the default rather than producing a malformed
  * `Cache-Control: max-age=NaN` header; CDNs/browsers ignore such a directive,
  * which would silently disable caching on EVERY prefetch response. Negative
- * finite values clamp to 0 (disabled). Mirrors the Number.isFinite guard used
- * in defer.ts and cf-cache-store.ts.
+ * finite values clamp to 0 (disabled).
+ *
+ * Policy note: this is the prefetch-TTL policy specifically. Other finite-number
+ * guards in the codebase deliberately differ — defer.ts treats Infinity as an
+ * intentional disable, and profile-registry.ts THROWS on non-finite/negative ttl
+ * at config time. They are NOT the same guard, so don't unify them.
  */
 export interface ResolvedPrefetchCacheTTL {
   /** TTL in seconds for the Cache-Control max-age directive. */

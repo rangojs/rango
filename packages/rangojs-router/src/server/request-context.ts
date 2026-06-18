@@ -50,7 +50,11 @@ import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
 import type { ResolvedTracing } from "../router/tracing.js";
 import { fireAndForgetWaitUntil } from "../types/request-scope.js";
-import { THEME_COOKIE } from "../theme/constants.js";
+import {
+  THEME_COOKIE,
+  isValidTheme,
+  warnInvalidTheme,
+} from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import { isInsideCacheScope } from "./context.js";
@@ -671,10 +675,12 @@ export function createRequestContext<TEnv>(
   const setTheme = (theme: Theme): void => {
     if (!themeConfig) return;
 
-    if (theme !== "system" && !themeConfig.themes.includes(theme)) {
-      console.warn(
-        `[Theme] Invalid theme value: "${theme}". Valid values: system, ${themeConfig.themes.join(", ")}`,
-      );
+    // Shared guard (isValidTheme): reject any value not in the configured theme
+    // set, AND reject "system" when system detection is off — a cookie of
+    // theme=system with enableSystem:false would re-apply a bogus class="system"
+    // on the next SSR.
+    if (!isValidTheme(theme, themeConfig)) {
+      warnInvalidTheme(theme, themeConfig);
       return;
     }
 

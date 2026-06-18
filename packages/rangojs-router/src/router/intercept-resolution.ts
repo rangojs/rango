@@ -398,8 +398,10 @@ export async function resolveInterceptLoadersOnly<TEnv>(
         segmentId,
         context.pathname,
         // Report a throwing intercept loader to onError + loader.error telemetry,
-        // matching the fresh/revalidation paths.
-        buildLoaderErrorContext(context),
+        // matching the fresh/revalidation paths. resolveInterceptLoadersOnly is
+        // only called on the cache-hit partial-update path (handleCacheHitIntercept),
+        // so flag isPartial:true exactly like revalidation.ts's partial path.
+        { ...buildLoaderErrorContext(context), isPartial: true },
       ),
     );
   }

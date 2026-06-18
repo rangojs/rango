@@ -1,4 +1,4 @@
-import { parseAst, type PluginOption } from "vite";
+import { type PluginOption } from "vite";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
@@ -37,35 +37,12 @@ import { createRangoDebugger, NS } from "./debug.js";
 
 const debugConfig = createRangoDebugger(NS.config);
 
-/**
- * Detect a leading `"use client"` (or `'use client'`) directive, tolerating
- * leading comments/whitespace before it. A bare `source.trimStart().startsWith`
- * check only strips whitespace, so a license banner / `// @ts-nocheck` before
- * the directive would be missed — diverging from version-plugin's AST-based
- * detection (a leading comment is not a `program.body` node). This walks the
- * leading ExpressionStatement string-literal directives the same way, so the
- * two sniffers agree on what counts as a client module.
- */
-export function hasUseClientDirective(source: string): boolean {
-  let program: { body?: any[] };
-  try {
-    program = parseAst(source, { lang: "tsx" }) as { body?: any[] };
-  } catch {
-    return false;
-  }
-  for (const node of program.body ?? []) {
-    if (
-      node?.type === "ExpressionStatement" &&
-      node.expression?.type === "Literal" &&
-      typeof node.expression.value === "string"
-    ) {
-      if (node.expression.value === "use client") return true;
-      continue;
-    }
-    break;
-  }
-  return false;
-}
+// The leading-directive 'use client' sniff is shared with version-plugin's
+// getClientModuleSignature so the two cannot drift. Imported for local use by the
+// HMR transform below and re-exported because the E8 sniff test imports it from
+// this module.
+import { hasUseClientDirective } from "./utils/directive-prologue.js";
+export { hasUseClientDirective };
 
 /**
  * Vite plugin for @rangojs/router.

@@ -29,6 +29,7 @@
  */
 
 import { createHandle, type Handle } from "../handle.js";
+import { isThenable } from "./is-thenable.js";
 import type {
   MetaDescriptor,
   MetaDescriptorBase,
@@ -39,11 +40,7 @@ import type {
 function isPromiseDescriptor(
   descriptor: MetaDescriptor,
 ): descriptor is Promise<MetaDescriptorBase> {
-  return (
-    typeof descriptor === "object" &&
-    descriptor !== null &&
-    typeof (descriptor as { then?: unknown }).then === "function"
-  );
+  return isThenable(descriptor);
 }
 
 function isUnsetDescriptor(
@@ -172,9 +169,16 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
       // Promise descriptors cannot be inspected synchronously (their content is
       // unknown until resolved in <MetaTags> via React's use()), so they bypass
       // key-based dedup and title-templating: they are appended verbatim. Warn in
-      // dev when a title template is active, since a Promise<{ title }> will NOT
-      // receive the template and will produce a SECOND <title> alongside the
-      // template default — a surprising, otherwise-silent outcome.
+      // dev when a title template is active so the author knows an async
+      // descriptor will NOT participate in the template/dedup.
+      //
+      // The warning is deliberately a GENERAL note, not a duplicate-<title>
+      // prediction: collectMeta cannot tell whether this Promise resolves to a
+      // title (which would indeed yield a 2nd <title>) or to an ordinary
+      // descriptor like an async og:image (which would not). Asserting a
+      // duplicate <title> here is a false positive for the common og:image case,
+      // so the message states only that async descriptors bypass templating —
+      // not that a duplicate <title> WILL occur.
       if (isPromiseDescriptor(descriptor)) {
         if (
           titleTemplate !== undefined &&
@@ -182,9 +186,11 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
         ) {
           console.warn(
             `[Meta] A Promise meta descriptor was pushed while a title template is active. ` +
-              `Async descriptors bypass deduplication and title-templating (the template ` +
-              `will not be applied and may yield a duplicate <title>). Resolve the value ` +
-              `before pushing, or push a synchronous descriptor.`,
+              `Async descriptors bypass deduplication and title-templating: the template is ` +
+              `not applied to them. If this Promise resolves to a title, resolve the value ` +
+              `before pushing (or push a synchronous descriptor) so it participates in the ` +
+              `template; if it resolves to a non-title descriptor (e.g. og:image), this ` +
+              `note does not apply.`,
           );
         }
         result.push(descriptor);

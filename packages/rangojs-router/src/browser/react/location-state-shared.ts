@@ -255,7 +255,14 @@ export function createLocationState<TState>(
         );
       }
       const key = getKey();
-      const current = window.history.state ?? {};
+      // history.state may be a non-null primitive (string/number/boolean) if
+      // non-Rango code called pushState/replaceState with one. `?? {}` only
+      // catches null/undefined, so spreading a primitive would yield indexed
+      // char/no keys and corrupt history.state. Coerce any non-object to a fresh
+      // dict — mirrors the delete() guard.
+      const existing = window.history.state;
+      const current =
+        existing !== null && typeof existing === "object" ? existing : {};
       window.history.replaceState(
         { ...current, [key]: value },
         "",

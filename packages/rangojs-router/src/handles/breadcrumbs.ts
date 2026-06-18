@@ -23,6 +23,7 @@
 
 import type { ReactNode } from "react";
 import { createHandle, type Handle } from "../handle.js";
+import { isThenable } from "./is-thenable.js";
 
 /**
  * A single breadcrumb item.
@@ -53,7 +54,7 @@ function collectBreadcrumbs(segments: BreadcrumbItem[][]): BreadcrumbItem[] {
   const isResolvedItem = (item: unknown): item is BreadcrumbItem =>
     item != null &&
     typeof item === "object" &&
-    typeof (item as { then?: unknown }).then !== "function" &&
+    !isThenable(item) &&
     typeof (item as { href?: unknown }).href === "string";
 
   // Dedup resolved crumbs by href: keep the FIRST position (preserving

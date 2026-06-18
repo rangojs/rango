@@ -79,7 +79,10 @@ function djb2HexBytes(bytes: Uint8Array): string {
  * boundary: iterate in sorted-key order and, for each value, emit a
  * boundary-free token — `value` for strings, `b:<size>:<type>:<name>:<hash>`
  * for Blob/File (bytes folded via djb2 so distinct payloads of equal
- * size/type/name still differ). The result is stable across identical arg sets.
+ * size/type/name still differ). The user-controlled `type`/`name` are
+ * percent-encoded before joining so an embedded `:` cannot shift the field
+ * boundaries and collide two distinct files (e.g. {name:"a:b",type:""} vs
+ * {name:"b",type:":a"}). The result is stable across identical arg sets.
  */
 export async function replyToCacheKey(
   encoded: string | FormData,
@@ -98,10 +101,14 @@ export async function replyToCacheKey(
       pairs.push([key, value]);
     } else {
       // Blob/File: fold the bytes into a deterministic, boundary-free token.
+      // Percent-encode the user-controlled type/name so an embedded `:` cannot
+      // shift the `:`-delimited field boundaries and collide distinct files.
       const buf = await value.arrayBuffer();
       const hash = djb2HexBytes(new Uint8Array(buf));
       const name = "name" in value ? value.name : "";
-      pairs.push([key, `b:${value.size}:${value.type}:${name}:${hash}`]);
+      const encType = encodeURIComponent(value.type);
+      const encName = encodeURIComponent(name);
+      pairs.push([key, `b:${value.size}:${encType}:${encName}:${hash}`]);
     }
   }
   return encodeKV(pairs, { sort: true });

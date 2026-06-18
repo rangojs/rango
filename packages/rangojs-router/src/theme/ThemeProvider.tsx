@@ -26,7 +26,7 @@ import type {
   ThemeContextValue,
   ThemeProviderProps,
 } from "./types.js";
-import { THEME_COOKIE } from "./constants.js";
+import { THEME_COOKIE, isValidTheme, warnInvalidTheme } from "./constants.js";
 
 function getSystemTheme(): ResolvedTheme {
   if (typeof window !== "undefined" && window.matchMedia) {
@@ -152,14 +152,13 @@ export function ThemeProvider({
 
   const setTheme = useCallback(
     (newTheme: Theme) => {
-      // Mirror the server guard (request-context.ts setTheme): reject any value
-      // that is not "system" and not in the configured theme set, so the cookie
-      // can never hold a value the server would reinterpret as defaultTheme on
-      // the next SSR (which would desync initialTheme markup from the applied class).
-      if (newTheme !== "system" && !config.themes.includes(newTheme)) {
-        console.warn(
-          `[Theme] Invalid theme value: "${newTheme}". Valid values: system, ${config.themes.join(", ")}`,
-        );
+      // Shared guard (isValidTheme) used by the server ctx.setTheme too: reject
+      // any value not in the configured theme set, AND reject "system" when
+      // system detection is off (applyThemeToDocument would write a bogus
+      // class="system"). Keeps the cookie from holding a value the server would
+      // reinterpret as defaultTheme on the next SSR (desyncing markup).
+      if (!isValidTheme(newTheme, config)) {
+        warnInvalidTheme(newTheme, config);
         return;
       }
       setThemeState(newTheme);

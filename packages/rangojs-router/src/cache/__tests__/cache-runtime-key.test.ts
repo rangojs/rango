@@ -75,4 +75,17 @@ describe("replyToCacheKey (use cache key derivation)", () => {
     fd2.append("a", "1");
     expect(await replyToCacheKey(fd1)).toBe(await replyToCacheKey(fd2));
   });
+
+  it("does NOT collide when name/type carry the field-delimiter colon", async () => {
+    // Token shape is `b:<size>:<type>:<name>:<hash>`. With equal size and bytes,
+    // a File {name:"a:b", type:""} and {name:"b", type:":a"} would join to the
+    // byte-identical token `b:4::a:b:<hash>` unless type/name are encoded — an
+    // embedded colon must not shift the field boundaries.
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const fd1 = new FormData();
+    fd1.append("0", new File([bytes], "a:b", { type: "" }));
+    const fd2 = new FormData();
+    fd2.append("0", new File([bytes], "b", { type: ":a" }));
+    expect(await replyToCacheKey(fd1)).not.toBe(await replyToCacheKey(fd2));
+  });
 });

@@ -47,8 +47,10 @@ export function resolveCacheProfiles(
       // ttl flows into computeExpiration -> staleAt/expiresAt = NaN, and every
       // expiry check (`now > NaN`) is false, so the entry never evicts and never
       // revalidates: it is served fresh forever and accumulates unbounded. A
-      // negative ttl makes every read a guaranteed miss. Fail fast at config
-      // time (mirrors the Number.isFinite guard used in router.ts/defer.ts).
+      // negative ttl makes every read a guaranteed miss. This guard's policy is
+      // to FAIL FAST at config time on any non-finite/negative ttl — distinct
+      // from prefetch-cache-ttl.ts (falls back to the default) and defer.ts
+      // (treats Infinity as an intentional disable). Do not conflate them.
       if (!Number.isFinite(profile.ttl) || profile.ttl < 0) {
         throw new Error(
           `Invalid cache profile "${name}": ttl must be a finite non-negative ` +

@@ -23,8 +23,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderProvider(): { ctx: ThemeContextValue } {
-  const config = resolveThemeConfig({ themes: ["light", "dark"] });
+function renderProvider(overrides?: { enableSystem?: boolean }): {
+  ctx: ThemeContextValue;
+} {
+  const config = resolveThemeConfig({
+    themes: ["light", "dark"],
+    ...(overrides?.enableSystem !== undefined
+      ? { enableSystem: overrides.enableSystem }
+      : {}),
+  });
   const captured: { ctx?: ThemeContextValue } = {};
 
   function Capture() {
@@ -79,5 +86,25 @@ describe("client setTheme validation (mirrors server ctx.setTheme)", () => {
     const { ctx } = renderProvider();
     act(() => ctx.setTheme("system"));
     expect(readCookieTheme()).toBe("system");
+  });
+
+  it("rejects 'system' when enableSystem is false (no cookie, warns)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { ctx } = renderProvider({ enableSystem: false });
+
+    // Seed a concrete theme so we can prove the bogus "system" write is skipped.
+    act(() => ctx.setTheme("dark"));
+    expect(readCookieTheme()).toBe("dark");
+
+    act(() => ctx.setTheme("system"));
+
+    // "system" must NOT reach the cookie when system detection is off — otherwise
+    // the next SSR re-applies a bogus class="system" on <html>.
+    expect(readCookieTheme()).toBe("dark");
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("system"))).toBe(
+      true,
+    );
+    expect(document.documentElement.className).not.toContain("system");
   });
 });

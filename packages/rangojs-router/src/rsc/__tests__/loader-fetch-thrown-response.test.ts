@@ -72,6 +72,7 @@ vi.mock("../helpers.js", () => ({
 }));
 
 import { handleLoaderFetch } from "../loader-fetch";
+import { notFound } from "../../errors.js";
 
 // Capture what renderToReadableStream is asked to serialize (the error payload).
 let serializedPayloads: unknown[] = [];
@@ -141,6 +142,27 @@ describe("handleLoaderFetch — thrown Response from a no-middleware loader (D4)
 
     expect(res.status).toBe(404);
     expect(serializedPayloads).toHaveLength(0);
+  });
+
+  it("maps a real notFound() (DataNotFoundError) to a 404, not a 500", async () => {
+    // notFound() throws a DataNotFoundError (an Error subclass, NOT a Response),
+    // so the `error instanceof Response` branch misses it. Without the
+    // DataNotFoundError mapping it falls through to the generic coercion and
+    // returns a 500 — even though the comment claims notFound() is honored.
+    loaderImpl = async () => {
+      notFound("Product not found");
+    };
+    const { request, url } = loaderRequest();
+
+    const res = await handleLoaderFetch(
+      createMockHandlerCtx(),
+      request,
+      {},
+      url,
+      {},
+    );
+
+    expect(res.status).toBe(404);
   });
 });
 

@@ -162,4 +162,33 @@ describe("resolveInterceptLoadersOnly loading: false parity", () => {
     expect(result).not.toBeNull();
     expect(Array.isArray(result!.loaderDataPromise)).toBe(true);
   });
+
+  it("flags isPartial:true in the loader errorContext (cache-hit partial path)", async () => {
+    // resolveInterceptLoadersOnly is only called on the cache-hit partial-update
+    // path, so a throwing intercept loader here must report with isPartial:true
+    // (mirroring revalidation.ts), not be mislabeled as a full render.
+    const entry = makeInterceptEntry(false);
+    const deps = makeDeps();
+    await resolveInterceptLoadersOnly(
+      entry,
+      makeParentEntry(),
+      {},
+      makeContext(),
+      true,
+      deps,
+      {
+        clientSegmentIds: new Set(),
+        prevParams: {},
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test",
+      },
+    );
+
+    // The 5th arg to wrapLoaderPromise is the errorContext that drives onError +
+    // loader.error telemetry; assert it carries isPartial:true.
+    const errorContext = (deps.wrapLoaderPromise as any).mock.calls[0][4];
+    expect(errorContext).toMatchObject({ isPartial: true });
+  });
 });

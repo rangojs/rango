@@ -144,6 +144,49 @@ describe("location-state-shared", () => {
       );
     });
 
+    it("replaces a non-null primitive history.state with a fresh dict", () => {
+      // Mirror the delete() F6 guard: non-Rango code may call
+      // pushState/replaceState with a primitive, so `?? {}` (catches only
+      // null/undefined) would spread a string into indexed char keys
+      // ({0:"s",1:"o",...,product:...}), corrupting history.state. The guard
+      // must coerce any non-object to a fresh dict.
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: { state: "some-string", replaceState },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.write({ id: "p1" });
+
+      expect(replaceState).toHaveBeenCalledWith(
+        { product: { id: "p1" } },
+        "",
+        "https://example.test/page",
+      );
+    });
+
+    it("replaces a number primitive history.state with a fresh dict", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: { state: 42, replaceState },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.write({ id: "p1" });
+
+      expect(replaceState).toHaveBeenCalledWith(
+        { product: { id: "p1" } },
+        "",
+        "https://example.test/page",
+      );
+    });
+
     it("throws on the server (no window)", () => {
       const ProductState = createLocationState<{ id: string }>();
       (ProductState as any).__rsc_ls_key = "product";

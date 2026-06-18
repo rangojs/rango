@@ -45,13 +45,15 @@ type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
 let decoder: PrefetchDecoder | null = null;
 
 /**
- * Hard ceiling for a hover/direct prefetch with no caller-supplied AbortSignal.
- * prefetchDirect (hover) fetches without a signal, so a server that stalls
- * leaves the fetch pending forever — its `.finally()` never runs,
+ * Hard ceiling for ANY prefetch fetch (hover/direct AND queue-driven). A server
+ * that stalls leaves the fetch pending forever — its `.finally()` never runs,
  * `clearPrefetchInflight` never fires, and `hasPrefetch(key)` stays true,
- * permanently deduping every future prefetch of that URL. An internal timeout
- * aborts the stalled fetch so it settles (rejects) and the inflight key is
- * always released. Generous so a slow-but-live response is never cut short.
+ * permanently deduping every future prefetch of that URL. The hover path passes
+ * no signal; the queue passes its own AbortController signal that only aborts on
+ * navigation, never on a stall — so the timeout is layered on BOTH (combined
+ * with any caller signal via AbortSignal.any) and aborts the stalled fetch so it
+ * settles (rejects) and the inflight key is always released. Generous so a
+ * slow-but-live response is never cut short.
  */
 const PREFETCH_FETCH_TIMEOUT_MS = 30_000;
 
@@ -160,17 +162,34 @@ function executePrefetchFetch(
     : [wildcardKey, sourceKey];
   for (const k of inflightKeys) markPrefetchInflight(k);
 
-  // When the caller passes no AbortSignal (hover/direct prefetch), install an
-  // internal timeout so a stalled server cannot strand the inflight key. The
-  // timer aborts the fetch, which rejects it and runs the `.finally()` cleanup
-  // below — releasing the inflight flag so the URL can be prefetched again.
-  // Cleared on settle so a fast response pays no timer cost.
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  let effectiveSignal = signal;
-  if (!effectiveSignal) {
-    const controller = new AbortController();
-    effectiveSignal = controller.signal;
-    timeoutId = setTimeout(() => controller.abort(), PREFETCH_FETCH_TIMEOUT_MS);
+  // Always layer a stalled-fetch timeout so a server that never responds cannot
+  // strand the inflight key — true for the hover/direct path (no caller signal)
+  // AND the queue-driven path (the queue passes its own AbortController signal,
+  // which on its own only aborts on navigation, never on a stall). The timeout
+  // aborts the fetch, which rejects it and runs the `.finally()` cleanup below,
+  // releasing the inflight flag so the URL can be prefetched again. Cleared on
+  // settle so a fast response pays no timer cost.
+  const timeoutController = new AbortController();
+  const timeoutId: ReturnType<typeof setTimeout> = setTimeout(
+    () => timeoutController.abort(),
+    PREFETCH_FETCH_TIMEOUT_MS,
+  );
+  let effectiveSignal: AbortSignal;
+  if (!signal) {
+    effectiveSignal = timeoutController.signal;
+  } else if (typeof AbortSignal.any === "function") {
+    // Combine the caller's signal (navigation-abort) with the timeout so either
+    // can settle the fetch.
+    effectiveSignal = AbortSignal.any([signal, timeoutController.signal]);
+  } else {
+    // Legacy runtime without AbortSignal.any: forward the caller's abort onto the
+    // timeout controller so a single signal carries both reasons.
+    effectiveSignal = timeoutController.signal;
+    if (signal.aborted) timeoutController.abort();
+    else
+      signal.addEventListener("abort", () => timeoutController.abort(), {
+        once: true,
+      });
   }
 
   const promise: Promise<DecodedPrefetch | null> = fetch(fetchUrl, {

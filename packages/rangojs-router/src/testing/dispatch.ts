@@ -94,7 +94,6 @@ import type { CacheProfile } from "../cache/profile-registry.js";
 // non-Vite unit-test runner cannot resolve. A static import here would drag that
 // onto the whole testing barrel's eager graph and break every consumer suite
 // that imports `@rangojs/router/testing` without mocking plugin-rsc.
-import { traverseBack } from "../router/pattern-matching.js";
 import type { EntryData } from "../server/context.js";
 import { setRouterManifest } from "../route-map-builder.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
@@ -105,7 +104,6 @@ import {
   createSimpleRedirectResponse,
   finalizeResponse,
   interceptRedirectForPartial,
-  isCacheableStatus,
   mergeStubHeadersAndFinalize,
 } from "../rsc/helpers.js";
 import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
@@ -569,123 +567,39 @@ export async function dispatch<TEnv = any>(
         );
       };
 
-      // Response-route cache path, mirroring handleResponseRoute (lines 240-373)
-      // so a cached path.json/path.text route hits/SWRs/writes tags through
-      // dispatch the way it does in production — not a fresh run every call.
-      // Resolved from the matched entry tree (preview.manifestEntry), which the
-      // router's previewMatch surfaces for response routes.
+      // Response-route cache path: resolved through the SAME shared serve leaf
+      // (rsc/response-cache-serve.ts) production uses, so a cached
+      // path.json/path.text route hits/SWRs/writes tags through dispatch exactly
+      // as in production — and the two can never drift. Resolved from the matched
+      // entry tree (preview.manifestEntry), which previewMatch surfaces for
+      // response routes.
       const manifestEntry = preview?.manifestEntry;
       if (manifestEntry) {
         // Lazy so the testing barrel's eager graph stays plugin-rsc-free (see the
-        // import note above). Only loaded once a response route actually matched.
-        const { createCacheScope, resolveCacheTags } =
-          await import("../cache/cache-scope.js");
-        let cacheScope: ReturnType<typeof createCacheScope> = null;
-        for (const entry of traverseBack(manifestEntry)) {
-          if (entry.cache) {
-            cacheScope = createCacheScope(entry.cache, cacheScope);
-          }
-        }
-
-        if (cacheScope?.enabled) {
-          let conditionPassed = true;
-          if (cacheScope.config !== false && cacheScope.config.condition) {
-            try {
-              conditionPassed = !!cacheScope.config.condition(requestContext);
-            } catch {
-              conditionPassed = false;
-            }
-          }
-
-          const store = cacheScope.getStore() ?? requestContext._cacheStore;
-          if (conditionPassed && store?.getResponse && store?.putResponse) {
-            let cacheKey = `response:${responseType}:${url.host}${url.pathname}${url.search}`;
-            if (cacheScope.config !== false && cacheScope.config.key) {
-              try {
-                const customKey = await cacheScope.config.key(requestContext);
-                cacheKey = `response:${customKey}`;
-              } catch {
-                // Fall back to default key on route-level key failure.
-              }
-            } else if (store.keyGenerator) {
-              try {
-                cacheKey = await store.keyGenerator(requestContext, cacheKey);
-              } catch {
-                // Fall back to default key on keyGenerator failure.
-              }
-            }
-
-            // resolveCacheTags is typed against the default-env RequestContext
-            // (it reads only env-agnostic tag config); the dispatch ctx is
-            // RequestContext<TEnv>, assignable in the router's own tsc but not
-            // when a consumer pins a concrete Env. Cast to the param type.
-            const responseTags = resolveCacheTags(
-              cacheScope.config,
-              requestContext as Parameters<typeof resolveCacheTags>[1],
-            );
-
-            // Pre-handler onResponse callbacks are applied once per serve on
-            // every path (hit + miss), exactly as handleResponseRoute does.
-            const savedCallbacks = requestContext._onResponseCallbacks;
-            requestContext._onResponseCallbacks = [];
-            const applyPreHandlerCallbacks = (response: Response): Response => {
-              let result = response;
-              for (const callback of savedCallbacks) {
-                result = callback(result) ?? result;
-              }
-              return result;
-            };
-
-            try {
-              const cached = await store.getResponse(cacheKey);
-              if (cached && isCacheableStatus(cached.response.status)) {
-                if (!cached.shouldRevalidate) {
-                  return applyPreHandlerCallbacks(cached.response);
-                }
-                requestContext.waitUntil(async () => {
-                  try {
-                    const fresh = finalizeResponse(await executeHandler());
-                    if (isCacheableStatus(fresh.status)) {
-                      await store.putResponse!(
-                        cacheKey,
-                        fresh.clone(),
-                        cacheScope!.ttl,
-                        cacheScope!.swr,
-                        responseTags,
-                      );
-                    }
-                  } catch (error) {
-                    console.error(
-                      `[ResponseCache] Revalidation failed:`,
-                      error,
-                    );
-                  }
-                });
-                return applyPreHandlerCallbacks(cached.response);
-              }
-            } catch (error) {
-              console.error(`[ResponseCache] Cache lookup failed:`, error);
-            }
-
-            const response = finalizeResponse(await executeHandler());
-            if (isCacheableStatus(response.status)) {
-              requestContext.waitUntil(async () => {
-                try {
-                  await store.putResponse!(
-                    cacheKey,
-                    response.clone(),
-                    cacheScope!.ttl,
-                    cacheScope!.swr,
-                    responseTags,
-                  );
-                } catch (error) {
-                  console.error(`[ResponseCache] Cache write failed:`, error);
-                }
-              });
-            }
-            return applyPreHandlerCallbacks(response);
-          }
-        }
+        // import note above): the leaf takes createCacheScope/resolveCacheTags as
+        // INJECTED deps so it never imports plugin-rsc; we hand it the lazily
+        // imported pair here, only once a response route actually matched.
+        const cacheScopeMod = await import("../cache/cache-scope.js");
+        const { serveResponseRouteWithCache } =
+          await import("../rsc/response-cache-serve.js");
+        // requestContext is RequestContext<TEnv>; the leaf is typed against the
+        // default-env RequestContext (it reads only env-agnostic config).
+        // Assignable in the router's own tsc but not when a consumer pins a
+        // concrete Env — cast to the leaf's param type.
+        const cached = await serveResponseRouteWithCache({
+          reqCtx: requestContext as Parameters<
+            typeof serveResponseRouteWithCache
+          >[0]["reqCtx"],
+          manifestEntry,
+          responseType: responseType as string,
+          url,
+          executeHandler,
+          deps: {
+            createCacheScope: cacheScopeMod.createCacheScope,
+            resolveCacheTags: cacheScopeMod.resolveCacheTags,
+          },
+        });
+        if (cached !== undefined) return cached;
       }
 
       return executeHandler().then(finalizeResponse);

@@ -256,7 +256,7 @@ describe("collectHandle on the built-in Meta handle", () => {
       ] as never) as Array<unknown>;
 
       // The template default survives as a sync <title>; the Promise is appended
-      // separately (would render a 2nd <title>), so the dev-warn fires.
+      // separately (bypassing the template), so the dev-warn fires.
       expect(result).toContain(p);
       expect(warn).toHaveBeenCalled();
       expect(
@@ -270,6 +270,41 @@ describe("collectHandle on the built-in Meta handle", () => {
       const p = Promise.resolve({ property: "og:image", content: "x.png" });
       collectHandle(Meta, [[p]] as never);
       expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it("treats a non-callable `then` as a SYNC descriptor (collect/render agree)", () => {
+      // A descriptor carrying a NON-callable `then` (e.g. a serialized shape)
+      // must NOT be classified as a Promise — otherwise collect appends it while
+      // MetaTags' render side would call React's use() on it and throw. The
+      // shared isThenable predicate (callable `then`) keeps both sides in sync:
+      // here the descriptor is deduped/templated as an ordinary sync title.
+      const result = collectHandle(Meta, [
+        [{ then: 5, title: "Sync via non-callable then" }],
+      ] as never) as Array<Record<string, unknown>>;
+      const titles = result.filter((d) => "title" in d);
+      expect(titles).toHaveLength(1);
+      expect(titles[0]!.title).toBe("Sync via non-callable then");
+    });
+
+    // The warning is a general note, NOT a duplicate-<title> prediction.
+    // collectMeta can't tell a title-Promise from an og:image-Promise
+    // synchronously, so asserting a guaranteed second <title> would be a false
+    // positive for the common async og:image case. The softened message must not
+    // claim a duplicate <title> will occur.
+    it("does NOT assert a guaranteed duplicate <title> in the warning message", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const p = Promise.resolve({ property: "og:image", content: "x.png" });
+      collectHandle(Meta, [
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [p],
+      ] as never);
+      // It still warns (template is active, content unknowable)...
+      expect(warn).toHaveBeenCalled();
+      // ...but the message must not over-claim a duplicate / second <title>.
+      const messages = warn.mock.calls.map((c) => String(c[0]));
+      expect(messages.some((m) => /duplicate <title>/i.test(m))).toBe(false);
+      expect(messages.some((m) => /second <title>/i.test(m))).toBe(false);
       warn.mockRestore();
     });
   });
