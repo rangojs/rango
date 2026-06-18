@@ -1,7 +1,112 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, goBack } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  goBack,
+  prodDescribe,
+} from "./helper";
+
+// URL resolver: dev passes devURL(devServerURL, p); production passes f.url(p).
+type UrlResolver = (path: string) => string;
+
+// Concurrent-action bodies are shared between dev and the (production) build
+// describe so the same rapid-fire races run against minified, NODE_ENV-folded
+// output. Synchronization is event-driven (button-enabled / list-item locators),
+// not fixed waitForTimeout, so production timing stays deterministic.
+
+async function todosRapidAdditions(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/todos"));
+  await waitForHydration(page);
+
+  const input = page.locator('input[placeholder="What needs to be done?"]');
+  const addButton = page.locator("button:has-text('Add Todo')");
+  await expect(addButton).toBeEnabled({ timeout: 10000 });
+
+  // Add three todos in quick succession. The form disables while an add is
+  // pending; waiting for it to re-enable keeps the sequence rapid but
+  // deterministic instead of relying on a fixed sleep.
+  for (const title of ["Rapid Todo 1", "Rapid Todo 2", "Rapid Todo 3"]) {
+    await expect(addButton).toBeEnabled({ timeout: 15000 });
+    await input.fill(title);
+    await addButton.click();
+  }
+
+  // All three todos must surface once their actions settle and the loader
+  // revalidates.
+  await expect(page.locator("text=Rapid Todo 1")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.locator("text=Rapid Todo 2")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.locator("text=Rapid Todo 3")).toBeVisible({
+    timeout: 15000,
+  });
+}
+
+async function todosRapidToggles(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/todos"));
+  await waitForHydration(page);
+
+  await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+
+  const checkboxes = page.locator('input[type="checkbox"]:not(:checked)');
+  await expect(checkboxes.first()).toBeVisible({ timeout: 10000 });
+  const count = await checkboxes.count();
+
+  if (count >= 2) {
+    // Toggle two checkboxes back to back (concurrent toggle actions). Each item
+    // disables its checkbox while pending; both re-enable once settled.
+    const first = checkboxes.nth(0);
+    const second = checkboxes.nth(1);
+    await first.click();
+    await second.click();
+
+    // Wait for both toggle actions to settle (checkboxes re-enabled).
+    await expect
+      .poll(
+        async () =>
+          (await page.locator('input[type="checkbox"]:disabled').count()) === 0,
+        { timeout: 15000 },
+      )
+      .toBe(true);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+  }
+}
+
+async function todosAddAndToggleConcurrent(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/todos"));
+  await waitForHydration(page);
+
+  const addButton = page.locator("button:has-text('Add Todo')");
+  await expect(addButton).toBeEnabled({ timeout: 10000 });
+
+  // Toggle an existing checkbox, then immediately add a new todo so the two
+  // actions overlap.
+  const checkbox = page.locator('input[type="checkbox"]:not(:checked)').first();
+  await expect(checkbox).toBeVisible({ timeout: 10000 });
+  await checkbox.click();
+
+  const input = page.locator('input[placeholder="What needs to be done?"]');
+  await expect(addButton).toBeEnabled({ timeout: 15000 });
+  await input.fill("Concurrent Add Todo");
+  await addButton.click();
+
+  // New todo surfaces once both overlapping actions settle.
+  await expect(page.locator("text=Concurrent Add Todo")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+}
 
 /**
  * Todos tests - server actions and revalidation
@@ -241,113 +346,39 @@ devTest.describe("todos-concurrent-actions", () => {
   devTest(
     "should handle rapid todo additions",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/todos"));
-      await waitForHydration(page);
-
-      // Wait for page to load
-      await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Wait for event handlers to attach
-      await page.waitForTimeout(100);
-
-      const input = page.locator('input[placeholder="What needs to be done?"]');
-      const addButton = page.locator("button:has-text('Add Todo')");
-
-      // Add multiple todos rapidly without waiting for completion
-      await input.fill("Rapid Todo 1");
-      await addButton.click();
-
-      await input.fill("Rapid Todo 2");
-      await addButton.click();
-
-      await input.fill("Rapid Todo 3");
-      await addButton.click();
-
-      // Wait for all actions to complete and revalidation
-      await page.waitForTimeout(10000);
-
-      // All todos should appear
-      await expect(page.locator("text=Rapid Todo 1")).toBeVisible({
-        timeout: 10000,
-      });
-      await expect(page.locator("text=Rapid Todo 2")).toBeVisible({
-        timeout: 10000,
-      });
-      await expect(page.locator("text=Rapid Todo 3")).toBeVisible({
-        timeout: 10000,
-      });
+      await todosRapidAdditions(page, (p) => devURL(devServerURL, p));
     },
   );
 
   devTest(
     "should handle rapid checkbox toggles",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/todos"));
-      await waitForHydration(page);
-
-      // Wait for page to load
-      await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
-
-      // Get unchecked checkboxes
-      const checkboxes = page.locator('input[type="checkbox"]:not(:checked)');
-      const count = await checkboxes.count();
-
-      if (count >= 2) {
-        // Toggle multiple checkboxes rapidly
-        await checkboxes.nth(0).click();
-        await checkboxes.nth(1).click();
-
-        // Wait for actions to complete
-        await page.waitForTimeout(4000);
-
-        // Page should still be functional
-        await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
-      }
+      await todosRapidToggles(page, (p) => devURL(devServerURL, p));
     },
   );
 
   devTest(
     "should handle add and toggle concurrently",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/todos"));
-      await waitForHydration(page);
-
-      // Wait for page to load
-      await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
-        timeout: 3000,
-      });
-
-      // Toggle an existing checkbox
-      const checkbox = page
-        .locator('input[type="checkbox"]:not(:checked)')
-        .first();
-      await checkbox.click();
-
-      // Immediately add a new todo
-      const input = page.locator('input[placeholder="What needs to be done?"]');
-      await input.fill("Concurrent Add Todo");
-      await page.locator("button:has-text('Add Todo')").click();
-
-      // Wait for all actions to complete
-      await page.waitForTimeout(6000);
-
-      // New todo should appear
-      await expect(page.locator("text=Concurrent Add Todo")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Page should still be functional
-      await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+      await todosAddAndToggleConcurrent(page, (p) => devURL(devServerURL, p));
     },
   );
+});
+
+prodDescribe("todos-concurrent-actions", (f) => {
+  test.setTimeout(120000);
+
+  test("should handle rapid todo additions", async ({ page }) => {
+    await todosRapidAdditions(page, (p) => f.url(p));
+  });
+
+  test("should handle rapid checkbox toggles", async ({ page }) => {
+    await todosRapidToggles(page, (p) => f.url(p));
+  });
+
+  test("should handle add and toggle concurrently", async ({ page }) => {
+    await todosAddAndToggleConcurrent(page, (p) => f.url(p));
+  });
 });
 
 /**

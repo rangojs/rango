@@ -1,7 +1,140 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, goBack, testId } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  goBack,
+  testId,
+  prodDescribe,
+} from "./helper";
+
+// URL resolver: dev passes devURL(devServerURL, p); production passes f.url(p).
+type UrlResolver = (path: string) => string;
+
+// Concurrent-action bodies are shared between dev and the (production) build
+// describe so the same rapid-fire races run against minified, NODE_ENV-folded
+// output. Synchronization is event-driven (optimistic style + action-counter
+// text), not fixed waitForTimeout, so the production timing stays deterministic.
+
+// Wait until the open card modal has no in-flight transitions. The modal sets
+// cursor: "wait" while any startTransition(kanbanUpdateCard) is pending, so a
+// non-"wait" cursor means every concurrent action has settled.
+async function waitForModalSettled(page: Page) {
+  await expect
+    .poll(
+      () =>
+        page
+          .locator('[data-testid="card-modal"]')
+          .evaluate((el) => getComputedStyle(el).cursor),
+      { timeout: 20000 },
+    )
+    .not.toBe("wait");
+}
+
+async function kanbanConcurrentLabelToggles(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/kanban"));
+  await waitForHydration(page);
+
+  await testId(page, "card-link-card-1").click();
+  await expect(testId(page, "card-modal")).toBeVisible();
+
+  const testingLabel = page
+    .locator("button")
+    .filter({ hasText: "testing" })
+    .first();
+  const apiLabel = page.locator("button").filter({ hasText: "api" }).first();
+  const authLabel = page.locator("button").filter({ hasText: "auth" }).first();
+
+  // Fire three label toggles in quick succession (concurrent actions).
+  await testingLabel.click();
+  await apiLabel.click();
+  await authLabel.click();
+
+  // Optimistic state is synchronous: each toggled label flips to opacity 1.
+  for (const label of [testingLabel, apiLabel, authLabel]) {
+    await expect
+      .poll(() => label.evaluate((el) => getComputedStyle(el).opacity))
+      .toBe("1");
+  }
+
+  // All concurrent actions settle (cursor leaves "wait").
+  await waitForModalSettled(page);
+
+  // Modal and board remain functional after the concurrent batch.
+  await expect(testId(page, "card-modal")).toBeVisible();
+  await expect(testId(page, "card-title")).toBeVisible();
+  await expect(testId(page, "kanban-board")).toBeVisible();
+}
+
+async function kanbanRapidCardAdditions(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/kanban"));
+  await waitForHydration(page);
+
+  const todoColumn = testId(page, "kanban-column-col-todo");
+  const addCardButton = todoColumn.locator("button", {
+    hasText: "+ Add a card",
+  });
+  await addCardButton.click();
+
+  const input = todoColumn.locator('input[placeholder="Enter card title..."]');
+  await expect(input).toBeVisible();
+
+  // Add three cards back to back without awaiting completion between them.
+  await input.fill("Concurrent Card 1");
+  await todoColumn.locator("button", { hasText: "Add Card" }).click();
+
+  await input.fill("Concurrent Card 2");
+  await todoColumn.locator("button", { hasText: "Add Card" }).click();
+
+  await input.fill("Concurrent Card 3");
+  await todoColumn.locator("button", { hasText: "Add Card" }).click();
+
+  // All three cards must appear (optimistic first, then confirmed by
+  // revalidation). The locator waits replace the old fixed timeout.
+  await expect(page.locator("text=Concurrent Card 1")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.locator("text=Concurrent Card 2")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.locator("text=Concurrent Card 3")).toBeVisible({
+    timeout: 15000,
+  });
+}
+
+async function kanbanActionCounterConcurrent(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/kanban"));
+  await waitForHydration(page);
+
+  await testId(page, "card-link-card-2").click();
+  await expect(testId(page, "card-modal")).toBeVisible();
+
+  const docsLabel = page.locator("button").filter({ hasText: "docs" }).first();
+  const uiLabel = page.locator("button").filter({ hasText: "UI" }).first();
+
+  // Two concurrent label toggles.
+  await docsLabel.click();
+  await uiLabel.click();
+
+  // Both actions settle before we close the modal.
+  await waitForModalSettled(page);
+
+  await testId(page, "card-modal-close").click();
+  await expect(testId(page, "card-modal")).not.toBeVisible();
+
+  // The action counter on the board reflects that kanbanUpdateCard ran and the
+  // loader revalidated. Poll until the counted action surfaces.
+  await expect(page.locator("text=kanbanUpdateCard:")).toBeVisible({
+    timeout: 15000,
+  });
+}
 
 /**
  * Kanban board tests - intercepting routes and action revalidation
@@ -312,129 +445,48 @@ devTest.describe("kanban-action-navigation-race", () => {
  * Concurrent actions tests - multiple actions triggered rapidly
  */
 devTest.describe("kanban-concurrent-actions", () => {
+  devTest.setTimeout(60000);
+
   devTest(
     "should handle multiple label toggles concurrently",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/kanban"));
-      await waitForHydration(page);
-
-      // Open card modal
-      await testId(page, "card-link-card-1").click();
-      await expect(testId(page, "card-modal")).toBeVisible();
-
-      // Toggle multiple labels rapidly (concurrent actions)
-      // Available labels: setup, infrastructure, database, design, auth, security, api, backend, ui, frontend, testing, devops, docs
-      const testingLabel = page
-        .locator("button")
-        .filter({ hasText: "testing" })
-        .first();
-      const apiLabel = page
-        .locator("button")
-        .filter({ hasText: "api" })
-        .first();
-      const authLabel = page
-        .locator("button")
-        .filter({ hasText: "auth" })
-        .first();
-
-      // Click all three labels in quick succession without waiting
-      await testingLabel.click();
-      await apiLabel.click();
-      await authLabel.click();
-
-      // Wait for all actions to complete
-      await page.waitForTimeout(5000);
-
-      // Modal should still be functional
-      await expect(testId(page, "card-modal")).toBeVisible();
-      await expect(testId(page, "card-title")).toBeVisible();
-
-      // Board should still be visible behind modal
-      await expect(testId(page, "kanban-board")).toBeVisible();
+      await kanbanConcurrentLabelToggles(page, (p) => devURL(devServerURL, p));
     },
   );
 
   devTest(
     "should handle rapid card additions",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/kanban"));
-      await waitForHydration(page);
-
-      // Find the TODO column and click "+ Add a card"
-      const todoColumn = testId(page, "kanban-column-col-todo");
-      const addCardButton = todoColumn.locator("button", {
-        hasText: "+ Add a card",
-      });
-      await addCardButton.click();
-
-      // Add first card
-      const input = todoColumn.locator(
-        'input[placeholder="Enter card title..."]',
-      );
-      await input.fill("Concurrent Card 1");
-      await todoColumn.locator("button", { hasText: "Add Card" }).click();
-
-      // Immediately add second card
-      await input.fill("Concurrent Card 2");
-      await todoColumn.locator("button", { hasText: "Add Card" }).click();
-
-      // Immediately add third card
-      await input.fill("Concurrent Card 3");
-      await todoColumn.locator("button", { hasText: "Add Card" }).click();
-
-      // Wait for all actions to complete and revalidation
-      await page.waitForTimeout(5000);
-
-      // All three cards should appear (with optimistic updates first, then confirmed)
-      await expect(page.locator("text=Concurrent Card 1")).toBeVisible({
-        timeout: 5000,
-      });
-      await expect(page.locator("text=Concurrent Card 2")).toBeVisible({
-        timeout: 5000,
-      });
-      await expect(page.locator("text=Concurrent Card 3")).toBeVisible({
-        timeout: 5000,
-      });
+      await kanbanRapidCardAdditions(page, (p) => devURL(devServerURL, p));
     },
   );
 
   devTest(
     "should update action counter correctly with concurrent actions",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/kanban"));
-      await waitForHydration(page);
-
-      // Open card modal
-      await testId(page, "card-link-card-2").click();
-      await expect(testId(page, "card-modal")).toBeVisible();
-
-      // Toggle two labels concurrently
-      const docsLabel = page
-        .locator("button")
-        .filter({ hasText: "docs" })
-        .first();
-      const uiLabel = page.locator("button").filter({ hasText: "UI" }).first();
-
-      await docsLabel.click();
-      await uiLabel.click();
-
-      // Close modal and wait for actions to complete
-      await testId(page, "card-modal-close").click();
-      await page.waitForTimeout(6000);
-
-      // Action counter should show kanbanUpdateCard was called
-      // Multiple concurrent actions should be counted
-      await expect(page.locator("text=kanbanUpdateCard:")).toBeVisible({
-        timeout: 2000,
-      });
+      await kanbanActionCounterConcurrent(page, (p) => devURL(devServerURL, p));
     },
   );
+});
+
+prodDescribe("kanban-concurrent-actions", (f) => {
+  test.setTimeout(120000);
+
+  test("should handle multiple label toggles concurrently", async ({
+    page,
+  }) => {
+    await kanbanConcurrentLabelToggles(page, (p) => f.url(p));
+  });
+
+  test("should handle rapid card additions", async ({ page }) => {
+    await kanbanRapidCardAdditions(page, (p) => f.url(p));
+  });
+
+  test("should update action counter correctly with concurrent actions", async ({
+    page,
+  }) => {
+    await kanbanActionCounterConcurrent(page, (p) => f.url(p));
+  });
 });
 
 devTest.describe("kanban-navigation-history", () => {

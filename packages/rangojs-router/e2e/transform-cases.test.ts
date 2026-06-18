@@ -1,13 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
 
-test.describe("transform-cases", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+/**
+ * Build-time directive transforms (use-cache/server-action/use-client) plus
+ * Static/Prerender/Link. The dev server applies these per-module; production
+ * bundling/minify/NODE_ENV-fold can transform them differently, so the shared
+ * body runs in both dev and production (mode: "build"). Describe titles stay
+ * literal so the e2e bucketing guard routes the "(production)" suite to the
+ * production project.
+ */
+function transformCasesTests(f: Fixture) {
   test("renders transform static route", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -36,4 +39,20 @@ test.describe("transform-cases", () => {
 
     await expect(testId(page, "transform-cases-prerender-page")).toBeVisible();
   });
+}
+
+test.describe("transform-cases", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  transformCasesTests(f);
+});
+
+test.describe("transform-cases (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  transformCasesTests(f);
 });
