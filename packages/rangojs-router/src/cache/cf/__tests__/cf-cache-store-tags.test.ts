@@ -1502,4 +1502,61 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(delSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe("corrupt taggedAt header (NaN fail-open)", () => {
+    // Intercept L1 reads so the matched entry's tagged-at header is rewritten to
+    // a non-numeric value, simulating a corrupt/tampered CACHE_TAGGED_AT_HEADER.
+    // Number("garbage") -> NaN; readTagInfo previously returned that NaN verbatim.
+    function corruptTaggedAtOnRead(): void {
+      const real = mockCaches._default.match.bind(mockCaches._default);
+      vi.spyOn(mockCaches._default, "match").mockImplementation(async (req) => {
+        const res = await real(req);
+        if (!res) return res;
+        if (!res.headers.get("x-edge-cache-tagged-at")) return res;
+        const headers = new Headers(res.headers);
+        headers.set("x-edge-cache-tagged-at", "not-a-number");
+        return new Response(res.body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers,
+        });
+      });
+    }
+
+    it("treats an item with a NaN taggedAt as untagged (not a permanent un-invalidatable hit)", async () => {
+      const store = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["catalog"] });
+      await ctx.flush();
+
+      corruptTaggedAtOnRead();
+
+      // The fix makes readTagInfo treat a non-finite taggedAt like the missing-
+      // tags case, so the read surfaces NO live tags. Before the fix it returned
+      // { tags: ["catalog"], taggedAt: NaN } - a tag set that isGloballyInvalidated
+      // could never act on (marker >= NaN is always false), so the entry was
+      // permanently non-invalidatable while still claiming to be tagged.
+      const hit = await store.getItem("k");
+      expect(hit).not.toBeNull();
+      expect(hit!.tags).toBeUndefined();
+    });
+
+    it("does not short-circuit isGloballyInvalidated into a permanent valid hit", async () => {
+      const store = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["catalog"] });
+      await ctx.flush();
+
+      // Invalidate the tag FIRST, so a correctly-read entry would already be a
+      // miss. With the corrupt NaN taggedAt, the old code's `!taggedAt` guard
+      // fired ("not invalidated") and served the entry regardless of the marker.
+      vi.advanceTimersByTime(10);
+      await store.invalidateTags(["catalog"]);
+
+      corruptTaggedAtOnRead();
+
+      // Fixed behavior: the entry is treated as untagged, so it carries no tag
+      // claim that could be (mis)reported as live + un-invalidatable.
+      const hit = await store.getItem("k");
+      expect(hit?.tags).toBeUndefined();
+    });
+  });
 });
