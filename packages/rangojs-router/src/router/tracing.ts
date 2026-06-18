@@ -31,18 +31,15 @@
  * track() at the call site), rango.render (render:total:<route>; normal AND
  * action-revalidation renders), rango.ssr (ssr:render-html).
  *
- * Streaming-phase span lifetime: a span ends when its callback's value (or
- * promise) settles. The streaming phases (request, middleware, render, ssr) are
- * wrapped by observeRequestPhase / observeStreamingPhase (instrument.ts), whose
- * callback hands the constructed Response/stream to the caller immediately
- * (streaming preserved) but then awaits a request-scoped drain barrier, so the
- * SPAN ends when the response BODY finishes draining, not at stream construction.
- * That keeps span durations covering the real streamed work and the trace tree
- * valid: a loader/Suspense child that resolves while the body streams ends before
- * its now-drain-bound parent. The co-emitted perf METRIC (render:total, …) is
- * still recorded at construction — it ships in the Server-Timing header, flushed
- * before the body drains — so a streaming span legitimately reads longer than its
- * same-named metric by the time the body spent streaming after construction.
+ * Span-duration caveat (best-effort, never buffers): a span ends when its
+ * callback's value (or promise) settles. For the streaming phases (request,
+ * render, ssr) that is when the Response / HTML / RSC stream is CONSTRUCTED, not
+ * when the body finishes draining — instrumentation never wraps or buffers the
+ * response body, so it cannot regress response latency or streaming. A loader /
+ * Suspense child that resolves while the body streams therefore keeps a
+ * rango.loader span that can extend past its render parent; overlapping spans are
+ * valid (the loader really did take that long). Phase spans bound the work up to
+ * stream-handoff, which is also what the co-emitted perf metric measures.
  *
  * Both shipped runners (Cloudflare, OTel) keep the core agnostic: the
  * platform-specific bridge lives at the edge behind the SpanRunner contract.

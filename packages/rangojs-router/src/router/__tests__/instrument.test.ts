@@ -195,6 +195,23 @@ describe("PHASES registry", () => {
     });
     expect(label).toBe("render:total:home");
   });
+
+  it("tags the render span with the matched route as rango.route (lazy, after fn)", async () => {
+    const renderAttrs: Record<string, unknown> = {};
+    const runner: SpanRunner = <T>(name: string, fn: (span: never) => T): T =>
+      fn({
+        setAttribute(k: string, v: unknown) {
+          if (name === "rango.render") renderAttrs[k] = v;
+        },
+      } as never);
+    const tracing = resolveTracing({ runner })!;
+    const store = createMetricsStore(true)!;
+    await runWithRequestContext(
+      { _metricsStore: store, _tracing: tracing, _routeName: "home" } as never,
+      () => observePhase(PHASES.render, async () => "x"),
+    );
+    expect(renderAttrs["rango.route"]).toBe("home");
+  });
 });
 
 describe("observeEvent", () => {

@@ -11,7 +11,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
-import { observeStreamingPhase, PHASES } from "../router/instrument.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { MatchResult } from "../types.js";
@@ -36,7 +36,7 @@ export function handleRscRendering<TEnv>(
   // same boundary (match -> serialize -> SSR), so the two surfaces agree.
   // Loaders kicked off during matching nest under the span; the SSR HTML pass
   // below opens "rango.ssr" the same way.
-  return observeStreamingPhase(PHASES.render, () =>
+  return observePhase(PHASES.render, () =>
     handleRscRenderingInner(
       ctx,
       request,
@@ -248,7 +248,7 @@ async function handleRscRenderingInner<TEnv>(
 
   // ssr-render-html metric + rango.ssr span from one boundary. render:total is
   // recorded by the observePhase wrapper around this function.
-  const htmlStream = await observeStreamingPhase(PHASES.ssr, () =>
+  const htmlStream = await observePhase(PHASES.ssr, () =>
     ssrModule.renderHTML(rscStream, {
       nonce,
       streamMode,

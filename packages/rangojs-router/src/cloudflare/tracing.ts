@@ -26,16 +26,13 @@
  * recorded is governed by the `observability`/tracing block in wrangler config.
  *
  * Span duration note: enterSpan ends a span when its callback's returned value
- * (or promise) settles. The streaming phases (request/render/ssr/middleware) are
- * wrapped (in instrument.ts) so their callback awaits the response body's drain
- * before settling — the constructed Response is handed to the client immediately,
- * but the callback (hence the SPAN) stays open until the body finishes draining.
- * So these spans cover the full streamed request and loader/Suspense children
- * that resolve mid-stream nest under a still-open parent. This uses only the
- * typed enterSpan API; no startActiveSpan/end. The perf METRICS (render:total,
- * the middleware own-time, handler:total) stay construction-bound — they ship in
- * the Server-Timing header, flushed before drain — so a span reads at least as
- * long as its same-named metric, the difference being post-construction streaming.
+ * (or promise) settles. For the streaming phases (request/render/ssr) that is at
+ * stream CONSTRUCTION, not body-drain. Instrumentation is best-effort and never
+ * wraps or buffers the response body, so it cannot regress streaming or latency.
+ * A loader/Suspense child that resolves mid-stream therefore keeps a rango.loader
+ * span that can extend past its render parent — overlapping spans are valid. Uses
+ * only the typed enterSpan API; spans bound work up to stream-handoff, matching
+ * the co-emitted perf metric.
  */
 
 import { _getRequestContext } from "../server/request-context.js";

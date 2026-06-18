@@ -42,9 +42,7 @@ import {
   runThenSettle,
   type TracePhase,
   type TraceSpan,
-  type ResolvedTracing,
 } from "./tracing.js";
-import { isWebSocketUpgradeResponse } from "../response-utils.js";
 
 /**
  * Perf-metric boundary for a phase, or `false` for span-only. `false` means the
@@ -208,11 +206,15 @@ function recordPhaseMetric(
  * unchanged and thrown errors / rejected promises propagate unchanged. When fn
  * returns a promise both the metric duration and the span end when it settles.
  *
- * This is the boundary for NON-streaming phases (action, loader): both the span
- * and the metric settle when their own work completes. Streaming phases (request,
- * middleware, render, ssr) use observeRequestPhase / observeStreamingPhase, where
- * the SPAN is held open until body-drain (valid tree) while the perf metric is
- * still recorded at construction (Server-Timing parity).
+ * This is the ONLY phase primitive: every phase (request/middleware/action/
+ * loader/handler/render/ssr) is construction-bound — the span and metric settle
+ * when fn's own work completes (for the streaming phases, when the RSC/HTML
+ * stream is constructed, NOT when the body drains). Instrumentation is strictly
+ * best-effort: it never wraps or buffers the response and adds no work on the
+ * streaming path, so it cannot regress response latency or streaming. A loader
+ * that resolves while the body streams therefore keeps a rango.loader span that
+ * may extend past its render parent — overlapping spans are valid; the loader
+ * really did take that long.
  *
  * Reads the metrics store + tracing off the RequestContext ALS, which is active
  * for the WHOLE request — contrast observeEvent, which reads the RouterContext
@@ -231,12 +233,25 @@ export function observePhase<T>(
 
   // Attributes only land on a real span, so skip the wrapper when only the perf
   // surface is active (traceSpan would apply them to NOOP_TRACE_SPAN for nothing).
+  // `lazyAttributes` resolve AFTER fn runs (e.g. rango.route, known post-match).
   const attributes = spec.attributes;
+  const lazy = spec.lazyAttributes;
   const wrapped: (span: TraceSpan) => T =
-    attributes && tracing
+    (attributes || lazy) && tracing
       ? (span) => {
-          applyAttributes(span, attributes);
-          return fn(span);
+          if (attributes) applyAttributes(span, attributes);
+          const out = fn(span);
+          if (!lazy) return out;
+          if (out instanceof Promise) {
+            return out.then((value) => {
+              const late = lazy();
+              if (late) applyAttributes(span, late);
+              return value;
+            }) as T;
+          }
+          const late = lazy();
+          if (late) applyAttributes(span, late);
+          return out;
         }
       : fn;
 
@@ -252,195 +267,6 @@ export function observePhase<T>(
   // the old track().finally() path it replaced).
   const start = performance.now();
   return runThenSettle(runSpan, () => recordPhaseMetric(store, metric, start));
-}
-
-/**
- * Re-stream `response`'s body through a pass-through that fires `onDrain` exactly
- * once when the body finishes — on natural end, a stream error, or a client
- * cancel (so a span can never leak on an aborted response). A bodyless response
- * fires immediately. Only used while instrumentation is active, so the per-chunk
- * relay cost never touches an untraced request.
- */
-function instrumentResponseDrain(
-  response: Response,
-  onDrain: () => void,
-): Response {
-  // WS-upgrade responses (status 101 / workerd `webSocket` property) must never
-  // be reconstructed: `new Response(body, { status: 101 })` throws and a copy
-  // drops the non-standard webSocket handoff (the invariant every other Response
-  // reconstruction site honors). A bodyless response has nothing to drain.
-  const source = response.body;
-  if (!source || isWebSocketUpgradeResponse(response)) {
-    onDrain();
-    return response;
-  }
-  let fired = false;
-  const fire = (): void => {
-    if (fired) return;
-    fired = true;
-    onDrain();
-  };
-  const reader = source.getReader();
-  const wrapped = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-        if (done) {
-          controller.close();
-          fire();
-          return;
-        }
-        controller.enqueue(value);
-      } catch (error) {
-        controller.error(error);
-        fire();
-      }
-    },
-    cancel(reason) {
-      fire();
-      return reader.cancel(reason);
-    },
-  });
-  return new Response(wrapped, response);
-}
-
-/**
- * Shared engine for the streaming phases (request, middleware, render, ssr). It
- * opens the span, runs fn, records the phase's perf metric at CONSTRUCTION (so it
- * still reaches the Server-Timing header / [RSC Perf] table, both built before
- * the body drains), hands the constructed value to the caller via a side channel
- * (streaming preserved), then holds the span open until `drain` resolves. The
- * SPAN therefore ends at body-drain — keeping the trace tree valid (a loader
- * child that resolves mid-stream ends before its parent) — while the perf metric
- * stays the construction work-time. `onDeliver` lets the request phase instrument
- * the final body before handing it back; `onError` lets it release the barrier on
- * failure. Fire-and-forget: the value reaches the caller via the returned
- * promise, so the span promise's rejection is swallowed (already surfaced there).
- */
-function runDrainBoundPhase<R>(
-  spec: PhaseSpec,
-  fn: (span: TraceSpan) => R | Promise<R>,
-  tracing: ResolvedTracing | undefined,
-  store: MetricsStore | undefined,
-  drain: Promise<void>,
-  onDeliver: (value: R) => R,
-  onError?: () => void,
-): Promise<R> {
-  let deliver!: (value: R) => void;
-  let reject!: (error: unknown) => void;
-  const delivered = new Promise<R>((res, rej) => {
-    deliver = res;
-    reject = rej;
-  });
-
-  const start = performance.now();
-  const attributes = spec.attributes;
-  const metric = spec.metric;
-  const record = (): void => {
-    if (store && metric !== false) recordPhaseMetric(store, metric, start);
-  };
-  const spanCallback = async (span: TraceSpan): Promise<void> => {
-    if (attributes && tracing) applyAttributes(span, attributes);
-    let value: R;
-    try {
-      value = await fn(span);
-    } catch (error) {
-      record(); // a failed phase still shows its (construction) timing
-      onError?.();
-      reject(error);
-      throw error; // settle the span with the error, at construction
-    }
-    // Late attributes (e.g. rango.route) — resolved now that the work has run,
-    // so they can read state like the matched route name that match sets midway.
-    const lazy =
-      tracing && spec.lazyAttributes ? spec.lazyAttributes() : undefined;
-    if (lazy) applyAttributes(span, lazy);
-    record(); // construction-bound metric, before the response/header is built
-    deliver(onDeliver(value));
-    await drain; // hold the span open until the response body drains
-  };
-
-  traceSpan(tracing, spec.tracePhase, spec.spanName, spanCallback).catch(
-    () => {},
-  );
-  return delivered;
-}
-
-/**
- * The request phase (rango.request, metric:false). Owns the drain barrier: it
- * runs fn to construct the final Response, instruments that Response's body so
- * the barrier resolves at drain, hands the Response to the caller immediately
- * (streaming preserved), and holds the span open until the body drains. Every
- * streaming inner phase awaits the same barrier (via observeStreamingPhase), so
- * the request/middleware/render/ssr chain ends at body-drain together and the
- * trace tree is valid (no child span outlives its parent). The perf metrics
- * (render:total, …) are recorded at construction so they still reach the
- * Server-Timing header; only the SPANS are drain-bound. ctx.waitUntil holds the
- * worker alive until drain so the span end runs. Pass-through when no surface is
- * active.
- */
-export function observeRequestPhase(
-  spec: PhaseSpec,
-  fn: (span: TraceSpan) => Promise<Response>,
-): Promise<Response> {
-  const reqCtx = _getRequestContext();
-  const store = reqCtx?._metricsStore;
-  const tracing = reqCtx?._tracing;
-
-  if ((!store && !tracing) || !reqCtx) return fn(NOOP_TRACE_SPAN);
-
-  let resolveDrain!: () => void;
-  const finalDrain = new Promise<void>((resolve) => {
-    resolveDrain = resolve;
-  });
-  reqCtx._finalDrain = finalDrain;
-
-  // Keep the worker alive until the body drains, so the drain-bound span end
-  // (and the inner phases' settle) runs before the runtime can reclaim it.
-  const ec = reqCtx.executionContext;
-  if (typeof ec?.waitUntil === "function") ec.waitUntil(finalDrain);
-
-  return runDrainBoundPhase<Response>(
-    spec,
-    fn,
-    tracing,
-    store,
-    finalDrain,
-    (response) => instrumentResponseDrain(response, resolveDrain),
-    resolveDrain, // release the barrier if fn fails before constructing a body
-  );
-}
-
-/**
- * A streaming inner phase (rango.middleware / render / ssr). Its SPAN settles
- * when the request's final response body drains (the barrier owned by
- * observeRequestPhase), not when fn returns the constructed stream — so
- * loader/Suspense children that resolve mid-stream nest under a still-open
- * parent. fn's result is delivered at construction (streaming preserved) and the
- * perf metric is recorded at construction (Server-Timing parity). Falls back to
- * observePhase (construction-bound span) when there is no barrier — a
- * non-streaming request, or instrumentation off.
- */
-export function observeStreamingPhase<R>(
-  spec: PhaseSpec,
-  fn: (span: TraceSpan) => R | Promise<R>,
-): Promise<R> {
-  const reqCtx = _getRequestContext();
-  const store = reqCtx?._metricsStore;
-  const tracing = reqCtx?._tracing;
-  const finalDrain = reqCtx?._finalDrain;
-
-  if ((!store && !tracing) || !finalDrain) {
-    return Promise.resolve(observePhase(spec, fn));
-  }
-  return runDrainBoundPhase<R>(
-    spec,
-    fn,
-    tracing,
-    store,
-    finalDrain,
-    (value) => value,
-  );
 }
 
 /**
