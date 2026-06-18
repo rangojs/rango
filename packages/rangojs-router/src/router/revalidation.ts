@@ -255,6 +255,27 @@ export async function evaluateRevalidation<TEnv>(
       stale,
     });
 
+    // The revalidate fn contract (handler-context.ts) is SYNCHRONOUS: it must
+    // return a boolean, a { defaultShouldRevalidate } object, or null/undefined.
+    // A Promise-returning (async) fn matches none of the decision branches below
+    // and silently falls through keeping the current default — a hard-to-find
+    // misuse. We do NOT await it (that would change the sync contract); instead
+    // we surface it as a dev-mode warning so the silent drop is diagnosable.
+    // Mirrors defer.ts: gated to dev, stripped from production builds.
+    if (
+      process.env.NODE_ENV !== "production" &&
+      result != null &&
+      typeof (result as { then?: unknown }).then === "function"
+    ) {
+      console.warn(
+        `[rango] revalidate fn "${name}" returned a Promise; revalidate ` +
+          `functions must be synchronous (return a boolean, ` +
+          `{ defaultShouldRevalidate }, or null/undefined). The async result ` +
+          `was IGNORED and the default (${currentSuggestion}) was kept. ` +
+          `Move async work into a loader instead.`,
+      );
+    }
+
     if (typeof result === "boolean") {
       debugLog("revalidation", "hard decision", {
         segmentId: segment.id,
