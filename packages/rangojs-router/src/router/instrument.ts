@@ -134,6 +134,18 @@ export const PHASES = {
     attributes: { "rango.loader_id": id },
   }),
 
+  /** One segment route/layout handler execution (the component/handler that
+   * produces a segment). Span only — the perf metric (handler:<id>) is owned by
+   * the legacy track() at the same call site, so observePhase here adds the
+   * rango.handler span without double-recording. `id` is the segment id, carried
+   * as the rango.segment_id attribute to match the handler:<id> perf row. */
+  handler: (id: string): PhaseSpec => ({
+    metric: false,
+    tracePhase: "handler",
+    spanName: "rango.handler",
+    attributes: { "rango.segment_id": id },
+  }),
+
   /** Whole render phase: match + serialize + SSR. The metric label is resolved
    * lazily at record time (after match has set the route name) so the perf
    * timeline shows WHICH route rendered: `render:total:<routeName>`, falling back

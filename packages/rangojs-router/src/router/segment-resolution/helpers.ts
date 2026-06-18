@@ -23,6 +23,7 @@ import type { ResolvedSegment, ErrorInfo, HandlerContext } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
+import { observePhase, PHASES } from "../instrument.js";
 import type { TelemetrySink } from "../telemetry.js";
 import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
 
@@ -130,11 +131,15 @@ export async function resolveLayoutComponent<TEnv>(
   entry: EntryData,
   context: HandlerContext<any, TEnv>,
 ): Promise<ReactNode> {
-  const component = await tryStaticHandler(entry, entry.shortCode);
-  if (component !== undefined) return component;
-  return typeof entry.handler === "function"
-    ? handleHandlerResult(await entry.handler(context))
-    : (entry.handler as ReactNode);
+  // rango.handler span for this layout/cache handler (the perf metric is owned
+  // by the track("handler:<id>") at the call site; this adds the span only).
+  return observePhase(PHASES.handler(entry.id), async () => {
+    const component = await tryStaticHandler(entry, entry.shortCode);
+    if (component !== undefined) return component;
+    return typeof entry.handler === "function"
+      ? handleHandlerResult(await entry.handler(context))
+      : (entry.handler as ReactNode);
+  });
 }
 
 // ---------------------------------------------------------------------------

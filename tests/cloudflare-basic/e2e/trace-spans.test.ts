@@ -91,6 +91,14 @@ function runTraceSpec(f: Fixture): void {
     expect(loader, "expected a rango.loader span").toBeTruthy();
     expect(typeof loader!.attributes["rango.loader_id"]).toBe("string");
 
+    // the route/layout handler executions produce rango.handler spans (the
+    // dominant per-segment work), nested under render and tagged with the
+    // segment id — mirroring the handler:<id> perf rows.
+    const handler = findNode(roots, "rango.handler");
+    expect(handler, "expected a rango.handler span").toBeTruthy();
+    expect(typeof handler!.attributes["rango.segment_id"]).toBe("string");
+    expect(hasDescendant(render!, "rango.handler")).toBe(true);
+
     // Drain-bound validity: render/ssr spans now stay open until the response
     // body drains, so the loader (which settles when its data resolves) ends
     // BEFORE its render parent. Under the old construction-bound spans render

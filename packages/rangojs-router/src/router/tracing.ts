@@ -26,7 +26,9 @@
  * metered directly), rango.middleware (span-only incl. intercept middleware;
  * pre/post metered directly), rango.action (action:<id>; server-action
  * execution, JS + no-JS/PE), rango.loader (loader:<id>; single metering site at
- * useLoader, plus the fetchable path), rango.render (render:total:<route>; normal AND
+ * useLoader, plus the fetchable path), rango.handler (span-only, one per segment
+ * route/layout handler execution; the handler:<id> perf metric is owned by the
+ * track() at the call site), rango.render (render:total:<route>; normal AND
  * action-revalidation renders), rango.ssr (ssr:render-html).
  *
  * Streaming-phase span lifetime: a span ends when its callback's value (or
@@ -67,6 +69,7 @@ export type TracePhase =
   | "middleware"
   | "action"
   | "loader"
+  | "handler"
   | "render"
   | "ssr";
 
@@ -76,6 +79,7 @@ export interface TracePhaseToggles {
   middleware?: boolean;
   action?: boolean;
   loader?: boolean;
+  handler?: boolean;
   render?: boolean;
   ssr?: boolean;
 }
@@ -112,6 +116,7 @@ const ALL_PHASES_ON: Record<TracePhase, boolean> = {
   middleware: true,
   action: true,
   loader: true,
+  handler: true,
   render: true,
   ssr: true,
 };
@@ -139,6 +144,7 @@ export function resolveTracing(
           middleware: spans.middleware ?? true,
           action: spans.action ?? true,
           loader: spans.loader ?? true,
+          handler: spans.handler ?? true,
           render: spans.render ?? true,
           ssr: spans.ssr ?? true,
         }
