@@ -169,7 +169,7 @@ repeated imports resolve instantly.
 | `action:{id}`                                          | Action     | Server-action execution (decode args + run the action body), before the revalidation render (co-emitted with `rango.action`); `{id}` is the action $$id, so the timeline shows which action ran. JS and no-JS/PE form actions                                                                                                                                                                                                                                                                                                                                               |
 | `render:total:{route}`                                 | Rendering  | Whole render phase: match + serialize + SSR (co-emitted with `rango.render`); `{route}` is the matched route name (resolved at record time), falling back to bare `render:total` for unmatched / auto-named routes. Also emitted for an action-revalidation render                                                                                                                                                                                                                                                                                                          |
 | `loader:{id}`                                          | Loader     | Per-loader EXECUTION, every executing path incl. fetchable (co-emitted with `rango.loader`). A loader-cache HIT does not execute, so it emits no `loader:` entry                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `handler:{id}`                                         | Handler    | Per-segment route/layout handler EXECUTION (the component/handler that produces a segment) — the dominant per-segment work. Paired with the `rango.handler` span (`rango.handler_id={id}`, mirroring `rango.loader_id`/`rango.action_id` — the handler id, NOT the emitted segment's `shortCode`); the metric is owned by `track()` at the call site, the span by `observeHandler`. A static/prerender HIT records this metric (track wraps the whole resolution) but emits NO `rango.handler` span — no handler runs. Server-Timing prefixes the depth (`d2-handler-{id}`) |
+| `handler:{id}`                                         | Handler    | Per-segment route/layout handler EXECUTION (the component/handler that produces a segment) — the dominant per-segment work. Paired with the `rango.handler` span (`rango.handler_id={id}`, mirroring `rango.loader_id`/`rango.action_id` — the handler id, NOT the emitted segment's `shortCode`); the metric is owned by `track()` at the call site, the span by `observeHandler`. A static/prerender HIT emits NO `rango.handler` span (no handler runs); the `handler:{id}` metric is still recorded for **layout/cache** entries (their `track()` wraps `resolveLayoutComponent`, which does the static lookup) but NOT for **route/parallel** entries (their static lookup precedes `track()`, so a static hit records neither). Server-Timing prefixes the depth (`d2-handler-{id}`) |
 | `middleware:{name}@{scope}` / `middleware:{scope}#{n}` | Middleware | Combined pre + post own-time. Named handlers use `{name}@{scope}`; anonymous handlers use `{scope}#{ordinal}`. `scope` is the registered pattern or `*`. Span-only via `observePhase`; this metric is recorded directly                                                                                                                                                                                                                                                                                                                                                     |
 
 ### Zero overhead when disabled
@@ -528,14 +528,17 @@ request context. So the span set is always a subset of the perf phases and the
 two surfaces cannot drift (e.g. a fetchable `_rsc_loader` request appears in
 both, not one).
 
-Two phases pass `metric: false` to `observePhase` and record their own perf
-metric with a finer decomposition — still one owner per surface, just not a
-single combined metric:
+Three phases pass `metric: false` to `observePhase` — their perf metric is
+recorded elsewhere, not as a single combined metric from the wrap site (still
+one owner per surface):
 
 - `rango.request` — `handler:total` is the grand total incl. the pre-context
   bootstrap timings.
 - `rango.middleware` — the metric is the middleware's exclusive `:pre`/`:post`
   own-time (before/after `next()`); the span is the inclusive onion.
+- `rango.handler` — the `handler:{id}` metric is owned by the call-site `track()`
+  (the span is added separately by `observeHandler`), so this phase is span-only
+  here; see the metric table above for when a static hit records it.
 
 Discrete facts (cache decisions, handler errors, timeouts, …) are the **other**
 surface — `observeEvent()` → the `TelemetrySink`. Spans drive; events are
