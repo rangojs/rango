@@ -187,6 +187,31 @@ describe("observeStreamingPhase (drain-bound inner phase)", () => {
     expect(store.metrics.map((m) => m.label)).toContain("render:total");
   });
 
+  it("tags the render span with the matched route name (rango.route), resolved after match", async () => {
+    // A tracer that captures attributes set on the rango.render span.
+    const renderAttrs: Record<string, unknown> = {};
+    const runner: SpanRunner = <T>(name: string, fn: (span: never) => T): T =>
+      fn({
+        setAttribute(key: string, value: unknown) {
+          if (name === "rango.render") renderAttrs[key] = value;
+        },
+      } as never);
+    const tracing = resolveTracing({ runner })!;
+    const body = controllableBody();
+
+    await runWithRequestContext(
+      // _routeName is what match sets; the render phase reads it for rango.route.
+      { _tracing: tracing, _routeName: "index" } as never,
+      () =>
+        observeRequestPhase(PHASES.request, async () => {
+          await observeStreamingPhase(PHASES.render, async () => "rendered");
+          return new Response(body.stream, { status: 200 });
+        }),
+    );
+
+    expect(renderAttrs["rango.route"]).toBe("index");
+  });
+
   it("keeps the tree valid: a loader child that settles before drain ends before its drain-bound render parent", async () => {
     const { events, tracing } = lifecycleTracing();
     const body = controllableBody();

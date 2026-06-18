@@ -80,6 +80,9 @@ function runTraceSpec(f: Fixture): void {
     expect(render, "expected a rango.render span").toBeTruthy();
     expect(hasDescendant(request, "rango.render")).toBe(true);
 
+    // the render span is tagged with the matched route name (resolved after match).
+    expect(render!.attributes["rango.route"]).toBe("blog");
+
     // ssr nests under render.
     expect(hasDescendant(render!, "rango.ssr")).toBe(true);
 
