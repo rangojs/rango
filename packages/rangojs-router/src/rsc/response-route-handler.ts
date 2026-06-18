@@ -7,7 +7,7 @@
  */
 
 import { RouterError } from "../errors.js";
-import { requireRequestContext } from "../server/request-context.js";
+import { getRequestContext } from "../server/request-context.js";
 import { contextGet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
@@ -79,7 +79,7 @@ export async function handleResponseRoute<TEnv>(
   }
 
   // Build lightweight context for response handler
-  const reqCtx = requireRequestContext();
+  const reqCtx = getRequestContext();
   const cleanUrl = stripInternalParams(url);
   const responseHandlerCtx = {
     request,

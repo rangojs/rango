@@ -7,7 +7,7 @@
  */
 
 import {
-  requireRequestContext,
+  getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
@@ -28,7 +28,7 @@ export function handleRscRendering<TEnv>(
   env: TEnv,
   url: URL,
   isPartial: boolean,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
 ): Promise<Response> {
   // Instrument the whole render phase once through the unified API: it records
@@ -55,10 +55,10 @@ async function handleRscRenderingInner<TEnv>(
   env: TEnv,
   url: URL,
   isPartial: boolean,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
 ): Promise<Response> {
-  const reqCtx = requireRequestContext();
+  const reqCtx = getRequestContext();
 
   let payload: RscPayload;
   let hasInterceptSlots = false;

@@ -197,13 +197,11 @@ void options;
 import {
   createRSCHandler,
   getRequestContext,
-  requireRequestContext,
   type CreateRSCHandlerOptions,
 } from "@rangojs/router/rsc";
 
 void createRSCHandler;
 void getRequestContext;
-void requireRequestContext;
 type _Options = CreateRSCHandlerOptions;
 `,
       "ssr-consumer.ts": `
