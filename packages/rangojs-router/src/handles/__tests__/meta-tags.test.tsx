@@ -130,4 +130,46 @@ describe("AsyncMetaTag rejection handling", () => {
     expect(html).toContain('name="description"');
     expect(html).toContain('content="hello"');
   });
+
+  it("renders a non-native thenable descriptor whose then() returns void (React wakeable)", async () => {
+    const descriptor: MetaDescriptorBase = {
+      name: "description",
+      content: "from-wakeable",
+    };
+    // A PromiseLike whose then() invokes the fulfill callback but returns void
+    // (undefined) — the shape React wakeables and some loader-derived thenables
+    // have in SSR/RSC. Without the Promise.resolve normalization in
+    // toSafeMetaPromise, `safe` becomes undefined and use(undefined) throws
+    // ("unsupported type passed to use()"), 500-ing the page.
+    const wakeable = {
+      then(onFulfilled: (value: MetaDescriptorBase) => unknown) {
+        onFulfilled(descriptor);
+      },
+    };
+
+    const html = await renderAsync(
+      wakeable as unknown as Promise<MetaDescriptorBase>,
+    );
+
+    expect(html).toContain('name="description"');
+    expect(html).toContain('content="from-wakeable"');
+  });
+
+  it("renders nothing when a non-native thenable descriptor rejects", async () => {
+    const wakeable = {
+      then(
+        _onFulfilled: (value: MetaDescriptorBase) => unknown,
+        onRejected: (reason: unknown) => unknown,
+      ) {
+        onRejected(new Error("wakeable meta failed"));
+      },
+    };
+
+    const html = await renderAsync(
+      wakeable as unknown as Promise<MetaDescriptorBase>,
+    );
+
+    expect(html).not.toContain("<meta");
+    expect(html).not.toContain("data-msg");
+  });
 });

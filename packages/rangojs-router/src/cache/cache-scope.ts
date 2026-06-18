@@ -34,6 +34,7 @@ import {
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
+  isFiniteNonNegativeSeconds,
   resolveCacheKey,
   resolveCacheStore,
   resolveTagsOption,
@@ -64,7 +65,7 @@ function debugCacheLog(message: string): void {
  * foreground render.
  */
 function isValidCacheSeconds(value: number, label: string): boolean {
-  if (Number.isFinite(value) && value >= 0) return true;
+  if (isFiniteNonNegativeSeconds(value)) return true;
   if (process.env.NODE_ENV !== "production") {
     console.warn(
       `[CacheScope] Invalid ${label} ${value}; falling back to default`,

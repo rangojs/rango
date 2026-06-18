@@ -212,7 +212,14 @@ function toSafeMetaPromise(
     // Suspense subtree (and on the server switch it to client rendering). A
     // settled-to-sentinel promise degrades the single bad descriptor to nothing
     // while every sibling descriptor still renders.
-    safe = promise.then(
+    //
+    // Normalize via Promise.resolve first: a collected async descriptor may be a
+    // non-native thenable (a React wakeable in SSR/RSC) whose .then() returns
+    // void rather than a Promise. Calling .then directly would leave `safe`
+    // undefined and use(undefined) would throw ("unsupported type passed to
+    // use()"), 500-ing the page. Promise.resolve adopts the thenable into a
+    // native Promise whose .then always returns one.
+    safe = Promise.resolve(promise).then(
       (value) => value,
       () => REJECTED_META,
     );
