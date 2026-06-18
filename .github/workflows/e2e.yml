@@ -285,7 +285,11 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30 (was 20): the 5-way dev split fixed the runner-OOM, but the shard that
+    # draws the timing-sensitive dev tests (handle-breadcrumbs late-push +
+    # cache param-change soft-navs) spends real time on per-test timeouts and
+    # their Playwright retries under CI load, which brushed the old 20m cap.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
