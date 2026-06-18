@@ -26,6 +26,7 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
   warnOnStreamedResponse,
+  buildLoaderErrorContext,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
@@ -59,6 +60,13 @@ export async function resolveLoaders<TEnv>(
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 
+  // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
+  // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
+  // telemetry event — wrapLoaderPromise only builds the onError/telemetry path
+  // when errorContext is supplied. Built from ctx so the live render path reports
+  // loader failures the same way handlers/actions/routing/fetchable-loaders do.
+  const errorContext = buildLoaderErrorContext(ctx);
+
   if (!loadingDisabled) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
     const segments = loaderEntries.map((loaderEntry, i) => {
@@ -79,6 +87,7 @@ export async function resolveLoaders<TEnv>(
           entry,
           segmentId,
           ctx.pathname,
+          errorContext,
         ),
         belongsToRoute,
       };
@@ -107,6 +116,7 @@ export async function resolveLoaders<TEnv>(
       entry,
       segmentId,
       ctx.pathname,
+      errorContext,
     );
     return { wrapped, segmentId };
   });

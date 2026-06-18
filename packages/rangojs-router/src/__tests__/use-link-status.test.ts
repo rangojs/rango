@@ -155,4 +155,72 @@ describe("useLinkStatus", () => {
     expect(setBasePending).not.toHaveBeenCalled();
     expect(ec.subscribe).toHaveBeenCalledOnce();
   });
+
+  /**
+   * Regression (F1): the optimistic pending value must be released when the
+   * navigation returns to idle. While loading, useLinkStatus pins the optimistic
+   * value to `true` in a transition; at completion `state.state` is already
+   * "idle", so the old code only ran setBasePending(false) and left the pinned
+   * optimistic `true` in place. For view-transition routes the base `false` is
+   * deferred behind the still-pending commit transition, so the spinner stayed
+   * stuck. The fix mirrors useNavigation's optimisticPinnedRef release branch.
+   */
+  it("releases the pinned optimistic value when navigation returns to idle", () => {
+    let state = "idle";
+    let pendingUrl: string | null = null;
+    const ec = {
+      getState: vi.fn(() => ({ state, pendingUrl })),
+      subscribe: vi.fn((_cb: () => void) => vi.fn()),
+    };
+    wireContexts("/dashboard", { eventController: ec });
+
+    useLinkStatus();
+    capturedEffectFn!();
+    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+
+    // Navigation to /dashboard starts: loading + pending. This pins the
+    // optimistic value to true inside a transition.
+    state = "loading";
+    pendingUrl = "/dashboard";
+    subscribeCallback();
+    expect(setOptimistic).toHaveBeenCalledWith(true);
+
+    setOptimistic.mockClear();
+
+    // Navigation completes: state is idle and no longer pending. The pinned
+    // optimistic `true` must be released by setting it back to false.
+    state = "idle";
+    pendingUrl = null;
+    subscribeCallback();
+
+    expect(setOptimistic).toHaveBeenCalledWith(false);
+  });
+
+  it("does not release when nothing was pinned (no spurious optimistic call)", () => {
+    // A navigation to a DIFFERENT link never pins this link's optimistic value;
+    // when it settles, no release should fire.
+    let state = "idle";
+    let pendingUrl: string | null = null;
+    const ec = {
+      getState: vi.fn(() => ({ state, pendingUrl })),
+      subscribe: vi.fn((_cb: () => void) => vi.fn()),
+    };
+    wireContexts("/dashboard", { eventController: ec });
+
+    useLinkStatus();
+    capturedEffectFn!();
+    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+
+    // A different link is navigated to: this link is not pending, so no pin.
+    state = "loading";
+    pendingUrl = "/other";
+    subscribeCallback();
+    expect(setOptimistic).not.toHaveBeenCalled();
+
+    // It settles back to idle: still no optimistic release for this link.
+    state = "idle";
+    pendingUrl = null;
+    subscribeCallback();
+    expect(setOptimistic).not.toHaveBeenCalled();
+  });
 });

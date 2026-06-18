@@ -221,14 +221,29 @@ export const router = createRouter({});
 
   // ---- Idempotency ----
 
-  it("does not double-inject when $$id is already present", () => {
+  it("does not double-inject a call already carrying the injected $$routeNames marker", () => {
     const plugin = initPlugin();
+    // The injected marker is the unique `$$routeNames: __rsc_rn` property (not a
+    // bare `$$id` substring). A genuinely-injected call is skipped.
+    const code = `import { createRouter } from "@rangojs/router";
+import { NamedRoutes as __rsc_rn } from "./main.named-routes.gen.js";
+export const router = createRouter({ $$id: "x", $$sourceFile: "y", $$routeNames: __rsc_rn });
+`;
+    const result = plugin.transform(code, "/project/src/router.tsx");
+    // Should return null since the call is already injected.
+    expect(result).toBeNull();
+  });
+
+  it("still injects when a user value merely contains the text $$id (E3)", () => {
+    const plugin = initPlugin();
+    // A user-authored `$$id` property/value must NOT suppress injection — only
+    // the genuine `$$routeNames: __rsc_rn` marker does.
     const code = `import { createRouter } from "@rangojs/router";
 export const router = createRouter({ $$id: "existing" });
 `;
     const result = plugin.transform(code, "/project/src/router.tsx");
-    // Should return null since $$id is already present
-    expect(result).toBeNull();
+    expect(result).toBeTruthy();
+    expect(result!.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
   });
 
   // ---- Multiple routers ----

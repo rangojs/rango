@@ -284,8 +284,13 @@ function runWithLoaderContext<R>(
         }
         if (handleSeeds.has(dep)) return handleSeeds.get(dep);
         if (isHandle(dep)) return collectHandle(dep, []);
-        if (loaderSeeds.has(dep)) return loaderSeeds.get(dep);
-        if (opts.use) return opts.use(dep as LoaderDefinition<any, any>);
+        // Production ctx.use(Loader) ALWAYS returns a Promise (the cached loader
+        // promise). The seeded path must match, so a consumer composing on the
+        // result (ctx.use(Dep).then(...), Promise.race, etc.) works the same as
+        // production and the real-fn delegate path below.
+        if (loaderSeeds.has(dep)) return Promise.resolve(loaderSeeds.get(dep));
+        if (opts.use)
+          return Promise.resolve(opts.use(dep as LoaderDefinition<any, any>));
         return reqCtx.use(dep as LoaderDefinition<any, any>);
       }) as LoaderContext<any, any>["use"],
       method: opts.method ?? "GET",

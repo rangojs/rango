@@ -1,6 +1,20 @@
 import test, { expect } from "@playwright/test";
 import { useFixture } from "./fixture";
 
+// D6: a negotiated response must carry `Accept` in Vary exactly once. The
+// upstream negotiation layer bakes `Vary: Accept`, and the handler post-append
+// used to add a second `Accept` token (`Vary: Accept, Accept`) — a redundant
+// token some proxies/CDNs treat as a distinct cache key. appendVaryAccept now
+// dedups, so the consumer-visible header has a single `accept` token.
+function expectVaryAcceptOnce(varyHeader: string | undefined): void {
+  expect(varyHeader, "expected a Vary header").toBeTruthy();
+  const acceptTokens = varyHeader!
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token === "accept");
+  expect(acceptTokens).toEqual(["accept"]);
+}
+
 test.describe("content-negotiation", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   // /negotiate-test has: RSC (first), then JSON, then MD
@@ -180,6 +194,36 @@ test.describe("content-negotiation", () => {
       });
       expect(json.headers()["vary"]).toContain("Accept");
     });
+
+    // D6: the `accept` token must appear exactly once across each transport
+    // (RSC, markdown, JSON, and the middleware-bearing route). A duplicate
+    // `Vary: Accept, Accept` would be filed under a distinct cache key by
+    // some intermediaries.
+    test("emits Accept in Vary exactly once (no duplicate token)", async ({
+      request,
+    }) => {
+      const rsc = await request.get(f.url("/negotiate-test"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expectVaryAcceptOnce(rsc.headers()["vary"]);
+
+      const md = await request.get(f.url("/negotiate-test"), {
+        headers: { Accept: "text/markdown" },
+      });
+      expectVaryAcceptOnce(md.headers()["vary"]);
+
+      const json = await request.get(f.url("/negotiate-test"), {
+        headers: { Accept: "application/json" },
+      });
+      expectVaryAcceptOnce(json.headers()["vary"]);
+
+      // A negotiated route that also runs variant middleware (the middleware
+      // appends a header after next()) must still dedup to a single token.
+      const mwJson = await request.get(f.url("/negotiate-mw-test"), {
+        headers: { Accept: "application/json" },
+      });
+      expectVaryAcceptOnce(mwJson.headers()["vary"]);
+    });
   });
 
   test.describe("variant-specific middleware", () => {
@@ -278,6 +322,26 @@ test.describe("content-negotiation (production)", () => {
         headers: { Accept: "application/json" },
       });
       expect(json.headers()["vary"]).toContain("Accept");
+    });
+
+    // D6 (production): same single-token contract against the bundled build.
+    test("emits Accept in Vary exactly once (no duplicate token)", async ({
+      request,
+    }) => {
+      const rsc = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expectVaryAcceptOnce(rsc.headers()["vary"]);
+
+      const json = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "application/json" },
+      });
+      expectVaryAcceptOnce(json.headers()["vary"]);
+
+      const mwJson = await request.get(fProd.url("/negotiate-mw-test"), {
+        headers: { Accept: "application/json" },
+      });
+      expectVaryAcceptOnce(mwJson.headers()["vary"]);
     });
   });
 

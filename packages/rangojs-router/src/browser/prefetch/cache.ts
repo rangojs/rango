@@ -269,6 +269,23 @@ export function storePrefetch(
 }
 
 /**
+ * Remove a single stored prefetch entry. Used to evict an entry whose body
+ * stream stalled after headers arrived (its payload / streamComplete never
+ * settle), so future prefetches and navigation refetch instead of dedupe-ing
+ * against — and awaiting — a stuck entry.
+ *
+ * Identity-guarded: only evicts when the entry CURRENTLY stored under `key` is
+ * the exact `entry` we published. A generation check alone is insufficient —
+ * after this entry is consumed (consumePrefetch) and a fresh prefetch
+ * republishes under the SAME key in the SAME generation, a gen-only guard would
+ * delete that valid newer entry. Reference identity drops only our own stalled
+ * entry.
+ */
+export function removePrefetch(key: string, entry: DecodedPrefetch): void {
+  if (cache.get(key)?.entry === entry) cache.delete(key);
+}
+
+/**
  * Capture the current generation. The returned value is passed to
  * storePrefetch so it can detect stale completions.
  */

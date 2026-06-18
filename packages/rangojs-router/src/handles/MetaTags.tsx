@@ -8,6 +8,10 @@
  *
  * When theme is enabled in the router config, MetaTags also renders
  * the theme initialization script to prevent FOUC (flash of unstyled content).
+ * This makes MetaTags the sole FOUC-script injector for apps that render it;
+ * the standalone `<ThemeScript />` is only needed when MetaTags is not used.
+ * Rendering both is safe (the inline script guards listener registration) but
+ * redundant.
  *
  * @example
  * ```tsx
@@ -27,6 +31,7 @@
 import { use } from "react";
 import { useHandle } from "../browser/react/use-handle.js";
 import { Meta } from "./meta.js";
+import { isThenable } from "./is-thenable.js";
 import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.js";
 import { useThemeContext } from "../theme/theme-context.js";
 import { generateThemeScript } from "../theme/theme-script.js";
@@ -91,10 +96,13 @@ function hasTagName(
 }
 
 /**
- * Check if a value is a Promise.
+ * Check if a value is a Promise. Uses the shared thenable predicate (callable
+ * `then`) so collect (meta.ts) and render never disagree: an object carrying a
+ * non-callable `then` (e.g. `{ then: 5 }`) is a SYNC descriptor on both sides,
+ * not a Promise that would crash React's `use()`.
  */
 function isPromise(value: unknown): value is Promise<unknown> {
-  return value !== null && typeof value === "object" && "then" in value;
+  return isThenable(value);
 }
 
 function renderMetaDescriptor(

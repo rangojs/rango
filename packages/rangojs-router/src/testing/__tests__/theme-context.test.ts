@@ -59,4 +59,24 @@ describe("ctx.theme / ctx.setTheme via runMiddleware", () => {
     expect(hadSetter).toBe(false);
     expect(cookies.theme).toBeUndefined();
   });
+
+  it("ctx.setTheme rejects 'system' when enableSystem is false", async () => {
+    const mw: MiddlewareFn = async (ctx, next) => {
+      // A concrete theme is accepted...
+      ctx.setTheme?.("dark");
+      // ...but "system" is rejected when system detection is off, so the cookie
+      // is never set to "system" (which the next SSR would re-apply as a bogus
+      // class="system"). The prior "dark" value survives.
+      ctx.setTheme?.("system");
+      return next();
+    };
+    const { cookies, response } = await runMiddleware(mw, {
+      request: "/dashboard",
+      theme: { themes: ["light", "dark"], enableSystem: false },
+    });
+    expect(cookies.theme).toBe("dark");
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith("theme=system")),
+    ).toBe(false);
+  });
 });

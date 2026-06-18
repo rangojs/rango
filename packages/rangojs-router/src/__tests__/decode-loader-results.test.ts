@@ -107,4 +107,48 @@ describe("decodeLoaderResults", () => {
       errorFallback: null,
     });
   });
+
+  // D3: the producer (loader-resolution.ts) uses `fallback: null` as the ONLY
+  // no-boundary sentinel; a matched boundary's rendered ReactNode can be falsy
+  // (0, "", false). decodeLoaderResults must treat those as a real fallback
+  // (test for != null), not discard them and rethrow the original loader error.
+  describe("falsy-but-present error boundary fallbacks (D3)", () => {
+    for (const falsy of [0, "", false] as const) {
+      it(`uses a fallback of ${JSON.stringify(falsy)} instead of rethrowing`, () => {
+        // Producer signals a matched boundary by setting fallback to the
+        // rendered node — here a legitimately falsy value.
+        const result: LoaderDataResult = {
+          __loaderResult: true,
+          ok: false,
+          error: { message: "boom" } as any,
+          fallback: falsy as any,
+        };
+
+        let thrown: unknown;
+        let out: ReturnType<typeof decodeLoaderResults> | undefined;
+        try {
+          out = decodeLoaderResults([result], ["a"]);
+        } catch (e) {
+          thrown = e;
+        }
+
+        // The original loader error must NOT escape.
+        expect(thrown).toBeUndefined();
+        // The falsy node is the chosen errorFallback.
+        expect(out!.errorFallback).toBe(falsy);
+      });
+    }
+
+    it("still rethrows when fallback is null (the genuine no-boundary case)", () => {
+      const result: LoaderDataResult = {
+        __loaderResult: true,
+        ok: false,
+        error: { message: "no-boundary boom" } as any,
+        fallback: null,
+      };
+      expect(() => decodeLoaderResults([result], ["a"])).toThrow(
+        "no-boundary boom",
+      );
+    });
+  });
 });

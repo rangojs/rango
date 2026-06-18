@@ -83,13 +83,26 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
   }
 
   var stored = getStoredTheme();
-  var theme = stored && (stored === 'system' || themes.indexOf(stored) !== -1)
+  // A stored value is valid when it is a configured theme, OR "system" but only
+  // while system detection is enabled. A stored "system" with enableSystem=false
+  // (an old cookie/localStorage, or a value pushed cross-tab) must fall back to
+  // defaultTheme — otherwise resolveTheme returns "system" unresolved and
+  // applyTheme writes a bogus class="system" / colorScheme="system" on <html>.
+  // Same rule as isValidTheme (constants.ts), inlined since this is a string.
+  var systemAllowed = stored === 'system' && enableSystem;
+  var theme = stored && (systemAllowed || themes.indexOf(stored) !== -1)
     ? stored
     : defaultTheme;
 
   applyTheme(theme);
 
-  if (enableSystem && typeof window !== 'undefined' && window.matchMedia) {
+  // Idempotency guard: MetaTags auto-injects this script when theme is enabled,
+  // and ThemeScript is also a public component for the same job. If a consumer
+  // renders both, the IIFE runs twice; without this guard the second run would
+  // register a SECOND, never-removed matchMedia('change') listener (a leak).
+  // The flag is keyed by storageKey so independent theme configs don't collide.
+  var flagKey = '__rangoThemeListener_' + storageKey;
+  if (enableSystem && typeof window !== 'undefined' && window.matchMedia && !window[flagKey]) {
     try {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
         var current = getStoredTheme() || defaultTheme;
@@ -97,6 +110,7 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
           applyTheme('system');
         }
       });
+      window[flagKey] = true;
     } catch (e) {
       // Older browsers may not support addEventListener on MediaQueryList
     }

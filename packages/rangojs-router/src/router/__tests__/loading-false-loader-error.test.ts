@@ -41,8 +41,12 @@ function makeEntry(): EntryData {
 
 function makeCtx() {
   return {
-    params: {},
+    params: { id: "7" },
     pathname: "/test",
+    request: new Request("https://app.test/test?x=1"),
+    url: new URL("https://app.test/test?x=1"),
+    env: { region: "eu" },
+    _routeName: "test.route",
     use: vi.fn((loader: { $$id: string }) =>
       loader.$$id === "boom-loader"
         ? Promise.reject(new Error("loader boom"))
@@ -67,5 +71,29 @@ describe("resolveLoaders — loading:false with a rejecting loader (M10)", () =>
     expect(ok).toEqual({ ok: true, data: { value: 42 } });
     expect(boom.ok).toBe(false);
     expect(boom.error).toBeInstanceOf(Error);
+  });
+
+  it("threads errorContext into wrapLoaderPromise so a throwing DSL loader can fire onError/loader.error", async () => {
+    // wrapLoaderPromise only wires the consumer onError callback and the
+    // loader.error telemetry emit when its 5th errorContext arg is present. The
+    // call site previously omitted it, so loader failures were silently dropped.
+    const deps = makeDeps();
+    const ctx = makeCtx();
+
+    await resolveLoaders(makeEntry(), ctx, true, deps);
+
+    const calls = (deps.wrapLoaderPromise as ReturnType<typeof vi.fn>).mock
+      .calls;
+    expect(calls.length).toBe(2);
+    for (const call of calls) {
+      // arg 5 (index 4) is the errorContext carrying the reporting fields.
+      const errorContext = call[4];
+      expect(errorContext).toBeDefined();
+      expect(errorContext.request).toBe(ctx.request);
+      expect(errorContext.url).toBe(ctx.url);
+      expect(errorContext.routeKey).toBe("test.route");
+      expect(errorContext.params).toEqual({ id: "7" });
+      expect(errorContext.env).toEqual({ region: "eu" });
+    }
   });
 });

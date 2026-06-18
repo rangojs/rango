@@ -389,6 +389,64 @@ describe("createDocumentCacheMiddleware", () => {
       expect(mockStore.cache.size).toBe(0);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
+
+    it("should not store an unqualified no-cache response even with s-maxage (RFC 7234 §5.2.2.2)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // `no-cache` means a shared cache MUST revalidate at the origin before
+      // serving. The store's hit path has no validation step, so serving a
+      // stored no-cache response within s-maxage would hand the client content
+      // the origin marked must-revalidate. Refuse to store it.
+      const next = vi.fn().mockResolvedValue(
+        new Response("no-cache body", {
+          headers: { "Cache-Control": "no-cache, s-maxage=60" },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.cache.size).toBe(0);
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+    });
+
+    it("still stores a field-name-qualified no-cache response (RFC nuance)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // `no-cache="set-cookie"` scopes the directive to a single field and is
+      // storable per RFC 7234 — only the qualified field must be stripped on
+      // serve, not the whole response. The veto excludes the `=` boundary so
+      // this qualified form does NOT veto storage.
+      const next = vi.fn().mockResolvedValue(
+        new Response("qualified no-cache body", {
+          headers: { "Cache-Control": 'no-cache="set-cookie", s-maxage=60' },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+      await vi.runAllTimersAsync();
+
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(mockStore.cache.has("/page:html")).toBe(true);
+    });
   });
 
   describe("cache hit", () => {

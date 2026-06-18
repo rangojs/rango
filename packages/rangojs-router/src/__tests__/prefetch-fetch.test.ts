@@ -739,6 +739,251 @@ describe("prefetch fetch options (credentials + action fence)", () => {
 });
 
 /**
+ * F4: a hover/direct prefetch fetches with no caller AbortSignal. If the server
+ * stalls and the fetch never settles, the inflight key was stranded forever:
+ * `hasPrefetch(key)` stayed true, so every future prefetch of that URL was
+ * silently deduped out (no warming) until a full cache clear. An internal
+ * timeout now aborts the stalled fetch so it settles, the `.finally()` clears
+ * the inflight flag, and the URL can be prefetched again.
+ */
+describe("hover prefetch stalled-fetch timeout (F4)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  it("aborts a never-settling direct prefetch so the key can be prefetched again", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // A fetch that resolves only when its AbortSignal fires (i.e. a stalled
+    // server). Without the internal timeout, this never settles and strands
+    // the inflight key.
+    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (sig) {
+          sig.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Inflight while the fetch is pending.
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // A re-prefetch while still inflight is correctly deduped (no new fetch).
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance past the internal timeout: the stalled fetch is aborted and
+    // settles, running the `.finally()` cleanup.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    // The inflight key is released — no longer stranded.
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // A fresh prefetch of the same URL now actually hits the network again
+    // instead of being silently deduped against the dead inflight entry.
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("evicts a published entry whose body stalls AFTER headers, so it can be re-prefetched", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // Headers arrive (the fetch resolves and the entry publishes), but the body
+    // NEVER produces or closes — a server that flushes headers then stalls
+    // mid-stream. A never-resolving `pull()` makes the tracking tee read hang, so
+    // streamComplete never resolves. Before the fix, the timeout was cleared
+    // once headers arrived, so the published entry was dedupe-d against forever
+    // and navigation awaited a payload that never settled. The stall timeout
+    // must now also bound the body and evict the entry.
+    // Fresh stalling stream per call (a teed body cannot be reused).
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              return new Promise<void>(() => {}); // never resolves -> read() hangs
+            },
+          }),
+          { status: 200, headers: { "X-Test": "1" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    // Let the fetch resolve and the `.then` publish the entry.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Headers arrived -> entry published even though the body is stalled.
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    // A re-prefetch dedupes against the published (stuck) entry — the bug.
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance past the stall timeout: the body never finished, so the fetch's
+    // stream is aborted and the published-but-never-settling entry is evicted.
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // A fresh prefetch now refetches instead of dedupe-ing against the stuck
+    // entry / awaiting a payload that never settles.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a stalled entry's eviction does NOT drop a fresh entry republished under the same key", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // Call 1 stalls (its stall timer stays armed); call 2 (after the stalled
+    // entry is consumed) republishes under the SAME key with a body that
+    // completes. When call 1's timer fires, evicting by generation alone would
+    // delete call 2's valid entry — identity-guarded eviction must spare it.
+    let call = 0;
+    const fetchMock = vi.fn(() => {
+      call += 1;
+      const body =
+        call === 1
+          ? new ReadableStream<Uint8Array>({
+              pull() {
+                return new Promise<void>(() => {}); // stall: never produces/closes
+              },
+            })
+          : "payload"; // completes immediately
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { "X-Test": "1" } }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch, consumePrefetch } =
+      await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    // A publishes (stalled); its stall timer is armed for 30s.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // Navigation consumes A (removes it) while A's timer is still armed.
+    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // B republishes under the same key; its body completes so its own timer
+    // clears, leaving only A's stale timer armed.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // A's stall timer fires: identity guard means it does NOT delete B.
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+  });
+
+  it("aborts a never-settling QUEUED prefetch (caller signal) so its key clears", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // The queue passes its own AbortController signal. Without combining that
+    // with the internal timeout, a stalled queued prefetch never settles and
+    // strands the inflight key — the bug this layered-timeout fixes.
+    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (sig) {
+          sig.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    prefetchQueued("/blog", ["A0"], "v1");
+    // Drive the queue's idle/image waits so the item actually executes.
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    // The queued fetch received a real caller signal (not undefined).
+    expect(fetchMock.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal);
+
+    // Advance past the internal timeout: the combined signal fires, the stalled
+    // fetch aborts and settles, running `.finally()` cleanup.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+  });
+
+  it("clears the timeout when the fetch settles normally (no late abort)", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    // Drain the fetch + decode microtasks.
+    await vi.advanceTimersByTimeAsync(0);
+
+    const { hasPrefetch, consumePrefetch } =
+      await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    // Entry is cached (timer was cleared on settle, fetch was never aborted).
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+  });
+});
+
+/**
  * Regression: same-page cache poisoning.
  *
  * After navigating to a prefetched target, a render/viewport prefetch would

@@ -31,6 +31,7 @@ export const NamedRoutes = {
   "docs.refIndex": "/docs/ref",
   "docs.search": "/docs/api/search",
   documentCache: "/document-cache",
+  documentCacheNoCache: "/document-cache-no-cache",
   fast: "/slow/fast",
   featuresDetail: "/features/:slug",
   filesWildcard: "/files/*",

@@ -1034,3 +1034,32 @@ describe("joinPrefix", () => {
     expect(joinPrefix("/a/b/", "/c")).toBe("/a/b/c");
   });
 });
+
+describe("extractStaticPrefix", () => {
+  it("returns the documented prefixes", () => {
+    expect(extractStaticPrefix("/api")).toBe("/api");
+    expect(extractStaticPrefix("/site/:locale")).toBe("/site");
+    expect(extractStaticPrefix("/:locale")).toBe("");
+    expect(extractStaticPrefix("/admin/users/:id")).toBe("/admin/users");
+    expect(extractStaticPrefix("/api/*")).toBe("/api");
+  });
+
+  it("returns empty for root and empty patterns", () => {
+    expect(extractStaticPrefix("/")).toBe("");
+    expect(extractStaticPrefix("")).toBe("");
+    expect(extractStaticPrefix("/*")).toBe("");
+  });
+
+  // A2: a literal ":" or "*" inside a STATIC segment is not a param/wildcard
+  // marker, so it must not terminate the prefix. The old raw-indexOf logic
+  // misread these and returned "", dropping the findMatch fast-skip for the
+  // entry on every request.
+  it("treats a literal colon inside a static segment as static", () => {
+    expect(extractStaticPrefix("/a:b/c")).toBe("/a:b/c");
+    expect(extractStaticPrefix("/a:b/c/:id")).toBe("/a:b/c");
+    expect(extractStaticPrefix("/shop/p:slug/items")).toBe(
+      "/shop/p:slug/items",
+    );
+    expect(extractStaticPrefix("/tel:+1/x")).toBe("/tel:+1/x");
+  });
+});

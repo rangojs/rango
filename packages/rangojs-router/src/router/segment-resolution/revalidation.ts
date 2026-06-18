@@ -40,6 +40,7 @@ import {
   tryStaticSlot,
   resolveLayoutComponent,
   resolveWithErrorBoundary,
+  buildLoaderErrorContext,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
@@ -199,6 +200,10 @@ export async function resolveLoadersWithRevalidation<TEnv>(
     ),
   );
 
+  // Partial (revalidation) render path: a throwing DSL loader must still fire
+  // onError/loader.error. isPartial flags the reporting phase accordingly.
+  const errorContext = { ...buildLoaderErrorContext(ctx), isPartial: true };
+
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(
     ({ loaderEntry, loader, segmentId, index }) => ({
@@ -216,6 +221,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
         entry,
         segmentId,
         ctx.pathname,
+        errorContext,
       ),
       belongsToRoute,
     }),

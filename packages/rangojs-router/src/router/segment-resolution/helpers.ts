@@ -19,13 +19,47 @@ import {
 import { getRequestContext } from "../../server/request-context.js";
 import { DefaultErrorFallback } from "../../default-error-boundary.js";
 import type { EntryData } from "../../server/context";
-import type { ResolvedSegment, ErrorInfo, HandlerContext } from "../../types";
+import type {
+  ResolvedSegment,
+  ErrorInfo,
+  HandlerContext,
+  InternalHandlerContext,
+} from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
 import { observeHandler } from "../instrument.js";
 import type { TelemetrySink } from "../telemetry.js";
 import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
+
+/** The errorContext shape wrapLoaderPromise expects as its 5th argument. */
+type LoaderErrorContext<TEnv> = NonNullable<
+  Parameters<SegmentResolutionDeps<TEnv>["wrapLoaderPromise"]>[4]
+>;
+
+/**
+ * Build the errorContext passed to wrapLoaderPromise so a throwing DSL loader
+ * fires createRouter({ onError }) (phase "loader") and emits the loader.error
+ * telemetry event. wrapLoaderPromise only wires the onError/telemetry path when
+ * this 5th argument is present; every real call site previously omitted it, so
+ * loaders were the one phase whose failures were silently dropped (handlers,
+ * actions, routing, rendering, and fetchable loaders all reported correctly).
+ *
+ * The fields come off the handler context, which already carries the request,
+ * url, params, env, and (on the internal shape) the matched route name.
+ */
+export function buildLoaderErrorContext<TEnv>(
+  ctx: HandlerContext<any, TEnv>,
+): LoaderErrorContext<TEnv> {
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  return {
+    request: ctx.request,
+    url: ctx.url,
+    routeKey: internal._routeName,
+    params: ctx.params as Record<string, string>,
+    env: ctx.env,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Handler result processing

@@ -1,5 +1,32 @@
-import { createLoader, cookies } from "@rangojs/router";
+import { createLoader, cookies, redirect } from "@rangojs/router";
 import { getCartQuantitySync } from "./cart-store.js";
+
+// ============================================================================
+// Fetchable-loader thrown-Response + error-name fixtures (D4, D5)
+// ============================================================================
+
+// D4: a fetchable loader (no middleware) that throws a redirect Response. The
+// _rsc_loader endpoint's catch must honor `error instanceof Response` and emit
+// the real 302 + Location, not coerce it into a generic 500.
+export const ThrownRedirectLoader = createLoader(async () => {
+  throw redirect("/redirected-loader-target");
+}, true);
+
+// D5: a fetchable loader that throws an error whose class name is a recognizable
+// sentinel. In production the endpoint must NOT leak `err.name` into the error
+// payload (the client only reads `message`); dev still carries the name. The
+// sentinel string lets the e2e assert presence (dev) / absence (prod) in the
+// served RSC body.
+class RangoLeakSentinelError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RangoLeakSentinelError";
+  }
+}
+
+export const NamedErrorLoader = createLoader(async () => {
+  throw new RangoLeakSentinelError("named-error-loader: thrown by design");
+}, true);
 
 // Layout-level loader for segment tracking tests
 export const LayoutCountLoader = createLoader(async () => {

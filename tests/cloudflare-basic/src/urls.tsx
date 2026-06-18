@@ -26,6 +26,7 @@ import {
   ProactiveCacheItemBPage,
 } from "./pages/proactive-cache.js";
 import { DocumentCachePage } from "./pages/document-cache.js";
+import { DocumentCacheNoCachePage } from "./pages/document-cache-no-cache.js";
 import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
@@ -376,6 +377,14 @@ export const urlpatterns = urls(
         ]),
         // Document cache route
         path("/document-cache", DocumentCachePage, { name: "documentCache" }),
+
+        // C3: document cache route whose response sets an unqualified
+        // `Cache-Control: no-cache`. The document cache must refuse to store it
+        // (never a frozen HIT), so the rendered timestamp re-executes every
+        // request despite the accompanying s-maxage.
+        path("/document-cache-no-cache", DocumentCacheNoCachePage, {
+          name: "documentCacheNoCache",
+        }),
 
         // Tagged document cache route: the full-page response is document-cached
         // AND tagged (via a "use cache" + cacheTag), so updateTag("doc-page")

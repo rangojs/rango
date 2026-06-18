@@ -110,6 +110,7 @@ import {
   renderStaticSegment as _renderStaticSegment,
 } from "./router/prerender-match.js";
 import { resolveStateCookieName } from "./router/state-cookie-name.js";
+import { resolvePrefetchCacheTTL } from "./router/prefetch-cache-ttl.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -230,17 +231,15 @@ export function createRouter<TEnv = any>(
     routerId,
   );
 
-  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes)
-  // Clamp to a non-negative integer for valid Cache-Control max-age.
-  const rawTTL =
-    prefetchCacheTTLOption !== undefined ? prefetchCacheTTLOption : 300;
-  const prefetchCacheTTLSeconds =
-    rawTTL === false ? 0 : Math.max(0, Math.floor(rawTTL));
-  const prefetchCacheTTL = prefetchCacheTTLSeconds * 1000;
+  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes). Clamps to a
+  // non-negative integer and guards non-finite (NaN/Infinity) inputs so a
+  // malformed `Cache-Control: max-age=NaN` can never reach the wire.
+  const resolvedPrefetchCacheTTL = resolvePrefetchCacheTTL(
+    prefetchCacheTTLOption,
+  );
+  const prefetchCacheTTL = resolvedPrefetchCacheTTL.ms;
   const prefetchCacheControl: string | false =
-    prefetchCacheTTLSeconds === 0
-      ? false
-      : `private, max-age=${prefetchCacheTTLSeconds}`;
+    resolvedPrefetchCacheTTL.cacheControl;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;

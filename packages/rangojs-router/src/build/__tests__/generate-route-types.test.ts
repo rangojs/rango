@@ -20,7 +20,6 @@ import {
   writePerModuleRouteTypesForFile,
   extractIncludesWithDiagnostics,
   detectUnresolvableIncludes,
-  extractUrlsVariableFromRouter,
   extractUrlsFromRouter,
   extractBasenameFromRouter,
   findNestedRouterConflict,
@@ -1334,17 +1333,26 @@ export const urlpatterns = urls(({ path, include }) => [
 });
 
 // ---------------------------------------------------------------------------
-// extractUrlsVariableFromRouter (AST-based)
+// extractUrlsFromRouter — variable-name extraction (AST-based)
+// (Previously exercised through the removed extractUrlsVariableFromRouter shim;
+// migrated to the canonical extractUrlsFromRouter + a local variable-name
+// projection matching the old shim's `kind === "variable" ? name : null`.)
 // ---------------------------------------------------------------------------
 
-describe("extractUrlsVariableFromRouter", () => {
+/** Reproduce the removed shim's contract over the canonical extractor. */
+function urlsVariableName(code: string): string | null {
+  const result = extractUrlsFromRouter(code);
+  return result?.kind === "variable" ? result.name : null;
+}
+
+describe("extractUrlsFromRouter (variable-name projection)", () => {
   it("extracts from .routes(varName) chain", () => {
     const code = `
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 export const router = createRouter().routes(urlpatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 
   it("extracts from createRouter<T>().routes(varName) with generic", () => {
@@ -1355,7 +1363,7 @@ export const router = createRouter<AppEnv>({
   document: Document,
 }).routes(urlpatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 
   it("extracts from chained .middleware().routes(varName)", () => {
@@ -1366,7 +1374,7 @@ export const router = createRouter<AppEnv>({
   document: Document,
 }).middleware([authMiddleware]).routes(sitePatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("sitePatterns");
+    expect(urlsVariableName(code)).toBe("sitePatterns");
   });
 
   it("extracts from createRouter({ urls: varName })", () => {
@@ -1375,7 +1383,7 @@ import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 export const router = createRouter({ urls: urlpatterns, document: Document });
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 
   it("returns null when no createRouter call exists", () => {
@@ -1386,21 +1394,21 @@ export const patterns = urls(({ path }) => [
   path("/", handler, { name: "home" }),
 ]);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+    expect(urlsVariableName(code)).toBeNull();
   });
 
   it("does not match .routes() on non-createRouter calls", () => {
     const code = `
 const config = someBuilder().routes(myRoutes);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+    expect(urlsVariableName(code)).toBeNull();
   });
 
   it("does not match urls: in non-createRouter objects", () => {
     const code = `
 const config = { urls: myHelper, other: true };
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+    expect(urlsVariableName(code)).toBeNull();
   });
 
   it("handles createRouter with options and .routes() chained", () => {
@@ -1410,7 +1418,7 @@ export const router = createRouter({
   theme: { defaultTheme: "light" },
 }).routes(urlpatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 });
 

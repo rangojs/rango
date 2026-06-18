@@ -735,6 +735,27 @@ describe("loader-cache", () => {
       expect(loader).toHaveBeenCalledTimes(1);
     });
 
+    it("does not re-run the user tags() callback on a deduped second resolution", async () => {
+      // The dedup short-circuit must run BEFORE resolveTags(): the orphan-layout
+      // re-resolution path calls resolveLoaderData twice for the same loaderId,
+      // and a tags() callback doing real work must not fire a second time for one
+      // logical cached loader.
+      const store = createMockStore();
+      const loader = createMockLoader("tags-dedup", { data: "x" });
+      const tags = vi.fn(() => ["t1"]);
+      const entry = createLoaderEntry(loader, { ttl: 60, store, tags });
+      const ctx = createMockCtx();
+
+      const first = resolveLoaderData(entry, ctx, "/page");
+      const second = resolveLoaderData(entry, ctx, "/page");
+
+      expect(second).toBe(first);
+      await Promise.all([first, second]);
+
+      // tags() ran exactly once despite two resolutions of the same loaderId.
+      expect(tags).toHaveBeenCalledTimes(1);
+    });
+
     it("accumulates multiple cached loaders behind one stable interceptor (no O(N) chain)", async () => {
       const loaderA = createMockLoader("loader-a", { data: "A" });
       const loaderB = createMockLoader("loader-b", { data: "B" });

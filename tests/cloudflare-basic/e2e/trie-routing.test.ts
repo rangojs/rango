@@ -125,6 +125,46 @@ function describeTrieRouting(label: string, mode: "dev" | "build") {
     });
 
     // -------------------------------------------------------------------------
+    // A1 — empty required-param segment must NOT bind the param to ""
+    // A required single-segment param emits the regex `([^/]+)`, which captures
+    // 1+ chars, so a double slash (`/item//detail`) must NOT match
+    // `/item/:itemId/detail` with itemId="". The request falls through to the
+    // catch-all instead of running the item-detail handler with an empty param.
+    // -------------------------------------------------------------------------
+    test.describe("A1: empty param segment rejected", () => {
+      test("/item//detail does not bind :itemId to '' (falls to catch-all)", async ({
+        request,
+      }) => {
+        // Raw HTTP so the empty middle segment reaches the server verbatim,
+        // unaffected by browser address-bar URL normalization.
+        const res = await request.get(f.url("/item//detail"), {
+          headers: { Accept: "text/html" },
+        });
+        const body = await res.text();
+
+        // The empty-param route must NOT have matched (no item-detail handler).
+        expect(body).not.toContain("item-detail-page");
+        // The catch-all owns it instead (the app has a root "/*").
+        expect(body).toContain("catch-all-page");
+      });
+
+      test("/item/123/detail still binds :itemId normally (control)", async ({
+        request,
+      }) => {
+        const res = await request.get(f.url("/item/123/detail"), {
+          headers: { Accept: "text/html" },
+        });
+        const body = await res.text();
+        // The :itemId route matched and bound the concrete value. ("Item ID: "
+        // and "123" render as adjacent text nodes, so assert each separately
+        // rather than the joined string.)
+        expect(body).toContain("item-detail-page");
+        expect(body).toContain("item-id-value");
+        expect(body).toContain("123");
+      });
+    });
+
+    // -------------------------------------------------------------------------
     // Wildcard catch-all baseline
     // -------------------------------------------------------------------------
     test.describe("wildcard catch-all baseline", () => {

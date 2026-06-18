@@ -100,6 +100,15 @@ describe("trie vs regex matcher parity (stable surface)", () => {
       routes: { home: "/", about: "/about", post: "/blog/:slug" },
       urls: ["/", "/about", "/blog/hello"],
     },
+    {
+      // A1: an empty path segment (double slash) must NOT bind a REQUIRED param
+      // to "". Both matchers reject it (regex `([^/]+)` needs 1+ chars; the trie
+      // now guards the plain-param branch with `segment !== ""`). A non-empty
+      // segment still matches normally.
+      name: "empty required-param segment is rejected by both",
+      routes: { A: "/a/:s/b" },
+      urls: ["/a//b", "/a/x/b"],
+    },
   ];
 
   for (const row of AGREEING) {
@@ -165,6 +174,44 @@ describe("trie vs regex matcher parity (stable surface)", () => {
         redirectTo: null,
       });
       expect(norm(regex(entries, "/foo/"))?.redirectTo).toBe("/foo");
+    });
+
+    // A6: wildcard splat trailing-slash capture. Under `ignore` (or no-ts)
+    // modes the regex fallback matches a trailing-slash URL via its
+    // alternatePathname branch, and its greedy `(.*)` group eats the trailing
+    // slash into the splat param. The canonical trie strips a single trailing
+    // slash before splitting segments (trie-matching.ts normalizedPath +
+    // joinRemainingSegments), so the splat has no trailing slash. Both match the
+    // wildcard route with NO redirect, so the divergent splat value is
+    // consumer-visible on the documented lazy-include lag / trie-absent fallback
+    // path. The trie is canonical; this row pins the exact values so the gap
+    // cannot silently widen (e.g. the regex starting to ALSO strip, or the trie
+    // starting to keep).
+    it("A6: regex leaks a trailing slash into the splat; trie strips it", () => {
+      const { trie, entries } = buildBoth(
+        { any: "/blog/*" },
+        { any: "ignore" },
+      );
+
+      // Deep path with a trailing slash: trie "x/y", regex "x/y/".
+      const trieDeep = tryTrieMatch(trie, "/blog/x/y/");
+      const regexDeep = regex(entries, "/blog/x/y/");
+      expect(trieDeep?.routeKey).toBe("any");
+      expect(regexDeep?.routeKey).toBe("any");
+      expect(trieDeep?.redirectTo ?? null).toBeNull();
+      expect(regexDeep?.redirectTo ?? null).toBeNull();
+      expect(trieDeep?.params).toEqual({ "*": "x/y" });
+      expect(regexDeep?.params).toEqual({ "*": "x/y/" });
+
+      // Bare double slash: trie "", regex "/".
+      const trieBare = tryTrieMatch(trie, "/blog//");
+      const regexBare = regex(entries, "/blog//");
+      expect(trieBare?.params).toEqual({ "*": "" });
+      expect(regexBare?.params).toEqual({ "*": "/" });
+
+      // Sanity: with NO trailing slash the two matchers AGREE on the splat.
+      expect(tryTrieMatch(trie, "/blog/x/y")?.params).toEqual({ "*": "x/y" });
+      expect(regex(entries, "/blog/x/y")?.params).toEqual({ "*": "x/y" });
     });
   });
 });

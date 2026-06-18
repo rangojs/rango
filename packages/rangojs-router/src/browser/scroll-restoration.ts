@@ -191,10 +191,15 @@ export function saveCurrentScrollPosition(): void {
 
 /**
  * Persist scroll positions to sessionStorage.
- * If the write fails due to quota exceeded, progressively evict the oldest
- * entries and retry until it succeeds or the store is empty.
+ * If the write fails (typically QuotaExceededError), evict the oldest ~1/4 of
+ * entries ONCE and retry the write a single time; if that still fails, remove
+ * our storage key entirely so we don't block other sessionStorage consumers.
+ * This is a single evict-then-retry-then-clear ladder, not a loop.
+ *
+ * Exported so that single eviction/retry/clear ladder is unit-testable directly.
+ * The browser drives it from the `pagehide` handler.
  */
-function persistToSessionStorage(): void {
+export function persistToSessionStorage(): void {
   try {
     sessionStorage.setItem(
       SCROLL_STORAGE_KEY,

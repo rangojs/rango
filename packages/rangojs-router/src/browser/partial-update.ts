@@ -545,6 +545,18 @@ export function createPartialUpdater(
 
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;
+        // Mirror the partial branch's history-key staleness guard (above): the
+        // await above is a real async suspension, so the user may have navigated
+        // away while this background revalidation was draining. Dropping a late
+        // full-update here prevents it from clobbering the freshly committed UI
+        // of the page the user moved to.
+        const historyKeyNow = store.getHistoryKey();
+        if (historyKeyNow !== historyKeyAtStart) {
+          debugLog(
+            `[Browser] Stale revalidation (full update): history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`,
+          );
+          return;
+        }
         startTransition(() => {
           if (fullHasTransition && addTransitionType) {
             addTransitionType("action");

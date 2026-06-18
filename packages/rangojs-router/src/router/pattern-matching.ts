@@ -267,32 +267,34 @@ function buildParamsFromMatch(
 export function extractStaticPrefix(pattern: string): string {
   if (!pattern || pattern === "/") return "";
 
-  const paramIndex = pattern.indexOf(":");
-  const wildcardIndex = pattern.indexOf("*");
+  // Walk segments and stop at the first that is a real param (`:name`) or a
+  // wildcard (`*`). A literal `:` or `*` not at a segment boundary (e.g. the
+  // `a:b` in `/a:b/c/:id`, or `tel:+1`) is a STATIC segment and must NOT
+  // terminate the prefix — `pattern.indexOf(":")` misread it as a param marker,
+  // returning "" and dropping the findMatch fast-skip optimization for that
+  // entry on every request. Classification mirrors parsePattern: a leading `:`
+  // marks a param, a leading `*` marks a wildcard.
+  const hasLeadingSlash = pattern.startsWith("/");
+  const body = hasLeadingSlash ? pattern.slice(1) : pattern;
+  const segments = body.split("/");
 
-  let cutIndex = -1;
-  if (paramIndex !== -1 && wildcardIndex !== -1) {
-    cutIndex = Math.min(paramIndex, wildcardIndex);
-  } else if (paramIndex !== -1) {
-    cutIndex = paramIndex;
-  } else if (wildcardIndex !== -1) {
-    cutIndex = wildcardIndex;
+  const staticSegments: string[] = [];
+  for (const segment of segments) {
+    if (segment.startsWith(":") || segment.startsWith("*")) {
+      break;
+    }
+    staticSegments.push(segment);
   }
 
-  if (cutIndex === -1) {
-    return pattern;
-  }
+  // No leading static segment (first segment is a param/wildcard) -> no prefix.
+  if (staticSegments.length === 0) return "";
+  // Every segment was static (no param/wildcard) -> the whole pattern is the
+  // prefix. Preserve a trailing slash only when it existed in the input; a
+  // split of "/a/b" yields ["a","b"] (no empty tail) so a re-join is exact.
+  if (staticSegments.length === segments.length) return pattern;
 
-  if (cutIndex === 0) {
-    return "";
-  }
-
-  const lastSlash = pattern.lastIndexOf("/", cutIndex - 1);
-  if (lastSlash === -1 || lastSlash === 0) {
-    return "";
-  }
-
-  return pattern.slice(0, lastSlash);
+  const prefix = staticSegments.join("/");
+  return hasLeadingSlash ? "/" + prefix : prefix;
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { PluginOption } from "vite";
+import { type PluginOption } from "vite";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
@@ -36,6 +36,13 @@ import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
 import { createRangoDebugger, NS } from "./debug.js";
 
 const debugConfig = createRangoDebugger(NS.config);
+
+// The leading-directive 'use client' sniff is shared with version-plugin's
+// getClientModuleSignature so the two cannot drift. Imported for local use by the
+// HMR transform below and re-exported because the E8 sniff test imports it from
+// this module.
+import { hasUseClientDirective } from "./utils/directive-prologue.js";
+export { hasUseClientDirective };
 
 /**
  * Vite plugin for @rangojs/router.
@@ -335,6 +342,12 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                     "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
                   ),
                 ],
+                // Vite 8 does not propagate the top-level optimizeDeps.exclude
+                // (set in config()) to non-client envs, so the rsc env must set
+                // it explicitly — mirroring the node ssr env and the cloudflare
+                // rsc env. Without it a strict-pnpm npm-installed app can try to
+                // pre-bundle the router's own subpath entries and fail.
+                exclude: excludeDeps,
                 rolldownOptions: sharedRolldownOptions,
               },
             },
@@ -396,11 +409,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
       try {
         const source = readFileSync(file, "utf-8");
-        const trimmed = source.trimStart();
-        if (
-          trimmed.startsWith('"use client"') ||
-          trimmed.startsWith("'use client'")
-        ) {
+        if (hasUseClientDirective(source)) {
           return [];
         }
       } catch {}

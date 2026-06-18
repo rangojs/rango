@@ -12,6 +12,7 @@
  */
 
 import { getLoaderLazy } from "../server/loader-registry.js";
+import { DataNotFoundError } from "../errors.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { getRequestContext } from "../server/request-context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -31,6 +32,62 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
+/**
+ * Build the 500 RSC error Response for a failed fetchable loader. Shared by the
+ * module-load-error catch (the import itself threw) and the loader-execution
+ * error catch — both call onError("loader"), serialize the same dev-gated error
+ * payload via renderToReadableStream (reporting render failures through
+ * onError("rendering")), and return a 500 text/x-component Response. The only
+ * per-site difference is the console.error label, passed in.
+ */
+function buildLoaderErrorResponse<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  error: unknown,
+  meta: { request: Request; url: URL; env: TEnv; loaderId: string },
+  logLabel: string,
+): Response {
+  const { request, url, env, loaderId } = meta;
+  const isDev = process.env.NODE_ENV !== "production";
+
+  console.error(logLabel, error);
+
+  ctx.callOnError(error, "loader", {
+    request,
+    url,
+    env,
+    loaderName: loaderId,
+    handledByBoundary: false,
+  });
+
+  const err = error instanceof Error ? error : new Error(String(error));
+  const errorPayload = {
+    loaderResult: null,
+    loaderError: {
+      message: isDev ? err.message : "An error occurred",
+      // Gate err.name to dev. In production it leaks the consumer's error class
+      // name (e.g. AuthError, PrismaClientKnownRequestError) to the client; the
+      // client only ever reads `message`, so the field is dead data outside dev.
+      // Matches sanitizeError's dev-only name contract.
+      name: isDev ? err.name : "Error",
+    },
+  };
+  const rscStream = ctx.renderToReadableStream(errorPayload, {
+    onError: (renderError: unknown) => {
+      ctx.callOnError(renderError, "rendering", {
+        request,
+        url,
+        env,
+        loaderName: loaderId,
+      });
+    },
+  });
+
+  return createResponseWithMergedHeaders(rscStream, {
+    status: 500,
+    headers: { "content-type": "text/x-component;charset=utf-8" },
+  });
+}
+
 export async function handleLoaderFetch<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
@@ -47,8 +104,22 @@ export async function handleLoaderFetch<TEnv>(
     });
   }
 
-  // Look up loader lazily
-  const registeredLoader = await getLoaderLazy(loaderId);
+  // Look up loader lazily. getLoaderLazy returns undefined only when the id was
+  // never registered (genuine 404). A thrown error means the loader module
+  // EXISTS but its import failed (broken transitive import, syntax error, throw
+  // in top-level code) — a real server breakage that must surface as a 500 and
+  // fire onError, not be collapsed into a misleading "not found".
+  let registeredLoader;
+  try {
+    registeredLoader = await getLoaderLazy(loaderId);
+  } catch (error) {
+    return buildLoaderErrorResponse(
+      ctx,
+      error,
+      { request, url, env, loaderId },
+      `[RSC] Loader module load failed for "${loaderId}":`,
+    );
+  }
   if (!registeredLoader) {
     return createResponseWithMergedHeaders(
       `Loader "${loaderId}" not found in registry`,
@@ -196,40 +267,39 @@ export async function handleLoaderFetch<TEnv>(
       ),
     );
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    const isDev = process.env.NODE_ENV !== "production";
+    // A thrown Response is control flow, not an error: `throw redirect('/x')`
+    // throws a real Response (a 3xx). The with-middleware path already converts
+    // this to a returned Response (middleware.ts: `if (error instanceof Response)
+    // result = error`), but a fetchable loader with NO middleware reaches this
+    // catch directly, where the generic Error coercion below would turn it into a
+    // 500. Honor it the same way: re-wrap through createResponseWithMergedHeaders
+    // so the request context's stub cookies/headers merge, exactly like the
+    // returned-Response path. Mirrors rsc/handler.ts's `error instanceof Response`
+    // special-case.
+    if (error instanceof Response) {
+      return finalizeResponse(
+        createResponseWithMergedHeaders(error.body, {
+          status: error.status,
+          headers: error.headers,
+        }),
+      );
+    }
 
-    console.error("[RSC] Loader error:", error);
+    // notFound() throws a DataNotFoundError (an Error subclass, NOT a Response),
+    // so it does not match the branch above. Map it to a 404 before the generic
+    // 500 coercion so a no-middleware fetchable loader's notFound() is honored
+    // (the with-middleware path resolves it through the notFoundBoundary).
+    if (error instanceof DataNotFoundError) {
+      return finalizeResponse(
+        createResponseWithMergedHeaders(null, { status: 404 }),
+      );
+    }
 
-    ctx.callOnError(error, "loader", {
-      request,
-      url,
-      env,
-      loaderName: loaderId,
-      handledByBoundary: false,
-    });
-
-    const errorPayload = {
-      loaderResult: null,
-      loaderError: {
-        message: isDev ? err.message : "An error occurred",
-        name: err.name,
-      },
-    };
-    const rscStream = ctx.renderToReadableStream(errorPayload, {
-      onError: (error: unknown) => {
-        ctx.callOnError(error, "rendering", {
-          request,
-          url,
-          env,
-          loaderName: loaderId,
-        });
-      },
-    });
-
-    return createResponseWithMergedHeaders(rscStream, {
-      status: 500,
-      headers: { "content-type": "text/x-component;charset=utf-8" },
-    });
+    return buildLoaderErrorResponse(
+      ctx,
+      error,
+      { request, url, env, loaderId },
+      "[RSC] Loader error:",
+    );
   }
 }

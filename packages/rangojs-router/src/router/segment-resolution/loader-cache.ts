@@ -147,12 +147,6 @@ export function resolveLoaderData<TEnv>(
 
   const loaderId = loaderEntry.loader.$$id;
 
-  const ttl = resolveTtl(options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
-  const swrWindow = resolveSwrWindow(options.swr, store.defaults);
-  const swr = swrWindow || undefined;
-  const tags = resolveTags(loaderEntry);
-  recordRequestTags(tags);
-
   // A handler that later awaits this same loader via ctx.use(loader) must get
   // THIS memoized promise, not a fresh execution. Rather than rebind ctx.use
   // once per cached loader (O(N) chained wrappers + a synchronous
@@ -187,6 +181,16 @@ export function resolveLoaderData<TEnv>(
   // affects the emitted segmentId in resolveLoaders, not the cached value.
   const existing = overrides.get(loaderId);
   if (existing) return existing;
+
+  // Compute ttl/swr/tags only AFTER the dedup short-circuit: a deduped second
+  // resolution of the same loaderId (the orphan-layout inheritance path) must
+  // not re-run the user tags() callback. These values are only consumed inside
+  // the read-through below, so they belong here, past the dedup gate.
+  const ttl = resolveTtl(options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
+  const swrWindow = resolveSwrWindow(options.swr, store.defaults);
+  const swr = swrWindow || undefined;
+  const tags = resolveTags(loaderEntry);
+  recordRequestTags(tags);
 
   const dataPromise = (async () => {
     const codec = await getCodec();

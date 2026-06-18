@@ -39,8 +39,18 @@ import {
   unobserveForPrefetch,
 } from "../prefetch/observer.js";
 
-const isTouchDevice =
-  typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
+/**
+ * Read current touch/no-hover capability. Evaluated at the point of use (per
+ * render) rather than once at module load, so `prefetch="adaptive"` reacts to
+ * input-capability changes on hybrid devices (touch laptops, tablets gaining or
+ * losing a pointer) and after SSR -> hydrate. The SSR guard returns a stable
+ * `false` (pointer/hover default) so the resolved strategy doesn't drift on the
+ * server vs the first client render.
+ */
+function isTouchDevice(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(hover: none)").matches;
+}
 
 /**
  * Prefetch strategy for the Link component
@@ -56,6 +66,20 @@ export type PrefetchStrategy =
   | "render"
   | "adaptive"
   | "none";
+
+/**
+ * Resolve a prefetch strategy, expanding "adaptive" to the concrete strategy
+ * for the CURRENT input capability: "viewport" on touch (no-hover) devices,
+ * "hover" on pointer devices. Non-adaptive strategies pass through unchanged.
+ * Reads touch capability live (not a module-load snapshot) so the result
+ * tracks input-capability changes.
+ */
+export function resolveAdaptiveStrategy(
+  prefetch: PrefetchStrategy,
+): PrefetchStrategy {
+  if (prefetch !== "adaptive") return prefetch;
+  return isTouchDevice() ? "viewport" : "hover";
+}
 
 /**
  * Link component props
@@ -228,9 +252,10 @@ export const Link: ForwardRefExoticComponent<
     return to === "/" ? bn : bn + to;
   }, [to, isExternal, ctx?.basename]);
 
-  // Resolve adaptive: viewport on touch devices, hover on pointer devices
-  const resolvedStrategy =
-    prefetch === "adaptive" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
+  // Resolve adaptive: viewport on touch devices, hover on pointer devices.
+  // isTouchDevice() is read here (per render), not from a module-load snapshot,
+  // so a device whose input capability changes resolves to the current value.
+  const resolvedStrategy = resolveAdaptiveStrategy(prefetch);
 
   // Internal ref for viewport observation; merge with forwarded ref
   const internalRef = useRef<HTMLAnchorElement | null>(null);

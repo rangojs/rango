@@ -322,12 +322,6 @@ export function extractBasenameFromRouter(code: string): string | undefined {
   return result;
 }
 
-/** @deprecated Use extractUrlsFromRouter instead */
-export function extractUrlsVariableFromRouter(code: string): string | null {
-  const result = extractUrlsFromRouter(code);
-  return result?.kind === "variable" ? result.name : null;
-}
-
 /** Apply a basename prefix to all route patterns in a result set. */
 function applyBasenameToRoutes(
   result: {

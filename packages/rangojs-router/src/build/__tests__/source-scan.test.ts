@@ -85,6 +85,87 @@ describe("source-scan: codeMatchIndices", () => {
   });
 });
 
+describe("source-scan: regex-literal awareness (E1)", () => {
+  it("finds a real createRouter after a regex literal containing an apostrophe", () => {
+    // `/it's a "x"/g` embeds an unbalanced apostrophe. Without a regex-literal
+    // skip the `'` opens a phantom string that swallows the following real call,
+    // making firstCodeMatchIndex return -1 (the discovery-dropping bug).
+    const code = `const re = /it's a "x"/g;\nexport const r = createRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
+
+  it("finds a real createRouter after a regex literal containing an unbalanced double quote", () => {
+    // A single `"` inside the regex would open a phantom string under the old
+    // classifier and swallow the following real call.
+    const code = `const re = /he said "/;\nexport const r = createRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
+
+  it("skips a createRouter( token that appears inside a regex literal", () => {
+    // The regex body contains a literal `createRouter(` that matches the scan
+    // pattern; it must NOT be reported as a real call. The trailing `"` would
+    // also desync the old classifier — both reasons it must be skipped.
+    const code = `const re = /x createRouter(y) "q/;\nconst x = 1;`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(-1);
+  });
+
+  it("does not treat division as a regex literal (quote after a divide)", () => {
+    // `a / b` — `/` follows a value-producing identifier, so it is division, not
+    // a regex. A quote later in the line must still open a real string and the
+    // call after it on the next line is found normally.
+    const code = `const z = a / b;\nexport const r = createRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
+
+  it("handles a regex char class containing a slash and a quote", () => {
+    const code = `const re = /[a/b]"x'/g;\nexport const r = createRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
+
+  it("codeMatchIndices ignores a token inside a regex literal but keeps the real one", () => {
+    const code = `const re = /createRouter\\(z "q/;\nexport const r = createRouter({});`;
+    const idx = codeMatchIndices(code, ROUTER());
+    expect(idx).toEqual([code.lastIndexOf("createRouter")]);
+  });
+
+  it("finds a real createRouter after a regex that follows the `return` keyword", () => {
+    // `return` ends in a word char, so the previous-CHAR-only heuristic read the
+    // `/` as division; the regex body's inner `'`/`"` then opened a phantom
+    // string and swallowed the later real createRouter(). Keyword context (the
+    // `/` follows the `return` keyword -> regex) fixes it.
+    const code = `function f() { return /it's a "x"/g; }\ncreateRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
+
+  it("treats `/` after other expression keywords (typeof/case/throw) as a regex", () => {
+    for (const kw of ["typeof", "case", "throw"]) {
+      const code = `x; ${kw} /a'b"c/g;\nexport const r = createRouter({});`;
+      expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+        code.lastIndexOf("createRouter"),
+      );
+    }
+  });
+
+  it("still treats `/` after a value-named identifier as division (not a keyword)", () => {
+    // `returnValue` is NOT the `return` keyword: `/` after it is division, and a
+    // later quote opens a real string, exactly as before.
+    const code = `const z = returnValue / b;\nexport const r = createRouter({});`;
+    expect(firstCodeMatchIndex(code, ROUTER())).toBe(
+      code.lastIndexOf("createRouter"),
+    );
+  });
+});
+
 describe("source-scan: line-terminator handling for // comments", () => {
   const LS = String.fromCharCode(0x2028);
   const PS = String.fromCharCode(0x2029);

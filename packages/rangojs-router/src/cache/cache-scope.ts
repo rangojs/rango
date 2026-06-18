@@ -18,7 +18,13 @@ import {
 } from "../server/request-context.js";
 import { recordRequestTags } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
-import { serializeSegments, deserializeSegments } from "./segment-codec.js";
+// segment-codec is the only module on cache-scope's import graph that eagerly
+// pulls @vitejs/plugin-rsc (a virtual: module the plain node/vitest runner cannot
+// resolve). It is imported LAZILY at the two call sites below (deserializeSegments
+// in lookupRoute, serializeSegments in cacheRoute) so that requiring cache-scope —
+// e.g. dispatch's lazy `import("../cache/cache-scope.js")` for the response-route
+// cache path — does not crash a consumer test that never mocks plugin-rsc. Behavior
+// is unchanged: both methods are async and already awaited the codec.
 import {
   captureHandles,
   restoreHandles,
@@ -231,10 +237,16 @@ export class CacheScope {
     const store = this.getStore();
     if (!store) return null;
 
-    // Resolve cache key (may use custom key functions)
-    const key = await this.resolveKey(pathname, params, isIntercept);
-
+    // Resolve cache key INSIDE the try so a throwing consumer key() (or a
+    // store.keyGenerator) degrades to a cache miss (return null -> render
+    // uncached) instead of crashing the foreground render. resolveCacheKey
+    // itself keeps its hard-fail/no-fallback-to-default contract (a throw must
+    // not silently collide onto the default slot); the graceful degradation
+    // happens here, where a miss is a safe outcome.
+    let key: string | undefined;
     try {
+      key = await this.resolveKey(pathname, params, isIntercept);
+
       const result = await store.get(key);
 
       if (!result) {
@@ -250,6 +262,7 @@ export class CacheScope {
       // error (handled by the outer catch).
       let segments: ResolvedSegment[];
       try {
+        const { deserializeSegments } = await import("./segment-codec.js");
         segments = await deserializeSegments(cached.segments);
       } catch (error) {
         reportCacheError(
@@ -294,7 +307,13 @@ export class CacheScope {
 
       return { segments, shouldRevalidate };
     } catch (error) {
-      reportCacheError(error, "cache-read", `[CacheScope] lookup ${key}`);
+      // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
+      // (resolveKey). Either way degrade to a cache miss so the render proceeds.
+      reportCacheError(
+        error,
+        "cache-read",
+        `[CacheScope] lookup ${key ?? "(key resolution failed)"}`,
+      );
       return null;
     }
   }
@@ -420,6 +439,7 @@ export class CacheScope {
         // Serialize segments and Flight-encode handles in parallel. Handles go
         // through the codec (not raw into the entry) so Promise/ReactNode handle
         // values survive a JSON-serializing store — see encodeHandles.
+        const { serializeSegments } = await import("./segment-codec.js");
         const [serializedSegments, encodedHandles] = await Promise.all([
           serializeSegments(nonLoaderSegments),
           encodeHandles(handles),

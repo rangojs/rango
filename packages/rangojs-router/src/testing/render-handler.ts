@@ -276,7 +276,9 @@ export async function renderHandler<TEnv = any>(
           handlePushes.set(handle, pushed);
         });
       }
-      if (loaderSeeds.has(item)) return loaderSeeds.get(item);
+      // Production ctx.use(Loader) ALWAYS returns a Promise (the cached loader
+      // promise); wrap the seed so a handler composing on the result matches.
+      if (loaderSeeds.has(item)) return Promise.resolve(loaderSeeds.get(item));
       throw new RenderHandlerSetupError(
         `renderHandler: ctx.use(loader) was not seeded. Pass ` +
           `{ loaders: [[YourLoader, data]] } for each loader the handler reads.`,
