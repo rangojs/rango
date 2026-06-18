@@ -208,7 +208,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter vite-rsc-demo exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter vite-rsc-demo exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter vite-rsc-demo exec playwright install-deps chromium
 
       - name: Run demo app e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         run: |
@@ -265,7 +269,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter @rangojs/router exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter @rangojs/router exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter @rangojs/router exec playwright install-deps chromium
 
       - name: Run smoke tests
         run: pnpm --filter @rangojs/router test --project=smoke
@@ -361,7 +369,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter @rangojs/router exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter @rangojs/router exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter @rangojs/router exec playwright install-deps chromium
 
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         env:
@@ -428,7 +440,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter cloudflare-basic exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter cloudflare-basic exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter cloudflare-basic exec playwright install-deps chromium
 
       - name: Run cloudflare-basic e2e tests
         run: pnpm --filter cloudflare-basic test:e2e
@@ -479,7 +495,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter cloudflare-multi-router exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter cloudflare-multi-router exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter cloudflare-multi-router exec playwright install-deps chromium
 
       - name: Run cloudflare-multi-router e2e tests
         run: pnpm --filter cloudflare-multi-router test:e2e
@@ -530,7 +550,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter react-experimental exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter react-experimental exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter react-experimental exec playwright install-deps chromium
 
       - name: Run react-experimental e2e tests
         run: pnpm --filter react-experimental test:e2e
@@ -579,7 +603,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter no-typescript exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter no-typescript exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter no-typescript exec playwright install-deps chromium
 
       - name: Run no-typescript e2e tests
         run: pnpm --filter no-typescript test:e2e
@@ -628,7 +656,11 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter cloudflare-stress-demo exec playwright install-deps chromium
+        # Cap each attempt at 60s and retry once: install-deps shells out to
+        # apt-get and can hang on a slow/transient mirror.
+        run: |
+          timeout 60 pnpm --filter cloudflare-stress-demo exec playwright install-deps chromium ||
+            timeout 60 pnpm --filter cloudflare-stress-demo exec playwright install-deps chromium
 
       - name: Run cloudflare-stress-demo e2e tests
         run: pnpm --filter cloudflare-stress-demo test:e2e
