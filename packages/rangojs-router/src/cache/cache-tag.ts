@@ -19,8 +19,13 @@ import {
 const cacheTagStorage = new AsyncLocalStorage<Set<string>>();
 
 export function normalizeTag(tag: string): string | null {
-  if (!tag || !tag.trim()) return null;
-  return tag;
+  // Trim and return the canonical (trimmed) form, not the raw tag. Both the
+  // write path (cacheTag) and the invalidate path (updateTag/revalidateTag)
+  // route through here, and matching is exact-string: returning the untrimmed
+  // tag made cacheTag(" products ") and updateTag("products") two different
+  // logical tags, a silent failure-to-invalidate (stale data served forever).
+  const trimmed = tag?.trim();
+  return trimmed ? trimmed : null;
 }
 
 export function normalizeTags(tags: Iterable<string>): string[] {

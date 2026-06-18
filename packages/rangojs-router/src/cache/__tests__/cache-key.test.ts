@@ -547,8 +547,13 @@ describe("segment cache key generation", () => {
     });
   });
 
-  describe("hard-fail on key() error", () => {
-    it("propagates route key() error through CacheScope.lookupRoute", async () => {
+  describe("degrade-to-miss on key() error", () => {
+    // A throwing consumer key() must NOT crash the foreground render. The key
+    // resolution happens inside lookupRoute's try, so a throw degrades to a
+    // cache miss (return null -> render uncached). resolveCacheKey itself keeps
+    // its hard-fail/no-fallback-to-default contract (it never silently collides
+    // onto the default slot); the safe degradation lives here in lookupRoute.
+    it("returns null (degrades to a miss) when the route key() throws", async () => {
       const store = {
         get: vi.fn().mockResolvedValue(null),
         set: vi.fn(),
@@ -564,9 +569,9 @@ describe("segment cache key generation", () => {
         },
       } as any);
 
-      await expect(scope.lookupRoute("/test", {})).rejects.toThrow(
-        "route key exploded",
-      );
+      const result = await scope.lookupRoute("/test", {});
+      expect(result).toBeNull();
+      // The store is never consulted because the key never resolved.
       expect(store.get).not.toHaveBeenCalled();
     });
   });

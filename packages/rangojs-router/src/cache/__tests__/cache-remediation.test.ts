@@ -64,6 +64,44 @@ describe("cache profile validation", () => {
     expect(resolved.default.ttl).toBe(42);
   });
 
+  // ttl/swr VALUE validation: a NaN ttl flows into computeExpiration and yields
+  // staleAt/expiresAt = NaN, so the entry never evicts and never revalidates
+  // (served fresh forever, unbounded growth). Reject non-finite/negative values
+  // at config time instead of producing a permanently-fresh runtime entry.
+  it("rejects a NaN ttl", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: NaN } })).toThrow(
+      /Invalid cache profile "fast": ttl/,
+    );
+  });
+
+  it("rejects an Infinity ttl", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: Infinity } })).toThrow(
+      /Invalid cache profile "fast": ttl/,
+    );
+  });
+
+  it("rejects a negative ttl", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: -5 } })).toThrow(
+      /Invalid cache profile "fast": ttl/,
+    );
+  });
+
+  it("rejects a non-finite swr", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: 60, swr: NaN } })).toThrow(
+      /Invalid cache profile "fast": swr/,
+    );
+  });
+
+  it("rejects a negative swr", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: 60, swr: -1 } })).toThrow(
+      /Invalid cache profile "fast": swr/,
+    );
+  });
+
+  it("accepts ttl 0 and swr undefined (valid edge values)", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: 0 } })).not.toThrow();
+  });
+
   describe("resolveCacheProfiles", () => {
     it("returns default profile when called with undefined", () => {
       const resolved = resolveCacheProfiles(undefined);

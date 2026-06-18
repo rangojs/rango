@@ -231,10 +231,16 @@ export class CacheScope {
     const store = this.getStore();
     if (!store) return null;
 
-    // Resolve cache key (may use custom key functions)
-    const key = await this.resolveKey(pathname, params, isIntercept);
-
+    // Resolve cache key INSIDE the try so a throwing consumer key() (or a
+    // store.keyGenerator) degrades to a cache miss (return null -> render
+    // uncached) instead of crashing the foreground render. resolveCacheKey
+    // itself keeps its hard-fail/no-fallback-to-default contract (a throw must
+    // not silently collide onto the default slot); the graceful degradation
+    // happens here, where a miss is a safe outcome.
+    let key: string | undefined;
     try {
+      key = await this.resolveKey(pathname, params, isIntercept);
+
       const result = await store.get(key);
 
       if (!result) {
@@ -294,7 +300,13 @@ export class CacheScope {
 
       return { segments, shouldRevalidate };
     } catch (error) {
-      reportCacheError(error, "cache-read", `[CacheScope] lookup ${key}`);
+      // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
+      // (resolveKey). Either way degrade to a cache miss so the render proceeds.
+      reportCacheError(
+        error,
+        "cache-read",
+        `[CacheScope] lookup ${key ?? "(key resolution failed)"}`,
+      );
       return null;
     }
   }

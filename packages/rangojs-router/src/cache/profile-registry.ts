@@ -42,7 +42,29 @@ export function resolveCacheProfiles(
             `Profile names must match [a-zA-Z0-9_-]+.`,
         );
       }
-      merged[name] = profiles[name];
+      const profile = profiles[name];
+      // Validate ttl/swr VALUES, not just the name. An unvalidated NaN/Infinity
+      // ttl flows into computeExpiration -> staleAt/expiresAt = NaN, and every
+      // expiry check (`now > NaN`) is false, so the entry never evicts and never
+      // revalidates: it is served fresh forever and accumulates unbounded. A
+      // negative ttl makes every read a guaranteed miss. Fail fast at config
+      // time (mirrors the Number.isFinite guard used in router.ts/defer.ts).
+      if (!Number.isFinite(profile.ttl) || profile.ttl < 0) {
+        throw new Error(
+          `Invalid cache profile "${name}": ttl must be a finite non-negative ` +
+            `number (got ${profile.ttl}).`,
+        );
+      }
+      if (
+        profile.swr !== undefined &&
+        (!Number.isFinite(profile.swr) || profile.swr < 0)
+      ) {
+        throw new Error(
+          `Invalid cache profile "${name}": swr must be a finite non-negative ` +
+            `number (got ${profile.swr}).`,
+        );
+      }
+      merged[name] = profile;
     }
   }
   return merged;

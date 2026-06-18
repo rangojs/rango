@@ -361,6 +361,65 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
   });
 });
 
+// ---------------------------------------------------------------------------
+// A throwing consumer cache({ key }) must degrade lookupRoute to a cache MISS
+// (return null -> render uncached) rather than crash the foreground render.
+// ---------------------------------------------------------------------------
+
+describe("CacheScope.lookupRoute - throwing key() degrades to a miss", () => {
+  function makeCtx(store: SegmentCacheStore) {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com/products"),
+      url: new URL("https://example.com/products"),
+      variables: {},
+      cacheStore: store,
+    });
+  }
+
+  it("returns null (not throw) when the consumer key() throws", async () => {
+    const get = vi.fn();
+    const store = { get } as unknown as SegmentCacheStore;
+    const config: PartialCacheOptions = {
+      ttl: 60,
+      store,
+      // A buggy/throwing key function (e.g. reads ctx state that is absent).
+      key: () => {
+        throw new Error("key boom");
+      },
+    };
+    const scope = new CacheScope(config);
+    const ctx = makeCtx(store);
+
+    const result = await runWithRequestContext(ctx, () =>
+      scope.lookupRoute("/products", {}),
+    );
+
+    // Degrades to a miss; the store is never consulted (key never resolved).
+    expect(result).toBeNull();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("returns null when an async key() rejects", async () => {
+    const store = { get: vi.fn() } as unknown as SegmentCacheStore;
+    const config: PartialCacheOptions = {
+      ttl: 60,
+      store,
+      key: async () => {
+        throw new Error("async key boom");
+      },
+    };
+    const scope = new CacheScope(config);
+    const ctx = makeCtx(store);
+
+    const result = await runWithRequestContext(ctx, () =>
+      scope.lookupRoute("/products", {}),
+    );
+
+    expect(result).toBeNull();
+  });
+});
+
 describe("CacheScope.recordTags - first-write tags land in the request tag union synchronously", () => {
   // The miss/first-write counterpart of the hit-path test above. On a hit the
   // tags come back in the cached entry and lookupRoute records them; on a first

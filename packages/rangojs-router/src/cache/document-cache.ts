@@ -65,6 +65,17 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
     return null;
   }
 
+  // RFC 7234 §5.2.2.2: a shared cache MUST NOT serve a stored `no-cache`
+  // response without successful origin validation. This store's hit path has no
+  // validation step, so serving a stored no-cache response within s-maxage
+  // would hand the client content the origin marked must-revalidate. Refuse to
+  // store it. Only UNqualified `no-cache` (no `=`) vetoes — the field-name-
+  // scoped `no-cache="set-cookie"` form IS storable per the RFC, so the `=`
+  // boundary is excluded from the lookahead (unlike private/no-store above).
+  if (/(^|[\s,;])no-cache(?=$|[\s,;])/i.test(header)) {
+    return null;
+  }
+
   const directives: CacheDirectives = {};
 
   // Parse s-maxage
