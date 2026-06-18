@@ -196,6 +196,24 @@ export async function handleLoaderFetch<TEnv>(
       ),
     );
   } catch (error) {
+    // A thrown Response is control flow, not an error: `throw redirect('/x')`
+    // and `throw notFound()` signal a redirect / 404 by throwing a Response.
+    // The with-middleware path already converts this to a returned Response
+    // (middleware.ts: `if (error instanceof Response) result = error`), but a
+    // fetchable loader with NO middleware reaches this catch directly, where
+    // the generic Error coercion below would turn it into a 500. Honor it the
+    // same way: re-wrap through createResponseWithMergedHeaders so the request
+    // context's stub cookies/headers merge, exactly like the returned-Response
+    // path. Mirrors rsc/handler.ts's `error instanceof Response` special-case.
+    if (error instanceof Response) {
+      return finalizeResponse(
+        createResponseWithMergedHeaders(error.body, {
+          status: error.status,
+          headers: error.headers,
+        }),
+      );
+    }
+
     const err = error instanceof Error ? error : new Error(String(error));
     const isDev = process.env.NODE_ENV !== "production";
 
@@ -213,7 +231,11 @@ export async function handleLoaderFetch<TEnv>(
       loaderResult: null,
       loaderError: {
         message: isDev ? err.message : "An error occurred",
-        name: err.name,
+        // Gate err.name to dev. In production it leaks the consumer's error
+        // class name (e.g. AuthError, PrismaClientKnownRequestError) to the
+        // client; the client only ever reads `message`, so the field is dead
+        // data outside dev. Matches sanitizeError's dev-only name contract.
+        name: isDev ? err.name : "Error",
       },
     };
     const rscStream = ctx.renderToReadableStream(errorPayload, {

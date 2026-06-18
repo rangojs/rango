@@ -166,14 +166,16 @@ describe("handler SSR kickoff placement", () => {
     expect(startSSRSetupSpy).not.toHaveBeenCalled();
   });
 
-  it("starts SSR setup for normal HTML page requests", async () => {
+  it("starts SSR setup for normal HTML page requests (text/html Accept)", async () => {
     const router = createMockRouter();
 
     // The handler will throw downstream because rendering isn't fully mocked,
     // but startSSRSetup runs before the error. Assert findMatch was reached
     // to confirm the negative path tests aren't passing due to an early crash.
     const handler = createRSCHandler({ router });
-    const request = new Request("https://example.com/");
+    const request = new Request("https://example.com/", {
+      headers: { accept: "text/html" },
+    });
 
     try {
       await handler(request, { env: {} });
@@ -183,6 +185,28 @@ describe("handler SSR kickoff placement", () => {
 
     expect(router.findMatch).toHaveBeenCalled();
     expect(startSSRSetupSpy).toHaveBeenCalledOnce();
+  });
+
+  // D7: a full-document request with NO Accept header renders RSC at render
+  // time (isRscRequest treats missing Accept as RSC), so the early SSR setup
+  // is wasted and its unconsumed Promise.all can reject (orphan rejection).
+  // The handler must NOT kick off SSR setup for it.
+  it("does NOT start SSR setup for a no-Accept request that returns RSC", async () => {
+    const router = createMockRouter();
+
+    const handler = createRSCHandler({ router });
+    const request = new Request("https://example.com/");
+
+    try {
+      await handler(request, { env: {} });
+    } catch {
+      // Expected — downstream rendering isn't fully mocked
+    }
+    // Settle microtasks so an orphaned SSR setup promise (if any) would surface.
+    await Promise.resolve();
+
+    expect(router.findMatch).toHaveBeenCalled();
+    expect(startSSRSetupSpy).not.toHaveBeenCalled();
   });
 
   it("does NOT start SSR setup for RSC-only requests (Accept without text/html)", async () => {

@@ -25,7 +25,13 @@ export function decodeLoaderResults(
       continue;
     }
 
-    if (result.fallback) {
+    // null/undefined is the producer's ONLY "no boundary found" sentinel
+    // (loader-resolution.ts sets fallback: null for the no-boundary and the
+    // fallback-render-threw cases). A matched boundary's rendered ReactNode can
+    // legitimately be falsy (0, "", false), so test for null explicitly rather
+    // than truthiness, otherwise a valid falsy fallback is discarded and the
+    // original loader error is rethrown.
+    if (result.fallback != null) {
       errorFallback = result.fallback;
     } else {
       // No boundary: rethrow preserving the ErrorInfo identity (name/stack/

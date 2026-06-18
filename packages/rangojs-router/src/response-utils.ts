@@ -27,6 +27,31 @@ export function isWebSocketUpgradeResponse(response: Response): boolean {
   );
 }
 
+/**
+ * Append `Accept` to a response's `Vary` header without duplicating it.
+ *
+ * Content-negotiated responses already carry `Vary: Accept` from the
+ * upstream layer (response-route-handler's callHandlerWithVary, or
+ * handleRscRendering baking `accept` into its vary list). The negotiated
+ * post-append in the handler would otherwise emit `Vary: Accept, Accept`,
+ * a redundant token some proxies/CDNs treat as a distinct cache key.
+ * Token match is case-insensitive (HTTP field tokens are case-insensitive)
+ * and whitespace-tolerant.
+ */
+export function appendVaryAccept(response: Response): void {
+  const existing = response.headers.get("Vary");
+  if (!existing) {
+    response.headers.set("Vary", "Accept");
+    return;
+  }
+  const hasAccept = existing
+    .split(",")
+    .some((token) => token.trim().toLowerCase() === "accept");
+  if (!hasAccept) {
+    response.headers.append("Vary", "Accept");
+  }
+}
+
 // Location truthiness (not presence) so an empty `Location: ""` is not a redirect.
 export function isRedirectResponse(response: Response): boolean {
   return (

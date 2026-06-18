@@ -31,7 +31,10 @@ import {
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
-import { isWebSocketUpgradeResponse } from "../response-utils.js";
+import {
+  isWebSocketUpgradeResponse,
+  appendVaryAccept,
+} from "../response-utils.js";
 import {
   handleResponseRoute,
   type ResponseRouteMatch,
@@ -830,7 +833,9 @@ export function createRSCHandler<
       }
       const response = responseOutcome.result;
       if (plan.negotiated && !isWebSocketUpgradeResponse(response)) {
-        response.headers.append("Vary", "Accept");
+        // handleResponseRoute (callHandlerWithVary) already appends Vary: Accept
+        // for negotiated responses; dedup so we don't emit Vary: Accept, Accept.
+        appendVaryAccept(response);
       }
       return response;
     }
@@ -838,7 +843,21 @@ export function createRSCHandler<
     // SSR setup: kick off in parallel for modes that need HTML rendering.
     // Placed after response-route short-circuit so response/mime routes
     // never pay for SSR work.
-    if (plan.mode !== "loader" && mayNeedSSR(request, url)) {
+    //
+    // Only kick off when the request will actually render HTML, so the
+    // eager loadSSRModule() + user resolveStreaming() are not started (and
+    // never consumed) for a request that returns an RSC stream — that wasted
+    // work also leaves an orphaned Promise.all that can reject (D7). PE form
+    // submissions always render HTML (handleProgressiveEnhancement renders via
+    // getSSRSetup regardless of Accept). For full/partial-render and action,
+    // the render-time HTML decision is exactly !isRscRequest — mayNeedSSR is
+    // the coarse transport pre-filter, isRscRequest is the precise Accept call
+    // (it, unlike mayNeedSSR, treats a MISSING Accept as RSC). Both must pass.
+    const willRenderHtml =
+      plan.mode === "pe-render" ||
+      (mayNeedSSR(request, url) &&
+        !isRscRequest(request, url, plan.mode === "partial-render"));
+    if (plan.mode !== "loader" && willRenderHtml) {
       variables[SSR_SETUP_VAR] = startSSRSetup(
         handlerCtx,
         request,
@@ -1016,7 +1035,9 @@ export function createRSCHandler<
           );
         }
         if (negotiated && !isWebSocketUpgradeResponse(response)) {
-          response.headers.append("Vary", "Accept");
+          // handleRscRendering bakes `accept` into the RSC response's Vary list;
+          // dedup so the negotiated append does not list accept twice.
+          appendVaryAccept(response);
         }
         return response;
       } catch (error) {

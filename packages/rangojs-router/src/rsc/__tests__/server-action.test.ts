@@ -9,48 +9,111 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 
-describe("executeServerAction — decode-error info disclosure", () => {
-  // The decode failure is caught at the very top of executeServerAction (before
-  // any router/render machinery), so a minimal ctx stub reaches the catch.
-  function ctxThatFailsDecode(detail: string) {
+// D1: a JS-path action argument-decode failure (truncated/oversized/malformed
+// Flight body, or garbage posted to ?_rsc_action=...) must produce a
+// router-controlled response — a route error boundary when one matches, else an
+// explicit 400 — NOT an opaque host 500 from re-throwing. This mirrors the no-JS
+// PE path (progressive-enhancement.ts) so JS and no-JS converge. The original
+// decode error must never leak to the client-facing response.
+describe("executeServerAction — decode failure is router-controlled (D1)", () => {
+  // Stub whose decodeReply throws. matchError is configurable so the test can
+  // exercise both the no-boundary (plain 400) and matched-boundary (deferred
+  // continuation) branches. callOnError records the reported error.
+  function ctxThatFailsDecode(
+    detail: string,
+    matchError: () => Promise<unknown>,
+    onError?: (err: unknown, phase: string, info: any) => void,
+  ) {
     return {
       createTemporaryReferenceSet: () => ({}),
       decodeReply: () => {
         throw new Error(detail);
       },
+      callOnError: onError ?? (() => {}),
+      router: { id: "test", matchError },
     } as any;
   }
 
-  it("throws a generic message and keeps the original error as cause (no leak)", async () => {
-    const SECRET = "SECRET internal decode detail";
-    const request = new Request("http://localhost/", {
+  function decodeFailRequest(): Request {
+    return new Request("http://localhost/?_rsc_action=a1", {
       method: "POST",
       headers: { "content-type": "text/plain" },
       body: "non-empty-body",
     });
-    const url = new URL(request.url);
+  }
 
-    let thrown: unknown;
-    try {
-      await executeServerAction(
-        ctxThatFailsDecode(SECRET),
-        request,
-        {} as any,
-        url,
-        "actionId",
-        {} as any,
-      );
-    } catch (error) {
-      thrown = error;
-    }
+  it("returns an explicit 400 (no throw, no leak) when no error boundary matches", async () => {
+    const SECRET = "SECRET internal decode detail";
+    const request = decodeFailRequest();
+    const reported: { err: unknown; info: any }[] = [];
 
-    expect(thrown).toBeInstanceOf(Error);
-    // Message is static — does NOT interpolate the raw decode error.
-    expect((thrown as Error).message).toBe("Failed to decode action arguments");
-    expect((thrown as Error).message).not.toContain(SECRET);
-    // The original error is preserved on `cause` for server-side logging.
-    expect((thrown as Error).cause).toBeInstanceOf(Error);
-    expect(((thrown as Error).cause as Error).message).toBe(SECRET);
+    const result = await executeServerAction(
+      ctxThatFailsDecode(
+        SECRET,
+        async () => null,
+        (err, _phase, info) => reported.push({ err, info }),
+      ),
+      request,
+      {} as any,
+      new URL(request.url),
+      "a1",
+      {} as any,
+    );
+
+    // Router-controlled response, NOT a thrown error.
+    expect(result).toBeInstanceOf(Response);
+    const res = result as Response;
+    expect(res.status).toBe(400);
+    // No decode internals leak into the client-facing body.
+    const body = await res.text();
+    expect(body).not.toContain(SECRET);
+    // onError still fired with the sanitized error (cause preserved) as unhandled.
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.err).toBeInstanceOf(Error);
+    expect((reported[0]!.err as Error).message).toBe(
+      "Failed to decode action arguments",
+    );
+    expect((reported[0]!.err as Error).message).not.toContain(SECRET);
+    expect(((reported[0]!.err as Error).cause as Error).message).toBe(SECRET);
+    expect(reported[0]!.info.handledByBoundary).toBe(false);
+  });
+
+  it("defers to an errorBoundary continuation (status 400) when a boundary matches", async () => {
+    const SECRET = "SECRET internal decode detail";
+    const request = decodeFailRequest();
+    const ERROR_MATCH = {
+      segments: [],
+      matched: ["err"],
+      diff: ["err"],
+      resolvedIds: ["err"],
+      params: {},
+      routeName: "boom",
+    };
+
+    const result = await executeServerAction(
+      ctxThatFailsDecode(SECRET, async () => ERROR_MATCH),
+      request,
+      {} as any,
+      new URL(request.url),
+      "a1",
+      {} as any,
+    );
+
+    // The boundary render is deferred under route middleware, exactly like the
+    // action-threw path — so the result is a continuation, not a Response.
+    expect(result).not.toBeInstanceOf(Response);
+    const cont = result as ActionContinuation;
+    expect(cont.errorBoundary).toBe(ERROR_MATCH);
+    // Decode failure is a bad request -> 400 (action runtime errors use 500).
+    expect(cont.actionStatus).toBe(400);
+    expect(cont.returnValue.ok).toBe(false);
+    // The continuation carries the sanitized error, not the raw decode detail.
+    expect((cont.returnValue.data as Error).message).toBe(
+      "Failed to decode action arguments",
+    );
+    expect(JSON.stringify(cont.actionContext.actionResult)).not.toContain(
+      SECRET,
+    );
   });
 });
 

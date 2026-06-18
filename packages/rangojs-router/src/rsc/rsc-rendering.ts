@@ -82,6 +82,11 @@ async function handleRscRenderingInner<TEnv>(
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
+      // Carry warmupEnabled on the initial full-render payload so the client
+      // respects warmup:false from first load. The 404 and PE payloads already
+      // include it; without it here warmup could never be disabled on the
+      // normal full-load path (partial payloads omit it by design).
+      warmupEnabled: ctx.router.warmupEnabled,
       initialTheme: reqCtx.theme,
     },
   });

@@ -115,9 +115,55 @@ export async function executeServerAction<TEnv>(
     // Keep the original error as `cause` for server-side logging, but do not
     // interpolate it into the message: that string can surface to the client
     // and may leak decode internals.
-    throw new Error("Failed to decode action arguments", {
+    const decodeError = new Error("Failed to decode action arguments", {
       cause: error,
     });
+
+    // Produce a router-controlled response instead of re-throwing into the
+    // host (which would surface as an opaque 500). This mirrors the no-JS PE
+    // path, where a malformed form body renders the route error boundary or
+    // returns an explicit 400 (progressive-enhancement.ts). Attempt boundary
+    // rendering first; if a boundary matches, defer the render to the
+    // revalidation phase (errorBoundary continuation) so it runs inside route
+    // middleware, identical to the action-threw path below. Otherwise return a
+    // plain 400 — the JS and no-JS paths now converge on the same outcome.
+    let decodeBoundary: MatchResult | undefined;
+    try {
+      decodeBoundary =
+        (await ctx.router.matchError(request, { env }, decodeError, "route")) ??
+        undefined;
+    } catch {
+      // matchError itself failed — fall through to the plain 400 below.
+      decodeBoundary = undefined;
+    }
+
+    ctx.callOnError(decodeError, "action", {
+      request,
+      url,
+      env,
+      actionId,
+      handledByBoundary: !!decodeBoundary,
+    });
+
+    if (decodeBoundary) {
+      return {
+        returnValue: { ok: false, data: decodeError },
+        // 400: malformed action request, matching the PE explicit-400 status
+        // class (the action-threw path uses 500; a decode failure is a bad
+        // request, not an action runtime error).
+        actionStatus: 400,
+        temporaryReferences,
+        actionContext: {
+          actionId,
+          actionUrl: new URL(url),
+          actionResult: decodeError,
+          formData: actionFormData,
+        },
+        errorBoundary: decodeBoundary,
+      };
+    }
+
+    return createResponseWithMergedHeaders(null, { status: 400 });
   }
 
   // Execute the server action
