@@ -90,7 +90,12 @@ export function transformRouter(
     const closeParen = findMatchingParen(code, parenPos + 1);
     const callArgs = code.slice(parenPos + 1, closeParen);
 
-    if (callArgs.includes("$$id")) continue;
+    // Skip ONLY a call we already injected into. The injected marker is the
+    // unique `$$routeNames: <var>` property; a bare `$$id` substring check
+    // would also match a user value/comment that merely contains the text
+    // "$$id" (e.g. `createRouter({ meta: { note: "see $$id docs" } })`),
+    // silently dropping named-route wiring for a legitimate config.
+    if (callArgs.includes(`$$routeNames: ${routeNamesVar}`)) continue;
 
     const sourceFilePath = absolutePath ?? filePath;
     const lineNumber = code.slice(0, callStart).split("\n").length;

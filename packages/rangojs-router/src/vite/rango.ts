@@ -1,4 +1,4 @@
-import type { PluginOption } from "vite";
+import { parseAst, type PluginOption } from "vite";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
@@ -36,6 +36,36 @@ import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
 import { createRangoDebugger, NS } from "./debug.js";
 
 const debugConfig = createRangoDebugger(NS.config);
+
+/**
+ * Detect a leading `"use client"` (or `'use client'`) directive, tolerating
+ * leading comments/whitespace before it. A bare `source.trimStart().startsWith`
+ * check only strips whitespace, so a license banner / `// @ts-nocheck` before
+ * the directive would be missed — diverging from version-plugin's AST-based
+ * detection (a leading comment is not a `program.body` node). This walks the
+ * leading ExpressionStatement string-literal directives the same way, so the
+ * two sniffers agree on what counts as a client module.
+ */
+export function hasUseClientDirective(source: string): boolean {
+  let program: { body?: any[] };
+  try {
+    program = parseAst(source, { lang: "tsx" }) as { body?: any[] };
+  } catch {
+    return false;
+  }
+  for (const node of program.body ?? []) {
+    if (
+      node?.type === "ExpressionStatement" &&
+      node.expression?.type === "Literal" &&
+      typeof node.expression.value === "string"
+    ) {
+      if (node.expression.value === "use client") return true;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
 
 /**
  * Vite plugin for @rangojs/router.
@@ -335,6 +365,12 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                     "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
                   ),
                 ],
+                // Vite 8 does not propagate the top-level optimizeDeps.exclude
+                // (set in config()) to non-client envs, so the rsc env must set
+                // it explicitly — mirroring the node ssr env and the cloudflare
+                // rsc env. Without it a strict-pnpm npm-installed app can try to
+                // pre-bundle the router's own subpath entries and fail.
+                exclude: excludeDeps,
                 rolldownOptions: sharedRolldownOptions,
               },
             },
@@ -396,11 +432,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
       try {
         const source = readFileSync(file, "utf-8");
-        const trimmed = source.trimStart();
-        if (
-          trimmed.startsWith('"use client"') ||
-          trimmed.startsWith("'use client'")
-        ) {
+        if (hasUseClientDirective(source)) {
           return [];
         }
       } catch {}

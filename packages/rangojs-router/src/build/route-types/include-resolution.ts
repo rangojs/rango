@@ -201,7 +201,13 @@ export function resolveImportedVariable(
   code: string,
   localName: string,
 ): { specifier: string; exportedName: string } | null {
-  const importRegex = /import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g;
+  // Allow an optional leading default binding before the named-import brace so
+  // a combined `import Foo, { bar } from "..."` is matched (the named members
+  // are the only part we resolve; the default binding is skipped). Without the
+  // optional `(?:[\w$]+\s*,\s*)?` segment, the `Foo, ` prefix breaks the match
+  // and a legitimate static named import surfaces as `unresolvable-import`.
+  const importRegex =
+    /import\s*(?:[\w$]+\s*,\s*)?\{([^}]+)\}\s*from\s*["']([^"']+)["']/g;
   let match;
 
   while ((match = importRegex.exec(code)) !== null) {

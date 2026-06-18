@@ -68,13 +68,28 @@ export async function runWithConcurrency<T>(
     return;
   }
   let nextIndex = 0;
+  // On first failure (the default prerender.onError: "fail" re-throws), stop
+  // scheduling new work so the remaining workers don't keep running full RSC
+  // renders before the build aborts. The first error is surfaced after all
+  // in-flight workers settle, preserving the throw-to-fail-build behavior.
+  let firstError: unknown;
+  let failed = false;
   async function worker() {
-    while (nextIndex < items.length) {
+    while (nextIndex < items.length && !failed) {
       const idx = nextIndex++;
-      await fn(items[idx]);
+      try {
+        await fn(items[idx]);
+      } catch (err) {
+        if (!failed) {
+          failed = true;
+          firstError = err;
+        }
+        return;
+      }
     }
   }
   await Promise.all(Array.from({ length: limit }, () => worker()));
+  if (failed) throw firstError;
 }
 
 export function groupByConcurrency<T extends { concurrency: number }>(
