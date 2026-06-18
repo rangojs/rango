@@ -3,6 +3,7 @@ import MagicString from "magic-string";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { normalizePath, findMatchingParen } from "../expose-id-utils.js";
+import { escapeRegExp } from "../../../regex-escape.js";
 import { getImportedFnNames } from "./export-analysis.js";
 import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
 import { createRangoDebugger, createCounter, NS } from "../../debug.js";
@@ -16,7 +17,7 @@ export function transformRouter(
   absolutePath?: string,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   const pat = new RegExp(
-    `\\b(?:${routerFnNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s*(?:<[^>]*>)?\\s*\\(`,
+    `\\b(?:${routerFnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>)?\\s*\\(`,
     "g",
   );
   let match: RegExpExecArray | null;

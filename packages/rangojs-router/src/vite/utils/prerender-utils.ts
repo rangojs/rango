@@ -9,9 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
-export function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+import { escapeRegExp } from "../../regex-escape.js";
 
 export function encodePathParam(value: unknown): string {
   return String(value)

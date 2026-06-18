@@ -7,6 +7,7 @@
 import type { RouteEntry, TrailingSlashMode } from "../types";
 import type { EntryData } from "../server/context";
 import { debugLog, isRouterDebugEnabled } from "./logging.js";
+import { escapeRegExp } from "../regex-escape.js";
 import { safeDecodeURIComponent } from "./url-params.js";
 
 /**
@@ -151,7 +152,7 @@ export function compilePattern(pattern: string): CompiledPattern {
       regexPattern += "/(.*)";
     } else if (segment.type === "param") {
       paramNames.push(segment.value);
-      const suffixPattern = segment.suffix ? escapeRegex(segment.suffix) : "";
+      const suffixPattern = segment.suffix ? escapeRegExp(segment.suffix) : "";
       // Constrained params capture anything here; the allowed values are
       // checked post-decode in findMatch so URL-encoded constraint values
       // (e.g. `:lang(en GB)` via `/en%20GB`) still match.
@@ -169,7 +170,7 @@ export function compilePattern(pattern: string): CompiledPattern {
       }
     } else {
       // Static segment
-      regexPattern += `/${escapeRegex(segment.value)}`;
+      regexPattern += `/${escapeRegExp(segment.value)}`;
     }
   }
 
@@ -227,13 +228,6 @@ function satisfiesConstraints(
     }
   }
   return true;
-}
-
-/**
- * Escape special regex characters in a string
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
