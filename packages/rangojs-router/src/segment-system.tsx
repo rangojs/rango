@@ -30,9 +30,15 @@ function isRenderableLoading(loading: ReactNode): boolean {
   return loading !== undefined && loading !== null && loading !== false;
 }
 
-function restoreParallelLoaderMarkers(
+// Exported for unit testing the no-parallel fast path (D6); internal otherwise.
+export function restoreParallelLoaderMarkers(
   segments: ResolvedSegment[],
 ): ResolvedSegment[] {
+  // Parallel-loading markers only exist when a parallel segment is present, so
+  // a list with no parallel slot has nothing to restore. Skip the Map alloc and
+  // full scan in that (common) case — this runs on every render.
+  if (!segments.some((s) => s.type === "parallel")) return segments;
+
   const parallelLoadingByNamespace = new Map<string, ReactNode>();
   let nextSegments: ResolvedSegment[] | null = null;
 
