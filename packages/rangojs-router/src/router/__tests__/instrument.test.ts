@@ -313,7 +313,27 @@ describe("observeHandler", () => {
     expect(calls).toBe(1);
   });
 
-  it("opens a rango.handler span tagged with the segment id when tracing is on", () => {
+  it("calls the handler directly (no span) when only the perf store is active", () => {
+    // Handler instrumentation is span-only — handler:<id> is owned by track().
+    // With no tracing there is nothing to record, even with debugPerformance on.
+    const store = createMetricsStore(true)!;
+    let calls = 0;
+    const out = runWithRequestContext({ _metricsStore: store } as never, () =>
+      observeHandler(
+        "seg-1",
+        () => {
+          calls++;
+          return "r";
+        },
+        undefined,
+      ),
+    );
+    expect(out).toBe("r");
+    expect(calls).toBe(1);
+    expect(store.metrics).toHaveLength(0); // observeHandler records no metric
+  });
+
+  it("opens a rango.handler span tagged with the handler id when tracing is on", () => {
     const attrs: Record<string, unknown> = {};
     const runner: SpanRunner = (name, fn) =>
       fn({
@@ -325,7 +345,7 @@ describe("observeHandler", () => {
     runWithRequestContext({ _tracing: tracing } as never, () =>
       observeHandler("seg-1", (c) => c, "x"),
     );
-    expect(attrs["rango.segment_id"]).toBe("seg-1");
+    expect(attrs["rango.handler_id"]).toBe("seg-1");
   });
 });
 

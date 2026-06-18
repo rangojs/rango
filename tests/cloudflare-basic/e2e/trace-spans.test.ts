@@ -91,10 +91,10 @@ function runTraceSpec(f: Fixture): void {
 
     // the route/layout handler executions produce rango.handler spans (the
     // dominant per-segment work), nested under render and tagged with the
-    // segment id — mirroring the handler:<id> perf rows.
+    // handler id — mirroring the handler:<id> perf rows.
     const handler = findNode(roots, "rango.handler");
     expect(handler, "expected a rango.handler span").toBeTruthy();
-    expect(typeof handler!.attributes["rango.segment_id"]).toBe("string");
+    expect(typeof handler!.attributes["rango.handler_id"]).toBe("string");
     expect(hasDescendant(render!, "rango.handler")).toBe(true);
 
     // global document-cache middleware wraps the request.

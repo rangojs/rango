@@ -579,9 +579,9 @@ export interface RangoOptions<TEnv = any> {
    * start/end/error, loader start/end/error, handler errors, cache decisions,
    * revalidation decisions, timeouts, origin rejections.
    *
-   * This is the EVENT surface. Phase-duration SPANS (request/loader/render/ssr
-   * timing wired into a tracing backend) come from the separate `tracing`
-   * option below — a sink does not emit them, because async-context nesting
+   * This is the EVENT surface. Phase-duration SPANS (request/middleware/action/
+   * handler/loader/render/ssr timing wired into a tracing backend) come from the
+   * separate `tracing` option below — a sink does not emit them, because async-context nesting
    * cannot be faithfully reconstructed from after-the-fact start/end events.
    *
    * No-op when not configured (zero overhead).

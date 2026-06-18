@@ -135,13 +135,15 @@ export const PHASES = {
   /** One segment route/layout handler execution (the component/handler that
    * produces a segment). Span only — the perf metric (handler:<id>) is owned by
    * the legacy track() at the same call site, so observePhase here adds the
-   * rango.handler span without double-recording. `id` is the segment id, carried
-   * as the rango.segment_id attribute to match the handler:<id> perf row. */
+   * rango.handler span without double-recording. `id` is the HANDLER id (the
+   * entry.id used in the handler:<id> perf row), carried as rango.handler_id —
+   * NOT the emitted segment's id (shortCode), which differs; the *_id naming
+   * mirrors rango.loader_id / rango.action_id. */
   handler: (id: string): PhaseSpec => ({
     metric: false,
     tracePhase: "handler",
     spanName: "rango.handler",
-    attributes: { "rango.segment_id": id },
+    attributes: { "rango.handler_id": id },
   }),
 
   /** Whole render phase: match + serialize + SSR. The metric label is resolved
@@ -291,19 +293,21 @@ export function observePhase<T>(
 
 /**
  * Open a rango.handler span around one segment route/layout handler call. The
- * segment-resolution hot path runs this PER SEGMENT, so it checks the
- * perf/tracing surface FIRST and calls the handler directly when neither is
- * active — building neither the PhaseSpec (PHASES.handler allocates) nor the
- * wrapper closure on the off path. The handler:<id> perf metric is owned by the
- * track() at the call site, so this is span-only (metric:false).
+ * segment-resolution hot path runs this PER SEGMENT, so it gates on the SPAN
+ * surface alone and calls the handler directly otherwise — building neither the
+ * PhaseSpec (PHASES.handler allocates) nor the wrapper closure on the off path.
+ * The handler:<id> perf metric is owned by the track() at the call site, so the
+ * span is the only surface this adds (metric:false); a debugPerformance-only
+ * request (no tracing) or a disabled handler phase (spans:{handler:false}) has
+ * nothing to record here and short-circuits.
  */
 export function observeHandler<C, R>(
   id: string,
   handler: (ctx: C) => R,
   ctx: C,
 ): R {
-  const reqCtx = _getRequestContext();
-  if (!reqCtx?._metricsStore && !reqCtx?._tracing) return handler(ctx);
+  const tracing = _getRequestContext()?._tracing;
+  if (!tracing || tracing.phases.handler === false) return handler(ctx);
   return observePhase(PHASES.handler(id), () => handler(ctx));
 }
 
