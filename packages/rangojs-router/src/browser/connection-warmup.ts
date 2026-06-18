@@ -52,17 +52,14 @@ export function startConnectionWarmup(
 
   let idleTimer: TimerHandle | undefined;
   let debounceTimer: TimerHandle | undefined;
-  // Drives the idle->cold cycle. resetIdleTimer clears it on any activity.
-  let isCold = false;
-  // Separate cold latch for the warmup decision — see module header. Set in
-  // markCold; cleared only when warmup fires or listeners detach, NOT by
-  // resetIdleTimer, so triggerWarmup sees the pre-reset cold state regardless
-  // of listener ordering.
+  // Cold latch for the warmup decision — see module header. Set in markCold;
+  // cleared only when warmup fires or listeners detach, NOT by resetIdleTimer,
+  // so triggerWarmup sees the pre-reset cold state regardless of listener
+  // ordering (the idle-reset listener runs first on a shared mousemove event).
   let coldLatch = false;
   let warmupListenersAttached = false;
 
   function sendWarmup() {
-    isCold = false;
     coldLatch = false;
     env.fetch("/?_rsc_warmup", { method: "HEAD" }).catch(() => {});
   }
@@ -100,14 +97,12 @@ export function startConnectionWarmup(
   }
 
   function markCold() {
-    isCold = true;
     coldLatch = true;
     attachWarmupListeners();
   }
 
   function resetIdleTimer() {
     clearT(idleTimer);
-    isCold = false;
     idleTimer = setT(markCold, IDLE_TIMEOUT);
   }
 
@@ -127,10 +122,6 @@ export function startConnectionWarmup(
   }
 
   resetIdleTimer();
-
-  // isCold is read by resetIdleTimer/sendWarmup to drive the cycle; reference
-  // it here so the linter sees the assignments as meaningful.
-  void isCold;
 
   return () => {
     clearT(idleTimer);

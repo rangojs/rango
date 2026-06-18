@@ -96,16 +96,21 @@ export async function executeServerAction<TEnv>(
     // server action, matching the PE path (progressive-enhancement.ts populates
     // formData from request.formData()). A form-driven action is invoked as
     // action(formData) (direct) or action(prevState, formData) (useActionState),
-    // so the FormData arrives INSIDE the decoded args — the FIRST FormData arg.
+    // so the FormData arrives INSIDE the decoded args. Use the LAST FormData arg:
+    // for useActionState the submitted form is the final arg, and a prior state
+    // that is itself a FormData would otherwise be picked first.
     //
     // The raw request body is NOT usable here: encodeReply wraps a FormData arg
     // in a multipart envelope whose keys are Flight-encoded (e.g. `_1_name`,
     // `0`), so request.formData() would hand shouldRevalidate a FormData with
     // internal keys instead of the consumer's `name`. The decoded arg has the
     // original keys.
-    actionFormData = args.find(
-      (arg): arg is FormData => arg instanceof FormData,
-    );
+    for (let i = args.length - 1; i >= 0; i--) {
+      if (args[i] instanceof FormData) {
+        actionFormData = args[i] as FormData;
+        break;
+      }
+    }
   } catch (error) {
     // Keep the original error as `cause` for server-side logging, but do not
     // interpolate it into the message: that string can surface to the client

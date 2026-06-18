@@ -3070,6 +3070,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           }
           headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
           headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
+          // Carry the hard-expiry deadline so the document herd guard's
+          // markResponseRevalidating re-put can compute the remaining window
+          // (matches promoteSegmentToL1/promoteItemToL1); without it a stale
+          // re-put would floor to max-age=1 and churn the KV-promoted twin.
+          headers.set(CACHE_EXPIRES_AT_HEADER, String(envelope.e));
           // Re-attach the internal tag headers (envelope.hd is client-facing
           // and intentionally excludes them) so the promoted entry stays
           // invalidatable.

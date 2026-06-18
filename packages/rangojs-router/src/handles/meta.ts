@@ -197,10 +197,6 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
         // replacement string specially ($&, $`, $', $$, $n), so a title like
         // "Save $5" or one containing "$&" would be mangled. split/join inserts
         // the raw value with no special-character interpretation.
-        // Insert the title literally. String.prototype.replace treats the
-        // replacement string specially ($&, $`, $', $$, $n), so a title like
-        // "Save $5" or one containing "$&" would be mangled. split/join inserts
-        // the raw value with no special-character interpretation.
         const finalTitle = titleTemplate
           ? titleTemplate.split("%s").join(titleValue as string)
           : titleValue;

@@ -12,13 +12,23 @@ import { encodeKV } from "../encode-kv.js";
  * Reserved URL query params that the router owns and must never key the cache
  * on. `_rsc*` is the router's internal navigation/action/loader prefix (matched
  * by prefix). `__no_cache` is the single `__`-prefixed param the router reads
- * (handler.ts / testing dispatch.ts use it to bypass the store); it is matched
- * by an EXACT allowlist, not a blanket `__` prefix. A blanket `__` filter would
- * silently collapse consumer params like `__variant=a` vs `__variant=b` onto one
- * cache slot, since the router owns no other `__` param.
+ * (handler.ts / testing dispatch.ts use it to bypass the store); it and the
+ * other router-internal `__`-prefixed request params are matched by an EXACT
+ * allowlist, not a blanket `__` prefix. A blanket `__` filter would silently
+ * collapse consumer params like `__variant=a` vs `__variant=b` onto one cache
+ * slot; an allowlist keeps the router's own params out of the key while leaving
+ * consumer `__` params intact.
  */
+const RESERVED_SEARCH_PARAMS = new Set([
+  "__no_cache",
+  "__rsc",
+  "__html",
+  "__debug_manifest",
+  "__prerender_collect",
+]);
+
 function isReservedSearchParam(key: string): boolean {
-  return key.startsWith("_rsc") || key === "__no_cache";
+  return key.startsWith("_rsc") || RESERVED_SEARCH_PARAMS.has(key);
 }
 
 /**
