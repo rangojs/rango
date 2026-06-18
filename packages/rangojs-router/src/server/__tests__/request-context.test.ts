@@ -754,4 +754,48 @@ describe("RequestContext", () => {
       expect(responseB.headers.get("X-Context")).toBe("beta");
     });
   });
+
+  describe("response cookie Max-Age deletion classification", () => {
+    function ctxWithSetCookie(setCookie: string) {
+      const url = new URL("https://example.com/");
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(url),
+        url,
+        variables: {},
+      });
+      ctx.res.headers.append("Set-Cookie", setCookie);
+      return ctx;
+    }
+
+    it("treats Max-Age=0 as a deletion (cookie reads as absent)", () => {
+      const ctx = ctxWithSetCookie("session=abc; Max-Age=0");
+      expect(ctx.cookie("session")).toBeUndefined();
+      expect(ctx.cookies().session).toBeUndefined();
+    });
+
+    it("treats a negative Max-Age as a deletion", () => {
+      const ctx = ctxWithSetCookie("session=abc; Max-Age=-1");
+      expect(ctx.cookie("session")).toBeUndefined();
+    });
+
+    it("does NOT treat zero-prefixed Max-Age=05 as a deletion", () => {
+      // Max-Age=05 is a real 5-second cookie; it must be readable, not absent.
+      const ctx = ctxWithSetCookie("session=abc; Max-Age=05");
+      expect(ctx.cookie("session")).toBe("abc");
+      expect(ctx.cookies().session).toBe("abc");
+    });
+
+    it("does NOT treat Max-Age=00 as a deletion when followed by other attrs", () => {
+      // A pathological zero-prefixed value that still parses to 0 IS a deletion;
+      // but a non-zero zero-prefixed value like 010 must survive.
+      const ctx = ctxWithSetCookie("session=abc; Max-Age=010; Path=/");
+      expect(ctx.cookie("session")).toBe("abc");
+    });
+
+    it("treats a positive Max-Age as a live cookie", () => {
+      const ctx = ctxWithSetCookie("session=abc; Max-Age=3600");
+      expect(ctx.cookie("session")).toBe("abc");
+    });
+  });
 });

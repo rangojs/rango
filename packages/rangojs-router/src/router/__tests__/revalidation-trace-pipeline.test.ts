@@ -42,6 +42,7 @@ vi.mock("../segment-resolution/helpers.js", () => ({
       }
     },
   ),
+  buildLoaderErrorContext: vi.fn(() => ({})),
 }));
 
 import { resolveLoadersWithRevalidation } from "../segment-resolution/revalidation.js";

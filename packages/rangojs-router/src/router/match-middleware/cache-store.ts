@@ -155,7 +155,16 @@ export function withCacheStore<TEnv>(
       createHandleStore,
     } = getRouterContext<TEnv>();
 
-    const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
+    // On a fresh intercept miss the intercept slot segments flow through
+    // `source` into allSegments AND are also recorded on state.interceptSegments.
+    // Dedup by id so each segment is cached once — cacheRoute serializes the
+    // array verbatim (no id-dedup), so an un-deduped append doubles the intercept
+    // segment in the cached entry, re-rendering the slot twice on the next hit.
+    const seenSegmentIds = new Set(allSegments.map((s) => s.id));
+    const allSegmentsToCache = [
+      ...allSegments,
+      ...state.interceptSegments.filter((s) => !seenSegmentIds.has(s.id)),
+    ];
 
     const hasNullComponents = allSegmentsToCache.some(
       (s) =>

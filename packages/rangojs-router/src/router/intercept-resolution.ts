@@ -24,6 +24,7 @@ import { getGlobalRouteMap } from "../route-map-builder.js";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
+  buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
@@ -220,6 +221,9 @@ export async function resolveInterceptEntry<TEnv>(
         parentEntry,
         segmentId,
         context.pathname,
+        // Report a throwing intercept loader to onError + loader.error telemetry,
+        // matching the fresh/revalidation paths.
+        buildLoaderErrorContext(context),
       ),
     );
   }
@@ -393,6 +397,9 @@ export async function resolveInterceptLoadersOnly<TEnv>(
         parentEntry,
         segmentId,
         context.pathname,
+        // Report a throwing intercept loader to onError + loader.error telemetry,
+        // matching the fresh/revalidation paths.
+        buildLoaderErrorContext(context),
       ),
     );
   }

@@ -13,6 +13,8 @@ import {
 import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { redirect } from "../../route-definition/redirect.js";
 import { createVar } from "../../context-var.js";
+import { registerSearchSchema } from "../../route-map-builder.js";
+import type { LoaderDefinition } from "../../types.js";
 
 // runInRequestContext is the reachable entry for the advanced action-auth path:
 // a server action has no loader context (so runLoader is the wrong shape) yet
@@ -226,6 +228,49 @@ describe("runInRequestContext", () => {
   it("does not leak the context outside the runner", async () => {
     await runInRequestContext(() => getRequestContext().method);
     expect(() => getRequestContext()).toThrow();
+  });
+
+  it("threads typed ctx.search into a loader invoked via ctx.use (action/dispatch path)", async () => {
+    // A server action does `await ctx.use(ProductLoader)` where ProductLoader's
+    // route declares a search schema. createUseFunction (the ctx.use behind
+    // actions/dispatch) must build the loader's ctx.search by parsing the route's
+    // search schema, matching the render and fetchable-loader paths — not hand it
+    // an empty {} (which it did because the RequestContext has no `search` field).
+    registerSearchSchema("products.list", { sort: "string?", page: "number?" });
+
+    const ProductLoader = {
+      $$id: "products.list#loader",
+      fn: (ctx: any) => ctx.search,
+    } as unknown as LoaderDefinition<Record<string, unknown>, any>;
+
+    const { result } = await runInRequestContext(
+      (ctx) => ctx.use(ProductLoader),
+      {
+        request: "https://app.test/products?sort=price&page=2",
+        routeMap: { "products.list": "/products" },
+        routeName: "products.list",
+      },
+    );
+
+    expect(result).toEqual({ sort: "price", page: 2 });
+  });
+
+  it("gives a loader an empty ctx.search when the route has no search schema", async () => {
+    const PlainLoader = {
+      $$id: "plain#loader",
+      fn: (ctx: any) => ctx.search,
+    } as unknown as LoaderDefinition<Record<string, unknown>, any>;
+
+    const { result } = await runInRequestContext(
+      (ctx) => ctx.use(PlainLoader),
+      {
+        request: "https://app.test/plain?x=1",
+        routeMap: { plain: "/plain" },
+        routeName: "plain",
+      },
+    );
+
+    expect(result).toEqual({});
   });
 });
 

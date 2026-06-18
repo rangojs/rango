@@ -22,6 +22,7 @@ vi.mock("../../route-map-builder.js", () => ({
 }));
 vi.mock("../segment-resolution.js", () => ({
   handleHandlerResult: vi.fn((x: any) => x),
+  buildLoaderErrorContext: vi.fn(() => ({})),
 }));
 
 function makeDeps(): SegmentResolutionDeps<any> {
