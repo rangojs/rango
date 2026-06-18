@@ -149,6 +149,45 @@ describe("HandleStore settlement", () => {
     expect(settled).toBe(true);
   });
 
+  it("coalesces a synchronous burst of pushes into the full accumulated state", async () => {
+    const store = createHandleStore();
+
+    // 50 synchronous pushes across 3 handles / 3 segments.
+    const handles = ["crumbs", "meta", "links"];
+    const segments = ["seg1", "seg2", "seg3"];
+    let pushCount = 0;
+    store.track(
+      delay(5).then(() => {
+        for (let i = 0; i < 50; i++) {
+          const handle = handles[i % handles.length];
+          const segment = segments[i % segments.length];
+          store.push(handle, segment, `value-${i}`);
+          pushCount++;
+        }
+      }),
+    );
+
+    const yields: Record<string, Record<string, unknown[]>>[] = [];
+    for await (const snapshot of store.stream()) {
+      yields.push(snapshot as Record<string, Record<string, unknown[]>>);
+    }
+
+    expect(pushCount).toBe(50);
+
+    // The final snapshot must contain ALL pushed entries (full accumulated state).
+    const final = yields[yields.length - 1];
+    let total = 0;
+    for (const handle of handles) {
+      for (const segment of segments) {
+        total += final[handle]?.[segment]?.length ?? 0;
+      }
+    }
+    expect(total).toBe(50);
+
+    // The burst coalesces: far fewer yields than the 50 pushes.
+    expect(yields.length).toBeLessThanOrEqual(3);
+  });
+
   it("getData auto-seals and waits for all tracked promises", async () => {
     const store = createHandleStore();
 

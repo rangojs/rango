@@ -8,6 +8,7 @@ import {
   findCallParenAfterGenerics,
   skipStringOrComment,
 } from "../expose-id-utils.js";
+import { escapeRegExp } from "../../../regex-escape.js";
 import {
   getImportedFnNames,
   buildUnsupportedShapeWarning,
@@ -53,7 +54,7 @@ export function transformRouter(
   // separately via findCallParenAfterGenerics so a nested `>` does not defeat
   // the scan (a `<[^>]*>` regex stopped at the first `>`).
   const pat = new RegExp(
-    `\\b(?:${routerFnNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+    `\\b(?:${routerFnNames.map(escapeRegExp).join("|")})\\b`,
     "g",
   );
   let match: RegExpExecArray | null;

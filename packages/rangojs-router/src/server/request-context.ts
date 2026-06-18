@@ -11,6 +11,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { parseCookiesFromHeader } from "./cookie-parse.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import {
@@ -979,32 +980,10 @@ function parseResponseCookies(response: Response): Map<string, string | null> {
   return result;
 }
 
-// Exported for unit tests; the canonical cookie parse/serialize lives here
-// (a duplicate copy in middleware-cookies.ts was removed). Not part of the
-// public export surface.
-export function parseCookiesFromHeader(
-  cookieHeader: string | null,
-): Record<string, string> {
-  if (!cookieHeader) return {};
-
-  const cookies: Record<string, string> = {};
-  const pairs = cookieHeader.split(";");
-
-  for (const pair of pairs) {
-    const [name, ...rest] = pair.trim().split("=");
-    if (name) {
-      const raw = rest.join("=");
-      try {
-        cookies[name] = decodeURIComponent(raw);
-      } catch {
-        // Malformed percent-encoding: fall back to raw value
-        cookies[name] = raw;
-      }
-    }
-  }
-
-  return cookies;
-}
+// Re-exported for unit tests and the existing import path. The implementation
+// lives in the dependency-free ./cookie-parse leaf so consumers (e.g. the host
+// dispatcher) can share it without pulling this module's request-context graph.
+export { parseCookiesFromHeader };
 
 export function serializeCookieValue(
   name: string,

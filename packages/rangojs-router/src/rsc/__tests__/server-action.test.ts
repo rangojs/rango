@@ -263,3 +263,61 @@ describe("executeServerAction — action error boundary deferred under middlewar
     expect(res.headers.get("X-Route-Mw")).toBe("applied");
   });
 });
+
+describe("executeServerAction — thrown non-redirect Response is serialized", () => {
+  // ctx stub for an action that throws a non-redirect Response. The catch path
+  // with matchError === null falls through to building an ActionContinuation.
+  function ctxThatThrowsResponse(response: Response) {
+    return {
+      createTemporaryReferenceSet: () => ({}),
+      version: "1",
+      loadServerAction: () => async () => {
+        throw response;
+      },
+      // noop: the thrown Response is not a redirect, so this is never reached.
+      createRedirectFlightResponse: () => null,
+      callOnError: () => {},
+      router: {
+        id: "test",
+        matchError: async () => null,
+      },
+    } as any;
+  }
+
+  it("stores a serializable Error (not the raw Response) as returnValue.data", async () => {
+    // Empty body so decodeReply (hasBodyContent) is never invoked.
+    const request = new Request("http://localhost/", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "",
+    });
+    const url = new URL(request.url);
+
+    const result = await executeServerAction(
+      ctxThatThrowsResponse(new Response("nope", { status: 403 })),
+      request,
+      {} as any,
+      url,
+      "actionId",
+      {} as any,
+    );
+
+    // matchError === null → falls through to an ActionContinuation, not a Response.
+    expect(result).not.toBeInstanceOf(Response);
+    const continuation = result as Exclude<typeof result, Response>;
+
+    expect(continuation.returnValue.ok).toBe(false);
+    // data must NOT be a raw Response; the asymmetric thrown case now mirrors
+    // the returned-Response discard and stores a serializable Error.
+    expect(continuation.returnValue.data).not.toBeInstanceOf(Response);
+    expect(continuation.returnValue.data).toBeInstanceOf(Error);
+
+    // The fix's contract: the embedded value is Flight/structuredClone-safe.
+    expect(() => structuredClone(continuation.returnValue.data)).not.toThrow();
+
+    // actionResult mirrors returnValue.data into the continuation actionContext.
+    expect(continuation.actionContext.actionResult).not.toBeInstanceOf(
+      Response,
+    );
+  });
+});

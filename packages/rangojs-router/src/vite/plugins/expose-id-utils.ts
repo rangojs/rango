@@ -243,9 +243,7 @@ export function findStatementEnd(code: string, pos: number): number {
   return i;
 }
 
-export function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+export { escapeRegExp } from "../../regex-escape.js";
 
 /**
  * Given an index pointing just past a `create*` callee identifier, return the

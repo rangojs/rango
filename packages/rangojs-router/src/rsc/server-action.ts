@@ -149,6 +149,8 @@ export async function executeServerAction<TEnv>(
 
     returnValue = { ok: true, data };
   } catch (error) {
+    let actionResultData: unknown = error;
+
     // Handle thrown redirect (e.g., throw redirect('/path'))
     if (error instanceof Response) {
       const intercepted = interceptRedirectForPartial(
@@ -168,9 +170,18 @@ export async function executeServerAction<TEnv>(
             `Use \`throw redirect('/path')\` for redirects.`,
         );
       }
+
+      // A raw Response cannot be serialized into Flight; storing it as the
+      // action returnValue.data would make the error payload serialization
+      // throw and mask the boundary render. Replace it with a serializable
+      // error (mirrors the discard of a returned non-redirect Response above).
+      // matchError/onError still receive the original Response.
+      actionResultData = new Error(
+        `Server action "${actionId}" threw a non-redirect Response (status ${error.status})`,
+      );
     }
 
-    returnValue = { ok: false, data: error };
+    returnValue = { ok: false, data: actionResultData };
     actionStatus = 500;
 
     // Try to render error boundary.

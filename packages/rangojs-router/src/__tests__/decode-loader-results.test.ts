@@ -62,6 +62,45 @@ describe("decodeLoaderResults", () => {
     ).toThrow("fatal");
   });
 
+  it("preserves the ErrorInfo identity (name/stack/code/cause) when rethrowing without a fallback", () => {
+    // Worst-case path: a loader fails with no boundary. The rethrown error must
+    // carry the ErrorInfo's name/stack/code/cause, not a stripped generic Error.
+    const cause = {
+      name: "Error",
+      message: "root cause",
+      stack: "cause-stack",
+    };
+    const result: LoaderDataResult = {
+      __loaderResult: true,
+      ok: false,
+      error: {
+        message: "custom failure",
+        name: "CustomError",
+        code: "E_X",
+        stack: "CustomError: custom failure\n    at loader",
+        cause,
+        segmentId: "seg",
+        segmentType: "loader",
+      },
+      fallback: null,
+    } as any;
+
+    let thrown: unknown;
+    try {
+      decodeLoaderResults([result], ["a"]);
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const err = thrown as Error & { code?: string };
+    expect(err.message).toBe("custom failure");
+    expect(err.name).toBe("CustomError");
+    expect(err.stack).toBe("CustomError: custom failure\n    at loader");
+    expect(err.code).toBe("E_X");
+    expect(err.cause).toEqual(cause);
+  });
+
   it("returns an empty result set for no loaders", () => {
     expect(decodeLoaderResults([], [])).toEqual({
       loaderData: {},

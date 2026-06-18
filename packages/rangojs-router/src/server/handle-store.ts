@@ -174,8 +174,10 @@ export function createHandleStore(): HandleStore {
     notifyDrain();
   }
 
-  // Queue for pending emissions and resolver for waiting consumer
-  let pendingEmissions: HandleData[] = [];
+  // Dirty flag for pending emissions and resolver for waiting consumer.
+  // stream() only ever yields the latest full state, so we track a single
+  // dirty bit and clone `data` once at yield time instead of per push.
+  let hasPendingEmission = false;
   let emissionResolver: (() => void) | null = null;
   let completed = false;
 
@@ -190,7 +192,7 @@ export function createHandleStore(): HandleStore {
 
   // Wait for the next emission or completion
   function waitForEmission(): Promise<void> {
-    if (pendingEmissions.length > 0 || completed) {
+    if (hasPendingEmission || completed) {
       return Promise.resolve();
     }
     return new Promise((resolve) => {
@@ -238,8 +240,8 @@ export function createHandleStore(): HandleStore {
       }
       data[handleName][segmentId].push(value);
 
-      // Queue a snapshot for emission
-      pendingEmissions.push(cloneHandleData(data));
+      // Mark dirty; the actual snapshot is cloned once at yield time.
+      hasPendingEmission = true;
       signalEmission();
     },
 
@@ -260,22 +262,20 @@ export function createHandleStore(): HandleStore {
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       if (Object.keys(data).length > 0) {
-        pendingEmissions = [];
-        const snapshot = cloneHandleData(data);
-        yield snapshot;
+        hasPendingEmission = false;
+        yield cloneHandleData(data);
       }
 
       while (!completed) {
         await waitForEmission();
 
-        if (pendingEmissions.length > 0) {
-          const latest = pendingEmissions[pendingEmissions.length - 1];
-          pendingEmissions = [];
-          yield latest;
+        if (hasPendingEmission) {
+          hasPendingEmission = false;
+          yield cloneHandleData(data);
         }
       }
 
-      if (pendingEmissions.length > 0) {
+      if (hasPendingEmission) {
         yield cloneHandleData(data);
       }
     },
@@ -303,7 +303,7 @@ export function createHandleStore(): HandleStore {
         // segment, not accumulate on top of data from a different route.
         data[handleName][segmentId] = [...segmentHandles[handleName]];
       }
-      pendingEmissions.push(cloneHandleData(data));
+      hasPendingEmission = true;
       signalEmission();
     },
   };

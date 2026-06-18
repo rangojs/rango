@@ -15,6 +15,7 @@
     "lint": "oxlint --deny-warnings",
     "check:e2e-bucketing": "node tools/check-e2e-bucketing.mjs",
     "check:e2e-parity": "node tools/check-e2e-parity.mjs",
+    "check:doc-links": "node tools/check-doc-links.mjs",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
     "tsc": "turbo run typecheck",
