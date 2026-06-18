@@ -184,9 +184,25 @@ export async function serveResponseRouteWithCache(
   // Cache miss: execute the handler and cache the result.
   const response = finalizeResponse(await executeHandler());
   if (isCacheableStatus(response.status)) {
+    // Clone SYNCHRONOUSLY here, before returning. The original `response` is
+    // handed back to the middleware chain, where mergeResponse rebuilds it as
+    // `new Response(response.body, ...)`. Deferring the clone into the waitUntil
+    // callback (putFresh(response), which clones inside the async body) raced
+    // that rebuild: the background clone() and the foreground body read could
+    // interleave and throw "Response body object should not be disturbed or
+    // locked" (a flaky 500). Teeing now keeps the returned body independent of
+    // the cache write. The SWR path above is unaffected (its `fresh` is created
+    // inside the background callback and never returned to the caller).
+    const toCache = response.clone();
     reqCtx.waitUntil(async () => {
       try {
-        await putFresh(store, response);
+        await store.putResponse!(
+          cacheKey,
+          toCache,
+          cacheScope!.ttl,
+          cacheScope!.swr,
+          responseTags,
+        );
       } catch (error) {
         console.error(`[ResponseCache] Cache write failed:`, error);
       }
