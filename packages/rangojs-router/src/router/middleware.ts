@@ -322,9 +322,16 @@ export function matchMiddleware<TEnv>(
       continue;
     }
 
-    // Check if pathname matches
-    if (entry.regex.test(pathname)) {
-      const params = extractParams(pathname, entry.regex, entry.paramNames);
+    // Run the scope regex ONCE per entry. The old code ran test() then, on a
+    // hit, extractParams' match() — a second full pass over the same string for
+    // every matching entry on the per-request hot path. The regexes carry no
+    // `g` flag, so there is no lastIndex statefulness across this single match.
+    const m = pathname.match(entry.regex);
+    if (m) {
+      const params: Record<string, string> = {};
+      for (let i = 0; i < entry.paramNames.length; i++) {
+        params[entry.paramNames[i]] = safeDecodeURIComponent(m[i + 1] || "");
+      }
       matches.push({ entry, params });
     }
   }

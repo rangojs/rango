@@ -231,7 +231,13 @@ function walkTrie(
     }
   }
 
-  if (node.p) {
+  // A required single-segment param captures 1+ chars (the regex matcher emits
+  // `([^/]+)`), so an empty path segment from a double slash (`/a//b`) must NOT
+  // bind `:s` to "". Reject it here so the trie matches the regex contract and
+  // a malformed URL 404s instead of running the handler with an empty param.
+  // The suffix-param branch above already requires `segment.length > suffix`,
+  // and node.w may legitimately be empty, so only this branch needs the guard.
+  if (node.p && segment !== "") {
     paramValues.push(segment);
     const result = walkTrie(node.p.c, segments, index + 1, paramValues);
     paramValues.pop();
