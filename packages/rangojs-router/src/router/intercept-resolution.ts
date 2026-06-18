@@ -112,10 +112,25 @@ export async function resolveInterceptEntry<TEnv>(
     };
     stale?: boolean;
   },
+  options?: {
+    /**
+     * Skip the intercept's middleware execution. Set ONLY by the post-response
+     * background re-render paths (proactive caching, stale background
+     * revalidation), whose sole purpose is to re-render the segment tree to
+     * populate the cache. The foreground request already ran the intercept
+     * middleware before the response was sent — it validated auth, set cookies,
+     * and wrote context vars into the request context's shared `_variables`,
+     * which the background render reuses. Re-running middleware here would fire
+     * its side effects a SECOND time, and a middleware that short-circuits with
+     * a Response would `throw` and silently abort the cache write. Never set on
+     * the foreground path.
+     */
+    skipMiddleware?: boolean;
+  },
 ): Promise<ResolvedSegment[]> {
   const segments: ResolvedSegment[] = [];
 
-  if (interceptEntry.middleware.length > 0) {
+  if (!options?.skipMiddleware && interceptEntry.middleware.length > 0) {
     const requestCtx = getRequestContext();
     if (!requestCtx?.res) {
       throw new Error(

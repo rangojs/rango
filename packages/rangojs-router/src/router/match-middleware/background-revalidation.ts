@@ -203,6 +203,12 @@ export function withBackgroundRevalidation<TEnv>(
               ctx.matched.params,
               freshHandlerContext,
               true,
+              undefined,
+              // Skip intercept middleware: this is a post-response background
+              // re-render to refresh a stale cached route. The foreground
+              // already ran the middleware; re-running it would double its side
+              // effects and a short-circuit Response would abort the write.
+              { skipMiddleware: true },
             ),
           );
         }
