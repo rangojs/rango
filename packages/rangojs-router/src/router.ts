@@ -63,7 +63,7 @@ import {
 import { loadManifest } from "./router/manifest.js";
 import { createMetricsStore } from "./router/metrics.js";
 import {
-  parsePattern,
+  compileMiddlewarePattern,
   type MiddlewareEntry,
   type MiddlewareFn,
 } from "./router/middleware.js";
@@ -347,7 +347,7 @@ export function createRouter<TEnv = any>(
     let regex: RegExp | null = null;
     let paramNames: string[] = [];
     if (fullPattern) {
-      const parsed = parsePattern(fullPattern);
+      const parsed = compileMiddlewarePattern(fullPattern);
       regex = parsed.regex;
       paramNames = parsed.paramNames;
     }

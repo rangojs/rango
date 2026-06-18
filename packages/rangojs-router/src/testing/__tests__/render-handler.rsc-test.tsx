@@ -440,4 +440,52 @@ describe("renderHandler: ctx.use(Handle).defer()", () => {
     });
     expect(JSON.stringify(tree)).toContain("store=true profile=true");
   });
+
+  // Dogfood ctx.theme / ctx.setTheme — documented HandlerContext members. The
+  // theme option resolves a ThemeConfig and seeds it into the request context;
+  // ctx.setTheme writes the theme cookie (default storageKey "theme"), captured
+  // in the run's cookie snapshot.
+  test("theme option enables ctx.theme and ctx.setTheme writes the cookie", async () => {
+    let observed: string | undefined;
+    function Page(ctx: HandlerContext) {
+      observed = ctx.theme;
+      ctx.setTheme?.("dark");
+      return <main>ok</main>;
+    }
+    const { cookies, response } = await renderHandler(Page, { theme: true });
+    // Default theme is "system".
+    expect(observed).toBe("system");
+    expect(cookies.theme).toBe("dark");
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith("theme=dark")),
+    ).toBe(true);
+  });
+
+  test("ctx.theme reflects an incoming theme cookie", async () => {
+    let observed: string | undefined;
+    function Page(ctx: HandlerContext) {
+      observed = ctx.theme;
+      return <main>ok</main>;
+    }
+    await renderHandler(Page, {
+      theme: true,
+      headers: { Cookie: "theme=dark" },
+    });
+    expect(observed).toBe("dark");
+  });
+
+  test("ctx.theme / ctx.setTheme are inert without the theme option", async () => {
+    let observed: string | undefined = "unset";
+    let hadSetter = true;
+    function Page(ctx: HandlerContext) {
+      observed = ctx.theme;
+      hadSetter = typeof ctx.setTheme === "function";
+      ctx.setTheme?.("dark");
+      return <main>ok</main>;
+    }
+    const { cookies } = await renderHandler(Page);
+    expect(observed).toBeUndefined();
+    expect(hadSetter).toBe(false);
+    expect(cookies.theme).toBeUndefined();
+  });
 });

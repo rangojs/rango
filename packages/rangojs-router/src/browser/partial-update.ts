@@ -191,9 +191,10 @@ export function createPartialUpdater(
     const { payload, streamComplete: rawStreamComplete } = fetchResult;
     debugLog("payload.metadata", payload.metadata);
 
-    const streamComplete = rawStreamComplete.then(() => {
-      streamingToken.end();
-    });
+    // Side effect only: end the streaming token once the stream settles.
+    // The wrapped promise was never read as a value; only the .end() matters.
+    // The .catch keeps an unhandled rejection from leaking if the stream errors.
+    rawStreamComplete.then(() => streamingToken.end()).catch(() => {});
 
     const currentRouterId = store.getRouterId?.();
     if (
@@ -400,19 +401,34 @@ export function createPartialUpdater(
             ? reconciled.interceptSegments
             : undefined,
       };
-      const newTree = await (signal
-        ? Promise.race([
+      let newTree: Awaited<ReturnType<typeof renderSegments>>;
+      if (signal) {
+        // Race render against abort. Store the abort handler and register it
+        // { once:true } so a non-aborted render (which wins the race) can
+        // remove it in finally — otherwise the listener stays attached and the
+        // rejecting promise never settles. Mirrors teeWithCompletion in
+        // browser/response-adapter.ts.
+        let onAbort: (() => void) | undefined;
+        const abortPromise = new Promise<never>((_, reject) => {
+          if (signal.aborted) {
+            reject(new DOMException("Navigation aborted", "AbortError"));
+            return;
+          }
+          onAbort = () =>
+            reject(new DOMException("Navigation aborted", "AbortError"));
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+        try {
+          newTree = await Promise.race([
             renderSegments(reconciled.mainSegments, renderOptions),
-            new Promise<never>((_, reject) => {
-              if (signal.aborted) {
-                reject(new DOMException("Navigation aborted", "AbortError"));
-              }
-              signal.addEventListener("abort", () => {
-                reject(new DOMException("Navigation aborted", "AbortError"));
-              });
-            }),
-          ])
-        : renderSegments(reconciled.mainSegments, renderOptions));
+            abortPromise,
+          ]);
+        } finally {
+          if (onAbort) signal.removeEventListener("abort", onAbort);
+        }
+      } else {
+        newTree = await renderSegments(reconciled.mainSegments, renderOptions);
+      }
 
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
@@ -540,7 +556,7 @@ export function createPartialUpdater(
           });
         });
       } else if (mode.type === "action") {
-        startTransition(async () => {
+        startTransition(() => {
           if (fullHasTransition && addTransitionType) {
             addTransitionType("action");
           }

@@ -70,7 +70,7 @@ export function useNavigation<T>(
 
   // Subscribe to event controller state changes (only runs on client)
   useEffect(() => {
-    return ctx.eventController.subscribe(() => {
+    const update = () => {
       const currentState = ctx.eventController.getState();
       const publicState = toPublicState(currentState);
       const nextSelected = selectorRef.current
@@ -109,7 +109,15 @@ export function useNavigation<T>(
         // Always update base state so UI reflects current state
         setBaseValue(nextSelected);
       }
-    });
+    };
+
+    // Catch-up: re-read state synchronously on mount before subscribing, so a
+    // state change between the seeding render and this effect commit isn't
+    // dropped until the next (debounced) notify. Mirrors usePathname /
+    // useSearchParams.
+    update();
+
+    return ctx.eventController.subscribe(update);
   }, []);
 
   return value as T | PublicNavigationState;

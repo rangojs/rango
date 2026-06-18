@@ -27,10 +27,14 @@ catalogs:
     babel-plugin-react-compiler:
       specifier: ^1.0.0
       version: 1.0.0
+    react:
+      specifier: ^19.2.6
+      version: 19.2.6
+    react-dom:
+      specifier: ^19.2.6
+      version: 19.2.6
 
 overrides:
-  react: ^19.2.6
-  react-dom: ^19.2.6
   react-experimental>react: experimental
   react-experimental>react-dom: experimental
   rollup: ^4.54.0
@@ -66,10 +70,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@cloudflare/vite-plugin':
@@ -109,10 +113,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@cloudflare/vite-plugin':
@@ -164,8 +168,8 @@ importers:
         specifier: ^0.30.17
         version: 0.30.21
       picomatch:
-        specifier: ^4.0.3
-        version: 4.0.3
+        specifier: ^4.0.4
+        version: 4.0.4
       rsc-html-stream:
         specifier: ^0.0.7
         version: 0.0.7
@@ -207,10 +211,10 @@ importers:
         specifier: ^2.6.1
         version: 2.6.1
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
       typescript:
         specifier: ^5.3.0
@@ -225,10 +229,10 @@ importers:
         specifier: workspace:*
         version: link:../..
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@babel/core':
@@ -265,10 +269,10 @@ importers:
         specifier: workspace:*
         version: link:../..
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/react':
@@ -290,10 +294,10 @@ importers:
         specifier: workspace:*
         version: link:../..
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@testing-library/react':
@@ -327,10 +331,10 @@ importers:
         specifier: workspace:*
         version: link:../..
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/react':
@@ -358,10 +362,10 @@ importers:
         specifier: file:__test_packages__/fake-context-lib
         version: file:packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib(react@19.2.6)
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/react':
@@ -392,10 +396,10 @@ importers:
         specifier: workspace:*
         version: link:../shared-docs
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
       spin-delay:
         specifier: ^2.0.1
@@ -465,10 +469,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@cloudflare/vite-plugin':
@@ -514,10 +518,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@playwright/test':
@@ -579,7 +583,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
     devDependencies:
       '@types/react':
@@ -608,10 +612,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@babel/core':
@@ -1699,8 +1703,8 @@ packages:
       '@testing-library/dom': ^10.0.0
       '@types/react': ^18.0.0 || ^19.0.0
       '@types/react-dom': ^18.0.0 || ^19.0.0
-      react: ^19.2.6
-      react-dom: ^19.2.6
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
     peerDependenciesMeta:
       '@types/react':
         optional: true
@@ -1776,8 +1780,8 @@ packages:
   '@vitejs/plugin-rsc@0.5.26':
     resolution: {integrity: sha512-T8W8ODEutblw9qXQB512LDPyv1tAbJRD/Gf0QEGsAoydl4nxEtIrghnhoI9oLY9R+7aw+cLk1ZEltxWHWf4aHw==}
     peerDependencies:
-      react: ^19.2.6
-      react-dom: ^19.2.6
+      react: '*'
+      react-dom: '*'
       react-server-dom-webpack: '*'
       vite: ^8.0.0
     peerDependenciesMeta:
@@ -2028,7 +2032,7 @@ packages:
   fake-context-lib@file:packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib:
     resolution: {directory: packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib, type: directory}
     peerDependencies:
-      react: ^19.2.6
+      react: '>=18'
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -2393,10 +2397,6 @@ packages:
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
-  picomatch@4.0.3:
-    resolution: {integrity: sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==}
-    engines: {node: '>=12'}
-
   picomatch@4.0.4:
     resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
     engines: {node: '>=12'}
@@ -2434,7 +2434,7 @@ packages:
   react-dom@0.0.0-experimental-c0060cf2-20260224:
     resolution: {integrity: sha512-MIjg7KpKv1StDb5huvLLGiNhp/vrBPcHo12EI6LIWJDx/rK+o1J6Ud3+UrvNzGgUWtTyNut03iMzh/mLYauLTQ==}
     peerDependencies:
-      react: ^19.2.6
+      react: 0.0.0-experimental-c0060cf2-20260224
 
   react-dom@19.2.6:
     resolution: {integrity: sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==}
@@ -2524,7 +2524,7 @@ packages:
   spin-delay@2.0.1:
     resolution: {integrity: sha512-ilggKXKqAMwk21PSYvxuF/KCnrsGFDrnO6mXa629mj8fvfo+dOQfubDViqsRjRX5U1jd3Xb8FTsV+m4Tg7YeUg==}
     peerDependencies:
-      react: ^19.2.6
+      react: '>=17.0.1'
 
   srvx@0.11.15:
     resolution: {integrity: sha512-iXsux0UcOjdvs0LCMa2Ws3WwcDUozA3JN3BquNXkaFPP7TpRqgunKdEgoZ/uwb1J6xaYHfxtz9Twlh6yzwM6Tg==}
@@ -3862,10 +3862,6 @@ snapshots:
     dependencies:
       react: 19.2.6
 
-  fdir@6.5.0(picomatch@4.0.3):
-    optionalDependencies:
-      picomatch: 4.0.3
-
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
       picomatch: 4.0.4
@@ -4205,8 +4201,6 @@ snapshots:
 
   picocolors@1.1.1: {}
 
-  picomatch@4.0.3: {}
-
   picomatch@4.0.4: {}
 
   playwright-core@1.57.0: {}
@@ -4282,7 +4276,7 @@ snapshots:
   rollup-plugin-visualizer@7.0.1(rolldown@1.0.2)(rollup@4.54.0):
     dependencies:
       open: 11.0.0
-      picomatch: 4.0.3
+      picomatch: 4.0.4
       source-map: 0.7.6
       yargs: 18.0.0
     optionalDependencies:
@@ -4417,8 +4411,8 @@ snapshots:
 
   tinyglobby@0.2.15:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
 
   tinyglobby@0.2.16:
     dependencies:
@@ -4528,7 +4522,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.3
+      picomatch: 4.0.4
       std-env: 3.10.0
       tinybench: 2.9.0
       tinyexec: 1.0.2

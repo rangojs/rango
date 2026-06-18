@@ -246,6 +246,75 @@ describe("dispatch", () => {
     expect(res.headers.get("X-Tag")).toBe("yes");
   });
 
+  // A1 makes `router.use("/:locale(en|gb)/*", mw)` a real consumer feature:
+  // constrained / optional / suffix middleware scopes. Exercise it end-to-end
+  // through dispatch (the public testing primitive that runs the full global
+  // middleware scope-matching path), not just the white-box compiler, so a
+  // consumer can pin "my scoped middleware runs only for these locales".
+  describe("constrained middleware scope (router.use)", () => {
+    function localeScopedRouter(onRun: (locale: string) => void) {
+      const localeMw: MiddlewareFn = async (ctx, next) => {
+        onRun(ctx.params.locale as string);
+        ctx.header("X-Locale-Mw", "ran");
+        return next();
+      };
+      return createRouter<{}>({})
+        .use("/:locale(en|gb)/*", localeMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/en/x", () => ({ ok: "en" }), { name: "en.x" }),
+            path.json("/gb/x", () => ({ ok: "gb" }), { name: "gb.x" }),
+            path.json("/de/x", () => ({ ok: "de" }), { name: "de.x" }),
+          ]),
+        ) as Parameters<typeof dispatch>[0];
+    }
+
+    it("runs the middleware for an in-constraint locale (/en) and exposes the param", async () => {
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/en/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBe("ran");
+      // The constrained param is named "locale" (not "locale(en|gb)") and is
+      // extracted from the matched path.
+      expect(ran).toEqual(["en"]);
+    });
+
+    it("runs the middleware for the other in-constraint locale (/gb)", async () => {
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/gb/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBe("ran");
+      expect(ran).toEqual(["gb"]);
+    });
+
+    it("does NOT run the middleware for an out-of-constraint locale (/de)", async () => {
+      // The whole point of the constraint: /de is a real route but is outside
+      // the (en|gb) scope, so the middleware must not run. If constraints were
+      // not enforced (the pre-A1 bug, or a scope-explosion regression) the
+      // middleware would run here and this test would fail.
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/de/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBeNull();
+      expect(ran).toEqual([]);
+    });
+  });
+
   it("wires the router's cache store into the request context", async () => {
     // Without the store, registerCachedFunction bypasses BEFORE the request-scope
     // (NOCACHE) check, so the brand would be inert. dispatch must surface the

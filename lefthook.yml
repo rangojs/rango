@@ -13,6 +13,9 @@ pre-commit:
     - name: e2e-bucketing
       run: node tools/check-e2e-bucketing.mjs
       glob: "*.test.{ts,tsx,js,jsx}"
+    - name: doc-links
+      run: node tools/check-doc-links.mjs
+      glob: "packages/rangojs-router/docs/internal/feature-*map.md"
 
 post-merge:
   jobs:

@@ -752,6 +752,20 @@ export const IsActionAnyLoader = createLoader(async () => {
   return { runs: isActionAnyRuns };
 });
 
+// shouldRevalidate({ formData }) e2e probe (C2). A module-level run counter so
+// the test can tell whether the loader re-ran. Gated by
+// revalidate(({ formData }) => formData?.get("reload") === "yes"): the loader
+// re-runs ONLY when the action's FormData reaches the predicate with the clean
+// `reload` key. If formData is undefined (the bug) or carries Flight-encoded
+// keys, the predicate is false and the counter does not change — for BOTH the JS
+// and no-JS (PE) transports.
+let revalFormDataRuns = 0;
+export const RevalFormDataLoader = createLoader(async () => {
+  "use server";
+  revalFormDataRuns += 1;
+  return { runs: revalFormDataRuns };
+});
+
 // ============================================================================
 // Action ctx.set → loader ctx.get test
 // Reads context variables set by an action to verify loaders see them

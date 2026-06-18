@@ -7,6 +7,8 @@
  * URLSearchParams instance.
  */
 
+import { encodeKV } from "./encode-kv.js";
+
 /** Supported scalar types for search params (append ? for optional). */
 export type SearchSchemaValue =
   | "string"
@@ -200,15 +202,15 @@ export function parseSearchParams<T extends SearchSchema>(
 
 /**
  * Serialize a typed search params object to a query string (without leading `?`).
- * Skips `undefined` and `null` values.
+ * Skips `undefined` and `null` values. Preserves insertion order (no sort).
  */
 export function serializeSearchParams(params: Record<string, unknown>): string {
-  const parts: string[] = [];
+  // Pre-filter null/undefined and coerce values to strings here so encodeKV
+  // (which never inspects values) reproduces this call site's exact output.
+  const pairs: [string, string][] = [];
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null) continue;
-    parts.push(
-      `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`,
-    );
+    pairs.push([key, String(value)]);
   }
-  return parts.join("&");
+  return encodeKV(pairs);
 }

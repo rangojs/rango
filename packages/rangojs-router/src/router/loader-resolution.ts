@@ -109,16 +109,40 @@ export function wrapLoaderWithErrorHandling<T>(
         };
       }
 
-      // Render fallback on server
+      // Render fallback on server. The user ErrorBoundaryHandler may throw
+      // synchronously; if it does we must NOT let that rejection escape — the
+      // wrapped LoaderDataResult promise is contracted to never reject (see
+      // segment-resolution/fresh.ts `await Promise.all(...wrapped)`), and a
+      // rejection here would collapse the whole entry and discard healthy
+      // sibling loader data. On a fallback-render throw, fall back to the
+      // no-boundary result (fallback: null) so the client throws the ORIGINAL
+      // error, and the wrapped promise still resolves to a LoaderDataResult.
       let renderedFallback: ReactNode;
-      if (typeof fallback === "function") {
-        // ErrorBoundaryHandler - call with error info
-        const props: ErrorBoundaryFallbackProps = {
+      try {
+        if (typeof fallback === "function") {
+          // ErrorBoundaryHandler - call with error info
+          const props: ErrorBoundaryFallbackProps = {
+            error: errorInfo,
+          };
+          renderedFallback = fallback(props);
+        } else {
+          renderedFallback = fallback;
+        }
+      } catch (fallbackError) {
+        debugLog("loader", "error boundary fallback render threw", {
+          segmentId,
+          message: errorInfo.message,
+          fallbackError:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError),
+        });
+        return {
+          __loaderResult: true,
+          ok: false,
           error: errorInfo,
+          fallback: null,
         };
-        renderedFallback = fallback(props);
-      } else {
-        renderedFallback = fallback;
       }
 
       debugLog("loader", "loader error wrapped with boundary fallback", {
@@ -542,18 +566,21 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
         );
       }
 
-      return (
-        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
-      ) => {
-        if (!store) return;
+      // Wrap with withDefer so ctx.use(Handle).defer(...) works on the build /
+      // prerender path, matching production setupLoaderAccess. Without it a
+      // prerender handler calling .defer() throws "defer is not a function".
+      return withDefer(
+        (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+          if (!store) return;
 
-        const valueOrPromise =
-          typeof dataOrFn === "function"
-            ? (dataOrFn as () => Promise<unknown>)()
-            : dataOrFn;
+          const valueOrPromise =
+            typeof dataOrFn === "function"
+              ? (dataOrFn as () => Promise<unknown>)()
+              : dataOrFn;
 
-        store.push(handle.$$id, segmentId, valueOrPromise);
-      };
+          store.push(handle.$$id, segmentId, valueOrPromise);
+        },
+      );
     }
 
     // Loader case: not available during pre-rendering
@@ -581,8 +608,11 @@ export function setupLoaderAccessSilent<TEnv>(
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
-      // Silent mode - return a no-op so handle data is not pushed during caching
-      return (_dataOrFn: unknown) => {};
+      // Silent mode - return a no-op so handle data is not pushed during caching.
+      // Wrap with withDefer so ctx.use(Handle).defer(...) still resolves to a
+      // callable resolver (also a no-op here), matching production's push shape
+      // instead of throwing "defer is not a function".
+      return withDefer((_dataOrFn: unknown) => {});
     }
 
     return useLoader(item as LoaderDefinition<any, any>, null);

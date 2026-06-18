@@ -5,6 +5,7 @@ import {
   findStatementEnd,
   buildExportMap,
   escapeRegExp,
+  findCallParenAfterGenerics,
 } from "../expose-id-utils.js";
 import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
 import type { CreateExportBinding } from "./types.js";
@@ -50,18 +51,42 @@ export function isExportOnlyFile(
   return true;
 }
 
+// Matches the callee identifier only. The optional generic argument list
+// (which may be nested, e.g. createLoader<A<B>>(...)) and the call paren are
+// resolved per match via findCallParenAfterGenerics, so a nested `>` no longer
+// defeats the scan the way `<[^>]*>` did (it stopped at the first `>`).
 function createCallPattern(fnNames: string[]): RegExp {
-  return new RegExp(
-    `\\b(?:${fnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>\\s*)?\\(`,
-    "g",
+  return new RegExp(`\\b(?:${fnNames.map(escapeRegExp).join("|")})\\b`, "g");
+}
+
+/**
+ * Byte offsets of every create*-call site in real code: a callee-identifier
+ * match that is actually followed by a call `(` (after an optional nested
+ * generic list). Non-call references (type positions, the import specifier
+ * itself) yield -1 from findCallParenAfterGenerics and are dropped.
+ */
+function createCallStartIndices(code: string, fnNames: string[]): number[] {
+  return codeMatchIndices(code, createCallPattern(fnNames)).filter(
+    (index) =>
+      findCallParenAfterGenerics(
+        code,
+        index + matchedNameLength(code, index),
+      ) !== -1,
   );
+}
+
+// Length of the identifier match at `index` (run of identifier chars).
+function matchedNameLength(code: string, index: number): number {
+  let i = index;
+  while (i < code.length && /[A-Za-z0-9_$]/.test(code[i])) i++;
+  return i - index;
 }
 
 export function countCreateCallsForNames(
   code: string,
   fnNames: string[],
 ): number {
-  return codeMatchIndices(code, createCallPattern(fnNames)).length;
+  return createCallStartIndices(code, fnNames).length;
 }
 
 export function offsetToLineColumn(
@@ -86,7 +111,7 @@ export function findUnsupportedCreateCallSites(
   supportedBindings: CreateExportBinding[],
 ): Array<{ line: number; column: number }> {
   const supported = new Set(supportedBindings.map((b) => b.callExprStart));
-  return codeMatchIndices(code, createCallPattern(fnNames))
+  return createCallStartIndices(code, fnNames)
     .filter((index) => !supported.has(index))
     .map((index) => offsetToLineColumn(code, index));
 }

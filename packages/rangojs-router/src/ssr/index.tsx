@@ -1,6 +1,9 @@
 import React from "react";
 import { renderSegments } from "../segment-system.js";
-import { filterSegmentOrder } from "../browser/react/filter-segment-order.js";
+import {
+  filterSegmentOrder,
+  filterRouteSegmentIds,
+} from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
 import { NonceContext } from "../browser/react/nonce-context.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
@@ -166,9 +169,7 @@ function createSsrEventController(opts: {
   const handleState = {
     data: opts.handleData ?? {},
     segmentOrder: filterSegmentOrder(rawMatched),
-    routeSegmentIds: rawMatched.filter(
-      (id) => !id.includes(".@") && !/D\d+\./.test(id),
-    ),
+    routeSegmentIds: filterRouteSegmentIds(rawMatched),
   };
   const state: DerivedNavigationState = {
     state: "idle",

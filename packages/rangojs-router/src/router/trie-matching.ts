@@ -81,6 +81,7 @@ export function tryTrieMatch(
       result.wildcardValue,
       pathname,
       pathnameHasTrailingSlash,
+      result.validatedParams,
     );
   }
 
@@ -91,6 +92,14 @@ interface WalkResult {
   leaf: TrieLeaf;
   paramValues: string[];
   wildcardValue?: string;
+  /**
+   * For a constraint-bearing leaf (leaf.cv set), the params map that
+   * leafConstraintsPass already decoded AND validated during the walk. Carried
+   * forward so validateAndBuild reuses it instead of re-decoding paramValues and
+   * re-running constraintsSatisfied a second time on the winning leaf. Undefined
+   * for unconstrained leaves (no decode/validate happened in the walk).
+   */
+  validatedParams?: Record<string, string>;
 }
 
 /**
@@ -115,17 +124,23 @@ function constraintsSatisfied(
 /**
  * Constraint check for a candidate terminal DURING the walk. Builds the named
  * params from positional walk values (decoded the same way validateAndBuild
- * does) and validates leaf.cv. Returning false lets walkTrie unwind to a
+ * does) and validates leaf.cv. Returning null lets walkTrie unwind to a
  * lower-priority sibling instead of committing to a leaf that would only be
  * rejected post-walk — that post-walk rejection is what forced the regex
  * fallback (and its false "trie gap" R3 warning) for perfectly valid configs.
+ *
+ * On success returns the built+validated params for a constraint-bearing leaf so
+ * walkTrie can carry them to validateAndBuild (avoiding a second decode + a
+ * second constraintsSatisfied pass on the winner); returns the shared EMPTY_PASS
+ * sentinel for an unconstrained leaf (no work was done, nothing to carry).
  */
+const EMPTY_PASS: Record<string, string> = {};
 function leafConstraintsPass(
   leaf: TrieLeaf,
   paramValues: string[],
   wildcardValue: string | undefined,
-): boolean {
-  if (!leaf.cv) return true;
+): Record<string, string> | null {
+  if (!leaf.cv) return EMPTY_PASS;
   const params: Record<string, string> = {};
   if (leaf.pa) {
     for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
@@ -136,7 +151,7 @@ function leafConstraintsPass(
     params[(leaf as TrieLeaf & { pn: string }).pn] =
       safeDecodeURIComponent(wildcardValue);
   }
-  return constraintsSatisfied(leaf, params);
+  return constraintsSatisfied(leaf, params) ? params : null;
 }
 
 /**
@@ -154,8 +169,19 @@ function walkTrie(
   paramValues: string[],
 ): WalkResult | null {
   if (index === segments.length) {
-    if (node.r && leafConstraintsPass(node.r, paramValues, undefined)) {
-      return { leaf: node.r, paramValues: [...paramValues] };
+    if (node.r) {
+      const validatedParams = leafConstraintsPass(
+        node.r,
+        paramValues,
+        undefined,
+      );
+      if (validatedParams) {
+        return {
+          leaf: node.r,
+          paramValues: [...paramValues],
+          validatedParams,
+        };
+      }
     }
     // A wildcard at this node matches the bare prefix with an empty remainder
     // (e.g. "/files" against "/files/*"), mirroring the regex matcher's `*=""`.
@@ -163,8 +189,16 @@ function walkTrie(
     // so without this a request to the wildcard's own prefix misses the trie
     // and the regex fallback emits a corrupt redirect. A static terminal
     // (node.r) still wins.
-    if (node.w && leafConstraintsPass(node.w, paramValues, "")) {
-      return { leaf: node.w, paramValues: [...paramValues], wildcardValue: "" };
+    if (node.w) {
+      const validatedParams = leafConstraintsPass(node.w, paramValues, "");
+      if (validatedParams) {
+        return {
+          leaf: node.w,
+          paramValues: [...paramValues],
+          wildcardValue: "",
+          validatedParams,
+        };
+      }
     }
     return null;
   }
@@ -206,11 +240,13 @@ function walkTrie(
 
   if (node.w) {
     const rest = joinRemainingSegments(segments, index);
-    if (leafConstraintsPass(node.w, paramValues, rest)) {
+    const validatedParams = leafConstraintsPass(node.w, paramValues, rest);
+    if (validatedParams) {
       return {
         leaf: node.w,
         paramValues: [...paramValues],
         wildcardValue: rest,
+        validatedParams,
       };
     }
   }
@@ -230,6 +266,15 @@ function joinRemainingSegments(segments: string[], start: number): string {
 
 /**
  * Post-match: validate constraints and handle trailing slash logic.
+ *
+ * `validatedParams` is the params map walkTrie already decoded AND validated via
+ * leafConstraintsPass for a constraint-bearing winning leaf. When present (and
+ * non-empty) we reuse it verbatim and SKIP the second decode + the second
+ * constraintsSatisfied pass — both are byte-identical to the walk-time work.
+ * When absent (unconstrained leaf, or the root-path call sites that never walk)
+ * we still BUILD the params here (that is not redundant — they must be returned)
+ * and run constraintsSatisfied for safety; an unconstrained leaf's check is a
+ * cheap early `!leaf.cv` return.
  */
 function validateAndBuild(
   leaf: TrieLeaf,
@@ -237,21 +282,30 @@ function validateAndBuild(
   wildcardValue: string | undefined,
   originalPathname: string,
   pathnameHasTrailingSlash: boolean,
+  validatedParams?: Record<string, string>,
 ): TrieMatchResult | null {
-  const params: Record<string, string> = {};
-  if (leaf.pa) {
-    for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
-      params[leaf.pa[i]] = safeDecodeURIComponent(paramValues[i]);
+  let params: Record<string, string>;
+  // EMPTY_PASS (the unconstrained sentinel) and undefined both mean "nothing was
+  // pre-validated"; only a populated map carried from a constraint-bearing leaf
+  // lets us skip the rebuild + re-check.
+  if (validatedParams && validatedParams !== EMPTY_PASS) {
+    params = validatedParams;
+  } else {
+    params = {};
+    if (leaf.pa) {
+      for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
+        params[leaf.pa[i]] = safeDecodeURIComponent(paramValues[i]);
+      }
     }
-  }
 
-  if (wildcardValue !== undefined && "pn" in leaf) {
-    params[(leaf as TrieLeaf & { pn: string }).pn] =
-      safeDecodeURIComponent(wildcardValue);
-  }
+    if (wildcardValue !== undefined && "pn" in leaf) {
+      params[(leaf as TrieLeaf & { pn: string }).pn] =
+        safeDecodeURIComponent(wildcardValue);
+    }
 
-  if (!constraintsSatisfied(leaf, params)) {
-    return null;
+    if (!constraintsSatisfied(leaf, params)) {
+      return null;
+    }
   }
 
   const tsMode = leaf.ts as "never" | "always" | "ignore" | undefined;

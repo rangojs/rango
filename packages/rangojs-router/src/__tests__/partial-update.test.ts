@@ -1730,4 +1730,181 @@ describe("partial-update", () => {
       expect(tx.startStreaming).not.toHaveBeenCalled();
     });
   });
+
+  /**
+   * F4: the render-vs-abort Promise.race must not leak its abort listener. The
+   * abort Promise registers an "abort" listener; if render wins, the listener
+   * has to be removed (the rejecting Promise never settles otherwise). Mirrors
+   * teeWithCompletion in browser/response-adapter.ts.
+   */
+  describe("abort listener lifecycle (F4)", () => {
+    function spySignal(): {
+      signal: AbortSignal;
+      addCalls: () => number;
+      removeCalls: () => number;
+    } {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      let added = 0;
+      let removed = 0;
+      const realAdd = signal.addEventListener.bind(signal);
+      const realRemove = signal.removeEventListener.bind(signal);
+      signal.addEventListener = ((type: string, ...rest: any[]) => {
+        if (type === "abort") added++;
+        return (realAdd as any)(type, ...rest);
+      }) as any;
+      signal.removeEventListener = ((type: string, ...rest: any[]) => {
+        if (type === "abort") removed++;
+        return (realRemove as any)(type, ...rest);
+      }) as any;
+      return {
+        signal,
+        addCalls: () => added,
+        removeCalls: () => removed,
+      };
+    }
+
+    it("removes the abort listener after a non-aborted partial render", async () => {
+      const cached = seg("L0", { type: "layout", component: "cached" });
+      const newRoute = seg("L0R0", { component: "new" });
+      const store = createMockStore({ cachedSegments: [cached] });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [newRoute],
+          matched: ["L0", "L0R0"],
+          diff: ["L0R0"],
+        },
+      });
+
+      const tx = createMockTx();
+      const spy = spySignal();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await updater(
+        "http://localhost/page",
+        ["L0", "L0R0"],
+        false,
+        spy.signal,
+        tx,
+      );
+
+      // The race registered exactly one abort listener and removed it after
+      // render won — no dangling listener.
+      expect(spy.addCalls()).toBe(1);
+      expect(spy.removeCalls()).toBe(1);
+    });
+  });
+
+  /**
+   * F3: the action full-update transition must use a synchronous callback like
+   * every sibling branch. An async callback returns a Promise React ignores —
+   * a latent trap.
+   */
+  describe("action full-update transition is synchronous (F3)", () => {
+    it("passes a non-async callback to startTransition on the action full path", async () => {
+      const captured: Array<(...args: any[]) => any> = [];
+      // Re-mock startTransition for this test to capture (still runs sync).
+      const React = await import("react");
+      const spy = vi.spyOn(React, "startTransition").mockImplementation(((
+        fn: () => void,
+      ) => {
+        captured.push(fn);
+        fn();
+      }) as any);
+
+      try {
+        const serverSegments = [seg("L0", { type: "layout" }), seg("L0R0")];
+        const store = createMockStore();
+        const { client } = createMockClient({
+          metadata: { isPartial: false, segments: serverSegments },
+        });
+        const onUpdate = vi.fn();
+        const tx = createMockTx();
+
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate,
+          renderSegments: vi.fn(async () => "full-tree"),
+        });
+
+        // mode.type === "action" drives the full-update action branch.
+        await updater("http://localhost/new", [], false, undefined, tx, {
+          type: "action",
+        });
+
+        expect(onUpdate).toHaveBeenCalledOnce();
+        expect(captured.length).toBeGreaterThan(0);
+        for (const fn of captured) {
+          expect(fn.constructor.name).not.toBe("AsyncFunction");
+          // A sync transition callback returns undefined, never a thenable.
+          expect((fn as any)()).toBeUndefined();
+        }
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  /**
+   * F5: the stream-completion side effect now has a .catch, so a rejecting
+   * stream does not surface as an unhandled rejection and does not break the
+   * update.
+   */
+  describe("stream completion rejection is swallowed (F5)", () => {
+    it("completes the partial update even if streamComplete rejects", async () => {
+      const cached = seg("R0", { component: "cached" });
+      const store = createMockStore({ cachedSegments: [cached] });
+
+      // streamComplete rejects; the .catch must absorb it.
+      const rejecting = Promise.reject(new Error("stream boom"));
+      // Pre-attach a no-op catch on our own reference so the test's reference
+      // doesn't itself trip the unhandled-rejection detector; the production
+      // .catch is what guards the copy partial-update holds.
+      rejecting.catch(() => {});
+
+      const tx = createMockTx();
+      const endSpy = vi.fn();
+      tx.startStreaming = vi.fn(() => ({ end: endSpy }));
+
+      const client = {
+        fetchPartial: vi.fn(async () => ({
+          payload: {
+            metadata: {
+              isPartial: true,
+              segments: [seg("R0", { component: "new" })],
+              matched: ["R0"],
+              diff: ["R0"],
+            },
+          },
+          streamComplete: rejecting,
+        })),
+      };
+
+      const onUpdate = vi.fn();
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      expect(onUpdate).toHaveBeenCalledOnce();
+    });
+  });
 });

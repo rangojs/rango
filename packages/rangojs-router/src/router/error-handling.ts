@@ -170,6 +170,37 @@ export function findNearestNotFoundBoundary(
 }
 
 /**
+ * Normalize an error's cause into a Flight-serializable shape.
+ * ErrorInfo.cause crosses the RSC serialization boundary (via
+ * LoaderDataResult.error + error-segment fallback props); a non-serializable
+ * cause (function, class instance, circular object) would make Flight
+ * serialization throw and mask the original loader error.
+ */
+function normalizeCause(cause: unknown): unknown {
+  if (cause == null) return undefined;
+  const t = typeof cause;
+  if (t === "string" || t === "number" || t === "boolean") return cause;
+  // The whole body is guarded: even `instanceof`/clone can run user code (a
+  // Proxy trap, a throwing getter), and this helper must never throw —
+  // throwing here would mask the original loader error it exists to protect.
+  try {
+    if (cause instanceof Error) {
+      return { name: cause.name, message: cause.message, stack: cause.stack };
+    }
+    // Prefer preserving a serializable object/array intact (Flight uses
+    // structured-clone-like semantics); fall back to a string when the value
+    // is circular, host-bound, or otherwise non-serializable.
+    return structuredClone(cause);
+  } catch {
+    try {
+      return String(cause);
+    } catch {
+      return "[unstringifiable cause]";
+    }
+  }
+}
+
+/**
  * Create ErrorInfo from an error object
  * Sanitizes error details in production
  */
@@ -186,7 +217,7 @@ export function createErrorInfo(
       name: error.name,
       code: (error as any).code,
       stack: isDev ? error.stack : undefined,
-      cause: isDev ? error.cause : undefined,
+      cause: isDev ? normalizeCause(error.cause) : undefined,
       segmentId,
       segmentType,
     };

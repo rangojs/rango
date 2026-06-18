@@ -243,6 +243,12 @@ export function withCacheStore<TEnv>(
                   proactiveHandlerContext,
                   true, // belongsToRoute
                   // No revalidationContext = render fresh
+                  undefined,
+                  // Skip intercept middleware: the foreground already ran it
+                  // before the response was sent. Re-running here (post-response,
+                  // background) would fire side effects twice and a short-circuit
+                  // Response would silently abort this cache write.
+                  { skipMiddleware: true },
                 ),
               );
             }

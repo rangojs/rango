@@ -3,7 +3,10 @@ import ts from "typescript";
 import { extractParamsFromPattern } from "./param-extraction.js";
 import { extractRoutesFromSource } from "./ast-route-extraction.js";
 import { generatePerModuleTypesSource } from "./codegen.js";
-import { buildCombinedRouteMapWithSearch } from "./include-resolution.js";
+import {
+  buildCombinedRouteMapWithSearch,
+  createScanMemo,
+} from "./include-resolution.js";
 import type { ScanFilter } from "./scan-filter.js";
 import { findTsFiles } from "./scan-filter.js";
 
@@ -78,10 +81,20 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
     if (varNames.length > 0) {
       // Follow includes recursively via the combined route map builder.
       // The visited set in buildCombinedRouteMapWithSearch prevents infinite loops.
+      // Share one per-file scan memo across all urls() variables so a shared
+      // include target is read+parsed once for this file, not once per variable.
       routes = [];
+      const memo = createScanMemo();
       for (const varName of varNames) {
         const { routes: routeMap, searchSchemas } =
-          buildCombinedRouteMapWithSearch(filePath, varName);
+          buildCombinedRouteMapWithSearch(
+            filePath,
+            varName,
+            undefined,
+            undefined,
+            undefined,
+            memo,
+          );
         for (const [name, pattern] of Object.entries(routeMap)) {
           const params = extractParamsFromPattern(pattern);
           routes.push({
