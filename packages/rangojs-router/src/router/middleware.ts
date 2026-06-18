@@ -2,6 +2,7 @@
 
 import { contextGet, contextSet } from "../context-var.js";
 import { escapeRegExp } from "../regex-escape.js";
+import { parsePattern as parseRoutePattern } from "./pattern-matching.js";
 import { safeDecodeURIComponent } from "./url-params.js";
 import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import type {
@@ -49,7 +50,43 @@ function getMiddlewareMetricLabel<TEnv>(
   return `middleware:${scope}#${ordinal + 1}`;
 }
 
-export function parsePattern(pattern: string): {
+/**
+ * Compile a middleware scope pattern to a regex + param names.
+ *
+ * Middleware scopes reuse the route pattern parser (`parsePattern` from
+ * pattern-matching.ts), so they support the same param forms as routes —
+ * optional (`:x?`), constrained (`:x(en|gb)`), and suffix (`:x.html`) — in
+ * addition to the trailing-`*` wildcard middleware relies on. Before this
+ * unification the middleware-side parser handled only static, bare `:param`,
+ * and trailing `*`, so e.g. `router.use("/:locale(en|gb)/*", mw)` silently
+ * named the param "locale(en|gb)" and never enforced the constraint.
+ *
+ * Middleware matching semantics deliberately differ from route matching, so we
+ * emit the regex here rather than route through `compilePattern`:
+ * - `*` alone matches every path (`/^.*$/`).
+ * - A trailing `*` segment is an OPTIONAL subtree match (`(?:/.*)?`): `/admin/*`
+ *   matches `/admin`, `/admin/`, and `/admin/users`. It contributes no param
+ *   name (unlike route wildcards, which capture `*`).
+ * - A NON-trailing `*` is also OPTIONAL (`(?:/.*)?`), matching zero-or-more
+ *   intermediate segments: `/a/<star>/b` matches both `/a/b` and `/a/x/b`. This
+ *   mirrors the pre-unification parser, which compiled every `*` part as
+ *   optional regardless of position.
+ * - A pattern without a trailing `*` tolerates a trailing slash (`/?$`).
+ * - Constraints are baked into the regex as an alternation so `matchMiddleware`
+ *   (a bare `regex.test`) enforces them without extra validation. Constraint
+ *   values are matched against the raw (still URL-encoded) path segment, which
+ *   matches the pre-unification middleware behavior (it never decoded for
+ *   matching); the constraint string is regex-escaped so values like `en.gb`
+ *   are treated literally.
+ *
+ * The route segment parser only recognizes `/`-prefixed segments, but the
+ * pre-unification middleware parser split on `/` and dropped empty parts, so a
+ * leading slash was irrelevant: `use("admin/*")` and `use("/admin/*")` scoped
+ * identically. Normalize a non-`*` pattern to have a leading slash before
+ * parsing so that behavior is preserved (without it, `parseRoutePattern("admin/*")`
+ * drops the static `admin` and the scope explodes to every path).
+ */
+export function compileMiddlewarePattern(pattern: string): {
   regex: RegExp;
   paramNames: string[];
 } {
@@ -57,34 +94,43 @@ export function parsePattern(pattern: string): {
     return { regex: /^.*$/, paramNames: [] };
   }
 
+  const normalizedPattern = pattern.startsWith("/") ? pattern : `/${pattern}`;
+  const segments = parseRoutePattern(normalizedPattern);
   const paramNames: string[] = [];
   let regexStr = "^";
+  let hasTrailingWildcard = false;
 
-  const parts = pattern.split("/").filter(Boolean);
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
 
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-
-    if (part === "*") {
-      // Wildcard - match rest of path
+    if (segment.type === "wildcard") {
+      // Optional subtree match (parity with the original middleware parser,
+      // which compiled every `*` as `(?:/.*)?`). A trailing `*` matches the
+      // subtree; a non-trailing `*` matches zero-or-more intermediate segments,
+      // so `/a/<star>/b` still matches `/a/b`.
       regexStr += "(?:/.*)?";
-    } else if (part.startsWith(":")) {
-      // Param
-      const paramName = part.slice(1);
-      paramNames.push(paramName);
-      regexStr += "/([^/]+)";
+      if (i === segments.length - 1) {
+        hasTrailingWildcard = true;
+      }
+    } else if (segment.type === "param") {
+      paramNames.push(segment.value);
+      const suffixPattern = segment.suffix ? escapeRegExp(segment.suffix) : "";
+      const valuePattern = segment.constraint
+        ? `(${segment.constraint.map(escapeRegExp).join("|")})`
+        : "([^/]+)";
+      if (segment.optional) {
+        regexStr += `(?:/${valuePattern}${suffixPattern})?`;
+      } else {
+        regexStr += `/${valuePattern}${suffixPattern}`;
+      }
     } else {
-      // Literal
-      regexStr += "/" + escapeRegExp(part);
+      // Static literal
+      regexStr += "/" + escapeRegExp(segment.value);
     }
   }
 
-  // If pattern doesn't end with *, match exact or with trailing segments
-  if (!pattern.endsWith("*")) {
-    regexStr += "/?$";
-  } else {
-    regexStr += "$";
-  }
+  // Without a trailing `*`, match exactly with an optional trailing slash.
+  regexStr += hasTrailingWildcard ? "$" : "/?$";
 
   return { regex: new RegExp(regexStr), paramNames };
 }

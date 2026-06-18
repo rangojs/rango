@@ -707,6 +707,34 @@ describe("loader-cache", () => {
       expect(result).toEqual({ other: true });
     });
 
+    it("dedups the cache read-through when the same loaderId resolves twice in one request", async () => {
+      // An orphan layout with parallel slots inherits its parent route's
+      // loaders, so resolveOrphanLayout re-resolves the parent's loaders under
+      // a different shortCode -> resolveLoaderData runs twice for the SAME
+      // loaderId. Without dedup, getItem/setItem (e.g. a KV round-trip) would
+      // run twice for one logical cached loader.
+      const store = createMockStore();
+      const loader = createMockLoader("orphan-inherited", { data: "shared" });
+      const entry = createLoaderEntry(loader, { ttl: 60, store });
+      const ctx = createMockCtx();
+
+      const first = resolveLoaderData(entry, ctx, "/dashboard");
+      const second = resolveLoaderData(entry, ctx, "/dashboard");
+
+      // Second resolution must reuse the first in-flight promise, not issue a
+      // second read-through.
+      expect(second).toBe(first);
+
+      const [a, b] = await Promise.all([first, second]);
+      expect(a).toEqual({ data: "shared" });
+      expect(b).toEqual({ data: "shared" });
+
+      // One getItem and one setItem (and one loader execution) for one loaderId.
+      expect(store.getItem).toHaveBeenCalledTimes(1);
+      expect(store.setItem).toHaveBeenCalledTimes(1);
+      expect(loader).toHaveBeenCalledTimes(1);
+    });
+
     it("accumulates multiple cached loaders behind one stable interceptor (no O(N) chain)", async () => {
       const loaderA = createMockLoader("loader-a", { data: "A" });
       const loaderB = createMockLoader("loader-b", { data: "B" });
