@@ -76,6 +76,32 @@ describe("replyToCacheKey (use cache key derivation)", () => {
     expect(await replyToCacheKey(fd1)).toBe(await replyToCacheKey(fd2));
   });
 
+  it("does NOT collide a string equal to a blob token with the blob entry (P2a)", async () => {
+    // A File serializes to `b:<size>:<encType>:<encName>:<hash>`. A user-supplied
+    // STRING whose value is exactly that token, under the same FormData key, must
+    // NOT produce the same key as the actual File — otherwise two different arg
+    // lists share one cache entry. Reconstruct the exact token the blob branch
+    // emits (deterministic name/type so it is predictable), feed it back as a
+    // string, and assert the keys diverge (the `s:` tag is what separates them).
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+
+    // djb2 over the same bytes, matching djb2HexBytes in cache-runtime.ts.
+    let h = 5381;
+    for (const b of bytes) h = ((h << 5) + h + b) >>> 0;
+    const hash = h.toString(16).padStart(8, "0");
+    // size 4, type "" -> encType "", name "f" -> encName "f".
+    const blobToken = `b:4::f:${hash}`;
+
+    const fdBlob = new FormData();
+    fdBlob.append("0", new File([bytes], "f", { type: "" }));
+    const fdString = new FormData();
+    fdString.append("0", blobToken);
+
+    expect(await replyToCacheKey(fdBlob)).not.toBe(
+      await replyToCacheKey(fdString),
+    );
+  });
+
   it("does NOT collide when name/type carry the field-delimiter colon", async () => {
     // Token shape is `b:<size>:<type>:<name>:<hash>`. With equal size and bytes,
     // a File {name:"a:b", type:""} and {name:"b", type:":a"} would join to the

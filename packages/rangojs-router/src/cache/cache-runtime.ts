@@ -77,12 +77,15 @@ function djb2HexBytes(bytes: Uint8Array): string {
  *
  * Instead derive the key from the entries themselves, independent of the
  * boundary: iterate in sorted-key order and, for each value, emit a
- * boundary-free token — `value` for strings, `b:<size>:<type>:<name>:<hash>`
+ * boundary-free token — `s:<value>` for strings, `b:<size>:<type>:<name>:<hash>`
  * for Blob/File (bytes folded via djb2 so distinct payloads of equal
- * size/type/name still differ). The user-controlled `type`/`name` are
- * percent-encoded before joining so an embedded `:` cannot shift the field
- * boundaries and collide two distinct files (e.g. {name:"a:b",type:""} vs
- * {name:"b",type:":a"}). The result is stable across identical arg sets.
+ * size/type/name still differ). Strings carry an `s:` type tag so a string whose
+ * value happens to equal a blob token (e.g. the literal `b:4::a:b:<hash>`) cannot
+ * collide with an actual Blob/File entry under the same FormData key. The
+ * user-controlled `type`/`name` are percent-encoded before joining so an embedded
+ * `:` cannot shift the field boundaries and collide two distinct files (e.g.
+ * {name:"a:b",type:""} vs {name:"b",type:":a"}). The result is stable across
+ * identical arg sets.
  */
 export async function replyToCacheKey(
   encoded: string | FormData,
@@ -98,7 +101,10 @@ export async function replyToCacheKey(
   const pairs: [string, string][] = [];
   for (const [key, value] of raw) {
     if (typeof value === "string") {
-      pairs.push([key, value]);
+      // Type-tag strings with `s:` so a string equal to a blob token (e.g.
+      // `b:4::a:b:<hash>`) cannot collide with a Blob/File entry under the same
+      // key (which carries the `b:` tag below).
+      pairs.push([key, "s:" + value]);
     } else {
       // Blob/File: fold the bytes into a deterministic, boundary-free token.
       // Percent-encode the user-controlled type/name so an embedded `:` cannot

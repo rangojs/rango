@@ -92,21 +92,40 @@ export async function serveResponseRouteWithCache(
   let cacheKey = `response:${responseType}:${url.host}${url.pathname}${url.search}`;
 
   // Priority 1: route-level key() (full override). Priority 2: store-level
-  // keyGenerator (modifies the default key). Both fall back to the default key
-  // on failure.
+  // keyGenerator (modifies the default key).
+  //
+  // A CONFIGURED key()/keyGenerator that THROWS must DEGRADE TO A MISS, not fall
+  // back to the broad default key. The default key
+  // `response:${type}:${host}${path}${search}` is intentionally broad; if the
+  // configured key encodes tenant/user/auth state, falling back to the broad key
+  // would cache PERSONALIZED output under it and serve it cross-user (cache
+  // poisoning). Mirrors the segment-cache behavior (cache-scope.ts lookupRoute):
+  // a throwing key degrades to a cache miss, never a collision onto the default
+  // slot. The no-key default path is left untouched (the broad key is correct
+  // when no key is configured).
+  let keyResolutionFailed = false;
   if (cacheScope.config !== false && cacheScope.config.key) {
     try {
       const customKey = await cacheScope.config.key(reqCtx);
       cacheKey = `response:${customKey}`;
-    } catch {
-      // Fall back to default key on route-level key failure.
+    } catch (error) {
+      keyResolutionFailed = true;
+      console.error(`[ResponseCache] Key resolution failed:`, error);
     }
   } else if (store.keyGenerator) {
     try {
       cacheKey = await store.keyGenerator(reqCtx, cacheKey);
-    } catch {
-      // Fall back to default key on keyGenerator failure.
+    } catch (error) {
+      keyResolutionFailed = true;
+      console.error(`[ResponseCache] keyGenerator failed:`, error);
     }
+  }
+
+  // Degrade to a MISS: return undefined so the caller runs the route UNCACHED.
+  // This early-returns BEFORE _onResponseCallbacks is saved/cleared below, so the
+  // pre-handler onResponse callbacks are still intact for the uncached run.
+  if (keyResolutionFailed) {
+    return undefined;
   }
 
   // Resolve cache tags for this document entry (static or dynamic) while the

@@ -9,7 +9,12 @@
 import type { ResolvedSegment } from "../types.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { SegmentHandleData } from "./types.js";
-import { serializeResult, deserializeResult } from "./segment-codec.js";
+// segment-codec eagerly pulls @vitejs/plugin-rsc (a virtual: module unresolvable
+// in plain node/vitest). It is imported LAZILY inside the two async encode/decode
+// helpers below so that modules which import handle-snapshot only for the
+// plugin-rsc-free captureHandles/restoreHandles (e.g. cache-scope, on dispatch's
+// lazy response-route cache path) do not pull plugin-rsc at module load. Behavior
+// is unchanged: both helpers are async and already awaited the codec.
 
 const HANDLE_ENCODE_TIMEOUT_MS = 5000;
 
@@ -52,6 +57,7 @@ export function decodeHandles(encoded: string): Promise<HandleRecord | null> {
 }
 
 export async function encodeHandleValue(value: unknown): Promise<string> {
+  const { serializeResult } = await import("./segment-codec.js");
   const encoded = await withTimeout(
     serializeResult(value),
     HANDLE_ENCODE_TIMEOUT_MS,
@@ -67,6 +73,7 @@ export async function encodeHandleValue(value: unknown): Promise<string> {
  */
 export async function decodeHandleValue<T>(encoded: string): Promise<T | null> {
   try {
+    const { deserializeResult } = await import("./segment-codec.js");
     return await deserializeResult<T>(encoded);
   } catch {
     return null;

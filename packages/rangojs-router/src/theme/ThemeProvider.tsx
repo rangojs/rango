@@ -200,11 +200,16 @@ export function ThemeProvider({
       const newTheme = e.newValue;
       if (!newTheme) return;
 
-      // Validate and apply
-      if (newTheme === "system" || config.themes.includes(newTheme)) {
-        setThemeState(newTheme as Theme);
-        applyThemeToDocument(newTheme as Theme, config);
-      }
+      // A cross-tab storage event can carry any value (another tab, or stale
+      // localStorage). Reuse the shared validity rule: reject anything not a
+      // configured theme, AND reject "system" when system detection is off (it
+      // would apply a bogus class="system"). An invalid received value falls back
+      // to defaultTheme rather than applying as-is.
+      const applied: Theme = isValidTheme(newTheme, config)
+        ? (newTheme as Theme)
+        : config.defaultTheme;
+      setThemeState(applied);
+      applyThemeToDocument(applied, config);
     };
 
     window.addEventListener("storage", handleStorageChange);

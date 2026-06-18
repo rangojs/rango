@@ -18,7 +18,13 @@ import {
 } from "../server/request-context.js";
 import { recordRequestTags } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
-import { serializeSegments, deserializeSegments } from "./segment-codec.js";
+// segment-codec is the only module on cache-scope's import graph that eagerly
+// pulls @vitejs/plugin-rsc (a virtual: module the plain node/vitest runner cannot
+// resolve). It is imported LAZILY at the two call sites below (deserializeSegments
+// in lookupRoute, serializeSegments in cacheRoute) so that requiring cache-scope —
+// e.g. dispatch's lazy `import("../cache/cache-scope.js")` for the response-route
+// cache path — does not crash a consumer test that never mocks plugin-rsc. Behavior
+// is unchanged: both methods are async and already awaited the codec.
 import {
   captureHandles,
   restoreHandles,
@@ -256,6 +262,7 @@ export class CacheScope {
       // error (handled by the outer catch).
       let segments: ResolvedSegment[];
       try {
+        const { deserializeSegments } = await import("./segment-codec.js");
         segments = await deserializeSegments(cached.segments);
       } catch (error) {
         reportCacheError(
@@ -432,6 +439,7 @@ export class CacheScope {
         // Serialize segments and Flight-encode handles in parallel. Handles go
         // through the codec (not raw into the entry) so Promise/ReactNode handle
         // values survive a JSON-serializing store — see encodeHandles.
+        const { serializeSegments } = await import("./segment-codec.js");
         const [serializedSegments, encodedHandles] = await Promise.all([
           serializeSegments(nonLoaderSegments),
           encodeHandles(handles),

@@ -416,6 +416,80 @@ describe("dispatch", () => {
       ).json();
       expect(second).not.toEqual(first);
     });
+
+    // P1 (security): when a CONFIGURED route-level cache({ key }) THROWS, the
+    // response cache must DEGRADE TO A MISS — run the route uncached and write
+    // NOTHING — never fall back to the broad default key. If the key encodes
+    // tenant/user/auth state, caching personalized output under the broad key
+    // would serve it cross-user (cache poisoning).
+    it("degrades to an uncached miss when cache({ key }) throws (no store write)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache(
+            {
+              ttl: 600,
+              key: () => {
+                throw new Error("key fn boom");
+              },
+            },
+            () => [
+              path.json(
+                "/cached-keythrows",
+                () => ({ ts: Date.now() + Math.random() }),
+                { name: "cached.keythrows" },
+              ),
+            ],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-keythrows" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-keythrows" })
+      ).json();
+
+      // Served uncached: handler re-ran, so the body differs (no HIT under any key).
+      expect(second).not.toEqual(first);
+      // And nothing was written under ANY key (no broad-key poisoning).
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("still caches when cache({ key }) succeeds (HIT, store written)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600, key: (ctx) => `tenant-a${ctx.pathname}` }, () => [
+            path.json(
+              "/cached-keyok",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.keyok" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-keyok" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-keyok" })
+      ).json();
+
+      // A HIT returns the byte-identical cached body, and the entry was written
+      // under the custom key (response:tenant-a/cached-keyok).
+      expect(second).toEqual(first);
+      expect(putSpy).toHaveBeenCalled();
+      expect(putSpy.mock.calls[0]?.[0]).toBe("response:tenant-a/cached-keyok");
+      putSpy.mockRestore();
+    });
   });
 
   it("throws a clear error for an RSC (component) route", async () => {

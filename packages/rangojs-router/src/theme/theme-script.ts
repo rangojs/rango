@@ -83,7 +83,14 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
   }
 
   var stored = getStoredTheme();
-  var theme = stored && (stored === 'system' || themes.indexOf(stored) !== -1)
+  // A stored value is valid when it is a configured theme, OR "system" but only
+  // while system detection is enabled. A stored "system" with enableSystem=false
+  // (an old cookie/localStorage, or a value pushed cross-tab) must fall back to
+  // defaultTheme — otherwise resolveTheme returns "system" unresolved and
+  // applyTheme writes a bogus class="system" / colorScheme="system" on <html>.
+  // Same rule as isValidTheme (constants.ts), inlined since this is a string.
+  var systemAllowed = stored === 'system' && enableSystem;
+  var theme = stored && (systemAllowed || themes.indexOf(stored) !== -1)
     ? stored
     : defaultTheme;
 

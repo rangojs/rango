@@ -108,3 +108,39 @@ describe("client setTheme validation (mirrors server ctx.setTheme)", () => {
     expect(document.documentElement.className).not.toContain("system");
   });
 });
+
+// P3: a cross-tab `storage` event can carry any value (another tab, or stale
+// localStorage). The storage handler must apply the SAME validity rule as
+// setTheme — a received "system" with enableSystem=false must fall back to
+// defaultTheme, never apply class="system"/colorScheme="system".
+describe("cross-tab storage handler validity (enableSystem:false)", () => {
+  function dispatchStorage(newValue: string | null): void {
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "theme", newValue }),
+      );
+    });
+  }
+
+  it("coerces a cross-tab 'system' to defaultTheme when enableSystem is false", () => {
+    renderProvider({ enableSystem: false });
+    // defaultTheme is the first concrete theme ("light") when system is off.
+    dispatchStorage("system");
+    expect(document.documentElement.className).not.toContain("system");
+    expect(document.documentElement.style.colorScheme).not.toBe("system");
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+  });
+
+  it("applies a valid cross-tab concrete theme as-is", () => {
+    renderProvider({ enableSystem: false });
+    dispatchStorage("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("coerces an unknown cross-tab value to defaultTheme", () => {
+    renderProvider({ enableSystem: false });
+    dispatchStorage("purple");
+    expect(document.documentElement.classList.contains("purple")).toBe(false);
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+  });
+});
