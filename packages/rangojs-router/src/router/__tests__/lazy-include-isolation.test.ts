@@ -209,8 +209,9 @@ describe("lazy include parent isolation", () => {
       ]);
 
       // Root-scoped include: prefix="", namePrefix=undefined (name="" doesn't
-      // produce a prefix segment). This hits the else branch in
-      // evaluateLazyEntry (line 157) where runWithPrefixes is skipped.
+      // produce a prefix segment). This hits the else branch of the
+      // `if (fullPrefix || lazyContext?.namePrefix)` check in evaluateLazyEntry
+      // (src/router/lazy-includes.ts) where runWithPrefixes is skipped.
       const errorEntry: RouteEntry = {
         prefix: "",
         staticPrefix: "",

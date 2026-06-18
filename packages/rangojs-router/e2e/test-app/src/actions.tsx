@@ -174,6 +174,25 @@ export async function resetLastSubmittedName(): Promise<void> {
 }
 
 /**
+ * Progressive-enhancement header-preservation action. The action sets a
+ * request-scoped marker cookie so the GET re-render can prove it ran, but the
+ * load-bearing assertion lives in PeHeaderProbeLoader, which reads the original
+ * POST request's `pe-probe` cookie during the re-render. Before the PE fix the
+ * GET re-render request carried only `accept: text/html`, so the loader saw no
+ * cookie under a no-JS submission. The fix copies the POST headers (minus
+ * content-type/content-length) onto the GET re-render, so the loader observes
+ * the request cookie under PE exactly as it does on the JS action path. State
+ * lives entirely in cookies, so parallel browser contexts never interfere.
+ */
+export async function peHeaderSubmitAction(formData: FormData): Promise<void> {
+  await delay(50);
+  // Touch the form data so the action has an observable input; the real
+  // assertion is the request cookie the loader reads during the re-render.
+  void formData.get("note");
+  cookies().set("pe-header-submitted", "yes", { path: "/", maxAge: 60 });
+}
+
+/**
  * Streaming action with React node result
  * Total time: 1s initial + 2s streaming = 3s (matches test expectations)
  */

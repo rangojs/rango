@@ -10,6 +10,7 @@
 
 import type { ResolvedSegment } from "../types.js";
 import type { SerializedSegmentData } from "./types.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import {
   renderToReadableStream,
   createTemporaryReferenceSet,
@@ -95,7 +96,14 @@ export async function serializeResult(value: unknown): Promise<string | null> {
     const temporaryReferences = createTemporaryReferenceSet();
     const stream = renderToReadableStream(value, { temporaryReferences });
     return await streamToString(stream);
-  } catch {
+  } catch (error) {
+    // Returning null silently turns a non-serializable cache value into a
+    // permanent miss with no trace. Surface it on the internal debug channel so
+    // a failed serialize is diagnosable on wrangler tail, but keep returning
+    // null so the caller falls through to an uncached render rather than throws.
+    if (INTERNAL_RANGO_DEBUG) {
+      console.warn("[segment-codec] serializeResult failed:", error);
+    }
     return null;
   }
 }

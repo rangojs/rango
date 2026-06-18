@@ -746,8 +746,8 @@ describe("Comprehensive Pattern Testing - Edge Cases", () => {
   });
 
   it("should handle case sensitivity correctly", () => {
-    // Hostnames should be case-insensitive (per spec)
-    // But our implementation treats them as-is
+    // Hosts are case-insensitive per RFC 3986: both the pattern literal and the
+    // request host are folded to lowercase before matching.
     expect(
       matchPattern("Admin.*", "Admin.example.com", "/", [
         "Admin",
@@ -761,7 +761,7 @@ describe("Comprehensive Pattern Testing - Edge Cases", () => {
         "example",
         "com",
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

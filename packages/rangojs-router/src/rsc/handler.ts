@@ -1112,10 +1112,18 @@ export function createRSCHandler<
               segments: [notFoundSegment],
               matched: [],
               diff: [],
+              // Shape parity with buildFullPayload (rsc-rendering.ts): the 404
+              // payload carries params/resolvedIds/prefetchCacheTTL the same way a
+              // matched full render does. resolvedIds mirrors the rendered segment
+              // list (the single notFound segment) like the error-boundary path
+              // (match-api.ts) does for its boundary segment.
+              resolvedIds: [notFoundSegment.id],
+              params: {},
               isPartial: false,
               rootLayout: router.rootLayout,
               handles: handleStore.stream(),
               version,
+              prefetchCacheTTL: router.prefetchCacheTTL,
               stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,

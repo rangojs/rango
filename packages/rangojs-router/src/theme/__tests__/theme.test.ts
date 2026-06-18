@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   resolveThemeConfig,
+  warnInvalidTheme,
   THEME_DEFAULTS,
   THEME_COOKIE,
 } from "../constants.js";
@@ -108,6 +109,39 @@ describe("Theme Configuration", () => {
       expect(THEME_COOKIE.maxAge).toBe(60 * 60 * 24 * 365);
       expect(THEME_COOKIE.path).toBe("/");
       expect(THEME_COOKIE.sameSite).toBe("lax");
+    });
+  });
+
+  // The valid-values list in the warning must mirror isValidTheme: advertising
+  // "system" when enableSystem is false would name a value the guard rejects.
+  describe("warnInvalidTheme valid-values list", () => {
+    it("omits 'system' when enableSystem is false", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        warnInvalidTheme("bogus", {
+          themes: ["light", "dark"],
+          enableSystem: false,
+        });
+        const msg = spy.mock.calls[0]?.[0] as string;
+        expect(msg).toContain("Valid values: light, dark");
+        expect(msg).not.toContain("system");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("includes 'system' when enableSystem is true", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        warnInvalidTheme("bogus", {
+          themes: ["light", "dark"],
+          enableSystem: true,
+        });
+        const msg = spy.mock.calls[0]?.[0] as string;
+        expect(msg).toContain("Valid values: system, light, dark");
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });
@@ -326,6 +360,27 @@ describe("Theme Script", () => {
       const script = generateThemeScript(config);
 
       expect(script.includes('"data-theme"')).toBe(true);
+    });
+
+    it("escapes </script> in config values so they cannot close the inline script tag", () => {
+      const config: ResolvedThemeConfig = {
+        defaultTheme: "light",
+        // A storageKey carrying a script-close sequence must not break out of the
+        // <script> the FOUC init is injected into via dangerouslySetInnerHTML.
+        storageKey: "theme</script>",
+        themes: ["light", "dark"],
+        attribute: "class",
+        enableSystem: true,
+        enableColorScheme: true,
+        value: { light: "light", dark: "dark" },
+      };
+
+      const script = generateThemeScript(config);
+
+      // The raw close sequence must not appear (it is <-escaped); the value
+      // is still present in escaped form so the script keeps working.
+      expect(script.includes("</script>")).toBe(false);
+      expect(script.includes("\\u003c/script\\u003e")).toBe(true);
     });
   });
 });

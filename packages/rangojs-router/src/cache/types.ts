@@ -259,11 +259,15 @@ export interface CacheDefaults {
   /**
    * Default time-to-live in seconds.
    * After TTL expires, cached entry is considered stale.
+   * Must be a finite, non-negative number; an invalid value (NaN/Infinity/
+   * negative) falls back to the default at read time.
    */
   ttl?: number;
   /**
    * Default stale-while-revalidate window in seconds.
    * During SWR window, stale content is served while revalidating in background.
+   * Must be a finite, non-negative number; an invalid value (NaN/Infinity/
+   * negative) falls back to the default at read time.
    */
   swr?: number;
 }

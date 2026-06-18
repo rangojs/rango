@@ -7,6 +7,7 @@
  */
 
 import type { EntryData } from "../server/context.js";
+import type { NegotiateVariant } from "../build/route-trie.js";
 import type { CollectedMiddleware } from "./middleware-types.js";
 import { collectRouteMiddleware } from "./middleware.js";
 import { loadManifest } from "./manifest.js";
@@ -81,14 +82,10 @@ export const RSC_RESPONSE_TYPE = "__rsc__";
  * candidate serves that type. Wildcards match the first candidate.
  * Falls back to the first candidate if nothing matches.
  */
-export function pickNegotiateVariant(
-  acceptEntries: AcceptEntry[],
-  candidates: Array<{ routeKey: string; responseType: string }>,
-): { routeKey: string; responseType: string } {
-  const byCandidateMime = new Map<
-    string,
-    { routeKey: string; responseType: string }
-  >();
+export function pickNegotiateVariant<
+  T extends { routeKey: string; responseType: string },
+>(acceptEntries: AcceptEntry[], candidates: T[]): T {
+  const byCandidateMime = new Map<string, T>();
   for (const c of candidates) {
     const mime =
       c.responseType === RSC_RESPONSE_TYPE
@@ -113,6 +110,49 @@ export function pickNegotiateVariant(
     if (match) return match;
   }
   return candidates[0]!;
+}
+
+/**
+ * Re-key params from the primary leaf's names to a winning variant's names.
+ *
+ * The trie match builds `params` positionally under the primary leaf's pa, so
+ * `/widgets/:id` matched as the primary yields `{ id }` even when the winning
+ * `/widgets/:file` response variant expects `{ file }`. Both share the same trie
+ * terminal, so they bind the same number of positional named params; we zip the
+ * variant's pa against the named values in insertion order (which is the
+ * primary's pa order). The wildcard key (`*`) is positional-independent and left
+ * untouched.
+ *
+ * Mutates `params` in place. No-op when `variantPa` is absent, when names already
+ * match (the common case), or when the positional count diverges (defensive:
+ * never corrupt params by zipping mismatched lengths).
+ */
+export function rekeyParamsForVariant(
+  params: Record<string, string>,
+  variantPa: string[] | undefined,
+): void {
+  if (!variantPa || variantPa.length === 0) return;
+
+  const namedKeys: string[] = [];
+  for (const key in params) {
+    if (key !== "*") namedKeys.push(key);
+  }
+  if (namedKeys.length !== variantPa.length) return;
+
+  let identical = true;
+  for (let i = 0; i < variantPa.length; i++) {
+    if (namedKeys[i] !== variantPa[i]) {
+      identical = false;
+      break;
+    }
+  }
+  if (identical) return;
+
+  const values = namedKeys.map((k) => params[k]!);
+  for (const key of namedKeys) delete params[key];
+  for (let i = 0; i < variantPa.length; i++) {
+    params[variantPa[i]!] = values[i]!;
+  }
 }
 
 /**
@@ -165,8 +205,10 @@ export async function negotiateRoute(
 
   const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
 
-  const variants = matched.negotiateVariants;
-  let candidates: Array<{ routeKey: string; responseType: string }>;
+  // Variants carry the variant's own pa (positional param names); the synthetic
+  // primary/RSC candidates have none (their params are already keyed correctly).
+  const variants = matched.negotiateVariants as NegotiateVariant[];
+  let candidates: NegotiateVariant[];
   if (responseType) {
     candidates = [...variants, { routeKey: matched.routeKey, responseType }];
   } else {
@@ -194,6 +236,12 @@ export async function negotiateRoute(
       negotiated: true,
     };
   }
+  // The trie extracted params under the PRIMARY leaf's pa, but the winning
+  // variant's handler is keyed by the variant's own param names. Re-key in place
+  // so plan.route.params (and the variant middleware collected just below) see
+  // the variant's names. No-op when the variant has no pa or shares the primary's
+  // names (the common case).
+  rekeyParamsForVariant(matched.params, variant.pa);
   const negotiateEntry = await loadManifest(
     matched.entry,
     variant.routeKey,

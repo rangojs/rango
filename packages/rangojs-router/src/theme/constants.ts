@@ -45,13 +45,20 @@ export function isValidTheme(
 /**
  * Emit the shared "[Theme] Invalid theme value" warning. One owner of the
  * message string so the client and server guards stay byte-identical.
+ *
+ * The valid-values list mirrors isValidTheme: "system" is only listed when
+ * enableSystem is true, otherwise the message would advertise a value the guard
+ * itself rejects.
  */
 export function warnInvalidTheme(
   theme: string,
-  config: Pick<ResolvedThemeConfig, "themes">,
+  config: Pick<ResolvedThemeConfig, "themes" | "enableSystem">,
 ): void {
+  const validValues = config.enableSystem
+    ? ["system", ...config.themes]
+    : config.themes;
   console.warn(
-    `[Theme] Invalid theme value: "${theme}". Valid values: system, ${config.themes.join(", ")}`,
+    `[Theme] Invalid theme value: "${theme}". Valid values: ${validValues.join(", ")}`,
   );
 }
 

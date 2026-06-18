@@ -100,47 +100,43 @@ describe("hashParams", () => {
     });
   });
 
-  describe("localeCompare non-determinism", () => {
-    // BUG P1-10: localeCompare varies across runtimes and locales.
-    // Byte-order (< operator) comparison should be used instead to
-    // guarantee identical sort order in Node.js, Workers, and browsers.
+  describe("byte-order sort determinism", () => {
+    // encodeKV sorts keys with the byte-order `<`/`>` operators, NOT
+    // localeCompare (see src/encode-kv.ts). Byte order compares UTF-16 code
+    // units, so the sort is identical across Node.js, Workers, and browsers
+    // regardless of locale. These cases verify that contract.
     it("should sort by byte order, not locale-dependent order", () => {
-      // In many locales, localeCompare treats uppercase and lowercase
-      // as equivalent or sorts them differently than codepoint order.
-      // Codepoint order: 'A' (65) < 'Z' (90) < 'a' (97) < 'z' (122)
-      // Some locales: 'a' < 'A' < 'b' < 'B' (case-interleaved)
+      // Codepoint order: 'A' (65) < 'Z' (90) < 'a' (97) < 'z' (122). A
+      // locale-aware sort might interleave case ('a' < 'A' < 'b' < 'B');
+      // byte order does not, so insertion order never affects the hash.
       const hash1 = hashParams({ Z: "1", a: "2" });
       const hash2 = hashParams({ a: "2", Z: "1" });
 
-      // Both should produce the same hash regardless of insertion order.
-      // This passes because localeCompare at least agrees on basic ASCII
-      // letter ordering within a single runtime.
+      // Same hash regardless of insertion order, because the entries are
+      // byte-order sorted before encoding.
       expect(hash1).toBe(hash2);
     });
 
     it("should produce consistent sort order for non-ASCII keys", () => {
-      // localeCompare may sort accented characters differently depending
-      // on the runtime locale. Byte-order comparison would use codepoint
-      // values and be deterministic across all environments.
-      // e.g., in Swedish locale, a-ring sorts after z, but in German it
-      // may sort differently.
+      // Accented characters sort by their code-unit values under byte order,
+      // not by locale collation (e.g. Swedish sorts a-ring after z), so the
+      // hash is deterministic across every runtime.
       const params = { "\u00E4": "ae", "\u00F6": "oe", a: "plain" };
       const hash1 = hashParams(params);
 
-      // Re-hash to verify at least within the same runtime it is stable.
+      // Re-hash with a different insertion order to confirm stability.
       const hash2 = hashParams({ a: "plain", "\u00F6": "oe", "\u00E4": "ae" });
       expect(hash1).toBe(hash2);
     });
 
     it("should treat codepoint order as canonical for ASCII keys", () => {
-      // Byte/codepoint order: "_" (95) < "a" (97)
-      // Some localeCompare implementations treat "_" as a punctuation
-      // character and sort it after letters.
+      // Byte/codepoint order: "_" (95) < "a" (97). A locale-aware sort might
+      // treat "_" as punctuation and place it after letters; byte order keeps
+      // it before, identically on every runtime.
       const hash1 = hashParams({ _meta: "1", alpha: "2" });
       const hash2 = hashParams({ alpha: "2", _meta: "1" });
 
-      // Within a single runtime these should match, but across runtimes
-      // the sort order may differ if localeCompare is used.
+      // Matches across runtimes because byte order, not localeCompare, sorts.
       expect(hash1).toBe(hash2);
     });
   });

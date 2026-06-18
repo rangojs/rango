@@ -254,9 +254,19 @@ export async function handleProgressiveEnhancement<TEnv>(
   // cookies set by route middleware are available during re-render — matching
   // the behavior of JS-enabled requests.
   const renderPage = async (): Promise<Response> => {
+    // Preserve the original POST request's headers (Authorization, Cookie,
+    // custom headers) so loaders that read request headers/cookies behave
+    // identically under PE and the JS action path. Drop body-framing headers
+    // from the bodyless GET and force the HTML accept.
+    const headers = new Headers(request.headers);
+    headers.delete("content-type");
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    headers.delete("transfer-encoding");
+    headers.set("accept", "text/html");
     const renderRequest = new Request(url.toString(), {
       method: "GET",
-      headers: new Headers({ accept: "text/html" }),
+      headers,
     });
 
     const match = await ctx.router.match(renderRequest, { env });

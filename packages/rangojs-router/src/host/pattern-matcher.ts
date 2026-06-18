@@ -64,10 +64,24 @@ export function matchPattern(
 
   const slashIndex = normalized.indexOf("/");
   const hasPath = slashIndex !== -1;
-  const domainPattern = hasPath ? normalized.slice(0, slashIndex) : normalized;
+  // Hosts are case-insensitive (RFC 3986): lowercase the domain literal and the
+  // request host once so matching folds case. Wildcards (*, **, .) are
+  // unaffected by lowercasing. The path is left untouched (paths are
+  // case-sensitive).
+  const domainPattern = (
+    hasPath ? normalized.slice(0, slashIndex) : normalized
+  ).toLowerCase();
   const pathPattern = hasPath ? normalized.slice(slashIndex) : null;
 
-  const domainMatch = matchDomainPattern(domainPattern, hostname, parts);
+  const lowerHostname = hostname.toLowerCase();
+  const lowerParts =
+    lowerHostname === hostname ? parts : lowerHostname.split(".");
+
+  const domainMatch = matchDomainPattern(
+    domainPattern,
+    lowerHostname,
+    lowerParts,
+  );
   if (!domainMatch) {
     return false;
   }

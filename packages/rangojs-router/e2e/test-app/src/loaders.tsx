@@ -614,6 +614,31 @@ export const CookieTestLoader = createLoader(async () => {
 });
 
 /**
+ * Loader for the progressive-enhancement header-preservation fixture. It reads
+ * the request headers off the LOADER's own request (ctx.request) — NOT the
+ * ambient cookies() store, which always reflects the original POST request
+ * context and so would mask the bug. During a no-JS submit the PE re-render is
+ * a synthetic GET; the fix copies the POST's request headers onto it, so the
+ * loader's ctx.request still carries the `pe-probe` cookie and any custom
+ * header. Without the fix, ctx.request had only `accept: text/html` and these
+ * read empty.
+ *
+ * The browser sends `Cookie` automatically on the native POST, so `cookieProbe`
+ * is the no-JS-controllable signal. `customHeader` is additionally observable
+ * on the JS action path (where fetch sends custom headers), proving full
+ * header preservation, not just cookies.
+ */
+export const PeHeaderProbeLoader = createLoader(async (ctx) => {
+  const cookieHeader = ctx.request.headers.get("cookie") ?? "";
+  const match = /(?:^|;\s*)pe-probe=([^;]*)/.exec(cookieHeader);
+  return {
+    cookieProbe: match ? decodeURIComponent(match[1]!) : null,
+    customHeader: ctx.request.headers.get("x-pe-probe"),
+    submitted: cookies().get("pe-header-submitted")?.value === "yes",
+  };
+});
+
+/**
  * Loader that uses cookies().get() to read a cookie set by middleware.
  * Tests the full pipeline: middleware sets cookie -> loader reads it.
  */

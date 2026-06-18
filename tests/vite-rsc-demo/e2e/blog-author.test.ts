@@ -253,6 +253,102 @@ devTest.describe("blog-author-breadcrumbs", () => {
 });
 
 /**
+ * Blog author intercept tests (production build)
+ */
+test.describe("blog-author-intercept (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should show author modal when clicking author from blog index", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    await page.locator('a[href="/blog/author/jane-doe"]').first().click();
+
+    await expect(page.locator("text=Intercepted")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator("text=Blog Posts")).toBeVisible();
+  });
+
+  test("should navigate directly to author page from a post", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h2:has-text('Hello World')")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await page.locator('a[href="/blog/author/jane-doe"]').first().click();
+
+    // when() returns false from post pages, so no intercept modal
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({
+      timeout: 3000,
+    });
+
+    await expect(page.locator('[data-testid="author-page"]')).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.locator("h2:has-text('Jane Doe')")).toBeVisible();
+  });
+
+  test("should close author modal on back navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    await page.locator('a[href="/blog/author/jane-doe"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({
+      timeout: 5000,
+    });
+
+    await goBack(page);
+
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({
+      timeout: 3000,
+    });
+    await expect(page.locator("text=Blog Posts")).toBeVisible();
+  });
+
+  test("should navigate from author modal to full author page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    await page.locator('a[href="/blog/author/jane-doe"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({
+      timeout: 5000,
+    });
+
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({
+      timeout: 3000,
+    });
+
+    await expect(page.locator('[data-testid="author-page"]')).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.locator("h2:has-text('Jane Doe')")).toBeVisible();
+  });
+});
+
+/**
  * Blog author tests (production build)
  */
 test.describe("blog-author-breadcrumbs (production)", () => {

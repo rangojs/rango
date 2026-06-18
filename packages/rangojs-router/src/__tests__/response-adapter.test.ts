@@ -153,6 +153,28 @@ describe("teeWithCompletion", () => {
     expect(teed.headers.get("X-Custom")).toBe("value");
   });
 
+  it("calls onComplete exactly once when the stream errors mid-read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const onComplete = vi.fn();
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("chunk1"));
+        controller.error(new Error("mid-stream failure"));
+      },
+    });
+    const res = new Response(stream);
+
+    teeWithCompletion(res, onComplete);
+
+    // Wait for the tracking reader's read() to reject and both the finally
+    // block and the .catch handler to run.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The finally block and the rejection's .catch must not both fire onComplete.
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
+
   it("calls onComplete when abort signal fires", async () => {
     const onComplete = vi.fn();
     const controller = new AbortController();

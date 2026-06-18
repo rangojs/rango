@@ -1,6 +1,7 @@
 import type { Handler } from "@rangojs/router";
-import { cookies } from "@rangojs/router";
+import { cookies, Meta } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
+import { PeHeaderProbeLoader } from "../loaders.js";
 import {
   FetchableTestLoader,
   HookTestLoader,
@@ -432,6 +433,78 @@ export const PeRedirectHandler: Handler<"peRedirect"> = async () => {
       >
         <button type="submit" data-testid="pe-external-allowed-btn">
           Cross-origin redirect with external:true (must be allowed)
+        </button>
+      </form>
+    </div>
+  );
+};
+
+// The literal payload an attacker would put in a JSON-LD string field to break
+// out of <script type="application/ld+json">. MetaTags.escapeJsonForScript must
+// neutralize the "<"/">"/"&" so this can never close the tag or execute.
+export const META_ESCAPE_PAYLOAD = "</script><script>window.__pwned=1</script>";
+
+/**
+ * JSON-LD escaping fixture. Emits a script:ld+json descriptor whose
+ * `description` field contains a literal `</script>` breakout attempt. The
+ * MetaTags fix escapes the serialized JSON before dangerouslySetInnerHTML, so
+ * the payload stays inside the script tag (no breakout, no execution) and the
+ * JSON re-parses to the original string.
+ */
+export const MetaEscapeHandler: Handler<"metaEscape"> = (ctx) => {
+  const meta = ctx.use(Meta);
+  meta({
+    "script:ld+json": {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Meta Escape Test",
+      description: META_ESCAPE_PAYLOAD,
+    },
+  });
+
+  return (
+    <div data-testid="meta-escape-page">
+      <Link to="/" data-testid="back-link">
+        ← Back to Home
+      </Link>
+      <h1 data-testid="meta-escape-title">Meta Escape Test</h1>
+    </div>
+  );
+};
+
+/**
+ * Progressive-enhancement header-preservation fixture. A "use server" form
+ * action submits while a loader reads the `pe-probe` request cookie. Under a
+ * no-JS submit the browser performs a native POST; the PE re-render must carry
+ * the POST's request headers so the loader still sees the cookie. The page
+ * echoes the loader-read cookie and whether the action's marker cookie is set.
+ */
+export const PeHeaderHandler: Handler<"peHeader"> = async (ctx) => {
+  const { peHeaderSubmitAction } = await import("../actions.js");
+  const { cookieProbe, customHeader, submitted } =
+    await ctx.use(PeHeaderProbeLoader);
+
+  return (
+    <div data-testid="pe-header-page">
+      <Link to="/" data-testid="back-link">
+        ← Back to Home
+      </Link>
+      <h1 data-testid="pe-header-title">PE Header Preservation Test</h1>
+      <p data-testid="pe-header-probe">{cookieProbe ?? "no-probe"}</p>
+      <p data-testid="pe-header-custom">{customHeader ?? "no-custom"}</p>
+      <p data-testid="pe-header-submitted">{submitted ? "yes" : "no"}</p>
+
+      {/* No method/encType: React manages those for a function action and
+          warns (and produces a hydration attribute mismatch) if we set them. */}
+      <form action={peHeaderSubmitAction} data-testid="pe-header-form">
+        <input
+          type="text"
+          name="note"
+          defaultValue="hello"
+          data-testid="pe-header-note"
+        />
+        <button type="submit" data-testid="pe-header-submit">
+          Submit
         </button>
       </form>
     </div>

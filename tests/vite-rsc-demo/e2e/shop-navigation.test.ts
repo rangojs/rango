@@ -464,6 +464,82 @@ devTest.describe("shop-conditional-intercept", () => {
 });
 
 /**
+ * Shop intercept background preservation (production build)
+ *
+ * Regression: a fire-and-forget action's background revalidation must not
+ * unmount the preserved intercept background. The assertion (background stays
+ * visible after revalidation) is logical, not timing-dependent; the waits are
+ * generously larger than the product route's 1s render delay.
+ */
+test.describe("shop-intercept-background-preservation (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should preserve background data when action completes after navigating back to intercept", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Step 1: shop index
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    await expect(page.locator("text=All Products")).toBeVisible();
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+
+    // Step 2: open intercept modal
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+    await expect(page).toHaveURL(/\/shop\/product\/wireless-headphones/);
+    await expect(page.locator("text=Intercepted")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+
+    // Step 3: go to full product page (non-intercept)
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({
+      timeout: 15000,
+    });
+
+    const addToCartButton = page
+      .locator("button")
+      .filter({ hasText: "Add to Cart (Fire & Forget)" })
+      .first();
+    await expect(addToCartButton).toBeVisible({ timeout: 10000 });
+
+    // Step 4: fire the action, then race a back-navigation to the modal
+    await addToCartButton.click();
+    await page.waitForTimeout(300);
+
+    // Step 5: navigate back to the intercept modal
+    await goBack(page);
+    await expect(page.locator("text=Intercepted")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+
+    // Step 6: allow the action + background revalidation to settle.
+    await page.waitForTimeout(5000);
+
+    // Background must remain mounted after revalidation.
+    await expect(page.locator("text=Featured Products")).toBeVisible({
+      timeout: 2000,
+    });
+    await expect(page.locator("text=Intercepted")).toBeVisible();
+  });
+});
+
+/**
  * Production build tests for shop
  */
 test.describe("shop-navigation (production)", () => {

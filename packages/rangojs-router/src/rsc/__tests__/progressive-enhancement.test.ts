@@ -43,6 +43,8 @@ function makeReqCtx(request: Request) {
 interface StubCtxOptions {
   actionThrows: boolean;
   matchErrorResult: unknown;
+  // Captures the Request passed to router.match during the PE re-render.
+  onMatch?: (request: Request) => void;
 }
 
 function makeStubCtx(opts: StubCtxOptions): HandlerContext<unknown> {
@@ -58,7 +60,8 @@ function makeStubCtx(opts: StubCtxOptions): HandlerContext<unknown> {
       resolvedStateCookieName: "rango-state",
       themeConfig: undefined,
       warmupEnabled: false,
-      async match() {
+      async match(request: Request) {
+        opts.onMatch?.(request);
         return {
           redirect: undefined,
           segments: [],
@@ -140,5 +143,71 @@ describe("handleProgressiveEnhancement — boundaryless action error status (C1)
     expect(res).not.toBeNull();
     expect(res!.status).toBe(200);
     expect(res!.headers.get("content-type")).toContain("text/html");
+  });
+});
+
+// F12: the PE re-render request must preserve the original POST request's
+// headers (Authorization, Cookie, custom headers) so loaders that read request
+// headers/cookies behave identically under PE and the JS action path. It must
+// also drop body-framing headers (content-type, content-length) and force a
+// bodyless GET so match() treats it as a non-form GET, not another form POST.
+function buildDirectActionRequestWithHeaders(): Request {
+  const fd = new FormData();
+  fd.set(`$ACTION_ID_${ACTION_ID}`, "");
+  fd.set("name", "no-js");
+  return new Request("http://localhost/pe", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer secret-token",
+      cookie: "session=abc123",
+      "x-custom-header": "custom-value",
+    },
+    body: fd,
+  });
+}
+
+describe("handleProgressiveEnhancement — PE re-render preserves request headers (F12)", () => {
+  it("preserves auth/cookie/custom headers and drops body-framing headers on the GET re-render", async () => {
+    const request = buildDirectActionRequestWithHeaders();
+    const reqCtx = makeReqCtx(request);
+
+    let renderRequest: Request | undefined;
+    const ctx = makeStubCtx({
+      actionThrows: false,
+      matchErrorResult: null,
+      onMatch: (req) => {
+        renderRequest = req;
+      },
+    });
+
+    const res = await runWithRequestContext(reqCtx, () =>
+      handleProgressiveEnhancement(
+        ctx,
+        request,
+        {},
+        new URL(request.url),
+        false,
+        reqCtx._handleStore,
+        undefined,
+      ),
+    );
+
+    expect(res).not.toBeNull();
+    expect(renderRequest).toBeDefined();
+
+    // Auth/cookie/custom headers carried over from the original POST.
+    expect(renderRequest!.headers.get("authorization")).toBe(
+      "Bearer secret-token",
+    );
+    expect(renderRequest!.headers.get("cookie")).toBe("session=abc123");
+    expect(renderRequest!.headers.get("x-custom-header")).toBe("custom-value");
+
+    // Body-framing headers dropped for the bodyless GET.
+    expect(renderRequest!.headers.get("content-type")).toBeNull();
+    expect(renderRequest!.headers.get("content-length")).toBeNull();
+
+    // Re-render request is a non-form GET; accept forces the HTML path.
+    expect(renderRequest!.method).toBe("GET");
+    expect(renderRequest!.headers.get("accept")).toBe("text/html");
   });
 });

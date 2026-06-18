@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseAcceptTypes,
   pickNegotiateVariant,
+  rekeyParamsForVariant,
   RSC_RESPONSE_TYPE,
 } from "../content-negotiation";
 
@@ -147,5 +148,62 @@ describe("pickNegotiateVariant", () => {
     const accept = parseAcceptTypes("");
     const result = pickNegotiateVariant(accept, [jsonCandidate]);
     expect(result).toBe(jsonCandidate);
+  });
+
+  it("preserves the variant's pa on the picked candidate", () => {
+    type Candidate = { routeKey: string; responseType: string; pa?: string[] };
+    const jsonWithPa: Candidate = {
+      routeKey: "widgets.json",
+      responseType: "json",
+      pa: ["file"],
+    };
+    const candidates: Candidate[] = [
+      { routeKey: "widgets.view", responseType: RSC_RESPONSE_TYPE },
+      jsonWithPa,
+    ];
+    const accept = parseAcceptTypes("application/json");
+    const result = pickNegotiateVariant(accept, candidates);
+    expect(result).toBe(jsonWithPa);
+    expect(result.pa).toEqual(["file"]);
+  });
+});
+
+describe("rekeyParamsForVariant", () => {
+  it("re-keys params under the variant's param names", () => {
+    // Trie extracted under the primary's pa (:id); the winning json variant
+    // binds the same position under :file. Re-keying renames id -> file.
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, ["file"]);
+    expect(params).toEqual({ file: "42" });
+  });
+
+  it("re-keys multiple positional params in order", () => {
+    const params: Record<string, string> = { a: "1", b: "2" };
+    rekeyParamsForVariant(params, ["x", "y"]);
+    expect(params).toEqual({ x: "1", y: "2" });
+  });
+
+  it("leaves the wildcard key untouched while re-keying named params", () => {
+    const params: Record<string, string> = { id: "42", "*": "a/b" };
+    rekeyParamsForVariant(params, ["file"]);
+    expect(params).toEqual({ file: "42", "*": "a/b" });
+  });
+
+  it("is a no-op when names already match (common case)", () => {
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, ["id"]);
+    expect(params).toEqual({ id: "42" });
+  });
+
+  it("is a no-op when the variant has no pa", () => {
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, undefined);
+    expect(params).toEqual({ id: "42" });
+  });
+
+  it("does not corrupt params when positional counts diverge", () => {
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, ["a", "b"]);
+    expect(params).toEqual({ id: "42" });
   });
 });
