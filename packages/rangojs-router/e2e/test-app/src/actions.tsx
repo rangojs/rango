@@ -537,6 +537,35 @@ export async function isActionTargetAction(): Promise<void> {}
 export async function isActionDecoyAction(): Promise<void> {}
 
 /**
+ * Action error-boundary + route-middleware fixture (C3). One action succeeds
+ * (mutates a cookie so revalidation has a visible signal) and one throws so the
+ * route error boundary renders. The route's middleware sets X-Action-Route-Mw on
+ * the response; the test asserts that header appears on BOTH the success and the
+ * error-boundary action responses — proving route middleware wraps the
+ * error-boundary render the same way it wraps a successful revalidation.
+ */
+export async function actionRouteMwSuccess(): Promise<void> {
+  await delay(50);
+  cookies().set("action-route-mw-ran", "yes", { path: "/", maxAge: 60 });
+}
+
+export async function actionRouteMwThrow(): Promise<void> {
+  await delay(50);
+  throw new Error("action-route-mw boom");
+}
+
+/**
+ * shouldRevalidate({ formData }) e2e probe action (C2). A no-op form action: the
+ * RevalFormDataLoader's revalidate predicate reads the submitted `reload` field
+ * from formData to decide whether to re-run. Accepts FormData so it works on the
+ * no-JS PE transport (native form POST) and the JS transport (form enhancement)
+ * alike.
+ */
+export async function revalFormDataAction(_formData: FormData): Promise<void> {
+  await delay(50);
+}
+
+/**
  * Server action that invalidates a cache tag (read-your-own-writes).
  * Awaits updateTag so cached entries are gone before the action returns,
  * making the subsequent render fresh. Used by InvalidateTagButton.
