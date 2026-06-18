@@ -29,6 +29,7 @@ import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 import { cancelAllPrefetches } from "../prefetch/queue.js";
 import { handleNavigationEnd } from "../scroll-restoration.js";
 import { createAppShellRef, type AppShellRef } from "../app-shell.js";
+import { startConnectionWarmup } from "../connection-warmup.js";
 import { debugLog } from "../logging.js";
 
 /**
@@ -250,91 +251,13 @@ export function NavigationProvider({
     return value;
   }, []);
 
-  // Connection warmup: keep TLS alive after idle periods.
-  // After 60s of no user interaction, marks connection as "cold".
-  // On next interaction or visibility change, sends a HEAD request to warm TLS
-  // before the user actually clicks a link.
+  // Connection warmup: keep TLS alive after idle periods. After 60s of no
+  // interaction the connection is marked cold; the next pointer/touch
+  // interaction or visibility change warms TLS via a HEAD request before the
+  // user clicks a link. State machine lives in connection-warmup.ts.
   useEffect(() => {
     if (!warmupEnabled) return;
-
-    const IDLE_TIMEOUT = 60_000;
-    const DEBOUNCE_DELAY = 150;
-
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-    let isCold = false;
-    let warmupListenersAttached = false;
-
-    function sendWarmup() {
-      isCold = false;
-      fetch("/?_rsc_warmup", { method: "HEAD" }).catch(() => {});
-    }
-
-    function triggerWarmup() {
-      if (!isCold) return;
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        sendWarmup();
-        detachWarmupListeners();
-        resetIdleTimer();
-      }, DEBOUNCE_DELAY);
-    }
-
-    function onVisibilityChange() {
-      if (document.visibilityState === "visible" && isCold) {
-        triggerWarmup();
-      }
-    }
-
-    function attachWarmupListeners() {
-      if (warmupListenersAttached) return;
-      warmupListenersAttached = true;
-      document.addEventListener("visibilitychange", onVisibilityChange);
-      document.addEventListener("mousemove", triggerWarmup, { once: true });
-      document.addEventListener("touchstart", triggerWarmup, { once: true });
-    }
-
-    function detachWarmupListeners() {
-      warmupListenersAttached = false;
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      document.removeEventListener("mousemove", triggerWarmup);
-      document.removeEventListener("touchstart", triggerWarmup);
-    }
-
-    function markCold() {
-      isCold = true;
-      attachWarmupListeners();
-    }
-
-    function resetIdleTimer() {
-      clearTimeout(idleTimer);
-      isCold = false;
-      idleTimer = setTimeout(markCold, IDLE_TIMEOUT);
-    }
-
-    // Activity events that reset the idle timer
-    const activityEvents = [
-      "mousemove",
-      "keydown",
-      "touchstart",
-      "scroll",
-    ] as const;
-    const activityOptions: AddEventListenerOptions = { passive: true };
-
-    for (const event of activityEvents) {
-      document.addEventListener(event, resetIdleTimer, activityOptions);
-    }
-
-    resetIdleTimer();
-
-    return () => {
-      clearTimeout(idleTimer);
-      clearTimeout(debounceTimer);
-      detachWarmupListeners();
-      for (const event of activityEvents) {
-        document.removeEventListener(event, resetIdleTimer);
-      }
-    };
+    return startConnectionWarmup();
   }, [warmupEnabled]);
 
   // Cancel non-matching prefetches when navigation starts.
