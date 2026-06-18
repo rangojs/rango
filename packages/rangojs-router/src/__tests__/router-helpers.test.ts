@@ -6,7 +6,7 @@ import {
   isLazyEvaluationNeeded,
 } from "../router/pattern-matching.js";
 import {
-  parsePattern as parseMiddlewarePattern,
+  compileMiddlewarePattern as parseMiddlewarePattern,
   extractParams,
 } from "../router/middleware.js";
 import {
