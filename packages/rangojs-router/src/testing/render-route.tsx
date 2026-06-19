@@ -250,6 +250,20 @@ export interface RenderRouteOptions {
    * component.
    */
   theme?: ThemeConfig | true;
+  /**
+   * CSP nonce to seed via NonceContext, so a component calling `useNonce()`
+   * (e.g. an analytics/GTM head-script component) sees this value — mirroring
+   * what the SSR renderer provides per request. Defaults to undefined (the
+   * browser default), matching production client behavior.
+   *
+   * @example
+   * const { getByTestId } = await renderRoute(
+   *   [{ path: "/", Component: NonceProbe }],
+   *   { nonce: "test-nonce" },
+   * );
+   * expect(getByTestId("nonce").textContent).toBe("test-nonce");
+   */
+  nonce?: string;
 }
 
 /**
@@ -536,6 +550,7 @@ export async function renderRoute(
         themeConfig={
           options.theme === undefined ? null : resolveThemeConfig(options.theme)
         }
+        nonce={options.nonce}
       />,
     );
   });

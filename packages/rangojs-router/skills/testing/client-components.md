@@ -21,6 +21,7 @@ RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter
 | `basename`      | `string`                                                               | `createRouter({ basename })` value. Wired into `NavigationProvider` so `useRouter().basename`, `<Link>` prefixing, `useMount`/`useHref` resolve against the mount. Normalized like `createRouter`. Defaults to root. |
 | `mount`         | `string`                                                               | `include()` mount prefix. Wraps the segment chain in a `MountContext` so `useMount()` returns the prefix. Normalized like a path prefix. Defaults to `"/"`.                                                          |
 | `theme`         | `ThemeConfig \| true`                                                  | Theme config (`createRouter({ theme })` shape) to wrap the tree in a `ThemeProvider`. Defaults to no provider. A component calling `useTheme()` REQUIRES one.                                                        |
+| `nonce`         | `string`                                                               | CSP nonce to seed via `NonceContext`, so a component calling `useNonce()` (e.g. an analytics/GTM head script) sees it — mirroring SSR. Defaults to `undefined` (the browser default).                                |
 
 `RenderRouteSpec = { path, Component, layout?, loaderIds?, name? }` — one node of the route definition. The array is the layout chain root-to-leaf; the LAST entry is the leaf route (its pattern is matched against `request` to extract params; layout patterns are informational). `loaderIds` attaches seeded loaders to THIS node's segment; `layout` on the leaf wraps it; `name` is informational.
 
@@ -36,6 +37,7 @@ RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter
 | `useRouter`                    | The router handle, including `.basename`.                                                     |
 | `usePathname`                  | Current committed pathname.                                                                   |
 | `useSearchParams`              | Search params from the `request` URL.                                                         |
+| `useNonce`                     | SEEDED CSP nonce (`options.nonce`), else `undefined` (the browser default).                   |
 | `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path).                                                 |
 | `useLocationState`             | SEEDED `history.state` value.                                                                 |
 | `useHandle`                    | SEEDED handle output (globally accumulated).                                                  |

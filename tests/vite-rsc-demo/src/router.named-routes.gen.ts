@@ -20,6 +20,7 @@ export const NamedRoutes = {
   "errors.notFoundLoader": "/errors/not-found-loader",
   "errors.throwError": "/errors/throw",
   "errors.unhandled": "/errors/unhandled",
+  "gtm.index": "/gtm",
   "home.index": "/",
   "kanban.card": "/kanban/card/:cardId",
   "kanban.index": "/kanban",

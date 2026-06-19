@@ -89,6 +89,7 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 | `useSegments`          | Segments state                          |
 | `useAction`            | Server action state tracking            |
 | `useHandle`            | Access handle data                      |
+| `useNonce`             | CSP nonce for userland head scripts     |
 | `useLocationState`     | Navigation state persistence            |
 | `useLinkStatus`        | Link navigation status                  |
 | `useMount`             | `include()` mount context               |

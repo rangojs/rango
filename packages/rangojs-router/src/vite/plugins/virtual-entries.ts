@@ -84,6 +84,11 @@ export default function handler(request, env) {
     _handler = createRSCHandler({
       router,
       version: VERSION,
+      // Forward the router's CSP nonce provider. createRSCHandler reads the
+      // provider only from options.nonce; without this, createRouter({ nonce })
+      // is silently dropped on the Node preset (the Cloudflare path wires it via
+      // router.fetch). router.nonce is undefined when unconfigured, a safe no-op.
+      nonce: router.nonce,
       deps: {
         renderToReadableStream,
         decodeReply,

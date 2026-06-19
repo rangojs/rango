@@ -40,6 +40,9 @@ export { useRouter } from "./browser/react/use-router.js";
 export { usePathname } from "./browser/react/use-pathname.js";
 export { useSearchParams } from "./browser/react/use-search-params.js";
 export { useParams } from "./browser/react/use-params.js";
+// CSP nonce for userland head-script components (analytics/GTM/inline init);
+// forwarded so the RSC client entry's hook surface matches the default entry.
+export { useNonce } from "./browser/react/nonce-context.js";
 export { useMount } from "./browser/react/use-mount.js";
 export {
   useSegments,

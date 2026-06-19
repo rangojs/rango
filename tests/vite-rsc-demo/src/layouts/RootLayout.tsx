@@ -10,13 +10,22 @@ import {
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
 import { LinkStatusIndicator } from "../components/LinkStatusIndicator.js";
+import { GtmScript, GtmNoScript } from "../components/GtmScript.js";
+import { GtmPageViews } from "../components/GtmPageViews.js";
 
 export function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <title>RSC Router Demo</title>
+        {/*
+          No manual <title> here: the Meta handle owns the single document title
+          (a default is set in the GTM layout, overridden per route). Two <title>
+          elements would make document.title resolve to the first (manual) one at
+          parse time, so the inline GTM bootstrap would read the wrong page_title
+          before React reconciles the managed title.
+        */}
         <MetaTags />
+        <GtmScript />
         <style>{`
           body {
             font-family: system-ui, -apple-system, sans-serif;
@@ -55,6 +64,8 @@ export function RootLayout({ children }: { children: ReactNode }) {
         `}</style>
       </head>
       <body className="full-width">
+        <GtmNoScript />
+        <GtmPageViews />
         <ScrollRestoration />
         <nav>
           <Link to={href("/")} prefetch="hover">
@@ -90,6 +101,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           </Link>
           <Link to={href("/errors")} prefetch="hover">
             Errors
+          </Link>
+          <Link to={href("/gtm")} prefetch="hover">
+            GTM
           </Link>
         </nav>
         <BreadcrumbNav />

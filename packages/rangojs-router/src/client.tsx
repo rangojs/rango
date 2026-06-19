@@ -340,6 +340,11 @@ export { useRouter } from "./browser/react/use-router.js";
 export { usePathname } from "./browser/react/use-pathname.js";
 export { useSearchParams } from "./browser/react/use-search-params.js";
 export { useParams } from "./browser/react/use-params.js";
+// CSP nonce for the active request, for userland components that inject their
+// own <script>/<style> into the document head (analytics, GTM, inline init).
+// Returns the nonce during SSR and undefined in the browser; render the tag
+// server-side so the nonce lands in the SSR HTML and hydration stays clean.
+export { useNonce } from "./browser/react/nonce-context.js";
 export type {
   RouterInstance,
   RouterNavigateOptions,

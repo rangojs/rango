@@ -2,12 +2,15 @@
 
 import type { ReactNode } from "react";
 import { Link, MetaTags, href } from "@rangojs/router/client";
+import { GtmScript, GtmNoScript } from "../gtm/GtmScript.js";
+import { GtmPageViews } from "../gtm/GtmPageViews.js";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <MetaTags />
+        <GtmScript />
         <style
           dangerouslySetInnerHTML={{
             __html: `
@@ -76,6 +79,8 @@ export function Document({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
+        <GtmNoScript />
+        <GtmPageViews />
         <nav data-testid="nav">
           <Link to={href("/")} data-testid="nav-home">
             Home
