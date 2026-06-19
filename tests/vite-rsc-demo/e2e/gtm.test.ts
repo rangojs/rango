@@ -148,6 +148,116 @@ async function checkInitialPageTitle(page: Page, url: Url) {
     pageViews[0]?.page_title,
     "initial page_view page_title matches the rendered document title",
   ).toBe("GTM Demo");
+  // content_group is baked into the FIRST page_view server-side: the /gtm route
+  // overrides the layout's bootstrap by reusing the "gtm" Script id (collected
+  // post-handler, last-wins). This lands in the static HTML — not possible with a
+  // head-only server component, which renders before route handlers push.
+  expect(
+    pageViews[0]?.content_group,
+    "content_group is baked into the first page_view by the route's Script override",
+  ).toBe("demo");
+}
+
+// The Script handle covers more than GTM: an external async resource (Plausible,
+// async + data-* attributes) in <head>, a body-positioned inline script, and
+// dedup of the GTM bootstrap to exactly one element. Attribute / nonce /
+// placement / dedup are asserted on the raw SSR HTML (the live DOM blanks
+// script.nonce); body-script execution is asserted on the hydrated page.
+async function checkScriptScenarios(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+
+  // Plausible: external ASYNC resource (React hoists it into <head>) with vendor
+  // attrs + nonce — asserted on the raw SSR HTML (the live DOM blanks script.nonce).
+  const res = await page.request.get(url("/gtm"), {
+    headers: { Accept: "text/html,application/xhtml+xml" },
+  });
+  const html = await res.text();
+  const plausibleTag = html.match(/<script[^>]*plausible\.io[^>]*>/)?.[0] ?? "";
+  expect(plausibleTag, "plausible script is in the SSR HTML").not.toBe("");
+  expect(plausibleTag).toMatch(/\sasync/);
+  expect(plausibleTag).toContain('data-domain="example.com"');
+  expect(plausibleTag, "nonce applied to the external script").toMatch(
+    /\snonce="[^"]+"/,
+  );
+
+  await page.goto(url("/gtm"));
+  await waitForHydration(page);
+
+  // Dedup: the layout and the /gtm route both push id "gtm", so the bootstrap is
+  // a single element and injects the gtm.js loader exactly once (counting the
+  // injected loader is Flight-payload-robust; raw string counts are not, since
+  // the handle data is also serialized into the RSC payload). collectScripts
+  // dedup is unit-tested directly.
+  await expect(
+    page.locator('head script[src*="googletagmanager.com/gtm.js"]'),
+  ).toHaveCount(1);
+
+  // Body-positioned inline script is a DOCUMENT-LOAD script: on a hard load it is
+  // in the initial HTML and executes (position filtering is unit-tested).
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __gtmDemoBody?: boolean }).__gtmDemoBody,
+    ),
+  ).toBe(true);
+}
+
+// The execution contract on SOFT (client) navigation, the part page.goto() can't
+// see. Land on "/", then <Link>-navigate to /gtm:
+//  - the async Plausible resource actually LOADS + EXECUTES (React loads async
+//    resources on nav; under the demo's 'strict-dynamic' CSP the client-injected
+//    script is trusted). Proven by a sentinel, not element presence — a
+//    CSP-blocked or failed request would still leave the element in the DOM;
+//  - the body inline script (document-load) is neither inserted NOR run —
+//    <Scripts/> freezes the non-async set after hydration, so React never inserts
+//    an inert <script> (asserting only the side effect would also pass against the
+//    old inert-tag behavior, so the element absence is asserted too);
+//  - the soft-nav page_view still fires, via the already-mounted <GtmPageViews>.
+async function checkSoftNavScriptContract(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+
+  // Deterministic Plausible response: executing it sets a window sentinel.
+  await page.route("**/plausible.io/js/script.js", (route) =>
+    route.fulfill({
+      contentType: "application/javascript",
+      body: "window.__plausibleExecuted = true;",
+    }),
+  );
+
+  await page.goto(url("/"));
+  await waitForHydration(page);
+  expect(await pageViewPaths(page)).toEqual(["/"]);
+
+  await page.locator('nav a[href="/gtm"]').first().click();
+  await expect(testId(page, "gtm-demo")).toBeVisible();
+
+  // Soft-nav page_view fired through the client component (not the inert bootstrap).
+  await expect.poll(() => pageViewPaths(page)).toEqual(["/", "/gtm"]);
+
+  // Async external resource LOADED + EXECUTED on the soft navigation.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __plausibleExecuted?: boolean })
+            .__plausibleExecuted,
+      ),
+    )
+    .toBe(true);
+
+  // Document-load inline body script: NOT inserted (no inert element) ...
+  const inlineBodyCount = await page.evaluate(
+    () =>
+      [...document.querySelectorAll("body script")].filter((s) =>
+        s.textContent?.includes("__gtmDemoBody"),
+      ).length,
+  );
+  expect(inlineBodyCount).toBe(0);
+  // ... and therefore NOT run.
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __gtmDemoBody?: boolean }).__gtmDemoBody,
+    ),
+  ).toBeUndefined();
 }
 
 // view_item is fired once from the route loader's data; add_to_cart on click.
@@ -283,6 +393,20 @@ devTest.describe("gtm", () => {
   );
 
   devTest(
+    "Script handle: external (Plausible) + body-position + dedup",
+    async ({ page, devServerURL }) => {
+      await checkScriptScenarios(page, (p) => devURL(devServerURL, p));
+    },
+  );
+
+  devTest(
+    "Script soft-nav contract: async loads, inline document-load does not",
+    async ({ page, devServerURL }) => {
+      await checkSoftNavScriptContract(page, (p) => devURL(devServerURL, p));
+    },
+  );
+
+  devTest(
     "view_item from loader + add_to_cart on click",
     async ({ page, devServerURL }) => {
       await checkEcommerce(page, (p) => devURL(devServerURL, p));
@@ -326,6 +450,18 @@ prodDescribe("gtm", (f) => {
     page,
   }) => {
     await checkSoftNavPayload(page, (p) => f.url(p));
+  });
+
+  test("Script handle: external (Plausible) + body-position + dedup", async ({
+    page,
+  }) => {
+    await checkScriptScenarios(page, (p) => f.url(p));
+  });
+
+  test("Script soft-nav contract: async loads, inline document-load does not", async ({
+    page,
+  }) => {
+    await checkSoftNavScriptContract(page, (p) => f.url(p));
   });
 
   test("view_item from loader + add_to_cart on click", async ({ page }) => {

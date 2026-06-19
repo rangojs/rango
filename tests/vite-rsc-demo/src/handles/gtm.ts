@@ -1,12 +1,17 @@
 import { createHandle } from "@rangojs/router";
 
 /**
- * Google Tag Manager integration, wired the idiomatic Rango way: a layout
- * handler pushes the container id + page tagging into the Gtm handle; the client
- * <GtmScript> in the document head reads it via useHandle(Gtm) and injects the
- * GTM scripts with the request CSP nonce; <GtmPageViews> emits page_view on soft
- * navigation; ecommerce events come from the route's loader data and user
- * interactions.
+ * Google Tag Manager integration, built on the router's first-class primitives:
+ *
+ * - The inline GTM BOOTSTRAP is pushed into the built-in `Script` handle
+ *   (ctx.use(Script)) by the root layout and rendered by `<Scripts/>` in
+ *   RootLayout's <head> with the request CSP nonce applied automatically. A route
+ *   may override it by reusing the "gtm" Script id (see urls/gtm.tsx) to bake
+ *   per-route tagging (content_group) into the FIRST page_view server-side.
+ * - This `Gtm` handle carries per-route page tagging (content_group, ...) for the
+ *   SOFT-navigation page_view, read by the client `<GtmPageViews>`.
+ * - generateGtmInit builds the bootstrap string; pageViewTagging shapes the
+ *   soft-nav page_view; ecommerce events come from loader data + interactions.
  *
  * SCOPE — this wires the PRODUCER side (the dataLayer). It does NOT, by itself,
  * send anything to GA4. To make these events flow, the GTM container must be
@@ -29,9 +34,8 @@ import { createHandle } from "@rangojs/router";
  * producer side (markup, head placement, nonce, dataLayer queue + event shapes),
  * not that a real GTM container loads and forwards events to GA4.
  *
- * collectGtm folds segment entries parent -> child: containerId is last-wins
- * (the root layout sets it), and page is shallow-merged so a nested route can add
- * fields (content_group, custom dimensions) on top of the layout's page.
+ * collectGtm folds segment entries parent -> child: page is shallow-merged so a
+ * nested route can add fields (content_group, custom dimensions) on top.
  */
 
 /** A single dataLayer event object pushed to window.dataLayer. */
@@ -57,28 +61,25 @@ export interface GtmPageInfo {
   [key: string]: unknown;
 }
 
-/** What a route/layout handler pushes via ctx.use(Gtm). */
+/** What a route handler pushes via ctx.use(Gtm) (the container id is a build
+ * constant, so the handle only carries per-route page tagging). */
 export interface GtmEntry {
-  containerId?: string;
   page?: GtmPageInfo;
 }
 
 /** The merged value read on the client via useHandle(Gtm). */
 export interface GtmConfig {
-  containerId?: string;
   page: GtmPageInfo;
 }
 
 function collectGtm(segments: GtmEntry[][]): GtmConfig {
-  let containerId: string | undefined;
   const page: GtmPageInfo = {};
   for (const segment of segments) {
     for (const entry of segment) {
-      if (entry.containerId !== undefined) containerId = entry.containerId;
       if (entry.page) Object.assign(page, entry.page);
     }
   }
-  return { containerId, page };
+  return { page };
 }
 
 /**
@@ -89,19 +90,6 @@ export const Gtm = createHandle<GtmEntry, GtmConfig>(collectGtm);
 
 /** Default demo container id. Placeholder — see the module doc (DEMO LIMITATION). */
 export const DEFAULT_GTM_ID = "GTM-DEMO123";
-
-/**
- * Escape a JSON string for safe embedding inside an inline <script>, mirroring
- * the router-internal escapeJsonForScript (which is not a public export). A raw
- * "</script>" would close the tag early; escaping "<", ">", "&" to \uXXXX keeps
- * the payload valid JSON and a valid JS string literal that re-parses identically.
- */
-function escapeForScript(json: string): string {
-  return json
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/&/g, "\\u0026");
-}
 
 // page_view fields that are owned by the framework (the event name, page_path
 // from `path`, and the runtime fields added at the push site). Arbitrary handle
@@ -115,54 +103,73 @@ const RESERVED_PAGE_VIEW_KEYS = new Set([
 ]);
 
 /**
+ * Drop framework-owned keys from a tagging bag so extras can never override the
+ * event name, page_path, or the runtime page_location/page_title/page_referrer.
+ * Shared by BOTH page_view paths — the soft-nav effect (pageViewTagging) and the
+ * hard-load inline bootstrap (generateGtmInit) — so they sanitize identically.
+ */
+function stripReservedKeys(
+  extras: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(extras).filter(([key]) => !RESERVED_PAGE_VIEW_KEYS.has(key)),
+  );
+}
+
+/**
  * The static, handle-derived part of a page_view: page_path plus any pass-through
  * params (content_group, custom dimensions). The runtime fields (page_location,
  * page_title, page_referrer) are added at the push site. Shared by the SSR inline
  * init and the client soft-nav effect so both emit an identical field set.
- *
- * Reserved keys are dropped from extras so a stray handle push (e.g. a route
- * pushing `page: { event: "x" }` or `page: { page_title: "..." }`) cannot
- * override the event name, page_path, or the runtime page_location/page_title/
- * page_referrer.
  */
 export function pageViewTagging(page: GtmPageInfo): GtmDataLayerEvent {
   const { path, ...extras } = page;
-  const result: GtmDataLayerEvent = {};
-  if (path !== undefined) result.page_path = path;
-  for (const [key, value] of Object.entries(extras)) {
-    if (!RESERVED_PAGE_VIEW_KEYS.has(key)) result[key] = value;
-  }
-  return result;
+  return {
+    ...(path !== undefined ? { page_path: path } : {}),
+    ...stripReservedKeys(extras),
+  };
 }
 
 /**
  * Generate the inline GTM bootstrap (Google's canonical snippet, parameterized):
  * initialise window.dataLayer, fire the gtm.js start event, emit the FIRST
- * page_view, then inject the gtm.js loader.
+ * page_view, then inject the gtm.js loader. Pushed into the built-in Script
+ * handle (ctx.use(Script)) and rendered by <Scripts/>.
  *
- * The loader is injected by THIS (nonced) inline script rather than rendered as a
+ * The loader is injected by THIS inline script rather than emitted as a
  * declarative <script async>, on purpose: React 19 hoists a declarative async
- * script to the TOP of <head>, ABOVE this inline bootstrap, so gtm.js could
- * execute before dataLayer exists. Injecting it here guarantees the
- * dataLayer-before-gtm.js contract regardless of document order. Under
- * 'strict-dynamic' the nonced inline script vouches for the script it creates,
- * so the injected loader needs no nonce of its own.
+ * script to the TOP of <head>, ABOVE this bootstrap, so gtm.js could execute
+ * before dataLayer exists. Injecting it here guarantees the dataLayer-before-
+ * gtm.js contract; under 'strict-dynamic' the nonced inline script (the nonce is
+ * applied by <Scripts/>) vouches for the script it creates.
  *
- * Deterministic so the rendered string is byte-identical between SSR and
- * hydration — every dynamic value is a runtime expression (location.href,
- * document.title, new Date()) or a statically-interpolated constant, never a
- * value that differs per render.
+ * The page_view's location/title/referrer are RUNTIME expressions (identical for
+ * every request). `extras` (e.g. { content_group }) is baked server-side by the
+ * pushing handler: a route can override the layout's bootstrap by reusing the
+ * Script `id`, so per-route tagging lands on the FIRST (hard-load) page_view —
+ * which a head-only server component cannot do. Reserved keys are stripped from
+ * `extras` (same logic as the soft-nav path) so they cannot override the runtime
+ * fields baked into `runtime` below.
+ *
+ * Returns raw JS; no manual escaping is needed because <Scripts/> escapes the
+ * inline body against "</script>" breakout when it renders it.
  */
 export function generateGtmInit(
   containerId: string,
-  page: GtmPageInfo,
+  extras?: Record<string, unknown>,
 ): string {
-  const tagging = escapeForScript(JSON.stringify(pageViewTagging(page)));
-  const id = escapeForScript(JSON.stringify(containerId));
+  const id = JSON.stringify(containerId);
+  const runtime =
+    '{event:"page_view",page_location:location.href,page_path:location.pathname+location.search,page_title:document.title,page_referrer:document.referrer}';
+  const safeExtras = extras ? stripReservedKeys(extras) : {};
+  const pageView =
+    Object.keys(safeExtras).length > 0
+      ? `Object.assign(${runtime},${JSON.stringify(safeExtras)})`
+      : runtime;
   return [
     "window.dataLayer=window.dataLayer||[];",
     'window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});',
-    `window.dataLayer.push(Object.assign({event:"page_view",page_location:location.href,page_title:document.title,page_referrer:document.referrer},${tagging}));`,
+    `window.dataLayer.push(${pageView});`,
     `(function(d,s,i){var j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+encodeURIComponent(i);var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);})(document,"script",${id});`,
   ].join("");
 }

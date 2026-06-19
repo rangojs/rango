@@ -81,6 +81,12 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+export {
+  Script,
+  type ScriptConfig,
+  type ScriptAttributes,
+} from "./handles/script.js";
+export { Scripts } from "./handles/Scripts.js";
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 export {

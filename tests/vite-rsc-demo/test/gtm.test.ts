@@ -16,35 +16,20 @@ import {
  */
 
 describe("Gtm handle — collectGtm (collectHandle)", () => {
-  it("takes the last container id (layout sets it) and shallow-merges page child-wins", () => {
-    const layout: GtmEntry = {
-      containerId: "GTM-LAYOUT",
-      page: { path: "/gtm", content_group: "site" },
-    };
-    const route: GtmEntry = {
-      page: { content_group: "demo" },
-    };
+  it("shallow-merges page across segments, child wins", () => {
+    const layout: GtmEntry = { page: { path: "/gtm", content_group: "site" } };
+    const route: GtmEntry = { page: { content_group: "demo" } };
 
     const result = collectHandle(Gtm, [[layout], [route]]);
 
-    expect(result.containerId).toBe("GTM-LAYOUT");
     expect(result.page).toEqual({
       path: "/gtm", // from layout
       content_group: "demo", // child overrides
     });
   });
 
-  it("a later container id wins over an earlier one", () => {
-    const result = collectHandle(Gtm, [
-      [{ containerId: "GTM-A" }],
-      [{ containerId: "GTM-B" }],
-    ]);
-    expect(result.containerId).toBe("GTM-B");
-  });
-
-  it("returns empty page and no container when nothing is pushed", () => {
-    const result = collectHandle(Gtm, []);
-    expect(result).toEqual({ containerId: undefined, page: {} });
+  it("returns an empty page when nothing is pushed", () => {
+    expect(collectHandle(Gtm, [])).toEqual({ page: {} });
   });
 });
 
@@ -76,22 +61,21 @@ describe("pageViewTagging", () => {
 });
 
 describe("generateGtmInit", () => {
-  it("is deterministic and emits dataLayer init, gtm.js start, page_view, and the loader injection", () => {
-    const a = generateGtmInit("GTM-TEST", { path: "/" });
-    const b = generateGtmInit("GTM-TEST", { path: "/" });
-    expect(a).toBe(b); // byte-identical -> hydration-safe
+  it("emits dataLayer init, gtm.js start, a runtime page_view, and the loader injection", () => {
+    const a = generateGtmInit("GTM-TEST");
 
     expect(a).toContain("window.dataLayer=window.dataLayer||[]");
     expect(a).toContain('event:"gtm.js"');
     expect(a).toContain('event:"page_view"');
-    expect(a).toContain('"page_path":"/"');
-    // Runtime fields are live expressions, never baked into the string.
+    // All page_view fields are live runtime expressions (the bootstrap is
+    // request-shape-independent so a server component renders it identically).
     expect(a).toContain("page_location:location.href");
+    expect(a).toContain("page_path:location.pathname+location.search");
     expect(a).toContain("page_title:document.title");
     expect(a).toContain("page_referrer:document.referrer");
     expect(a).toContain("new Date().getTime()");
-    // The loader is injected by the inline script (Google's snippet), keyed by
-    // the container id, AFTER dataLayer is initialised.
+    // The loader is injected by the inline script, keyed by the container id,
+    // AFTER dataLayer is initialised.
     expect(a).toContain('"https://www.googletagmanager.com/gtm.js?id="');
     expect(a).toContain('"GTM-TEST"');
     expect(a.indexOf("window.dataLayer=window.dataLayer||[]")).toBeLessThan(
@@ -99,21 +83,42 @@ describe("generateGtmInit", () => {
     );
   });
 
-  it("merges static tagging onto the runtime page_view fields", () => {
+  it("bakes `extras` (e.g. content_group) onto the first page_view server-side", () => {
+    const out = generateGtmInit("GTM-TEST", { content_group: "demo" });
+    expect(out).toContain('"content_group":"demo"');
+    // Merged onto the runtime fields via Object.assign, not replacing them.
+    expect(out).toContain("page_location:location.href");
+    expect(out).toContain("Object.assign(");
+  });
+
+  it("omits the Object.assign wrapper when there are no extras", () => {
+    expect(generateGtmInit("GTM-TEST")).not.toContain("Object.assign(");
+  });
+
+  it("strips reserved keys from extras so they cannot override runtime fields", () => {
     const out = generateGtmInit("GTM-TEST", {
-      path: "/gtm",
+      event: "hacked",
+      page_path: "spoofed",
+      page_title: "spoofed",
       content_group: "demo",
     });
-    expect(out).toContain('"page_path":"/gtm"');
+    // The framework-owned fields keep their runtime expressions...
+    expect(out).toContain('event:"page_view"');
+    expect(out).toContain("page_path:location.pathname+location.search");
+    expect(out).toContain("page_title:document.title");
+    // ...and the reserved keys never make it into the baked extras.
+    expect(out).not.toContain('"event":"hacked"');
+    expect(out).not.toContain('"page_path":"spoofed"');
+    expect(out).not.toContain('"page_title":"spoofed"');
+    // Non-reserved extras are still baked.
     expect(out).toContain('"content_group":"demo"');
   });
 
-  it("escapes characters that would break out of the <script> element", () => {
-    const out = generateGtmInit("GTM-TEST", {
-      path: "/x",
-      content_group: "</script><b>",
-    });
-    expect(out).not.toContain("</script>");
-    expect(out).toContain("\\u003c"); // "<" escaped
+  it("emits raw JS (no manual escaping) — <Scripts/> escapes </script> at render", () => {
+    // generateGtmInit does not escape; the router's <Scripts/> applies
+    // escapeScriptBody when it renders the inline body (covered by the router's
+    // handles/__tests__/script.test.tsx). So the builder stays a plain snippet.
+    const out = generateGtmInit("GTM-TEST", { content_group: "demo" });
+    expect(out).toContain('{"content_group":"demo"}');
   });
 });

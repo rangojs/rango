@@ -1,23 +1,17 @@
-import {
-  GtmViewItem,
-  GtmAddToCartButton,
-  type GtmItem,
-} from "../components/GtmEcommerce.js";
+import { GtmProduct } from "../components/GtmEcommerce.js";
 
 /**
- * GTM demo page. Server component: receives the loader-fetched item and renders
- * a view_item tag (fires on mount from loader data) plus an add_to_cart control.
- * The page_view for this route is emitted globally by the GTM layout + script.
+ * GTM demo page. The product data is registered on the route via the loader()
+ * DSL and read on the client by <GtmProduct> (useLoader) — it is NOT awaited in
+ * the handler, because the view_item / add_to_cart events it drives are
+ * client-side. The page_view for this route is emitted globally by the GTM layout
+ * + script.
  */
-export function GtmDemoPage({ item }: { item: GtmItem }) {
+export function GtmDemoPage() {
   return (
     <div data-testid="gtm-demo">
       <h1>GTM Demo</h1>
-      <p>
-        Product: <strong>{item.item_name}</strong> (${item.price})
-      </p>
-      <GtmViewItem item={item} />
-      <GtmAddToCartButton item={item} />
+      <GtmProduct />
     </div>
   );
 }

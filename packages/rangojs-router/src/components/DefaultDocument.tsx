@@ -2,11 +2,13 @@
 
 import type { ReactNode, ReactElement } from "react";
 import { MetaTags } from "../handles/MetaTags.js";
+import { Scripts } from "../handles/Scripts.js";
 
 /**
  * Default document component that provides a basic HTML structure.
  * Used when no custom document is provided to createRouter.
- * Includes MetaTags for automatic charset, viewport, and route meta support.
+ * Includes MetaTags for automatic charset, viewport, and route meta support,
+ * and Scripts (head + body sites) so the Script handle works out of the box.
  *
  * Uses suppressHydrationWarning on <html> because the theme script
  * may modify class/style attributes before React hydrates.
@@ -20,8 +22,12 @@ export function DefaultDocument({
     <html lang="en" suppressHydrationWarning>
       <head>
         <MetaTags />
+        <Scripts />
       </head>
-      <body>{children}</body>
+      <body>
+        <Scripts position="body" />
+        {children}
+      </body>
     </html>
   );
 }

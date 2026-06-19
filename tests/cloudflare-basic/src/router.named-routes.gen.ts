@@ -52,6 +52,7 @@ export const NamedRoutes = {
   "renderedBarrier.index": "/rendered-barrier",
   renderStability: "/render-stability/p/:id",
   robots: "/robots.txt",
+  scriptsDemo: "/scripts-demo",
   search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
   shopArchive: "/shop/:slug.archive.html",
   shopCategory: "/shop/:categoryId",

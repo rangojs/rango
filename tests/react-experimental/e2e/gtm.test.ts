@@ -98,6 +98,18 @@ async function checkCspAndNonce(page: Page, url: Url, enforced: boolean) {
   expect(html.indexOf("googletagmanager")).toBeLessThan(html.indexOf("<body"));
 }
 
+// The root layout owns the Script push, so a DIRECT (hard) load of a non-home
+// route also gets the bootstrap + its first page_view — not just "/".
+async function checkAppWideBootstrap(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/about"));
+  await waitForHydration(page);
+
+  await expectGtmInHead(page, true);
+  expect(await pageViewPaths(page)).toEqual(["/about"]);
+}
+
 async function checkNoJsHead(page: Page, url: Url) {
   await page.goto(url("/"));
   // Bootstrap markup present; loader not injected without JS.
@@ -114,6 +126,10 @@ function defineSuite(f: Fixture) {
     page,
   }) => {
     await checkCspAndNonce(page, (p) => f.url(p), f.mode === "build");
+  });
+
+  test("bootstrap is app-wide (direct load of /about)", async ({ page }) => {
+    await checkAppWideBootstrap(page, (p) => f.url(p));
   });
 
   test.describe("no-js", () => {

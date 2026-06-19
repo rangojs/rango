@@ -20,40 +20,18 @@ declare global {
 export interface GtmPageInfo {
   /** Rendered path (pathname + search), emitted as page_path. */
   path?: string;
-  /** Arbitrary extra dataLayer params. */
-  [key: string]: unknown;
 }
 
 /** Demo GTM container id. */
 export const DEFAULT_GTM_ID = "GTM-EXPERIMENTAL";
 
-function escapeForScript(json: string): string {
-  return json
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/&/g, "\\u0026");
-}
-
-const RESERVED_PAGE_VIEW_KEYS = new Set([
-  "event",
-  "page_path",
-  "page_location",
-  "page_title",
-  "page_referrer",
-]);
-
 /**
- * Static, handle/route-derived page_view fields (page_path + extras). Reserved
- * keys are dropped so extras cannot override the event name or runtime fields.
+ * The handle/route-derived part of a soft-nav page_view. This app exercises only
+ * page_path (the richer content_group/custom-dimension path lives in
+ * tests/vite-rsc-demo); the runtime fields are added at the push site.
  */
 export function pageViewTagging(page: GtmPageInfo): GtmDataLayerEvent {
-  const { path, ...extras } = page;
-  const result: GtmDataLayerEvent = {};
-  if (path !== undefined) result.page_path = path;
-  for (const [key, value] of Object.entries(extras)) {
-    if (!RESERVED_PAGE_VIEW_KEYS.has(key)) result[key] = value;
-  }
-  return result;
+  return page.path !== undefined ? { page_path: page.path } : {};
 }
 
 /**
@@ -64,16 +42,13 @@ export function pageViewTagging(page: GtmPageInfo): GtmDataLayerEvent {
  * (React 19 would hoist a declarative async script above this bootstrap).
  * Deterministic so SSR and hydration produce a byte-identical string.
  */
-export function generateGtmInit(
-  containerId: string,
-  page: GtmPageInfo,
-): string {
-  const tagging = escapeForScript(JSON.stringify(pageViewTagging(page)));
-  const id = escapeForScript(JSON.stringify(containerId));
+export function generateGtmInit(containerId: string): string {
+  // Raw JS; <Scripts/> escapes the inline body against "</script>" breakout.
+  const id = JSON.stringify(containerId);
   return [
     "window.dataLayer=window.dataLayer||[];",
     'window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});',
-    `window.dataLayer.push(Object.assign({event:"page_view",page_location:location.href,page_title:document.title,page_referrer:document.referrer},${tagging}));`,
+    `window.dataLayer.push({event:"page_view",page_location:location.href,page_path:location.pathname+location.search,page_title:document.title,page_referrer:document.referrer});`,
     `(function(d,s,i){var j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+encodeURIComponent(i);var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);})(document,"script",${id});`,
   ].join("");
 }

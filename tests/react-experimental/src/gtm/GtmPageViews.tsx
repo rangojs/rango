@@ -11,8 +11,9 @@ function pushDataLayer(event: GtmDataLayerEvent) {
 
 /**
  * Fires a GTM page_view on each soft navigation. The first page_view is emitted
- * server-side by <GtmScript>, so this seeds its key to the initial location and
- * fires only on change. Payload mirrors the first page_view: runtime fields from
+ * server-side by the inline Script bootstrap (rendered by <Scripts/>), so this
+ * seeds its key to the initial location and fires only on change. Payload mirrors
+ * the first page_view: runtime fields from
  * the live document plus page_referrer from the previous in-app URL. Under
  * experimental React the location hooks re-render inside startViewTransition; the
  * effect still runs once per committed nav.

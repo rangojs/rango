@@ -1,6 +1,6 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, Meta, Script } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
-import { Gtm, DEFAULT_GTM_ID } from "../handles/gtm.js";
+import { DEFAULT_GTM_ID, generateGtmInit } from "../handles/gtm.js";
 import { HomePage } from "../pages/home.js";
 import { AboutPage } from "../pages/about.js";
 import { PrefetchTestPage } from "../pages/prefetch-test.js";
@@ -29,25 +29,16 @@ import { gtmDemoPatterns } from "./gtm.js";
  * The include() helper adds URL prefix and optional name prefix.
  */
 export const urlpatterns = urls(({ path, layout, include }) => [
-  // GTM layout: a transparent wrapper (renders only its children via <Outlet />)
-  // whose handler runs on every matched route and pushes the GTM container id +
-  // page path into the Gtm handle. <GtmScript> in the document head reads the
-  // merged value via useHandle(Gtm) and injects the nonced GTM scripts; nested
-  // routes can push extra page tagging on top (e.g. /gtm adds content_group).
+  // Root layout. Pushes the GTM bootstrap into the built-in Script handle (the
+  // single inline snippet that inits dataLayer, fires the first page_view, and
+  // injects gtm.js); <Scripts/> in RootLayout's <head> renders it with the
+  // request nonce. A route can OVERRIDE this by reusing the "gtm" id to bake
+  // per-route tagging into the first page_view (see /gtm). Also sets the default
+  // document title via Meta — the SOLE managed <title>, so document.title is
+  // correct at parse time when the bootstrap reads it for page_title.
   layout(
     (ctx) => {
-      // Container id is a build constant (prerender-safe: ctx.env is unavailable
-      // during build-time pre-rendering). page.path is per-request (pathname +
-      // search, matching the soft-nav page_view); on a prerendered route it is
-      // captured into the stored Flight payload.
-      ctx.use(Gtm)({
-        containerId: DEFAULT_GTM_ID,
-        page: { path: ctx.url.pathname + ctx.url.search },
-      });
-      // Default document title via the Meta handle (overridden per route). This
-      // is the SOLE managed <title>, so document.title is correct at parse time
-      // when the inline GTM bootstrap reads it for the first page_view's
-      // page_title (no competing manual <title> in RootLayout).
+      ctx.use(Script)({ id: "gtm", children: generateGtmInit(DEFAULT_GTM_ID) });
       ctx.use(Meta)({ title: "RSC Router Demo" });
       return <Outlet />;
     },
