@@ -430,6 +430,140 @@ describe("createEventController", () => {
       expect(ctrl.getState().state).toBe("idle");
     });
 
+    describe("location-state claim (dispatch-order wins, cohort-scoped)", () => {
+      // Same cohort (history key) for the same-entry concurrency cases; passed
+      // to startAction so arbitration is scoped to that entry.
+      const K = "kA";
+
+      it("claims distinct keys for every concurrent action", () => {
+        const ctrl = createController();
+        const a = ctrl.startAction("hash#a", [], K);
+        const b = ctrl.startAction("hash#b", [], K);
+
+        expect(a.claimLocationState({ __rsc_ls_x: 1 })).toEqual({
+          __rsc_ls_x: 1,
+        });
+        expect(b.claimLocationState({ __rsc_ls_y: 2 })).toEqual({
+          __rsc_ls_y: 2,
+        });
+      });
+
+      it("same key: last-initiated wins even when it claims first (settles first)", () => {
+        const ctrl = createController();
+        const first = ctrl.startAction("hash#a", [], K); // initiated first
+        const second = ctrl.startAction("hash#b", [], K); // initiated later
+
+        // last-initiated settles first -> claims and wins the key.
+        expect(second.claimLocationState({ __rsc_ls_k: "second" })).toEqual({
+          __rsc_ls_k: "second",
+        });
+        // first-initiated settles last -> must NOT reclaim it (dispatch-order,
+        // not settle-order, decides the winner).
+        expect(first.claimLocationState({ __rsc_ls_k: "first" })).toEqual({});
+      });
+
+      it("same key: last-initiated wins when it claims last (settles last)", () => {
+        const ctrl = createController();
+        const first = ctrl.startAction("hash#a", [], K);
+        const second = ctrl.startAction("hash#b", [], K);
+
+        // first-initiated settles first -> provisionally wins (transiently).
+        expect(first.claimLocationState({ __rsc_ls_k: "first" })).toEqual({
+          __rsc_ls_k: "first",
+        });
+        // last-initiated settles last -> still wins on arrival (overrides).
+        expect(second.claimLocationState({ __rsc_ls_k: "second" })).toEqual({
+          __rsc_ls_k: "second",
+        });
+      });
+
+      it("a partial claim keeps winning distinct keys and drops only lost keys", () => {
+        const ctrl = createController();
+        const first = ctrl.startAction("hash#a", [], K);
+        const second = ctrl.startAction("hash#b", [], K);
+
+        // last-initiated wins the shared key.
+        second.claimLocationState({ __rsc_ls_shared: "second" });
+        // first-initiated wins its own distinct key but loses the shared one.
+        expect(
+          first.claimLocationState({
+            __rsc_ls_shared: "first",
+            __rsc_ls_own: "kept",
+          }),
+        ).toEqual({ __rsc_ls_own: "kept" });
+      });
+
+      it("scopes arbitration by cohort: same slot on different entries does not compete", () => {
+        const ctrl = createController();
+        const onEntry1 = ctrl.startAction("hash#a", [], "kEntry1"); // initiated first
+        const onEntry2 = ctrl.startAction("hash#b", [], "kEntry2"); // initiated later
+
+        // Newer action on entry 2 claims the slot in its own cohort.
+        expect(onEntry2.claimLocationState({ __rsc_ls_k: "from-2" })).toEqual({
+          __rsc_ls_k: "from-2",
+        });
+        // Older action on entry 1 writes the SAME slot key but in a DIFFERENT
+        // cohort -> it still wins (no cross-entry suppression). This is the P1
+        // regression guard.
+        expect(onEntry1.claimLocationState({ __rsc_ls_k: "from-1" })).toEqual({
+          __rsc_ls_k: "from-1",
+        });
+      });
+
+      it("frees a cohort's arbitration once its last action settles", () => {
+        const ctrl = createController();
+        // Two cohorts overlap; cohort 2 drains first while cohort 1 lingers.
+        const e1 = ctrl.startAction("hash#a", [], "k1");
+        const e2 = ctrl.startAction("hash#b", [], "k2");
+
+        e1.claimLocationState({ __rsc_ls_k: "1" });
+        e2.claimLocationState({ __rsc_ls_k: "2" });
+
+        // Settle cohort 2's only action; cohort 1 is still inflight.
+        e2.complete();
+        vi.advanceTimersByTime(100); // cohort 2 cleanup fires
+        // Cohort 1's action is still inflight, so cohort 1 retains its key but
+        // a fresh action re-entering cohort 2 starts clean (last-initiated wins
+        // trivially). The observable invariant is that nothing throws and both
+        // cohorts remain independent.
+        const e3 = ctrl.startAction("hash#c", [], "k2");
+        expect(e3.claimLocationState({ __rsc_ls_k: "3" })).toEqual({
+          __rsc_ls_k: "3",
+        });
+        // Cohort 1 still isolated.
+        expect(e1.claimLocationState({ __rsc_ls_other: "x" })).toEqual({
+          __rsc_ls_other: "x",
+        });
+      });
+
+      it("a stale settlement does not break a newer cohort generation's arbitration", () => {
+        const ctrl = createController();
+        // Gen 1 in cohort k1 settles, scheduling a 100ms cleanup; abortAllActions
+        // then clears the map while that cleanup is still pending.
+        const g1 = ctrl.startAction("hash#g1", [], "k1");
+        g1.complete();
+        ctrl.abortAllActions();
+
+        // Gen 2: two concurrent actions recreate cohort k1.
+        const a = ctrl.startAction("hash#a", [], "k1"); // initiated first
+        const b = ctrl.startAction("hash#b", [], "k1"); // initiated later
+
+        // last-initiated wins the shared key.
+        expect(b.claimLocationState({ __rsc_ls_k: "b" })).toEqual({
+          __rsc_ls_k: "b",
+        });
+
+        // The stale gen-1 settlement fires now. Pre-fix it deleted gen-2's
+        // arbitration by id, after which gen-2 claims saw no map and accepted
+        // every key (so `a` would wrongly win below). A monotonic-sequence test
+        // alone cannot catch this; the loser must be a LOWER-sequence sibling.
+        vi.advanceTimersByTime(100);
+
+        // first-initiated must STILL lose the shared key.
+        expect(a.claimLocationState({ __rsc_ls_k: "a" })).toEqual({});
+      });
+    });
+
     it("fail() before abortAllActions() delivers error to subscribers", () => {
       const ctrl = createController();
       const handle = ctrl.startAction("hash#save", []);

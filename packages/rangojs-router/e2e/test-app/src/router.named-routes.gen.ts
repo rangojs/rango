@@ -181,6 +181,7 @@ export const NamedRoutes = {
   "loadingRedirect.target": "/loading-redirect/target",
   "locale.detail": "/:locale/blog/:slug",
   "locale.list": "/:locale/blog",
+  "locationState.actionLs": "/location-state/action-ls",
   "locationState.index": "/location-state",
   "locationState.linkState": "/location-state/link-state",
   "locationState.linkStatePlainTarget": "/location-state/link-state/plain-target",

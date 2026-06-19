@@ -12,7 +12,7 @@ import {
   reconcileErrorSegments,
 } from "./segment-reconciler.js";
 import { startTransition } from "react";
-import type { EventController } from "./event-controller.js";
+import type { EventController, ActionHandle } from "./event-controller.js";
 import {
   toNetworkError,
   emitNetworkError,
@@ -56,6 +56,27 @@ export interface ServerActionBridgeConfigWithController extends ServerActionBrid
     url: string,
     options?: { state?: unknown; replace?: boolean; _skipCache?: boolean },
   ) => Promise<void>;
+}
+
+/**
+ * Merge an action's location-state payload into history.state, restricted to
+ * the keys this action is entitled to write. claimLocationState enforces
+ * last-initiated-wins for same-key concurrent writes (a later-initiated sibling
+ * keeps its value even if this action's response settles afterward); distinct
+ * keys from every concurrent action survive. Arbitration is scoped to the
+ * action's cohort (captured at startAction), so a newer action on another entry
+ * cannot suppress this one. No-op when nothing was set or all keys were already
+ * claimed by a later-initiated sibling in the cohort.
+ */
+function applyActionLocationState(
+  handle: ActionHandle,
+  locationState: Record<string, unknown> | undefined,
+): void {
+  if (!locationState) return;
+  const winning = handle.claimLocationState(locationState);
+  if (Object.keys(winning).length > 0) {
+    mergeLocationState(winning);
+  }
 }
 
 /**
@@ -165,8 +186,11 @@ export function createServerActionBridge(
     const locationKey = window.history.state?.key;
     log("action start", { id, argsCount: args.length });
 
-    // Start action in event controller - handles lifecycle tracking
-    const handle = eventController.startAction(id, args);
+    // Start action in event controller - handles lifecycle tracking. The
+    // current history key is the action's cohort: location-state arbitration is
+    // scoped to it so a later action on a different entry cannot suppress this
+    // one (and vice versa).
+    const handle = eventController.startAction(id, args, locationKey);
     // Whether the action's response carried the keepClientCache() directive.
     // Set when the response arrives; gates the deferred invalidation below.
     let keepCache = false;
@@ -627,6 +651,20 @@ export function createServerActionBridge(
         currentInterceptSource: store.getInterceptSourceUrl(),
       });
 
+      // Apply server-set location state exhaustively here, as a successful-
+      // response effect — the terminal switch below decides rendering/refetch,
+      // not whether this metadata survives (every refetch path is storeOnly and
+      // never writes history.state). Gated on NOT navigated-away: the classifier
+      // treats either a pathname OR history-key change as diversion, so this
+      // both honors the "diverted state is dropped" contract AND prevents a
+      // cross-entry write (mergeLocationState writes the CURRENT entry, which a
+      // navigated-away action no longer owns). Done before the switch (and
+      // before the normal branch's async renderSegments) so a slow render racing
+      // a navigation cannot drop it.
+      if (scenario.type !== "navigated-away") {
+        applyActionLocationState(handle, metadata?.locationState);
+      }
+
       switch (scenario.type) {
         case "navigated-away": {
           log("user navigated away during action", {
@@ -679,7 +717,8 @@ export function createServerActionBridge(
           log("consolidation fetch needed", {
             segmentIds: scenario.segmentIds,
           });
-          // Calculate segments to send (exclude the ones we want fresh)
+          // Location state already applied above (pre-switch). Calculate
+          // segments to send (exclude the ones we want fresh).
           const currentSegmentIds = store.getSegmentState().currentSegmentIds;
           const segmentsToSend = currentSegmentIds.filter(
             (sid) => !scenario.segmentIds.includes(sid),
@@ -703,6 +742,8 @@ export function createServerActionBridge(
           // Only update store if history key hasn't changed (user didn't navigate away)
           const currentKeyNow = store.getHistoryKey();
           if (currentKeyNow === currentKey) {
+            // Location state already applied above (pre-switch); this action's
+            // UI render is skipped because a later sibling consolidates.
             store.setSegmentIds(matched);
             const currentHandleData = eventController.getHandleState().data;
             store.cacheSegmentsForHistory(
@@ -742,13 +783,7 @@ export function createServerActionBridge(
             onUpdate({ root: newTree, metadata: metadata! });
           });
 
-          // Apply server-set location state to history.state (non-redirect flow)
-          const actionLocationState = metadata?.locationState;
-          if (actionLocationState) {
-            mergeLocationState(actionLocationState);
-          }
-
-          // Update store state
+          // Location state already applied above (pre-switch). Update store.
           store.setSegmentIds(matched);
           const currentHandleData = eventController.getHandleState().data;
           store.cacheSegmentsForHistory(
