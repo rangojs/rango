@@ -275,6 +275,7 @@ export const NamedRoutes = {
   "renderedBarrier.streamingDeadlock": "/rendered-barrier/streaming-deadlock",
   "renderedBarrier.streamingPrerender": "/rendered-barrier/streaming-prerender",
   "renderedBarrier.useCache": "/rendered-barrier/use-cache",
+  renderStability: "/render-stability/p/:id",
   "responseCache.responseCache.html": "/response-cache/cached-html",
   "responseCache.responseCache.json": "/response-cache/cached-json",
   "responseCache.responseCache.jsonQuery": "/response-cache/cached-json-query",

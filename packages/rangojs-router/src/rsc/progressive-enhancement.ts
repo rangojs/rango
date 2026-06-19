@@ -295,6 +295,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         stateCookieName: ctx.router.resolvedStateCookieName,
         themeConfig: ctx.router.themeConfig,
         warmupEnabled: ctx.router.warmupEnabled,
+        strictMode: ctx.router.strictMode,
         initialTheme: getRequestContext().theme,
       },
     };
@@ -412,6 +413,7 @@ async function renderPeErrorBoundary<TEnv>(
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       warmupEnabled: ctx.router.warmupEnabled,
+      strictMode: ctx.router.strictMode,
       initialTheme: getRequestContext().theme,
     },
   };

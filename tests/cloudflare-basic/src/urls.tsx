@@ -11,6 +11,7 @@ import { apiPatterns } from "./api/urls.js";
 import { HomePage } from "./pages/home.js";
 import { AboutPage } from "./pages/about.js";
 import { CounterPage } from "./pages/counter.js";
+import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
 import {
   BlogLayout,
@@ -323,6 +324,9 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        path("/render-stability/p/:id", RenderStabilityRoute, {
+          name: "renderStability",
+        }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
         // Search route with typed search params
