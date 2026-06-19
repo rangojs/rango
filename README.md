@@ -4,6 +4,14 @@ React RSC Route Wrangler
 
 A code-first, type-safe React Server Components router
 
+## Stability
+
+> **Experimental:** This package is published as `0.0.0-experimental.*` and is under active development. APIs may change between releases. Install with the `@experimental` tag:
+>
+> ```bash
+> npm install @rangojs/router@experimental
+> ```
+
 ## Features
 
 - **Code-first routing** - No file-based conventions

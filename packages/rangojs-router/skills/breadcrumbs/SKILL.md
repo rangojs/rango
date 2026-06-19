@@ -206,7 +206,7 @@ path("/dashboard", (ctx) => {
 ```tsx
 // Client component
 "use client";
-import { useHandle, type Breadcrumbs } from "@rangojs/router/client";
+import { useHandle, Breadcrumbs } from "@rangojs/router/client";
 
 function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
   const crumbs = useHandle(handle);

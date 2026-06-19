@@ -62,6 +62,9 @@ urls(
     revalidate, // Control revalidation
     intercept, // Intercept routes for modals
     when, // Conditional rendering
+    errorBoundary, // Add an error boundary
+    notFoundBoundary, // Add a not-found boundary
+    transition, // Configure view transitions
   }) => [
     // Route definitions here
   ],

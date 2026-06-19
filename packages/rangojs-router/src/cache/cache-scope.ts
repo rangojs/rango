@@ -34,6 +34,7 @@ import {
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
+  isFiniteNonNegativeSeconds,
   resolveCacheKey,
   resolveCacheStore,
   resolveTagsOption,
@@ -52,6 +53,36 @@ function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
     console.log(message);
   }
+}
+
+/**
+ * A finite, non-negative seconds value? A NaN/Infinity ttl/swr (from a bad
+ * cache() option or store defaults) flows into computeExpiration ->
+ * staleAt/expiresAt = NaN, where every `now > NaN` is false so the entry never
+ * evicts and is served fresh forever; a negative value makes every read a miss.
+ * Mirror profile-registry.ts's Number.isFinite + >= 0 check, but the callers
+ * degrade to a default (warning in dev) rather than throw — this runs on the
+ * foreground render.
+ */
+function isValidCacheSeconds(value: number, label: string): boolean {
+  if (isFiniteNonNegativeSeconds(value)) return true;
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[CacheScope] Invalid ${label} ${value}; falling back to default`,
+    );
+  }
+  return false;
+}
+
+/** Coerce a resolved ttl to a finite, non-negative number (default on invalid). */
+function validatedTtl(value: number): number {
+  return isValidCacheSeconds(value, "ttl") ? value : DEFAULT_ROUTE_TTL;
+}
+
+/** Coerce a resolved swr to a finite, non-negative number, or undefined (no SWR window). */
+function validatedSwr(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  return isValidCacheSeconds(value, "swr") ? value : undefined;
 }
 
 function getCacheKeyBase(
@@ -130,20 +161,26 @@ export class CacheScope {
   }
 
   /**
-   * Get effective TTL from config or store defaults
+   * Get effective TTL from config or store defaults.
+   *
+   * Unlike profile-registry.ts (which fails fast at config time), the render
+   * path must DEGRADE: a non-finite/negative ttl (NaN/Infinity from a bad
+   * defaults config) would make computeExpiration produce NaN deadlines so the
+   * entry never evicts, or a guaranteed miss for a negative value. Fall back to
+   * DEFAULT_ROUTE_TTL instead of throwing in the foreground render.
    */
   get ttl(): number {
     if (this.config === false) return 0;
 
     // Explicit TTL in cache() options
     if (this.config.ttl !== undefined) {
-      return this.config.ttl;
+      return validatedTtl(this.config.ttl);
     }
 
     // Fall back to store defaults (explicit store first, then app-level)
     const store = this.getStore();
     if (store?.defaults?.ttl !== undefined) {
-      return store.defaults.ttl;
+      return validatedTtl(store.defaults.ttl);
     }
 
     // Hardcoded fallback
@@ -151,19 +188,22 @@ export class CacheScope {
   }
 
   /**
-   * Get SWR window from config or store defaults
+   * Get SWR window from config or store defaults.
+   *
+   * A non-finite/negative swr is degraded to undefined (no SWR window) rather
+   * than fed into expiry math; see the ttl getter for the rationale.
    */
   get swr(): number | undefined {
     if (this.config === false) return undefined;
 
     // Explicit SWR in cache() options
     if (this.config.swr !== undefined) {
-      return this.config.swr;
+      return validatedSwr(this.config.swr);
     }
 
     // Fall back to store defaults
     const store = this.getStore();
-    return store?.defaults?.swr;
+    return validatedSwr(store?.defaults?.swr);
   }
 
   /**

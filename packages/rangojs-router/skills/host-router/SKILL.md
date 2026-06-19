@@ -66,7 +66,7 @@ Why two methods instead of one overloaded `.map()`:
 | `.` or `*`        | Any apex domain (`example.com`)                |
 | `**`              | Any domain (apex + all subdomains)             |
 | `*.`              | Any single-level subdomain (`www.example.com`) |
-| `**. `            | Any multi-level subdomain (`a.b.example.com`)  |
+| `**.`             | Any multi-level subdomain (`a.b.example.com`)  |
 | `example.com`     | Exact domain                                   |
 | `*.com`           | Any apex `.com` domain                         |
 | `*.example.com`   | Single subdomain of `example.com`              |

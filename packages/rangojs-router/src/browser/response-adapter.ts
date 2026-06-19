@@ -88,8 +88,19 @@ export function teeWithCompletion(
   signal?: AbortSignal,
   silent = false,
 ): Response {
+  // Once-guard: a mid-stream read error runs both the finally block and the
+  // rejection's .catch, so onComplete must be settled exactly once across all
+  // paths (no-body early return, finally, catch).
+  let settled = false;
+  const settle = () => {
+    if (!settled) {
+      settled = true;
+      onComplete();
+    }
+  };
+
   if (!response.body) {
-    onComplete();
+    settle();
     return response;
   }
 
@@ -107,13 +118,13 @@ export function teeWithCompletion(
     } finally {
       if (onAbort) signal!.removeEventListener("abort", onAbort);
       reader.releaseLock();
-      onComplete();
+      settle();
     }
   })().catch((error) => {
     if (!silent && !signal?.aborted) {
       console.error("[Browser] Error reading tracking stream:", error);
     }
-    onComplete();
+    settle();
   });
 
   return new Response(rscStream, {

@@ -32,8 +32,9 @@ is only needed when you want the richer `typeof router.routeMap` shape
 available globally.
 
 - `GeneratedRouteMap` — auto-registered by `router.named-routes.gen.ts`
-  Use for `Handler<"name">`, `Prerender<"name">`, server `ctx.reverse()`,
-  and named-route param/search inference.
+  Use for `Handler<"name">` (type annotation), `Prerender<"name">(...)` (function
+  call with type arg for param inference), server `ctx.reverse()`, and
+  named-route param/search inference.
 - `typeof router.routeMap` — the real merged route map from your router
   instance, including response-route metadata such as `{ path, response }`.
 - `RegisteredRoutes` — manual global hook for exposing `typeof router.routeMap`

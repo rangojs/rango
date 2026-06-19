@@ -60,10 +60,13 @@ filterCacheDecisions(events: readonly TelemetryEvent[]): CacheDecisionEvent[]
 ## Recipe
 
 ```ts
-// In a Playwright e2e, import the cache-status helpers from the e2e entry —
+// In a Playwright e2e, import from the e2e entry —
 // the @rangojs/router/testing barrel pulls a build-only virtual that does not
 // resolve in a plain Playwright runner.
-import { assertCacheStatus } from "@rangojs/router/testing/e2e";
+import { expect, test } from "@playwright/test";
+import { assertCacheStatus, createRangoE2E } from "@rangojs/router/testing/e2e";
+
+const { parityDescribe } = createRangoE2E({ test, expect });
 
 parityDescribe("product page caches", (f) => {
   test("second request is a hit", async ({ page }) => {

@@ -80,7 +80,7 @@ const PricesLoader = createLoader(async (ctx) => {
 | ------------------------------------------------ | ----------------------------------------------------- |
 | `rendered()` in DSL loader, no streaming         | Resolves after handlers settle                        |
 | `rendered()` in DSL loader, tree has `loading()` | Waits for streaming handlers to settle, then resolves |
-| `rendered()` in handler-invoked loader           | Throws `RenderedBarrierError`                         |
+| `rendered()` in handler-invoked loader           | Throws `Error` ("only available in DSL loaders")      |
 | `rendered()` while a handler awaits this loader  | Throws (deadlock guard)                               |
 | `ctx.use(handle)` before `await ctx.rendered()`  | Throws                                                |
 | `ctx.use(handle)` after `await ctx.rendered()`   | Returns collected handle data                         |

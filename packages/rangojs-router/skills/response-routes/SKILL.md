@@ -316,7 +316,7 @@ the response payload straight from the `urls()` patterns and needs no
 ### ParamsFor with Response Routes
 
 ```typescript
-import type { ParamsFor } from "@rangojs/router/client";
+import type { ParamsFor } from "@rangojs/router";
 
 // Works for both RSC and response routes
 type ProductParams = ParamsFor<"api.productDetail">;
@@ -422,7 +422,7 @@ export const urlpatterns = urls(({ path, include }) => [
 
 ```typescript
 import type { RouteResponse } from "@rangojs/router";
-import type { ParamsFor } from "@rangojs/router/client";
+import type { ParamsFor } from "@rangojs/router";
 
 // Scoped (before mount) -- use the module directly, no global wiring needed
 type Stats = RouteResponse<typeof blogApiPatterns, "stats">;

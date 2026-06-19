@@ -107,8 +107,24 @@ test.describe("cache-status-behavior", () => {
     // Visit not-found route
     await page.goto(f.url("/cache-status/not-found"));
 
-    // Wait for response processing
-    await page.waitForTimeout(500);
+    // Wait for response processing by polling for the deterministic MISS log
+    // (mirrors the 200-cache test's poll instead of a fixed timeout).
+    await expect
+      .poll(
+        () => {
+          const stdout = f.proc().stdout().substring(initialLength);
+          return (
+            stdout.includes("[CacheScope] MISS:") &&
+            stdout.includes("/cache-status/not-found")
+          );
+        },
+        {
+          timeout: 5000,
+          message:
+            "Expected [CacheScope] MISS: log for /cache-status/not-found",
+        },
+      )
+      .toBe(true);
 
     // Check logs - should have MISS but no Cached (404 is never cached)
     const afterStdout = f.proc().stdout();

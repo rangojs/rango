@@ -43,19 +43,23 @@ export const NamedRoutes = {
   },
 } as const;
 
+// Aliased so the augmentation below does not pay a homomorphic mapped-type
+// instantiation per route; `as const` already makes the members readonly.
+type NamedRoutesShape = typeof NamedRoutes;
+
 // Module augmentation for typed Handler<"blog.post"> and ctx.reverse("blog.post")
 declare global {
   namespace Rango {
-    interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
+    interface GeneratedRouteMap extends NamedRoutesShape {}
   }
 }
-
-export type NamedRoutes = typeof NamedRoutes;
 ```
 
 The augmentation targets the global `Rango` namespace (not
-`declare module "@rangojs/router"`) and extends `Readonly<typeof NamedRoutes>`,
-so the generated `const` is the single source of truth for both runtime and types.
+`declare module "@rangojs/router"`) and extends `NamedRoutesShape` (an alias of
+`typeof NamedRoutes`), so the generated `const` is the single source of truth
+for both runtime and types. The alias avoids the homomorphic mapped-type cost
+that `Readonly<typeof NamedRoutes>` would incur at the `extends` site.
 
 **Dual purpose:**
 

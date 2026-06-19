@@ -2094,11 +2094,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       await Promise.all(
         tags.map(async (tag) => {
           const markerKey = this.tagMarkerKey(tag);
-          if (kvKeyByteLength(markerKey) > KV_MAX_KEY_BYTES) {
+          const markerKeyBytes = kvKeyByteLength(markerKey);
+          if (markerKeyBytes > KV_MAX_KEY_BYTES) {
             failedTags.add(tag);
             errors.push(
               new Error(
-                `tag "${tag}" produces a ${kvKeyByteLength(markerKey)}-byte KV ` +
+                `tag "${tag}" produces a ${markerKeyBytes}-byte KV ` +
                   `marker key, over the ${KV_MAX_KEY_BYTES}-byte limit`,
               ),
             );
@@ -2473,7 +2474,19 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           typeof e.st === "number" &&
           typeof e.e === "number" &&
           typeof e.s === "number" &&
-          Array.isArray(e.hd),
+          // stx is optional but, if present, must be a string (feeds Response).
+          (e.stx === undefined || typeof e.stx === "string") &&
+          // hd must be an array of [name, value] string tuples; a malformed
+          // shape would otherwise throw in `new Headers(hd)`. Validate it here
+          // so a faulty envelope is a fail-open MISS, never a thrown read.
+          Array.isArray(e.hd) &&
+          e.hd.every(
+            (entry) =>
+              Array.isArray(entry) &&
+              entry.length === 2 &&
+              typeof entry[0] === "string" &&
+              typeof entry[1] === "string",
+          ),
         "kvGetResponse",
       );
       if (!envelope) return null;

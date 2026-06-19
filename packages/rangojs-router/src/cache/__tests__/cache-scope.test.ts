@@ -49,7 +49,7 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
 });
 
 // Import AFTER mocks are registered so vitest applies them.
-const { serializeSegments, deserializeSegments } =
+const { serializeSegments, deserializeSegments, serializeResult } =
   await import("../segment-codec.js");
 const { CacheScope } = await import("../cache-scope.js");
 const { createRequestContext, runWithRequestContext } =
@@ -417,6 +417,102 @@ describe("CacheScope.lookupRoute - throwing key() degrades to a miss", () => {
     );
 
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// serializeResult swallows a serialization failure and returns null (so the
+// caller falls through to an uncached render) rather than throwing. The fix
+// added a debug-gated log on the swallowed error; the contract under test is
+// the return value and the no-throw guarantee.
+// ---------------------------------------------------------------------------
+
+describe("serializeResult - non-serializable input returns null, does not throw", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns null for a value the serializer rejects", async () => {
+    // The mock renderToReadableStream JSON.stringifies synchronously, so a
+    // circular reference throws inside serializeResult's try.
+    const circular: any = {};
+    circular.self = circular;
+
+    await expect(serializeResult(circular)).resolves.toBeNull();
+  });
+
+  it("returns null for a BigInt the serializer cannot encode", async () => {
+    await expect(serializeResult(10n)).resolves.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ttl/swr getters validate the resolved value and DEGRADE on garbage. An
+// unvalidated NaN/Infinity ttl flows into expiry math (every `now > NaN` is
+// false) so the entry never evicts; a negative ttl makes every read a miss.
+// Unlike profile-registry.ts (fail fast at config time) the render path falls
+// back to DEFAULT_ROUTE_TTL / undefined rather than throwing.
+// ---------------------------------------------------------------------------
+
+describe("CacheScope.ttl / swr - validation and degradation", () => {
+  const DEFAULT_ROUTE_TTL = 60;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([NaN, Infinity, -Infinity, -5])(
+    "falls back to DEFAULT_ROUTE_TTL for config.ttl = %s",
+    (bad) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const scope = new CacheScope({ ttl: bad });
+      expect(scope.ttl).toBe(DEFAULT_ROUTE_TTL);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid ttl"));
+    },
+  );
+
+  it.each([0, 1, 60, 3600])("passes through a valid config.ttl = %s", (ok) => {
+    const scope = new CacheScope({ ttl: ok });
+    expect(scope.ttl).toBe(ok);
+  });
+
+  it.each([NaN, Infinity, -1])(
+    "returns undefined for config.swr = %s",
+    (bad) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const scope = new CacheScope({ ttl: 60, swr: bad });
+      expect(scope.swr).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid swr"));
+    },
+  );
+
+  it.each([0, 5, 300])("passes through a valid config.swr = %s", (ok) => {
+    const scope = new CacheScope({ ttl: 60, swr: ok });
+    expect(scope.swr).toBe(ok);
+  });
+
+  it("validates an invalid store defaults.ttl when config.ttl is absent", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = {
+      get: vi.fn(),
+      set: vi.fn(),
+      defaults: { ttl: NaN },
+    } as unknown as SegmentCacheStore;
+    const scope = new CacheScope({ store });
+    expect(scope.ttl).toBe(DEFAULT_ROUTE_TTL);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid ttl"));
+  });
+
+  it("returns undefined for an invalid store defaults.swr", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = {
+      get: vi.fn(),
+      set: vi.fn(),
+      defaults: { ttl: 60, swr: -10 },
+    } as unknown as SegmentCacheStore;
+    const scope = new CacheScope({ store });
+    expect(scope.swr).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid swr"));
   });
 });
 

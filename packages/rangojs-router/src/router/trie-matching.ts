@@ -5,7 +5,11 @@
  * Falls back to null when no match is found (caller uses regex fallback).
  */
 
-import type { TrieNode, TrieLeaf } from "../build/route-trie.js";
+import type {
+  TrieNode,
+  TrieLeaf,
+  NegotiateVariant,
+} from "../build/route-trie.js";
 import { safeDecodeURIComponent } from "./url-params.js";
 
 export interface TrieMatchResult {
@@ -24,7 +28,7 @@ export interface TrieMatchResult {
   /** Response type for non-RSC routes (json, text, image, any) */
   responseType?: string;
   /** Negotiate variants: response-type routes sharing this path */
-  negotiateVariants?: Array<{ routeKey: string; responseType: string }>;
+  negotiateVariants?: NegotiateVariant[];
   /** RSC-first: RSC route was defined before response-type variants */
   rscFirst?: true;
 }
@@ -262,12 +266,7 @@ function walkTrie(
 
 function joinRemainingSegments(segments: string[], start: number): string {
   if (start >= segments.length) return "";
-
-  let rest = segments[start]!;
-  for (let i = start + 1; i < segments.length; i++) {
-    rest += "/" + segments[i]!;
-  }
-  return rest;
+  return segments.slice(start).join("/");
 }
 
 /**

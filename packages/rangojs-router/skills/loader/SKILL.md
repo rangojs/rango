@@ -561,6 +561,8 @@ entirely (no read, no write).
 ### Per-Loader Store Override
 
 ```typescript
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+
 const hotStore = new MemorySegmentCacheStore({ defaults: { ttl: 10 } });
 
 loader(PricingLoader, () => [

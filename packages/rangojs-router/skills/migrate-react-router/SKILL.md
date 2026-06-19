@@ -597,11 +597,13 @@ function ErrorBoundary() {
 }
 
 // Rango: errorBoundary() wrapping a group of routes
+// Server-side error boundaries only receive `error` (no `reset` — server render
+// cannot be retried; users can navigate away or refresh).
 layout(<DashboardLayout />, () => [
-  errorBoundary(({ error, reset }) => (
+  errorBoundary(({ error }) => (
     <div>
       <h2>Something went wrong</h2>
-      <button onClick={reset}>Try again</button>
+      <p>{error.message}</p>
     </div>
   )),
   path("/dashboard", DashboardIndex, { name: "dashboard" }),

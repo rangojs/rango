@@ -9,205 +9,234 @@ import {
 
 test.describe.configure({ mode: "serial" });
 
-test.describe("blog with CF cache", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
+// Blog routes wrapped in cache({ ttl: 60, swr: 300 }) with a parallel,
+// cache()-backed sidebar loader. The content (post titles/authors, sidebar
+// links/tags) is deterministic, and the cache-stability assertion (the sidebar
+// timestamp is preserved across an in-layout navigation) is an invariant of the
+// cache() boundary that holds identically in dev and the production
+// CFCacheStore. Covered in BOTH dev and production (build) modes.
+function describeBlogCache(mode: "dev" | "build") {
+  const label = mode === "build" ? "production" : "dev";
+  test.describe(`blog with CF cache (${label})`, () => {
+    const f = useFixture({
+      root: ".",
+      mode,
+    });
 
-  test("should render blog index with posts list", async ({ page }) => {
-    using _ = expectNoPageError(page);
+    test("should render blog index with posts list", async ({ page }) => {
+      using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
-    await waitForHydration(page);
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
 
-    // Blog layout should be visible
-    await expect(testId(page, "blog-layout")).toBeVisible();
+      // Blog layout should be visible
+      await expect(testId(page, "blog-layout")).toBeVisible();
 
-    // Blog index content
-    await expect(testId(page, "blog-title")).toHaveText("Blog");
-    await expect(testId(page, "blog-posts-list")).toBeVisible();
+      // Blog index content
+      await expect(testId(page, "blog-title")).toHaveText("Blog");
+      await expect(testId(page, "blog-posts-list")).toBeVisible();
 
-    // Should show all 3 blog posts
-    await expect(
-      testId(page, "blog-post-getting-started-with-rsc"),
-    ).toBeVisible();
-    await expect(
-      testId(page, "blog-post-cloudflare-workers-deployment"),
-    ).toBeVisible();
-    await expect(
-      testId(page, "blog-post-understanding-caching-strategies"),
-    ).toBeVisible();
-  });
+      // Should show all 3 blog posts
+      await expect(
+        testId(page, "blog-post-getting-started-with-rsc"),
+      ).toBeVisible();
+      await expect(
+        testId(page, "blog-post-cloudflare-workers-deployment"),
+      ).toBeVisible();
+      await expect(
+        testId(page, "blog-post-understanding-caching-strategies"),
+      ).toBeVisible();
+    });
 
-  test("should stream sidebar with skeleton then content", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    // Navigate fresh to blog page
-    await page.goto(f.url("/blog"));
-
-    // Sidebar skeleton should appear first (streaming)
-    // Note: May be too fast to catch in dev mode, so we check either skeleton or final content
-    const skeletonOrContent = page.locator(
-      '[data-testid="sidebar-skeleton"], [data-testid="blog-sidebar"]',
-    );
-    await expect(skeletonOrContent.first()).toBeVisible({ timeout: 5000 });
-
-    // Wait for sidebar to fully load
-    await expect(testId(page, "blog-sidebar")).toBeVisible({ timeout: 10000 });
-
-    // Sidebar should show recent posts
-    await expect(
-      testId(page, "sidebar-link-getting-started-with-rsc"),
-    ).toBeVisible();
-    await expect(
-      testId(page, "sidebar-link-cloudflare-workers-deployment"),
-    ).toBeVisible();
-
-    // Sidebar should show popular tags
-    await expect(testId(page, "sidebar-tag-react")).toBeVisible();
-    await expect(testId(page, "sidebar-tag-cloudflare")).toBeVisible();
-
-    // Sidebar should show rendered timestamp
-    await expect(testId(page, "sidebar-rendered-at")).toBeVisible();
-  });
-
-  test("should navigate to blog post detail page", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/blog"));
-    await waitForHydration(page);
-
-    // Wait for sidebar to load (streaming complete)
-    await expect(testId(page, "blog-sidebar")).toBeVisible({ timeout: 10000 });
-
-    await using __ = await expectNoReload(page);
-
-    // Click on first blog post link
-    await testId(page, "blog-link-getting-started-with-rsc").click();
-
-    // Should navigate to blog post detail
-    await expect(page).toHaveURL(/\/blog\/getting-started-with-rsc/);
-    await expect(testId(page, "blog-post-detail")).toBeVisible();
-    await expect(testId(page, "post-title")).toHaveText(
-      "Getting Started with React Server Components",
-    );
-    await expect(testId(page, "post-author")).toHaveText("RSC Team");
-    await expect(testId(page, "post-content")).toContainText(
-      "React Server Components",
-    );
-  });
-
-  test("should preserve sidebar during navigation to post", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/blog"));
-    await waitForHydration(page);
-
-    // Wait for sidebar to load
-    await expect(testId(page, "blog-sidebar")).toBeVisible({ timeout: 10000 });
-
-    // Get sidebar timestamp before navigation
-    const sidebarTimeBefore = await testId(
+    test("should stream sidebar with skeleton then content", async ({
       page,
-      "sidebar-rendered-at",
-    ).textContent();
+    }) => {
+      using _ = expectNoPageError(page);
 
-    await using __ = await expectNoReload(page);
+      // Navigate fresh to blog page
+      await page.goto(f.url("/blog"));
 
-    // Navigate to post
-    await testId(page, "blog-link-cloudflare-workers-deployment").click();
-    await expect(testId(page, "blog-post-detail")).toBeVisible();
+      // Sidebar skeleton should appear first (streaming)
+      // Note: May be too fast to catch in dev mode, so we check either skeleton or final content
+      const skeletonOrContent = page.locator(
+        '[data-testid="sidebar-skeleton"], [data-testid="blog-sidebar"]',
+      );
+      await expect(skeletonOrContent.first()).toBeVisible({ timeout: 5000 });
 
-    // Sidebar should still be visible
-    await expect(testId(page, "blog-sidebar")).toBeVisible();
+      // Wait for sidebar to fully load
+      await expect(testId(page, "blog-sidebar")).toBeVisible({
+        timeout: 10000,
+      });
 
-    // Sidebar timestamp should be preserved (same as before - from cache)
-    const sidebarTimeAfter = await testId(
+      // Sidebar should show recent posts
+      await expect(
+        testId(page, "sidebar-link-getting-started-with-rsc"),
+      ).toBeVisible();
+      await expect(
+        testId(page, "sidebar-link-cloudflare-workers-deployment"),
+      ).toBeVisible();
+
+      // Sidebar should show popular tags
+      await expect(testId(page, "sidebar-tag-react")).toBeVisible();
+      await expect(testId(page, "sidebar-tag-cloudflare")).toBeVisible();
+
+      // Sidebar should show rendered timestamp
+      await expect(testId(page, "sidebar-rendered-at")).toBeVisible();
+    });
+
+    test("should navigate to blog post detail page", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+
+      // Wait for sidebar to load (streaming complete)
+      await expect(testId(page, "blog-sidebar")).toBeVisible({
+        timeout: 10000,
+      });
+
+      await using __ = await expectNoReload(page);
+
+      // Click on first blog post link
+      await testId(page, "blog-link-getting-started-with-rsc").click();
+
+      // Should navigate to blog post detail
+      await expect(page).toHaveURL(/\/blog\/getting-started-with-rsc/);
+      await expect(testId(page, "blog-post-detail")).toBeVisible();
+      await expect(testId(page, "post-title")).toHaveText(
+        "Getting Started with React Server Components",
+      );
+      await expect(testId(page, "post-author")).toHaveText("RSC Team");
+      await expect(testId(page, "post-content")).toContainText(
+        "React Server Components",
+      );
+    });
+
+    test("should preserve sidebar during navigation to post", async ({
       page,
-      "sidebar-rendered-at",
-    ).textContent();
-    expect(sidebarTimeBefore).toBe(sidebarTimeAfter);
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+
+      // Wait for sidebar to load
+      await expect(testId(page, "blog-sidebar")).toBeVisible({
+        timeout: 10000,
+      });
+
+      // Get sidebar timestamp before navigation
+      const sidebarTimeBefore = await testId(
+        page,
+        "sidebar-rendered-at",
+      ).textContent();
+
+      await using __ = await expectNoReload(page);
+
+      // Navigate to post
+      await testId(page, "blog-link-cloudflare-workers-deployment").click();
+      await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+      // Sidebar should still be visible
+      await expect(testId(page, "blog-sidebar")).toBeVisible();
+
+      // Sidebar timestamp should be preserved (same as before - from cache)
+      const sidebarTimeAfter = await testId(
+        page,
+        "sidebar-rendered-at",
+      ).textContent();
+      expect(sidebarTimeBefore).toBe(sidebarTimeAfter);
+    });
+
+    test("should render blog post directly via URL", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog/understanding-caching-strategies"));
+      await waitForHydration(page);
+
+      // Should render post detail
+      await expect(testId(page, "blog-post-detail")).toBeVisible();
+      await expect(testId(page, "post-title")).toHaveText(
+        "Understanding RSC Caching Strategies",
+      );
+      await expect(testId(page, "post-content")).toContainText(
+        "Caching is crucial",
+      );
+
+      // Sidebar should also load
+      await expect(testId(page, "blog-sidebar")).toBeVisible({
+        timeout: 10000,
+      });
+    });
+
+    // Flaky only in serial dev mode: hydration fails after repeated blog visits
+    // in the same suite (raw RSC payload). Passes in isolation and production,
+    // so skip in dev (module-runner state corruption) but run the production
+    // build, which is where this navigation must keep working.
+    test("should navigate back to blog index from post", async ({ page }) => {
+      test.fixme(
+        mode === "dev",
+        "dev module-runner state corruption on repeated blog visits in serial",
+      );
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog/getting-started-with-rsc"));
+      await waitForHydration(page);
+
+      // Wait for full page load including sidebar
+      await expect(testId(page, "blog-sidebar")).toBeVisible({
+        timeout: 10000,
+      });
+
+      await using __ = await expectNoReload(page);
+
+      // Click back link
+      await page.click('a:has-text("Back to Blog")');
+
+      // Should navigate back to index
+      await expect(page).toHaveURL(/\/blog$/);
+      await expect(testId(page, "blog-index")).toBeVisible();
+      await expect(testId(page, "blog-title")).toHaveText("Blog");
+    });
+
+    test("should show cache info timestamp", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+
+      // Cache info should show rendered timestamp
+      await expect(testId(page, "cache-info")).toContainText("Rendered at:");
+      await expect(testId(page, "cache-info")).toContainText("TTL=60s");
+    });
+
+    test("sidebar links should navigate to posts", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+
+      // Wait for sidebar
+      await expect(testId(page, "blog-sidebar")).toBeVisible({
+        timeout: 10000,
+      });
+
+      await using __ = await expectNoReload(page);
+
+      // Click sidebar link
+      await testId(page, "sidebar-link-cloudflare-workers-deployment").click();
+
+      // Should navigate to that post
+      await expect(page).toHaveURL(/\/blog\/cloudflare-workers-deployment/);
+      await expect(testId(page, "post-title")).toHaveText(
+        "Deploying RSC to Cloudflare Workers",
+      );
+    });
   });
+}
 
-  test("should render blog post directly via URL", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/blog/understanding-caching-strategies"));
-    await waitForHydration(page);
-
-    // Should render post detail
-    await expect(testId(page, "blog-post-detail")).toBeVisible();
-    await expect(testId(page, "post-title")).toHaveText(
-      "Understanding RSC Caching Strategies",
-    );
-    await expect(testId(page, "post-content")).toContainText(
-      "Caching is crucial",
-    );
-
-    // Sidebar should also load
-    await expect(testId(page, "blog-sidebar")).toBeVisible({ timeout: 10000 });
-  });
-
-  // TODO: flaky in serial dev mode — hydration fails after repeated blog
-  // visits in the same suite (raw RSC payload shown). Passes in isolation
-  // and production. Root cause is dev-mode module runner state corruption.
-  test.fixme("should navigate back to blog index from post", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/blog/getting-started-with-rsc"));
-    await waitForHydration(page);
-
-    // Wait for full page load including sidebar
-    await expect(testId(page, "blog-sidebar")).toBeVisible({ timeout: 10000 });
-
-    await using __ = await expectNoReload(page);
-
-    // Click back link
-    await page.click('a:has-text("Back to Blog")');
-
-    // Should navigate back to index
-    await expect(page).toHaveURL(/\/blog$/);
-    await expect(testId(page, "blog-index")).toBeVisible();
-    await expect(testId(page, "blog-title")).toHaveText("Blog");
-  });
-
-  test("should show cache info timestamp", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/blog"));
-    await waitForHydration(page);
-
-    // Cache info should show rendered timestamp
-    await expect(testId(page, "cache-info")).toContainText("Rendered at:");
-    await expect(testId(page, "cache-info")).toContainText("TTL=60s");
-  });
-
-  test("sidebar links should navigate to posts", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/blog"));
-    await waitForHydration(page);
-
-    // Wait for sidebar
-    await expect(testId(page, "blog-sidebar")).toBeVisible({ timeout: 10000 });
-
-    await using __ = await expectNoReload(page);
-
-    // Click sidebar link
-    await testId(page, "sidebar-link-cloudflare-workers-deployment").click();
-
-    // Should navigate to that post
-    await expect(page).toHaveURL(/\/blog\/cloudflare-workers-deployment/);
-    await expect(testId(page, "post-title")).toHaveText(
-      "Deploying RSC to Cloudflare Workers",
-    );
-  });
-});
+describeBlogCache("dev");
+describeBlogCache("build");
 
 test.describe("proactive-caching", () => {
   const f = useFixture({

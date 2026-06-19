@@ -915,8 +915,8 @@ See `/links` for the full URL generation guide. `ctx.reverse()` is server-only; 
 | `useRouter()`             | Stable router actions                                          | push, replace, refresh, prefetch, back, forward                    |
 | `useSegments()`           | URL path & segment IDs                                         | path, segmentIds, location                                         |
 | `useLinkStatus()`         | Link pending state                                             | { pending }                                                        |
-| `useLoader()`             | Loader data (strict)                                           | data, isLoading, error                                             |
-| `useFetchLoader()`        | Loader with on-demand fetch                                    | data, load, isLoading                                              |
+| `useLoader()`             | Loader data (strict)                                           | data, isLoading, error, load, refetch                              |
+| `useFetchLoader()`        | Loader with on-demand fetch                                    | data, load, isLoading, error, refetch                              |
 | `useRefreshLoaders()`     | Refresh cross-loader group(s)                                  | `() => (groups: string \| string[]) => Promise<void>`              |
 | `useHandle()`             | Accumulated handle data                                        | T (handle type)                                                    |
 | `useAction()`             | Server action state                                            | state, error, result                                               |

@@ -11,6 +11,7 @@
  */
 
 import type { ResolvedThemeConfig } from "./types.js";
+import { escapeJsonForScript } from "../escape-script.js";
 
 /**
  * Generate the inline script for theme initialization
@@ -24,13 +25,13 @@ import type { ResolvedThemeConfig } from "./types.js";
 export function generateThemeScript(config: ResolvedThemeConfig): string {
   const script = `
 (function() {
-  var storageKey = ${JSON.stringify(config.storageKey)};
-  var defaultTheme = ${JSON.stringify(config.defaultTheme)};
-  var attribute = ${JSON.stringify(config.attribute)};
+  var storageKey = ${escapeJsonForScript(JSON.stringify(config.storageKey))};
+  var defaultTheme = ${escapeJsonForScript(JSON.stringify(config.defaultTheme))};
+  var attribute = ${escapeJsonForScript(JSON.stringify(config.attribute))};
   var enableSystem = ${config.enableSystem};
   var enableColorScheme = ${config.enableColorScheme};
-  var valueMap = ${JSON.stringify(config.value)};
-  var themes = ${JSON.stringify(config.themes)};
+  var valueMap = ${escapeJsonForScript(JSON.stringify(config.value))};
+  var themes = ${escapeJsonForScript(JSON.stringify(config.themes))};
 
   function getStoredTheme() {
     var cookies = document.cookie.split(';');

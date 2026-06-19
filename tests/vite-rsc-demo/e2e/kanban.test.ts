@@ -712,6 +712,139 @@ test.describe("kanban-actions (production)", () => {
   });
 });
 
+test.describe("kanban-action-navigation-race (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should revalidate and show fresh data after action completes during navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
+    // Open card modal
+    await testId(page, "card-link-card-1").click();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
+
+    // Toggle a label to trigger kanbanUpdateCard action (has ~2.2s server delay)
+    const labelButton = page
+      .locator("button")
+      .filter({ hasText: "docs" })
+      .first();
+    await labelButton.click();
+
+    // Let the action start on the server (200ms initial delay) but not finish.
+    await page.waitForTimeout(500);
+
+    // Close modal via programmatic navigation; this navigation races the action.
+    await testId(page, "card-modal-close").click();
+
+    await expect(testId(page, "card-modal")).not.toBeVisible();
+    await expect(page).toHaveURL(/\/kanban$/);
+    await expect(testId(page, "kanban-board")).toBeVisible();
+
+    // After the action completes (~2.2s) and background revalidation lands, the
+    // action counter surfaces kanbanUpdateCard. Poll so production timing does
+    // not depend on a fixed wait.
+    await expect(page.locator("text=kanbanUpdateCard:")).toBeVisible({
+      timeout: 15000,
+    });
+  });
+
+  test("should show correct action count when using back button (working case)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
+    // Open card modal
+    await testId(page, "card-link-card-2").click();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
+
+    // Toggle a label to trigger kanbanUpdateCard action
+    const labelButton = page
+      .locator("button")
+      .filter({ hasText: "UI" })
+      .first();
+    await labelButton.click();
+
+    // Browser back aborts in-flight actions via handlePopstate().
+    await goBack(page);
+
+    await expect(page).toHaveURL(/\/kanban$/);
+    await expect(testId(page, "card-modal")).not.toBeVisible();
+
+    // With back button the action is aborted; board stays functional.
+    await expect(testId(page, "kanban-board")).toBeVisible();
+  });
+});
+
+test.describe("kanban-action-counter-revalidation (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display action counter on kanban page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "action-counter")).toBeVisible({
+      timeout: 10000,
+    });
+  });
+
+  test("should delete card when clicking delete button", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
+    // Verify card-6 exists on the board
+    await expect(testId(page, "kanban-card-card-6")).toBeVisible();
+
+    // Open card-6 modal
+    await testId(page, "card-link-card-6").click();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
+
+    // Delete the card (this triggers an action)
+    page.on("dialog", (dialog) => dialog.accept());
+    await testId(page, "delete-card").click();
+
+    // Navigation back to board, modal gone, optimistic removal
+    await expect(page).toHaveURL(/\/kanban$/);
+    await expect(testId(page, "card-modal")).not.toBeVisible();
+    await expect(testId(page, "kanban-card-card-6")).not.toBeVisible();
+  });
+});
+
 test.describe("kanban-navigation-history (production)", () => {
   const f = useFixture({
     root: ".",

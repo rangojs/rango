@@ -53,6 +53,7 @@ import { defineConfig } from "vitest/config";
 import {
   rangoTestAliases,
   rangoUseClientTransform,
+  rangoInlineDeps,
 } from "@rangojs/router/testing/vitest";
 
 // Production React in this process AND any forked worker (forks inherit env).
@@ -69,6 +70,8 @@ export default defineConfig({
     include: ["**/*.rsc-test.{ts,tsx}"],
     pool: "forks",
     execArgv: ["--conditions=react-server"], // or React throws "react-server condition must be enabled"
+    // Required for an installed consumer on Node >= 23 (rango ships TS source).
+    server: { deps: { inline: rangoInlineDeps } },
   },
 });
 ```
