@@ -10,6 +10,7 @@ import type { CacheDefaults, SegmentCacheStore } from "./types.js";
 import { _getRequestContext } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import { normalizeTags } from "./cache-tag.js";
+import { reportCacheError } from "./cache-error.js";
 
 /**
  * Default TTL for route-level cache() DSL and loader cache.
@@ -136,9 +137,11 @@ export function resolveTagsOption<TEnv>(
     try {
       return normalizeTagList(tags(ctx));
     } catch (error) {
-      console.error(
-        `[${label}] Tags function failed, caching without tags:`,
+      reportCacheError(
         error,
+        "cache-write",
+        `[${label}] Tags function failed, caching without tags`,
+        ctx,
       );
       return undefined;
     }

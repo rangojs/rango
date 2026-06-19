@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import type { Mock } from "vitest";
 
 // createRouter's match path transitively imports @vitejs/plugin-rsc/rsc, whose
 // top-level body imports Vite virtual modules that do not resolve in plain
@@ -22,6 +23,8 @@ import { getRequestContext } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { RouterError } from "../../errors.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
+import type { SegmentCacheStore } from "../../cache/types.js";
+import type { OnErrorCallback } from "../../types/error-types.js";
 
 function Home() {
   return null;
@@ -489,6 +492,224 @@ describe("dispatch", () => {
       expect(putSpy).toHaveBeenCalled();
       expect(putSpy.mock.calls[0]?.[0]).toBe("response:tenant-a/cached-keyok");
       putSpy.mockRestore();
+    });
+  });
+
+  // The 6 request-time CACHE error sites surface through the SAME consumer hook
+  // a real app passes to createRouter({ onError }). dispatch wires the request
+  // context's _reportBackgroundError -> router.onError exactly like the production
+  // RSC handler, so each cache-read / cache-write / stale-revalidation failure on
+  // a cached response route fires onError (phase "cache" + metadata.category)
+  // while the request still degrades-to-miss / serves stale. These are the
+  // CONSUMER-side proof that createRouter({ onError }) observes cache degradation,
+  // not an internal _reportBackgroundError stub.
+  describe("cache error reporting through createRouter({ onError })", () => {
+    // The miss-write and SWR-revalidation reports run in a ctx.waitUntil
+    // microtask (no executionContext under dispatch); flush so they are observed.
+    const flushBackground = () => new Promise((r) => setTimeout(r, 0));
+
+    // A minimal SegmentCacheStore the response-cache serve leaf engages with: it
+    // requires BOTH getResponse and putResponse to be present (else the path is
+    // skipped). Per-test, ONE method is overridden to throw so a single error
+    // site is exercised in isolation. Methods unused by the serve path are no-ops.
+    function makeStore(
+      overrides: Partial<{
+        getResponse: SegmentCacheStore["getResponse"];
+        putResponse: SegmentCacheStore["putResponse"];
+        keyGenerator: SegmentCacheStore["keyGenerator"];
+      }> = {},
+    ): SegmentCacheStore {
+      return {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => false,
+        getResponse: async () => null,
+        putResponse: async () => {},
+        ...overrides,
+      };
+    }
+
+    // Build a router whose ONLY route is a cached response route, with an
+    // onError spy and the supplied store. The route cache config is spread in so
+    // a test can inject a throwing key()/tags().
+    function buildCacheRouter(
+      onError: Mock<OnErrorCallback>,
+      store: SegmentCacheStore,
+      cacheConfig: Record<string, unknown> = { ttl: 600 },
+    ) {
+      return createRouter<{}>({ onError, cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache(cacheConfig as any, () => [
+            path.json(
+              "/cached-err",
+              () => ({ ts: Date.now() + Math.random() }),
+              {
+                name: "cached.err",
+              },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+    }
+
+    function lastPhaseAndCategory(onError: Mock<OnErrorCallback>) {
+      const ctx = onError.mock.calls.at(-1)?.[0] as
+        | { phase?: string; metadata?: { category?: string } }
+        | undefined;
+      return { phase: ctx?.phase, category: ctx?.metadata?.category };
+    }
+
+    it("route cache({ key }) throw -> onError phase cache, category cache-read (degrades to miss)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = buildCacheRouter(onError, store, {
+        ttl: 600,
+        key: () => {
+          throw new Error("key boom");
+        },
+      });
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Degrade preserved: the handler still ran and returned its JSON body.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-read",
+      });
+      // No store write under the broad default key (no cache poisoning).
+      expect(putSpy).not.toHaveBeenCalled();
+    });
+
+    it("store keyGenerator throw -> onError phase cache, category cache-read (degrades to miss)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore({
+        keyGenerator: () => {
+          throw new Error("keygen boom");
+        },
+      });
+      const putSpy = vi.spyOn(store, "putResponse");
+      // No route-level key(): keyGenerator is the active key resolver.
+      const router = buildCacheRouter(onError, store, { ttl: 600 });
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      expect(res.status).toBe(200);
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-read",
+      });
+      expect(putSpy).not.toHaveBeenCalled();
+    });
+
+    it("store getResponse throw -> onError phase cache, category cache-read (serves fresh)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore({
+        getResponse: async () => {
+          throw new Error("getResponse boom");
+        },
+      });
+      const router = buildCacheRouter(onError, store);
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Lookup failed -> fall through to a fresh handler run, still 200.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-read",
+      });
+    });
+
+    it("cache MISS + store putResponse throw -> onError phase cache, category cache-write (serves fresh)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore({
+        getResponse: async () => null, // miss
+        putResponse: async () => {
+          throw new Error("putResponse boom");
+        },
+      });
+      const router = buildCacheRouter(onError, store);
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Miss path returns the fresh handler response; the write failure is
+      // background and must not affect the served response.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      // The write (and its failure report) runs in ctx.waitUntil.
+      await flushBackground();
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-write",
+      });
+    });
+
+    it("SWR stale hit + store putResponse throw -> onError phase cache, category stale-revalidation (serves stale)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const staleBody = JSON.stringify({ ts: "STALE" });
+      const store = makeStore({
+        // A stale HIT: return a cacheable (200) response flagged for revalidation.
+        getResponse: async () => ({
+          response: new Response(staleBody, {
+            status: 200,
+            headers: { "content-type": "application/json;charset=utf-8" },
+          }),
+          shouldRevalidate: true,
+        }),
+        // Background revalidation re-runs the handler then writes; the write throws.
+        putResponse: async () => {
+          throw new Error("revalidate write boom");
+        },
+      });
+      const router = buildCacheRouter(onError, store);
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // The STALE cached body is served immediately (SWR), unaffected by the
+      // failing background revalidation.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBe("STALE");
+
+      // Background revalidation + its failure report run in ctx.waitUntil.
+      await flushBackground();
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "stale-revalidation",
+      });
+    });
+
+    it("route cache({ tags }) throw -> onError phase cache, category cache-write (caches without tags)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = buildCacheRouter(onError, store, {
+        ttl: 600,
+        tags: () => {
+          throw new Error("tags boom");
+        },
+      });
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Degrade preserved: a throwing tags() caches without tags, never fails.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-write",
+      });
+      // The miss-write still proceeds (without tags), so the store WAS written.
+      await flushBackground();
+      expect(putSpy).toHaveBeenCalled();
     });
   });
 
