@@ -1113,3 +1113,191 @@ test.describe("location-state.static-write (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   staticWriteSuite(f);
 });
+
+/**
+ * Concurrent server-action location state.
+ *
+ * Pins that a server action setting locationState via ctx.setLocationState()
+ * lands in history.state on every terminal, not only the single-action "normal"
+ * path:
+ *   - single action                 -> "normal" merge (previously untested)
+ *   - two concurrent, distinct keys -> both survive (one lands via
+ *                                      concurrent-skip, the other via
+ *                                      consolidation-needed)
+ *   - two concurrent, same key      -> last-INITIATED wins, independent of which
+ *                                      response settles last (both settlement
+ *                                      orders are exercised)
+ *   - same slot on two different history entries -> cohort-scoped, no
+ *                                      cross-entry suppression (P1 regression)
+ * Same-key/distinct tests wait on a deterministic "both settled" marker rather
+ * than a fixed sleep. Non-flash slots, so they also persist across back/forward.
+ */
+function actionLocationStateSuite(f: ReturnType<typeof useFixture>) {
+  test("single non-redirect action sets location state", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/action-ls"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="action-info-a-empty"]'),
+    ).toBeVisible();
+
+    await page.locator('[data-testid="action-setls-single-btn"]').click();
+
+    await expect(page.locator('[data-testid="action-info-a-data"]')).toHaveText(
+      "A-single",
+    );
+  });
+
+  test("concurrent actions with distinct keys both survive consolidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/action-ls"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="action-info-a-empty"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('[data-testid="action-info-b-empty"]'),
+    ).toBeVisible();
+
+    // One click fires both actions synchronously -> genuinely in flight
+    // together. A (longer delay) settles last via consolidation-needed; B
+    // settles first via concurrent-skip.
+    await page.locator('[data-testid="action-setls-distinct-btn"]').click();
+
+    // Wait for BOTH actions to settle (deterministic), then assert both slots.
+    await expect(page.locator('[data-testid="settled-markers"]')).toHaveText(
+      "a,b",
+    );
+    await expect(page.locator('[data-testid="action-info-a-data"]')).toHaveText(
+      "A-from-action",
+    );
+    await expect(page.locator('[data-testid="action-info-b-data"]')).toHaveText(
+      "B-from-action",
+    );
+  });
+
+  // Both settlement orders must yield the last-INITIATED value. The settled
+  // marker waits until BOTH actions have resolved, so the assertion can never
+  // race ahead of the losing (later-settling) action under slow CI.
+  for (const variant of [
+    {
+      title: "last-initiated wins when it settles first (slow first)",
+      btn: "action-setls-samekey-slowfirst-btn",
+    },
+    {
+      title: "last-initiated wins when it settles last (fast first)",
+      btn: "action-setls-samekey-fastfirst-btn",
+    },
+  ]) {
+    test(`concurrent same-key writes: ${variant.title}`, async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/location-state/action-ls"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="action-info-a-empty"]'),
+      ).toBeVisible();
+
+      await page.locator(`[data-testid="${variant.btn}"]`).click();
+
+      // Deterministic: both actions have settled before we assert the winner.
+      await expect(page.locator('[data-testid="settled-markers"]')).toHaveText(
+        "first,second",
+      );
+      await expect(
+        page.locator('[data-testid="action-info-a-data"]'),
+      ).toHaveText("second-initiated");
+    });
+  }
+
+  test("same slot on different history entries does not suppress each other (cohort-scoped)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Entry 1.
+    await page.goto(f.url("/location-state/action-ls"));
+    await waitForHydration(page);
+    await expect(
+      page.locator('[data-testid="action-info-a-empty"]'),
+    ).toBeVisible();
+
+    // Start a SLOW action on entry 1 that sets slot A + a marker in slot B.
+    await page.locator('[data-testid="action-cross-slow-btn"]').click();
+
+    // SPA-navigate to a NEW history entry and run a FAST action there that
+    // writes the SAME slot A. It settles while entry 1's action is still
+    // in flight, claiming slot A globally (pre-fix this suppressed entry 1).
+    await page.locator('[data-testid="action-ls-newentry-link"]').click();
+    await expect(page).toHaveURL(/action-ls\?e=2/);
+    await page.locator('[data-testid="action-cross-fast-btn"]').click();
+    await expect(page.locator('[data-testid="action-info-a-data"]')).toHaveText(
+      "from-entry-2",
+    );
+
+    // Return to entry 1 BEFORE its slow action resolves.
+    await goBack(page);
+    await expect(page.locator('[data-testid="ls-action-ls"]')).toBeVisible();
+
+    // The slow action settles on entry 1: its marker (slot B) lands -> signal.
+    await expect(page.locator('[data-testid="action-info-b-data"]')).toHaveText(
+      "a1-done",
+      { timeout: 12000 },
+    );
+    // Entry 1's slot A must be ITS OWN value, not suppressed by entry 2's write.
+    await expect(page.locator('[data-testid="action-info-a-data"]')).toHaveText(
+      "from-entry-1",
+    );
+  });
+
+  test("concurrent action location state persists across back/forward", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/action-ls"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="action-setls-distinct-btn"]').click();
+    await expect(page.locator('[data-testid="settled-markers"]')).toHaveText(
+      "a,b",
+    );
+    await expect(page.locator('[data-testid="action-info-a-data"]')).toHaveText(
+      "A-from-action",
+    );
+    await expect(page.locator('[data-testid="action-info-b-data"]')).toHaveText(
+      "B-from-action",
+    );
+
+    // Navigate away and back; non-flash slots persist on the original entry.
+    await page.locator('[data-testid="action-ls-other-link"]').click();
+    await expect(page.locator('[data-testid="ls-other-page"]')).toBeVisible();
+
+    await goBack(page);
+    await expect(page.locator('[data-testid="ls-action-ls"]')).toBeVisible();
+    await expect(page.locator('[data-testid="action-info-a-data"]')).toHaveText(
+      "A-from-action",
+    );
+    await expect(page.locator('[data-testid="action-info-b-data"]')).toHaveText(
+      "B-from-action",
+    );
+  });
+}
+
+test.describe("location-state.action-ls", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  actionLocationStateSuite(f);
+});
+
+test.describe("location-state.action-ls (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  test.setTimeout(120000);
+  actionLocationStateSuite(f);
+});

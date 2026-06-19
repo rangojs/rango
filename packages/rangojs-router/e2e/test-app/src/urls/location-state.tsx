@@ -23,6 +23,10 @@ import {
   TypedJitTimingLink,
 } from "../components/LinkStateDisplay.js";
 import { StaticWriteWidget } from "../components/StaticWriteWidget.js";
+import {
+  ActionInfoDisplay,
+  ActionLocationStateControls,
+} from "../components/ActionLocationState.js";
 
 /**
  * Location state test routes - tests for redirect() with state,
@@ -267,5 +271,27 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
       </div>
     ),
     { name: "staticWrite" },
+  ),
+
+  // Non-redirect server actions that set location state. Drives the
+  // concurrent-action consolidation e2e: distinct keys survive both terminals
+  // (concurrent-skip + consolidation-needed) and a same-key collision resolves
+  // to the last-initiated action.
+  path(
+    "/action-ls",
+    () => (
+      <div data-testid="ls-action-ls">
+        <h1>Action location state</h1>
+        <ActionInfoDisplay />
+        <ActionLocationStateControls />
+        <Link to="/location-state/other" data-testid="action-ls-other-link">
+          Go to other page
+        </Link>
+        <Link to="/location-state" data-testid="action-ls-index-link">
+          Back to index
+        </Link>
+      </div>
+    ),
+    { name: "actionLs" },
   ),
 ]);

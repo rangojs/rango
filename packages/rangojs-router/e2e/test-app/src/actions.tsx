@@ -9,7 +9,7 @@ import {
   redirect,
   updateTag,
 } from "@rangojs/router";
-import { FlashMessage } from "./location-states.js";
+import { ActionInfoA, ActionInfoB, FlashMessage } from "./location-states.js";
 import {
   getCurrentCart,
   getCartQuantitySync,
@@ -218,6 +218,44 @@ export const StreamingAction = async (_data: FormData) => {
     }),
   };
 };
+
+/**
+ * Non-redirect action that sets a distinct location-state slot after a
+ * configurable delay. Dispatched concurrently in the action-ls e2e fixture so
+ * the first-initiated action can resolve last: that forces one response through
+ * the consolidation-needed terminal and the other through concurrent-skip — the
+ * two paths that historically dropped action-set location state. The asymmetric
+ * delays also let the same-key case prove last-initiated-wins independent of
+ * settle order. The default action revalidation re-renders this route, so each
+ * response carries a non-empty diff (the concurrent terminals require it).
+ */
+export async function setLocationStateSlot(
+  slot: "A" | "B",
+  value: string,
+  delayMs: number,
+): Promise<void> {
+  await delay(delayMs);
+  const def = slot === "A" ? ActionInfoA : ActionInfoB;
+  getRequestContext().setLocationState(def({ value }));
+}
+
+/**
+ * Sets the contested slot A plus a distinct marker in slot B after a delay.
+ * Used by the cross-entry arbitration e2e: the marker (slot B) is uncontested,
+ * so it always lands and serves as a remount-surviving "this action settled"
+ * signal (history.state outlives the React component across back/forward),
+ * while slot A is the value whose cohort scoping is under test.
+ */
+export async function setSlotWithMarker(
+  value: string,
+  marker: string,
+  delayMs: number,
+): Promise<void> {
+  await delay(delayMs);
+  const ctx = getRequestContext();
+  ctx.setLocationState(ActionInfoA({ value }));
+  ctx.setLocationState(ActionInfoB({ value: marker }));
+}
 
 /**
  * Action that redirects with a flash message.

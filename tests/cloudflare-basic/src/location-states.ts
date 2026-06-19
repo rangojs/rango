@@ -23,3 +23,15 @@ export interface ActionFlashState {
  * through the revalidation payload.
  */
 export const ActionFlash = createLocationState<ActionFlashState>();
+
+export interface ConcurrentSlotState {
+  value: string;
+}
+
+/**
+ * Two distinct slots written by concurrent server actions. Distinct keys must
+ * both survive consolidation; the same key resolves to the last-initiated
+ * action regardless of settle order.
+ */
+export const ConcurrentSlotA = createLocationState<ConcurrentSlotState>();
+export const ConcurrentSlotB = createLocationState<ConcurrentSlotState>();
