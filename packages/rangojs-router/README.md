@@ -127,19 +127,28 @@ export const router = createRouter().routes(urlpatterns);
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { MetaTags, Scripts } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
         <MetaTags />
+        <Scripts />
       </head>
-      <body>{children}</body>
+      <body>
+        <Scripts position="body" />
+        {children}
+      </body>
     </html>
   );
 }
 ```
+
+`<MetaTags />` and `<Scripts />` render the tags collected by the built-in `Meta`
+and `Script` handles (see [Meta Tags](#meta-tags) and [Scripts](#scripts)). The
+built-in `DefaultDocument` already includes all three sites, so this is only
+needed for a custom document.
 
 ## Defining Routes
 
@@ -977,6 +986,38 @@ export function BlogPostPage(ctx: HandlerContext) {
 ```
 
 Render collected tags in the document with `<MetaTags />` from `@rangojs/router/client`.
+
+## Scripts
+
+Inject `<script>` tags (analytics, GTM, widgets) the same way, using the built-in
+`Script` handle — push a config from a handler, render with `<Scripts />`:
+
+```tsx
+import { Script } from "@rangojs/router";
+import type { HandlerContext } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+
+export function RootLayout(ctx: HandlerContext) {
+  // Inline bootstrap (GTM/GA4/Segment) — rendered with the request CSP nonce.
+  ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
+  // External async resource (loads on first encounter, deduped by src).
+  ctx.use(Script)({
+    id: "plausible",
+    src: "https://plausible.io/js/script.js",
+    async: true,
+    attributes: { "data-domain": "example.com" },
+  });
+  return <Outlet />;
+}
+```
+
+Render with `<Scripts />` (head) and `<Scripts position="body" />` (body) from
+`@rangojs/router/client` (both are wired in `DefaultDocument`). The request CSP
+nonce is applied automatically to document-rendered scripts. `ScriptConfig` is a
+discriminated union (inline / external-async / external-ordered), and inline +
+ordered scripts are document-load while async externals are React resources — see
+the [`/scripts` skill](./skills/scripts/SKILL.md) for the full execution contract
+and CSP guidance.
 
 ## CLI: `rango generate`
 

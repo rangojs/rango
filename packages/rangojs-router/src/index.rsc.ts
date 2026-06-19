@@ -181,6 +181,11 @@ export type { HandlerCacheConfig } from "./rsc/types.js";
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";
+export {
+  Script,
+  type ScriptConfig,
+  type ScriptAttributes,
+} from "./handles/script.js";
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 // Request context (for accessing request data in server actions/components).

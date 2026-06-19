@@ -10,6 +10,7 @@ import { apiPatterns } from "./api/urls.js";
 // Page handlers
 import { HomePage } from "./pages/home.js";
 import { AboutPage } from "./pages/about.js";
+import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
@@ -327,6 +328,7 @@ export const urlpatterns = urls(
         path("/render-stability/p/:id", RenderStabilityRoute, {
           name: "renderStability",
         }),
+        path("/scripts-demo", ScriptsDemoPage, { name: "scriptsDemo" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
         // Search route with typed search params

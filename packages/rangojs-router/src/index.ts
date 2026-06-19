@@ -307,6 +307,11 @@ export type {
 
 // Built-in handles (universal — work on both server and client)
 export { Meta } from "./handles/meta.js";
+export {
+  Script,
+  type ScriptConfig,
+  type ScriptAttributes,
+} from "./handles/script.js";
 export { Breadcrumbs } from "./handles/breadcrumbs.js";
 
 // Meta types

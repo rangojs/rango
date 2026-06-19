@@ -6,17 +6,28 @@ import {
   ScrollRestoration,
   href,
   MetaTags,
+  Scripts,
 } from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
 import { LinkStatusIndicator } from "../components/LinkStatusIndicator.js";
+import { GtmPageViews } from "../components/GtmPageViews.js";
+import { DEFAULT_GTM_ID, gtmNoScriptSrc } from "../handles/gtm.js";
 
 export function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <title>RSC Router Demo</title>
+        {/*
+          No manual <title> here: the Meta handle owns the single document title
+          (a default is set in the GTM layout, overridden per route). Two <title>
+          elements would make document.title resolve to the first (manual) one at
+          parse time, so the inline GTM bootstrap would read the wrong page_title
+          before React reconciles the managed title.
+        */}
         <MetaTags />
+        {/* Renders scripts pushed via ctx.use(Script) (the GTM bootstrap is one). */}
+        <Scripts />
         <style>{`
           body {
             font-family: system-ui, -apple-system, sans-serif;
@@ -55,6 +66,19 @@ export function RootLayout({ children }: { children: ReactNode }) {
         `}</style>
       </head>
       <body className="full-width">
+        {/* Body-positioned scripts pushed via ctx.use(Script)({ position: "body" }). */}
+        <Scripts position="body" />
+        {/* GTM <noscript> fallback (not a <script>, so the consumer Document owns it). */}
+        <noscript>
+          <iframe
+            src={gtmNoScriptSrc(DEFAULT_GTM_ID)}
+            height="0"
+            width="0"
+            style={{ display: "none", visibility: "hidden" }}
+            title="gtm"
+          />
+        </noscript>
+        <GtmPageViews />
         <ScrollRestoration />
         <nav>
           <Link to={href("/")} prefetch="hover">
@@ -90,6 +114,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           </Link>
           <Link to={href("/errors")} prefetch="hover">
             Errors
+          </Link>
+          <Link to={href("/gtm")} prefetch="hover">
+            GTM
           </Link>
         </nav>
         <BreadcrumbNav />

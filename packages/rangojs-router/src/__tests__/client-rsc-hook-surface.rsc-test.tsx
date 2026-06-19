@@ -31,6 +31,7 @@ const REQUIRED_HOOKS = [
   "useSegments",
   "useLinkStatus",
   "useScrollRestoration",
+  "useNonce",
 ] as const;
 
 describe("client.rsc entry hook surface (H4)", () => {

@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { MetaTags, Scripts } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <MetaTags />
+        <Scripts />
         <style
           dangerouslySetInnerHTML={{
             __html: `
@@ -30,7 +31,10 @@ export function Document({ children }: { children: ReactNode }) {
           }}
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <Scripts position="body" />
+        {children}
+      </body>
     </html>
   );
 }
