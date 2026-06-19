@@ -40,6 +40,7 @@ import {
 } from "./handle-snapshot.js";
 import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 import { sortedSearchString } from "./cache-key-utils.js";
+import { encodeKV } from "../encode-kv.js";
 import { runBackground } from "./background-task.js";
 import {
   normalizeTags,
@@ -50,14 +51,73 @@ import { reportCacheError } from "./cache-error.js";
 import type { CacheItemResult } from "./types.js";
 
 /**
- * Convert encodeReply result to a stable string key.
- * encodeReply may return string or FormData — normalize to string.
+ * DJB2 hash returning an 8-char hex string. Deterministic across runtimes
+ * (no crypto import — cache-runtime runs on the edge). Mirrors prerender's
+ * param-hash djb2Hex so binary key parts hash consistently.
  */
-async function replyToCacheKey(encoded: string | FormData): Promise<string> {
+function djb2HexBytes(bytes: Uint8Array): string {
+  let hash = 5381;
+  for (let i = 0; i < bytes.length; i++) {
+    hash = ((hash << 5) + hash + bytes[i]!) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * Convert encodeReply result to a stable string key.
+ *
+ * encodeReply may return a string or FormData. A plain string is already
+ * deterministic for a given arg set, so return it verbatim. FormData (emitted
+ * whenever a key arg is a typed array / Blob / File / a large object React
+ * lazily chunks) carries a per-call RANDOM multipart boundary
+ * (`formdata-undici-<random>`); stringifying the whole body via
+ * `new Response(formData).text()` would therefore produce a DIFFERENT key on
+ * every call, so the cached function would always miss and the store would
+ * accumulate one duplicate entry per call (unbounded growth).
+ *
+ * Instead derive the key from the entries themselves, independent of the
+ * boundary: iterate in sorted-key order and, for each value, emit a
+ * boundary-free token — `s:<value>` for strings, `b:<size>:<type>:<name>:<hash>`
+ * for Blob/File (bytes folded via djb2 so distinct payloads of equal
+ * size/type/name still differ). Strings carry an `s:` type tag so a string whose
+ * value happens to equal a blob token (e.g. the literal `b:4::a:b:<hash>`) cannot
+ * collide with an actual Blob/File entry under the same FormData key. The
+ * user-controlled `type`/`name` are percent-encoded before joining so an embedded
+ * `:` cannot shift the field boundaries and collide two distinct files (e.g.
+ * {name:"a:b",type:""} vs {name:"b",type:":a"}). The result is stable across
+ * identical arg sets.
+ */
+export async function replyToCacheKey(
+  encoded: string | FormData,
+): Promise<string> {
   if (typeof encoded === "string") return encoded;
-  // FormData: convert to Response body, then to string for deterministic key
-  const text = await new Response(encoded).text();
-  return text;
+
+  // Snapshot entries synchronously (forEach avoids relying on FormData's
+  // iterator typings), then fold any Blob/File bytes asynchronously.
+  const raw: [string, FormDataEntryValue][] = [];
+  encoded.forEach((value, key) => {
+    raw.push([key, value]);
+  });
+  const pairs: [string, string][] = [];
+  for (const [key, value] of raw) {
+    if (typeof value === "string") {
+      // Type-tag strings with `s:` so a string equal to a blob token (e.g.
+      // `b:4::a:b:<hash>`) cannot collide with a Blob/File entry under the same
+      // key (which carries the `b:` tag below).
+      pairs.push([key, "s:" + value]);
+    } else {
+      // Blob/File: fold the bytes into a deterministic, boundary-free token.
+      // Percent-encode the user-controlled type/name so an embedded `:` cannot
+      // shift the `:`-delimited field boundaries and collide distinct files.
+      const buf = await value.arrayBuffer();
+      const hash = djb2HexBytes(new Uint8Array(buf));
+      const name = "name" in value ? value.name : "";
+      const encType = encodeURIComponent(value.type);
+      const encName = encodeURIComponent(name);
+      pairs.push([key, `b:${value.size}:${encType}:${encName}:${hash}`]);
+    }
+  }
+  return encodeKV(pairs, { sort: true });
 }
 
 // Cached-fn ids already warned about running uncached under a test runner, so

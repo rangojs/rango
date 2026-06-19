@@ -85,7 +85,7 @@ createRouter({
 - `"use cache"` (no name) resolves to the `default` profile.
 - `"use cache: <name>"` resolves to the named profile. Names must match `[a-zA-Z0-9_-]+`.
 - Unknown profile names throw at runtime with an actionable error message.
-- Profiles are scoped per router: at DSL-time, `cache("profileName")` reads from `HelperContext.cacheProfiles` (set by `createRouter()` and propagated through `RangoContext.run()`). At request-time, `registerCachedFunction` resolves from `requestCtx._cacheProfiles` (set per-request by the active router). There is no global fallback.
+- Profiles are scoped per router: `registerCachedFunction` resolves the profile name at request-time from `requestCtx._cacheProfiles` (set per-request by the active router via `createRequestContext()`). There is no global fallback. The same `cacheProfiles` map set by `createRouter()` is also propagated through `RangoContext.run()` for DSL-time route-segment cache resolution.
 
 ## Cache Key
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback } from "react";
 import { href, type ValidPaths } from "../../href-client.js";
 import { useMount } from "./use-mount.js";
 
@@ -36,5 +37,11 @@ import { useMount } from "./use-mount.js";
  */
 export function useHref(): (path: `/${string}`) => string {
   const mount = useMount();
-  return (path: `/${string}`) => href(path as ValidPaths, mount);
+  // Memoize on `mount` (stable within a route) so the returned function is
+  // referentially stable across re-renders — a consumer can safely pass it as a
+  // dependency or a prop to a memoized child without forcing re-renders.
+  return useCallback(
+    (path: `/${string}`) => href(path as ValidPaths, mount),
+    [mount],
+  );
 }

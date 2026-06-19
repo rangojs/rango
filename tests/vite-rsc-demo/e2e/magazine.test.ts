@@ -338,3 +338,130 @@ test.describe("magazine-navigation (production)", () => {
     await expect(breadcrumbNav.locator("text=Alice Writer")).not.toBeVisible();
   });
 });
+
+/**
+ * Magazine breadcrumb tests (production build) -- mirrors the dev
+ * magazine-breadcrumbs describe against the pre-rendered build output.
+ */
+test.describe("magazine-breadcrumbs (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display Magazine breadcrumb on index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/magazine"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+  });
+
+  test("should display article breadcrumbs", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/magazine/design-systems"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Design Systems")).toBeVisible();
+  });
+
+  test("should display author breadcrumbs", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/magazine/author/alice-writer"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
+  });
+
+  test("should display author posts breadcrumbs", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/magazine/author/alice-writer/posts"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Articles")).toBeVisible();
+  });
+
+  test("should handle SPA navigation with breadcrumb updates", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // Step 1: Magazine index
+    await page.goto(f.url("/magazine"));
+    await waitForHydration(page);
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+
+    // Step 2: Navigate to article
+    await page.locator('a[href="/magazine/design-systems"]').first().click();
+    await expect(page.locator("h2:has-text('Design Systems')")).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Design Systems")).toBeVisible();
+
+    // Step 3: Navigate to author
+    await page
+      .locator('a[href="/magazine/author/alice-writer"]')
+      .first()
+      .click();
+    await expect(page.locator("h2:has-text('Alice Writer')")).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
+    await expect(
+      breadcrumbNav.locator("text=Design Systems"),
+    ).not.toBeVisible();
+
+    // Step 4: Navigate to author posts
+    await page
+      .locator('a[href="/magazine/author/alice-writer/posts"]')
+      .first()
+      .click();
+    await expect(
+      page.locator("h2:has-text('Articles by Alice Writer')"),
+    ).toBeVisible({ timeout: 10000 });
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Articles")).toBeVisible();
+  });
+
+  test("should preserve breadcrumbs on back navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    await page.goto(f.url("/magazine"));
+    await waitForHydration(page);
+
+    await page
+      .locator('a[href="/magazine/author/alice-writer"]')
+      .first()
+      .click();
+    await expect(page.locator("h2:has-text('Alice Writer')")).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
+
+    await goBack(page);
+    await expect(page.locator('[data-testid="magazine-index"]')).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Alice Writer")).not.toBeVisible();
+  });
+});

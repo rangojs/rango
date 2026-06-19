@@ -21,6 +21,11 @@ import { PRERENDER_PASSTHROUGH } from "../prerender.js";
 import { substitutePatternParams } from "./substitute-pattern-params.js";
 import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 
+// Mutating Headers methods guarded so they throw inside "use cache" / cache()
+// scope. Module-level constant (read-only, .has() lookups) so it is allocated
+// once at module load instead of per createHandlerContext (per-request) call.
+const MUTATING_HEADERS_METHODS = new Set(["set", "append", "delete"]);
+
 /**
  * Strip internal _rsc* query params from a URL.
  * Returns a new URL with only user-facing params.
@@ -212,7 +217,7 @@ export function createHandlerContext<TEnv>(
   // Guard mutating Headers methods so they throw inside "use cache" or cache() scope.
   // Uses lazy `ctx` reference (assigned below) — only the specific handler ctx
   // is stamped by cache-runtime, not the shared request context.
-  const MUTATING_HEADERS_METHODS = new Set(["set", "append", "delete"]);
+  // MUTATING_HEADERS_METHODS is hoisted to module scope (constant, read-only).
   let ctx: InternalHandlerContext<any, TEnv>;
   const guardedHeaders = new Proxy(stubResponse.headers, {
     get(target, prop, receiver) {

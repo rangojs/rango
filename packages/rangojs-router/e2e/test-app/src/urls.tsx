@@ -14,6 +14,7 @@ import {
   trailingSlashPatterns,
 } from "./urls/meta.js";
 import { hooksPatterns } from "./urls/hooks.js";
+import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
@@ -69,6 +70,8 @@ import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { cacheTagPatterns } from "./urls/cache-tag.js";
 import { actionCtxSetPatterns } from "./urls/action-ctx-set.js";
 import { isActionPatterns } from "./urls/is-action.js";
+import { revalFormDataPatterns } from "./urls/reval-formdata.js";
+import { actionRouteMwPatterns } from "./urls/action-route-mw.js";
 import { paramsAfterActionPatterns } from "./urls/params-after-action.js";
 import { middlewareWrappingPatterns } from "./urls/middleware-wrapping.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
@@ -757,6 +760,9 @@ export const urlpatterns = urls(
       // Hook test patterns - already have their prefixes in paths
       include("/", hooksPatterns, { name: "" }),
 
+      // Hook render-stability fixture (render/commit tracking)
+      include("/", renderStabilityPatterns, { name: "" }),
+
       // Shared-refetch regression scenario
       include("/", sharedRefetchPatterns, { name: "" }),
 
@@ -939,6 +945,16 @@ export const urlpatterns = urls(
         name: "isAction",
       }),
 
+      // shouldRevalidate({ formData }) JS/PE parity in a revalidate predicate
+      include("/reval-formdata", revalFormDataPatterns, {
+        name: "revalFormData",
+      }),
+
+      // Action error-boundary render runs under route middleware (C3)
+      include("/action-route-mw", actionRouteMwPatterns, {
+        name: "actionRouteMw",
+      }),
+
       // useParams survival across action → revalidation boundary
       include("/params-after-action", paramsAfterActionPatterns, {
         name: "paramsAfterAction",
@@ -1107,12 +1123,20 @@ export const urlpatterns = urls(
       path.json(
         "/__test/loader-ids",
         async () => {
-          const { FetchableTestLoader, ProductsLoader, ProtectedLoader } =
-            await import("./loaders.js");
+          const {
+            FetchableTestLoader,
+            ProductsLoader,
+            ProtectedLoader,
+            ThrownRedirectLoader,
+            NamedErrorLoader,
+          } = await import("./loaders.js");
           return {
             fetchable: (FetchableTestLoader as any).$$id,
             nonFetchable: (ProductsLoader as any).$$id,
             withMiddleware: (ProtectedLoader as any).$$id,
+            // D4/D5 fetchable fixtures (thrown-redirect + named-error loaders).
+            thrownRedirect: (ThrownRedirectLoader as any).$$id,
+            namedError: (NamedErrorLoader as any).$$id,
           };
         },
         { name: "testLoaderIds" },

@@ -28,7 +28,7 @@ const router = createRouter<AppBindings>({
   urls: urlpatterns,
   // App-level cache store. The document cache middleware uses this store's
   // getResponse/putResponse methods.
-  cache: (_env, ctx) => new CFCacheStore({ ctx: ctx! }),
+  cache: (_env, ctx) => ({ store: new CFCacheStore({ ctx: ctx! }) }),
 });
 
 router.use(
@@ -150,7 +150,7 @@ import { urlpatterns } from "./urls";
 const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
-  cache: (_env, ctx) => new CFCacheStore({ ctx: ctx! }),
+  cache: (_env, ctx) => ({ store: new CFCacheStore({ ctx: ctx! }) }),
 });
 
 router.use(

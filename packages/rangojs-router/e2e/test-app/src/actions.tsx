@@ -9,7 +9,7 @@ import {
   redirect,
   updateTag,
 } from "@rangojs/router";
-import { FlashMessage } from "./location-states.js";
+import { ActionInfoA, ActionInfoB, FlashMessage } from "./location-states.js";
 import {
   getCurrentCart,
   getCartQuantitySync,
@@ -174,6 +174,25 @@ export async function resetLastSubmittedName(): Promise<void> {
 }
 
 /**
+ * Progressive-enhancement header-preservation action. The action sets a
+ * request-scoped marker cookie so the GET re-render can prove it ran, but the
+ * load-bearing assertion lives in PeHeaderProbeLoader, which reads the original
+ * POST request's `pe-probe` cookie during the re-render. Before the PE fix the
+ * GET re-render request carried only `accept: text/html`, so the loader saw no
+ * cookie under a no-JS submission. The fix copies the POST headers (minus
+ * content-type/content-length) onto the GET re-render, so the loader observes
+ * the request cookie under PE exactly as it does on the JS action path. State
+ * lives entirely in cookies, so parallel browser contexts never interfere.
+ */
+export async function peHeaderSubmitAction(formData: FormData): Promise<void> {
+  await delay(50);
+  // Touch the form data so the action has an observable input; the real
+  // assertion is the request cookie the loader reads during the re-render.
+  void formData.get("note");
+  cookies().set("pe-header-submitted", "yes", { path: "/", maxAge: 60 });
+}
+
+/**
  * Streaming action with React node result
  * Total time: 1s initial + 2s streaming = 3s (matches test expectations)
  */
@@ -199,6 +218,44 @@ export const StreamingAction = async (_data: FormData) => {
     }),
   };
 };
+
+/**
+ * Non-redirect action that sets a distinct location-state slot after a
+ * configurable delay. Dispatched concurrently in the action-ls e2e fixture so
+ * the first-initiated action can resolve last: that forces one response through
+ * the consolidation-needed terminal and the other through concurrent-skip — the
+ * two paths that historically dropped action-set location state. The asymmetric
+ * delays also let the same-key case prove last-initiated-wins independent of
+ * settle order. The default action revalidation re-renders this route, so each
+ * response carries a non-empty diff (the concurrent terminals require it).
+ */
+export async function setLocationStateSlot(
+  slot: "A" | "B",
+  value: string,
+  delayMs: number,
+): Promise<void> {
+  await delay(delayMs);
+  const def = slot === "A" ? ActionInfoA : ActionInfoB;
+  getRequestContext().setLocationState(def({ value }));
+}
+
+/**
+ * Sets the contested slot A plus a distinct marker in slot B after a delay.
+ * Used by the cross-entry arbitration e2e: the marker (slot B) is uncontested,
+ * so it always lands and serves as a remount-surviving "this action settled"
+ * signal (history.state outlives the React component across back/forward),
+ * while slot A is the value whose cohort scoping is under test.
+ */
+export async function setSlotWithMarker(
+  value: string,
+  marker: string,
+  delayMs: number,
+): Promise<void> {
+  await delay(delayMs);
+  const ctx = getRequestContext();
+  ctx.setLocationState(ActionInfoA({ value }));
+  ctx.setLocationState(ActionInfoB({ value: marker }));
+}
 
 /**
  * Action that redirects with a flash message.
@@ -535,6 +592,35 @@ export async function authBoundaryFormAction(
  */
 export async function isActionTargetAction(): Promise<void> {}
 export async function isActionDecoyAction(): Promise<void> {}
+
+/**
+ * Action error-boundary + route-middleware fixture (C3). One action succeeds
+ * (mutates a cookie so revalidation has a visible signal) and one throws so the
+ * route error boundary renders. The route's middleware sets X-Action-Route-Mw on
+ * the response; the test asserts that header appears on BOTH the success and the
+ * error-boundary action responses — proving route middleware wraps the
+ * error-boundary render the same way it wraps a successful revalidation.
+ */
+export async function actionRouteMwSuccess(): Promise<void> {
+  await delay(50);
+  cookies().set("action-route-mw-ran", "yes", { path: "/", maxAge: 60 });
+}
+
+export async function actionRouteMwThrow(): Promise<void> {
+  await delay(50);
+  throw new Error("action-route-mw boom");
+}
+
+/**
+ * shouldRevalidate({ formData }) e2e probe action (C2). A no-op form action: the
+ * RevalFormDataLoader's revalidate predicate reads the submitted `reload` field
+ * from formData to decide whether to re-run. Accepts FormData so it works on the
+ * no-JS PE transport (native form POST) and the JS transport (form enhancement)
+ * alike.
+ */
+export async function revalFormDataAction(_formData: FormData): Promise<void> {
+  await delay(50);
+}
 
 /**
  * Server action that invalidates a cache tag (read-your-own-writes).

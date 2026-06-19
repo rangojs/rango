@@ -246,6 +246,75 @@ describe("dispatch", () => {
     expect(res.headers.get("X-Tag")).toBe("yes");
   });
 
+  // A1 makes `router.use("/:locale(en|gb)/*", mw)` a real consumer feature:
+  // constrained / optional / suffix middleware scopes. Exercise it end-to-end
+  // through dispatch (the public testing primitive that runs the full global
+  // middleware scope-matching path), not just the white-box compiler, so a
+  // consumer can pin "my scoped middleware runs only for these locales".
+  describe("constrained middleware scope (router.use)", () => {
+    function localeScopedRouter(onRun: (locale: string) => void) {
+      const localeMw: MiddlewareFn = async (ctx, next) => {
+        onRun(ctx.params.locale as string);
+        ctx.header("X-Locale-Mw", "ran");
+        return next();
+      };
+      return createRouter<{}>({})
+        .use("/:locale(en|gb)/*", localeMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/en/x", () => ({ ok: "en" }), { name: "en.x" }),
+            path.json("/gb/x", () => ({ ok: "gb" }), { name: "gb.x" }),
+            path.json("/de/x", () => ({ ok: "de" }), { name: "de.x" }),
+          ]),
+        ) as Parameters<typeof dispatch>[0];
+    }
+
+    it("runs the middleware for an in-constraint locale (/en) and exposes the param", async () => {
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/en/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBe("ran");
+      // The constrained param is named "locale" (not "locale(en|gb)") and is
+      // extracted from the matched path.
+      expect(ran).toEqual(["en"]);
+    });
+
+    it("runs the middleware for the other in-constraint locale (/gb)", async () => {
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/gb/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBe("ran");
+      expect(ran).toEqual(["gb"]);
+    });
+
+    it("does NOT run the middleware for an out-of-constraint locale (/de)", async () => {
+      // The whole point of the constraint: /de is a real route but is outside
+      // the (en|gb) scope, so the middleware must not run. If constraints were
+      // not enforced (the pre-A1 bug, or a scope-explosion regression) the
+      // middleware would run here and this test would fail.
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/de/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBeNull();
+      expect(ran).toEqual([]);
+    });
+  });
+
   it("wires the router's cache store into the request context", async () => {
     // Without the store, registerCachedFunction bypasses BEFORE the request-scope
     // (NOCACHE) check, so the brand would be inert. dispatch must surface the
@@ -270,6 +339,157 @@ describe("dispatch", () => {
 
     const res = await dispatch(router, { request: "/api/probe" });
     expect((await res.json()).hasStore).toBe(true);
+  });
+
+  // I2: dispatch wires the production response-route cache path (resolved from
+  // the matched entry tree), so a cached path.json/path.text route hits/writes
+  // through dispatch the way it does in production — not a fresh run every call.
+  describe("cached response routes (cache() boundary)", () => {
+    // The cache WRITE is scheduled via ctx.waitUntil (a microtask without an
+    // executionContext); flush the queue so the second dispatch can observe it.
+    const flushWrites = () => new Promise((r) => setTimeout(r, 0));
+
+    it("serves a cached path.json route from the store (same body on a HIT)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached", () => ({ ts: Date.now() + Math.random() }), {
+              name: "cached.json",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached" })
+      ).json();
+
+      // A HIT returns the byte-identical cached body; a fresh re-run would carry
+      // a new ts. (Before the fix dispatch never touched the store -> different.)
+      expect(second).toEqual(first);
+    });
+
+    it("writes an entry into the store for a cached response route", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached2", () => ({ ok: true }), {
+              name: "cached2.json",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      await dispatch(router, { request: "/cached2" });
+      await flushWrites();
+
+      // The production key shape: response:{type}:{host}{path}{search}.
+      const cached = await store.getResponse("response:json:localhost/cached2");
+      expect(cached).not.toBeNull();
+      expect(cached?.response.status).toBe(200);
+    });
+
+    it("re-runs an UNcached response route every call (different body)", async () => {
+      // Non-vacuity: without a cache() boundary the handler re-executes, so the
+      // body changes — proving the equality above is caused by caching.
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path }) => [
+          path.json("/uncached", () => ({ ts: Date.now() + Math.random() }), {
+            name: "uncached.json",
+          }),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/uncached" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/uncached" })
+      ).json();
+      expect(second).not.toEqual(first);
+    });
+
+    // P1 (security): when a CONFIGURED route-level cache({ key }) THROWS, the
+    // response cache must DEGRADE TO A MISS — run the route uncached and write
+    // NOTHING — never fall back to the broad default key. If the key encodes
+    // tenant/user/auth state, caching personalized output under the broad key
+    // would serve it cross-user (cache poisoning).
+    it("degrades to an uncached miss when cache({ key }) throws (no store write)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache(
+            {
+              ttl: 600,
+              key: () => {
+                throw new Error("key fn boom");
+              },
+            },
+            () => [
+              path.json(
+                "/cached-keythrows",
+                () => ({ ts: Date.now() + Math.random() }),
+                { name: "cached.keythrows" },
+              ),
+            ],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-keythrows" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-keythrows" })
+      ).json();
+
+      // Served uncached: handler re-ran, so the body differs (no HIT under any key).
+      expect(second).not.toEqual(first);
+      // And nothing was written under ANY key (no broad-key poisoning).
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("still caches when cache({ key }) succeeds (HIT, store written)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600, key: (ctx) => `tenant-a${ctx.pathname}` }, () => [
+            path.json(
+              "/cached-keyok",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.keyok" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-keyok" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-keyok" })
+      ).json();
+
+      // A HIT returns the byte-identical cached body, and the entry was written
+      // under the custom key (response:tenant-a/cached-keyok).
+      expect(second).toEqual(first);
+      expect(putSpy).toHaveBeenCalled();
+      expect(putSpy.mock.calls[0]?.[0]).toBe("response:tenant-a/cached-keyok");
+      putSpy.mockRestore();
+    });
   });
 
   it("throws a clear error for an RSC (component) route", async () => {

@@ -23,6 +23,61 @@ export interface UnresolvableInclude {
 }
 
 // ---------------------------------------------------------------------------
+// Per-scan memo
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-scan memo shared across the include-resolution recursion. Keys are
+ * absolute file paths; values cache the readFileSync result and the
+ * ts.SourceFile parsed from the FULL file source. A separate blockSources map
+ * caches parses of extracted sub-blocks (urls() call text), keyed by the exact
+ * block string, so the two extractors (routes + includes) for the same block
+ * share a single parse.
+ *
+ * The memo is purely a performance accelerator: same input -> same parse, so
+ * generated output is identical to the un-memoized path. A fresh memo is
+ * created per top-level scan entry, so stale file edits between scans are never
+ * served.
+ */
+export interface ScanMemo {
+  files: Map<string, string>;
+  blockSourceFiles: Map<string, ts.SourceFile>;
+}
+
+export function createScanMemo(): ScanMemo {
+  return { files: new Map(), blockSourceFiles: new Map() };
+}
+
+function parseBlock(memo: ScanMemo | undefined, block: string): ts.SourceFile {
+  if (memo) {
+    const cached = memo.blockSourceFiles.get(block);
+    if (cached) return cached;
+  }
+  const sf = ts.createSourceFile(
+    "input.tsx",
+    block,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  if (memo) memo.blockSourceFiles.set(block, sf);
+  return sf;
+}
+
+function readSourceMemoized(
+  memo: ScanMemo | undefined,
+  realPath: string,
+): string {
+  if (memo) {
+    const cached = memo.files.get(realPath);
+    if (cached !== undefined) return cached;
+  }
+  const source = readFileSync(realPath, "utf-8");
+  if (memo) memo.files.set(realPath, source);
+  return source;
+}
+
+// ---------------------------------------------------------------------------
 // AST-based include() parsing
 // ---------------------------------------------------------------------------
 
@@ -47,7 +102,10 @@ function extractNamePrefixFromInclude(node: ts.CallExpression): string | null {
  * Returns both resolved includes (identifier second args) and unresolvable
  * includes (factory calls, etc.) with reasons.
  */
-export function extractIncludesWithDiagnostics(code: string): {
+export function extractIncludesWithDiagnostics(
+  code: string,
+  sourceFileArg?: ts.SourceFile,
+): {
   resolved: Array<{
     pathPrefix: string;
     variableName: string;
@@ -60,13 +118,16 @@ export function extractIncludesWithDiagnostics(code: string): {
     detail: string;
   }>;
 } {
-  const sourceFile = ts.createSourceFile(
-    "input.tsx",
-    code,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
+  // Reuse a caller-provided SourceFile (parsed once per scan) when given.
+  const sourceFile =
+    sourceFileArg ??
+    ts.createSourceFile(
+      "input.tsx",
+      code,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
   const resolved: Array<{
     pathPrefix: string;
     variableName: string;
@@ -140,7 +201,13 @@ export function resolveImportedVariable(
   code: string,
   localName: string,
 ): { specifier: string; exportedName: string } | null {
-  const importRegex = /import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g;
+  // Allow an optional leading default binding before the named-import brace so
+  // a combined `import Foo, { bar } from "..."` is matched (the named members
+  // are the only part we resolve; the default binding is skipped). Without the
+  // optional `(?:[\w$]+\s*,\s*)?` segment, the `Foo, ` prefix breaks the match
+  // and a legitimate static named import surfaces as `unresolvable-import`.
+  const importRegex =
+    /import\s*(?:[\w$]+\s*,\s*)?\{([^}]+)\}\s*from\s*["']([^"']+)["']/g;
   let match;
 
   while ((match = importRegex.exec(code)) !== null) {
@@ -206,14 +273,18 @@ export function resolveImportPath(
 function extractUrlsBlockForVariable(
   code: string,
   varName: string,
+  sourceFileArg?: ts.SourceFile,
 ): string | null {
-  const sourceFile = ts.createSourceFile(
-    "input.tsx",
-    code,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
+  // Reuse a caller-provided full-source SourceFile (parsed once per scan).
+  const sourceFile =
+    sourceFileArg ??
+    ts.createSourceFile(
+      "input.tsx",
+      code,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
   let result: string | null = null;
 
   function visit(node: ts.Node) {
@@ -249,11 +320,15 @@ function buildRouteMapFromBlock(
   visited: Set<string>,
   searchSchemasOut?: Record<string, Record<string, string>>,
   diagnosticsOut?: UnresolvableInclude[],
+  memo?: ScanMemo,
 ): Record<string, string> {
   const routeMap: Record<string, string> = {};
 
+  // Parse the block once and share the SourceFile between both extractors.
+  const blockSourceFile = parseBlock(memo, block);
+
   // Extract local path() routes
-  const localRoutes = extractRoutesFromSource(block);
+  const localRoutes = extractRoutesFromSource(block, blockSourceFile);
   for (const { name, pattern, search } of localRoutes) {
     routeMap[name] = pattern;
     if (search && searchSchemasOut) {
@@ -262,8 +337,10 @@ function buildRouteMapFromBlock(
   }
 
   // Extract include() calls with diagnostics for unresolvable ones
-  const { resolved: includes, unresolvable } =
-    extractIncludesWithDiagnostics(block);
+  const { resolved: includes, unresolvable } = extractIncludesWithDiagnostics(
+    block,
+    blockSourceFile,
+  );
 
   if (diagnosticsOut) {
     for (const entry of unresolvable) {
@@ -298,12 +375,17 @@ function buildRouteMapFromBlock(
         imported.exportedName,
         visited,
         diagnosticsOut,
+        undefined,
+        memo,
       );
     } else {
-      // Check if variable exists as a same-file urls() definition
+      // Check if variable exists as a same-file urls() definition. Share the
+      // full-source SourceFile parse via the memo (block === fullSource hits the
+      // same cache entry already used above).
       const sameFileBlock = extractUrlsBlockForVariable(
         fullSource,
         variableName,
+        parseBlock(memo, fullSource),
       );
       if (!sameFileBlock) {
         if (diagnosticsOut) {
@@ -322,6 +404,8 @@ function buildRouteMapFromBlock(
         variableName,
         visited,
         diagnosticsOut,
+        undefined,
+        memo,
       );
     }
 
@@ -361,6 +445,9 @@ function buildRouteMapFromBlock(
  * @param inlineBlock - Optional pre-extracted code block (e.g. from an inline
  *   builder function). When provided, variableName is ignored and the block
  *   is parsed directly for path()/include() calls.
+ * @param memo - Per-scan readFileSync/parse memo. A fresh one is created at the
+ *   top-level entry and threaded through the recursion so each file is read and
+ *   parsed once per scan. Behavior-preserving (same input -> same output).
  */
 export function buildCombinedRouteMapWithSearch(
   filePath: string,
@@ -368,11 +455,13 @@ export function buildCombinedRouteMapWithSearch(
   visited?: Set<string>,
   diagnosticsOut?: UnresolvableInclude[],
   inlineBlock?: string,
+  memo?: ScanMemo,
 ): {
   routes: Record<string, string>;
   searchSchemas: Record<string, Record<string, string>>;
 } {
   visited = visited ?? new Set();
+  memo = memo ?? createScanMemo();
   const realPath = resolve(filePath);
   const key = variableName ? `${realPath}:${variableName}` : realPath;
   if (visited.has(key)) {
@@ -383,7 +472,7 @@ export function buildCombinedRouteMapWithSearch(
 
   let source: string;
   try {
-    source = readFileSync(realPath, "utf-8");
+    source = readSourceMemoized(memo, realPath);
   } catch {
     return { routes: {}, searchSchemas: {} };
   }
@@ -392,7 +481,11 @@ export function buildCombinedRouteMapWithSearch(
   if (inlineBlock) {
     block = inlineBlock;
   } else if (variableName) {
-    const extracted = extractUrlsBlockForVariable(source, variableName);
+    const extracted = extractUrlsBlockForVariable(
+      source,
+      variableName,
+      parseBlock(memo, source),
+    );
     if (!extracted) return { routes: {}, searchSchemas: {} };
     block = extracted;
   } else {
@@ -407,6 +500,7 @@ export function buildCombinedRouteMapWithSearch(
     visited,
     searchSchemas,
     diagnosticsOut,
+    memo,
   );
 
   // Remove from visited so sibling branches can include the same variable

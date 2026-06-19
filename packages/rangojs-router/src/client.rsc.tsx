@@ -20,7 +20,36 @@ export {
   type ErrorBoundaryProps,
 } from "./client.js";
 
+export {
+  useFetchLoader,
+  useRefreshLoaders,
+  type LoadFunction,
+  type UseLoaderResult,
+  type UseFetchLoaderResult,
+  type UseLoaderOptions,
+} from "./use-loader.js";
+
 export { createLoader } from "./route-definition.js";
+
+// "use client" hooks the default ./client entry exports. They are client
+// references in the RSC graph, identical in kind to useHref/useReverse/
+// useHandle already forwarded below; forward them so the RSC client entry's
+// hook surface matches the default entry. useNavigation/useAction stay omitted
+// (they drive client-only navigation/action state — see note below).
+export { useRouter } from "./browser/react/use-router.js";
+export { usePathname } from "./browser/react/use-pathname.js";
+export { useSearchParams } from "./browser/react/use-search-params.js";
+export { useParams } from "./browser/react/use-params.js";
+export { useMount } from "./browser/react/use-mount.js";
+export {
+  useSegments,
+  type SegmentsState,
+} from "./browser/react/use-segments.js";
+export {
+  useLinkStatus,
+  type LinkStatus,
+} from "./browser/react/use-link-status.js";
+export { useScrollRestoration } from "./browser/react/ScrollRestoration.js";
 
 export {
   Link,

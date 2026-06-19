@@ -19,8 +19,6 @@ import type {
 } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { resolveLoaderData } from "./loader-cache.js";
-import { _getRequestContext } from "../../server/request-context.js";
-import { appendMetric } from "../metrics.js";
 import {
   handleHandlerResult,
   tryStaticHandler,
@@ -28,10 +26,12 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
   warnOnStreamedResponse,
+  buildLoaderErrorContext,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
+import { observeHandler } from "../instrument.js";
 import {
   track,
   RangoContext,
@@ -59,7 +59,13 @@ export async function resolveLoaders<TEnv>(
   const shortCode = shortCodeOverride ?? entry.shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
-  const ms = _getRequestContext()?._metricsStore;
+
+  // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
+  // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
+  // telemetry event — wrapLoaderPromise only builds the onError/telemetry path
+  // when errorContext is supplied. Built from ctx so the live render path reports
+  // loader failures the same way handlers/actions/routing/fetchable-loaders do.
+  const errorContext = buildLoaderErrorContext(ctx);
 
   if (!loadingDisabled) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
@@ -81,6 +87,7 @@ export async function resolveLoaders<TEnv>(
           entry,
           segmentId,
           ctx.pathname,
+          errorContext,
         ),
         belongsToRoute,
       };
@@ -102,7 +109,6 @@ export async function resolveLoaders<TEnv>(
   const pendingLoaderData = loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
-    const start = performance.now();
     const wrapped = deps.wrapLoaderPromise(
       runInsideLoaderScope(() =>
         resolveLoaderData(loaderEntry, ctx, ctx.pathname),
@@ -110,27 +116,19 @@ export async function resolveLoaders<TEnv>(
       entry,
       segmentId,
       ctx.pathname,
+      errorContext,
     );
-    return { wrapped, start, segmentId, loaderId: loader.$$id };
+    return { wrapped, segmentId };
   });
   await Promise.all(pendingLoaderData.map((p) => p.wrapped));
 
   return loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const pending = pendingLoaderData[i]!;
-    if (ms && !ms.metrics.some((m) => m.label === `loader:${loader.$$id}`)) {
-      // All loaders ran in parallel via Promise.all — each span covers
-      // from its own kickoff to the batch settlement, giving a ceiling
-      // on that loader's contribution to the overall wait.
-      const batchEnd = performance.now();
-      appendMetric(
-        ms,
-        `loader:${loader.$$id}`,
-        pending.start,
-        batchEnd - pending.start,
-        2,
-      );
-    }
+    // The "loader:<id>" perf metric is recorded by observePhase at the single
+    // loader-metering site (useLoader, reached via ctx.use during
+    // resolveLoaderData), with the real per-loader duration rather than a
+    // Promise.all batch ceiling.
     return {
       id: pending.segmentId,
       namespace: entry.id,
@@ -151,6 +149,15 @@ export async function resolveLoaders<TEnv>(
 export interface ResolveSegmentOptions {
   /** When true, skip resolveLoaders() calls (used for pre-rendering) */
   skipLoaders?: boolean;
+  /**
+   * When true, a thrown render error is re-thrown instead of being converted
+   * into an error-boundary segment. Set only by the pre-render path so a
+   * build-time render failure (and a `throw new Skip()` inside a render fn)
+   * surfaces to the build instead of being silently baked into a frozen error
+   * page served as a 200 (issue #587). The live request path leaves this unset,
+   * so error boundaries keep catching at request time.
+   */
+  throwOnError?: boolean;
 }
 
 /**
@@ -262,7 +269,9 @@ export async function resolveSegment<TEnv>(
         !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
       const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
-        const result = handleHandlerResult(handler(context));
+        const result = handleHandlerResult(
+          observeHandler(entry.id, handler, context),
+        );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, entry.id);
           result.finally(doneRouteHandler).catch(() => {});
@@ -284,7 +293,9 @@ export async function resolveSegment<TEnv>(
           component = result;
         }
       } else {
-        component = handleHandlerResult(await handler(context));
+        component = handleHandlerResult(
+          await observeHandler(entry.id, handler, context),
+        );
         doneRouteHandler();
       }
     }
@@ -509,7 +520,9 @@ export async function resolveParallelEntry<TEnv>(
         parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (hasLoadingFallback) {
         const result =
-          typeof handler === "function" ? handler(context) : handler;
+          typeof handler === "function"
+            ? observeHandler(`${parallelEntry.id}.${slot}`, handler, context)
+            : handler;
         if (result instanceof Promise) {
           result.finally(doneParallelHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
@@ -531,7 +544,13 @@ export async function resolveParallelEntry<TEnv>(
         }
       } else {
         component =
-          typeof handler === "function" ? await handler(context) : handler;
+          typeof handler === "function"
+            ? await observeHandler(
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                context,
+              )
+            : handler;
         doneParallelHandler();
       }
     }
@@ -635,6 +654,7 @@ export async function resolveAllSegments<TEnv>(
       deps,
       { request: safeRequest, url: context.url, routeKey, telemetry },
       context.pathname,
+      options?.throwOnError,
     );
     doneEntry();
     // Deduplicate by segment ID. include() scopes can produce entries that

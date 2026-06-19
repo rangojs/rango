@@ -7,12 +7,13 @@
  */
 
 import {
-  requireRequestContext,
+  getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
 import { getSSRSetup } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -44,7 +45,7 @@ export async function handleProgressiveEnhancement<TEnv>(
   env: TEnv,
   url: URL,
   isAction: boolean,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
   routeMwInfo?: PeRouteMiddlewareInfo,
 ): Promise<Response | null> {
@@ -115,6 +116,13 @@ export async function handleProgressiveEnhancement<TEnv>(
   // Execute action and return HTML
   let actionResult: unknown = undefined;
   let reactFormState: ReactFormState | null = null;
+  // Status for the fall-through re-render after a boundaryless action error.
+  // When an action throws and NO error boundary matches, the PE path re-renders
+  // the page (below) the same way it would after a successful action. Without
+  // this the re-render serves HTTP 200, diverging from the JS path which serves
+  // 500 (server-action.ts sets actionStatus=500 for the same boundaryless error).
+  // 500 is carried only into the final HTML response, never the redirect branch.
+  let boundarylessErrorStatus: number | undefined;
 
   if (isUseActionState) {
     // Decode and extract action identity before execution so error
@@ -124,7 +132,11 @@ export async function handleProgressiveEnhancement<TEnv>(
       const boundAction = await ctx.decodeAction(formData);
       // React's custom .bind() preserves $$id on server references.
       useActionStateId = (boundAction as { $$id?: string }).$$id ?? undefined;
-      actionResult = await boundAction();
+      // Meter the no-JS form action as the action phase, same as the JS path.
+      actionResult = await observePhase(
+        PHASES.action(useActionStateId ?? "useActionState"),
+        () => boundAction(),
+      );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);
@@ -151,6 +163,9 @@ export async function handleProgressiveEnhancement<TEnv>(
         handledByBoundary: false,
       });
       console.error("[RSC] Progressive enhancement action error:", error);
+      // No boundary matched — the fall-through re-render must carry 500 to match
+      // the JS path's boundaryless-error status (server-action.ts).
+      boundarylessErrorStatus = 500;
     }
   } else if (isDirectAction && directActionId) {
     const temporaryReferences = ctx.createTemporaryReferenceSet();
@@ -172,7 +187,9 @@ export async function handleProgressiveEnhancement<TEnv>(
 
     try {
       const loadedAction = await ctx.loadServerAction(directActionId);
-      actionResult = await loadedAction.apply(null, args);
+      actionResult = await observePhase(PHASES.action(directActionId), () =>
+        loadedAction.apply(null, args),
+      );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);
@@ -199,6 +216,9 @@ export async function handleProgressiveEnhancement<TEnv>(
         handledByBoundary: false,
       });
       console.error("[RSC] Progressive enhancement action error:", error);
+      // No boundary matched — the fall-through re-render must carry 500 to match
+      // the JS path's boundaryless-error status (server-action.ts).
+      boundarylessErrorStatus = 500;
     }
   }
 
@@ -234,9 +254,19 @@ export async function handleProgressiveEnhancement<TEnv>(
   // cookies set by route middleware are available during re-render — matching
   // the behavior of JS-enabled requests.
   const renderPage = async (): Promise<Response> => {
+    // Preserve the original POST request's headers (Authorization, Cookie,
+    // custom headers) so loaders that read request headers/cookies behave
+    // identically under PE and the JS action path. Drop body-framing headers
+    // from the bodyless GET and force the HTML accept.
+    const headers = new Headers(request.headers);
+    headers.delete("content-type");
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    headers.delete("transfer-encoding");
+    headers.set("accept", "text/html");
     const renderRequest = new Request(url.toString(), {
       method: "GET",
-      headers: new Headers({ accept: "text/html" }),
+      headers,
     });
 
     const match = await ctx.router.match(renderRequest, { env });
@@ -265,7 +295,8 @@ export async function handleProgressiveEnhancement<TEnv>(
         stateCookieName: ctx.router.resolvedStateCookieName,
         themeConfig: ctx.router.themeConfig,
         warmupEnabled: ctx.router.warmupEnabled,
-        initialTheme: requireRequestContext().theme,
+        strictMode: ctx.router.strictMode,
+        initialTheme: getRequestContext().theme,
       },
     };
 
@@ -293,6 +324,13 @@ export async function handleProgressiveEnhancement<TEnv>(
     });
 
     return createResponseWithMergedHeaders(htmlStream, {
+      // boundarylessErrorStatus is set only when the action threw and no error
+      // boundary matched; it makes the re-render carry 500 like the JS path.
+      // The redirect branch above returns before this, so a redirect re-render
+      // keeps its 308 and is never overridden.
+      ...(boundarylessErrorStatus !== undefined
+        ? { status: boundarylessErrorStatus }
+        : {}),
       headers: { "content-type": "text/html;charset=utf-8" },
     });
   };
@@ -327,7 +365,7 @@ async function renderPeErrorBoundary<TEnv>(
   env: TEnv,
   url: URL,
   error: unknown,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
   actionId?: string | null,
 ): Promise<Response | null> {
@@ -375,7 +413,8 @@ async function renderPeErrorBoundary<TEnv>(
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       warmupEnabled: ctx.router.warmupEnabled,
-      initialTheme: requireRequestContext().theme,
+      strictMode: ctx.router.strictMode,
+      initialTheme: getRequestContext().theme,
     },
   };
 

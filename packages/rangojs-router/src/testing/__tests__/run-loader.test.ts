@@ -133,6 +133,47 @@ describe("runLoader", () => {
     expect(result).toBe(7);
   });
 
+  it("seeded ctx.use(Loader) returns a Promise (production parity, not the raw value)", async () => {
+    // Production ctx.use(Loader) ALWAYS returns a Promise. A consumer composing
+    // on the result (.then / Promise.race) must work the same for a seeded loader
+    // as for the real-fn delegate path. Before the fix the seeded branch returned
+    // the raw value, so `.then` was not a function.
+    const Dep = {
+      __brand: "loader",
+      $$id: "x#DepThenable",
+    } as LoaderDefinition<{
+      count: number;
+    }>;
+    const result = await runLoader(
+      async (ctx) => {
+        const used = ctx.use(Dep);
+        // The seeded result must be thenable, exactly like production.
+        return used instanceof Promise && typeof used.then === "function"
+          ? await used.then((d) => d.count * 2)
+          : -1;
+      },
+      { loaders: [[Dep, { count: 5 }]] },
+    );
+    expect(result).toBe(10);
+  });
+
+  it("ctx.use(Loader) via the opts.use resolver also returns a Promise", async () => {
+    const Dep = {
+      __brand: "loader",
+      $$id: "x#DepUseThenable",
+    } as LoaderDefinition<{
+      count: number;
+    }>;
+    const result = await runLoader(
+      async (ctx) => {
+        const used = ctx.use(Dep);
+        return used instanceof Promise ? await used.then((d) => d.count) : -1;
+      },
+      { use: () => ({ count: 8 }) as any },
+    );
+    expect(result).toBe(8);
+  });
+
   it("delegates ctx.use to the real request-context use() (runs the dep fn)", async () => {
     // A loader definition that carries its own fn runs via the real ctx.use().
     const Dep = {

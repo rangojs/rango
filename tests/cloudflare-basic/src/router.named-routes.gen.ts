@@ -31,6 +31,7 @@ export const NamedRoutes = {
   "docs.refIndex": "/docs/ref",
   "docs.search": "/docs/api/search",
   documentCache: "/document-cache",
+  documentCacheNoCache: "/document-cache-no-cache",
   fast: "/slow/fast",
   featuresDetail: "/features/:slug",
   filesWildcard: "/files/*",
@@ -49,6 +50,7 @@ export const NamedRoutes = {
   productReviews: "/item/:productId/reviews",
   "releases.index": "/releases",
   "renderedBarrier.index": "/rendered-barrier",
+  renderStability: "/render-stability/p/:id",
   robots: "/robots.txt",
   search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
   shopArchive: "/shop/:slug.archive.html",
@@ -98,8 +100,12 @@ export const NamedRoutes = {
   "transformCases.state": "/transform-cases/state",
 } as const;
 
+// Aliased so the augmentation below does not pay a homomorphic mapped-type
+// instantiation per route; `as const` already makes the members readonly.
+type NamedRoutesShape = typeof NamedRoutes;
+
 declare global {
   namespace Rango {
-    interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
+    interface GeneratedRouteMap extends NamedRoutesShape {}
   }
 }

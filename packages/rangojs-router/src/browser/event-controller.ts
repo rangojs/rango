@@ -10,7 +10,10 @@ import type {
   HandleData,
   StreamingToken,
 } from "./types.js";
-import { filterSegmentOrder } from "./react/filter-segment-order.js";
+import {
+  filterSegmentOrder,
+  filterRouteSegmentIds,
+} from "./react/filter-segment-order.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -165,6 +168,22 @@ export interface ActionHandle extends Disposable {
   startStreaming(): StreamingToken;
   /** Record segments that were revalidated */
   recordRevalidatedSegments(segmentIds: string[]): void;
+  /**
+   * Claim the subset of a location-state payload this action may write. A key
+   * is claimed only if no later-initiated action in the SAME cohort has already
+   * claimed it, so same-key concurrent writes resolve to the last-initiated
+   * action while distinct keys from every action survive. Recording the claim
+   * stops a later-settling earlier action from overwriting it. Arbitration is
+   * scoped to the action's cohort (its originating history entry, captured at
+   * startAction), so an action on one entry cannot suppress an action on
+   * another that happens to write the same slot.
+   *
+   * Contract: this guarantees the FINAL value is the last-initiated action's,
+   * not that the loser is never momentarily visible. When an earlier-initiated
+   * action settles first, its value is merged and observable until the
+   * later-initiated winner's response lands and overwrites it.
+   */
+  claimLocationState(state: Record<string, unknown>): Record<string, unknown>;
   /** Complete the action with result */
   complete(result?: unknown): void;
   /** Fail the action with error */
@@ -191,7 +210,12 @@ export interface EventController {
   abortNavigation(): void;
 
   // Action operations
-  startAction(actionId: string, args: unknown[]): ActionHandle;
+  startAction(
+    actionId: string,
+    args: unknown[],
+    /** Originating history entry key; scopes location-state arbitration. */
+    cohort?: string,
+  ): ActionHandle;
   abortAllActions(): void;
 
   // State access
@@ -304,6 +328,28 @@ export function createEventController(
   let hadAnyConcurrentActions = false;
 
   const concurrentRevalidatedSegments = new Set<string>();
+
+  // Monotonic dispatch counter: every startAction() takes the next value
+  // (private), so a larger sequence means the action was initiated later.
+  let actionDispatchSeq = 0;
+
+  // Concurrent location-state arbitration, scoped PER COHORT (history entry).
+  // Each cohort owns a slotKey->winningDispatchSeq map plus a refcount of its
+  // inflight actions; claimLocationState() consults its own cohort's map so
+  // same-key writes within one entry resolve to the last-initiated action
+  // regardless of settle order, while actions on different entries never
+  // compete. A cohort's map is freed once its LAST action's cleanup runs — the
+  // same brief post-settle grace (doSettle's 100ms timer) as other action
+  // teardown, not when every action everywhere settles — so a long-running
+  // action in one cohort can never retain arbitration keys from other cohorts
+  // that have since drained. It is never cleared in clearConsolidation, which
+  // fires
+  // per-action on divert/error and would let a later-settling earlier action
+  // wrongly reclaim a key a sibling already won.
+  const cohortArbitration = new Map<
+    string,
+    { keySeq: Map<string, number>; inflight: number }
+  >();
 
   let activeStreamCount = 0;
 
@@ -507,9 +553,28 @@ export function createEventController(
   // Action Operations
   // ========================================================================
 
-  function startAction(actionId: string, args: unknown[]): ActionHandle {
+  function startAction(
+    actionId: string,
+    args: unknown[],
+    cohort?: string,
+  ): ActionHandle {
     const id = `${actionId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    // Private to this handle: never exposed on the returned ActionHandle.
+    const dispatchSeq = actionDispatchSeq++;
     const abort = new AbortController();
+
+    // Register this action under its cohort (originating history entry). The
+    // cohort's arbitration is created on first use and freed when its last
+    // action settles (see doSettle). Keyless entries share the "" cohort.
+    const cohortId = cohort ?? "";
+    let arb = cohortArbitration.get(cohortId);
+    if (!arb) {
+      arb = { keySeq: new Map<string, number>(), inflight: 0 };
+      cohortArbitration.set(cohortId, arb);
+    }
+    // const so the captured reference stays non-undefined inside doSettle.
+    const arbitration = arb;
+    arbitration.inflight++;
 
     // Track if this action started while others were pending (concurrent)
     const hadConcurrent = inflightActions.size > 0;
@@ -534,10 +599,27 @@ export function createEventController(
     let settled = false;
     let streamingEnded = false;
     let actionCompleted = false;
+    let cohortReleased = false;
     let pendingResult:
       | { type: "success"; value?: unknown }
       | { type: "error"; value: unknown }
       | null = null;
+
+    // Release this action's hold on its cohort arbitration exactly once: drop
+    // the refcount and, only if the map still points at THIS arbitration object,
+    // delete it. A newer generation may have replaced it (e.g. abortAllActions
+    // cleared the map and a fresh action recreated the same cohort id), so a
+    // stale settlement must never delete the newer one by id.
+    function releaseCohort() {
+      if (cohortReleased) return;
+      cohortReleased = true;
+      if (
+        --arbitration.inflight <= 0 &&
+        cohortArbitration.get(cohortId) === arbitration
+      ) {
+        cohortArbitration.delete(cohortId);
+      }
+    }
 
     function doSettle() {
       if (settled) return;
@@ -546,6 +628,9 @@ export function createEventController(
       // Cleanup after brief delay (allow useAction to read result)
       setTimeout(() => {
         inflightActions.delete(id);
+        // Free this cohort's arbitration once its last action has settled, so
+        // a long-running action elsewhere cannot pin keys from a drained entry.
+        releaseCohort();
         // Check for consolidation
         if (inflightActions.size === 0) {
           // All actions done - reset tracking
@@ -622,6 +707,26 @@ export function createEventController(
         segmentIds.forEach((id) => concurrentRevalidatedSegments.add(id));
       },
 
+      claimLocationState(state: Record<string, unknown>) {
+        const winning: Record<string, unknown> = {};
+        // Arbitrate against this action's OWN captured arbitration object, not a
+        // live map lookup: a concurrent map clear/replace (abortAllActions, a
+        // stale settlement) must not make this action silently stop recording
+        // and accept every key.
+        const keySeq = arbitration.keySeq;
+        for (const key of Object.keys(state)) {
+          const prevSeq = keySeq.get(key);
+          // Strictly-greater: a later-initiated action wins a key over an
+          // earlier one in the same cohort regardless of arrival order. Equal
+          // cannot happen (dispatchSeq is unique per action).
+          if (prevSeq === undefined || dispatchSeq > prevSeq) {
+            keySeq.set(key, dispatchSeq);
+            winning[key] = state[key];
+          }
+        }
+        return winning;
+      },
+
       complete(result?: unknown) {
         settleWith({ type: "success", value: result });
       },
@@ -643,6 +748,10 @@ export function createEventController(
       [Symbol.dispose]() {
         // If aborted, another navigation/error took over - don't touch state
         if (abort.signal.aborted) {
+          // Aborted actions skip doSettle, so release the cohort hold here to
+          // keep the per-cohort refcount balanced (no leak when an action is
+          // aborted individually rather than via abortAllActions).
+          releaseCohort();
           inflightActions.delete(id);
           notify();
           notifyAction(actionId);
@@ -677,6 +786,7 @@ export function createEventController(
     }
     hadAnyConcurrentActions = false;
     concurrentRevalidatedSegments.clear();
+    cohortArbitration.clear();
     notify();
     // Notify all action listeners directly by subscription ID.
     // actionListeners keys are subscription IDs (possibly short names like
@@ -703,9 +813,7 @@ export function createEventController(
     const newSegmentOrder = filterSegmentOrder(rawMatched);
     // Separate list for useSegments(): "layouts and routes only" — strip
     // parallels (".@") and loader sub-ids (D digit) without reordering.
-    const newRouteSegmentIds = rawMatched.filter(
-      (id) => !id.includes(".@") && !/D\d+\./.test(id),
-    );
+    const newRouteSegmentIds = filterRouteSegmentIds(rawMatched);
 
     if (isPartial && newSegmentOrder.length > 0) {
       // Partial update: merge new data with existing

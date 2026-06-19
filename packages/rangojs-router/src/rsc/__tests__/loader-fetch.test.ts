@@ -14,8 +14,8 @@ vi.mock("../../server/loader-registry.js", () => ({
   })),
 }));
 
-vi.mock("../../server/request-context.js", () => ({
-  requireRequestContext: () => ({
+vi.mock("../../server/request-context.js", () => {
+  const make = () => ({
     env: {},
     request: new Request("http://localhost/"),
     url: new URL("http://localhost/"),
@@ -28,8 +28,14 @@ vi.mock("../../server/request-context.js", () => ({
     _routeName: "products",
     _onResponseCallbacks: [],
     res: { headers: new Headers(), status: 200 },
-  }),
-}));
+  });
+  return {
+    getRequestContext: make,
+    // observePhase (loader instrumentation) reads store + tracing from here;
+    // the mock context has neither, so it is a pass-through and the loader runs.
+    _getRequestContext: make,
+  };
+});
 
 vi.mock("../../router/middleware.js", () => ({
   executeLoaderMiddleware: vi.fn(
@@ -125,12 +131,12 @@ describe("handleLoaderFetch context parity", () => {
 
   it("returns empty search when route has no search schema", async () => {
     // Override _routeName to a route without a search schema
-    const { requireRequestContext } =
+    const { getRequestContext } =
       await import("../../server/request-context.js");
-    const original = (requireRequestContext as any)();
+    const original = (getRequestContext as any)();
     vi.mocked(
       await import("../../server/request-context.js"),
-    ).requireRequestContext = (() => ({
+    ).getRequestContext = (() => ({
       ...original,
       _routeName: "unknown-route",
     })) as any;

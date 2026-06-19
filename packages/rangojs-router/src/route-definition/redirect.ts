@@ -1,6 +1,5 @@
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import {
-  requireRequestContext,
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
@@ -76,7 +75,7 @@ export function redirect(
     typeof statusOrOptions === "object" ? statusOrOptions?.external : undefined;
 
   if (state) {
-    const ctx = requireRequestContext();
+    const ctx = getRequestContext();
     ctx.setLocationState(state);
 
     if (process.env.NODE_ENV !== "production") {

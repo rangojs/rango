@@ -85,7 +85,7 @@ describe("RSC performance metrics recording", () => {
     );
 
     expect(metricsStore.metrics.map((metric) => metric.label)).toEqual(
-      expect.arrayContaining(["rsc-serialize", "render:total"]),
+      expect.arrayContaining(["rsc-serialize", "render:total:home"]),
     );
   });
 
@@ -120,7 +120,7 @@ describe("RSC performance metrics recording", () => {
     );
 
     expect(metricsStore.metrics.map((metric) => metric.label)).toEqual(
-      expect.arrayContaining(["rsc-serialize", "render:total"]),
+      expect.arrayContaining(["rsc-serialize", "render:total:home"]),
     );
   });
 });

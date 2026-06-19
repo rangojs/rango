@@ -1203,7 +1203,7 @@ rangoInlineDeps: RegExp[];  // the server.deps.inline patterns, if wiring them y
 // Response; the render/run primitives -> an envelope (effect snapshot and/or tree).
 runMiddleware(
   mw: Middleware | Middleware[],
-  opts: { request?: Request | string; env?, params?, vars?, routeMap?, routeName?, basename?, next?: () => Promise<Response> }, // request optional, defaults to http://localhost/
+  opts: { request?: Request | string; env?, params?, vars?, routeMap?, routeName?, basename?, theme?, next?: () => Promise<Response>, cacheStore?, cacheProfiles?, stateCookie? }, // request optional, defaults to http://localhost/
 ): Promise<{ response: Response; ctx: RequestContext; nextCalled: number;
              cookies: Record<string, string>; headers: Record<string, string>;
              locationState: Record<string, unknown> }>;
@@ -1212,8 +1212,8 @@ runMiddleware(
 
 runLoader<T>(
   loader: ((ctx) => T | Promise<T>) | LoaderDefinition<T>, // raw body OR a registered createLoader() handle
-  opts?: { params?, search?, env?, request?, vars?, routeMap?, routeName?, method?, body?,
-           formData?, loaders?: [loader, data][], use?, rendered?, handles? },
+  opts?: { params?, search?, searchData?, env?, request?, vars?, routeMap?, routeName?, method?, body?,
+           formData?, loaders?: [loader, data][], use?, rendered?, handles?, basename?, theme?, cacheStore?, cacheProfiles?, stateCookie? },
 ): Promise<T>;
 // A createLoader() handle's fn is recovered from the registry (works through the server build / rangoTestConfig preset).
 // vars accepts an object ({ user: u }) or [key, value] tuples ([[userVar, u]]).
@@ -1263,7 +1263,7 @@ renderToFlightString(element, opts?: { request?: Request|string, headers?, env?,
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
 renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
-renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles? }):
+renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, theme? }):
   Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }>;
 // cacheStore (e.g. new MemorySegmentCacheStore()) + cacheProfiles exercise a "use cache" fn the handler
 // invokes; without cacheStore registerCachedFunction bypasses uncached (warns once under the runner).
@@ -1306,7 +1306,7 @@ assertGeneratedRoutesMatch(router, generatedMap?): void;
 runInRequestContext<T>(fn: (ctx) => T | Promise<T>, opts?):
   Promise<{ result: T | undefined; thrown: unknown; response: Response;
             cookies: Record<string, string>; headers: Record<string, string>;
-            locationState: Record<string, unknown> }>;
+            locationState: Record<string, unknown>; stateCookieName: string }>;
   // build + ENTER a real ctx in one call; captures the action's OUTPUT whether fn RETURNS or THROWS.
   // result = fn's return (undefined if it threw); thrown = what it threw (a redirect Response on the
   // success path — captured, NOT re-thrown); response = Set-Cookie/headers/status (a thrown redirect's

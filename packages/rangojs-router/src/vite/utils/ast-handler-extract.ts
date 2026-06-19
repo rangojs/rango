@@ -282,15 +282,22 @@ function isInertExpression(node: any): boolean {
         (e: any) => e === null || isInertExpression(e),
       );
     case "ObjectExpression":
-      return (node.properties ?? []).every(
-        (p: any) =>
+      return (node.properties ?? []).every((p: any) => {
+        // A spread inside an object (`{ ...x }`) is inert iff `x` is inert.
+        if (p.type === "SpreadElement" || p.type === "RestElement") {
+          return isInertExpression(p.argument);
+        }
+        return (
           p.type === "Property" &&
           (!p.computed || isInertExpression(p.key)) &&
-          isInertExpression(p.value),
-      );
+          isInertExpression(p.value)
+        );
+      });
     case "UnaryExpression":
       return isInertExpression(node.argument);
     case "BinaryExpression":
+      return isInertExpression(node.left) && isInertExpression(node.right);
+    case "LogicalExpression":
       return isInertExpression(node.left) && isInertExpression(node.right);
     case "ConditionalExpression":
       return (

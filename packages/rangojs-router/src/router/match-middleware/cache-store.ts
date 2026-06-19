@@ -155,7 +155,16 @@ export function withCacheStore<TEnv>(
       createHandleStore,
     } = getRouterContext<TEnv>();
 
-    const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
+    // On a fresh intercept miss the intercept slot segments flow through
+    // `source` into allSegments AND are also recorded on state.interceptSegments.
+    // Dedup by id so each segment is cached once — cacheRoute serializes the
+    // array verbatim (no id-dedup), so an un-deduped append doubles the intercept
+    // segment in the cached entry, re-rendering the slot twice on the next hit.
+    const seenSegmentIds = new Set(allSegments.map((s) => s.id));
+    const allSegmentsToCache = [
+      ...allSegments,
+      ...state.interceptSegments.filter((s) => !seenSegmentIds.has(s.id)),
+    ];
 
     const hasNullComponents = allSegmentsToCache.some(
       (s) =>
@@ -168,6 +177,18 @@ export function withCacheStore<TEnv>(
     if (!requestCtx) return;
 
     const cacheScope = ctx.cacheScope;
+
+    // Record the route's segment-DSL cache tags into the request tag union NOW,
+    // synchronously in the pipeline. The actual store write (cacheRoute) runs in
+    // requestCtx.waitUntil() below — and the proactive path re-resolves the whole
+    // tree first — so cacheRoute's own tag recording races the document cache's
+    // post-body-drain snapshot of _requestTags. On a first-write miss the document
+    // tag union could miss these tags and revalidateTag()/updateTag() would not
+    // invalidate the cached document. Recording here (before the snapshot) closes
+    // the window for both the direct and proactive write paths; the duplicate
+    // record inside cacheRoute is idempotent.
+    cacheScope.recordTags(requestCtx);
+
     const reqId = INTERNAL_RANGO_DEBUG
       ? getOrCreateRequestId(ctx.request)
       : undefined;
@@ -231,6 +252,12 @@ export function withCacheStore<TEnv>(
                   proactiveHandlerContext,
                   true, // belongsToRoute
                   // No revalidationContext = render fresh
+                  undefined,
+                  // Skip intercept middleware: the foreground already ran it
+                  // before the response was sent. Re-running here (post-response,
+                  // background) would fire side effects twice and a short-circuit
+                  // Response would silently abort this cache write.
+                  { skipMiddleware: true },
                 ),
               );
             }

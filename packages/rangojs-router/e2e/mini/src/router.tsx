@@ -18,8 +18,10 @@
 // See README.md in this folder.
 
 import {
+  cookies,
   createRouter,
   createVar,
+  getRequestContext,
   Meta,
   Breadcrumbs,
   redirect,
@@ -29,7 +31,7 @@ import {
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
 
-import { ClockLoader, CounterLoader } from "./shared.js";
+import { ClockLoader, CounterLoader, FlashMessage } from "./shared.js";
 import { increment, incrementWithResult } from "./actions.js";
 import { productsPatterns } from "./urls/products.js";
 // Route-colocated client components (each in its own directory) used to
@@ -419,6 +421,81 @@ export const router = createRouter({
               );
             },
             { name: "state" },
+          ),
+
+          // Auth: INLINE server actions (function-level "use server") defined
+          // right in the handler and colocated with their <form>s. Because we
+          // stay on /login, there is no redirect: each action mutates the session
+          // cookie and sets the flash with getRequestContext().setLocationState(),
+          // then returns void. The framework re-renders /login after the action —
+          // cookies().get() now reflects the change (signed-in vs. the form) — and
+          // attaches the set location state to the action payload, so FlashBanner
+          // shows it via useLocationState. A form action gets no `ctx` and an
+          // inline "use server" closure can't close over it (not serializable), so
+          // getRequestContext() (server-only, ALS-resolved) is how we reach
+          // setLocationState. The bodies close over nothing, so they serialize
+          // cleanly.
+          path(
+            "/login",
+            (ctx) => {
+              ctx.use(Meta)({ title: "Login" });
+              const session = cookies().get("session")?.value;
+
+              async function loginAction(formData: FormData): Promise<void> {
+                "use server";
+                const name = String(formData.get("name") ?? "").trim();
+                if (!name) {
+                  getRequestContext().setLocationState(
+                    FlashMessage({ text: "Name is required." }),
+                  );
+                  return;
+                }
+                cookies().set("session", name, {
+                  httpOnly: true,
+                  path: "/",
+                  sameSite: "lax",
+                });
+                getRequestContext().setLocationState(
+                  FlashMessage({ text: `Welcome back, ${name}!` }),
+                );
+              }
+
+              async function logoutAction(): Promise<void> {
+                "use server";
+                cookies().delete("session", { path: "/" });
+                getRequestContext().setLocationState(
+                  FlashMessage({ text: "Signed out." }),
+                );
+              }
+
+              return (
+                <div data-testid="login-page">
+                  <FlashBanner />
+                  {session ? (
+                    <form action={logoutAction} data-testid="logout-form">
+                      <span data-testid="signed-in">
+                        Signed in as {session}
+                      </span>{" "}
+                      <button type="submit" data-testid="logout">
+                        Log out
+                      </button>
+                    </form>
+                  ) : (
+                    <form action={loginAction} data-testid="login-form">
+                      <input
+                        name="name"
+                        data-testid="login-name"
+                        placeholder="Your name"
+                      />
+                      <button type="submit" data-testid="login-submit">
+                        Log in
+                      </button>
+                    </form>
+                  )}
+                </div>
+              );
+            },
+            { name: "login" },
           ),
 
           // Navigation hooks.

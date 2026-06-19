@@ -42,6 +42,15 @@ async function ReverseEcho(): Promise<React.ReactElement> {
   return <span>url={ctx.reverse("product", { id: "5" })}</span>;
 }
 
+// A Server Component that reads the active theme, proving the Flight primitive
+// populates themeConfig on the request context (like renderHandler does).
+async function ThemeEcho(): Promise<React.ReactElement> {
+  const ctx = getRequestContext();
+  // Compose into a single string so it serializes contiguously (Flight splits
+  // `theme={x}` JSX into a children array, not one string).
+  return <span>{`theme=${String(ctx.theme)}`}</span>;
+}
+
 // A Server Component that throws during render.
 async function Boom(): Promise<React.ReactElement> {
   await Promise.resolve();
@@ -100,6 +109,30 @@ describe("renderToFlightString (Flight RSC)", () => {
     });
     expect(flight).toMatchFlight("url=");
     expect(flight).toMatchFlight("/scoped/products/5");
+  });
+
+  // I4: renderToFlightString must thread themeConfig into the request context
+  // (like renderHandler), so a server component reading ctx.theme is testable.
+  // The theme is resolved from the request cookie -> deterministic.
+  it("populates ctx.theme when the theme option is passed", async () => {
+    const flight = await renderToFlightString(<ThemeEcho />, {
+      request: new Request("http://localhost/", {
+        headers: { Cookie: "theme=dark" },
+      }),
+      theme: true,
+    });
+    expect(flight).toMatchFlight("theme=dark");
+  });
+
+  // Non-vacuity: without the theme option, ctx.theme is undefined (an app with
+  // no theme configured), so the assertion above genuinely depends on the fix.
+  it("leaves ctx.theme undefined when the theme option is omitted", async () => {
+    const flight = await renderToFlightString(<ThemeEcho />, {
+      request: new Request("http://localhost/", {
+        headers: { Cookie: "theme=dark" },
+      }),
+    });
+    expect(flight).toMatchFlight("theme=undefined");
   });
 
   it("normalizeFlight scrubs the dev reference row and file paths", () => {

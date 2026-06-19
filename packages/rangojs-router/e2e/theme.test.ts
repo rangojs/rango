@@ -1,16 +1,17 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
 
 /**
- * Theme functionality tests - testing theme provider, useTheme hook, and ctx.theme
+ * Theme functionality tests - testing theme provider, useTheme hook, and ctx.theme.
+ *
+ * The shared body runs in both dev and production (mode: "build") so the
+ * FOUC-prevention / inlined-ThemeScript / hydration contracts are verified
+ * against the bundled, NODE_ENV-folded build, not only the dev server. The
+ * describe titles stay literal so the e2e bucketing guard routes the
+ * "(production)" suite to the production project.
  */
-test.describe("theme", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function themeTests(f: Fixture) {
   test.describe("server-side theme", () => {
     test("should have access to ctx.theme in route handlers", async ({
       page,
@@ -378,4 +379,20 @@ test.describe("theme", () => {
       expect(hydrationErrors).toEqual([]);
     });
   });
+}
+
+test.describe("theme", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  themeTests(f);
+});
+
+test.describe("theme (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  themeTests(f);
 });

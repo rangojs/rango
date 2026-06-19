@@ -19,12 +19,47 @@ import {
 import { getRequestContext } from "../../server/request-context.js";
 import { DefaultErrorFallback } from "../../default-error-boundary.js";
 import type { EntryData } from "../../server/context";
-import type { ResolvedSegment, ErrorInfo, HandlerContext } from "../../types";
+import type {
+  ResolvedSegment,
+  ErrorInfo,
+  HandlerContext,
+  InternalHandlerContext,
+} from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
+import { observeHandler } from "../instrument.js";
 import type { TelemetrySink } from "../telemetry.js";
 import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
+
+/** The errorContext shape wrapLoaderPromise expects as its 5th argument. */
+type LoaderErrorContext<TEnv> = NonNullable<
+  Parameters<SegmentResolutionDeps<TEnv>["wrapLoaderPromise"]>[4]
+>;
+
+/**
+ * Build the errorContext passed to wrapLoaderPromise so a throwing DSL loader
+ * fires createRouter({ onError }) (phase "loader") and emits the loader.error
+ * telemetry event. wrapLoaderPromise only wires the onError/telemetry path when
+ * this 5th argument is present; every real call site previously omitted it, so
+ * loaders were the one phase whose failures were silently dropped (handlers,
+ * actions, routing, rendering, and fetchable loaders all reported correctly).
+ *
+ * The fields come off the handler context, which already carries the request,
+ * url, params, env, and (on the internal shape) the matched route name.
+ */
+export function buildLoaderErrorContext<TEnv>(
+  ctx: HandlerContext<any, TEnv>,
+): LoaderErrorContext<TEnv> {
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  return {
+    request: ctx.request,
+    url: ctx.url,
+    routeKey: internal._routeName,
+    params: ctx.params as Record<string, string>,
+    env: ctx.env,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Handler result processing
@@ -130,11 +165,16 @@ export async function resolveLayoutComponent<TEnv>(
   entry: EntryData,
   context: HandlerContext<any, TEnv>,
 ): Promise<ReactNode> {
-  const component = await tryStaticHandler(entry, entry.shortCode);
-  if (component !== undefined) return component;
-  return typeof entry.handler === "function"
-    ? handleHandlerResult(await entry.handler(context))
-    : (entry.handler as ReactNode);
+  // Static/prerender hit: no handler runs, so emit no rango.handler span.
+  const staticComponent = await tryStaticHandler(entry, entry.shortCode);
+  if (staticComponent !== undefined) return staticComponent;
+  const handler = entry.handler;
+  if (typeof handler !== "function") return handler as ReactNode;
+  // Wrap ONLY the handler call in the rango.handler span (the perf metric is owned
+  // by track("handler:<id>") at the call site). handleHandlerResult stays OUTSIDE
+  // the span so a handler that returns a Response (redirect control flow, which it
+  // rethrows) is not recorded as a span error — mirrors the route-handler sites.
+  return handleHandlerResult(await observeHandler(entry.id, handler, context));
 }
 
 // ---------------------------------------------------------------------------
@@ -284,11 +324,17 @@ export async function resolveWithErrorBoundary<TEnv, TResult>(
   deps: SegmentResolutionDeps<TEnv>,
   report?: ErrorReportContext,
   pathname?: string,
+  throwOnError?: boolean,
 ): Promise<TResult> {
   try {
     return await resolveFn();
   } catch (error) {
     if (error instanceof Response) throw error;
+    // Pre-render surfaces render failures to the build instead of baking the
+    // error boundary as a frozen 200 (issue #587). A `throw new Skip()` in a
+    // render fn also propagates here so the build can skip that URL rather than
+    // bake its error page. The live request path leaves throwOnError unset.
+    if (throwOnError) throw error;
     const segment = catchSegmentError(
       error,
       entry,

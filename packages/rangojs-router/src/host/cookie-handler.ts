@@ -6,29 +6,10 @@ import {
   InvalidHostnameError,
   HostValidationError,
 } from "./errors.js";
+import { parseCookiesFromHeader } from "../server/cookie-parse.js";
 
 export function parseCookies(request: Request): Record<string, string> {
-  const cookieHeader = request.headers.get("cookie");
-  if (!cookieHeader) {
-    return {};
-  }
-
-  const cookies: Record<string, string> = {};
-  const pairs = cookieHeader.split(";");
-
-  for (const pair of pairs) {
-    const [name, ...rest] = pair.trim().split("=");
-    if (name && rest.length > 0) {
-      const value = rest.join("=");
-      try {
-        cookies[name] = decodeURIComponent(value);
-      } catch {
-        cookies[name] = value;
-      }
-    }
-  }
-
-  return cookies;
+  return parseCookiesFromHeader(request.headers.get("cookie"));
 }
 
 export function getCookie(request: Request, name: string): string | undefined {
@@ -110,20 +91,24 @@ export function handleCookieOverride(
     }
   }
 
+  // URL.hostname ASCII-lowercases the host, so compare the cookie value against
+  // its canonical lowercase form (a mixed-case host is valid) and reject only
+  // when it carries a path/port. Return the canonical host so downstream
+  // matching, which assumes lowercase, sees a consistent value.
   try {
     const testUrl = new URL(`https://${cookieValue}`);
 
-    if (testUrl.hostname !== cookieValue) {
+    if (testUrl.hostname !== cookieValue.toLowerCase()) {
       throw new InvalidHostnameError(cookieValue, {
         cause: { original: cookieValue, normalized: testUrl.hostname },
       });
     }
+
+    return testUrl.hostname;
   } catch (error) {
     if (error instanceof InvalidHostnameError) {
       throw error;
     }
     throw new InvalidHostnameError(cookieValue, { cause: error });
   }
-
-  return cookieValue;
 }

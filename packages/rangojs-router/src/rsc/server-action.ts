@@ -16,10 +16,11 @@
  */
 
 import {
-  requireRequestContext,
+  getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -30,11 +31,20 @@ import {
 } from "./helpers.js";
 import { warnNonRedirectActionResponse } from "./runtime-warnings.js";
 import type { HandlerContext } from "./handler-context.js";
+import type { MatchResult } from "../types.js";
 
 /**
  * Data flowing from action execution to the revalidation phase.
- * When the action completes without redirect/error-boundary, the handler
- * passes this to route middleware → revalidateAfterAction.
+ * When the action completes without redirect, the handler passes this to route
+ * middleware → revalidateAfterAction.
+ *
+ * `errorBoundary` carries the matched error-boundary result when the action
+ * threw and a boundary matched. The error-boundary render is then performed in
+ * the revalidation phase so it runs INSIDE the same route-middleware wrapper as
+ * a successful revalidation — route middleware (context vars, headers, cookies)
+ * must apply to the error render too, matching the module doc's "identical to a
+ * normal render". When `errorBoundary` is set, `actionContext` is unused (the
+ * boundary is already matched; no matchPartial is run).
  */
 export interface ActionContinuation {
   returnValue: { ok: boolean; data: unknown };
@@ -48,6 +58,7 @@ export interface ActionContinuation {
     actionResult: unknown;
     formData?: FormData;
   };
+  errorBoundary?: MatchResult;
 }
 
 /**
@@ -63,7 +74,7 @@ export async function executeServerAction<TEnv>(
   env: TEnv,
   url: URL,
   actionId: string,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
 ): Promise<Response | ActionContinuation> {
   const temporaryReferences = ctx.createTemporaryReferenceSet();
 
@@ -77,20 +88,82 @@ export async function executeServerAction<TEnv>(
       ? await request.formData()
       : await request.text();
 
-    if (body instanceof FormData) {
-      actionFormData = body;
-    }
-
     if (hasBodyContent(body)) {
       args = await ctx.decodeReply(body, { temporaryReferences });
+    }
+
+    // Surface the action's FormData to shouldRevalidate({ formData }) for a JS
+    // server action, matching the PE path (progressive-enhancement.ts populates
+    // formData from request.formData()). A form-driven action is invoked as
+    // action(formData) (direct) or action(prevState, formData) (useActionState),
+    // so the FormData arrives INSIDE the decoded args. Use the LAST FormData arg:
+    // for useActionState the submitted form is the final arg, and a prior state
+    // that is itself a FormData would otherwise be picked first.
+    //
+    // The raw request body is NOT usable here: encodeReply wraps a FormData arg
+    // in a multipart envelope whose keys are Flight-encoded (e.g. `_1_name`,
+    // `0`), so request.formData() would hand shouldRevalidate a FormData with
+    // internal keys instead of the consumer's `name`. The decoded arg has the
+    // original keys.
+    for (let i = args.length - 1; i >= 0; i--) {
+      if (args[i] instanceof FormData) {
+        actionFormData = args[i] as FormData;
+        break;
+      }
     }
   } catch (error) {
     // Keep the original error as `cause` for server-side logging, but do not
     // interpolate it into the message: that string can surface to the client
     // and may leak decode internals.
-    throw new Error("Failed to decode action arguments", {
+    const decodeError = new Error("Failed to decode action arguments", {
       cause: error,
     });
+
+    // Produce a router-controlled response instead of re-throwing into the
+    // host (which would surface as an opaque 500). This mirrors the no-JS PE
+    // path, where a malformed form body renders the route error boundary or
+    // returns an explicit 400 (progressive-enhancement.ts). Attempt boundary
+    // rendering first; if a boundary matches, defer the render to the
+    // revalidation phase (errorBoundary continuation) so it runs inside route
+    // middleware, identical to the action-threw path below. Otherwise return a
+    // plain 400 — the JS and no-JS paths now converge on the same outcome.
+    let decodeBoundary: MatchResult | undefined;
+    try {
+      decodeBoundary =
+        (await ctx.router.matchError(request, { env }, decodeError, "route")) ??
+        undefined;
+    } catch {
+      // matchError itself failed — fall through to the plain 400 below.
+      decodeBoundary = undefined;
+    }
+
+    ctx.callOnError(decodeError, "action", {
+      request,
+      url,
+      env,
+      actionId,
+      handledByBoundary: !!decodeBoundary,
+    });
+
+    if (decodeBoundary) {
+      return {
+        returnValue: { ok: false, data: decodeError },
+        // 400: malformed action request, matching the PE explicit-400 status
+        // class (the action-threw path uses 500; a decode failure is a bad
+        // request, not an action runtime error).
+        actionStatus: 400,
+        temporaryReferences,
+        actionContext: {
+          actionId,
+          actionUrl: new URL(url),
+          actionResult: decodeError,
+          formData: actionFormData,
+        },
+        errorBoundary: decodeBoundary,
+      };
+    }
+
+    return createResponseWithMergedHeaders(null, { status: 400 });
   }
 
   // Execute the server action
@@ -122,6 +195,8 @@ export async function executeServerAction<TEnv>(
 
     returnValue = { ok: true, data };
   } catch (error) {
+    let actionResultData: unknown = error;
+
     // Handle thrown redirect (e.g., throw redirect('/path'))
     if (error instanceof Response) {
       const intercepted = interceptRedirectForPartial(
@@ -141,9 +216,18 @@ export async function executeServerAction<TEnv>(
             `Use \`throw redirect('/path')\` for redirects.`,
         );
       }
+
+      // A raw Response cannot be serialized into Flight; storing it as the
+      // action returnValue.data would make the error payload serialization
+      // throw and mask the boundary render. Replace it with a serializable
+      // error (mirrors the discard of a returned non-redirect Response above).
+      // matchError/onError still receive the original Response.
+      actionResultData = new Error(
+        `Server action "${actionId}" threw a non-redirect Response (status ${error.status})`,
+      );
     }
 
-    returnValue = { ok: false, data: error };
+    returnValue = { ok: false, data: actionResultData };
     actionStatus = 500;
 
     // Try to render error boundary.
@@ -178,47 +262,27 @@ export async function executeServerAction<TEnv>(
     });
 
     if (errorResult) {
-      setRequestContextParams(errorResult.params, errorResult.routeName);
-
-      const payload: RscPayload = {
-        metadata: {
-          pathname: url.pathname,
-          // routerId exposed for the frontend (current app identity); see
-          // rsc-rendering.ts partial branch.
-          routerId: ctx.router.id,
-          segments: errorResult.segments,
-          isPartial: true,
-          matched: errorResult.matched,
-          diff: errorResult.diff,
-          resolvedIds: errorResult.resolvedIds,
-          params: errorResult.params,
-          isError: true,
-          handles: handleStore.stream(),
-          version: ctx.version,
-        },
+      // Defer the error-boundary render to the revalidation phase so it runs
+      // inside the same route-middleware wrapper as a successful revalidation
+      // (handler.ts executeRenderWithMiddleware). Building + returning the
+      // Response here would bypass route middleware: context vars, headers, and
+      // cookies set by route middleware would NOT apply to the error render,
+      // diverging from the success path and from the module doc's "identical to
+      // a normal render". The boundary is already matched; the render in
+      // revalidateAfterAction uses errorResult directly (no matchPartial).
+      return {
         returnValue,
-      };
-
-      // Intentionally omit attachLocationState for error payloads:
-      // location state is a success-only semantic. Error boundary responses
-      // update the error UI but should not mutate browser history state.
-
-      const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+        actionStatus,
         temporaryReferences,
-        onError: (error: unknown) => {
-          ctx.callOnError(error, "rendering", { request, url, env });
+        // actionContext is unused on the errorBoundary path (no matchPartial).
+        actionContext: {
+          actionId,
+          actionUrl: new URL(url),
+          actionResult: returnValue.data,
+          formData: actionFormData,
         },
-      });
-
-      return createResponseWithMergedHeaders(rscStream, {
-        status: actionStatus,
-        headers: {
-          "content-type": "text/x-component;charset=utf-8",
-          // Router identity for the client's pre-decode integrity check (the
-          // action apply path has no post-decode guard). See response-adapter.
-          "X-RSC-Router-Id": ctx.router.id,
-        },
-      });
+        errorBoundary: errorResult,
+      };
     }
   }
 
@@ -256,18 +320,103 @@ export async function executeServerAction<TEnv>(
  * provide. Redirects are the only non-partial outcome and are handled via
  * X-RSC-Redirect headers before Flight deserialization.
  */
-export async function revalidateAfterAction<TEnv>(
+export function revalidateAfterAction<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
   env: TEnv,
   url: URL,
-  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   continuation: ActionContinuation,
 ): Promise<Response> {
-  const { returnValue, actionStatus, temporaryReferences, actionContext } =
-    continuation;
-  const reqCtx = requireRequestContext();
+  // Instrument the action-revalidation render through the unified phase API,
+  // exactly like a normal navigation render (handleRscRendering). It records
+  // "render:total" AND opens "rango.render" from one boundary covering
+  // matchPartial -> serialize, so the revalidation loaders' rango.loader spans
+  // nest under a rango.render parent instead of dangling at the request root.
+  return observePhase(PHASES.render, () =>
+    revalidateAfterActionInner(
+      ctx,
+      request,
+      env,
+      url,
+      handleStore,
+      continuation,
+    ),
+  );
+}
+
+async function revalidateAfterActionInner<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
+  continuation: ActionContinuation,
+): Promise<Response> {
+  const {
+    returnValue,
+    actionStatus,
+    temporaryReferences,
+    actionContext,
+    errorBoundary,
+  } = continuation;
+  const reqCtx = getRequestContext();
   const metricsStore = reqCtx._metricsStore;
+
+  // Action threw and a boundary matched: render the (already-matched) error
+  // boundary here so it runs inside the route-middleware wrapper, exactly like
+  // the success branch below. setRequestContextParams + the payload mirror the
+  // pre-deferral render that executeServerAction used to do inline.
+  if (errorBoundary) {
+    setRequestContextParams(errorBoundary.params, errorBoundary.routeName);
+
+    const errorPayload: RscPayload = {
+      metadata: {
+        pathname: url.pathname,
+        // routerId exposed for the frontend (current app identity); see
+        // rsc-rendering.ts partial branch.
+        routerId: ctx.router.id,
+        segments: errorBoundary.segments,
+        isPartial: true,
+        matched: errorBoundary.matched,
+        diff: errorBoundary.diff,
+        resolvedIds: errorBoundary.resolvedIds,
+        params: errorBoundary.params,
+        isError: true,
+        handles: handleStore.stream(),
+        version: ctx.version,
+      },
+      returnValue,
+    };
+
+    // Intentionally omit attachLocationState for error payloads: location state
+    // is a success-only semantic. Error boundary responses update the error UI
+    // but should not mutate browser history state.
+
+    const errorStart = performance.now();
+    const errorStream = ctx.renderToReadableStream<RscPayload>(errorPayload, {
+      temporaryReferences,
+      onError: (error: unknown) => {
+        ctx.callOnError(error, "rendering", { request, url, env });
+      },
+    });
+    appendMetric(
+      metricsStore,
+      "rsc-serialize",
+      errorStart,
+      performance.now() - errorStart,
+    );
+
+    return createResponseWithMergedHeaders(errorStream, {
+      status: actionStatus,
+      headers: {
+        "content-type": "text/x-component;charset=utf-8",
+        // Router identity for the client's pre-decode integrity check (the
+        // action apply path has no post-decode guard). See response-adapter.
+        "X-RSC-Router-Id": ctx.router.id,
+      },
+    });
+  }
 
   const matchResult = await ctx.router.matchPartial(
     request,
@@ -335,13 +484,8 @@ export async function revalidateAfterAction<TEnv>(
   });
   const rscSerializeDur = performance.now() - renderStart;
   // This measures synchronous stream creation, not end-to-end stream consumption.
+  // render:total is recorded by the observePhase wrapper in revalidateAfterAction.
   appendMetric(metricsStore, "rsc-serialize", renderStart, rscSerializeDur);
-  appendMetric(
-    metricsStore,
-    "render:total",
-    renderStart,
-    performance.now() - renderStart,
-  );
 
   return createResponseWithMergedHeaders(rscStream, {
     status: actionStatus,

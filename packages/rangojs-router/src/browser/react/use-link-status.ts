@@ -95,6 +95,13 @@ export function useLinkStatus(): LinkStatus {
 
   const prevPending = useRef(basePending);
 
+  // Tracks whether the most recent setOptimisticPending call pinned the value
+  // to a non-idle (loading) state. Used to decide whether to emit a release
+  // update when returning to idle, so the optimistic store doesn't stay pinned
+  // to `true` if a parent transition (e.g. the <Link> click / view transition
+  // commit) is still pending. Mirrors useNavigation's optimisticPinnedRef.
+  const optimisticPinnedRef = useRef(false);
+
   const [pending, setOptimisticPending] = useOptimistic(basePending);
 
   useEffect(() => {
@@ -102,24 +109,46 @@ export function useLinkStatus(): LinkStatus {
       return;
     }
 
-    return ctx.eventController.subscribe(() => {
+    const update = () => {
       const state = ctx.eventController.getState();
       const isPending = isPendingFor(linkTo, state.pendingUrl, origin);
 
       if (isPending !== prevPending.current) {
         prevPending.current = isPending;
 
-        // Use optimistic update for immediate feedback during navigation
-        if (state.state !== "idle") {
+        const shouldPin = isPending && state.state !== "idle";
+
+        if (shouldPin) {
+          // Pin the optimistic value so the spinner shows immediately even if
+          // a parent transition (e.g. <Link> click) defers the urgent
+          // setBasePending commit.
           startTransition(() => {
             setOptimisticPending(isPending);
           });
+          optimisticPinnedRef.current = true;
+        } else if (optimisticPinnedRef.current) {
+          // Release a previously-pinned optimistic value. Without this,
+          // useOptimistic keeps returning the stale `true` while any parent
+          // transition is still pending, even after basePending flipped to
+          // false at navigation completion — leaving the link spinner stuck.
+          startTransition(() => {
+            setOptimisticPending(isPending);
+          });
+          optimisticPinnedRef.current = false;
         }
 
         // Always update base state
         setBasePending(isPending);
       }
-    });
+    };
+
+    // Catch-up: re-read state synchronously on mount before subscribing, so a
+    // navigation that started between the seeding render and this effect commit
+    // isn't dropped until the next (debounced) notify. Mirrors usePathname /
+    // useSearchParams.
+    update();
+
+    return ctx.eventController.subscribe(update);
   }, [linkTo, origin]);
 
   // If not inside a Link, return not pending

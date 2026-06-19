@@ -9,9 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
-export function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+import { escapeRegExp } from "../../regex-escape.js";
 
 export function encodePathParam(value: unknown): string {
   return String(value)
@@ -70,13 +68,28 @@ export async function runWithConcurrency<T>(
     return;
   }
   let nextIndex = 0;
+  // On first failure (the default prerender.onError: "fail" re-throws), stop
+  // scheduling new work so the remaining workers don't keep running full RSC
+  // renders before the build aborts. The first error is surfaced after all
+  // in-flight workers settle, preserving the throw-to-fail-build behavior.
+  let firstError: unknown;
+  let failed = false;
   async function worker() {
-    while (nextIndex < items.length) {
+    while (nextIndex < items.length && !failed) {
       const idx = nextIndex++;
-      await fn(items[idx]);
+      try {
+        await fn(items[idx]);
+      } catch (err) {
+        if (!failed) {
+          failed = true;
+          firstError = err;
+        }
+        return;
+      }
     }
   }
   await Promise.all(Array.from({ length: limit }, () => worker()));
+  if (failed) throw firstError;
 }
 
 export function groupByConcurrency<T extends { concurrency: number }>(
@@ -135,6 +148,42 @@ export function notifyOnError(
     }
     break; // Only notify the first router with onError
   }
+}
+
+/**
+ * Resolve a thrown build-time render error into the prerender build's policy and
+ * log a per-entry line. A `Skip` (or any render error under `prerender.onError:
+ * "warn"`) logs and returns so the caller skips the entry; a render error under
+ * the default "fail" logs FAIL, notifies `onError`, and re-throws to fail the
+ * build. Shared by `expandPrerenderRoutes` (prerender) and `renderStaticHandlers`
+ * (static) so the Skip/warn/fail policy lives in one place. `label` is the padded
+ * URL / handler name for the log line; `elapsed` is the per-entry duration string.
+ */
+export function resolvePrerenderError(
+  registry: Map<string, any>,
+  error: any,
+  onError: "fail" | "warn",
+  label: string,
+  elapsed: string,
+  phase: "prerender" | "static",
+  routeKey?: string,
+  pathname?: string,
+): void {
+  const isSkip = error?.name === "Skip";
+  if (isSkip || onError === "warn") {
+    if (isSkip) {
+      console.log(`[rango]   SKIP ${label} (${elapsed}ms) - ${error.message}`);
+    } else {
+      console.warn(
+        `[rango]   WARN ${label} (${elapsed}ms) - render error, not pre-rendered (prerender.onError: "warn"): ${error.message}`,
+      );
+    }
+    notifyOnError(registry, error, phase, routeKey, pathname, true);
+    return;
+  }
+  console.error(`[rango]   FAIL ${label} (${elapsed}ms) - ${error.message}`);
+  notifyOnError(registry, error, phase, routeKey, pathname);
+  throw error;
 }
 
 function getStagedAssetDir(projectRoot: string): string {

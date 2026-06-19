@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
 import {
@@ -6,7 +6,139 @@ import {
   expectNoPageError,
   goBack,
   clearCart,
+  prodDescribe,
 } from "./helper";
+
+// URL resolver: dev passes devURL(devServerURL, p); production passes f.url(p).
+type UrlResolver = (path: string) => string;
+
+// Concurrent-action bodies are shared between dev and the (production) build
+// describe so the same rapid-fire races run against minified, NODE_ENV-folded
+// output. Synchronization is event-driven (optimistic cart-quantity / button
+// text), not fixed waitForTimeout, so production timing stays deterministic.
+
+async function shopRapidQuantityChanges(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/shop"));
+  await waitForHydration(page);
+
+  await page
+    .locator('a[href="/shop/product/wireless-headphones"]')
+    .first()
+    .click();
+  await expect(page.locator("text=Intercepted")).toBeVisible({
+    timeout: 10000,
+  });
+
+  // Ensure the item is in the cart so quantity controls are present.
+  const quantity = page.locator('[data-testid="cart-quantity"]');
+  const addToCartButton = page
+    .locator("button")
+    .filter({ hasText: "Add to Cart" })
+    .first();
+  if (await addToCartButton.isVisible().catch(() => false)) {
+    await addToCartButton.click();
+  }
+  await expect(quantity).toBeVisible({ timeout: 10000 });
+
+  const start = parseInt((await quantity.textContent()) || "0", 10);
+
+  // Fire three increments in quick succession (concurrent quantity actions).
+  const plusButton = page.locator('[data-testid="quantity-increment"]');
+  await plusButton.click();
+  await plusButton.click();
+  await plusButton.click();
+
+  // Optimistic quantity climbs synchronously; settle on the final value.
+  await expect(quantity).toHaveText(String(start + 3), { timeout: 15000 });
+
+  // Modal and background remain functional after the concurrent batch.
+  await expect(page.locator("text=Intercepted")).toBeVisible();
+  await expect(page.locator("text=Featured Products")).toBeVisible();
+}
+
+async function shopConcurrentAddToCart(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/shop/product/wireless-headphones"));
+  await waitForHydration(page);
+
+  await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.locator("text=Add to Cart - Tests")).toBeVisible({
+    timeout: 10000,
+  });
+
+  const withResultButton = page
+    .locator("button")
+    .filter({ hasText: "Add to Cart (With Result)" })
+    .first();
+  const streamingButton = page
+    .locator("button")
+    .filter({ hasText: "Add product (Streaming)" })
+    .first();
+
+  // Fire both actions back to back (concurrent actions).
+  await withResultButton.click();
+  await streamingButton.click();
+
+  // "With Result" action settles and reports success.
+  await expect(withResultButton).not.toHaveText("Adding...", {
+    timeout: 15000,
+  });
+  await expect(page.locator("h4:has-text('Success')")).toBeVisible({
+    timeout: 10000,
+  });
+
+  // Streaming action settles too (button leaves the "Processing..." state).
+  await expect(streamingButton).not.toHaveText("Processing...", {
+    timeout: 20000,
+  });
+
+  // Page remains functional after both concurrent actions.
+  await expect(
+    page.locator("h2:has-text('Wireless Headphones')"),
+  ).toBeVisible();
+}
+
+async function shopActionDuringNavigation(page: Page, url: UrlResolver) {
+  using _ = expectNoPageError(page);
+
+  await page.goto(url("/shop"));
+  await waitForHydration(page);
+
+  await page
+    .locator('a[href="/shop/product/wireless-headphones"]')
+    .first()
+    .click();
+  await expect(page.locator("text=Intercepted")).toBeVisible({
+    timeout: 10000,
+  });
+
+  // Make sure the item is in the cart so the + control is available.
+  const plusButton = page.locator('[data-testid="quantity-increment"]');
+  const addToCartButton = page
+    .locator("button")
+    .filter({ hasText: "Add to Cart" })
+    .first();
+  if (await addToCartButton.isVisible().catch(() => false)) {
+    await addToCartButton.click();
+    await expect(plusButton).toBeVisible({ timeout: 10000 });
+  }
+
+  // Fire a quantity action, then immediately navigate away before it settles.
+  await plusButton.click();
+  await goBack(page);
+
+  // The shop index must restore cleanly and the modal must be gone.
+  await expect(page.locator("text=All Products")).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(page.locator("text=Featured Products")).toBeVisible();
+  await expect(page.locator("text=Intercepted")).not.toBeVisible();
+}
 
 /**
  * Shop actions tests
@@ -578,164 +710,41 @@ devTest.describe("shop-concurrent-actions", () => {
   devTest(
     "should handle rapid quantity changes from modal",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/shop"));
-      await waitForHydration(page);
-
-      // Open product modal
-      await page
-        .locator('a[href="/shop/product/wireless-headphones"]')
-        .first()
-        .click();
-      await expect(page.locator("text=Intercepted")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // First click "Add to Cart" to add item to cart
-      const addToCartButton = page
-        .locator("button")
-        .filter({ hasText: "Add to Cart" })
-        .first();
-      await addToCartButton.click();
-
-      // Wait for UI to update to show quantity controls
-      await expect(
-        page.locator("button").filter({ hasText: "+" }).first(),
-      ).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Now click + button multiple times rapidly to increase quantity
-      const plusButton = page
-        .locator("button")
-        .filter({ hasText: "+" })
-        .first();
-      await plusButton.click();
-      await plusButton.click();
-      await plusButton.click();
-
-      // Wait for all actions to complete
-      await page.waitForTimeout(4000);
-
-      // Modal should still be visible and functional
-      await expect(page.locator("text=Intercepted")).toBeVisible();
-
-      // Background should still be visible
-      await expect(page.locator("text=Featured Products")).toBeVisible();
+      await shopRapidQuantityChanges(page, (p) => devURL(devServerURL, p));
     },
   );
 
   devTest(
     "should handle concurrent add to cart actions from detail page",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(
-        devURL(devServerURL, "/shop/product/wireless-headphones"),
-      );
-      await waitForHydration(page);
-
-      // Wait for product to load
-      await expect(
-        page.locator("h2:has-text('Wireless Headphones')"),
-      ).toBeVisible({
-        timeout: 10000,
-      });
-
-      // Wait for the add to cart section to be visible
-      await expect(page.locator("text=Add to Cart - Tests")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Find both add to cart buttons - use "With Result" to verify action success
-      const withResultButton = page
-        .locator("button")
-        .filter({ hasText: "Add to Cart (With Result)" })
-        .first();
-
-      const streamingButton = page
-        .locator("button")
-        .filter({ hasText: "Add product (Streaming)" })
-        .first();
-
-      // Click both buttons in quick succession (concurrent actions)
-      await withResultButton.click();
-      await streamingButton.click();
-
-      // Wait for "With Result" action to complete
-      await expect(withResultButton).not.toHaveText("Adding...", {
-        timeout: 10000,
-      });
-
-      // Verify the "With Result" action succeeded
-      await expect(page.locator("h4:has-text('Success')")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Wait for streaming action to complete (has ~1s delay)
-      await page.waitForTimeout(2000);
-
-      // Page should still be functional after both concurrent actions
-      await expect(
-        page.locator("h2:has-text('Wireless Headphones')"),
-      ).toBeVisible();
+      await shopConcurrentAddToCart(page, (p) => devURL(devServerURL, p));
     },
   );
 
   devTest(
     "should handle action during modal navigation",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(devURL(devServerURL, "/shop"));
-      await waitForHydration(page);
-
-      // Open product modal
-      await page
-        .locator('a[href="/shop/product/wireless-headphones"]')
-        .first()
-        .click();
-      await expect(page.locator("text=Intercepted")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Ensure item is in cart first (might need to add it)
-      const plusButton = page
-        .locator("button")
-        .filter({ hasText: "+" })
-        .first();
-      const addToCartButton = page
-        .locator("button")
-        .filter({ hasText: "Add to Cart" })
-        .first();
-
-      const isAddToCartVisible = await addToCartButton
-        .isVisible()
-        .catch(() => false);
-      if (isAddToCartVisible) {
-        // Add to cart first, then + will be available
-        await addToCartButton.click();
-        await expect(plusButton).toBeVisible({ timeout: 5000 });
-      }
-
-      // Click + to trigger action
-      await plusButton.click();
-
-      // Immediately navigate away before action completes
-      await goBack(page);
-
-      // Wait for navigation
-      await page.waitForTimeout(1000);
-
-      // Should be back on shop page
-      await expect(page.locator("text=All Products")).toBeVisible();
-      await expect(page.locator("text=Featured Products")).toBeVisible();
-
-      // Page should be functional
-      await expect(page.locator("text=Intercepted")).not.toBeVisible();
+      await shopActionDuringNavigation(page, (p) => devURL(devServerURL, p));
     },
   );
+});
+
+prodDescribe("shop-concurrent-actions", (f) => {
+  test.setTimeout(120000);
+
+  test("should handle rapid quantity changes from modal", async ({ page }) => {
+    await shopRapidQuantityChanges(page, (p) => f.url(p));
+  });
+
+  test("should handle concurrent add to cart actions from detail page", async ({
+    page,
+  }) => {
+    await shopConcurrentAddToCart(page, (p) => f.url(p));
+  });
+
+  test("should handle action during modal navigation", async ({ page }) => {
+    await shopActionDuringNavigation(page, (p) => f.url(p));
+  });
 });
 
 /**

@@ -96,6 +96,18 @@ describe("collectHandle on the built-in Breadcrumbs handle", () => {
     ]);
   });
 
+  // G4: re-pushing an existing href (e.g. a child refreshing a parent crumb's
+  // label) must NOT reorder the crumb to the end — parent->child order is the
+  // documented contract. The href keeps its FIRST position but the LAST value.
+  it("re-pushing an existing crumb keeps parent->child order (dedup in place)", () => {
+    const homeCurrent = { label: "Home (current)", href: "/" };
+    // Home pushed first, Blog second, then Home re-pushed in a deeper segment.
+    const result = collectHandle(Breadcrumbs, [[home], [blog], [homeCurrent]]);
+    // Home stays in position 0 (with the refreshed label), Blog stays after it.
+    expect(result).toEqual([homeCurrent, blog]);
+    expect(result.map((c) => c.href)).toEqual(["/", "/blog"]);
+  });
+
   it("returns an empty array for no segments", () => {
     expect(collectHandle(Breadcrumbs, [])).toEqual([]);
   });
@@ -141,6 +153,35 @@ describe("collectHandle on the built-in Meta handle", () => {
     ).toBe("Acme");
   });
 
+  it("inserts a child title containing $-sequences literally into the template", () => {
+    // String.prototype.replace would interpret $&, $', $`, $$, $n in the
+    // replacement; the template must insert the raw title verbatim.
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "Save $5 & more" }],
+      ]),
+    ).toBe("Save $5 & more | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "Buy $& now" }],
+      ]),
+    ).toBe("Buy $& now | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "100$$ deal" }],
+      ]),
+    ).toBe("100$$ deal | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "a$'b" }],
+      ]),
+    ).toBe("a$'b | Acme");
+  });
+
   it("an absolute title bypasses the template", () => {
     expect(
       titleOf([
@@ -165,6 +206,107 @@ describe("collectHandle on the built-in Meta handle", () => {
       [{ unset: "name:description" }],
     ] as never) as Array<Record<string, unknown>>;
     expect(result.some((d) => d.name === "description")).toBe(false);
+  });
+
+  // G3: Promise descriptors cannot be inspected synchronously (collectMeta never
+  // awaits), so they are append-only: they bypass key-dedup and title-templating.
+  // The collect must (a) still pass the Promise through untouched (so MetaTags can
+  // resolve it via use()), and (b) warn in dev when a title template is active,
+  // since a Promise<{ title }> silently misses the template and yields a 2nd <title>.
+  describe("async (Promise) meta descriptors", () => {
+    it("passes a Promise descriptor through untouched (append-only)", () => {
+      const p = Promise.resolve({ property: "og:title", content: "Async" });
+      const result = collectHandle(Meta, [
+        [{ property: "og:title", content: "Sync" }],
+        [p],
+      ] as never) as Array<unknown>;
+      // The sync og:title stays; the Promise is appended as-is, NOT deduped
+      // against it (its content is unknown until it resolves).
+      expect(result).toContain(p);
+      expect(
+        (result as Array<Record<string, unknown>>).some(
+          (d) => d && typeof d === "object" && d.property === "og:title",
+        ),
+      ).toBe(true);
+    });
+
+    it("does NOT dedupe a Promise og: descriptor against a sync one", () => {
+      const p = Promise.resolve({ property: "og:title", content: "Async" });
+      const result = collectHandle(Meta, [
+        [{ property: "og:title", content: "Sync" }],
+        [p],
+      ] as never) as Array<unknown>;
+      // Both the sync descriptor and the unresolved Promise survive (2 entries).
+      const ogish = result.filter(
+        (d) =>
+          d === p ||
+          (d &&
+            typeof d === "object" &&
+            (d as Record<string, unknown>).property === "og:title"),
+      );
+      expect(ogish).toHaveLength(2);
+    });
+
+    it("warns in dev when a Promise descriptor is pushed under an active title template", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const p = Promise.resolve({ title: "Async Title" });
+      const result = collectHandle(Meta, [
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [p],
+      ] as never) as Array<unknown>;
+
+      // The template default survives as a sync <title>; the Promise is appended
+      // separately (bypassing the template), so the dev-warn fires.
+      expect(result).toContain(p);
+      expect(warn).toHaveBeenCalled();
+      expect(
+        warn.mock.calls.some((c) => /title template/i.test(String(c[0]))),
+      ).toBe(true);
+      warn.mockRestore();
+    });
+
+    it("does NOT warn for a Promise descriptor when no title template is active", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const p = Promise.resolve({ property: "og:image", content: "x.png" });
+      collectHandle(Meta, [[p]] as never);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it("treats a non-callable `then` as a SYNC descriptor (collect/render agree)", () => {
+      // A descriptor carrying a NON-callable `then` (e.g. a serialized shape)
+      // must NOT be classified as a Promise — otherwise collect appends it while
+      // MetaTags' render side would call React's use() on it and throw. The
+      // shared isThenable predicate (callable `then`) keeps both sides in sync:
+      // here the descriptor is deduped/templated as an ordinary sync title.
+      const result = collectHandle(Meta, [
+        [{ then: 5, title: "Sync via non-callable then" }],
+      ] as never) as Array<Record<string, unknown>>;
+      const titles = result.filter((d) => "title" in d);
+      expect(titles).toHaveLength(1);
+      expect(titles[0]!.title).toBe("Sync via non-callable then");
+    });
+
+    // The warning is a general note, NOT a duplicate-<title> prediction.
+    // collectMeta can't tell a title-Promise from an og:image-Promise
+    // synchronously, so asserting a guaranteed second <title> would be a false
+    // positive for the common async og:image case. The softened message must not
+    // claim a duplicate <title> will occur.
+    it("does NOT assert a guaranteed duplicate <title> in the warning message", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const p = Promise.resolve({ property: "og:image", content: "x.png" });
+      collectHandle(Meta, [
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [p],
+      ] as never);
+      // It still warns (template is active, content unknowable)...
+      expect(warn).toHaveBeenCalled();
+      // ...but the message must not over-claim a duplicate / second <title>.
+      const messages = warn.mock.calls.map((c) => String(c[0]));
+      expect(messages.some((m) => /duplicate <title>/i.test(m))).toBe(false);
+      expect(messages.some((m) => /second <title>/i.test(m))).toBe(false);
+      warn.mockRestore();
+    });
   });
 
   describe("JSON-LD (script:ld+json)", () => {

@@ -65,6 +65,52 @@ describe("tryTrieMatch", () => {
     expect(result?.params).toEqual({ "*": "docs/guides/intro" });
   });
 
+  // joinRemainingSegments builds the wildcard remainder via slice().join("/").
+  it("joins the wildcard remainder from the matched index onward", () => {
+    const trie = buildTestTrie({ "a.any": "/a/*" });
+    const result = tryTrieMatch(trie, "/a/b/c");
+    expect(result?.routeKey).toBe("a.any");
+    expect(result?.params).toEqual({ "*": "b/c" });
+  });
+
+  // FIX 10: an RSC route and a response-type route sharing a trie terminal can
+  // bind the same positional segment under DIFFERENT param names. The folded
+  // negotiate variant must carry its OWN param names (pa) so the runtime can
+  // re-key the matched params when that variant wins negotiation.
+  it("carries the variant's own param names (pa) on negotiate variants", () => {
+    const routes = {
+      "widgets.view": "/widgets/:id",
+      "widgets.json": "/widgets/:file",
+    };
+    const ancestry = {
+      "widgets.view": ["A:view"],
+      "widgets.json": ["A:json"],
+    };
+    const staticPrefix = {
+      "widgets.view": "/widgets",
+      "widgets.json": "/widgets",
+    };
+    const trie = buildRouteTrie(
+      routes,
+      ancestry,
+      staticPrefix,
+      undefined,
+      undefined,
+      undefined,
+      { "widgets.json": "json" },
+    );
+
+    const result = tryTrieMatch(trie, "/widgets/42");
+    // Primary leaf is the RSC route; params are extracted under its pa (:id).
+    expect(result?.routeKey).toBe("widgets.view");
+    expect(result?.params).toEqual({ id: "42" });
+    // The folded json variant carries its own param names so the runtime can
+    // re-key id -> file when it wins negotiation.
+    expect(result?.negotiateVariants).toEqual([
+      { routeKey: "widgets.json", responseType: "json", pa: ["file"] },
+    ]);
+  });
+
   // Regression (C1): a wildcard whose parent node is reached with no remaining
   // segments must match the bare prefix with an empty remainder. Previously the
   // trie missed and the regex fallback emitted a corrupt slice-off redirect

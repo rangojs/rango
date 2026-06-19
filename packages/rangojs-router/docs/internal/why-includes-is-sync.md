@@ -19,10 +19,10 @@ urls(({ include }) => [include("/admin", () => import("./urls/admin"))]);
 Enforcement sites:
 
 - Type: `IncludeFn` at `src/urls/path-helper-types.ts`
-- Runtime call: `createIncludeHelper` at `src/urls/include-helper.ts:103`
+- Runtime call: `createIncludeHelper` at `src/urls/include-helper.ts:60`
 - The inner handler is invoked synchronously at **two** distinct sites:
   - **Match-time**, inside sync `findMatch`:
-    `evaluateLazyEntry` at `src/router/lazy-includes.ts:155`. Must stay
+    `evaluateLazyEntry` at `src/router/lazy-includes.ts:69`. Must stay
     sync because `findMatch` is sync and has ~8 callers (including
     client-side navigation snapshot lookups).
   - **Manifest-load time**, inside async `loadManifest`:
@@ -37,12 +37,13 @@ Route-tree **metadata** is built eagerly at two separate phases, both of
 which walk `patterns.handler()` synchronously:
 
 1. **Runtime router registration** — `Rango.routes(patternsOrBuilder)`
-   at `src/router.ts:682` walks the handler during router construction to
+   at `src/router.ts:709` walks the handler during router construction to
    extract route patterns, register the reverse map, and seed
    `routesEntries` used by `findMatch`.
 2. **Build-time discovery** — `generateManifestFull` at
-   `src/build/generate-manifest.ts:282` (and nested `buildPrefixTreeNode`
-   at `src/build/generate-manifest.ts:174-198`) walks the handler to
+   `src/build/generate-manifest.ts:291` (and nested `buildPrefixTreeNode`
+   at `src/build/generate-manifest.ts:81`, called recursively at lines 192
+   and 397) walks the handler to
    produce the generated route manifest, route ancestry, trie input,
    trailing-slash config, prerender list, response-type map, and
    generated type file inputs.
@@ -85,7 +86,7 @@ Consequences:
 ## "Lazy" already means something specific here
 
 The lazy-include system (`src/router/lazy-includes.ts`, comment at
-`src/urls/include-helper.ts:187` "All includes are lazy — patterns are
+`src/urls/include-helper.ts:56` "All includes are lazy — patterns are
 evaluated on first matching request") defers **per-request Store
 population**, not route-name discovery. Specifically:
 
@@ -129,7 +130,7 @@ metadata incomplete. A whole handler/app is a natural splitting unit; a
 single `include()` prefix inside a shared router is not.
 
 `Rango.routes()` itself only accepts `UrlPatterns | UrlBuilder` (see
-`src/router.ts:682`) — it does **not** take a factory. Code-splitting
+`src/router.ts:709`) — it does **not** take a factory. Code-splitting
 below the host-router boundary requires host-level composition, not a
 widened `include()` signature.
 

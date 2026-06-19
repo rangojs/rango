@@ -12,6 +12,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { drainOnResponseCallbacks } from "../../rsc/helpers.js";
 import { resolveLocationStateEntries } from "../../browser/react/location-state-shared.js";
 import { createReverseFunction } from "../../router/handler-context.js";
 import { normalizeBasename } from "../../router/basename.js";
@@ -259,6 +260,7 @@ export function buildRunResponse<TEnv>(
   thrown: unknown,
 ): Response {
   const stub = ctx.res;
+  let response: Response;
   if (thrown instanceof Response) {
     const headers = new Headers(thrown.headers);
     for (const cookie of stub.headers.getSetCookie()) {
@@ -268,9 +270,30 @@ export function buildRunResponse<TEnv>(
       if (name.toLowerCase() === "set-cookie") return;
       if (!headers.has(name)) headers.set(name, value);
     });
-    return new Response(null, { status: thrown.status, headers });
+    response = new Response(null, { status: thrown.status, headers });
+  } else {
+    response = new Response(null, {
+      status: stub.status,
+      headers: stub.headers,
+    });
   }
-  return new Response(null, { status: stub.status, headers: stub.headers });
+  // Mirror production response finalization: every response-finalization path
+  // drains ctx.onResponse() callbacks (createResponseWithMergedHeaders /
+  // finalizeResponse). buildRunResponse runs AFTER runWithRequestContext has
+  // exited, so _getRequestContext() (and finalizeResponse) would no-op — drain
+  // ctx._onResponseCallbacks explicitly. Reuses the SAME production drain
+  // (swap-before-iterate + external-redirect brand preservation) so a callback's
+  // header mutations / returned replacement Response are reflected on the result
+  // the harness surfaces. rsc/helpers is plugin-rsc-free on its eager graph
+  // (dispatch.ts in this same testing barrel already statically imports from it).
+  // drainOnResponseCallbacks is typed against the default-env RequestContext (it
+  // touches only the env-agnostic _onResponseCallbacks); the harness ctx is
+  // RequestContext<TEnv> — assignable in the router's own tsc but not when a
+  // consumer pins a concrete Env, so cast to the param type.
+  return drainOnResponseCallbacks(
+    ctx as Parameters<typeof drainOnResponseCallbacks>[0],
+    response,
+  );
 }
 
 export function buildRunSnapshot<TEnv>(

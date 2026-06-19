@@ -3,6 +3,7 @@ export const NamedRoutes = {
   "actionCtxSet.index": "/action-ctx-set",
   "actionRedirectRevalidation.index": "/action-redirect-revalidation",
   "actionRedirectRevalidation.login": "/action-redirect-revalidation/login",
+  "actionRouteMw.index": "/action-route-mw",
   "alsScope.detail": "/als-scope/detail/:slug",
   "alsScope.index": "/als-scope",
   "apiShop.cart": "/api/shop/cart",
@@ -180,6 +181,7 @@ export const NamedRoutes = {
   "loadingRedirect.target": "/loading-redirect/target",
   "locale.detail": "/:locale/blog/:slug",
   "locale.list": "/:locale/blog",
+  "locationState.actionLs": "/location-state/action-ls",
   "locationState.index": "/location-state",
   "locationState.linkState": "/location-state/link-state",
   "locationState.linkStatePlainTarget": "/location-state/link-state/plain-target",
@@ -192,6 +194,7 @@ export const NamedRoutes = {
   "locationState.triggerCtxState": "/location-state/trigger-ctx-state",
   "locationState.triggerRedirect": "/location-state/trigger-redirect",
   "manifestCacheTest.index": "/manifest-cache-test",
+  metaEscape: "/meta-escape",
   "metaMerge.child": "/meta-merge/child",
   "metaMerge.deep": "/meta-merge/deep/nested",
   "metaMerge.index": "/meta-merge",
@@ -243,6 +246,7 @@ export const NamedRoutes = {
   "paramsAfterAction.error": "/params-after-action/error/:postId/section/:section",
   "paramsAfterAction.show": "/params-after-action/:postId/section/:section",
   parityCounter: "/parity-counter",
+  peHeader: "/pe-header",
   peRedirect: "/pe-redirect",
   "plainProduct.detail": "/plain-product/:id",
   "prerender-handle": "/prerender-handle",
@@ -271,6 +275,7 @@ export const NamedRoutes = {
   "renderedBarrier.streamingDeadlock": "/rendered-barrier/streaming-deadlock",
   "renderedBarrier.streamingPrerender": "/rendered-barrier/streaming-prerender",
   "renderedBarrier.useCache": "/rendered-barrier/use-cache",
+  renderStability: "/render-stability/p/:id",
   "responseCache.responseCache.html": "/response-cache/cached-html",
   "responseCache.responseCache.json": "/response-cache/cached-json",
   "responseCache.responseCache.jsonQuery": "/response-cache/cached-json-query",
@@ -291,6 +296,7 @@ export const NamedRoutes = {
   responseWrapText: "/response-wrap/text",
   responseWrapWithHeaders: "/response-wrap/with-headers",
   responseWrapXml: "/response-wrap/xml",
+  "revalFormData.index": "/reval-formdata",
   "reverseAutofill.index": "/reverse-autofill/:tenantId",
   "reverseAutofill.settings": "/reverse-autofill/:tenantId/settings",
   "reverseAutofill.user": "/reverse-autofill/:tenantId/users/:userId",
@@ -358,8 +364,12 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.withLoader": "/use-cache-test/with-loader",
 } as const;
 
+// Aliased so the augmentation below does not pay a homomorphic mapped-type
+// instantiation per route; `as const` already makes the members readonly.
+type NamedRoutesShape = typeof NamedRoutes;
+
 declare global {
   namespace Rango {
-    interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
+    interface GeneratedRouteMap extends NamedRoutesShape {}
   }
 }

@@ -106,7 +106,9 @@ export interface RunLoaderOptions<TEnv = any> {
   basename?: string;
   /**
    * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
-   * or `{ themes: [...] }`). Without it `ctx.theme`/`ctx.setTheme` are inert.
+   * or `{ themes: [...] }`). Seeds the request's theme config so nested handler
+   * or cache contexts created from this loader observe it. Loaders themselves do
+   * not expose `ctx.theme`/`ctx.setTheme` (those are handler/middleware-only).
    */
   theme?: ThemeConfig | true;
   /** Environment bindings surfaced as `ctx.env`. */
@@ -284,8 +286,13 @@ function runWithLoaderContext<R>(
         }
         if (handleSeeds.has(dep)) return handleSeeds.get(dep);
         if (isHandle(dep)) return collectHandle(dep, []);
-        if (loaderSeeds.has(dep)) return loaderSeeds.get(dep);
-        if (opts.use) return opts.use(dep as LoaderDefinition<any, any>);
+        // Production ctx.use(Loader) ALWAYS returns a Promise (the cached loader
+        // promise). The seeded path must match, so a consumer composing on the
+        // result (ctx.use(Dep).then(...), Promise.race, etc.) works the same as
+        // production and the real-fn delegate path below.
+        if (loaderSeeds.has(dep)) return Promise.resolve(loaderSeeds.get(dep));
+        if (opts.use)
+          return Promise.resolve(opts.use(dep as LoaderDefinition<any, any>));
         return reqCtx.use(dep as LoaderDefinition<any, any>);
       }) as LoaderContext<any, any>["use"],
       method: opts.method ?? "GET",

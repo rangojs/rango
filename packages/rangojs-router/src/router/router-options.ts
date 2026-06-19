@@ -11,6 +11,7 @@ import type { UrlPatterns } from "../urls.js";
 import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
 import type { TelemetrySink } from "./telemetry.js";
+import type { RouterTracingConfig } from "./tracing.js";
 import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
 
 /**
@@ -523,6 +524,29 @@ export interface RangoOptions<TEnv = any> {
   warmup?: boolean;
 
   /**
+   * Wrap the hydrated client tree in `React.StrictMode`.
+   *
+   * The Rango browser entry hydrates the app inside `<React.StrictMode>` by
+   * default. StrictMode double-invokes render and (in development) mounts,
+   * unmounts, then remounts every effect to surface impure renders and missing
+   * effect cleanup. Production builds treat StrictMode as a no-op, so this flag
+   * only changes development behavior in a normal app.
+   *
+   * Set to `false` to hydrate without the StrictMode wrapper. The main reason to
+   * opt out is to isolate StrictMode's intentional double-render/double-effect
+   * from genuine re-renders when measuring client-hook stability — with
+   * StrictMode off, render counts are exact in development too.
+   *
+   * The value is resolved server-side at router creation and shipped to the
+   * client in the initial payload metadata; the browser entry reads it once at
+   * hydration. Changing it does not affect the SSR HTML (StrictMode emits no
+   * DOM), so toggling it never causes a hydration mismatch.
+   *
+   * @default true
+   */
+  strictMode?: boolean;
+
+  /**
    * Shorthand timeout (ms) applied to both action execution and render start.
    * Does NOT apply to streamIdleMs.
    * Overridden by individual values in `timeouts`.
@@ -574,11 +598,14 @@ export interface RangoOptions<TEnv = any> {
   onTimeout?: OnTimeoutCallback<TEnv>;
 
   /**
-   * Telemetry sink for structured lifecycle events.
+   * Telemetry sink for structured, discrete lifecycle EVENTS: request
+   * start/end/error, loader start/end/error, handler errors, cache decisions,
+   * revalidation decisions, timeouts, origin rejections.
    *
-   * When provided, the router emits events for request start/end,
-   * loader start/end/error, handler errors, cache decisions, and
-   * revalidation decisions.
+   * This is the EVENT surface. Phase-duration SPANS (request/middleware/action/
+   * handler/loader/render/ssr timing wired into a tracing backend) come from the
+   * separate `tracing` option below — a sink does not emit them, because async-context nesting
+   * cannot be faithfully reconstructed from after-the-fact start/end events.
    *
    * No-op when not configured (zero overhead).
    *
@@ -588,6 +615,18 @@ export interface RangoOptions<TEnv = any> {
    *
    * const router = createRouter({
    *   telemetry: createConsoleSink(),
+   * });
+   * ```
+   *
+   * @example OpenTelemetry — pair the event sink with the tracing slot
+   * ```typescript
+   * import { createOTelTracing, createOTelSink } from "@rangojs/router";
+   * import { trace } from "@opentelemetry/api";
+   *
+   * const tracer = trace.getTracer("my-app");
+   * const router = createRouter({
+   *   tracing: createOTelTracing(tracer), // phase spans
+   *   telemetry: createOTelSink(tracer), // discrete-fact events
    * });
    * ```
    *
@@ -603,6 +642,44 @@ export interface RangoOptions<TEnv = any> {
    * ```
    */
   telemetry?: TelemetrySink;
+
+  /**
+   * Span tracing for the router's performance phases (request, middleware, action,
+   * loaders, render, ssr). Connects the same phases shown in the
+   * `debugPerformance` timeline to the host platform's tracing system. This is
+   * the SPAN surface (the `telemetry` option above is the event surface).
+   *
+   * Two factories produce a config, both for this slot:
+   * - `createOTelTracing(tracer)` from `@rangojs/router` — any platform with an
+   *   OpenTelemetry SDK (including Node). Bridges the phases onto
+   *   `tracer.startActiveSpan`.
+   * - `createCloudflareTracing()` from `@rangojs/router/cloudflare` — Cloudflare
+   *   Workers native custom spans, alongside the automatic KV/D1/fetch spans.
+   *
+   * When tracing is unset — or off-platform (no OTel SDK / no Cloudflare tracing
+   * destination) — every span call falls through to the work directly, so the
+   * request behaves exactly as if tracing were off.
+   *
+   * @example OpenTelemetry
+   * ```typescript
+   * import { createOTelTracing } from "@rangojs/router";
+   * import { trace } from "@opentelemetry/api";
+   *
+   * const router = createRouter({
+   *   tracing: createOTelTracing(trace.getTracer("my-app")),
+   * });
+   * ```
+   *
+   * @example Cloudflare
+   * ```typescript
+   * import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+   *
+   * const router = createRouter({
+   *   tracing: createCloudflareTracing({ spans: { ssr: false } }),
+   * });
+   * ```
+   */
+  tracing?: RouterTracingConfig;
 
   /**
    * SSR configuration options.

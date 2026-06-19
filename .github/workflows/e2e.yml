@@ -49,6 +49,9 @@ jobs:
       - name: Check e2e dev/prod bucketing
         run: pnpm check:e2e-bucketing
 
+      - name: Check internal doc links
+        run: pnpm check:doc-links
+
   format:
     needs: [debounce]
     runs-on: ubuntu-latest
@@ -123,9 +126,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build rangojs-router
-        run: pnpm --filter @rangojs/router build
-
+      # No router build: typecheck resolves @rangojs/router types from src
+      # (the exports map `types` points at ./src/*), so dist/ is not needed.
       - name: Run typecheck
         run: pnpm typecheck
 
@@ -149,6 +151,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      # The build is needed here: generate-cli.test.ts spawns the built CLI
+      # (dist/bin/rango.js) as a subprocess, so the unit suite needs dist/.
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
 
@@ -312,21 +316,36 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30 (was 20): the 5-way dev split fixed the runner-OOM, but the shard that
+    # draws the timing-sensitive dev tests (handle-breadcrumbs late-push +
+    # cache param-change soft-navs) spends real time on per-test timeouts and
+    # their Playwright retries under CI load, which brushed the old 20m cap.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Dev tests sharded across 3 jobs
+          # Dev tests sharded across 5 jobs. Bumped from 3 -> 5: dev-mode e2e
+          # keeps a live Vite dev server + esbuild + Chromium resident, and at
+          # 3-way sharding the two heaviest shards exhausted the hosted runner's
+          # memory, so the runner was terminated mid-run ("received a shutdown
+          # signal" well under the 20m cap). Smaller shards fit the memory budget
+          # and finish faster.
           - project: dev
             shard: 1
-            shardTotal: 3
+            shardTotal: 5
           - project: dev
             shard: 2
-            shardTotal: 3
+            shardTotal: 5
           - project: dev
             shard: 3
-            shardTotal: 3
+            shardTotal: 5
+          - project: dev
+            shard: 4
+            shardTotal: 5
+          - project: dev
+            shard: 5
+            shardTotal: 5
           # Production tests sharded across 2 jobs
           - project: production
             shard: 1

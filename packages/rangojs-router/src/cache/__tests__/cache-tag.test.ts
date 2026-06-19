@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cacheTag, runWithCacheTagScope } from "../cache-tag.js";
+import { cacheTag, normalizeTag, runWithCacheTagScope } from "../cache-tag.js";
 
 describe("cacheTag", () => {
   it("throws when called outside a scope", () => {
@@ -64,6 +64,35 @@ describe("cacheTag", () => {
       cacheTag("real", "", "   ", "ok");
     });
     expect(tags).toEqual(new Set(["real", "ok"]));
+  });
+
+  it("trims surrounding whitespace to the canonical form", () => {
+    // normalizeTag is the single chokepoint for both the write path (cacheTag)
+    // and the invalidate path (updateTag/revalidateTag). It must return the
+    // TRIMMED form, otherwise " products " and "products" become two different
+    // logical tags and invalidation silently misses.
+    expect(normalizeTag(" products ")).toBe("products");
+    expect(normalizeTag("\tproducts\n")).toBe("products");
+    expect(normalizeTag("products")).toBe("products");
+    expect(normalizeTag("   ")).toBeNull();
+    expect(normalizeTag("")).toBeNull();
+  });
+
+  it("canonicalizes whitespace so a padded write matches an unpadded tag", () => {
+    // A consumer writing cacheTag(" products ") and invalidating with
+    // updateTag("products") must address the SAME stored tag. Both go through
+    // normalizeTag, so the trimmed form is what is stored and looked up.
+    const { tags } = runWithCacheTagScope(() => {
+      cacheTag(" products ");
+    });
+    expect(tags).toEqual(new Set(["products"]));
+  });
+
+  it("dedupes a padded tag against its trimmed twin", () => {
+    const { tags } = runWithCacheTagScope(() => {
+      cacheTag("products", " products ");
+    });
+    expect(tags).toEqual(new Set(["products"]));
   });
 
   it("captures tags added after an async boundary", async () => {

@@ -81,7 +81,7 @@ export const urlpatterns = urls(({ path }) => [
 - `Accept: application/json` — JSON handler
 - `Accept: text/plain` — text handler
 - `Accept: application/xml` — XML handler
-- `Accept: */*` — first variant (JSON, since it was registered first)
+- `Accept: */*` — RSC page (the primary, since it was registered first)
 
 ## Wildcard Routes
 

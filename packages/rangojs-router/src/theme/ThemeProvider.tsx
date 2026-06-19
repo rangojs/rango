@@ -26,7 +26,7 @@ import type {
   ThemeContextValue,
   ThemeProviderProps,
 } from "./types.js";
-import { THEME_COOKIE } from "./constants.js";
+import { THEME_COOKIE, isValidTheme, warnInvalidTheme } from "./constants.js";
 
 function getSystemTheme(): ResolvedTheme {
   if (typeof window !== "undefined" && window.matchMedia) {
@@ -152,6 +152,15 @@ export function ThemeProvider({
 
   const setTheme = useCallback(
     (newTheme: Theme) => {
+      // Shared guard (isValidTheme) used by the server ctx.setTheme too: reject
+      // any value not in the configured theme set, AND reject "system" when
+      // system detection is off (applyThemeToDocument would write a bogus
+      // class="system"). Keeps the cookie from holding a value the server would
+      // reinterpret as defaultTheme on the next SSR (desyncing markup).
+      if (!isValidTheme(newTheme, config)) {
+        warnInvalidTheme(newTheme, config);
+        return;
+      }
       setThemeState(newTheme);
       writeThemeToCookie(config.storageKey, newTheme);
       writeThemeToStorage(config.storageKey, newTheme);
@@ -191,11 +200,16 @@ export function ThemeProvider({
       const newTheme = e.newValue;
       if (!newTheme) return;
 
-      // Validate and apply
-      if (newTheme === "system" || config.themes.includes(newTheme)) {
-        setThemeState(newTheme as Theme);
-        applyThemeToDocument(newTheme as Theme, config);
-      }
+      // A cross-tab storage event can carry any value (another tab, or stale
+      // localStorage). Reuse the shared validity rule: reject anything not a
+      // configured theme, AND reject "system" when system detection is off (it
+      // would apply a bogus class="system"). An invalid received value falls back
+      // to defaultTheme rather than applying as-is.
+      const applied: Theme = isValidTheme(newTheme, config)
+        ? (newTheme as Theme)
+        : config.defaultTheme;
+      setThemeState(applied);
+      applyThemeToDocument(applied, config);
     };
 
     window.addEventListener("storage", handleStorageChange);

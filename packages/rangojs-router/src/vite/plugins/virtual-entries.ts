@@ -20,11 +20,16 @@ async function initializeApp() {
     createTemporaryReferenceSet,
   };
 
-  await initBrowserApp({ rscStream, deps });
+  // initBrowserApp resolves the initial payload and returns the browser app
+  // context, including strictMode (default true) from createRouter. StrictMode
+  // is the default; createRouter({ strictMode: false }) ships the opt-out in the
+  // payload metadata. StrictMode emits no DOM, so toggling never changes markup.
+  const { strictMode } = await initBrowserApp({ rscStream, deps });
 
+  const app = createElement(Rango);
   hydrateRoot(
     document,
-    createElement(StrictMode, null, createElement(Rango))
+    strictMode === false ? app : createElement(StrictMode, null, app)
   );
 }
 

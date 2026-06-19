@@ -762,7 +762,6 @@ ${lazyImports.join(",\n")}
             transformHandles(
               getBindings(code, fnNames),
               s,
-              code,
               filePath,
               isBuild,
             ) || changed;

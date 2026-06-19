@@ -27,6 +27,11 @@
  *     status, matching handleResponseRoute (RFC 9457 problem+json body with
  *     application/problem+json for json routes, text/plain message otherwise)
  *   - content-negotiated route:                         Vary: Accept appended
+ *   - cached response route (cache({...})):             getResponse/putResponse
+ *     hit/SWR/tag write, resolved from the matched entry tree exactly as
+ *     handleResponseRoute does. The write is scheduled via ctx.waitUntil
+ *     (a microtask without an executionContext), so a HIT-asserting test must
+ *     flush microtasks between the seeding dispatch and the asserting one.
  * - Global middleware (router.use(...)) AND route-level middleware, with full
  *   next()/short-circuit/throw-Response/header+cookie-merge fidelity.
  * - Partial (client-navigation) requests to a RESPONSE route (?_rsc_partial):
@@ -84,6 +89,12 @@ import {
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
+// cache-scope is loaded LAZILY inside the response-route cache path (below):
+// its module graph pulls @vitejs/plugin-rsc/rsc (via segment-codec), which the
+// non-Vite unit-test runner cannot resolve. A static import here would drag that
+// onto the whole testing barrel's eager graph and break every consumer suite
+// that imports `@rangojs/router/testing` without mocking plugin-rsc.
+import type { EntryData } from "../server/context.js";
 import { setRouterManifest } from "../route-map-builder.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { RouterError } from "../errors.js";
@@ -134,6 +145,7 @@ interface DispatchableRouter<TEnv> {
     params?: Record<string, string>;
     routeKey?: string;
     negotiated?: boolean;
+    manifestEntry?: EntryData;
   } | null>;
   basename?: string;
   cache?:
@@ -417,7 +429,7 @@ export async function dispatch<TEnv = any>(
     // coreHandler below, mirroring production where handleResponseRoute is
     // nested inside coreHandler. Built lazily so a redirect/404 path never
     // touches it.
-    const callResponseRoute = (): Promise<Response> => {
+    const callResponseRoute = async (): Promise<Response> => {
       // Match production: a partial (client-navigation) request to a response
       // route is short-circuited to X-RSC-Reload (handleResponseRoute), BEFORE
       // route-level middleware runs. Route-level middleware is skipped on a
@@ -527,28 +539,70 @@ export async function dispatch<TEnv = any>(
       if (isPartial) {
         return partialFinalHandler();
       }
-      const routeMiddlewareEntries = (preview?.routeMiddleware ?? []).map(
-        (mw) => ({
-          entry: {
-            pattern: null,
-            regex: null,
-            paramNames: [],
-            handler: mw.handler,
-          } as MiddlewareEntry<TEnv>,
-          params: mw.params,
-        }),
-      );
-      if (routeMiddlewareEntries.length === 0) {
-        return callHandler();
+
+      // executeHandler = callHandler wrapped by route-level middleware, exactly
+      // the unit the production response cache wraps (response-route-handler.ts).
+      const executeHandler = (): Promise<Response> => {
+        const routeMiddlewareEntries = (preview?.routeMiddleware ?? []).map(
+          (mw) => ({
+            entry: {
+              pattern: null,
+              regex: null,
+              paramNames: [],
+              handler: mw.handler,
+            } as MiddlewareEntry<TEnv>,
+            params: mw.params,
+          }),
+        );
+        if (routeMiddlewareEntries.length === 0) {
+          return callHandler();
+        }
+        return executeMiddleware<TEnv>(
+          routeMiddlewareEntries,
+          req,
+          env,
+          variables,
+          callHandler,
+          reverse,
+        );
+      };
+
+      // Response-route cache path: resolved through the SAME shared serve leaf
+      // (rsc/response-cache-serve.ts) production uses, so a cached
+      // path.json/path.text route hits/SWRs/writes tags through dispatch exactly
+      // as in production — and the two can never drift. Resolved from the matched
+      // entry tree (preview.manifestEntry), which previewMatch surfaces for
+      // response routes.
+      const manifestEntry = preview?.manifestEntry;
+      if (manifestEntry) {
+        // Lazy so the testing barrel's eager graph stays plugin-rsc-free (see the
+        // import note above): the leaf takes createCacheScope/resolveCacheTags as
+        // INJECTED deps so it never imports plugin-rsc; we hand it the lazily
+        // imported pair here, only once a response route actually matched.
+        const cacheScopeMod = await import("../cache/cache-scope.js");
+        const { serveResponseRouteWithCache } =
+          await import("../rsc/response-cache-serve.js");
+        // requestContext is RequestContext<TEnv>; the leaf is typed against the
+        // default-env RequestContext (it reads only env-agnostic config).
+        // Assignable in the router's own tsc but not when a consumer pins a
+        // concrete Env — cast to the leaf's param type.
+        const cached = await serveResponseRouteWithCache({
+          reqCtx: requestContext as Parameters<
+            typeof serveResponseRouteWithCache
+          >[0]["reqCtx"],
+          manifestEntry,
+          responseType: responseType as string,
+          url,
+          executeHandler,
+          deps: {
+            createCacheScope: cacheScopeMod.createCacheScope,
+            resolveCacheTags: cacheScopeMod.resolveCacheTags,
+          },
+        });
+        if (cached !== undefined) return cached;
       }
-      return executeMiddleware<TEnv>(
-        routeMiddlewareEntries,
-        req,
-        env,
-        variables,
-        callHandler,
-        reverse,
-      );
+
+      return executeHandler().then(finalizeResponse);
     };
 
     // coreHandler is the single terminal the global middleware chain wraps,

@@ -29,14 +29,14 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
     (e.g. `/product/1` -> `/product/2`) reconciles the route subtree instead of
     remounting it, so the previous content stays visible during the
     startTransition commit that `shouldStartViewTransition` already applies to
-    transition routes (`browser/partial-update.ts`) instead of flashing the
+    transition routes (`src/browser/partial-update.ts`) instead of flashing the
     loading skeleton. On experimental React the persistent `<ViewTransition>`
     then animates the same-route swap (morph) rather than exit/enter. Without a
     transition scope the route keeps the param and remounts on param change (the
     default).
   - `error` / `notFound` segments ALWAYS keep a param-BEARING key (`id-params`).
     `createErrorSegment` reuses the boundary layout's shortCode as the error
-    segment id (`router/error-handling.ts`), so a param-agnostic error key
+    segment id (`src/router/error-handling.ts`), so a param-agnostic error key
     could collide with that layout's key in the same render.
   - For a given route, `inTransitionScope` is a STATIC property of its position
     in the tree (it has transition() or it doesn't), so the key is identical on

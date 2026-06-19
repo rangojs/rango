@@ -24,15 +24,14 @@
 
 A request context is active for the whole render, so an async Server Component can read it via `getRequestContext()` / the router's server APIs. The notable surfaces seeded from the options above:
 
-| Field       | Type                                      | Meaning                                                               |
-| ----------- | ----------------------------------------- | --------------------------------------------------------------------- |
-| `request`   | `Request`                                 | The backing request (from `request`/`headers`).                       |
-| `url`       | `URL`                                     | The request URL.                                                      |
-| `env`       | `unknown`                                 | Env / bindings (from `env`).                                          |
-| `params`    | `Record<string, string>`                  | Route params (from `params`).                                         |
-| `routeName` | `string \| undefined`                     | Matched route name (from `routeName`).                                |
-| `get`       | `<T>(v: ContextVar<T>) => T \| undefined` | Read a var seeded via `vars` (by `createVar()` handle or string key). |
-| `cookies`   | reader                                    | Cookies parsed from the request's Cookie header.                      |
+| Field       | Type                                                                       | Meaning                                                               |
+| ----------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `request`   | `Request`                                                                  | The backing request (from `request`/`headers`).                       |
+| `url`       | `URL`                                                                      | The request URL.                                                      |
+| `env`       | `unknown`                                                                  | Env / bindings (from `env`).                                          |
+| `params`    | `Record<string, string>`                                                   | Route params (from `params`).                                         |
+| `routeName` | `string \| undefined`                                                      | Matched route name (from `routeName`).                                |
+| `get`       | `<T>(v: ContextVar<T>) => T \| undefined; <K extends string>(key: K): any` | Read a var seeded via `vars` (by `createVar()` handle or string key). |
 
 ### Returns — `Promise<string>`
 

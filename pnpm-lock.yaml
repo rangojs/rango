@@ -27,10 +27,14 @@ catalogs:
     babel-plugin-react-compiler:
       specifier: ^1.0.0
       version: 1.0.0
+    react:
+      specifier: ^19.2.6
+      version: 19.2.6
+    react-dom:
+      specifier: ^19.2.6
+      version: 19.2.6
 
 overrides:
-  react: ^19.2.6
-  react-dom: ^19.2.6
   react-experimental>react: experimental
   react-experimental>react-dom: experimental
   rollup: ^4.54.0
@@ -66,18 +70,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.38.0
-        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260521.1)(wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1))
+        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260616.1)(wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1))
       '@cloudflare/workers-types':
-        specifier: ^4.20260523.1
-        version: 4.20260523.1
+        specifier: ^4.20260617.1
+        version: 4.20260617.1
       '@playwright/test':
         specifier: ^1.49.1
         version: 1.57.0
@@ -100,8 +104,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)
       wrangler:
-        specifier: ^4.94.0
-        version: 4.94.0(@cloudflare/workers-types@4.20260523.1)
+        specifier: ^4.101.0
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
   examples/cloudflare-multi-router:
     dependencies:
@@ -109,18 +113,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.38.0
-        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260521.1)(wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1))
+        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260616.1)(wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1))
       '@cloudflare/workers-types':
-        specifier: ^4.20260523.1
-        version: 4.20260523.1
+        specifier: ^4.20260617.1
+        version: 4.20260617.1
       '@playwright/test':
         specifier: ^1.49.1
         version: 1.57.0
@@ -143,8 +147,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)
       wrangler:
-        specifier: ^4.94.0
-        version: 4.94.0(@cloudflare/workers-types@4.20260523.1)
+        specifier: ^4.101.0
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
   examples/vercel-basic:
     dependencies:
@@ -155,10 +159,10 @@ importers:
         specifier: ^3.7.1
         version: 3.7.1(ws@8.20.1)
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/node':
@@ -189,10 +193,10 @@ importers:
         specifier: ^3.7.1
         version: 3.7.1(ws@8.20.1)
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/node':
@@ -218,7 +222,7 @@ importers:
     dependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.38.0
-        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260521.1)(wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1))
+        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260616.1)(wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1))
       '@types/debug':
         specifier: ^4.1.12
         version: 4.1.13
@@ -235,8 +239,8 @@ importers:
         specifier: ^0.30.17
         version: 0.30.21
       picomatch:
-        specifier: ^4.0.3
-        version: 4.0.3
+        specifier: ^4.0.4
+        version: 4.0.4
       rsc-html-stream:
         specifier: ^0.0.7
         version: 0.0.7
@@ -281,10 +285,10 @@ importers:
         specifier: ^2.6.1
         version: 2.6.1
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
       typescript:
         specifier: ^5.3.0
@@ -299,10 +303,10 @@ importers:
         specifier: workspace:*
         version: link:../..
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@babel/core':
@@ -339,10 +343,10 @@ importers:
         specifier: workspace:*
         version: link:../..
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/react':
@@ -364,10 +368,10 @@ importers:
         specifier: workspace:*
         version: link:../..
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@testing-library/react':
@@ -395,6 +399,34 @@ importers:
         specifier: ^4.0.0
         version: 4.0.18(@types/node@24.10.4)(esbuild@0.27.4)(happy-dom@20.10.1)(jiti@2.6.1)(tsx@4.21.0)
 
+  packages/rangojs-router/e2e/prerender-onerror:
+    dependencies:
+      '@rangojs/router':
+        specifier: workspace:*
+        version: link:../..
+      react:
+        specifier: 'catalog:'
+        version: 19.2.6
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.6(react@19.2.6)
+    devDependencies:
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.7
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.7)
+      '@vitejs/plugin-react':
+        specifier: 'catalog:'
+        version: 6.0.2(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7)(@babel/runtime@7.29.7)(rolldown@1.0.2)(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)
+
   packages/rangojs-router/e2e/test-app:
     dependencies:
       '@rangojs/router':
@@ -404,10 +436,10 @@ importers:
         specifier: file:__test_packages__/fake-context-lib
         version: file:packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib(react@19.2.6)
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/react':
@@ -438,10 +470,10 @@ importers:
         specifier: workspace:*
         version: link:../shared-docs
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
       spin-delay:
         specifier: ^2.0.1
@@ -452,10 +484,10 @@ importers:
         version: 7.29.7
       '@cloudflare/vite-plugin':
         specifier: ^1.38.0
-        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260521.1)(wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1))
+        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260616.1)(wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1))
       '@cloudflare/workers-types':
-        specifier: ^4.20260523.1
-        version: 4.20260523.1
+        specifier: ^4.20260617.1
+        version: 4.20260617.1
       '@playwright/test':
         specifier: ^1.49.1
         version: 1.57.0
@@ -502,8 +534,8 @@ importers:
         specifier: ^4.0.0
         version: 4.0.18(@types/node@24.10.4)(esbuild@0.27.4)(happy-dom@20.10.1)(jiti@2.6.1)(tsx@4.21.0)
       wrangler:
-        specifier: ^4.94.0
-        version: 4.94.0(@cloudflare/workers-types@4.20260523.1)
+        specifier: ^4.101.0
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
   tests/cloudflare-stress-demo:
     dependencies:
@@ -511,18 +543,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.38.0
-        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260521.1)(wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1))
+        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260616.1)(wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1))
       '@cloudflare/workers-types':
-        specifier: ^4.20260523.1
-        version: 4.20260523.1
+        specifier: ^4.20260617.1
+        version: 4.20260617.1
       '@playwright/test':
         specifier: ^1.57.0
         version: 1.57.0
@@ -551,8 +583,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)
       wrangler:
-        specifier: ^4.94.0
-        version: 4.94.0(@cloudflare/workers-types@4.20260523.1)
+        specifier: ^4.101.0
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
   tests/no-typescript:
     dependencies:
@@ -560,10 +592,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@playwright/test':
@@ -590,10 +622,10 @@ importers:
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.38.0
-        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260521.1)(wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1))
+        version: 1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260616.1)(wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1))
       '@cloudflare/workers-types':
-        specifier: ^4.20260523.1
-        version: 4.20260523.1
+        specifier: ^4.20260617.1
+        version: 4.20260617.1
       '@playwright/test':
         specifier: ^1.49.1
         version: 1.57.0
@@ -616,8 +648,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)
       wrangler:
-        specifier: ^4.94.0
-        version: 4.94.0(@cloudflare/workers-types@4.20260523.1)
+        specifier: ^4.101.0
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
   tests/shared-docs:
     dependencies:
@@ -625,7 +657,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
     devDependencies:
       '@types/react':
@@ -654,10 +686,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rangojs-router
       react:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6
       react-dom:
-        specifier: ^19.2.6
+        specifier: 'catalog:'
         version: 19.2.6(react@19.2.6)
     devDependencies:
       '@babel/core':
@@ -810,8 +842,20 @@ packages:
     cpu: [x64]
     os: [darwin]
 
+  '@cloudflare/workerd-darwin-64@1.20260616.1':
+    resolution: {integrity: sha512-8QaDRQABkwkwoeviNiyScol7EQgXfGsPNSyUn52GiXObthY4XPiokoJsgDSDNcAelHjEvDLmdvQBHPK8YvGn4A==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [darwin]
+
   '@cloudflare/workerd-darwin-arm64@1.20260521.1':
     resolution: {integrity: sha512-ikN8aKSi4Ak28ndOkuSO5rq6lmV6wwDQu9F9Vu6J7EkwAOth74J/Hjn4j4EuFceW/npw2Ws0Y/muzA6WKHl4TA==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cloudflare/workerd-darwin-arm64@1.20260616.1':
+    resolution: {integrity: sha512-xEhiZQ62CBJ+vyKSmM13rkK/wB1kLP5sKFkF3+P+3R/c2bmnSG3Vcd5FfXUu9V0PdC+KlR02nByvZjqEw2N6Ag==}
     engines: {node: '>=16'}
     cpu: [arm64]
     os: [darwin]
@@ -822,8 +866,20 @@ packages:
     cpu: [x64]
     os: [linux]
 
+  '@cloudflare/workerd-linux-64@1.20260616.1':
+    resolution: {integrity: sha512-p5laSYPiRUMHaLkneaZ9ZfIkNpmEnGFwgYmXtfcHJutTfEd8o3IBnsUVRSbPL+phcshKqmapLsQSxDEX6WSFfA==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [linux]
+
   '@cloudflare/workerd-linux-arm64@1.20260521.1':
     resolution: {integrity: sha512-vhjWPIHenczegTakhRPwEmTeaavCpNqsuo3RlLCkUdU47HrwLvy/4QersGggs4+kF4Do+IE/EznCGyT40xYcLA==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cloudflare/workerd-linux-arm64@1.20260616.1':
+    resolution: {integrity: sha512-XQ7GonEl8ORvbz5fhe8Eyw2t/j09Li0KbXJxaldA318E+syF+PPTc4IRQudgqPWzzdzkH5nF7PuMOGySLSjFFw==}
     engines: {node: '>=16'}
     cpu: [arm64]
     os: [linux]
@@ -834,8 +890,14 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cloudflare/workers-types@4.20260523.1':
-    resolution: {integrity: sha512-Kr66Jip2K3t0srdoLLImzblTTx2T409Zk2J6AHANmlB950rlHr2henMQx7+cdQOLm2p1CttuBcYB1UVjdiFN8Q==}
+  '@cloudflare/workerd-windows-64@1.20260616.1':
+    resolution: {integrity: sha512-RaDVF9bSbPiPTq6vHYrgnv1TcQEcYnOr0WB3hWJ4yg2fBfpi2ygU6cYPuFeDwyFE9aPW5S6FBAkNmpKYueK4DQ==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [win32]
+
+  '@cloudflare/workers-types@4.20260617.1':
+    resolution: {integrity: sha512-HdbP3CNcdMZBwegitFDjWvzv+6wPkFXvV9gBXMnf6RjV2Cy3W8TJL3IhSEGul0S6F1DHjnucP7lrpIsvkzNEjA==}
 
   '@colors/colors@1.5.0':
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
@@ -1715,8 +1777,8 @@ packages:
       '@testing-library/dom': ^10.0.0
       '@types/react': ^18.0.0 || ^19.0.0
       '@types/react-dom': ^18.0.0 || ^19.0.0
-      react: ^19.2.6
-      react-dom: ^19.2.6
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
     peerDependenciesMeta:
       '@types/react':
         optional: true
@@ -1815,8 +1877,8 @@ packages:
   '@vitejs/plugin-rsc@0.5.26':
     resolution: {integrity: sha512-T8W8ODEutblw9qXQB512LDPyv1tAbJRD/Gf0QEGsAoydl4nxEtIrghnhoI9oLY9R+7aw+cLk1ZEltxWHWf4aHw==}
     peerDependencies:
-      react: ^19.2.6
-      react-dom: ^19.2.6
+      react: '*'
+      react-dom: '*'
       react-server-dom-webpack: '*'
       vite: ^8.0.0
     peerDependenciesMeta:
@@ -2075,7 +2137,7 @@ packages:
   fake-context-lib@file:packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib:
     resolution: {directory: packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib, type: directory}
     peerDependencies:
-      react: ^19.2.6
+      react: '>=18'
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -2407,6 +2469,11 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
+  miniflare@4.20260616.0:
+    resolution: {integrity: sha512-cEpzoNgSWjedzYmhJvttUPmL4Jk6nSzzeNNi118T5zwnmYP9fnM8UXwFU/Qa/1qoQ4SzGqtM1Q7tinHvHvIGtw==}
+    engines: {node: '>=22.0.0'}
+    hasBin: true
+
   minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
 
@@ -2476,10 +2543,6 @@ packages:
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
-  picomatch@4.0.3:
-    resolution: {integrity: sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==}
-    engines: {node: '>=12'}
-
   picomatch@4.0.4:
     resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
     engines: {node: '>=12'}
@@ -2517,7 +2580,7 @@ packages:
   react-dom@0.0.0-experimental-c0060cf2-20260224:
     resolution: {integrity: sha512-MIjg7KpKv1StDb5huvLLGiNhp/vrBPcHo12EI6LIWJDx/rK+o1J6Ud3+UrvNzGgUWtTyNut03iMzh/mLYauLTQ==}
     peerDependencies:
-      react: ^19.2.6
+      react: 0.0.0-experimental-c0060cf2-20260224
 
   react-dom@19.2.6:
     resolution: {integrity: sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==}
@@ -2565,26 +2628,6 @@ packages:
   rollup@4.54.0:
     resolution: {integrity: sha512-3nk8Y3a9Ea8szgKhinMlGMhGMw89mqule3KWczxhIzqudyHdCIOHw8WJlj/r329fACjKLEh13ZSk7oE22kyeIw==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
-    hasBin: true
-
-  rosie-skills-darwin-arm64@0.6.4:
-    resolution: {integrity: sha512-rn1s5hqFKcxeiDEWWoFa1hdGPshR8TkwHLzy/cBavb9XJNAaUxbe3oQ78W9sQkRHAgRyzJYyk9tw68Qrdnizgg==}
-    cpu: [arm64]
-    os: [darwin]
-
-  rosie-skills-freebsd-x64@0.6.4:
-    resolution: {integrity: sha512-SxCRduPBMtfjkQ+q56Yw9OLA3PyaqoALzt7kER7IDKuUVfM2O/1w8sa5xhTDiCvWkZJixnH5d5Ya6KT+/Mwcng==}
-    cpu: [x64]
-    os: [freebsd]
-
-  rosie-skills-linux-x64@0.6.4:
-    resolution: {integrity: sha512-D9Y9mfu7goB0s0X59uU3hcFeUTef3VbpCIDwFMzyvJrAq3XhRACWBDMHQsHlyWdHxTXPX/ILyW65RXyrJlgqng==}
-    cpu: [x64]
-    os: [linux]
-
-  rosie-skills@0.6.4:
-    resolution: {integrity: sha512-ojfhSiQRdZ2QyWbmKAHOSAUbaLYrTc5zIH7mS1jKoP8KCFSQddwVhMyFqldckTeybTfW3zNcsZzyOTzGTN1SBA==}
-    engines: {node: '>=18'}
     hasBin: true
 
   rsc-html-stream@0.0.7:
@@ -2638,7 +2681,7 @@ packages:
   spin-delay@2.0.1:
     resolution: {integrity: sha512-ilggKXKqAMwk21PSYvxuF/KCnrsGFDrnO6mXa629mj8fvfo+dOQfubDViqsRjRX5U1jd3Xb8FTsV+m4Tg7YeUg==}
     peerDependencies:
-      react: ^19.2.6
+      react: '>=17.0.1'
 
   srvx@0.11.15:
     resolution: {integrity: sha512-iXsux0UcOjdvs0LCMa2Ws3WwcDUozA3JN3BquNXkaFPP7TpRqgunKdEgoZ/uwb1J6xaYHfxtz9Twlh6yzwM6Tg==}
@@ -2898,12 +2941,17 @@ packages:
     engines: {node: '>=16'}
     hasBin: true
 
-  wrangler@4.94.0:
-    resolution: {integrity: sha512-GsNw0DomGFfeXFtKVTwn2X69UKcCxcTB0CXykjsMineJIxOeyrw7LovlHQ/3JU8KJHH7repLB+kOHvfTBA/Eew==}
+  workerd@1.20260616.1:
+    resolution: {integrity: sha512-aRGWYxviSjYZwyu97pCr5GyJ9ObpgmNcfZZs3/o+kG7Wz3SBTqA8d8uhNueY5u7ADeUp2ibJvK6mXkFLrUmPgg==}
+    engines: {node: '>=16'}
+    hasBin: true
+
+  wrangler@4.101.0:
+    resolution: {integrity: sha512-dZDDiRcT7MiA09lBDxWKmiL/iybEZ+SZe3IZmnVx1m1n1DOo730vOY5SeO7z9xFK8a/+vhGKDYB8mDXrvzEr5g==}
     engines: {node: '>=22.0.0'}
     hasBin: true
     peerDependencies:
-      '@cloudflare/workers-types': ^4.20260521.1
+      '@cloudflare/workers-types': ^4.20260616.1
     peerDependenciesMeta:
       '@cloudflare/workers-types':
         optional: true
@@ -3068,19 +3116,19 @@ snapshots:
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 
-  '@cloudflare/unenv-preset@2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260521.1)':
+  '@cloudflare/unenv-preset@2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260616.1)':
     dependencies:
       unenv: 2.0.0-rc.24
     optionalDependencies:
-      workerd: 1.20260521.1
+      workerd: 1.20260616.1
 
-  '@cloudflare/vite-plugin@1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260521.1)(wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1))':
+  '@cloudflare/vite-plugin@1.38.0(vite@8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260616.1)(wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1))':
     dependencies:
-      '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260521.1)
+      '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260616.1)
       miniflare: 4.20260521.0
       unenv: 2.0.0-rc.24
       vite: 8.0.14(@types/node@24.10.4)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)
-      wrangler: 4.94.0(@cloudflare/workers-types@4.20260523.1)
+      wrangler: 4.101.0(@cloudflare/workers-types@4.20260617.1)
       ws: 8.20.1
     transitivePeerDependencies:
       - bufferutil
@@ -3090,19 +3138,34 @@ snapshots:
   '@cloudflare/workerd-darwin-64@1.20260521.1':
     optional: true
 
+  '@cloudflare/workerd-darwin-64@1.20260616.1':
+    optional: true
+
   '@cloudflare/workerd-darwin-arm64@1.20260521.1':
+    optional: true
+
+  '@cloudflare/workerd-darwin-arm64@1.20260616.1':
     optional: true
 
   '@cloudflare/workerd-linux-64@1.20260521.1':
     optional: true
 
+  '@cloudflare/workerd-linux-64@1.20260616.1':
+    optional: true
+
   '@cloudflare/workerd-linux-arm64@1.20260521.1':
+    optional: true
+
+  '@cloudflare/workerd-linux-arm64@1.20260616.1':
     optional: true
 
   '@cloudflare/workerd-windows-64@1.20260521.1':
     optional: true
 
-  '@cloudflare/workers-types@4.20260523.1': {}
+  '@cloudflare/workerd-windows-64@1.20260616.1':
+    optional: true
+
+  '@cloudflare/workers-types@4.20260617.1': {}
 
   '@colors/colors@1.5.0':
     optional: true
@@ -4015,10 +4078,6 @@ snapshots:
     dependencies:
       react: 19.2.6
 
-  fdir@6.5.0(picomatch@4.0.3):
-    optionalDependencies:
-      picomatch: 4.0.3
-
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
       picomatch: 4.0.4
@@ -4285,6 +4344,18 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  miniflare@4.20260616.0:
+    dependencies:
+      '@cspotcode/source-map-support': 0.8.1
+      sharp: 0.34.5
+      undici: 7.24.8
+      workerd: 1.20260616.1
+      ws: 8.20.1
+      youch: 4.1.0-beta.10
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   minimist@1.2.8: {}
 
   ms@2.1.3: {}
@@ -4372,8 +4443,6 @@ snapshots:
 
   picocolors@1.1.1: {}
 
-  picomatch@4.0.3: {}
-
   picomatch@4.0.4: {}
 
   playwright-core@1.57.0: {}
@@ -4449,7 +4518,7 @@ snapshots:
   rollup-plugin-visualizer@7.0.1(rolldown@1.0.2)(rollup@4.54.0):
     dependencies:
       open: 11.0.0
-      picomatch: 4.0.3
+      picomatch: 4.0.4
       source-map: 0.7.6
       yargs: 18.0.0
     optionalDependencies:
@@ -4484,21 +4553,6 @@ snapshots:
       '@rollup/rollup-win32-x64-msvc': 4.54.0
       fsevents: 2.3.3
     optional: true
-
-  rosie-skills-darwin-arm64@0.6.4:
-    optional: true
-
-  rosie-skills-freebsd-x64@0.6.4:
-    optional: true
-
-  rosie-skills-linux-x64@0.6.4:
-    optional: true
-
-  rosie-skills@0.6.4:
-    optionalDependencies:
-      rosie-skills-darwin-arm64: 0.6.4
-      rosie-skills-freebsd-x64: 0.6.4
-      rosie-skills-linux-x64: 0.6.4
 
   rsc-html-stream@0.0.7: {}
 
@@ -4609,8 +4663,8 @@ snapshots:
 
   tinyglobby@0.2.15:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
 
   tinyglobby@0.2.16:
     dependencies:
@@ -4720,7 +4774,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.3
+      picomatch: 4.0.4
       std-env: 3.10.0
       tinybench: 2.9.0
       tinyexec: 1.0.2
@@ -4764,19 +4818,26 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20260521.1
       '@cloudflare/workerd-windows-64': 1.20260521.1
 
-  wrangler@4.94.0(@cloudflare/workers-types@4.20260523.1):
+  workerd@1.20260616.1:
+    optionalDependencies:
+      '@cloudflare/workerd-darwin-64': 1.20260616.1
+      '@cloudflare/workerd-darwin-arm64': 1.20260616.1
+      '@cloudflare/workerd-linux-64': 1.20260616.1
+      '@cloudflare/workerd-linux-arm64': 1.20260616.1
+      '@cloudflare/workerd-windows-64': 1.20260616.1
+
+  wrangler@4.101.0(@cloudflare/workers-types@4.20260617.1):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
-      '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260521.1)
+      '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260616.1)
       blake3-wasm: 2.1.5
       esbuild: 0.27.4
-      miniflare: 4.20260521.0
+      miniflare: 4.20260616.0
       path-to-regexp: 6.3.0
-      rosie-skills: 0.6.4
       unenv: 2.0.0-rc.24
-      workerd: 1.20260521.1
+      workerd: 1.20260616.1
     optionalDependencies:
-      '@cloudflare/workers-types': 4.20260523.1
+      '@cloudflare/workers-types': 4.20260617.1
       fsevents: 2.3.3
     transitivePeerDependencies:
       - bufferutil

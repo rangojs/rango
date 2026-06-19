@@ -62,6 +62,9 @@ urls(
     revalidate, // Control revalidation
     intercept, // Intercept routes for modals
     when, // Conditional rendering
+    errorBoundary, // Add an error boundary
+    notFoundBoundary, // Add a not-found boundary
+    transition, // Configure view transitions
   }) => [
     // Route definitions here
   ],
@@ -469,14 +472,34 @@ const router = createRouter({
 ```
 
 ```typescript
-// OpenTelemetry for production
-import { createRouter, createOTelSink } from "@rangojs/router";
+// OpenTelemetry for production: phase spans via the tracing slot,
+// discrete-fact spans via the telemetry sink.
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
 import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
 
 const router = createRouter({
   document: Document,
   urls: urlpatterns,
-  telemetry: createOTelSink(trace.getTracer("my-app")),
+  tracing: createOTelTracing(tracer),
+  telemetry: createOTelSink(tracer),
+});
+```
+
+```typescript
+// On Cloudflare Workers, swap the tracing factory for native custom spans
+// (no @opentelemetry/api dependency); the telemetry slot is unchanged.
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing: createCloudflareTracing(), // { spans: { ssr: false } } to toggle phases
 });
 ```
 

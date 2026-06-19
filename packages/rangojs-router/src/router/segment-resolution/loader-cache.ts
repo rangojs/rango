@@ -113,6 +113,11 @@ function getLoaderStore(
  *
  * When the LoaderEntry has no cache config, delegates directly to ctx.use(loader).
  * When cached, checks store first and stores on miss via waitUntil.
+ *
+ * Loader metering is NOT done here — it lives at the ctx.use execution funnel
+ * (observePhase; see instrument.ts). A cache HIT returns without calling ctx.use,
+ * so it emits no loader phase (the loader did not execute; the hit is only a
+ * LoaderCache debug log).
  */
 export function resolveLoaderData<TEnv>(
   loaderEntry: LoaderEntry,
@@ -142,12 +147,6 @@ export function resolveLoaderData<TEnv>(
 
   const loaderId = loaderEntry.loader.$$id;
 
-  const ttl = resolveTtl(options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
-  const swrWindow = resolveSwrWindow(options.swr, store.defaults);
-  const swr = swrWindow || undefined;
-  const tags = resolveTags(loaderEntry);
-  recordRequestTags(tags);
-
   // A handler that later awaits this same loader via ctx.use(loader) must get
   // THIS memoized promise, not a fresh execution. Rather than rebind ctx.use
   // once per cached loader (O(N) chained wrappers + a synchronous
@@ -169,6 +168,29 @@ export function resolveLoaderData<TEnv>(
     }) as typeof ctx.use;
   }
   const runMiss = internal._loaderCacheOriginalUse!;
+
+  // Dedup the cache read-through across repeated resolutions of the SAME
+  // loaderId in one request. An orphan layout with parallel slots inherits its
+  // parent route's loaders, so resolveOrphanLayout (fresh.ts) re-resolves the
+  // parent's loaders under a different shortCode — calling resolveLoaderData
+  // again for the same loaderId. The cache key (loader:{loaderId}:{host}
+  // {pathname}:{sortedParams}) does not include the shortCode and ctx/params
+  // are identical, so both resolutions produce the same data. Reuse the already
+  // in-flight dataPromise instead of issuing a second getItem/setItem (e.g. a
+  // second KV round-trip) for one logical cached loader. The shortCode only
+  // affects the emitted segmentId in resolveLoaders, not the cached value.
+  const existing = overrides.get(loaderId);
+  if (existing) return existing;
+
+  // Compute ttl/swr/tags only AFTER the dedup short-circuit: a deduped second
+  // resolution of the same loaderId (the orphan-layout inheritance path) must
+  // not re-run the user tags() callback. These values are only consumed inside
+  // the read-through below, so they belong here, past the dedup gate.
+  const ttl = resolveTtl(options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
+  const swrWindow = resolveSwrWindow(options.swr, store.defaults);
+  const swr = swrWindow || undefined;
+  const tags = resolveTags(loaderEntry);
+  recordRequestTags(tags);
 
   const dataPromise = (async () => {
     const codec = await getCodec();

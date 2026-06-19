@@ -24,7 +24,6 @@ export {
   extractIncludesWithDiagnostics,
 } from "./route-types/include-resolution.js";
 export {
-  extractUrlsVariableFromRouter,
   extractUrlsFromRouter,
   extractBasenameFromRouter,
   type UrlsExtractionResult,

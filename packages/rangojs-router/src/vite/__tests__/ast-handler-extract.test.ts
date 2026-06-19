@@ -265,6 +265,69 @@ layout(Static(() => <div />));
     );
     expect(decls).toEqual([]);
   });
+
+  it("treats a logical expression of literals as inert (safe)", () => {
+    const code = `import { Static } from "@rangojs/router";
+const FLAG = true && false;
+const OR = 0 || 1;
+const NULLISH = null ?? 2;
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
+    expect(decls).toHaveLength(3);
+    expect(decls[0]).toContain("const FLAG");
+    expect(decls[1]).toContain("const OR");
+    expect(decls[2]).toContain("const NULLISH");
+  });
+
+  it("treats a logical expression referencing an identifier as unsafe", () => {
+    const code = `import { Static } from "@rangojs/router";
+import * as React from "react";
+const MAYBE = React.Fragment || false;
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
+    expect(decls).toHaveLength(0);
+  });
+
+  it("treats an object with an inert spread as inert (safe)", () => {
+    const code = `import { Static } from "@rangojs/router";
+const MERGED = { a: 1, ...{ b: 2 } };
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
+    expect(decls).toHaveLength(1);
+    expect(decls[0]).toContain("const MERGED");
+  });
+
+  it("treats an object spreading a call expression as unsafe", () => {
+    const code = `import { Static } from "@rangojs/router";
+const SPREAD = { ...sideEffectfulCall() };
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
+    expect(decls).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

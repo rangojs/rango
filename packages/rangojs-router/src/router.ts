@@ -63,7 +63,7 @@ import {
 import { loadManifest } from "./router/manifest.js";
 import { createMetricsStore } from "./router/metrics.js";
 import {
-  parsePattern,
+  compileMiddlewarePattern,
   type MiddlewareEntry,
   type MiddlewareFn,
 } from "./router/middleware.js";
@@ -73,6 +73,7 @@ import {
   traverseBack,
 } from "./router/pattern-matching.js";
 import { resolveSink, safeEmit, getRequestId } from "./router/telemetry.js";
+import { resolveTracing } from "./router/tracing.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
   type RouterContext,
@@ -109,6 +110,7 @@ import {
   renderStaticSegment as _renderStaticSegment,
 } from "./router/prerender-match.js";
 import { resolveStateCookieName } from "./router/state-cookie-name.js";
+import { resolvePrefetchCacheTTL } from "./router/prefetch-cache-ttl.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -152,6 +154,7 @@ export function createRouter<TEnv = any>(
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
+    tracing: tracingOption,
     ssr: ssrOption,
     timeout: timeoutShorthand,
     timeouts: timeoutsOption,
@@ -159,6 +162,7 @@ export function createRouter<TEnv = any>(
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
     debugCacheSignal: debugCacheSignalOption = false,
+    strictMode: strictModeOption = true,
   } = options;
 
   // Debug cache signal gate (DEVELOPMENT/TEST ONLY). Enabled by the
@@ -177,6 +181,10 @@ export function createRouter<TEnv = any>(
 
   // Resolve telemetry sink (no-op when not configured)
   const telemetry = resolveSink(telemetrySink);
+
+  // Resolve span tracing (undefined when not configured; every traceSpan() call
+  // is then a direct pass-through with zero behavior change).
+  const resolvedTracing = resolveTracing(tracingOption);
 
   // Resolve cache profiles: merge user config with the guaranteed default
   // profile. This resolved map is threaded onto each request context; the
@@ -224,20 +232,23 @@ export function createRouter<TEnv = any>(
     routerId,
   );
 
-  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes)
-  // Clamp to a non-negative integer for valid Cache-Control max-age.
-  const rawTTL =
-    prefetchCacheTTLOption !== undefined ? prefetchCacheTTLOption : 300;
-  const prefetchCacheTTLSeconds =
-    rawTTL === false ? 0 : Math.max(0, Math.floor(rawTTL));
-  const prefetchCacheTTL = prefetchCacheTTLSeconds * 1000;
+  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes). Clamps to a
+  // non-negative integer and guards non-finite (NaN/Infinity) inputs so a
+  // malformed `Cache-Control: max-age=NaN` can never reach the wire.
+  const resolvedPrefetchCacheTTL = resolvePrefetchCacheTTL(
+    prefetchCacheTTLOption,
+  );
+  const prefetchCacheTTL = resolvedPrefetchCacheTTL.ms;
   const prefetchCacheControl: string | false =
-    prefetchCacheTTLSeconds === 0
-      ? false
-      : `private, max-age=${prefetchCacheTTLSeconds}`;
+    resolvedPrefetchCacheTTL.cacheControl;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
+
+  // Resolve StrictMode flag (default: true). Shipped to the client in payload
+  // metadata; the browser entry reads it once to decide whether to wrap the
+  // hydrated tree in React.StrictMode.
+  const strictMode = strictModeOption !== false;
 
   // Resolve theme config (null if theme not enabled)
   const resolvedThemeConfig = themeOption
@@ -341,7 +352,7 @@ export function createRouter<TEnv = any>(
     let regex: RegExp | null = null;
     let paramNames: string[] = [];
     if (fullPattern) {
-      const parsed = parsePattern(fullPattern);
+      const parsed = compileMiddlewarePattern(fullPattern);
       regex = parsed.regex;
       paramNames = parsed.paramNames;
     }
@@ -965,8 +976,14 @@ export function createRouter<TEnv = any>(
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
 
+    // Expose StrictMode flag for the initial-render payload metadata
+    strictMode,
+
     // Expose router-wide performance debugging for request-level metrics setup
     debugPerformance,
+
+    // Expose resolved span tracing for the handler (Cloudflare custom spans)
+    tracing: resolvedTracing,
 
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,

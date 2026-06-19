@@ -14,6 +14,7 @@ import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
 import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
+import type { ResolvedTracing } from "./tracing.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -315,10 +316,24 @@ export interface RangoInternal<
   readonly warmupEnabled: boolean;
 
   /**
+   * Whether the client hydrates inside React.StrictMode. Resolved from
+   * createRouter({ strictMode }) (default true) and shipped to the client in
+   * the initial payload metadata.
+   */
+  readonly strictMode: boolean;
+
+  /**
    * Whether router-wide performance debugging is enabled.
    * Used by the request handler to create metrics before middleware runs.
    */
   readonly debugPerformance?: boolean;
+
+  /**
+   * Resolved platform phase-span tracing (Cloudflare custom spans or OTel), or
+   * undefined when off. Threaded onto the request context and read at each
+   * traced phase.
+   */
+  readonly tracing?: ResolvedTracing;
 
   /**
    * Whether ?__debug_manifest is allowed in production.

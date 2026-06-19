@@ -116,6 +116,8 @@ export interface BrowserAppContext {
   initialTheme?: Theme;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
+  /** Whether the hydrated tree should be wrapped in React.StrictMode */
+  strictMode?: boolean;
   /** App version for prefetch version mismatch detection */
   version?: string;
   /**
@@ -476,6 +478,7 @@ export async function initBrowserApp(
     themeConfig: effectiveThemeConfig,
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
+    strictMode: initialPayload.metadata?.strictMode ?? true,
     version,
     appShellRef,
   };

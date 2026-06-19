@@ -20,11 +20,18 @@ export function generateClientLoaderStubs(
   const lines: string[] = [];
 
   for (const binding of bindings) {
-    for (const name of binding.exportNames) {
-      const loaderId = makeStubId(filePath, name, isBuild);
-      lines.push(
-        `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`,
-      );
+    // Aliases share the primary export's id (matches the server side, which
+    // registers only exportNames[0] in the loader registry, and the mixed-type
+    // whole-file path). Emitting a distinct makeStubId per alias would make a
+    // client component importing the alias fetch an id absent from the server
+    // registry, so the fetchable-loader request would 404.
+    const primaryName = binding.exportNames[0];
+    const loaderId = makeStubId(filePath, primaryName, isBuild);
+    lines.push(
+      `export const ${primaryName} = { __brand: "loader", $$id: "${loaderId}" };`,
+    );
+    for (const alias of binding.exportNames.slice(1)) {
+      lines.push(`export const ${alias} = ${primaryName};`);
     }
   }
 

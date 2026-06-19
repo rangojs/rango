@@ -54,6 +54,13 @@ export interface RscPayload {
     /** Whether connection warmup is enabled */
     warmupEnabled?: boolean;
     /**
+     * Whether the client should hydrate inside React.StrictMode. Carried on
+     * the initial full-render payload only; the browser entry reads it once at
+     * hydration. Absent on partial (navigation) payloads. Defaults to true on
+     * the client when omitted.
+     */
+    strictMode?: boolean;
+    /**
      * Server-side redirect with optional state (for partial requests).
      * `external: true` (from redirect(url, { external: true })) tells the client
      * to hard-navigate to an off-host target instead of validating same-origin.

@@ -15,6 +15,19 @@ import type { FullManifest } from "./generate-manifest.js";
 
 // -- Trie data structures (compact keys for JSON serialization) --
 
+/**
+ * A response-type variant folded into a primary leaf's negotiate list. `pa` is
+ * the variant's own positional param-name array, carried so the runtime can
+ * re-key the matched params under the variant's names when it wins negotiation
+ * (the trie match extracts params under the PRIMARY leaf's pa). Omitted when the
+ * variant has no params; absent/identical pa means no re-key is needed.
+ */
+export interface NegotiateVariant {
+  routeKey: string;
+  responseType: string;
+  pa?: string[];
+}
+
 export interface TrieLeaf {
   /** Route name (e.g., "site.l1_500") */
   n: string;
@@ -35,7 +48,7 @@ export interface TrieLeaf {
   /** Response type for non-RSC routes (json, text, image, any) */
   rt?: string;
   /** Negotiate variants: response-type routes sharing this path */
-  nv?: Array<{ routeKey: string; responseType: string }>;
+  nv?: NegotiateVariant[];
   /** RSC-first: RSC route was defined before response-type variants */
   rf?: true;
 }
@@ -124,6 +137,9 @@ function sortSuffixParams(node: TrieNode): void {
       sorted[suffix] = node.xp[suffix];
     }
     node.xp = sorted;
+    for (const child of Object.values(node.xp)) {
+      sortSuffixParams(child.c);
+    }
   }
   if (node.s) {
     for (const child of Object.values(node.s)) {
@@ -132,11 +148,6 @@ function sortSuffixParams(node: TrieNode): void {
   }
   if (node.p) {
     sortSuffixParams(node.p.c);
-  }
-  if (node.xp) {
-    for (const child of Object.values(node.xp)) {
-      sortSuffixParams(child.c);
-    }
   }
 }
 
@@ -259,6 +270,19 @@ export function extractAncestryFromTrie(
  * appended to the nv (negotiate variants) array.
  * Multiple response types on the same path are supported (json + text + xml).
  */
+/**
+ * Build a negotiate-variant entry from a leaf being folded into another leaf's
+ * nv list. Carries the variant's positional param names (`pa`) so the runtime
+ * can re-key matched params under the variant's names; omitted when the variant
+ * has none (the common case where primary and variant share the same names is a
+ * no-op re-key regardless).
+ */
+function toVariant(leaf: TrieLeaf, responseType: string): NegotiateVariant {
+  return leaf.pa
+    ? { routeKey: leaf.n, responseType, pa: leaf.pa }
+    : { routeKey: leaf.n, responseType };
+}
+
 function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
   if (!existing) return leaf;
 
@@ -266,7 +290,7 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
     // Both are response-type: preserve old as variant
     const merged = leaf;
     merged.nv = existing.nv || [];
-    merged.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    merged.nv.push(toVariant(existing, existing.rt));
     return merged;
   }
   if (leaf.rt && !existing.rt) {
@@ -276,7 +300,7 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
       existing.nv = [];
       existing.rf = true;
     }
-    existing.nv.push({ routeKey: leaf.n, responseType: leaf.rt });
+    existing.nv.push(toVariant(leaf, leaf.rt));
     return existing;
   }
   if (!leaf.rt && existing.rt) {
@@ -284,7 +308,7 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
     // RSC was defined second (response-type was already the existing leaf)
     if (!leaf.nv) leaf.nv = [];
     if (existing.nv) leaf.nv.push(...existing.nv);
-    leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    leaf.nv.push(toVariant(existing, existing.rt));
     // rf intentionally not set — RSC came after response-type variants
     return leaf;
   }

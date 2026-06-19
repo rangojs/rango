@@ -18,7 +18,13 @@ import {
 } from "../server/request-context.js";
 import { recordRequestTags } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
-import { serializeSegments, deserializeSegments } from "./segment-codec.js";
+// segment-codec is the only module on cache-scope's import graph that eagerly
+// pulls @vitejs/plugin-rsc (a virtual: module the plain node/vitest runner cannot
+// resolve). It is imported LAZILY at the two call sites below (deserializeSegments
+// in lookupRoute, serializeSegments in cacheRoute) so that requiring cache-scope —
+// e.g. dispatch's lazy `import("../cache/cache-scope.js")` for the response-route
+// cache path — does not crash a consumer test that never mocks plugin-rsc. Behavior
+// is unchanged: both methods are async and already awaited the codec.
 import {
   captureHandles,
   restoreHandles,
@@ -28,6 +34,7 @@ import {
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
+  isFiniteNonNegativeSeconds,
   resolveCacheKey,
   resolveCacheStore,
   resolveTagsOption,
@@ -46,6 +53,36 @@ function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
     console.log(message);
   }
+}
+
+/**
+ * A finite, non-negative seconds value? A NaN/Infinity ttl/swr (from a bad
+ * cache() option or store defaults) flows into computeExpiration ->
+ * staleAt/expiresAt = NaN, where every `now > NaN` is false so the entry never
+ * evicts and is served fresh forever; a negative value makes every read a miss.
+ * Mirror profile-registry.ts's Number.isFinite + >= 0 check, but the callers
+ * degrade to a default (warning in dev) rather than throw — this runs on the
+ * foreground render.
+ */
+function isValidCacheSeconds(value: number, label: string): boolean {
+  if (isFiniteNonNegativeSeconds(value)) return true;
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[CacheScope] Invalid ${label} ${value}; falling back to default`,
+    );
+  }
+  return false;
+}
+
+/** Coerce a resolved ttl to a finite, non-negative number (default on invalid). */
+function validatedTtl(value: number): number {
+  return isValidCacheSeconds(value, "ttl") ? value : DEFAULT_ROUTE_TTL;
+}
+
+/** Coerce a resolved swr to a finite, non-negative number, or undefined (no SWR window). */
+function validatedSwr(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  return isValidCacheSeconds(value, "swr") ? value : undefined;
 }
 
 function getCacheKeyBase(
@@ -124,20 +161,26 @@ export class CacheScope {
   }
 
   /**
-   * Get effective TTL from config or store defaults
+   * Get effective TTL from config or store defaults.
+   *
+   * Unlike profile-registry.ts (which fails fast at config time), the render
+   * path must DEGRADE: a non-finite/negative ttl (NaN/Infinity from a bad
+   * defaults config) would make computeExpiration produce NaN deadlines so the
+   * entry never evicts, or a guaranteed miss for a negative value. Fall back to
+   * DEFAULT_ROUTE_TTL instead of throwing in the foreground render.
    */
   get ttl(): number {
     if (this.config === false) return 0;
 
     // Explicit TTL in cache() options
     if (this.config.ttl !== undefined) {
-      return this.config.ttl;
+      return validatedTtl(this.config.ttl);
     }
 
     // Fall back to store defaults (explicit store first, then app-level)
     const store = this.getStore();
     if (store?.defaults?.ttl !== undefined) {
-      return store.defaults.ttl;
+      return validatedTtl(store.defaults.ttl);
     }
 
     // Hardcoded fallback
@@ -145,19 +188,22 @@ export class CacheScope {
   }
 
   /**
-   * Get SWR window from config or store defaults
+   * Get SWR window from config or store defaults.
+   *
+   * A non-finite/negative swr is degraded to undefined (no SWR window) rather
+   * than fed into expiry math; see the ttl getter for the rationale.
    */
   get swr(): number | undefined {
     if (this.config === false) return undefined;
 
     // Explicit SWR in cache() options
     if (this.config.swr !== undefined) {
-      return this.config.swr;
+      return validatedSwr(this.config.swr);
     }
 
     // Fall back to store defaults
     const store = this.getStore();
-    return store?.defaults?.swr;
+    return validatedSwr(store?.defaults?.swr);
   }
 
   /**
@@ -231,10 +277,16 @@ export class CacheScope {
     const store = this.getStore();
     if (!store) return null;
 
-    // Resolve cache key (may use custom key functions)
-    const key = await this.resolveKey(pathname, params, isIntercept);
-
+    // Resolve cache key INSIDE the try so a throwing consumer key() (or a
+    // store.keyGenerator) degrades to a cache miss (return null -> render
+    // uncached) instead of crashing the foreground render. resolveCacheKey
+    // itself keeps its hard-fail/no-fallback-to-default contract (a throw must
+    // not silently collide onto the default slot); the graceful degradation
+    // happens here, where a miss is a safe outcome.
+    let key: string | undefined;
     try {
+      key = await this.resolveKey(pathname, params, isIntercept);
+
       const result = await store.get(key);
 
       if (!result) {
@@ -250,6 +302,7 @@ export class CacheScope {
       // error (handled by the outer catch).
       let segments: ResolvedSegment[];
       try {
+        const { deserializeSegments } = await import("./segment-codec.js");
         segments = await deserializeSegments(cached.segments);
       } catch (error) {
         reportCacheError(
@@ -294,9 +347,35 @@ export class CacheScope {
 
       return { segments, shouldRevalidate };
     } catch (error) {
-      reportCacheError(error, "cache-read", `[CacheScope] lookup ${key}`);
+      // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
+      // (resolveKey). Either way degrade to a cache miss so the render proceeds.
+      reportCacheError(
+        error,
+        "cache-read",
+        `[CacheScope] lookup ${key ?? "(key resolution failed)"}`,
+      );
       return null;
     }
+  }
+
+  /**
+   * Record this scope's segment-DSL cache({ tags }) into the request tag union
+   * synchronously, under the same gate cacheRoute() uses for a write.
+   *
+   * cacheRoute() already records these tags, but it is invoked inside
+   * requestCtx.waitUntil() by the cache-store middleware (and the proactive path
+   * re-resolves the whole tree before calling it), so its recording is deferred
+   * and RACES the document cache's post-body-drain snapshot of _requestTags. On a
+   * first-write (segment-cache miss) the document tag union could miss these
+   * tags, and updateTag()/revalidateTag() would then fail to invalidate the
+   * cached document until a later write reseeded it. Calling this synchronously
+   * in the request pipeline (before the snapshot) closes that window. Idempotent
+   * (the tag union is a Set), so the duplicate record in cacheRoute is harmless.
+   */
+  recordTags(requestCtx: RequestContext | undefined): void {
+    if (!this.enabled) return;
+    if (!this.conditionAllows("write")) return;
+    recordRequestTags(resolveCacheTags(this.config, requestCtx), requestCtx);
   }
 
   /**
@@ -400,6 +479,7 @@ export class CacheScope {
         // Serialize segments and Flight-encode handles in parallel. Handles go
         // through the codec (not raw into the entry) so Promise/ReactNode handle
         // values survive a JSON-serializing store — see encodeHandles.
+        const { serializeSegments } = await import("./segment-codec.js");
         const [serializedSegments, encodedHandles] = await Promise.all([
           serializeSegments(nonLoaderSegments),
           encodeHandles(handles),

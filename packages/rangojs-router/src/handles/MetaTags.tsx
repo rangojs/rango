@@ -8,6 +8,10 @@
  *
  * When theme is enabled in the router config, MetaTags also renders
  * the theme initialization script to prevent FOUC (flash of unstyled content).
+ * This makes MetaTags the sole FOUC-script injector for apps that render it;
+ * the standalone `<ThemeScript />` is only needed when MetaTags is not used.
+ * Rendering both is safe (the inline script guards listener registration) but
+ * redundant.
  *
  * @example
  * ```tsx
@@ -27,10 +31,12 @@
 import { use } from "react";
 import { useHandle } from "../browser/react/use-handle.js";
 import { Meta } from "./meta.js";
+import { isThenable } from "./is-thenable.js";
 import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.js";
 import { useThemeContext } from "../theme/theme-context.js";
 import { generateThemeScript } from "../theme/theme-script.js";
 import { useNonce } from "../browser/react/nonce-context.js";
+import { escapeJsonForScript } from "../escape-script.js";
 
 // Type guards for MetaDescriptorBase variants
 function hasCharSet(d: MetaDescriptorBase): d is { charSet: "utf-8" } {
@@ -91,10 +97,13 @@ function hasTagName(
 }
 
 /**
- * Check if a value is a Promise.
+ * Check if a value is a Promise. Uses the shared thenable predicate (callable
+ * `then`) so collect (meta.ts) and render never disagree: an object carrying a
+ * non-callable `then` (e.g. `{ then: 5 }`) is a SYNC descriptor on both sides,
+ * not a Promise that would crash React's `use()`.
  */
 function isPromise(value: unknown): value is Promise<unknown> {
-  return value !== null && typeof value === "object" && "then" in value;
+  return isThenable(value);
 }
 
 function renderMetaDescriptor(
@@ -140,7 +149,9 @@ function renderMetaDescriptor(
   }
 
   if (hasScriptLdJson(descriptor)) {
-    const json = JSON.stringify(descriptor["script:ld+json"]);
+    const json = escapeJsonForScript(
+      JSON.stringify(descriptor["script:ld+json"]),
+    );
     return (
       <script
         key={`ld-json-${index}`}
@@ -178,14 +189,54 @@ function renderMetaDescriptor(
   );
 }
 
-function AsyncMetaTag({
+// Sentinel a rejected async descriptor resolves to: renderMetaDescriptor sees
+// no recognized fields and returns nothing renderable (see renderRejected).
+const REJECTED_META: unique symbol = Symbol("rango.rejectedMeta");
+
+// Cache the rejection-swallowing wrapper per source promise so use() gets a
+// stable reference across re-renders (a fresh .then() each render would make
+// React treat it as a new pending promise and never settle). WeakMap keys on
+// the original promise so entries are collected with it.
+const safeMetaPromises = new WeakMap<
+  Promise<MetaDescriptorBase>,
+  Promise<MetaDescriptorBase | typeof REJECTED_META>
+>();
+
+function toSafeMetaPromise(
+  promise: Promise<MetaDescriptorBase>,
+): Promise<MetaDescriptorBase | typeof REJECTED_META> {
+  let safe = safeMetaPromises.get(promise);
+  if (!safe) {
+    // Swallow the rejection at the promise boundary, not via an error boundary:
+    // an error boundary above a suspended use() makes React abandon the whole
+    // Suspense subtree (and on the server switch it to client rendering). A
+    // settled-to-sentinel promise degrades the single bad descriptor to nothing
+    // while every sibling descriptor still renders.
+    //
+    // Normalize via Promise.resolve first: a collected async descriptor may be a
+    // non-native thenable (a React wakeable in SSR/RSC) whose .then() returns
+    // void rather than a Promise. Calling .then directly would leave `safe`
+    // undefined and use(undefined) would throw ("unsupported type passed to
+    // use()"), 500-ing the page. Promise.resolve adopts the thenable into a
+    // native Promise whose .then always returns one.
+    safe = Promise.resolve(promise).then(
+      (value) => value,
+      () => REJECTED_META,
+    );
+    safeMetaPromises.set(promise, safe);
+  }
+  return safe;
+}
+
+export function AsyncMetaTag({
   promise,
   index,
 }: {
   promise: Promise<MetaDescriptorBase>;
   index: number;
 }): React.ReactNode {
-  const resolved = use(promise);
+  const resolved = use(toSafeMetaPromise(promise));
+  if (resolved === REJECTED_META) return null;
   return renderMetaDescriptor(resolved, index);
 }
 

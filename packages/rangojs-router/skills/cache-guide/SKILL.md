@@ -424,7 +424,7 @@ subsequent siblings. Everything below the cache boundary is cached as one unit:
 
 ```typescript
 path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
-  cache("long"),
+  cache({ ttl: 300 }),
   layout(DashboardSidebar, () => [
     parallel("@stats", StatsPanel),
     parallel("@activity", ActivityFeed),
@@ -444,7 +444,7 @@ boundary are not cached and always re-render:
 layout(RootLayout, () => [
   // RootLayout is NOT cached — runs every request
   path("/products/:slug", ProductPage, { name: "product" }, () => [
-    cache("long"),
+    cache({ ttl: 300 }),
     layout(ProductSidebar),
     parallel("@reviews", ReviewsPanel),
     parallel("@related", RelatedProducts),

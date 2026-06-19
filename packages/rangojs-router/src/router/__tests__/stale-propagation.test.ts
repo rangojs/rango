@@ -40,6 +40,7 @@ vi.mock("../segment-resolution/helpers.js", () => ({
   resolveWithErrorBoundary: vi.fn(
     async (_entry: any, _params: any, resolver: () => any) => resolver(),
   ),
+  buildLoaderErrorContext: vi.fn(() => ({})),
 }));
 
 function makeDeps(): SegmentResolutionDeps<any> {

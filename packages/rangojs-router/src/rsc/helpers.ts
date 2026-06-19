@@ -65,8 +65,14 @@ function applyStubHeaders(target: Headers, stub: Headers): void {
  * Drain ctx._onResponseCallbacks onto a response. Swapping the array before
  * iteration prevents re-entrant registrations from double-firing and matches
  * the contract that each callback runs at most once per request.
+ *
+ * Exported so the testing primitives' buildRunResponse can reuse the exact
+ * production drain (swap-before-iterate + external-redirect brand preservation)
+ * rather than maintain a hand-synced copy. This module is plugin-rsc-free on its
+ * eager graph (dispatch.ts already statically imports from here in the same
+ * testing barrel), so importing it adds nothing to the unit runner's graph.
  */
-function drainOnResponseCallbacks(
+export function drainOnResponseCallbacks(
   ctx: RequestContext,
   response: Response,
 ): Response {

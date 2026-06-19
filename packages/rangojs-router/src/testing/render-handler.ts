@@ -49,6 +49,8 @@ import {
 } from "./flight.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
+import type { ThemeConfig } from "../theme/types.js";
+import { resolveThemeConfig } from "../theme/constants.js";
 import {
   deserializeFlight,
   makeClientManifest,
@@ -114,6 +116,13 @@ export interface RenderHandlerOptions<TEnv = any> {
    * `"use cache: profileName"` resolution once a `cacheStore` is wired.
    */
   cacheProfiles?: Record<string, CacheProfile>;
+  /**
+   * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
+   * or `{ themes: [...] }`). Without it `ctx.theme`/`ctx.setTheme` are inert,
+   * mirroring an app with no theme configured. Pass one to exercise a handler
+   * that reads `ctx.theme` or writes the theme cookie via `ctx.setTheme(...)`.
+   */
+  theme?: ThemeConfig | true;
 }
 
 /** Result of {@link renderHandler}. */
@@ -225,6 +234,8 @@ export async function renderHandler<TEnv = any>(
     version: opts.stateCookie?.version,
     cacheStore: opts.cacheStore,
     cacheProfiles: opts.cacheProfiles,
+    themeConfig:
+      opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
   });
 
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
@@ -265,7 +276,9 @@ export async function renderHandler<TEnv = any>(
           handlePushes.set(handle, pushed);
         });
       }
-      if (loaderSeeds.has(item)) return loaderSeeds.get(item);
+      // Production ctx.use(Loader) ALWAYS returns a Promise (the cached loader
+      // promise); wrap the seed so a handler composing on the result matches.
+      if (loaderSeeds.has(item)) return Promise.resolve(loaderSeeds.get(item));
       throw new RenderHandlerSetupError(
         `renderHandler: ctx.use(loader) was not seeded. Pass ` +
           `{ loaders: [[YourLoader, data]] } for each loader the handler reads.`,

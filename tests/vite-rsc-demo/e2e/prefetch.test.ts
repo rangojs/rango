@@ -424,9 +424,10 @@ test.describe("prefetch-on-hover (router mode)", () => {
 });
 
 /**
- * Prefetch on hover (production — router mode)
+ * Prefetch on hover (production — router mode). Titled to match the dev
+ * "prefetch-on-hover (router mode)" base so dev/prod parity pairs cleanly.
  */
-base.describe("prefetch-on-hover (production)", () => {
+base.describe("prefetch-on-hover (router mode) (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
@@ -467,6 +468,77 @@ base.describe("prefetch-on-hover (production)", () => {
         document.querySelectorAll('link[rel="prefetch"][href*="/blog"]').length,
     );
     baseExpect(prefetchLinkCount).toBe(0);
+  });
+
+  base(
+    "should not make duplicate prefetch requests on repeated hover",
+    async ({ page }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const prefetchRequests: string[] = [];
+      page.on("request", (request) => {
+        const url = request.url();
+        if (url.includes("_rsc_partial") && url.includes("/blog")) {
+          prefetchRequests.push(url);
+        }
+      });
+
+      const blogLink = page.locator('nav a:has-text("Blog")');
+
+      // Hover, move away, hover again
+      await blogLink.hover();
+      await baseExpect
+        .poll(() => prefetchRequests.length, { timeout: 5000 })
+        .toBe(1);
+
+      // Move away from the link
+      await page.locator("h1").first().hover();
+
+      // Hover again — should not re-fetch (cached)
+      await blogLink.hover();
+
+      await expectCountToRemain(baseExpect, () => prefetchRequests.length, 1);
+    },
+  );
+
+  base("should prefetch multiple links independently", async ({ page }) => {
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const prefetchUrls: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial")) {
+        prefetchUrls.push(url);
+      }
+    });
+
+    // Hover over Blog link
+    await page.locator('nav a:has-text("Blog")').hover();
+    await baseExpect
+      .poll(() => prefetchUrls.filter((u) => u.includes("/blog")).length, {
+        timeout: 5000,
+      })
+      .toBe(1);
+
+    // Hover over Shop link
+    await page.locator('nav a:has-text("Shop")').hover();
+    await baseExpect
+      .poll(
+        () => ({
+          blog: prefetchUrls.filter((u) => u.includes("/blog")).length,
+          shop: prefetchUrls.filter((u) => u.includes("/shop")).length,
+        }),
+        { timeout: 5000 },
+      )
+      .toEqual({ blog: 1, shop: 1 });
+
+    const blogPrefetches = prefetchUrls.filter((u) => u.includes("/blog"));
+    const shopPrefetches = prefetchUrls.filter((u) => u.includes("/shop"));
+
+    baseExpect(blogPrefetches.length).toBe(1);
+    baseExpect(shopPrefetches.length).toBe(1);
   });
 
   base(

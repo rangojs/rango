@@ -30,9 +30,15 @@ function isRenderableLoading(loading: ReactNode): boolean {
   return loading !== undefined && loading !== null && loading !== false;
 }
 
-function restoreParallelLoaderMarkers(
+// Exported for unit testing the no-parallel fast path (D6); internal otherwise.
+export function restoreParallelLoaderMarkers(
   segments: ResolvedSegment[],
 ): ResolvedSegment[] {
+  // Parallel-loading markers only exist when a parallel segment is present, so
+  // a list with no parallel slot has nothing to restore. Skip the Map alloc and
+  // full scan in that (common) case — this runs on every render.
+  if (!segments.some((s) => s.type === "parallel")) return segments;
+
   const parallelLoadingByNamespace = new Map<string, ReactNode>();
   let nextSegments: ResolvedSegment[] | null = null;
 
@@ -504,7 +510,10 @@ export async function renderSegments(
 // slot name is user-controlled (`@${string}`) and may contain an uppercase "D"
 // (e.g. "@Detail"). Strip from the first `D<index>.` separator so the slot name
 // is preserved; splitting on a bare "D" mis-cut "@Detail" to "@" and silently
-// dropped the loader's data.
+// dropped the loader's data. The first-`D<index>.` strip is only correct because
+// slot names cannot contain "." -- assertValidSlotName (route-definition/
+// dsl-helpers.ts) rejects a "." at definition time, so a name like "@D3.foo"
+// (which WOULD mis-cut here) can never reach this function.
 function loaderParentId(loaderSegmentId: string): string {
   return loaderSegmentId.replace(/D\d+\..*$/, "");
 }

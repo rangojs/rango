@@ -1,5 +1,6 @@
 import { parseAst, type Plugin } from "vite";
 import { VIRTUAL_IDS, getVirtualVersionContent } from "./virtual-entries.js";
+import { hasUseClientDirective } from "../utils/directive-prologue.js";
 
 interface ClientModuleSignature {
   key: string;
@@ -16,29 +17,16 @@ function normalizeModuleId(id: string): string {
 function getClientModuleSignature(
   source: string,
 ): ClientModuleSignature | undefined {
+  // Same leading-directive sniff the rango HMR plugin uses (shared helper, so the
+  // two agree on what counts as a client module). A parse failure yields false.
+  if (!hasUseClientDirective(source)) return undefined;
+
   let program: any;
   try {
     program = parseAst(source, { lang: "tsx" });
   } catch {
     return undefined;
   }
-
-  let isUseClient = false;
-  for (const node of program.body ?? []) {
-    if (
-      node?.type === "ExpressionStatement" &&
-      node.expression?.type === "Literal" &&
-      typeof node.expression.value === "string"
-    ) {
-      if (node.expression.value === "use client") {
-        isUseClient = true;
-      }
-      continue;
-    }
-    break;
-  }
-
-  if (!isUseClient) return undefined;
 
   const exports = new Set<string>();
   let hasDefault = false;

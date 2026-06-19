@@ -11,6 +11,7 @@ import { apiPatterns } from "./api/urls.js";
 import { HomePage } from "./pages/home.js";
 import { AboutPage } from "./pages/about.js";
 import { CounterPage } from "./pages/counter.js";
+import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
 import {
   BlogLayout,
@@ -26,8 +27,10 @@ import {
   ProactiveCacheItemBPage,
 } from "./pages/proactive-cache.js";
 import { DocumentCachePage } from "./pages/document-cache.js";
+import { DocumentCacheNoCachePage } from "./pages/document-cache-no-cache.js";
 import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
+import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { ThemePage } from "./pages/theme.js";
@@ -321,6 +324,9 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        path("/render-stability/p/:id", RenderStabilityRoute, {
+          name: "renderStability",
+        }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
         // Search route with typed search params
@@ -376,6 +382,14 @@ export const urlpatterns = urls(
         // Document cache route
         path("/document-cache", DocumentCachePage, { name: "documentCache" }),
 
+        // C3: document cache route whose response sets an unqualified
+        // `Cache-Control: no-cache`. The document cache must refuse to store it
+        // (never a frozen HIT), so the rendered timestamp re-executes every
+        // request despite the accompanying s-maxage.
+        path("/document-cache-no-cache", DocumentCacheNoCachePage, {
+          name: "documentCacheNoCache",
+        }),
+
         // Tagged document cache route: the full-page response is document-cached
         // AND tagged (via a "use cache" + cacheTag), so updateTag("doc-page")
         // invalidates the whole-page entry (exercises document-level tag flow).
@@ -390,6 +404,25 @@ export const urlpatterns = urls(
         path("/streamed-document", StreamedDocumentPage, {
           name: "streamedDocument",
         }),
+
+        // Document-cached full page whose tag comes from a route-level
+        // cache({ tags }) (the segment-DSL tag path), NOT a runtime cacheTag.
+        // The segment write is scheduled via waitUntil, so this pins that the
+        // route-level tag reaches the document tag union on the FIRST write and
+        // updateTag("dsl-doc-page") invalidates the whole-page entry. Cache-Control
+        // is set via middleware in-scope (the blog-route pattern) — a cache()-
+        // wrapped component's own ctx.headers.set() does not reach the document
+        // response. Unnamed: the e2e navigates by URL, no gen-file entry.
+        cache({ ttl: 600, tags: ["dsl-doc-page"] }, () => [
+          middleware((ctx, next) => {
+            ctx.header(
+              "Cache-Control",
+              "s-maxage=60, stale-while-revalidate=300",
+            );
+            return next();
+          }),
+          path("/dsl-tagged-document", DslTaggedDocumentPage),
+        ]),
 
         // Slow cache route
         cache({ ttl: 60, swr: 300 }, () => [

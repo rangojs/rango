@@ -34,3 +34,13 @@ export interface StaticWriteDemoState {
 }
 
 export const StaticWriteDemo = createLocationState<StaticWriteDemoState>();
+
+export interface ActionInfoStateShape {
+  value: string;
+}
+
+// Two distinct, non-flash slots written by concurrent server actions in the
+// action-ls fixture. Distinct keys must both survive consolidation; the same
+// key resolves to the last-initiated action.
+export const ActionInfoA = createLocationState<ActionInfoStateShape>();
+export const ActionInfoB = createLocationState<ActionInfoStateShape>();
