@@ -1127,6 +1127,7 @@ export function createRSCHandler<
               stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
+              strictMode: router.strictMode,
               initialTheme: getRequestContext().theme,
             },
           };

@@ -163,6 +163,14 @@ const headerShorthandMiddleware: Middleware = async (ctx, next) => {
 };
 
 export const router = createRouter<AppEnv>({
+  // StrictMode is on by default. The hook render-stability e2e flips it off via
+  // RANGO_STRICT=off on an isolated server, to isolate StrictMode's intentional
+  // double-render/double-effect from genuine re-renders. Read through globalThis
+  // so the bundler never statically folds it (only process.env.NODE_ENV is a
+  // build-time define), keeping it a runtime read the dev/preview process owns.
+  strictMode:
+    (globalThis as { process?: { env?: Record<string, string | undefined> } })
+      .process?.env?.RANGO_STRICT !== "off",
   cache: { store: cacheStore },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },

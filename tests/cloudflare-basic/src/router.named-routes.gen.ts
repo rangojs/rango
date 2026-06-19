@@ -50,6 +50,7 @@ export const NamedRoutes = {
   productReviews: "/item/:productId/reviews",
   "releases.index": "/releases",
   "renderedBarrier.index": "/rendered-barrier",
+  renderStability: "/render-stability/p/:id",
   robots: "/robots.txt",
   search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
   shopArchive: "/shop/:slug.archive.html",

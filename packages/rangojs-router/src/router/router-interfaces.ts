@@ -316,6 +316,13 @@ export interface RangoInternal<
   readonly warmupEnabled: boolean;
 
   /**
+   * Whether the client hydrates inside React.StrictMode. Resolved from
+   * createRouter({ strictMode }) (default true) and shipped to the client in
+   * the initial payload metadata.
+   */
+  readonly strictMode: boolean;
+
+  /**
    * Whether router-wide performance debugging is enabled.
    * Used by the request handler to create metrics before middleware runs.
    */

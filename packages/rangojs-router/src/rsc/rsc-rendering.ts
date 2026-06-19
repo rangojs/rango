@@ -87,6 +87,10 @@ async function handleRscRenderingInner<TEnv>(
       // include it; without it here warmup could never be disabled on the
       // normal full-load path (partial payloads omit it by design).
       warmupEnabled: ctx.router.warmupEnabled,
+      // Carry strictMode on the initial full-render payload so the browser
+      // entry knows whether to wrap hydration in React.StrictMode. Partial
+      // (navigation) payloads omit it by design; StrictMode is decided once.
+      strictMode: ctx.router.strictMode,
       initialTheme: reqCtx.theme,
     },
   });

@@ -524,6 +524,29 @@ export interface RangoOptions<TEnv = any> {
   warmup?: boolean;
 
   /**
+   * Wrap the hydrated client tree in `React.StrictMode`.
+   *
+   * The Rango browser entry hydrates the app inside `<React.StrictMode>` by
+   * default. StrictMode double-invokes render and (in development) mounts,
+   * unmounts, then remounts every effect to surface impure renders and missing
+   * effect cleanup. Production builds treat StrictMode as a no-op, so this flag
+   * only changes development behavior in a normal app.
+   *
+   * Set to `false` to hydrate without the StrictMode wrapper. The main reason to
+   * opt out is to isolate StrictMode's intentional double-render/double-effect
+   * from genuine re-renders when measuring client-hook stability — with
+   * StrictMode off, render counts are exact in development too.
+   *
+   * The value is resolved server-side at router creation and shipped to the
+   * client in the initial payload metadata; the browser entry reads it once at
+   * hydration. Changing it does not affect the SSR HTML (StrictMode emits no
+   * DOM), so toggling it never causes a hydration mismatch.
+   *
+   * @default true
+   */
+  strictMode?: boolean;
+
+  /**
    * Shorthand timeout (ms) applied to both action execution and render start.
    * Does NOT apply to streamIdleMs.
    * Overridden by individual values in `timeouts`.

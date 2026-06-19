@@ -162,6 +162,7 @@ export function createRouter<TEnv = any>(
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
     debugCacheSignal: debugCacheSignalOption = false,
+    strictMode: strictModeOption = true,
   } = options;
 
   // Debug cache signal gate (DEVELOPMENT/TEST ONLY). Enabled by the
@@ -243,6 +244,11 @@ export function createRouter<TEnv = any>(
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
+
+  // Resolve StrictMode flag (default: true). Shipped to the client in payload
+  // metadata; the browser entry reads it once to decide whether to wrap the
+  // hydrated tree in React.StrictMode.
+  const strictMode = strictModeOption !== false;
 
   // Resolve theme config (null if theme not enabled)
   const resolvedThemeConfig = themeOption
@@ -969,6 +975,9 @@ export function createRouter<TEnv = any>(
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
+
+    // Expose StrictMode flag for the initial-render payload metadata
+    strictMode,
 
     // Expose router-wide performance debugging for request-level metrics setup
     debugPerformance,

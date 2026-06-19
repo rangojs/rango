@@ -130,6 +130,7 @@ Public API (`Rango` interface):
 
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
+- `strictMode` (default true) — wraps client hydration in `React.StrictMode`; shipped to the client via initial payload metadata and read once by the browser entry. `strictMode: false` opts out (used to isolate StrictMode's double-render when measuring hook stability)
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
 - Request timeouts via `timeout`/`timeouts`/`onTimeout` options
 - `basename` for sub-path deployments — auto-prefixes all routes, `reverse()`, `Link`, `redirect()`, `router.use()` patterns, and `useRouter()` navigation. `href()` is intentionally not basename-aware (raw path helper).
