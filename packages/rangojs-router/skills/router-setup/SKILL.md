@@ -494,6 +494,7 @@ const router = createRouter({
 ```typescript
 // On Cloudflare Workers, swap the tracing factory for native custom spans
 // (no @opentelemetry/api dependency); the telemetry slot is unchanged.
+// On Vercel (Node runtime) use createVercelTracing() from @rangojs/router/vercel.
 import { createCloudflareTracing } from "@rangojs/router/cloudflare";
 
 const router = createRouter({

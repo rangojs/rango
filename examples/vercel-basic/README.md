@@ -23,12 +23,13 @@ the generated function launcher). `srvx` (the Web→Node streaming bridge) and t
 
 ## Commands
 
-| Command        | What it does                                                                                                   |
-| -------------- | -------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`     | Vite dev server (in-memory cache store).                                                                       |
-| `pnpm build`   | `vite build` — the preset assembles `.vercel/output`.                                                          |
-| `pnpm smoke`   | Serves the assembled function over `node:http` and asserts the pages render + a static asset loads. No deploy. |
-| `pnpm preview` | `vite preview` (plugin-rsc's Node server; in-memory cache store).                                              |
+| Command               | What it does                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`            | Vite dev server (in-memory cache store).                                                                      |
+| `pnpm build`          | `vite build` — the preset assembles `.vercel/output`.                                                         |
+| `pnpm preview:vercel` | Serves the assembled `.vercel/output` **function** over `node:http` (what `vite preview` cannot do).          |
+| `pnpm smoke`          | Serves the function from an isolated temp dir and asserts the pages render + a static asset loads. No deploy. |
+| `pnpm test:e2e`       | Playwright dev + production e2e: rendering, cache freeze, navigation, and `rango.*` span emission.            |
 
 ## Local verification (no Vercel account)
 
@@ -42,6 +43,27 @@ the bundle is not self-contained), serves it behind the same "static first, else
 function" routing Vercel uses, and checks `/`, `/about`, `/cached`, and a static
 asset. Locally the app falls back to the in-memory cache store, so `/cached`
 demonstrates a real segment-cache hit (the timestamp freezes within the TTL).
+
+## Tracing (OpenTelemetry)
+
+The app emits the router's `rango.*` phase spans via OpenTelemetry, wired in
+`src/instrumentation.ts`. Vercel exposes tracing through OTel (not a native span
+API), so the real path installs `@vercel/otel` and reads its global tracer:
+
+```ts
+// src/instrumentation.ts (real path)
+import { registerOTel } from "@vercel/otel";
+import { createVercelTracing } from "@rangojs/router/vercel";
+registerOTel({ serviceName: "rango-vercel-basic" });
+// createRouter({ tracing: createVercelTracing() })
+```
+
+On a Node-runtime deploy the spans (`rango.request/middleware/loader/render/ssr`/…)
+show up in Vercel's trace waterfall. (Custom spans are unsupported on the Edge
+runtime.) The e2e sets `RANGO_TRACE_DEBUG=1` to swap in an in-memory recorder and
+asserts the span tree through a `/__debug/trace` route — exercising the real
+`createVercelTracing` API without a deploy. See the `observability` skill /
+`docs/telemetry.md` for the cross-platform model.
 
 ## Deploying to Vercel
 

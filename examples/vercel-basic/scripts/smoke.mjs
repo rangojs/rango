@@ -11,11 +11,11 @@
 // routing, and asserts the pages render and a static asset loads. The Runtime
 // Cache store is Vercel-only; locally the app falls back to the in-memory store,
 // so the cache observation is informational.
-import http from "node:http";
 import os from "node:os";
-import { readFile, stat, rm, cp } from "node:fs/promises";
+import { rm, cp } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { createVercelOutputServer } from "./serve-vercel-output.mjs";
 
 const appRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
 const builtOutput = path.join(appRoot, ".vercel", "output");
@@ -26,44 +26,7 @@ const isolated = path.join(os.tmpdir(), "rango-vercel-smoke");
 await rm(isolated, { recursive: true, force: true });
 await cp(builtOutput, isolated, { recursive: true });
 
-const funcEntry = path.join(isolated, "functions", "index.func", "index.mjs");
-const staticDir = path.join(isolated, "static");
-
-const CONTENT_TYPE = {
-  ".js": "text/javascript",
-  ".mjs": "text/javascript",
-  ".css": "text/css",
-  ".map": "application/json",
-  ".json": "application/json",
-  ".ico": "image/x-icon",
-};
-
-const handler = (await import(pathToFileURL(funcEntry).href)).default;
-
-const server = http.createServer(async (req, res) => {
-  const pathname = decodeURIComponent(
-    new URL(req.url, "http://localhost").pathname,
-  );
-  if (pathname !== "/") {
-    const filePath = path.join(staticDir, pathname);
-    if (filePath.startsWith(staticDir)) {
-      try {
-        const info = await stat(filePath);
-        if (info.isFile()) {
-          res.setHeader(
-            "content-type",
-            CONTENT_TYPE[path.extname(filePath)] ?? "application/octet-stream",
-          );
-          res.end(await readFile(filePath));
-          return;
-        }
-      } catch {
-        // fall through to the function
-      }
-    }
-  }
-  handler(req, res);
-});
+const server = await createVercelOutputServer(isolated);
 
 const port = await new Promise((resolve) => {
   server.listen(0, () => resolve(server.address().port));

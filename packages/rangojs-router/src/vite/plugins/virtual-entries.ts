@@ -115,12 +115,21 @@ import "virtual:rsc-router/routes-manifest";
 // The host entry module must export the HostRouter instance (createHostRouter()),
 // as a default export or a named \`hostRouter\`/\`router\` export. A Cloudflare-style
 // \`export default { fetch }\` object is not a HostRouter and is rejected here.
+// We require BOTH .match() and .host(): a regular createRouter() also exposes
+// .match(), so matching on .match() alone would accept an ordinary router and then
+// return its MatchResult (not a Response) at runtime. .host() is unique to a
+// HostRouter, so it disambiguates a mistaken \`hostRouter\` path at build time.
 // Exports are read dynamically (m[name]) so Rollup does not emit IMPORT_IS_UNDEFINED
 // warnings for the named exports a default-only host module legitimately omits.
 const __resolveHostRouter = (m) => {
   for (const name of ["default", "hostRouter", "router"]) {
     const candidate = m[name];
-    if (candidate && typeof candidate.match === "function") return candidate;
+    if (
+      candidate &&
+      typeof candidate.match === "function" &&
+      typeof candidate.host === "function"
+    )
+      return candidate;
   }
   return undefined;
 };
@@ -128,7 +137,7 @@ const hostRouter = __resolveHostRouter(__hostEntry);
 
 if (!hostRouter) {
   throw new Error(
-    "[rango] The host entry (${hostEntryPath}) must export a HostRouter instance for the node/vercel preset: a default export, or a named 'hostRouter'/'router' export (e.g. export default createHostRouter()). A Cloudflare-style 'export default { fetch }' object is not supported on this preset."
+    "[rango] The host entry (${hostEntryPath}) must export a HostRouter instance (createHostRouter()) for the node/vercel preset: a default export, or a named 'hostRouter'/'router' export. An ordinary createRouter() is not a host router (it has no .host()), and a Cloudflare-style 'export default { fetch }' object is not supported on this preset."
   );
 }
 

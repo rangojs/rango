@@ -339,6 +339,17 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           preset === "vercel"
             ? { resolve: { noExternal: true as const } }
             : undefined;
+        // Dev only: @vercel/functions is a CJS package (consumed at its root for
+        // getCache/waitUntil) whose nested internal requires vite's RSC + SSR dev
+        // module runners cannot load directly, so a vercel app using
+        // VercelCacheStore crashes on `vite dev`. Pre-bundle it for the server
+        // environments (the production build bundles it via noExternal above, so
+        // this is serve-only). The preset already requires @vercel/functions at
+        // build time, so the unconditional include matches the existing contract.
+        const vercelServerInclude =
+          preset === "vercel" && configEnv.command === "serve"
+            ? ["@vercel/functions"]
+            : [];
         return {
           ...(vercelDefine ? { define: vercelDefine } : {}),
           optimizeDeps: {
@@ -396,6 +407,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   nested(
                     "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
                   ),
+                  ...vercelServerInclude,
                 ],
                 exclude: excludeDeps,
                 rolldownOptions: sharedRolldownOptions,
@@ -412,6 +424,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   nested(
                     "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
                   ),
+                  ...vercelServerInclude,
                 ],
                 // Vite 8 does not propagate the top-level optimizeDeps.exclude
                 // (set in config()) to non-client envs, so the rsc env must set

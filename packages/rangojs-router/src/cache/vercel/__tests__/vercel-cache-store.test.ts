@@ -4,6 +4,7 @@ import {
   VERCEL_MAX_ITEM_BYTES,
   VERCEL_MAX_TAGS_PER_ITEM,
   type VercelRuntimeCache,
+  type VercelCacheReadDebugEvent,
 } from "../vercel-cache-store.js";
 import type { CachedEntryData } from "../../types.js";
 
@@ -312,6 +313,46 @@ describe("VercelCacheStore", () => {
       await s.putResponse("doc:k", new Response("x"), 60, 300);
       vi.setSystemTime(new Date(T0 + 400_000));
       expect(await s.getResponse("doc:k")).toBeNull();
+    });
+
+    it("fails open (no throw) on a corrupt response body and evicts it", async () => {
+      const { cache, store } = makeFakeCache();
+      const corrupt: VercelCacheReadDebugEvent[] = [];
+      const s = new VercelCacheStore({
+        cache,
+        debug: (e) => corrupt.push(e),
+      });
+      await s.putResponse("doc:k", new Response("hello"), 60, 300);
+      // Corrupt the stored base64 body in place; decoding it would otherwise
+      // throw InvalidCharacterError out of getResponse (a fail-open violation).
+      const entry = [...store.values()].find(
+        (e) =>
+          e.value != null &&
+          typeof e.value === "object" &&
+          "b" in (e.value as object),
+      );
+      (entry!.value as { b: string }).b = "%%%not-base64%%%";
+
+      await expect(s.getResponse("doc:k")).resolves.toBeNull();
+      expect(corrupt.at(-1)).toMatchObject({
+        op: "getResponse",
+        outcome: "corrupt",
+      });
+      // Evicted: a subsequent read is a clean miss, not another decode attempt.
+      expect(await s.getResponse("doc:k")).toBeNull();
+    });
+
+    it("emits a getResponse debug event on every read", async () => {
+      const { cache } = makeFakeCache();
+      const events: VercelCacheReadDebugEvent[] = [];
+      const s = new VercelCacheStore({ cache, debug: (e) => events.push(e) });
+      await s.getResponse("doc:k"); // miss
+      await s.putResponse("doc:k", new Response("x"), 60, 300);
+      await s.getResponse("doc:k"); // fresh
+      expect(events.map((e) => [e.op, e.outcome])).toEqual([
+        ["getResponse", "miss"],
+        ["getResponse", "fresh"],
+      ]);
     });
   });
 

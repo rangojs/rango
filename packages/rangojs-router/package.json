@@ -115,6 +115,11 @@
       "react-server": "./src/cloudflare/index.ts",
       "default": "./src/cloudflare/index.ts"
     },
+    "./vercel": {
+      "types": "./src/vercel/index.ts",
+      "react-server": "./src/vercel/index.ts",
+      "default": "./src/vercel/index.ts"
+    },
     "./theme": {
       "types": "./src/theme/index.ts",
       "default": "./src/theme/index.ts"
@@ -184,6 +189,7 @@
     "tinyexec": "^0.3.2"
   },
   "devDependencies": {
+    "@opentelemetry/api": "^1.9.0",
     "@playwright/test": "^1.49.1",
     "@shared/e2e": "workspace:*",
     "@testing-library/dom": "^10.4.1",
@@ -201,6 +207,7 @@
   },
   "peerDependencies": {
     "@cloudflare/vite-plugin": "^1.38.0",
+    "@opentelemetry/api": "^1.9.0",
     "@playwright/test": "^1.49.1",
     "@testing-library/react": ">=16",
     "@vercel/functions": "^3.0.0",
@@ -212,6 +219,9 @@
   },
   "peerDependenciesMeta": {
     "@cloudflare/vite-plugin": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
       "optional": true
     },
     "@playwright/test": {

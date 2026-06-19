@@ -102,6 +102,27 @@ export default hostRouter; // the instance
 
 `{ env, ctx }` is threaded unchanged from the function to each matched sub-app's handler and its `cache(env, ctx)` factory. See the `host-router` skill for sub-app structure and routing patterns.
 
+## Tracing (custom spans)
+
+Vercel exposes tracing through OpenTelemetry. `createVercelTracing()` (from `@rangojs/router/vercel`) emits the router's `rango.*` phase spans onto the global OTel tracer that `@vercel/otel`'s `registerOTel()` installs:
+
+```typescript
+// instrumentation.ts — install the provider, then export the tracing config so
+// importing this module is what runs registerOTel(). A Rango/Vite app does NOT
+// auto-load `instrumentation.ts` like Next.js does, so a standalone
+// registerOTel() that nothing imports is a silent no-op.
+import { registerOTel } from "@vercel/otel";
+import { createVercelTracing } from "@rangojs/router/vercel";
+registerOTel({ serviceName: "my-app" });
+export const tracing = createVercelTracing();
+
+// router.tsx — importing `tracing` runs instrumentation.ts (and registerOTel)
+import { tracing } from "./instrumentation.js";
+export const router = createRouter({ tracing }).routes(/* ... */);
+```
+
+`createVercelTracing(opts?)` takes `{ enabled, spans, tracerName, tracer }` — same phase set as `createCloudflareTracing` (`rango.request/middleware/action/loader/render/ssr`). Caveats: Node-runtime only (Vercel custom spans are unsupported on Edge); `registerOTel()` must run before the first request; `@vercel/otel` is what unlocks Vercel Session Tracing + Trace Drains. The deploy bundles `@vercel/otel` and its `@opentelemetry/*` peers into the function (no `node_modules` at runtime), so they must be installed. See `examples/vercel-basic` for a worked hybrid setup and the `observability` skill for the cross-platform tracing model.
+
 ## Local validation without deploying
 
-`vite preview` serves the node build for a quick check. For a faithful test of the assembled `.vercel/output` (isolated filesystem, ESM, self-contained bundle), import `functions/index.func/index.mjs` and serve it behind filesystem-then-function routing — see `examples/vercel-basic/scripts/smoke.mjs`.
+`vite preview` serves the static client assets only. To preview the RSC **function**, serve the assembled `.vercel/output` behind filesystem-then-function routing — `examples/vercel-basic/scripts/preview.mjs` does this (and `pnpm preview:vercel` runs it). For a faithful deploy test (isolated filesystem, ESM, self-contained bundle), `examples/vercel-basic/scripts/smoke.mjs` serves it from a temp dir outside the repo. Both share `scripts/serve-vercel-output.mjs`.

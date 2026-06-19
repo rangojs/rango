@@ -82,10 +82,32 @@ const fetchHandler = (request) =>
 export default toNodeHandler(fetchHandler);
 `;
 
+/**
+ * Reject a non-Node runtime for the vercel preset. The preset only emits a Node
+ * serverless function (launcherType "Nodejs", bundled Node APIs, response
+ * streaming). Vercel's Edge runtime needs a different Build Output primitive
+ * (EdgeFunction, a Web-handler entry, no node_modules) that this assembler does
+ * not produce, so a non-nodejs runtime would emit a config the platform rejects
+ * or mis-runs. Fail fast at build time instead of shipping a broken function.
+ */
+export function assertVercelNodeRuntime(runtime: string | undefined): void {
+  if (runtime != null && !runtime.startsWith("nodejs")) {
+    throw new Error(
+      `[rango] preset "vercel": runtime "${runtime}" is not supported. ` +
+        `This preset emits a Node serverless function; use a "nodejs*" runtime ` +
+        `(default "nodejs22.x"). The Edge runtime is not supported.`,
+    );
+  }
+}
+
 async function assemble(
   root: string,
   options: RangoVercelOptions,
 ): Promise<void> {
+  const vercel = options.vercel ?? {};
+  // Validate config before touching the build output.
+  assertVercelNodeRuntime(vercel.runtime);
+
   const dist = join(root, "dist");
   for (const dir of ["client", "rsc", "ssr"]) {
     if (!existsSync(join(dist, dir))) {
@@ -94,8 +116,6 @@ async function assemble(
       );
     }
   }
-
-  const vercel = options.vercel ?? {};
   const functionName = vercel.functionName ?? "index";
   const out = join(root, ".vercel", "output");
   const funcDir = join(out, "functions", `${functionName}.func`);

@@ -81,6 +81,10 @@ describe("createVirtualEntriesPlugin entry kind", () => {
       'import * as __hostEntry from "/src/worker.rsc.tsx"',
     );
     expect(host).not.toContain("createRSCHandler");
+    // The host-router resolver must require BOTH .match() and .host(): a regular
+    // createRouter() also exposes .match(), so .host() disambiguates a mistaken
+    // `hostRouter` path (which would otherwise return a non-Response MatchResult).
+    expect(host).toContain('typeof candidate.host === "function"');
   });
 });
 

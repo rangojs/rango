@@ -238,6 +238,12 @@ Grouped by concern — read when you need to…
 | `/bundle-analysis` | Audit your app's production bundle for server leaks and oversized chunks |
 | `/debug-manifest`  | Inspect route manifest structure                                         |
 
+**Deployment**:
+
+| Skill     | Description                                                                               |
+| --------- | ----------------------------------------------------------------------------------------- |
+| `/vercel` | Deploy to Vercel Functions (`preset: "vercel"`), Runtime Cache, and `createVercelTracing` |
+
 **Testing**:
 
 | Skill      | Description                                                                                                                     |

@@ -261,11 +261,20 @@ function base64ToBuffer(b64: string): ArrayBuffer {
 /**
  * Vercel Runtime Cache-backed segment cache store.
  *
- * Suitable for production deployments on Vercel Functions (Node or Edge). The
+ * Suitable for production deployments on Vercel Functions (Node runtime). The
  * store is best-effort: every read failure degrades to a miss and every write
  * failure to a no-op (reported, never thrown) - the sole exception is
- * invalidateTags(), which rejects on a failed expireTag so an awaited
- * updateTag() surfaces it (read-your-own-writes honesty).
+ * invalidateTags(), which rejects when the injected cache's expireTag() rejects
+ * so an awaited updateTag() can surface the failure.
+ *
+ * Read-your-own-writes caveat: this honesty is only as strong as the cache
+ * handle. The official `@vercel/functions` cache (`BuildCache.expireTag`)
+ * CATCHES backend failures and resolves, so with the official client a failed
+ * expireTag is invisible here and an awaited updateTag() can report success that
+ * did not happen. Treat tag invalidation on the official Vercel client as
+ * best-effort, not a hard read-your-own-writes guarantee. (A custom cache handle
+ * that propagates expireTag rejections does get the strict guarantee, which is
+ * what the unit suite exercises.)
  *
  * @example
  * ```ts
@@ -432,14 +441,21 @@ export class VercelCacheStore<
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
     const storeKey = this.toStoreKey(key, "r");
+    const started = Date.now();
     let raw: unknown;
     try {
       raw = await this.cache.get(storeKey);
     } catch (error) {
       reportCacheError(error, "cache-read", "[VercelCacheStore] getResponse");
+      this.emitDebug({ op: "getResponse", key, outcome: "error" });
       return null;
     }
-    if (raw == null) return null;
+    const readMs = Date.now() - started;
+
+    if (raw == null) {
+      this.emitDebug({ op: "getResponse", key, outcome: "miss", readMs });
+      return null;
+    }
     const env = this.asResponseEnvelope(raw);
     if (!env) {
       reportCacheError(
@@ -448,12 +464,43 @@ export class VercelCacheStore<
         "[VercelCacheStore] getResponse",
       );
       void this.safeDelete(storeKey);
+      this.emitDebug({ op: "getResponse", key, outcome: "corrupt", readMs });
       return null;
     }
 
     const now = Date.now();
     if (now > env.e) {
       void this.safeDelete(storeKey);
+      this.emitDebug({
+        op: "getResponse",
+        key,
+        outcome: "expired",
+        staleAt: env.s,
+        expiresAt: env.e,
+        readMs,
+      });
+      return null;
+    }
+
+    // Reconstruct the Response BEFORE marking revalidating. A corrupt body (e.g.
+    // invalid base64 from base64ToBuffer, or bad header entries) would otherwise
+    // throw out of getResponse — breaking the fail-open contract — and a stale
+    // re-stamp would re-persist the bad value. Treat a reconstruction failure as
+    // a corrupt entry: report, evict, and miss.
+    let response: Response;
+    try {
+      response = new Response(base64ToBuffer(env.b), {
+        status: env.st,
+        headers: new Headers(env.hd),
+      });
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-corrupt",
+        "[VercelCacheStore] getResponse",
+      );
+      void this.safeDelete(storeKey);
+      this.emitDebug({ op: "getResponse", key, outcome: "corrupt", readMs });
       return null;
     }
 
@@ -466,9 +513,14 @@ export class VercelCacheStore<
         "[VercelCacheStore] getResponse",
       );
     }
-    const response = new Response(base64ToBuffer(env.b), {
-      status: env.st,
-      headers: new Headers(env.hd),
+    this.emitDebug({
+      op: "getResponse",
+      key,
+      outcome: isStale ? "stale-revalidate" : "fresh",
+      shouldRevalidate: isStale,
+      staleAt: env.s,
+      expiresAt: env.e,
+      readMs,
     });
     return { response, shouldRevalidate: isStale };
   }
@@ -608,6 +660,10 @@ export class VercelCacheStore<
     } catch (error) {
       // The one deliberate throw: a failed durable invalidation must reject so an
       // awaited updateTag() surfaces it instead of reporting false success.
+      // NOTE: this only fires if the injected cache's expireTag() actually
+      // rejects. The official @vercel/functions cache catches backend failures
+      // and resolves, so on that client a failure is invisible and this throw
+      // never fires (tag invalidation is best-effort there). See the class doc.
       reportCacheError(
         error,
         "cache-invalidate",

@@ -8,6 +8,8 @@ import { Document } from "./components/Document.js";
 import { HomePage } from "./components/pages/HomePage.js";
 import { AboutPage } from "./components/pages/AboutPage.js";
 import { CachedTimePage } from "./components/pages/CachedTimePage.js";
+import { buildTracing, traceDebugEnabled } from "./instrumentation.js";
+import { getLastTrace } from "./trace-debug.js";
 
 const defaults = { ttl: 60, swr: 300 };
 
@@ -38,10 +40,32 @@ declare global {
   }
 }
 
-export const router = createRouter({
+const base = createRouter({
   document: Document,
   cache: resolveCache,
-}).routes(({ path, cache }) => [
+  // Vercel custom spans: emit "rango.*" spans for the request/middleware/
+  // loader/render/ssr phases via OpenTelemetry. The hybrid setup in
+  // instrumentation.ts wires @vercel/otel in the real path and an in-memory
+  // recorder in the e2e (RANGO_TRACE_DEBUG=1).
+  tracing: buildTracing(),
+});
+
+// Test-only: only in the debug build (RANGO_TRACE_DEBUG=1) register a
+// path-scoped endpoint that returns the recorder's most recent "rango.*" span
+// tree, so the e2e can assert span emission and nesting. Gated so a real
+// production deploy never exposes it. (A `.use()` middleware, not a route, so it
+// stays out of the route manifest either way.)
+const withDebug = traceDebugEnabled
+  ? base.use(
+      "/__debug/trace",
+      () =>
+        new Response(JSON.stringify(getLastTrace()), {
+          headers: { "content-type": "application/json" },
+        }),
+    )
+  : base;
+
+export const router = withDebug.routes(({ path, cache }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
   cache({ ttl: 10, swr: 30, tags: ["time"] }, () => [

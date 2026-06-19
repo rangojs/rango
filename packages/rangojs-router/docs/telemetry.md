@@ -221,6 +221,7 @@ Phase **spans** always come from the `tracing` slot. Pick the factory by platfor
 | Platform                               | `tracing` slot              | Phase spans? |
 | -------------------------------------- | --------------------------- | ------------ |
 | Cloudflare Workers                     | `createCloudflareTracing()` | yes (native) |
+| Vercel Functions (Node runtime)        | `createVercelTracing()`     | yes (OTel)   |
 | Any platform with an OpenTelemetry SDK | `createOTelTracing(tracer)` | yes (OTel)   |
 | Node / anywhere, no tracing slot wired | _(unset)_                   | no           |
 
@@ -584,6 +585,71 @@ only discrete-fact instant spans; the phase spans (`rango.request`/`loader`/…)
 come from the `tracing` slot (`createOTelTracing` or `createCloudflareTracing`).
 There is no overlap, so you can run a tracing adapter and `createOTelSink`
 together without duplicate phase spans.
+
+## Vercel custom spans (`createVercelTracing`)
+
+On Vercel, tracing is OpenTelemetry — there is no native import-free span API
+like Cloudflare's. `createVercelTracing()` is a thin convenience over
+`createOTelTracing` that reads the global OTel tracer
+[`@vercel/otel`](https://www.npmjs.com/package/@vercel/otel)'s `registerOTel()`
+installs, so the router's phases show up in Vercel's trace waterfall.
+
+```typescript
+// instrumentation.ts — installs the global OTel provider, then builds the
+// tracing config off it. Export the config so importing this module is what
+// runs registerOTel(): a Rango/Vite app does NOT auto-load `instrumentation.ts`
+// the way Next.js does, so a standalone registerOTel() that nothing imports is a
+// silent no-op (the tracer stays unregistered and every span is dropped).
+import { registerOTel } from "@vercel/otel";
+import { createVercelTracing } from "@rangojs/router/vercel";
+
+registerOTel({ serviceName: "my-app" });
+
+// All phases on by default; turn individual phases off as needed.
+export const tracing = createVercelTracing({ spans: { ssr: false } });
+```
+
+```typescript
+// router.tsx — importing `tracing` runs instrumentation.ts (and registerOTel).
+import { createRouter } from "@rangojs/router";
+import { tracing } from "./instrumentation.js";
+
+export const router = createRouter({ document: Document, tracing });
+```
+
+Emitted spans are the same set as everywhere else: `rango.request`,
+`rango.middleware`, `rango.action`, `rango.loader`, `rango.handler`,
+`rango.render`, `rango.ssr`. Options: `enabled`, per-phase `spans`, an
+OTel-instrumentation-scope `tracerName` (default `"rango"`), and a `tracer`
+override (defaults to the global `trace.getTracer(tracerName)`).
+
+Platform caveats, all inherited from Vercel / OpenTelemetry (not the router):
+
+- **Node.js runtime only.** Vercel custom spans are unsupported on the Edge
+  runtime — a span created there silently produces nothing. `startActiveSpan`
+  nesting also needs an `AsyncLocalStorageContextManager`, which `@vercel/otel`
+  configures on Node. Keep tracing on Node-runtime functions.
+- **`registerOTel()` must run before the first request** (the `instrumentation`
+  module convention). Reading the tracer via `trace.getTracer` is safe even if
+  it runs first — the API's proxy tracer delegates to the provider once
+  registered — but with no provider every span is a transparent no-op, exactly
+  as if tracing were off.
+- **`@vercel/otel` is what unlocks Vercel's Session Tracing + Trace Drains.** A
+  hand-rolled OpenTelemetry `NodeSDK` produces valid OTLP but forfeits both;
+  `createVercelTracing` is built to ride on `registerOTel`.
+- **Self-contained function bundling.** The `preset: "vercel"` deploy bundles
+  the server (rsc/ssr) with `noExternal`, so `@vercel/otel` and its
+  `@opentelemetry/*` peers must be installed (they go into the bundle, not
+  `node_modules`). `@vercel/otel` is bundle-friendly (zero runtime deps, fetch
+  instrumentation rather than `require-in-the-middle`). OTel bundling failures
+  surface at **runtime** (cold-start), not build time — verify the deployed
+  function, not just `vite build`.
+
+A worked hybrid setup (real `@vercel/otel` plus an in-memory recorder for the
+e2e) lives in `examples/vercel-basic`. Like `createCloudflareTracing`, these
+spans and the `debugPerformance` perf timeline are
+[one instrumentation model](#one-instrumentation-model), and `createVercelTracing`
+composes with `createOTelSink` without duplicate phase spans.
 
 ## Combining Sinks
 
