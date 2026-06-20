@@ -46,6 +46,15 @@
  *   redirects: a cross-origin Location is rewritten to the basename root unless
  *   redirect(url, { external: true }) opted out, mirroring production's single
  *   handler chokepoint. Soft partial/action redirects are 204 and pass through.
+ * - createRouter({ onError }) for CACHE / background-error degradation. dispatch
+ *   wires the request context's _reportBackgroundError to the router's onError the
+ *   same way the production RSC handler does, so a cache-read/cache-write/
+ *   stale-revalidation failure on a cached response route (a throwing route
+ *   cache({ key })/cache({ tags }), or a custom store whose keyGenerator/
+ *   getResponse/putResponse throws) fires onError with phase "cache" and
+ *   metadata.category, while the request still degrades-to-miss exactly as before.
+ *   (A thrown response-route HANDLER error is the one onError path NOT covered —
+ *   see "DOES NOT support" below.)
  *
  * What dispatch DOES NOT support (and why):
  * - RSC component routes — rendering requires the Flight serializer + React
@@ -53,10 +62,11 @@
  *   This includes partial requests that resolve to a component route.
  * - Server actions (?_rsc_action) — RSC protocol concerns handled by
  *   router.fetch().
- * - ctx.onError() callbacks on a thrown response-route handler error: the
+ * - createRouter({ onError }) on a thrown response-route HANDLER error: the
  *   error is serialized into the same typed 500 / RouterError Response as
- *   production, but registered onError handlers are NOT invoked here. Cover
- *   onError side effects with an e2e test.
+ *   production, but onError is NOT invoked for that path here. Cover handler-error
+ *   onError side effects with an e2e test. (This is the unchanged boundary; cache
+ *   and other background errors DO route through onError — see below.)
  * - Location-state-carrying redirects on a partial/action request: production
  *   embeds a Flight payload (createRedirectFlightResponse) so the client can
  *   restore location state across the redirect. dispatch is RSC-free, so it
@@ -114,6 +124,8 @@ import {
   markExternalRedirect,
 } from "../redirect-origin.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
+import { invokeOnError } from "../router/error-handling.js";
+import type { OnErrorCallback } from "../types/error-types.js";
 import type { Rango } from "../router/router-interfaces.js";
 
 /**
@@ -127,6 +139,7 @@ interface DispatchableRouter<TEnv> {
   routerId?: string;
   routeMap: Record<string, unknown>;
   middleware: MiddlewareEntry<TEnv>[];
+  onError?: OnErrorCallback<TEnv>;
   findMatch(pathname: string): {
     redirectTo?: string;
     routeKey?: string;
@@ -393,6 +406,22 @@ export async function dispatch<TEnv = any>(
     cacheStore,
     cacheProfiles: router.cacheProfiles,
   });
+  // Wire background error reporting so cache degradation (reportCacheError ->
+  // _reportBackgroundError) reaches the router's onError, mirroring the production
+  // RSC handler (rsc/handler.ts). Without this, dispatch could not observe onError.
+  requestContext._reportBackgroundError = (error, category) => {
+    if (error != null && typeof error === "object") {
+      if (requestContext._reportedErrors.has(error)) return;
+      requestContext._reportedErrors.add(error);
+    }
+    invokeOnError(
+      router.onError,
+      error,
+      "cache",
+      { request: req, url, metadata: { category } },
+      "RSC",
+    );
+  };
   // Match production: the RSC handler stores the router's basename on the
   // request context (handler.ts), and redirect() prefixes root-relative URLs
   // with it. Mirror it so basename-redirect tests behave as they do in a real

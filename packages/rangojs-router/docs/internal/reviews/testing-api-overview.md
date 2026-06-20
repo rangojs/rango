@@ -252,7 +252,7 @@ Plus **`@rangojs/router/host/testing`** for host-router pattern matching.
 2. **Flying coast-to-coast** — no real Flight serialization without react-server condition.
 3. **Global middleware on component routes** — `dispatch` rejects component routes; extract middleware to `runMiddleware` or test at e2e.
 4. **Platform bindings** (`env.DB`, `env.KV`, `env.D1`) — app-specific. Consumers inject doubles via `env` option.
-5. **`ctx.onError()` side effects** — `dispatch` does not invoke `onError` handlers. Test via e2e.
+5. **`ctx.onError()` for thrown handler errors** — `dispatch` does not invoke `onError` for a thrown response-route handler error (it serializes the same typed 500 / `RouterError` Response as production). Test handler-error `onError` side effects via e2e. Cache/background-error degradation IS covered, though: `dispatch` wires the request context's `_reportBackgroundError` to the router's `onError` (mirroring the production RSC handler), so a cached response route whose `key()`/`keyGenerator`/`tags()` throws — or whose store read/write fails — fires `onError` with phase `"cache"` and `metadata.category` while still degrading to a miss.
 6. **Location-state-carrying partial redirects** — `dispatch` lacks Flight stream for embedding location state on redirect. Unit test the loader's effects; verify redirect restoration at e2e.
 
 ### Design Constraints and Walls

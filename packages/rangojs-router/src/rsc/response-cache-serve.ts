@@ -25,6 +25,7 @@ import type { SegmentCacheStore } from "../cache/types.js";
 import type { EntryCacheConfig, EntryData } from "../server/context.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { isCacheableStatus, finalizeResponse } from "./helpers.js";
+import { reportCacheError } from "../cache/cache-error.js";
 
 /** Injected cache-scope builders (kept off this module's runtime import graph). */
 export interface CacheScopeDeps {
@@ -110,14 +111,24 @@ export async function serveResponseRouteWithCache(
       cacheKey = `response:${customKey}`;
     } catch (error) {
       keyResolutionFailed = true;
-      console.error(`[ResponseCache] Key resolution failed:`, error);
+      reportCacheError(
+        error,
+        "cache-read",
+        "[ResponseCache] Key resolution failed",
+        reqCtx,
+      );
     }
   } else if (store.keyGenerator) {
     try {
       cacheKey = await store.keyGenerator(reqCtx, cacheKey);
     } catch (error) {
       keyResolutionFailed = true;
-      console.error(`[ResponseCache] keyGenerator failed:`, error);
+      reportCacheError(
+        error,
+        "cache-read",
+        "[ResponseCache] keyGenerator failed",
+        reqCtx,
+      );
     }
   }
 
@@ -172,13 +183,23 @@ export async function serveResponseRouteWithCache(
           const fresh = finalizeResponse(await executeHandler());
           if (isCacheableStatus(fresh.status)) await putFresh(store, fresh);
         } catch (error) {
-          console.error(`[ResponseCache] Revalidation failed:`, error);
+          reportCacheError(
+            error,
+            "stale-revalidation",
+            "[ResponseCache] background revalidation",
+            reqCtx,
+          );
         }
       });
       return applyPreHandlerCallbacks(cached.response);
     }
   } catch (error) {
-    console.error(`[ResponseCache] Cache lookup failed:`, error);
+    reportCacheError(
+      error,
+      "cache-read",
+      "[ResponseCache] Cache lookup failed",
+      reqCtx,
+    );
   }
 
   // Cache miss: execute the handler and cache the result.
@@ -204,7 +225,12 @@ export async function serveResponseRouteWithCache(
           responseTags,
         );
       } catch (error) {
-        console.error(`[ResponseCache] Cache write failed:`, error);
+        reportCacheError(
+          error,
+          "cache-write",
+          "[ResponseCache] Cache write failed",
+          reqCtx,
+        );
       }
     });
   }
