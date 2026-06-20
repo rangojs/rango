@@ -9,8 +9,8 @@ import { GtmDemoPage } from "../pages/gtm-demo.js";
  * - OVERRIDES the GTM bootstrap by reusing the "gtm" Script id, baking
  *   content_group into the FIRST (hard-load) page_view server-side. The Script
  *   handle is collected after handlers (parent -> child, last-wins), so this
- *   replaces the layout's generic bootstrap on /gtm — content_group lands in the
- *   static HTML, which a head-only server component cannot do.
+ *   replaces the layout `@gtm` slot's generic bootstrap on /gtm — content_group
+ *   lands in the static HTML, which a head-only server component cannot do.
  * - content_group onto the Gtm handle for the SOFT-nav page_view (<GtmPageViews>).
  * - document title via Meta (becomes page_title through document.title).
  * - two more Script scenarios that demonstrate the execution contract:

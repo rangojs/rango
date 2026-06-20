@@ -1,13 +1,15 @@
-import { createHandle } from "@rangojs/router";
+import { createHandle, Script, type Handler } from "@rangojs/router";
 
 /**
  * Google Tag Manager integration, built on the router's first-class primitives:
  *
- * - The inline GTM BOOTSTRAP is pushed into the built-in `Script` handle
- *   (ctx.use(Script)) by the root layout and rendered by `<Scripts/>` in
- *   RootLayout's <head> with the request CSP nonce applied automatically. A route
- *   may override it by reusing the "gtm" Script id (see urls/gtm.tsx) to bake
- *   per-route tagging (content_group) into the FIRST page_view server-side.
+ * - The inline GTM BOOTSTRAP is pushed into the built-in `Script` handle by the
+ *   `GtmBootstrap` slot — a UI-less parallel (`@gtm`) the root layout mounts via
+ *   `parallel({ "@gtm": GtmBootstrap })`, which keeps the wiring composable and out
+ *   of the layout's render body. `<Scripts/>` in RootLayout's <head> renders it
+ *   with the request CSP nonce applied automatically. A route may override it by
+ *   reusing the "gtm" Script id (see urls/gtm.tsx) to bake per-route tagging
+ *   (content_group) into the FIRST page_view server-side.
  * - This `Gtm` handle carries per-route page tagging (content_group, ...) for the
  *   SOFT-navigation page_view, read by the client `<GtmPageViews>`.
  * - generateGtmInit builds the bootstrap string; pageViewTagging shapes the
@@ -166,13 +168,28 @@ export function generateGtmInit(
     Object.keys(safeExtras).length > 0
       ? `Object.assign(${runtime},${JSON.stringify(safeExtras)})`
       : runtime;
-  return [
-    "window.dataLayer=window.dataLayer||[];",
-    'window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});',
-    `window.dataLayer.push(${pageView});`,
-    `(function(d,s,i){var j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+encodeURIComponent(i);var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);})(document,"script",${id});`,
-  ].join("");
+  return `window.dataLayer=window.dataLayer||[];
+window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});
+window.dataLayer.push(${pageView});
+(function(d,s,i){var j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+encodeURIComponent(i);var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);})(document,"script",${id});`;
 }
+
+/**
+ * Composable GTM bootstrap slot. Pushes the inline GTM Script (init dataLayer,
+ * fire gtm.js start, emit the first page_view, inject gtm.js) and renders nothing.
+ * Mount it on any layout with `parallel({ "@gtm": GtmBootstrap })` instead of
+ * inlining the `ctx.use(Script)` push in the layout handler body — this is the
+ * same UI-less parallel pattern as a `@meta` slot, so the analytics wiring stays
+ * decoupled from rendering and can be added or removed per layout without touching
+ * the handler. The push associates with the parent (layout) segment, so a route
+ * still overrides per-route tagging by reusing the "gtm" Script id (child segment,
+ * last-push-wins); see urls/gtm.tsx. The CSP nonce and freeze-after-hydration are
+ * still owned by <Scripts/>.
+ */
+export const GtmBootstrap: Handler<"/"> = (ctx) => {
+  ctx.use(Script)({ id: "gtm", children: generateGtmInit(DEFAULT_GTM_ID) });
+  return null;
+};
 
 /** GTM <noscript> iframe URL for the given container id. */
 export function gtmNoScriptSrc(containerId: string): string {
