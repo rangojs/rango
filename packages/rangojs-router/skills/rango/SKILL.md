@@ -218,17 +218,18 @@ Grouped by concern — read when you need to…
 
 **Client & presentation** — build the client-side UX:
 
-| Skill               | Description                                                               |
-| ------------------- | ------------------------------------------------------------------------- |
-| `/hooks`            | Client-side React hooks                                                   |
-| `/theme`            | Light/dark mode with FOUC prevention                                      |
-| `/i18n`             | Locale routing with `:locale?`, resolution chains, react-intl integration |
-| `/fonts`            | Load web fonts with preload hints                                         |
-| `/css`              | Import CSS in the Document `<head>` (`?url` + managed `precedence` links) |
-| `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                |
-| `/view-transitions` | React View Transitions on layouts, routes, and parallel slots             |
-| `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                     |
-| `/react-compiler`   | Enable React Compiler (opt-in) the vite-rsc way; client-only scope        |
+| Skill               | Description                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `/hooks`            | Client-side React hooks                                                                                                            |
+| `/theme`            | Light/dark mode with FOUC prevention                                                                                               |
+| `/i18n`             | Locale routing with `:locale?`, resolution chains, react-intl integration                                                          |
+| `/fonts`            | Load web fonts with preload hints                                                                                                  |
+| `/css`              | Import CSS in the Document `<head>` (`?url` + managed `precedence` links)                                                          |
+| `/scripts`          | Inject third-party scripts (GTM/analytics) into head/body via the `Script` handle; nonce auto-applied to document-rendered scripts |
+| `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                                                                         |
+| `/view-transitions` | React View Transitions on layouts, routes, and parallel slots                                                                      |
+| `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                                                                              |
+| `/react-compiler`   | Enable React Compiler (opt-in) the vite-rsc way; client-only scope                                                                 |
 
 **Observability & production health**:
 

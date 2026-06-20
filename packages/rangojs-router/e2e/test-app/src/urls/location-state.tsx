@@ -14,6 +14,7 @@ import {
   ThrowSimpleRedirectButton,
   ThrowErrorButton,
   ThrowFormErrorButton,
+  ActionRedirectNonSerializableButton,
 } from "../components/FlashBanner.js";
 import {
   TypedStateDisplay,
@@ -86,6 +87,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
         <ThrowSimpleRedirectButton />
         <ThrowErrorButton />
         <ThrowFormErrorButton />
+        <ActionRedirectNonSerializableButton />
       </div>
     ),
     { name: "index" },

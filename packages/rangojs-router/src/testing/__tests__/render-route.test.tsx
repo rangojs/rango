@@ -15,6 +15,7 @@ import { useHandle } from "../../browser/react/use-handle.js";
 import { useMount } from "../../browser/react/use-mount.js";
 import { createHandle } from "../../handle.js";
 import type { LoaderDefinition } from "../../types.js";
+import { useNonce } from "../../browser/react/nonce-context.js";
 import { renderRoute } from "../render-route.js";
 
 afterEach(() => {
@@ -626,5 +627,31 @@ describe("renderRoute request/leaf validation", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("renderRoute nonce (useNonce contract)", () => {
+  // A userland head-script component (analytics/GTM) reads the CSP nonce via
+  // useNonce(). This pins that contract through the public testing primitive:
+  // the `nonce` option seeds NonceContext (mirroring what SSR provides per
+  // request), and the default is undefined (the production browser value).
+  function NonceProbe() {
+    return <span data-testid="nonce">{useNonce() ?? "(none)"}</span>;
+  }
+
+  it("seeds useNonce() with the nonce option", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/", Component: NonceProbe }],
+      { request: "/", nonce: "test-nonce-123" },
+    );
+    expect(getByTestId("nonce").textContent).toBe("test-nonce-123");
+  });
+
+  it("returns undefined when no nonce is seeded (browser default)", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/", Component: NonceProbe }],
+      { request: "/" },
+    );
+    expect(getByTestId("nonce").textContent).toBe("(none)");
   });
 });

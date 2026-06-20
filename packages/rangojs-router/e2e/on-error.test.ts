@@ -93,6 +93,41 @@ function onErrorTests(f: ReturnType<typeof useFixture>) {
     expect(error.message).toBe("Action error for onError test");
   });
 
+  test("redirect with non-serializable locationState reports phase='rendering'", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/location-state"));
+    await waitForHydration(page);
+
+    // Clear any previous errors
+    await page.request.get(f.url("/__test/clear-error-log"));
+
+    // The action throws redirect("/location-state", { state }) where state
+    // carries a function. The redirect is valid, so the handler returns a 200
+    // Flight redirect payload — but createRedirectFlightResponse's
+    // renderToReadableStream fails serializing the function during real async
+    // Flight serialization. That failure must reach onError("rendering"); the
+    // request itself still succeeds (the broken stream is only observable here).
+    const actionResponse = page.waitForResponse(
+      (resp) =>
+        resp.request().method() === "POST" &&
+        resp.url().includes("_rsc_action="),
+      { timeout: 30000 },
+    );
+    await page
+      .locator('[data-testid="action-redirect-nonserializable-btn"]')
+      .click();
+    await actionResponse;
+
+    const error = await waitForOnError(
+      page,
+      f.url("/__test/last-error"),
+      "rendering",
+    );
+
+    expect(error.phase).toBe("rendering");
+  });
+
   test("streaming rendering error reports phase='rendering'", async ({
     page,
   }) => {

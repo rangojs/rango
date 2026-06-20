@@ -10,6 +10,7 @@ import {
   throwSimpleRedirect,
   throwActionError,
   throwFormActionError,
+  actionRedirectNonSerializableState,
 } from "../actions.js";
 
 export function FlashBanner() {
@@ -62,6 +63,17 @@ export function ThrowSimpleRedirectButton() {
       onClick={() => throwSimpleRedirect()}
     >
       Throw simple redirect
+    </button>
+  );
+}
+
+export function ActionRedirectNonSerializableButton() {
+  return (
+    <button
+      data-testid="action-redirect-nonserializable-btn"
+      onClick={() => actionRedirectNonSerializableState().catch(() => {})}
+    >
+      Redirect with non-serializable state
     </button>
   );
 }

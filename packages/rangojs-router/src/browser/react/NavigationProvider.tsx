@@ -166,6 +166,14 @@ export interface NavigationProviderProps {
    * load (X-RSC-Reload), so the target app establishes its own shell on load.
    */
   appShellRef?: AppShellRef;
+
+  /**
+   * CSP nonce to expose via NonceContext. Production leaves this undefined — the
+   * browser has no nonce (it is a server-side HTML concern), and SSR provides the
+   * nonce through its own NonceContext.Provider. Test harnesses (renderRoute) set
+   * it to seed a nonce so components calling useNonce() can be exercised.
+   */
+  nonce?: string;
 }
 
 /**
@@ -200,6 +208,7 @@ export function NavigationProvider({
   version,
   basename,
   appShellRef,
+  nonce,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -377,9 +386,10 @@ export function NavigationProvider({
 
   // Match SSR tree shape: NonceContext.Provider is always present so
   // hydration sees the same component tree. Value is undefined on the
-  // client — CSP nonces are a server-side HTML concern.
+  // client — CSP nonces are a server-side HTML concern — unless a test
+  // harness seeded one via the `nonce` prop.
   content = (
-    <NonceContext.Provider value={undefined}>{content}</NonceContext.Provider>
+    <NonceContext.Provider value={nonce}>{content}</NonceContext.Provider>
   );
 
   return (

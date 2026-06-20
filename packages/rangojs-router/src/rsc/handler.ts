@@ -296,7 +296,17 @@ export function createRSCHandler<
         ...(locationState && { locationState }),
       },
     };
-    const rscStream = renderToReadableStream<RscPayload>(redirectPayload);
+    const rscStream = renderToReadableStream<RscPayload>(redirectPayload, {
+      onError: (error: unknown) => {
+        const reqCtx = _getRequestContext<TEnv>();
+        if (!reqCtx) return;
+        callOnError(error, "rendering", {
+          request: reqCtx.request,
+          url: reqCtx.url,
+          env: reqCtx.env,
+        });
+      },
+    });
     return createResponseWithMergedHeaders(rscStream, {
       status: 200,
       headers: { "content-type": "text/x-component;charset=utf-8" },

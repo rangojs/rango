@@ -35,3 +35,18 @@ export interface ConcurrentSlotState {
  */
 export const ConcurrentSlotA = createLocationState<ConcurrentSlotState>();
 export const ConcurrentSlotB = createLocationState<ConcurrentSlotState>();
+
+export interface NonSerializableStateShape {
+  text: string;
+  bad: unknown;
+}
+
+/**
+ * Slot whose declared shape allows an arbitrary `bad` payload. The redirect
+ * onError e2e stores a value React Flight cannot serialize (a function) here so
+ * createRedirectFlightResponse's renderToReadableStream errors under workerd
+ * during real async serialization, and the failure must surface through
+ * onError("rendering").
+ */
+export const NonSerializableState =
+  createLocationState<NonSerializableStateShape>();
