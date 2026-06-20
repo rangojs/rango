@@ -185,6 +185,12 @@ resolve `dist/` outside `./vite`, and it may lag `src/`.
 
 Grouped by concern — read when you need to…
 
+**Positioning & evaluation**:
+
+| Skill         | Description                                                  |
+| ------------- | ------------------------------------------------------------ |
+| `/comparison` | Compare Rango with Next.js, TanStack Start, and Waku fairly. |
+
 **Structure & routing** — shape URLs, layouts, navigation, and request processing:
 
 | Skill                     | Description                                                                |

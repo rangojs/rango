@@ -12,6 +12,47 @@ A code-first, type-safe React Server Components router
 > npm install @rangojs/router@experimental
 > ```
 
+## Why Rango?
+
+Rango keeps simple applications simple: define a route tree, render server
+components, and navigate by type-safe route names. As requirements grow, the
+same tree can express data freshness, caching, partial rendering, and complex UI
+composition without moving those decisions into a separate framework model.
+That makes it useful to one developer out of the box while preserving a coherent,
+machine-readable architecture as the application and its AI-assisted development
+workflow grow more complex.
+
+- **Readable, code-first routing** - `urls()`, `path()`, and `include()` keep URL
+  structure, module boundaries, and shared concerns visible in one declared tree
+  instead of making them implicit in filesystem conventions.
+- **Type-safe named routes** - Generated route names, params, search schemas, and
+  `reverse()` calls stay checked when paths move or modules are composed.
+- **RSC with progressive-enhancement parity** - Server Components, Server
+  Actions, and forms share tested behavior across client navigation and no-JS
+  requests.
+- **Live data beneath cached UI** - Loaders stay fresh by default, even when the
+  surrounding segment is cached or prerendered, and resolve in parallel while
+  the UI streams.
+- **Precise client updates** - `revalidate()` controls which segments and loaders
+  re-render after an action, independently from cache invalidation.
+- **Composable rendering** - Named slots, parallel routes, and intercepts model
+  dashboards, sidebars, modals, and alternate soft-navigation compositions in
+  the route graph.
+- **Controlled navigation** - Request-aware prefetching, in-flight adoption,
+  Rango State with userland invalidation, partial rendering, and integrated
+  deployment-skew recovery make navigation behavior explicit and stable.
+- **Request and cache safety built in** - Default origin checks protect Server
+  Actions, loader fetches, and no-JS form submissions, while tainted request
+  context protects cache boundaries from request-specific data and effects.
+- **CSP-ready rendering** - Per-request nonce generation and propagation cover
+  SSR, RSC payload scripts, typed middleware access, and document-rendered script
+  handles while leaving policy decisions with the application.
+- **Integrated diagnostics** - `debugPerformance` exposes a request waterfall
+  and `Server-Timing` headers without additional instrumentation.
+
+See [Rango compared to Next.js, TanStack Start, and Waku](packages/rangojs-router/docs/comparison.md)
+for the detailed design and capability comparison.
+
 ## Features
 
 - **Code-first routing** - No file-based conventions

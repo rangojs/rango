@@ -6,6 +6,10 @@ A code-first, type-safe React Server Components router
 
 > **Experimental:** This package is under active development. APIs may change between releases. Install with `@experimental` tag.
 
+For the design tradeoffs and a detailed comparison with Next.js, TanStack Start,
+and Waku, see the shipped
+[`/comparison` skill](./skills/comparison/references/framework-comparison.md).
+
 ## Features
 
 - **Named routes** — `reverse("blogPost", { slug })` for type-safe URL generation (Django-style)
