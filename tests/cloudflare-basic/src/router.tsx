@@ -7,6 +7,7 @@ import { createCloudflareTracing } from "@rangojs/router/cloudflare";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
+import { onErrorLog } from "./error-log.js";
 
 // Create the router with document component
 // Document is a server component that wraps the HTML shell
@@ -45,6 +46,10 @@ export const router = createRouter<AppBindings>({
   onError: (ctx) => {
     console.error("Router error ctx:", ctx);
     console.error("Router error:", ctx.error.stack || ctx.error);
+    // Test-only: record { phase, message } so the redirect onError e2e can
+    // read it back via /__test/last-error. The console.error above is kept so
+    // a real consumer's logging path stays exercised.
+    onErrorLog.push({ phase: ctx.phase, message: ctx.error.message });
   },
 })
   // Document cache middleware - caches full responses based on Cache-Control headers

@@ -72,6 +72,7 @@ import { buildEnvPatterns } from "./pages/build-env-handler.js";
 import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
+import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -92,6 +93,24 @@ export const urlpatterns = urls(
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
+
+    // Test utils: read the onError log (non-destructive). Imports from
+    // error-log.js (not router.js) so the read uses a static import and avoids
+    // the dynamic-import / module-graph race that can return an empty log.
+    path.json(
+      "/__test/last-error",
+      () => (onErrorLog.length > 0 ? [...onErrorLog] : null),
+      { name: "testLastError" },
+    ),
+    // Test utils: clear the onError log.
+    path.json(
+      "/__test/clear-error-log",
+      () => {
+        clearOnErrorLog();
+        return { cleared: true };
+      },
+      { name: "testClearErrorLog" },
+    ),
 
     // robots.txt (response route)
     path.text(

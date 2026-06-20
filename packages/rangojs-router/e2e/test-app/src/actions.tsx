@@ -9,7 +9,12 @@ import {
   redirect,
   updateTag,
 } from "@rangojs/router";
-import { ActionInfoA, ActionInfoB, FlashMessage } from "./location-states.js";
+import {
+  ActionInfoA,
+  ActionInfoB,
+  FlashMessage,
+  NonSerializableState,
+} from "./location-states.js";
 import {
   getCurrentCart,
   getCartQuantitySync,
@@ -289,6 +294,29 @@ export async function throwRedirectWithState(): Promise<void> {
  */
 export async function throwSimpleRedirect(): Promise<void> {
   throw redirect("/location-state/target");
+}
+
+/**
+ * Action that throws a redirect carrying location state React Flight cannot
+ * serialize (a function). The redirect itself is valid, so the handler returns
+ * a 200 Flight redirect payload — but createRedirectFlightResponse's
+ * renderToReadableStream fails serializing the function during real async
+ * serialization. The fix wires that failure to onError("rendering"); without it
+ * the consumer's telemetry never sees the broken stream.
+ *
+ * The function is stored past the typed `bad: unknown` slot; a real consumer
+ * could just as easily leak a non-serializable value here by accident.
+ */
+export async function actionRedirectNonSerializableState(): Promise<void> {
+  throw redirect("/location-state", {
+    // The compile-time ValidateLocationState guard rejects functions/symbols by
+    // design; the `as any` is the point of this test — it reproduces a consumer
+    // who casts past that guard and leaks a non-serializable value at runtime.
+    state: NonSerializableState({
+      text: "redirect with non-serializable state",
+      bad: () => "not serializable",
+    } as any),
+  });
 }
 
 /**
