@@ -10,6 +10,7 @@ import {
 import {
   setConcurrentSlot,
   setLocationStateAction,
+  redirectWithNonSerializableState,
 } from "../actions/action-location-state.js";
 
 export function ActionLocationStateTest() {
@@ -30,6 +31,17 @@ export function ActionLocationStateTest() {
         }
       >
         Set Location State
+      </button>
+
+      <button
+        data-testid="redirect-nonserializable-btn"
+        onClick={() =>
+          startTransition(() => {
+            redirectWithNonSerializableState().catch(() => {});
+          })
+        }
+      >
+        Redirect with non-serializable state
       </button>
 
       <ConcurrentLocationState />
