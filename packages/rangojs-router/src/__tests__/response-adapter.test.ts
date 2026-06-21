@@ -200,6 +200,68 @@ describe("teeWithCompletion", () => {
   });
 });
 
+// fetch() can hand the client a body paired with a null-body status (101/204/
+// 205/304) -- e.g. a 304 SWR revalidation materialized from cache. The JS
+// Response constructor rejects that pairing, so teeWithCompletion must pass such
+// responses through instead of re-teeing them via `new Response`.
+describe("teeWithCompletion null-body statuses", () => {
+  // A real fetch() Response can pair a null-body status with a body, but the JS
+  // constructor cannot build one, so duck-type the shape teeWithCompletion reads.
+  const fakeResponseWithBody = (status: number): Response => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array([1, 2, 3]));
+        c.close();
+      },
+    });
+    return {
+      body: stream,
+      status,
+      statusText: "",
+      headers: new Headers({ "content-type": "text/x-component" }),
+    } as unknown as Response;
+  };
+
+  for (const status of [101, 204, 205, 304]) {
+    it(`passes a ${status} response through without reconstructing it`, async () => {
+      const onComplete = vi.fn();
+      const res = fakeResponseWithBody(status);
+
+      let result!: Response;
+      expect(() => {
+        result = teeWithCompletion(res, onComplete);
+      }).not.toThrow();
+
+      // Same object back (never re-teed), original status, completion settled.
+      expect(result).toBe(res);
+      expect(result.status).toBe(status);
+      expect(onComplete).toHaveBeenCalledOnce();
+
+      // Body untouched, so the Flight decoder can still read it downstream.
+      const { value } = await result.body!.getReader().read();
+      expect(value).toEqual(new Uint8Array([1, 2, 3]));
+    });
+  }
+
+  it("still tees a normal 200 streaming response into a fresh Response", async () => {
+    const onComplete = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array([9]));
+        c.close();
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+
+    const teed = teeWithCompletion(res, onComplete);
+
+    // The guard must NOT short-circuit 200: a fresh teed Response, not the original.
+    expect(teed).not.toBe(res);
+    const { value } = await teed.body!.getReader().read();
+    expect(value).toEqual(new Uint8Array([9]));
+  });
+});
+
 // These tests validate the contract that server-action-bridge relies on:
 // when a header check returns "blocked", resolveStreamComplete() must be called
 // before returning emptyResponse(). The bridge does this inline, but the

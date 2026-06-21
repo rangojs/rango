@@ -362,7 +362,8 @@ export function NavigationProvider({
     payload.root instanceof Promise ? use(payload.root) : payload.root;
 
   // Wrap content in RootErrorBoundary to catch:
-  // 1. Errors from NetworkErrorThrower (rendered during network failures)
+  // 1. Errors from RenderErrorThrower (network failures and unprocessable
+  //    navigation responses, routed here by the navigation bridge)
   // 2. Client component errors that occur before/outside the segment tree's error boundary
   // 3. Errors during promise resolution or navigation state updates
   // This acts as a safety net - the segment tree has its own RootErrorBoundary that

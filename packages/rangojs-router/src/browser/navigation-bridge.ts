@@ -32,6 +32,7 @@ import { isInterceptOnlyCache } from "./intercept-utils.js";
 import {
   toNetworkError,
   emitNetworkError,
+  emitNavigationError,
   isBackgroundSuppressible,
 } from "./network-error-handler.js";
 import { debugLog } from "./logging.js";
@@ -325,8 +326,15 @@ export function createNavigationBridge(
           } as NavigateOptionsInternal);
         }
 
-        if (error instanceof DOMException && error.name === "AbortError") {
-          debugLog("[Browser] Navigation aborted by newer navigation");
+        // Aborted, or superseded by a newer navigation. A superseded nav may
+        // reject with a non-AbortError (e.g. a Flight decode that fails after its
+        // signal was aborted), so check the signal too -- otherwise we would
+        // render a boundary that clobbers the newer navigation's content.
+        if (
+          (error instanceof DOMException && error.name === "AbortError") ||
+          tx.handle.signal.aborted
+        ) {
+          debugLog("[Browser] Navigation aborted or superseded");
           return;
         }
 
@@ -343,7 +351,13 @@ export function createNavigationBridge(
           return;
         }
 
-        throw error;
+        // A response we could not process (undecodable Flight body, or an
+        // unanticipated failure building the response). Surface the route's
+        // error boundary rather than let the rejection abort the navigation
+        // silently. Prefetched responses funnel here too: a failed warm-prefetch
+        // payload rejects on consumption and propagates to this catch.
+        console.error("[Browser] Unprocessable navigation response:", error);
+        emitNavigationError(onUpdate, error, url);
       } finally {
         tx[Symbol.dispose]();
       }
@@ -372,6 +386,14 @@ export function createNavigationBridge(
           tx.with({ url: window.location.href, replace: true, scroll: false }),
         );
       } catch (error) {
+        // Aborted or superseded: bail without rendering a boundary (see navigate()).
+        if (
+          (error instanceof DOMException && error.name === "AbortError") ||
+          tx.handle.signal.aborted
+        ) {
+          return;
+        }
+
         const networkError = toNetworkError(error, {
           url: window.location.href,
           operation: "revalidation",
@@ -384,7 +406,12 @@ export function createNavigationBridge(
           emitNetworkError(onUpdate, networkError, window.location.href);
           return;
         }
-        throw error;
+
+        // refresh() shares the fetchPartialUpdate chokepoint with navigate()/
+        // popstate, so an unprocessable response must surface the error boundary
+        // here too rather than become an uncaught rejection.
+        console.error("[Browser] Unprocessable refresh response:", error);
+        emitNavigationError(onUpdate, error, window.location.href);
       } finally {
         tx[Symbol.dispose]();
       }
@@ -602,8 +629,13 @@ export function createNavigationBridge(
         // Restore scroll position after fetch completes
         handleNavigationEnd({ restore: true, isStreaming });
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          debugLog("[Browser] Popstate navigation aborted");
+        // Aborted or superseded by a newer navigation: bail without clobbering
+        // content with a boundary (see navigate()).
+        if (
+          (error instanceof DOMException && error.name === "AbortError") ||
+          tx.handle.signal.aborted
+        ) {
+          debugLog("[Browser] Popstate navigation aborted or superseded");
           return;
         }
 
@@ -620,7 +652,10 @@ export function createNavigationBridge(
           return;
         }
 
-        throw error;
+        // Unprocessable response on a back/forward navigation: surface the
+        // error boundary instead of an uncaught rejection (see navigate()).
+        console.error("[Browser] Unprocessable popstate response:", error);
+        emitNavigationError(onUpdate, error, url);
       } finally {
         tx[Symbol.dispose]();
       }

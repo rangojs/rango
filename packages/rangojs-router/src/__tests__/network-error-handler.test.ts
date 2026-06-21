@@ -1,8 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   toNetworkError,
   isBackgroundSuppressible,
+  emitNavigationError,
 } from "../browser/network-error-handler";
+import { RenderErrorThrower } from "../render-error-thrower";
 import { NetworkError } from "../errors";
 
 // ---------------------------------------------------------------------------
@@ -103,5 +105,34 @@ describe("isBackgroundSuppressible", () => {
 
   it("returns false for a string", () => {
     expect(isBackgroundSuppressible("error")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// emitNavigationError — routes an unprocessable-response error to the boundary
+// ---------------------------------------------------------------------------
+
+describe("emitNavigationError", () => {
+  it("renders RenderErrorThrower carrying the error, with isError metadata", () => {
+    const onUpdate = vi.fn();
+    const err = new Error("undecodable Flight body");
+
+    emitNavigationError(onUpdate, err, "/blog/post-1");
+
+    expect(onUpdate).toHaveBeenCalledOnce();
+    const update = onUpdate.mock.calls[0]![0];
+    // The thrown error is rendered (not async) so the boundary catches it.
+    expect(update.root.type).toBe(RenderErrorThrower);
+    expect(update.root.props.error).toBe(err);
+    expect(update.metadata).toMatchObject({
+      pathname: "/blog/post-1",
+      isError: true,
+    });
+  });
+
+  it("accepts any thrown value, not only Error instances", () => {
+    const onUpdate = vi.fn();
+    emitNavigationError(onUpdate, "boom", "/x");
+    expect(onUpdate.mock.calls[0]![0].root.props.error).toBe("boom");
   });
 });
