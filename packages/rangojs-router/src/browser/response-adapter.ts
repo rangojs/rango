@@ -3,6 +3,16 @@ import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 type HeaderResult = { url: string } | "blocked" | null;
 
 /**
+ * Null-body statuses: the Fetch spec forbids pairing these with a body, so
+ * `new Response(body, { status })` throws ("Response with null body status
+ * cannot have body"). fetch() can still surface one WITH a body straight from
+ * the network layer (never the JS constructor): a 304 stale-while-revalidate
+ * prefetch revalidated to Not Modified (body from cache), or a 204 soft
+ * redirect. teeWithCompletion must not re-run those through `new Response`.
+ */
+const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
+
+/**
  * Extract and validate an RSC response header URL (X-RSC-Reload, X-RSC-Redirect).
  * Returns { url } if valid, "blocked" if present but invalid origin, null if absent.
  */
@@ -99,7 +109,10 @@ export function teeWithCompletion(
     }
   };
 
-  if (!response.body) {
+  // Empty body, or a null-body status fetch() paired with a body: either way the
+  // body can't be re-attached via `new Response` below. Settle and pass the
+  // original response through; its body (when present) stays readable downstream.
+  if (!response.body || NULL_BODY_STATUS.has(response.status)) {
     settle();
     return response;
   }
