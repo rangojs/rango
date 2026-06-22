@@ -294,44 +294,47 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Dev tests: 7 shards x 2 workers. dev-mode e2e keeps a live Vite dev
-          # server + esbuild + Chromium resident, so per-shard peak memory is
-          # (workers x Chromium) + the dev server. The suite has crept to the
-          # hosted-runner memory ceiling as recent PRs each added e2e files, so
-          # the two heaviest shards OOM mid-run ("received a shutdown signal" /
-          # SIGTERM well under the 30m cap; every test passes before the kill).
-          # Sharding alone stopped helping (3 -> 5 -> 6 did not clear the two
-          # heaviest shards once re-sharding clustered cache.test.ts there), so we
-          # ALSO drop workers 3 -> 2 to cut peak Chromium concurrency. Both levers:
-          # 7 shards trims per-shard test count, workers:2 trims peak memory.
+          # Dev tests: 7 shards x 1 worker (serial). dev-mode e2e keeps a live
+          # Vite dev server + esbuild + Chromium resident, so per-shard peak
+          # memory is (workers x Chromium) + the dev server. The suite has crept
+          # to the hosted-runner memory ceiling as recent PRs each added e2e
+          # files, so the heaviest shards OOM mid-run ("received a shutdown
+          # signal" / SIGTERM well under the 30m cap), which also makes the
+          # timing-sensitive tests (handle-breadcrumbs late-push, cache
+          # param-change soft-navs) time out under the pressure. Sharding alone
+          # stopped helping (3 -> 5 -> 6 -> 7 only moved which shard OOM'd as
+          # re-sharding reclustered the heavy files), and workers:2 cleared the
+          # cache.test.ts shard but not the handle-breadcrumbs shard. workers:1
+          # is the memory floor: one Chromium + the dev server per shard, far
+          # under the ceiling, and 7 shards keep each serial run fast.
           - project: dev
             shard: 1
             shardTotal: 7
-            workers: 2
+            workers: 1
           - project: dev
             shard: 2
             shardTotal: 7
-            workers: 2
+            workers: 1
           - project: dev
             shard: 3
             shardTotal: 7
-            workers: 2
+            workers: 1
           - project: dev
             shard: 4
             shardTotal: 7
-            workers: 2
+            workers: 1
           - project: dev
             shard: 5
             shardTotal: 7
-            workers: 2
+            workers: 1
           - project: dev
             shard: 6
             shardTotal: 7
-            workers: 2
+            workers: 1
           - project: dev
             shard: 7
             shardTotal: 7
-            workers: 2
+            workers: 1
           # Production tests sharded across 2 jobs
           - project: production
             shard: 1
