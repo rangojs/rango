@@ -253,6 +253,9 @@ export const urlpatterns = urls(
                     <Link to="/plp-meta" data-testid="plp-meta-link">
                       /plp-meta - use(promise) + deferred Meta
                     </Link>
+                    <Link to="/plp-meta-tx" data-testid="plp-meta-tx-link">
+                      /plp-meta-tx - transition() + use(promise) + slow Meta
+                    </Link>
                   </li>
                   <li>
                     <Link

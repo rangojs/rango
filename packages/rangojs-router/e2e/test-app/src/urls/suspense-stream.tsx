@@ -105,9 +105,32 @@ const PlpMetaHandler: Handler = (ctx) => {
   );
 };
 
-export const suspenseStreamPatterns = urls(({ path }) => [
+// transition() forces the startTransition commit path (the same path SWR /
+// stale-revalidation uses on a revisit). Content (use(promise)) resolves at 2s;
+// the deferred Meta is a SEPARATE, SLOWER promise (4s) — mirrors the reported case
+// where the SEO meta resolves later than the page data. Without the store
+// resolution, the transition waits for the suspending MetaTags too -> held to 4s.
+const PlpMetaTxHandler: Handler = (ctx) => {
+  const contentPromise = new Promise<{ title: string }>((resolve) =>
+    setTimeout(() => resolve({ title: "TX Content" }), 2000),
+  );
+  const metaPromise = new Promise<string>((resolve) =>
+    setTimeout(() => resolve("TX Meta Title (slow)"), 5000),
+  );
+  ctx.use(Meta)(metaPromise.then((t) => ({ title: t })));
+  return (
+    <Suspense fallback={<div data-testid="plp-tx-loading">loading</div>}>
+      <UsePromiseContent promise={contentPromise} />
+    </Suspense>
+  );
+};
+
+export const suspenseStreamPatterns = urls(({ path, transition }) => [
   path("/suspense-stream", SuspenseStreamHandler, { name: "suspenseStream" }),
   path("/plp-meta", PlpMetaHandler, { name: "plpMeta" }),
+  transition(() => [
+    path("/plp-meta-tx", PlpMetaTxHandler, { name: "plpMetaTx" }),
+  ]),
   path("/suspense-stream/:id", SuspenseStreamByIdHandler, {
     name: "suspenseStreamById",
   }),

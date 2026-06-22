@@ -176,6 +176,43 @@ function suspenseStreamTests(mode: "dev" | "build") {
       await expectSoftNav(page);
     });
 
+    test("a startTransition commit is NOT held by a deferred Meta that resolves after the content", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // /plp-meta-tx commits through startTransition (transition() DSL — the same
+      // commit path SWR uses on a revisit). Its content resolves at 2s; its Meta is
+      // a SEPARATE, slower promise (5s). Without the store resolution the transition
+      // waits for the suspending MetaTags too and the commit is held to ~5s. The
+      // store resolution removes the meta from the transition's wait, so the content
+      // must commit well before the meta resolves.
+      const titleBefore = await page.title();
+      await testId(page, "plp-meta-tx-link").click();
+
+      await expect(testId(page, "use-promise-content")).toHaveText(
+        "TX Content",
+        {
+          // Between the content (2s) and the slow meta (5s): a meta-held commit (~5s)
+          // would blow this; a content-time commit (~2-3s) passes.
+          timeout: 4000,
+        },
+      );
+      // The contract: the commit did NOT await the meta. At content-commit time the
+      // deferred title has NOT been applied yet — the previous title is still in
+      // place (the meta resolves at 5s, off the critical path). If the commit had
+      // awaited the meta, the title here would already be "TX Meta Title".
+      expect(await page.title()).toBe(titleBefore);
+      expect(await page.title()).not.toContain("TX Meta Title");
+      // ...and the deferred title still lands afterwards (resolved, just not blocking).
+      await expect
+        .poll(() => page.title(), { timeout: CONTENT_TIMEOUT })
+        .toContain("TX Meta Title");
+    });
+
     test("same-route param nav re-streams the fallback, then resolves new content", async ({
       page,
     }) => {
