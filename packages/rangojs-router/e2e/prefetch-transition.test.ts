@@ -155,6 +155,36 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       ).toBe(false);
     });
 
+    test("fully-prefetched nav with a deferred Meta does not flash, and the title still lands", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // /suspense-stream-meta has a raw <Suspense> AND a deferred Meta title.
+      // Drain the prefetch fully (past the 2s child + meta), then navigate: the
+      // fully-prefetched commit must not flash the fallback, and the deferred
+      // title must still be applied. This pins that the deferred-handle branch
+      // composes with the transition commit — it neither holds the commit (which
+      // would let the fallback flash on a revert) nor drops the title.
+      await page.hover('[data-testid="suspense-stream-meta-prefetch-link"]');
+      await page.waitForTimeout(SUSPENSE_DELAY + 800);
+      await watchFlash(page, "suspense-stream-fallback");
+      await testId(page, "suspense-stream-meta-prefetch-link").click();
+      await expect(testId(page, "suspense-stream-content")).toHaveText(
+        "resolved",
+        { timeout: 8000 },
+      );
+      expect(
+        await readFlash(page),
+        "fully-prefetched deferred-Meta nav must NOT flash the fallback",
+      ).toBe(false);
+      await expect
+        .poll(() => page.title(), { timeout: 8000 })
+        .toContain("Streamed Title");
+    });
+
     test("FE history-cache hit (popstate) shows no loading() skeleton", async ({
       page,
     }) => {

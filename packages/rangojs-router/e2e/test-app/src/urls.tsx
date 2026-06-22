@@ -277,6 +277,15 @@ export const urlpatterns = urls(
                   </li>
                   <li>
                     <Link
+                      to="/suspense-stream-meta"
+                      data-testid="suspense-stream-meta-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /suspense-stream-meta (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
                       to="/slow-product/slow-product-a"
                       state={[
                         SlowProductLocationState({
