@@ -16,6 +16,13 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const child = x(name!, args, {
     nodeOptions: {
       ...options,
+      // detached makes the child a process-group leader (pgid === pid), so the
+      // kill() below can reap the WHOLE tree via process.kill(-pid). Without it
+      // the child shares our group, process.kill(-pid) throws ESRCH and falls
+      // back to killing only the direct child — leaving Vite/esbuild grandchildren
+      // orphaned. Files that spawn many isolatedServer instances (cache.test.ts
+      // spawns 21) then accumulate orphaned dev servers until the runner OOMs.
+      detached: true,
       env: { ...process.env, CI: "true", ...options.env },
     },
   }).process!;
