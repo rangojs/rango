@@ -1,6 +1,7 @@
 import { urls, Meta, type Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Suspense } from "react";
+import { UsePromiseContent } from "../components/UsePromiseContent.js";
 
 /**
  * Repro + proof for "a raw <Suspense> fallback inside a streaming handler render
@@ -88,8 +89,25 @@ const SuspenseStreamMetaHandler: Handler = (ctx) => {
   return <SuspenseStreamShell heading="Raw Suspense + Meta-from-promise" />;
 };
 
+// Exact consumer pattern: a promise is created in the handler, passed to a client
+// component that use()s it under a raw <Suspense> (NOT an RSC async component), and
+// the deferred Meta is derived from the SAME promise. The fallback must stream and
+// the content/title must resolve — the deferred meta must not hold the content.
+const PlpMetaHandler: Handler = (ctx) => {
+  const dataPromise = new Promise<{ title: string }>((resolve) =>
+    setTimeout(() => resolve({ title: "PLP Meta Title" }), 2000),
+  );
+  ctx.use(Meta)(dataPromise.then((d) => ({ title: d.title })));
+  return (
+    <Suspense fallback={<div data-testid="plp-meta-loading">loading</div>}>
+      <UsePromiseContent promise={dataPromise} />
+    </Suspense>
+  );
+};
+
 export const suspenseStreamPatterns = urls(({ path }) => [
   path("/suspense-stream", SuspenseStreamHandler, { name: "suspenseStream" }),
+  path("/plp-meta", PlpMetaHandler, { name: "plpMeta" }),
   path("/suspense-stream/:id", SuspenseStreamByIdHandler, {
     name: "suspenseStreamById",
   }),

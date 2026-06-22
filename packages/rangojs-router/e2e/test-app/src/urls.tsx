@@ -250,6 +250,11 @@ export const urlpatterns = urls(
                     </Link>
                   </li>
                   <li>
+                    <Link to="/plp-meta" data-testid="plp-meta-link">
+                      /plp-meta - use(promise) + deferred Meta
+                    </Link>
+                  </li>
+                  <li>
                     <Link
                       to="/suspense-stream"
                       data-testid="suspense-stream-prefetch-link"

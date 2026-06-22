@@ -249,6 +249,7 @@ export const NamedRoutes = {
   peHeader: "/pe-header",
   peRedirect: "/pe-redirect",
   "plainProduct.detail": "/plain-product/:id",
+  plpMeta: "/plp-meta",
   "prerender-handle": "/prerender-handle",
   "prerender-reverse": "/prerender-reverse",
   "prerenderComplex.detail": "/prerender-complex/:slug",

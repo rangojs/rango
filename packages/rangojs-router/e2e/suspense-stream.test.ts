@@ -148,6 +148,34 @@ function suspenseStreamTests(mode: "dev" | "build") {
         .toContain("Streamed Title");
     });
 
+    test("handler promise → client use() content + deferred Meta from the same promise streams", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await stampSoftNavProbe(page);
+
+      // /plp-meta: a promise made in the handler is passed to a "use client"
+      // component that use()s it under a raw <Suspense>, and the deferred Meta is
+      // derived from the SAME promise. The fallback must stream and the content +
+      // title must resolve — the deferred meta must not hold the streaming content.
+      await testId(page, "plp-meta-link").click();
+
+      await expect(testId(page, "plp-meta-loading")).toBeVisible({
+        timeout: FALLBACK_TIMEOUT,
+      });
+      await expect(testId(page, "use-promise-content")).toHaveText(
+        "PLP Meta Title",
+        { timeout: CONTENT_TIMEOUT },
+      );
+      await expect
+        .poll(() => page.title(), { timeout: CONTENT_TIMEOUT })
+        .toContain("PLP Meta Title");
+      await expectSoftNav(page);
+    });
+
     test("same-route param nav re-streams the fallback, then resolves new content", async ({
       page,
     }) => {
