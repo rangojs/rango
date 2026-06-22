@@ -260,6 +260,10 @@ export function createNavigationClient(
 
       let payloadPromise: Promise<RscPayload>;
       let streamCompletePromise: Promise<void>;
+      // True only for a prefetch-cache hit whose stream had already fully drained
+      // (complete === true). A still-streaming hit and the fresh path stay false,
+      // so only a fully-warmed prefetch commits in a transition (no fallback flash).
+      let fullyPrefetched = false;
 
       if (cachedEntry) {
         if (tx) {
@@ -270,6 +274,9 @@ export function createNavigationClient(
         }
         payloadPromise = cachedEntry.payload;
         streamCompletePromise = cachedEntry.streamComplete;
+        // Only a hit whose stream already fully drained is "fully prefetched";
+        // a still-streaming hit must keep streaming its fallbacks like a cold load.
+        fullyPrefetched = cachedEntry.complete;
       } else if (inflightEntryPromise) {
         if (tx) {
           browserDebugLog(tx, "reusing inflight prefetch", {
@@ -299,6 +306,9 @@ export function createNavigationClient(
         } else {
           payloadPromise = entry.payload;
           streamCompletePromise = entry.streamComplete;
+          // Adopted inflight is normally still streaming (false), but read the
+          // flag in case it completed between publish and adoption.
+          fullyPrefetched = entry.complete;
         }
       } else {
         ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
@@ -315,7 +325,11 @@ export function createNavigationClient(
             diffCount: payload.metadata?.diff?.length ?? 0,
           });
         }
-        return { payload, streamComplete: streamCompletePromise };
+        return {
+          payload,
+          streamComplete: streamCompletePromise,
+          fullyPrefetched,
+        };
       } catch (error) {
         // Convert network-level errors to NetworkError for proper handling
         if (isNetworkError(error)) {

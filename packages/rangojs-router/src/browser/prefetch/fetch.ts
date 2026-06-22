@@ -264,7 +264,12 @@ function executePrefetchFetch(
       // error is still surfaced to navigation if it consumes the entry.
       payload.catch(() => {});
 
-      const entry: DecodedPrefetch = { payload, streamComplete, scope };
+      const entry: DecodedPrefetch = {
+        payload,
+        streamComplete,
+        scope,
+        complete: false,
+      };
       storePrefetch(storageKey, entry, gen);
       // The stall timeout now owns the body stream: arm eviction (publishedKey)
       // and clear the timer once the stream completes. The tee's finally resolves
@@ -272,7 +277,12 @@ function executePrefetchFetch(
       // no lingering timer while a stalled one is evicted when the timer fires.
       publishedKey = storageKey;
       publishedEntry = entry;
-      streamComplete.then(() => clearTimeout(timeoutId));
+      streamComplete.then(() => {
+        // Synchronous marker for navigation's fully-prefetched check (see
+        // DecodedPrefetch.complete). Set before clearing the stall timer.
+        entry.complete = true;
+        clearTimeout(timeoutId);
+      });
       return entry;
     })
     .catch(() => null)

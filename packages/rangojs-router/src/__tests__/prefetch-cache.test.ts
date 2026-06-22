@@ -38,6 +38,7 @@ function makeEntry(scope: "source" | "wildcard" = "wildcard"): DecodedPrefetch {
     payload: Promise.resolve({} as RscPayload),
     streamComplete: Promise.resolve(),
     scope,
+    complete: false,
   };
 }
 

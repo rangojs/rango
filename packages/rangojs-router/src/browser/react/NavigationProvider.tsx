@@ -31,6 +31,39 @@ import { handleNavigationEnd } from "../scroll-restoration.js";
 import { createAppShellRef, type AppShellRef } from "../app-shell.js";
 import { startConnectionWarmup } from "../connection-warmup.js";
 import { debugLog } from "../logging.js";
+import { isThenable } from "../../handles/is-thenable.js";
+
+/** True when any handle value in this snapshot is a deferred (Promise) value. */
+function hasDeferredHandleValue(data: HandleData): boolean {
+  for (const segments of Object.values(data)) {
+    for (const values of Object.values(segments)) {
+      if (values.some(isThenable)) return true;
+    }
+  }
+  return false;
+}
+
+/** Snapshot with deferred (Promise) values awaited; a rejected deferred is
+ *  dropped (it contributes nothing), mirroring the render-side REJECTED_META.
+ *  Promise.allSettled treats non-promise values as already-fulfilled, so plain
+ *  values pass through unchanged. */
+async function resolveDeferredHandleValues(
+  data: HandleData,
+): Promise<HandleData> {
+  const out: HandleData = {};
+  await Promise.all(
+    Object.entries(data).flatMap(([handleName, segments]) => {
+      out[handleName] = {};
+      return Object.entries(segments).map(async ([segmentId, values]) => {
+        const settled = await Promise.allSettled(values);
+        out[handleName][segmentId] = settled
+          .filter((r) => r.status === "fulfilled")
+          .map((r) => (r as PromiseFulfilledResult<unknown>).value);
+      });
+    }),
+  );
+  return out;
+}
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -79,7 +112,43 @@ async function processHandles(
     }
 
     yieldCount++;
-    eventController.setHandleData(handleData, matched, isPartial, resolvedIds);
+
+    if (!hasDeferredHandleValue(handleData)) {
+      eventController.setHandleData(
+        handleData,
+        matched,
+        isPartial,
+        resolvedIds,
+      );
+      continue;
+    }
+
+    // A handle value can be a deferred Promise (e.g.
+    // ctx.use(Meta)(data.then(v => ({ title: v.t })))). Resolving it on the
+    // client here — instead of letting the consumer use() it — keeps the
+    // consumer (useHandle/MetaTags) dumb: it only ever sees resolved values, so
+    // it never suspends mid-navigation. MetaTags lives in <head>, above the
+    // route's <Suspense>, so an uncontained suspension there would revert the
+    // just-committed route and hide its loading fallback.
+    //
+    // Keep the PREVIOUS handle data on screen (stale-while-revalidate) until the
+    // resolved snapshot is ready, then swap it in atomically. Do NOT apply a
+    // stripped snapshot first: that would blank a title/meta whose only value is
+    // deferred for the whole resolution window. Skip if the user navigated away.
+    //
+    // Order-safety: each stream yield is a full cumulative snapshot, and a
+    // segment's handle array is atomic (handlers push synchronously, batched by
+    // handle-store stream()), so concurrent resolutions of different yields write
+    // identical per-segment arrays or touch disjoint segments — neither can clobber
+    // the other (setHandleData replaces per segment, never the whole store).
+    void resolveDeferredHandleValues(handleData).then((resolved) => {
+      if (historyKey !== store.getHistoryKey()) return; // navigated away
+      eventController.setHandleData(resolved, matched, isPartial, resolvedIds);
+      store.updateCacheHandleData(
+        historyKey,
+        eventController.getHandleState().data,
+      );
+    });
   }
 
   // Check again before final updates

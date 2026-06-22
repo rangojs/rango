@@ -37,6 +37,7 @@ function makeEntry(
     payload: Promise.resolve(payload) as Promise<any>,
     streamComplete: Promise.resolve(),
     scope,
+    complete: false,
   };
 }
 
