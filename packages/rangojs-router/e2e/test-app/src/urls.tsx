@@ -5,6 +5,7 @@ import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
+import { clientSuspensePatterns } from "./urls/client-suspense.js";
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,
@@ -282,6 +283,14 @@ export const urlpatterns = urls(
                       prefetch="hover"
                     >
                       /suspense-stream-meta (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/cs-layout/from"
+                      data-testid="cs-layout-entry-link"
+                    >
+                      /cs-layout/from (client-mount-suspense regression)
                     </Link>
                   </li>
                   <li>
@@ -795,6 +804,9 @@ export const urlpatterns = urls(
 
       // Raw <Suspense> (no loading() DSL) streaming route
       include("/", suspenseStreamPatterns, { name: "" }),
+
+      // #622 follow-up (HIGH): shared layout + client-mount-suspense children
+      include("/", clientSuspensePatterns, { name: "" }),
 
       // Error patterns - already has /errors prefix in paths
       include("/", errorsPatterns, { name: "" }),

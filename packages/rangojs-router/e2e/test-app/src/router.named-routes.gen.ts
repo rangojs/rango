@@ -95,6 +95,8 @@ export const NamedRoutes = {
   "crB.nested.index": "/cr/b/:tenantId/nested",
   "crB.optional": "/cr/b/:tenantId/items/:itemId/:section?",
   "crB.searchRoute": { path: "/cr/b/:tenantId/search", search: { q: "string", page: "number?" } },
+  csLayoutFrom: "/cs-layout/from",
+  csLayoutTo: "/cs-layout/to",
   "ctxClean.index": "/ctx-clean",
   "ctxClean.source": "/ctx-clean/source",
   delayedBreadcrumbs: "/delayed-breadcrumbs",

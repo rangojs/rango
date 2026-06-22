@@ -316,14 +316,32 @@ export async function renderSegments(
       resolvedComponent = await component;
     }
 
-    let nodeContent: ReactNode = isRenderableLoading(loading)
-      ? createElement(RouteContentWrapper, {
-          key: `suspense-loading-${id}`,
-          content: getMemoizedContentPromise(resolvedComponent),
-          fallback: loading,
-          segmentId: id,
-        })
-      : registerLazyRef(resolvedComponent);
+    let nodeContent: ReactNode = null;
+    if (isRenderableLoading(loading)) {
+      // forceAwait (popstate, stale-revalidation, fully-prefetched nav) renders a
+      // loading() route with the route content ALREADY resolved, so its
+      // RouteContentWrapper Suspender does not suspend for a microtask and flash
+      // the loading() fallback on a NORMAL (non-transition) commit. The router
+      // data is known-ready on these paths, so awaiting the content here is free.
+      // The wrapper tree is unchanged (RouteContentWrapper is still created with
+      // the same key/fallback) — only the `content` prop is a resolved node
+      // instead of a pending promise, which Suspender renders synchronously. This
+      // mirrors the forceAwait loaderData unwrap above; a CLIENT component that
+      // suspends on mount inside the content still reveals a fallback (it is not
+      // pre-resolved).
+      const contentPromise = getMemoizedContentPromise(resolvedComponent);
+      const loadingContent: Promise<ReactNode> | ReactNode = forceAwait
+        ? await contentPromise
+        : contentPromise;
+      nodeContent = createElement(RouteContentWrapper, {
+        key: `suspense-loading-${id}`,
+        content: loadingContent,
+        fallback: loading,
+        segmentId: id,
+      });
+    } else {
+      nodeContent = registerLazyRef(resolvedComponent);
+    }
 
     // Wrap with <ViewTransition> if transition config exists (React experimental only).
     // An empty config ({}) creates a bare <ViewTransition> boundary that participates
