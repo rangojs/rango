@@ -79,6 +79,75 @@ function suspenseStreamTests(mode: "dev" | "build") {
       await expectSoftNav(page);
     });
 
+    test("a promise-valued Meta push does NOT block the route's <Suspense> fallback", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await stampSoftNavProbe(page);
+
+      // /suspense-stream-meta is identical to /suspense-stream but its handler also
+      // does ctx.use(Meta)(promise.then(...)). That async meta descriptor must be
+      // isolated in its own <Suspense> inside MetaTags — otherwise use() suspends
+      // MetaTags (in <head>, above the route's <Suspense>) and holds the whole
+      // document, suppressing the route fallback until the meta promise resolves.
+      await testId(page, "suspense-stream-meta-link").click();
+
+      // Fallback must still stream despite the pending meta promise.
+      await expect(testId(page, "suspense-stream-fallback")).toBeVisible({
+        timeout: FALLBACK_TIMEOUT,
+      });
+      await expect(testId(page, "suspense-stream-content")).toHaveText(
+        "resolved",
+        { timeout: CONTENT_TIMEOUT },
+      );
+      await expect(testId(page, "suspense-stream-fallback")).toBeHidden();
+
+      // And the streamed title lands once its promise resolves.
+      await expect
+        .poll(() => page.title(), { timeout: CONTENT_TIMEOUT })
+        .toContain("Streamed Title");
+      await expectSoftNav(page);
+    });
+
+    test("a deferred Meta push keeps the previous title until it resolves (no blank)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Start on a page with a DISTINCT (non-default) title.
+      await page.goto(f.url("/blog/post-1"));
+      await waitForHydration(page);
+      await expect.poll(() => page.title()).toContain("Post post-1");
+
+      // Soft-nav to a route whose title is a deferred Meta push.
+      await testId(page, "blog-to-suspense-meta").click();
+
+      // The route fallback still streams (deferred meta does not block it)...
+      await expect(testId(page, "suspense-stream-fallback")).toBeVisible({
+        timeout: FALLBACK_TIMEOUT,
+      });
+      // ...and crucially the PREVIOUS title is kept while the deferred meta
+      // resolves — it must NOT blank out or revert to the layout default. (Before
+      // the store-resolution fix, a stripped pre-apply blanked it for ~2s.)
+      await page.waitForTimeout(700);
+      expect(
+        await page.title(),
+        "previous title kept during deferred meta resolution",
+      ).toContain("Post post-1");
+
+      // Then the streamed content + the deferred title land.
+      await expect(testId(page, "suspense-stream-content")).toHaveText(
+        "resolved",
+        { timeout: CONTENT_TIMEOUT },
+      );
+      await expect
+        .poll(() => page.title(), { timeout: CONTENT_TIMEOUT })
+        .toContain("Streamed Title");
+    });
+
     test("same-route param nav re-streams the fallback, then resolves new content", async ({
       page,
     }) => {

@@ -242,6 +242,15 @@ export const urlpatterns = urls(
                   </li>
                   <li>
                     <Link
+                      to="/suspense-stream-meta"
+                      data-testid="suspense-stream-meta-link"
+                    >
+                      /suspense-stream-meta - Raw &lt;Suspense&gt; + Meta
+                      promise
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
                       to="/suspense-stream"
                       data-testid="suspense-stream-prefetch-link"
                       prefetch="hover"

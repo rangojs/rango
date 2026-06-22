@@ -267,6 +267,12 @@ export function MetaTags(): React.ReactNode {
         />
       )}
       {descriptors.map((descriptor, index) => {
+        // A descriptor is only a Promise on the SSR/hydration path, where it is
+        // use()d to stream the tag into the document. On client navigation the
+        // store resolves deferred handle values before applying them (see
+        // processHandles), so MetaTags only ever receives resolved descriptors
+        // there and never suspends — which would otherwise revert the committed
+        // route (MetaTags lives in <head>, above the route's <Suspense>).
         if (isPromise(descriptor)) {
           return (
             <AsyncMetaTag

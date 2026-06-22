@@ -1,4 +1,4 @@
-import { urls, type Handler } from "@rangojs/router";
+import { urls, Meta, type Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Suspense } from "react";
 
@@ -77,9 +77,23 @@ const SuspenseStreamByIdHandler: Handler<"/suspense-stream/:id"> = (ctx) => (
   />
 );
 
+// Identical to SuspenseStreamHandler, but ALSO pushes Meta from a slow promise.
+// A/B against /suspense-stream (which streams its fallback) to isolate whether a
+// promise-valued handle push blocks the navigation commit / the fallback.
+const SuspenseStreamMetaHandler: Handler = (ctx) => {
+  const titleP = new Promise<string>((resolve) =>
+    setTimeout(() => resolve("Streamed Title"), SUSPENSE_STREAM_DELAY),
+  );
+  ctx.use(Meta)(titleP.then((t) => ({ title: t })));
+  return <SuspenseStreamShell heading="Raw Suspense + Meta-from-promise" />;
+};
+
 export const suspenseStreamPatterns = urls(({ path }) => [
   path("/suspense-stream", SuspenseStreamHandler, { name: "suspenseStream" }),
   path("/suspense-stream/:id", SuspenseStreamByIdHandler, {
     name: "suspenseStreamById",
+  }),
+  path("/suspense-stream-meta", SuspenseStreamMetaHandler, {
+    name: "suspenseStreamMeta",
   }),
 ]);
