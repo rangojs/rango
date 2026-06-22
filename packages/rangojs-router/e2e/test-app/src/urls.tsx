@@ -4,6 +4,7 @@ import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
+import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,
@@ -229,6 +230,32 @@ export const urlpatterns = urls(
                       data-testid="slow-skip-ssr-link"
                     >
                       /slow-streaming-skip-ssr - Skip SSR loading
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream"
+                      data-testid="suspense-stream-link"
+                    >
+                      /suspense-stream - Raw &lt;Suspense&gt; (no loading())
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream"
+                      data-testid="suspense-stream-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /suspense-stream (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/slow-streaming"
+                      data-testid="slow-streaming-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /slow-streaming (prefetch=hover)
                     </Link>
                   </li>
                   <li>
@@ -739,6 +766,9 @@ export const urlpatterns = urls(
 
       // Slow/streaming patterns (without slowProduct.detail which is inline above)
       include("/", slowPatternsWithoutDetail, { name: "" }),
+
+      // Raw <Suspense> (no loading() DSL) streaming route
+      include("/", suspenseStreamPatterns, { name: "" }),
 
       // Error patterns - already has /errors prefix in paths
       include("/", errorsPatterns, { name: "" }),

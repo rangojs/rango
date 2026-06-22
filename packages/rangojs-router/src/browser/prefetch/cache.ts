@@ -65,6 +65,14 @@ export interface DecodedPrefetch {
    * when it adopted an inflight entry through the wildcard key.
    */
   scope: "source" | "wildcard";
+  /**
+   * Synchronously-readable flag, flipped to true when `streamComplete` resolves
+   * (the entire RSC stream has drained). Navigation reads this at click time to
+   * tell a FULLY warmed prefetch (payload commits without suspending → safe to
+   * commit in a startTransition, no fallback flash) from a partially-warmed one
+   * (still streaming → stream its fallbacks like a cold load). Starts false.
+   */
+  complete: boolean;
 }
 
 let cacheTTL = 300_000;

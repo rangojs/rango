@@ -188,7 +188,11 @@ export function createPartialUpdater(
       routerId: store.getRouterId?.(),
     });
     const streamingToken = tx.startStreaming();
-    const { payload, streamComplete: rawStreamComplete } = fetchResult;
+    const {
+      payload,
+      streamComplete: rawStreamComplete,
+      fullyPrefetched,
+    } = fetchResult;
     debugLog("payload.metadata", payload.metadata);
 
     // Side effect only: end the streaming token once the stream settles.
@@ -498,6 +502,20 @@ export function createPartialUpdater(
           if (addTransitionType) {
             addTransitionType("navigation");
           }
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+            scroll: scrollPayload,
+          });
+        });
+      } else if (fullyPrefetched) {
+        // Fully-prefetched navigation: the payload is already fully resolved, so
+        // commit inside a transition to hold the current UI across the synchronous
+        // use()/Suspense resolution and avoid a 1-frame loading()/fallback flash.
+        // No addTransitionType: this is not a view transition, just the React
+        // content-hold. Cold and partially-prefetched navs do NOT reach here, so
+        // their fallbacks still stream (see fullyPrefetched in navigation-client).
+        startTransition(() => {
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,

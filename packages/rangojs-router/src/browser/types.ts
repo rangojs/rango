@@ -521,6 +521,15 @@ export interface FetchPartialResult {
   payload: RscPayload;
   /** Promise that resolves when the response stream is fully consumed */
   streamComplete: Promise<void>;
+  /**
+   * True only when this payload came from a prefetch-cache hit whose stream had
+   * ALREADY fully drained at fetch time (the route was fully prefetched). The
+   * commit then runs in a startTransition so loading()/Suspense content — already
+   * resolved — swaps in directly without flashing a fallback. A partially-warmed
+   * (still-streaming) prefetch hit and a cold fetch leave this false so their
+   * fallbacks stream as usual.
+   */
+  fullyPrefetched?: boolean;
 }
 
 /**

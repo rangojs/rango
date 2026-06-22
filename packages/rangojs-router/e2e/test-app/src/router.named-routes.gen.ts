@@ -318,6 +318,8 @@ export const NamedRoutes = {
   streamModeTest: "/stream-mode-test",
   "suffixOverlap.data": "/suffix-overlap/:file.data",
   "suffixOverlap.v2data": "/suffix-overlap/:file.v2.data",
+  suspenseStream: "/suspense-stream",
+  suspenseStreamById: "/suspense-stream/:id",
   "swrProduct.detail": "/swr-product/:id",
   "swrProductVtoff.detail": "/swr-product-vtoff/:id",
   testClearErrorLog: "/__test/clear-error-log",
