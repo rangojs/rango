@@ -216,17 +216,20 @@ export function createNavigationBridge(
         store.setInterceptSourceUrl(null);
       }
 
-      // Before navigating away, update the source page's cache with the latest handleData.
-      // This ensures the cache has correct handleData even if handles were streaming.
+      // Before navigating away, update the source page's cache with the latest
+      // handleData. This ensures the cache has correct handleData even if handles
+      // were streaming. Use updateCacheHandleData (not cacheSegmentsForHistory):
+      // the source page's segments are unchanged, so this is a handleData refresh,
+      // not a commit. Critically it PRESERVES the entry's stale flag — when the
+      // source page has a deferred Meta still pending, its entry was marked stale
+      // (invalidate-on-pending) so a popstate return revalidates; re-committing it
+      // here would reset stale to false and serve the carried (pre-resolution)
+      // title as fresh. It also leaves the nav-instance token intact.
       const sourceHistoryKey = store.getHistoryKey();
       const sourceCached = store.getCachedSegments(sourceHistoryKey);
       if (sourceCached?.segments && sourceCached.segments.length > 0) {
         const currentHandleData = eventController.getHandleState().data;
-        store.cacheSegmentsForHistory(
-          sourceHistoryKey,
-          sourceCached.segments,
-          currentHandleData,
-        );
+        store.updateCacheHandleData(sourceHistoryKey, currentHandleData);
       }
 
       // Check if we have cached segments for target URL
@@ -554,8 +557,19 @@ export function createNavigationBridge(
           // SWR: If stale, trigger background revalidation
           if (isStale) {
             debugLog("[Browser] Cache is stale, background revalidating...");
-            // Background revalidation - don't await, just fire and forget
-            const segmentIds = cachedSegments.map((s) => s.id);
+            // Background revalidation - don't await, just fire and forget.
+            // When the entry's handles are incomplete (a deferred Meta was still
+            // pending when the user navigated away — see handlesPending), send NO
+            // segment IDs so the server returns a FULL re-render with the handle
+            // stream. A normal stale revalidation sends the cached IDs and the
+            // server returns a diff-only payload that omits unchanged segments'
+            // handles, so a deferred Meta would never re-stream and the title
+            // would stay the pre-resolution carry. handlesPending is set only for
+            // the deferred-Meta-aborted case, so action/cross-tab SWR keeps the
+            // cheap diff path.
+            const segmentIds = cached?.handlesPending
+              ? []
+              : cachedSegments.map((s) => s.id);
 
             const tx = createNavigationTransaction(
               store,

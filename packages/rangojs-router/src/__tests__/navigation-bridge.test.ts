@@ -27,6 +27,7 @@ function createStore() {
     getCachedSegments: vi.fn((): any => undefined),
     hasHistoryCache: vi.fn(() => false),
     cacheSegmentsForHistory: vi.fn(),
+    updateCacheHandleData: vi.fn(),
     setInterceptSourceUrl: vi.fn(),
     setCrossTabRefreshCallback: vi.fn(),
     setHistoryKey: vi.fn(),

@@ -31,37 +31,55 @@ import { handleNavigationEnd } from "../scroll-restoration.js";
 import { createAppShellRef, type AppShellRef } from "../app-shell.js";
 import { startConnectionWarmup } from "../connection-warmup.js";
 import { debugLog } from "../logging.js";
-import { isThenable } from "../../handles/is-thenable.js";
+import { cloneHandleData } from "../navigation-store.js";
+import { collectHandleData } from "../../handle.js";
+import { Meta } from "../../handles/meta.js";
+import type { MetaDescriptor } from "../../router/types.js";
+import {
+  HEAD_RESOLVE_HANDLE_NAMES,
+  hasDeferredHandleValue,
+  resolveDeferredHandleValues,
+} from "./deferred-handle-resolution.js";
 
-/** True when any handle value in this snapshot is a deferred (Promise) value. */
-function hasDeferredHandleValue(data: HandleData): boolean {
-  for (const segments of Object.values(data)) {
-    for (const values of Object.values(segments)) {
-      if (values.some(isThenable)) return true;
+/** Meta handle-name key. Meta is the only head-placed handle whose consumer
+ *  use()s a deferred value above the route <Suspense>, so it must be resolved in
+ *  the store before apply; every other handle keeps the promise contract. */
+const META = "__rsc_router_meta__";
+
+/**
+ * Carry the previous page's COLLECTED Meta forward so the title is kept (no
+ * blank) while a deferred Meta resolves on a soft navigation.
+ *
+ * Why a carry-forward and not just preserving the previous Meta data: handle
+ * collection (useHandle/MetaTags) is driven by the event controller's
+ * `segmentOrder`, which becomes the NEW route's order so the synchronous
+ * breadcrumbs render immediately. The previous route's title lives under a
+ * segment that is NOT in the new order, so it would stop being collected — the
+ * title would fall back to the layout default. Re-keying the previous COLLECTED
+ * descriptors under a segment that IS in the new order keeps them visible.
+ *
+ * Title descriptors are wrapped as `{ title: { absolute } }` so re-collection
+ * under a (possibly template-bearing) new layout does not re-apply a title
+ * template to an already-final title. Promise and default (charSet/viewport)
+ * descriptors are dropped: Promise ones would suspend MetaTags, and the defaults
+ * are re-added by collectMeta.
+ */
+function carriedPreviousMeta(prev: MetaDescriptor[]): MetaDescriptor[] {
+  const out: MetaDescriptor[] = [];
+  for (const d of prev) {
+    if (d && typeof (d as { then?: unknown }).then === "function") continue;
+    const base = d as Exclude<MetaDescriptor, Promise<unknown>>;
+    if ("charSet" in base) continue;
+    if ("name" in base && (base as { name?: unknown }).name === "viewport") {
+      continue;
     }
+    if ("title" in base) {
+      const t = (base as { title: unknown }).title;
+      out.push({ title: { absolute: typeof t === "string" ? t : String(t) } });
+      continue;
+    }
+    out.push(base);
   }
-  return false;
-}
-
-/** Snapshot with deferred (Promise) values awaited; a rejected deferred is
- *  dropped (it contributes nothing), mirroring the render-side REJECTED_META.
- *  Promise.allSettled treats non-promise values as already-fulfilled, so plain
- *  values pass through unchanged. */
-async function resolveDeferredHandleValues(
-  data: HandleData,
-): Promise<HandleData> {
-  const out: HandleData = {};
-  await Promise.all(
-    Object.entries(data).flatMap(([handleName, segments]) => {
-      out[handleName] = {};
-      return Object.entries(segments).map(async ([segmentId, values]) => {
-        const settled = await Promise.allSettled(values);
-        out[handleName][segmentId] = settled
-          .filter((r) => r.status === "fulfilled")
-          .map((r) => (r as PromiseFulfilledResult<unknown>).value);
-      });
-    }),
-  );
   return out;
 }
 
@@ -99,6 +117,19 @@ async function processHandles(
     historyKey,
   } = opts;
 
+  // This nav's instance token, captured before any await — processHandles runs
+  // right after its own commit, so this is that commit's token. generateHistoryKey
+  // is URL-only, so an A->B->A revisit reuses the key; the token lets a late
+  // resolution tell its own visit apart from a newer same-URL visit, so a stale
+  // nav can never clobber a fresher one's live state or cache (P1).
+  const myInstance = store.getNavInstance();
+
+  // True while this nav still owns the live page: same history key AND the most
+  // recent commit is still ours (no newer nav has committed since).
+  const stillLive = (): boolean =>
+    historyKey === store.getHistoryKey() &&
+    myInstance === store.getNavInstance();
+
   let yieldCount = 0;
   for await (const handleData of handlesGenerator) {
     // Check if user navigated away before each update.
@@ -113,41 +144,130 @@ async function processHandles(
 
     yieldCount++;
 
-    if (!hasDeferredHandleValue(handleData)) {
+    // Resolve ONLY Meta in the store before applying. Meta is the sole
+    // head-placed handle whose consumer use()s a deferred value above the route
+    // <Suspense>; an uncontained suspension there would revert the just-committed
+    // route and hide its loading fallback. Every other handle (Breadcrumbs,
+    // custom handles) keeps the DeferredHandleEntry contract: its deferred values
+    // reach the consumer AS A PROMISE and are narrowed via isThenable(). So sync
+    // handles AND non-Meta deferred promises apply/stream through immediately —
+    // only Meta is held back and swapped in once resolved.
+    const metaDeferred = hasDeferredHandleValue(
+      handleData,
+      HEAD_RESOLVE_HANDLE_NAMES,
+    );
+
+    // Apply now. The non-deferred-Meta case applies the whole snapshot in one
+    // call (Meta included). When Meta IS deferred, replace the deferred Meta with
+    // the previous page's COLLECTED Meta (stale-while-revalidate — never a blank
+    // title) keyed under one of the NEW route's Meta segments, so it stays
+    // collected under the new segment order while the synchronous and non-Meta
+    // deferred handles update with normal cleanup. The resolved Meta is swapped
+    // in by the partial merge below.
+    if (metaDeferred) {
+      const immediate: HandleData = { ...handleData };
+      const metaSegments = handleData[META] ?? {};
+      // Anchor: the last new Meta segment in matched order (collected after the
+      // shared layout, so its carried title wins). Falls back to any new Meta
+      // segment if matched ordering does not surface one.
+      const metaSegmentIds = Object.keys(metaSegments);
+      const ordered = (matched ?? []).filter((id) =>
+        metaSegmentIds.includes(id),
+      );
+      const anchor = ordered.at(-1) ?? metaSegmentIds.at(-1);
+
+      const prevState = eventController.getHandleState();
+      const prevCollected = collectHandleData(
+        Meta,
+        prevState.data,
+        prevState.segmentOrder,
+      ) as MetaDescriptor[];
+      const carried = carriedPreviousMeta(prevCollected);
+
+      if (anchor && carried.length > 0) {
+        immediate[META] = { [anchor]: carried };
+      } else {
+        // No previous Meta to carry and/or no anchor: leave Meta unset until it
+        // resolves (the documented no-previous-Meta behavior).
+        delete immediate[META];
+      }
+      eventController.setHandleData(immediate, matched, isPartial, resolvedIds);
+    } else {
       eventController.setHandleData(
         handleData,
         matched,
         isPartial,
         resolvedIds,
       );
+    }
+
+    // Snapshot of the nav's full applied handle state (sync handles, non-Meta
+    // deferred promises, and — when Meta is deferred — the carried previous Meta).
+    // Captured AFTER applying so it reflects what is actually on screen now.
+    const baseSnapshot = cloneHandleData(eventController.getHandleState().data);
+
+    if (!metaDeferred) {
+      // Non-deferred: the applied snapshot is final. Keep the cache in sync and
+      // fresh. The token guard stops a stale same-URL nav writing a newer entry.
+      if (store.getCacheEntryInstance(historyKey) === myInstance) {
+        store.updateCacheHandleData(historyKey, baseSnapshot, false);
+      }
       continue;
     }
 
-    // A handle value can be a deferred Promise (e.g.
-    // ctx.use(Meta)(data.then(v => ({ title: v.t })))). Resolving it on the
-    // client here — instead of letting the consumer use() it — keeps the
-    // consumer (useHandle/MetaTags) dumb: it only ever sees resolved values, so
-    // it never suspends mid-navigation. MetaTags lives in <head>, above the
-    // route's <Suspense>, so an uncontained suspension there would revert the
-    // just-committed route and hide its loading fallback.
+    // Meta is deferred-pending. The applied snapshot carries the PREVIOUS page's
+    // Meta (or none), not this route's final title, so the cache entry must NOT
+    // be served as fresh on a popstate return. Mark it STALE and handlesPending
+    // (token-guarded). This is the P1 fix: the deferred Meta is a SERVER-side
+    // promise streamed via Flight, so a navigate-away ABORTS the stream and the
+    // client's deferred-Meta promise never resolves — the .then below never
+    // fires. stale makes a popstate return revalidate; handlesPending makes that
+    // revalidation a FULL re-render (no client segment IDs) so the server
+    // re-streams the handles. A diff-only revalidation would omit the unchanged
+    // segments' handles and the deferred Meta would never land — see the
+    // segmentIds branch in navigation-bridge.ts.
+    if (store.getCacheEntryInstance(historyKey) === myInstance) {
+      store.updateCacheHandleData(historyKey, baseSnapshot, true, true);
+    }
+
+    // Resolve Meta late, then swap it in. The swap is a PARTIAL merge with
+    // resolvedIds=undefined so the stale-clear loop (which scans all handle
+    // names under resolvedIds) cannot wipe the non-Meta buckets we already
+    // applied. When the deferred Meta DOES resolve while this nav still owns the
+    // entry (no navigate-away abort), write the resolved handle data and clear
+    // stale + handlesPending — the entry is now complete, so a popstate return
+    // serves it without revalidating.
     //
-    // Keep the PREVIOUS handle data on screen (stale-while-revalidate) until the
-    // resolved snapshot is ready, then swap it in atomically. Do NOT apply a
-    // stripped snapshot first: that would blank a title/meta whose only value is
-    // deferred for the whole resolution window. Skip if the user navigated away.
-    //
-    // Order-safety: each stream yield is a full cumulative snapshot, and a
-    // segment's handle array is atomic (handlers push synchronously, batched by
-    // handle-store stream()), so concurrent resolutions of different yields write
-    // identical per-segment arrays or touch disjoint segments — neither can clobber
-    // the other (setHandleData replaces per segment, never the whole store).
-    void resolveDeferredHandleValues(handleData).then((resolved) => {
-      if (historyKey !== store.getHistoryKey()) return; // navigated away
-      eventController.setHandleData(resolved, matched, isPartial, resolvedIds);
-      store.updateCacheHandleData(
-        historyKey,
-        eventController.getHandleState().data,
-      );
+    // Order-safety: each stream yield is a full cumulative snapshot and a
+    // segment's handle array is atomic, so concurrent Meta resolutions of
+    // different yields write identical per-segment arrays or touch disjoint
+    // segments — neither can clobber the other.
+    void resolveDeferredHandleValues(
+      handleData,
+      HEAD_RESOLVE_HANDLE_NAMES,
+    ).then((resolved) => {
+      const cacheValue = { ...baseSnapshot, [META]: resolved[META] };
+      if (stillLive()) {
+        // Still on the live page: swap Meta in and refresh the cache as fresh.
+        eventController.setHandleData(
+          { [META]: resolved[META] },
+          matched,
+          true,
+          undefined,
+        );
+        store.updateCacheHandleData(
+          historyKey,
+          eventController.getHandleState().data,
+          false,
+          false,
+        );
+      } else if (store.getCacheEntryInstance(historyKey) === myInstance) {
+        // Navigated away, but THIS nav still owns the target cache entry: write
+        // the resolved data and clear stale + handlesPending so a popstate return
+        // is fresh.
+        store.updateCacheHandleData(historyKey, cacheValue, false, false);
+      }
+      // else: a newer nav to the same URL superseded us — do nothing.
     });
   }
 
@@ -166,8 +286,9 @@ async function processHandles(
   // After handles processing completes, update the cache's handleData.
   // This fixes a race condition where commit() caches stale handleData before
   // the async handles processing completes.
-  // Only update if we're still on the same page (historyKey matches).
-  if (historyKey === store.getHistoryKey()) {
+  // Only update if we're still on the same page AND this is still the live nav
+  // (the token guard stops a stale same-URL nav writing a newer nav's state).
+  if (stillLive()) {
     const finalHandleData = eventController.getHandleState().data;
     store.updateCacheHandleData(historyKey, finalHandleData);
   }

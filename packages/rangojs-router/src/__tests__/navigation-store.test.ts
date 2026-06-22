@@ -354,6 +354,120 @@ describe("navigation-store", () => {
       // Should not throw
       store.updateCacheHandleData("/missing", { a: { s1: [1] } });
     });
+
+    it("updateCacheHandleData preserves the stale flag when stale is omitted", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      store.markCacheAsStale();
+      expect(store.getCachedSegments("/page")!.stale).toBe(true);
+
+      // No stale arg -> current stale flag is preserved.
+      store.updateCacheHandleData("/page", { b: { s2: [2] } });
+      const cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ b: { s2: [2] } });
+      expect(cached!.stale).toBe(true);
+    });
+
+    it("updateCacheHandleData can mark a single entry stale (deferred-Meta invalidate)", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      expect(store.getCachedSegments("/page")!.stale).toBe(false);
+
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true);
+      expect(store.getCachedSegments("/page")!.stale).toBe(true);
+    });
+
+    it("updateCacheHandleData can clear a single entry's stale flag (deferred-Meta resolved)", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true);
+      expect(store.getCachedSegments("/page")!.stale).toBe(true);
+
+      store.updateCacheHandleData("/page", { a: { s1: [9] } }, false);
+      const cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ a: { s1: [9] } });
+      expect(cached!.stale).toBe(false);
+    });
+
+    it("fresh commits are not handlesPending", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      expect(store.getCachedSegments("/page")!.handlesPending).toBe(false);
+    });
+
+    it("updateCacheHandleData sets and clears handlesPending (deferred-Meta pending then resolved)", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+
+      // Deferred Meta pending: mark stale + handlesPending.
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true, true);
+      let cached = store.getCachedSegments("/page");
+      expect(cached!.stale).toBe(true);
+      expect(cached!.handlesPending).toBe(true);
+
+      // Deferred Meta resolved: clear both.
+      store.updateCacheHandleData("/page", { a: { s1: [2] } }, false, false);
+      cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ a: { s1: [2] } });
+      expect(cached!.stale).toBe(false);
+      expect(cached!.handlesPending).toBe(false);
+    });
+
+    it("updateCacheHandleData preserves handlesPending when the flag is omitted", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true, true);
+      expect(store.getCachedSegments("/page")!.handlesPending).toBe(true);
+
+      // Source re-cache on navigate-away updates only handleData; both flags
+      // must survive so a popstate return still forces the full-render reval.
+      store.updateCacheHandleData("/page", { a: { s1: [3] } });
+      const cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ a: { s1: [3] } });
+      expect(cached!.stale).toBe(true);
+      expect(cached!.handlesPending).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Nav-instance token (per-commit identity; guards URL-only history keys)
+  // --------------------------------------------------------------------------
+  describe("nav-instance token", () => {
+    it("getNavInstance advances on each commit", () => {
+      const store = createTestStore();
+      const before = store.getNavInstance();
+      store.cacheSegmentsForHistory("/a", []);
+      const afterA = store.getNavInstance();
+      store.cacheSegmentsForHistory("/b", []);
+      const afterB = store.getNavInstance();
+      expect(afterA).toBeGreaterThan(before);
+      expect(afterB).toBeGreaterThan(afterA);
+    });
+
+    it("getCacheEntryInstance returns the entry's commit token; undefined when absent", () => {
+      const store = createTestStore();
+      expect(store.getCacheEntryInstance("/a")).toBeUndefined();
+
+      store.cacheSegmentsForHistory("/a", []);
+      const tokenA = store.getCacheEntryInstance("/a");
+      expect(tokenA).toBe(store.getNavInstance());
+
+      // A same-URL re-commit replaces the entry with a NEW token: a late
+      // resolution holding tokenA can detect it no longer owns the entry.
+      store.cacheSegmentsForHistory("/a", []);
+      const tokenA2 = store.getCacheEntryInstance("/a");
+      expect(tokenA2).not.toBe(tokenA);
+      expect(tokenA2).toBe(store.getNavInstance());
+    });
+
+    it("updateCacheHandleData preserves the entry's nav-instance token", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/a", [], { a: { s1: [1] } });
+      const token = store.getCacheEntryInstance("/a");
+
+      store.updateCacheHandleData("/a", { a: { s1: [2] } }, true);
+      expect(store.getCacheEntryInstance("/a")).toBe(token);
+    });
   });
 
   // --------------------------------------------------------------------------
