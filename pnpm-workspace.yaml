@@ -10,12 +10,12 @@ packages:
 
 catalog:
   "@vitejs/plugin-react": ^6.0.0
-  "@vitejs/plugin-rsc": ^0.5.26
+  "@vitejs/plugin-rsc": ^0.5.27
   react: ^19.2.6
   react-dom: ^19.2.6
   "@types/react": ^19.2.7
   "@types/react-dom": ^19.2.3
-  vite: ^8.0.0
+  vite: ^8.0.16
   # React Compiler (wired via @rolldown/plugin-babel, since plugin-react v6 uses
   # oxc and no longer runs Babel internally). reactCompilerPreset comes from
   # @vitejs/plugin-react. React 19 ships react/compiler-runtime in-tree.
@@ -23,3 +23,49 @@ catalog:
   "babel-plugin-react-compiler": ^1.0.0
   "@babel/core": ^7.26.0
   "@types/babel__core": ^7.20.5
+
+# Moved from package.json#pnpm.overrides (no longer read by pnpm 11)
+overrides:
+  # Pin the experimental React fixture to a complete family. The npm dist-tag can
+  # move before every sibling package for that build has finished publishing.
+  "react-experimental>react": 0.0.0-experimental-247fbb45-20260622
+  "react-experimental>react-dom": 0.0.0-experimental-247fbb45-20260622
+  rollup: ^4.54.0
+  esbuild: ^0.28.1
+  form-data: ^4.0.6
+  undici: ^7.28.0
+  vite: ^8.0.16
+  ws: ^8.21.0
+  uuid: ^11.1.1
+
+# Replaces package.json#pnpm.onlyBuiltDependencies (removed in pnpm 11).
+# Only these packages may run install/postinstall build scripts.
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  sharp: true
+  workerd: true
+
+# Moved from .npmrc public-hoist-pattern[] (pnpm 11 reads only auth/registry from .npmrc).
+# Hoist @vitejs/plugin-rsc so its internal imports resolve in the monorepo; required as a
+# peer dependency by consumers of @rangojs/router.
+publicHoistPattern:
+  - "@vitejs/plugin-rsc"
+  - rsc-html-stream
+
+# Supply-chain hardening (pnpm 11).
+# Quarantine newly published versions for 1 day before they can be installed.
+minimumReleaseAge: 1440
+# Exempt the pinned experimental React fixture while it is still inside the
+# cooldown window. The exact override above keeps installs from following a
+# freshly moved dist-tag.
+minimumReleaseAgeExclude:
+  - react
+  - react-dom
+  - react-is
+  - react-server-dom-webpack
+  - scheduler
+# Fail the install if a dependency has an un-reviewed build script (not in allowBuilds).
+strictDepBuilds: true
+# Verify node_modules matches the lockfile before any script runs.
+verifyDepsBeforeRun: install
