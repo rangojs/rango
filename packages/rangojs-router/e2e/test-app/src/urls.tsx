@@ -148,7 +148,6 @@ export const urlpatterns = urls(
     loader,
     loading,
     transition,
-    when,
     middleware,
     parallel,
   }) => [
@@ -731,11 +730,8 @@ export const urlpatterns = urls(
             </Modal>
           );
         },
-        () => [
-          when(({ from }) => shouldInterceptProduct(from.pathname)),
-          loader(ProductDetailLoader),
-          loader(CartQuantityLoader),
-        ],
+        { when: ({ from }) => shouldInterceptProduct(from.pathname) },
+        () => [loader(ProductDetailLoader), loader(CartQuantityLoader)],
       ),
 
       // Slow product intercept - with loading state

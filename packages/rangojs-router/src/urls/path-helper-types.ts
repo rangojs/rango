@@ -28,7 +28,6 @@ import type {
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
-  WhenItem,
   TypedCacheItem,
   TransitionItem,
   TypedTransitionItem,
@@ -42,7 +41,6 @@ import type {
   PassthroughHandlerDefinition,
 } from "../prerender.js";
 import type { StaticHandlerDefinition } from "../static-handler.js";
-import type { InterceptWhenFn } from "../server/context";
 import type {
   ResponseHandler,
   ResponseHandlerContext,
@@ -275,12 +273,18 @@ export type PathHelpers<TEnv> = {
         slotName: `@${string}`,
         routeName: string,
         handler: ReactNode | Handler<any, any, TEnv>,
+        config?:
+          | import("../server/context.js").InterceptConfig<TEnv>
+          | (() => InterceptUseItem[]),
         use?: () => InterceptUseItem[],
       ) => InterceptItem
     : (
         slotName: `@${string}`,
         routeName: (keyof Rango.GeneratedRouteMap & string) | `.${string}`,
         handler: ReactNode | Handler<any, any, TEnv>,
+        config?:
+          | import("../server/context.js").InterceptConfig<TEnv>
+          | (() => InterceptUseItem[]),
         use?: () => InterceptUseItem[],
       ) => InterceptItem;
 
@@ -334,11 +338,6 @@ export type PathHelpers<TEnv> = {
   notFoundBoundary: (
     fallback: ReactNode | NotFoundBoundaryHandler,
   ) => NotFoundBoundaryItem;
-
-  /**
-   * Define a condition for when an intercept should activate
-   */
-  when: (fn: InterceptWhenFn) => WhenItem;
 
   /**
    * Define cache configuration for segments

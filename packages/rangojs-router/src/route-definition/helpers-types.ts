@@ -29,12 +29,10 @@ import type {
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
-  WhenItem,
   CacheItem,
   TransitionItem,
   UseItems,
 } from "../route-types.js";
-import type { InterceptWhenFn } from "../server/context";
 
 // Re-export route item types for backward compatibility
 export type {
@@ -52,12 +50,12 @@ export type {
   RouteUseItem,
   ParallelUseItem,
   InterceptUseItem,
-  WhenItem,
   CacheItem,
 } from "../route-types.js";
 
 // Re-export intercept selector types for use in handlers
 export type {
+  InterceptConfig,
   InterceptSelectorContext,
   InterceptSegmentsState,
   InterceptWhenFn,
@@ -183,10 +181,26 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   loader(CardModalLoader),
    *   revalidate(() => false),
    * ])
+   *
+   * // Conditional activation via the config object's `when` selector
+   * intercept("@modal", "card", <CardModal />, {
+   *   when: ({ from }) => from.pathname.startsWith("/board"),
+   * })
+   *
+   * // Config + other use-items: config is arg 4, use is arg 5
+   * intercept(
+   *   "@modal",
+   *   "card",
+   *   <CardModal />,
+   *   { when: ({ from }) => from.pathname.startsWith("/board") },
+   *   () => [loader(CardDetailLoader)],
+   * )
    * ```
    * @param slotName - Named slot (prefixed with @) where intercept renders
    * @param routeName - Route name to intercept
    * @param handler - Component or handler for intercepted render
+   * @param config - Optional InterceptConfig (e.g. `{ when }`), or the use
+   *   callback directly when there is no config
    * @param use - Optional callback for loaders, middleware, revalidate, etc.
    */
   intercept: {
@@ -195,6 +209,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       slotName: `@${string}`,
       routeName: `.${K}`,
       handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
+      config?:
+        | import("../server/context.js").InterceptConfig<TEnv>
+        | (() => UseItems<InterceptUseItem>),
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
     // Global: unprefixed, params inferred from global route map
@@ -202,6 +219,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       slotName: `@${string}`,
       routeName: K,
       handler: ReactNode | Handler<K, Rango.GeneratedRouteMap, TEnv>,
+      config?:
+        | import("../server/context.js").InterceptConfig<TEnv>
+        | (() => UseItems<InterceptUseItem>),
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
   };
@@ -348,40 +368,6 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     fallback: ReactNode | NotFoundBoundaryHandler,
   ) => NotFoundBoundaryItem;
   /**
-   * Define a condition for when an intercept should activate
-   *
-   * Only valid inside intercept() use() callback. When multiple when() calls
-   * are present, ALL must return true for the intercept to activate.
-   * If no when() is defined, the intercept always activates on soft navigation.
-   *
-   * Context properties:
-   * - `from` - Source URL (where user is navigating from)
-   * - `to` - Destination URL (where user is navigating to)
-   * - `params` - Matched route params
-   * - `segments` - Client's current segments with `path` and `ids`
-   *
-   * ```typescript
-   * // Only intercept when coming from the board page
-   * intercept("@modal", "card", <CardModal />, () => [
-   *   when(({ from }) => from.pathname.startsWith("/board")),
-   *   loader(CardDetailLoader),
-   * ])
-   *
-   * // Use segments to check current route context
-   * intercept("@modal", "card", <CardModal />, () => [
-   *   when(({ segments }) => segments.path[0] === "kanban"),
-   * ])
-   *
-   * // Multiple conditions (AND logic)
-   * intercept("@modal", "card", <CardModal />, () => [
-   *   when(({ from }) => from.pathname.startsWith("/board")),
-   *   when(({ segments }) => segments.ids.includes("kanban-layout")),
-   * ])
-   * ```
-   * @param fn - Selector function receiving navigation context, returns boolean
-   */
-  when: (fn: InterceptWhenFn) => WhenItem;
-  /**
    * Define cache configuration for segments
    *
    * Creates a cache boundary that applies to all children unless overridden.
@@ -477,7 +463,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * the handler set via `ctx.get(...)`); returning false drops this transition
    * for the request, so the navigation streams its loading() skeleton instead of
    * holding. This is a post-handler predicate — distinct from intercept()'s
-   * match-time `when({ from })`.
+   * match-time `when` config selector (`intercept(slot, route, Comp, { when })`).
    *
    * ```typescript
    * // Attach to a single route

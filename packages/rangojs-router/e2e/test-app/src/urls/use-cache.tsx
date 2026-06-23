@@ -69,7 +69,7 @@ const loaderSegmentPages = urls(({ path }) => [
  * and inline "use cache" in handlers and layouts with handle data.
  */
 export const useCachePatterns = urls(
-  ({ path, layout, loading, intercept, loader, when, revalidate, include }) => [
+  ({ path, layout, loading, intercept, loader, revalidate, include }) => [
     // Basic: file-level "use cache", no args
     path(
       "/basic",
@@ -389,11 +389,10 @@ export const useCachePatterns = urls(
               </div>
             );
           },
-          () => [
-            when(({ from }) =>
+          {
+            when: ({ from }) =>
               from.pathname.startsWith("/use-cache-test/intercept-"),
-            ),
-          ],
+          },
         ),
       ],
     ),

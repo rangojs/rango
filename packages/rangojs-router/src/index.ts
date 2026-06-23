@@ -283,9 +283,6 @@ export function parallel(): never {
 export function intercept(): never {
   throw serverOnlyStubError("intercept");
 }
-export function when(): never {
-  throw serverOnlyStubError("when");
-}
 export function errorBoundary(): never {
   throw serverOnlyStubError("errorBoundary");
 }

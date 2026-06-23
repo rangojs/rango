@@ -98,10 +98,6 @@ export type NotFoundBoundaryItem = {
   type: "notFoundBoundary";
   uses?: AllUseItems[];
 };
-export type WhenItem = {
-  name: string;
-  type: "when";
-};
 export type CacheItem = {
   name: string;
   type: "cache";
@@ -231,7 +227,6 @@ export type InterceptUseItem =
   | NotFoundBoundaryItem
   | LayoutItem
   | RouteItem
-  | WhenItem
   | TransitionItem;
 export type LoaderUseItem = RevalidateItem | CacheItem;
 

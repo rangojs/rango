@@ -97,7 +97,6 @@ export {
   loading,
   parallel,
   intercept,
-  when,
   errorBoundary,
   notFoundBoundary,
   transition,

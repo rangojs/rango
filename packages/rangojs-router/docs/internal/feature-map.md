@@ -123,7 +123,7 @@ internal (the `withDefer` building block), not a public export.
 
 ### Route DSL and Composition
 
-`urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `when()`, `map()`, `route()`, `revalidate()`
+`urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `map()`, `route()`, `revalidate()`
 
 ### Router Lifecycle
 
@@ -210,7 +210,7 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 - Automatic prefetch-driven commit (no-flash, NOT an opt-in): a fully-prefetched navigation — one whose prefetch entry's stream already drained cleanly and decoded (`DecodedPrefetch.complete`, plumbed to `fullyPrefetched` through `navigation-client.ts` → `partial-update.ts`) — commits with `renderSegments({ forceAwait: true })` AND a NORMAL `onUpdate()` (NOT inside `startTransition`). `forceAwait` unwraps the already-resolved ROUTER loader data AND the route content promise during render (`segment-system.tsx`: `await loaderDataPromise`, and `await getMemoizedContentPromise(...)` so `RouteContentWrapper`'s `Suspender` renders the resolved node synchronously instead of suspending one microtask), so there is no `loading()`/fallback flash for router data. Committing normally (not in a transition) is deliberate: a transition holds the OLD UI until ALL suspense in the new tree settles, including a CLIENT component that starts its own data request only on mount under a persistent boundary — that would retain the previous page indefinitely. A normal commit lets such client-initiated suspense reveal a fallback while the ready router data never flashes. Cold and partially-prefetched navs (`fullyPrefetched=false`, e.g. a still-streaming or aborted/errored prefetch — `complete` means "decoded + clean EOF", never "stream settled") do NOT `forceAwait`, so they stream their fallbacks like a cold load. Explicit `transition()` (above) remains the opt-in for the broader content-hold. The wrapper tree is identical across all commit paths (the `forceAwait` branch only changes whether a promise or a resolved node is passed, never the structural depth — see `docs/tree-structure.md`).
 - Parallel slot streaming: `loading()` + `loader()` on a parallel makes it an independent streaming unit (own `LoaderBoundary`, non-blocking across SSR, SPA navigation, and cache-hit paths). Without `loading()`, parallel loaders block the parent layout.
 - Slot override dedup: last `parallel()` definition wins per `@slot` name, enabling composition overrides
-- Modal/intercept rendering via `intercept()` with `when()` conditions
+- Modal/intercept rendering via `intercept()` with `when` config conditions (the match-time selector field of the `InterceptConfig` 4th argument)
 
 ### Location State
 

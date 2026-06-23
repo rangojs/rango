@@ -41,16 +41,7 @@ const HandlerData = createVar<string>();
  * including after a server action mutates state mid-request.
  */
 export const mwChainPatterns = urls(
-  ({
-    path,
-    layout,
-    middleware,
-    loader,
-    parallel,
-    revalidate,
-    intercept,
-    when,
-  }) => [
+  ({ path, layout, middleware, loader, parallel, revalidate, intercept }) => [
     // Route middleware: verifies upstream state, sets route-level state.
     // After the refactor this wraps RENDERING only — actions already ran.
     middleware(async (ctx, next) => {
@@ -326,8 +317,8 @@ export const mwChainPatterns = urls(
               </div>
             );
           },
+          { when: ({ from }) => from.pathname.startsWith("/mw-chain") },
           () => [
-            when(({ from }) => from.pathname.startsWith("/mw-chain")),
             loader(MwChainInterceptLoader),
             middleware(async (ctx, next) => {
               ctx.set("chainIntercept", "from-intercept-mw");

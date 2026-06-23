@@ -424,19 +424,6 @@ describe("route definition edge cases", () => {
         ),
       ).toThrow("Duplicate route name");
     });
-
-    it("when() outside intercept throws", () => {
-      expect(() =>
-        buildRouteTree(
-          urls(({ path, layout, when }) => [
-            layout(RootLayout, () => [
-              // @ts-expect-error - WhenItem is not in RouteUseItem
-              path("/", HomePage, { name: "home" }, () => [when(() => true)]),
-            ]),
-          ]),
-        ),
-      ).toThrow("when() can only be used inside intercept()");
-    });
   });
 
   // ---------------------------------------------------------------------------
