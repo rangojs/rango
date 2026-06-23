@@ -73,6 +73,7 @@ import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
+import { txWhenPatterns } from "./pages/tx-when.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 
@@ -535,6 +536,9 @@ export const urlpatterns = urls(
         // #622 follow-up: fully-prefetched no-flash + client-mount-suspense
         // layout-hold regression (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
+        // transition({ when }) conditional-gate coverage (mirrors the router
+        // e2e app's /tx-when/:hold/:n).
+        include("/", txWhenPatterns, { name: "" }),
 
         // Deferred-handle navigation contract + history-cache fixes
         // (#622 follow-ups), exercised through client (soft) navigation under

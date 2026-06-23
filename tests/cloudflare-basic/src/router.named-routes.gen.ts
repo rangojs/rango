@@ -107,6 +107,7 @@ export const NamedRoutes = {
   "transformCases.index": "/transform-cases",
   "transformCases.prerendered": "/transform-cases/prerendered",
   "transformCases.state": "/transform-cases/state",
+  txWhen: "/tx-when/:hold/:n",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type
