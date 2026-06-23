@@ -89,3 +89,41 @@ function DeferredCrumb({
     </>
   );
 }
+
+/**
+ * Deferred-aware renderer that makes the PENDING state observable. For each
+ * entry, if it is still a Promise (a deferred slot not yet resolved), it renders
+ * a visible pending marker via the Suspense fallback while use() suspends; once
+ * resolved, the crumb's label replaces it. This pins the P2 contract: during a
+ * SOFT navigation a deferred non-Meta handle must reach the consumer AS A PROMISE
+ * (so the consumer can show a pending UI), not pre-resolved by the store.
+ */
+export function DeferredPendingBreadcrumbs() {
+  const breadcrumbs = useHandle(Breadcrumbs) as Array<
+    DeferredHandleEntry<BreadcrumbItem>
+  >;
+
+  return (
+    <nav aria-label="DeferredPending" data-testid="deferred-pending-nav">
+      <span data-testid="deferred-pending-count">{breadcrumbs.length}</span>
+      <ol>
+        {breadcrumbs.map((crumb, index) => {
+          // The contract assertion: a deferred entry is observed AS A PROMISE
+          // here. We render a pending marker until it resolves.
+          const pending = isThenable<BreadcrumbItem | null | undefined>(crumb);
+          return (
+            <li key={index} data-pending={pending ? "true" : "false"}>
+              <Suspense
+                fallback={
+                  <span data-testid={`crumb-pending-${index}`}>pending</span>
+                }
+              >
+                <DeferredCrumb crumb={crumb} />
+              </Suspense>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}

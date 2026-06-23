@@ -72,6 +72,7 @@ import { buildEnvPatterns } from "./pages/build-env-handler.js";
 import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
+import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
@@ -529,6 +530,11 @@ export const urlpatterns = urls(
         include("/rendered-barrier", renderedBarrierPatterns, {
           name: "renderedBarrier",
         }),
+
+        // Deferred-handle navigation contract + history-cache fixes
+        // (#622 follow-ups), exercised through client (soft) navigation under
+        // the workerd runtime.
+        include("/", deferredHandleNavPatterns, { name: "" }),
 
         // Prerender manifest introspection for e2e tests
         path.json(

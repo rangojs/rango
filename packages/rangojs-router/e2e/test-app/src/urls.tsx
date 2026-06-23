@@ -5,6 +5,7 @@ import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
+import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,
@@ -795,6 +796,9 @@ export const urlpatterns = urls(
 
       // Raw <Suspense> (no loading() DSL) streaming route
       include("/", suspenseStreamPatterns, { name: "" }),
+
+      // Deferred-handle navigation contract + history-cache fixes (#622 follow-ups)
+      include("/", deferredHandleNavPatterns, { name: "" }),
 
       // Error patterns - already has /errors prefix in paths
       include("/", errorsPatterns, { name: "" }),
