@@ -60,8 +60,7 @@ urls(
     cache, // Configure caching
     middleware, // Add middleware
     revalidate, // Control revalidation
-    intercept, // Intercept routes for modals
-    when, // Conditional rendering
+    intercept, // Intercept routes for modals (conditional via intercept(..., { when }))
     errorBoundary, // Add an error boundary
     notFoundBoundary, // Add a not-found boundary
     transition, // Configure view transitions

@@ -49,6 +49,7 @@ export type {
   ViewTransitionClass,
   TransitionConfig,
   TransitionWhenFn,
+  TransitionWhenContext,
   ResolvedSegment,
   SegmentMetadata,
   SlotState,

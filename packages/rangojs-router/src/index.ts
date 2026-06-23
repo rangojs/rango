@@ -85,6 +85,7 @@ export type { RouteHelpers, RouteHandlers } from "./route-definition.js";
 export type {
   TransitionConfig,
   TransitionWhenFn,
+  TransitionWhenContext,
   ViewTransitionClass,
 } from "./types.js";
 

@@ -209,6 +209,11 @@ interface TransitionConfig {
   default?: string | Record<string, string>; // fallback for any phase
   name?: string; // explicit view-transition-name
   viewTransition?: "auto" | false; // boundary opt-out (see below)
+  // Conditional gate, evaluated server-side AFTER the route handler (read-only
+  // ctx — get/params/request/url/method/env). Return false to drop this
+  // transition for the request, so the navigation streams its loading()
+  // fallback instead of holding. Distinct from intercept()'s match-time `when`.
+  when?: (ctx: TransitionWhenContext) => boolean;
 }
 ```
 

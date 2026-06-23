@@ -153,15 +153,16 @@ describe("validateHandlerUseItems", () => {
   it("passes valid items for intercept mount", () => {
     expect(() =>
       validateHandlerUseItems(
-        [
-          makeItem("middleware"),
-          makeItem("loader"),
-          makeItem("when"),
-          makeItem("layout"),
-        ],
+        [makeItem("middleware"), makeItem("loader"), makeItem("layout")],
         "intercept",
       ),
     ).not.toThrow();
+  });
+
+  it("rejects when as an intercept use item (conditional activation is config-only via intercept(..., { when }))", () => {
+    expect(() =>
+      validateHandlerUseItems([makeItem("when")], "intercept"),
+    ).toThrow();
   });
 
   it("throws for cache in intercept mount", () => {

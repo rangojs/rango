@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { ErrorInfo, NotFoundInfo } from "./boundaries.js";
-import type { HandlerContext } from "./handler-context.js";
+import type { RequestContext } from "../server/request-context.js";
 
 /**
  * CSS class(es) for a ViewTransition phase.
@@ -10,18 +10,35 @@ import type { HandlerContext } from "./handler-context.js";
 export type ViewTransitionClass = Record<string, string> | string;
 
 /**
+ * The (read-only) context a transition({ when }) predicate receives.
+ *
+ * This is the request context as it exists when the gate runs — post-handler,
+ * outside any cache scope — NOT the full handler context. It exposes only the
+ * fields actually present and safe to read at that point: `get` (read what the
+ * handler set), `params`, `request`, `url`, `method`, `env`. Handler-only sugar
+ * (`ctx.search`, `ctx.headers`, `ctx.build`, `ctx.dev`) is intentionally absent
+ * because it does not exist on this object — read query/headers the request way
+ * via `ctx.url.searchParams` / `ctx.request.headers`. There is no `ctx.set`: the
+ * gate runs after the handler, so a write would be observed out of order.
+ */
+export type TransitionWhenContext<TEnv = unknown> = Pick<
+  RequestContext<TEnv>,
+  "get" | "params" | "request" | "url" | "method" | "env"
+>;
+
+/**
  * Predicate that gates whether a transition() applies for the current request.
  *
  * Evaluated server-side AFTER the route's handler runs, so it can read state the
  * handler set via `ctx.get(...)`. Return false to drop this segment's transition
- * for the request; return true to apply it. It must be READ-ONLY — do not call
- * `ctx.set()` here (it runs post-handler, so a write would be observed out of
- * order). If it throws, the error is reported to the router's onError (phase
- * "rendering") and the transition is dropped (the navigation does not hold).
+ * for the request; return true to apply it. The context is read-only
+ * ({@link TransitionWhenContext}) — there is no `ctx.set`. If it throws, the
+ * error is reported to the router's onError (phase "rendering") and the
+ * transition is dropped (the navigation does not hold).
  *
- * Distinct from intercept()'s `when`, which is a match-time selector over
- * `{ from }`; a transition `when` runs post-handler and receives the request
- * context.
+ * Distinct from intercept()'s `when` config selector, which runs at MATCH time
+ * over `{ from, to, params, segments, … }`; a transition `when` runs
+ * post-handler and receives the request context.
  *
  * Scope: dropping a transition removes only THIS segment's contribution to the
  * navigation's hold. The startTransition hold is navigation-wide — it engages if
@@ -34,7 +51,7 @@ export type ViewTransitionClass = Record<string, string> | string;
  * replay the transition they had when stored. Avoid caching or prerendering a
  * route whose transition decision is request-dependent.
  */
-export type TransitionWhenFn = (ctx: HandlerContext) => boolean;
+export type TransitionWhenFn = (ctx: TransitionWhenContext) => boolean;
 
 /**
  * Configuration for React's <ViewTransition> component.

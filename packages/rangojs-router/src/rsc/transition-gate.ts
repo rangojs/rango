@@ -36,10 +36,11 @@ export function gateTransitions(
     for (const { id, when } of predicates) {
       let drop: boolean;
       try {
-        // The predicate is typed (ctx: HandlerContext); `ctx` here is the
-        // RequestContext, a structural superset. Widen the parameter to bridge
-        // the two rather than unsafely casting the context value.
-        drop = (when as (c: unknown) => boolean)(ctx) === false;
+        // The predicate's TransitionWhenContext is a read-only subset of this
+        // RequestContext (get/params/request/url/method/env), so the request
+        // context passes directly — no cast, and consumers can only type-read
+        // fields that actually exist here.
+        drop = when(ctx) === false;
       } catch (error) {
         // A throwing predicate must not fail the response: report it and treat
         // the transition as gated off (do not hold). invokeOnError no-ops when
