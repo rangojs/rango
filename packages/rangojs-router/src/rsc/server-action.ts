@@ -364,6 +364,14 @@ async function revalidateAfterActionInner<TEnv>(
   const reqCtx = getRequestContext();
   const metricsStore = reqCtx._metricsStore;
 
+  // Expose the action that triggered this revalidation to the transition({ when })
+  // gate (covers both the error-boundary and success gate calls below). Mirrors
+  // the action fields a revalidate() predicate sees.
+  reqCtx._gateActionId = actionContext?.actionId;
+  reqCtx._gateActionUrl = actionContext?.actionUrl;
+  reqCtx._gateActionResult = actionContext?.actionResult;
+  reqCtx._gateFormData = actionContext?.formData;
+
   // Action threw and a boundary matched: render the (already-matched) error
   // boundary here so it runs inside the route-middleware wrapper, exactly like
   // the success branch below. setRequestContextParams + the payload mirror the

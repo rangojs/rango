@@ -303,6 +303,20 @@ export interface RequestContext<
   _prevRouteKey?: string;
 
   /**
+   * @internal Navigation/action source data the transition({ when }) gate reads
+   * to build its ShouldRevalidateFn-shaped predicate context. currentUrl/Params
+   * come from the navigation snapshot (set at match time); action* are stashed
+   * at the action-bearing gate call sites. All undefined when there is no source
+   * (initial full load) or no action (plain navigation).
+   */
+  _gateCurrentUrl?: URL;
+  _gateCurrentParams?: Record<string, string>;
+  _gateActionId?: string;
+  _gateActionUrl?: URL;
+  _gateActionResult?: unknown;
+  _gateFormData?: FormData;
+
+  /**
    * @internal Render barrier for experimental `rendered()` API.
    * Resolves when all non-loader segments have settled and handle data
    * is available. Used by DSL loaders that call `ctx.rendered()`.
@@ -433,6 +447,12 @@ export type PublicRequestContext<
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
+  | "_gateCurrentUrl"
+  | "_gateCurrentParams"
+  | "_gateActionId"
+  | "_gateActionUrl"
+  | "_gateActionResult"
+  | "_gateFormData"
   | "_reportedErrors"
   | "_renderBarrier"
   | "_resolveRenderBarrier"
@@ -538,11 +558,17 @@ export function setRequestContextParams(
  */
 export function setRequestContextPrevRouteKey(
   prevRouteKey: string | undefined,
+  currentUrl?: URL,
+  currentParams?: Record<string, string>,
 ): void {
   const ctx = requestContextStorage.getStore();
-  if (ctx && prevRouteKey !== undefined) {
-    ctx._prevRouteKey = prevRouteKey;
-  }
+  if (!ctx) return;
+  if (prevRouteKey !== undefined) ctx._prevRouteKey = prevRouteKey;
+  // Source URL/params for the transition({ when }) gate (effectiveFromUrl /
+  // effectiveFromMatch.params from the navigation snapshot). Same write point as
+  // _prevRouteKey, which doubles as fromRouteName.
+  if (currentUrl !== undefined) ctx._gateCurrentUrl = currentUrl;
+  if (currentParams !== undefined) ctx._gateCurrentParams = currentParams;
 }
 
 /**

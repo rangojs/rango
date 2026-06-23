@@ -46,11 +46,49 @@ const TxWhenHandler: Handler<"/tx-when/:hold/:n"> = (ctx) => {
   return <TxWhenContent hold={ctx.params.hold} n={ctx.params.n} />;
 };
 
+/**
+ * Source-based gate: the `when` predicate now receives the same
+ * navigation/action metadata a revalidate() predicate gets. Here it reads
+ * `currentParams` (the navigation SOURCE) — `currentParams?.n !== "b"` — so the
+ * transition holds unless you arrive FROM n=b. Same-route :n nav makes it
+ * observable: a -> b holds the previous content (source n="a"), b -> a drops it
+ * and re-streams the skeleton (source n="b"). The `!== "b"` shape (rather than
+ * `=== "a"`) is deliberate: it returns true on the initial full load where
+ * `currentParams` is undefined, so the transition is present from first render
+ * and the route mounts INSIDE a transition scope — otherwise the first render
+ * would drop it and the route would remount (flash) on every later nav
+ * regardless of source. prefetch="none" forces cold navs so the gate runs at
+ * nav time and currentParams reflects the real source (a prefetched nav would
+ * freeze it to the prefetch source).
+ */
+async function TxSrcContent({ n }: { n: string }) {
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  return (
+    <div data-testid="tx-src-content">
+      <span data-testid="tx-src-n">{n}</span>
+      <Link to="/tx-src/a" data-testid="tx-src-to-a" prefetch="none">
+        a
+      </Link>
+      <Link to="/tx-src/b" data-testid="tx-src-to-b" prefetch="none">
+        b
+      </Link>
+    </div>
+  );
+}
+
+const TxSrcHandler: Handler<"/tx-src/:n"> = (ctx) => (
+  <TxSrcContent n={ctx.params.n} />
+);
+
 export const conditionalTransitionPatterns = urls(
   ({ path, loading, transition }) => [
     path("/tx-when/:hold/:n", TxWhenHandler, { name: "txWhen" }, () => [
       transition({ when: (ctx) => ctx.get(TxHoldMark) === true }),
       loading(<div data-testid="tx-when-loading">tx-when-loading</div>),
+    ]),
+    path("/tx-src/:n", TxSrcHandler, { name: "txSrc" }, () => [
+      transition({ when: ({ currentParams }) => currentParams?.n !== "b" }),
+      loading(<div data-testid="tx-src-loading">tx-src-loading</div>),
     ]),
   ],
 );

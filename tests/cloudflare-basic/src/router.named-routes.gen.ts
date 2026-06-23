@@ -107,6 +107,7 @@ export const NamedRoutes = {
   "transformCases.index": "/transform-cases",
   "transformCases.prerendered": "/transform-cases/prerendered",
   "transformCases.state": "/transform-cases/state",
+  txSrc: "/tx-src/:n",
   txWhen: "/tx-when/:hold/:n",
 } as const;
 

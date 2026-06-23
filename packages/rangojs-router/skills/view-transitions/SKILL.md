@@ -209,10 +209,9 @@ interface TransitionConfig {
   default?: string | Record<string, string>; // fallback for any phase
   name?: string; // explicit view-transition-name
   viewTransition?: "auto" | false; // boundary opt-out (see below)
-  // Conditional gate, evaluated server-side AFTER the route handler (read-only
-  // ctx — get/params/request/url/method/env). Return false to drop this
-  // transition for the request, so the navigation streams its loading()
-  // fallback instead of holding. Distinct from intercept()'s match-time `when`.
+  // Conditional gate, evaluated server-side AFTER the route handler. Return
+  // false to drop this transition for the request, so the navigation streams its
+  // loading() fallback instead of holding. See the gate section below.
   when?: (ctx: TransitionWhenContext) => boolean;
 }
 ```
@@ -221,6 +220,42 @@ interface TransitionConfig {
 - The object form keys are React transition types tagged by rango: `"navigation"` (forward navigations), `"navigation-back"` (popstate cache restores), and `"action"` (partial-update action/refetch paths only — see the caveat in "Direction-aware transitions").
 - `name` lets you participate in cross-page morphs by name (advanced; you usually don't need this on a layout/route-level wrap).
 - `viewTransition` toggles whether rango places its own `<ViewTransition>` boundary. `"auto"` (default) wraps as described above; `false` opts out — see the next section.
+
+## Conditional transitions (`when`)
+
+`transition({ when })` gates the hold per request. The predicate runs **server-side, AFTER the route handler** and outside any cache scope; return `false` to drop this segment's transition for the request (the navigation streams its `loading()` fallback instead of holding).
+
+Its context mirrors the `revalidate()` predicate args — the same navigation/action metadata — plus `get`/`env` for post-handler reads:
+
+```ts
+import type { TransitionWhenContext } from "@rangojs/router";
+
+// Hold only when the handler marked this request (handler sets, gate reads):
+transition({ when: (ctx) => ctx.get(KeepScroll) === true });
+
+// Hold only when arriving from a specific page (the navigation SOURCE):
+transition({
+  when: ({ currentUrl }) => currentUrl?.pathname.startsWith("/list") === true,
+});
+transition({ when: ({ fromRouteName }) => fromRouteName === "products.list" });
+
+// Hold only after a specific action revalidated the route:
+transition({
+  when: ({ actionId }) => actionId === "src/actions/cart.ts#addToCart",
+});
+```
+
+| field                                                  | meaning                                      | populated                                                                             |
+| ------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `currentUrl` / `currentParams` / `fromRouteName`       | navigation **source**                        | soft nav + action-success; `undefined` on initial full load and action/PE error paths |
+| `nextUrl` / `nextParams` / `toRouteName`               | navigation **target**                        | always                                                                                |
+| `actionId` / `actionUrl` / `actionResult` / `formData` | the server action that triggered this render | action-triggered renders only                                                         |
+| `method`                                               | `"GET"` (nav) / `"POST"` (action)            | always                                                                                |
+| `get` / `env`                                          | read handler/middleware vars + app env       | always                                                                                |
+
+A predicate that throws is reported to `router.onError` (phase `"rendering"`) and treated as no-hold (conservative).
+
+**Prefetch / cache caveat.** The gate runs during resolution, so a **prefetched** navigation decides at prefetch time — `currentUrl`/`currentParams`/`fromRouteName` reflect the page the prefetch fired from, not necessarily the click-time source — and a `cache()`/prerender hit replays the stored transition without re-running the predicate. A source-sensitive gate can therefore be frozen to prefetch/store-time state. This covers ~99% of navigations; if yours must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and don't `cache()` that segment.
 
 ## Opting out of the router boundary (place your own `<ViewTransition>`)
 

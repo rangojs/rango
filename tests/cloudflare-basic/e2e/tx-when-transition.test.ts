@@ -103,6 +103,42 @@ function txWhenTransitionTests(mode: "dev" | "build") {
         "mark=false must re-stream the loading() skeleton",
       ).toBe(true);
     });
+
+    // /tx-src/:n gates on the navigation SOURCE via the revalidate-shaped
+    // currentParams (the page navigated away from), mirroring the router e2e app.
+    test("transition({ when }) gates on the navigation source: holds when navigating away from n=a", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      await expect(testId(page, "tx-src-n")).toHaveText("a", { timeout: 8000 });
+
+      await watchFlash(page, "tx-src-loading");
+      await testId(page, "tx-src-to-b").click();
+      await expect(testId(page, "tx-src-n")).toHaveText("b", { timeout: 8000 });
+      expect(
+        await readFlash(page),
+        "source n=a (currentParams.n !== 'b') must hold the same-route nav (no skeleton flash)",
+      ).toBe(false);
+    });
+
+    test("transition({ when }) gates on the navigation source: re-streams when navigating away from n=b", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/tx-src/b"));
+      await waitForHydration(page);
+      await expect(testId(page, "tx-src-n")).toHaveText("b", { timeout: 8000 });
+
+      await watchFlash(page, "tx-src-loading");
+      await testId(page, "tx-src-to-a").click();
+      await expect(testId(page, "tx-src-n")).toHaveText("a", { timeout: 8000 });
+      expect(
+        await readFlash(page),
+        "source n=b (currentParams.n !== 'b' is false) must re-stream the loading() skeleton",
+      ).toBe(true);
+    });
   });
 }
 

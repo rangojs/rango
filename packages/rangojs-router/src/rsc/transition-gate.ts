@@ -1,4 +1,5 @@
 import type { MatchResult } from "../types.js";
+import type { TransitionWhenContext } from "../types/segments.js";
 import type { getRequestContext } from "../server/request-context.js";
 import { invokeOnError } from "../router/error-handling.js";
 import type { OnErrorCallback } from "../types/error-types.js";
@@ -36,11 +37,30 @@ export function gateTransitions(
     for (const { id, when } of predicates) {
       let drop: boolean;
       try {
-        // The predicate's TransitionWhenContext is a read-only subset of this
-        // RequestContext (get/params/request/url/method/env), so the request
-        // context passes directly — no cast, and consumers can only type-read
-        // fields that actually exist here.
-        drop = when(ctx) === false;
+        // Assemble the ShouldRevalidateFn-shaped predicate context from the
+        // request context. Source fields (currentUrl/currentParams/fromRouteName)
+        // were stashed at match time from the navigation snapshot; action fields
+        // at the action-bearing gate call sites. nextUrl/nextParams/toRouteName/
+        // method/get/env come straight off ctx (setRequestContextParams ran
+        // before the gate). Source/action fields are undefined when absent —
+        // never fabricated (see TransitionWhenContext).
+        const whenCtx: TransitionWhenContext = {
+          currentUrl: ctx._gateCurrentUrl,
+          currentParams: ctx._gateCurrentParams,
+          fromRouteName:
+            ctx._prevRouteKey as TransitionWhenContext["fromRouteName"],
+          nextUrl: ctx.url,
+          nextParams: ctx.params,
+          toRouteName: ctx.routeName,
+          actionId: ctx._gateActionId,
+          actionUrl: ctx._gateActionUrl,
+          actionResult: ctx._gateActionResult,
+          formData: ctx._gateFormData,
+          method: ctx.request.method,
+          get: ctx.get,
+          env: ctx.env,
+        };
+        drop = when(whenCtx) === false;
       } catch (error) {
         // A throwing predicate must not fail the response: report it and treat
         // the transition as gated off (do not hold). invokeOnError no-ops when

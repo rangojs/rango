@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { ErrorInfo, NotFoundInfo } from "./boundaries.js";
-import type { RequestContext } from "../server/request-context.js";
+import type { RevalidateParams, HandlerContext } from "./handler-context.js";
 
 /**
  * CSS class(es) for a ViewTransition phase.
@@ -10,35 +10,73 @@ import type { RequestContext } from "../server/request-context.js";
 export type ViewTransitionClass = Record<string, string> | string;
 
 /**
- * The (read-only) context a transition({ when }) predicate receives.
+ * The context a transition({ when }) predicate receives.
  *
- * This is the request context as it exists when the gate runs — post-handler,
- * outside any cache scope — NOT the full handler context. It exposes only the
- * fields actually present and safe to read at that point: `get` (read what the
- * handler set), `params`, `request`, `url`, `method`, `env`. Handler-only sugar
- * (`ctx.search`, `ctx.headers`, `ctx.build`, `ctx.dev`) is intentionally absent
- * because it does not exist on this object — read query/headers the request way
- * via `ctx.url.searchParams` / `ctx.request.headers`. There is no `ctx.set`: the
- * gate runs after the handler, so a write would be observed out of order.
+ * It mirrors the {@link ShouldRevalidateFn} args a `revalidate()` predicate
+ * gets — the same navigation/action metadata — so the two read the same shape,
+ * plus `get`/`env` for post-handler reads. There is no full `HandlerContext`
+ * here: the gate runs at the RSC-payload layer with the request context, not a
+ * handler context, so handler-only sugar (`search`/`build`/`dev`/`headers`) is
+ * absent by design. `get` is the way to read what the handler/middleware set
+ * via `ctx.set(...)` this request.
+ *
+ * Field availability (all source fields are optional — never fabricated):
+ * - `currentUrl` / `currentParams` / `fromRouteName` (the navigation SOURCE) are
+ *   populated on soft navigations and action-success revalidations. They are
+ *   undefined on an initial full document load and on action-error / no-JS error
+ *   paths that skip the navigation snapshot — there is no prior page to name.
+ * - `nextUrl` / `nextParams` / `toRouteName` / `get` / `env` are always present.
+ * - `actionId` / `actionUrl` / `actionResult` / `formData` are populated only
+ *   when a server action triggered the render; `method` is "POST" then, "GET"
+ *   otherwise.
+ *
+ * PREFETCH / CACHE CAVEAT (read this before gating on the source): the gate runs
+ * server-side during resolution. A PREFETCHED navigation renders at prefetch
+ * time, so `currentUrl`/`currentParams`/`fromRouteName` reflect the page the
+ * prefetch fired from, NOT necessarily the page the user actually navigates from
+ * — the decision is baked into the stored Flight payload and replayed verbatim.
+ * A `cache()`/prerender hit replays the stored transition with the predicate NOT
+ * re-run at all. So a source-sensitive predicate can be frozen to prefetch-time
+ * or store-time state. This is accepted (~99% of navigations match), but if your
+ * gate must reflect the exact click-time source, source-scope the prefetch
+ * (`<Link prefetchKey=":source">`) and do not `cache()` that segment.
  */
-export type TransitionWhenContext<TEnv = unknown> = Pick<
-  RequestContext<TEnv>,
-  "get" | "params" | "request" | "url" | "method" | "env"
->;
+export type TransitionWhenContext<
+  TParams = Record<string, string>,
+  TEnv = unknown,
+> = Partial<
+  Pick<
+    RevalidateParams<TParams, TEnv>,
+    "currentUrl" | "currentParams" | "fromRouteName"
+  >
+> &
+  Pick<
+    RevalidateParams<TParams, TEnv>,
+    | "nextUrl"
+    | "nextParams"
+    | "toRouteName"
+    | "actionId"
+    | "actionUrl"
+    | "actionResult"
+    | "formData"
+    | "method"
+  > &
+  Pick<HandlerContext<any, TEnv>, "get" | "env">;
 
 /**
  * Predicate that gates whether a transition() applies for the current request.
  *
- * Evaluated server-side AFTER the route's handler runs, so it can read state the
- * handler set via `ctx.get(...)`. Return false to drop this segment's transition
- * for the request; return true to apply it. The context is read-only
- * ({@link TransitionWhenContext}) — there is no `ctx.set`. If it throws, the
+ * Evaluated server-side AFTER the route's handler runs (so `get(...)` can read
+ * handler/middleware-set state) and outside any cache scope. Return false to
+ * drop this segment's transition for the request; return true to apply it. The
+ * context ({@link TransitionWhenContext}) carries the same navigation/action
+ * metadata a `revalidate()` predicate sees plus `get`/`env`. If it throws, the
  * error is reported to the router's onError (phase "rendering") and the
  * transition is dropped (the navigation does not hold).
  *
  * Distinct from intercept()'s `when` config selector, which runs at MATCH time
  * over `{ from, to, params, segments, … }`; a transition `when` runs
- * post-handler and receives the request context.
+ * post-handler over the resolved payload.
  *
  * Scope: dropping a transition removes only THIS segment's contribution to the
  * navigation's hold. The startTransition hold is navigation-wide — it engages if
@@ -47,9 +85,9 @@ export type TransitionWhenContext<TEnv = unknown> = Pick<
  * keeps a transition (the common case: a single transition on the route).
  *
  * Evaluated on every fresh (cache-miss) resolution; it is NOT re-run when a
- * segment is replayed from the runtime cache or a build-time prerender — those
- * replay the transition they had when stored. Avoid caching or prerendering a
- * route whose transition decision is request-dependent.
+ * segment is replayed from the runtime cache or a build-time prerender, and a
+ * prefetched navigation freezes it to prefetch-time state — see the caveat on
+ * {@link TransitionWhenContext}.
  */
 export type TransitionWhenFn = (ctx: TransitionWhenContext) => boolean;
 

@@ -504,7 +504,7 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * @param args.context - App context (db, user, etc.)
  * @param args.actionResult - Result from action (future support)
  * @param args.formData - Form data from action (future support)
- * @param args.formMethod - HTTP method from action (future support)
+ * @param args.method - HTTP method: "GET" for navigation, "POST" for server actions
  *
  * @returns Hard decision (boolean), soft suggestion (object), or defer
  *   (`void` / `null` / `undefined`) to keep the running suggestion as-is.

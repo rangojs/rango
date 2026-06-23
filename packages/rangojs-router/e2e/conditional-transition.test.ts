@@ -100,6 +100,50 @@ function conditionalTransitionTests(mode: "dev" | "build") {
         "mark=false must re-stream the loading() skeleton",
       ).toBe(true);
     });
+
+    // /tx-src/:n gates on the navigation SOURCE: `when: ({ currentParams }) =>
+    // currentParams?.n !== "b"`. This pins that the predicate now receives the
+    // revalidate-shaped nav metadata (currentParams = the page navigated away
+    // from) end-to-end, in both dev and production. (`!== "b"` is true on the
+    // initial load where currentParams is undefined, so the route mounts inside
+    // a transition scope; from-a holds, from-b drops.)
+    test("transition({ when }) gates on the navigation source: holds when navigating away from n=a", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      await expect(testId(page, "tx-src-n")).toHaveText("a", { timeout: 8000 });
+
+      // Same-route nav a -> b: the gate sees currentParams.n === "a" (the
+      // SOURCE), keeps the transition, so the re-suspend holds — no flash.
+      await watchFlash(page, "tx-src-loading");
+      await testId(page, "tx-src-to-b").click();
+      await expect(testId(page, "tx-src-n")).toHaveText("b", { timeout: 8000 });
+      expect(
+        await readFlash(page),
+        "source n=a (currentParams.n !== 'b') must hold the same-route nav (no skeleton flash)",
+      ).toBe(false);
+    });
+
+    test("transition({ when }) gates on the navigation source: re-streams when navigating away from n=b", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/tx-src/b"));
+      await waitForHydration(page);
+      await expect(testId(page, "tx-src-n")).toHaveText("b", { timeout: 8000 });
+
+      // Same-route nav b -> a: currentParams.n === "b", predicate returns false,
+      // the transition is dropped, so the boundary re-streams the skeleton.
+      await watchFlash(page, "tx-src-loading");
+      await testId(page, "tx-src-to-a").click();
+      await expect(testId(page, "tx-src-n")).toHaveText("a", { timeout: 8000 });
+      expect(
+        await readFlash(page),
+        "source n=b (currentParams.n !== 'b' is false) must re-stream the loading() skeleton",
+      ).toBe(true);
+    });
   });
 }
 

@@ -279,6 +279,14 @@ export async function handleProgressiveEnhancement<TEnv>(
       });
     }
 
+    // Expose the no-JS action to the transition({ when }) gate. currentUrl/Params
+    // are absent on this full-render path (no navigation snapshot); useActionState
+    // ids are block-scoped, so only a direct action id is available here.
+    const peReqCtx = getRequestContext();
+    peReqCtx._gateActionId = directActionId ?? undefined;
+    peReqCtx._gateActionResult = actionResult;
+    peReqCtx._gateFormData = formData;
+
     const payload: RscPayload = {
       metadata: {
         pathname: url.pathname,
@@ -399,6 +407,10 @@ async function renderPeErrorBoundary<TEnv>(
   });
 
   setRequestContextParams(errorResult.params, errorResult.routeName);
+
+  // Only the failing action id is in scope here (no formData/actionResult thread
+  // into this helper); expose it to the transition({ when }) gate.
+  getRequestContext()._gateActionId = actionId ?? undefined;
 
   const payload: RscPayload = {
     metadata: {
