@@ -65,6 +65,12 @@ export type {
   ErrorPhase,
   OnErrorContext,
   OnErrorCallback,
+  // View transition types (also exported from the default entry; route
+  // definitions resolve to this react-server entry, so they must be here too)
+  TransitionConfig,
+  TransitionWhenFn,
+  TransitionWhenContext,
+  ViewTransitionClass,
 } from "./types.js";
 
 // Router options type (server-only, so import directly)

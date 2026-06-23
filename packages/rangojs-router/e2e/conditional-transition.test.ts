@@ -144,6 +144,16 @@ function conditionalTransitionTests(mode: "dev" | "build") {
         "source n=b (currentParams.n !== 'b' is false) must re-stream the loading() skeleton",
       ).toBe(true);
     });
+
+    // NOTE on action-triggered gating: the gate DOES receive the action fields
+    // (actionId/actionResult/formData/method) on a server-action revalidation —
+    // pinned through the public type in src/testing/__tests__/transition-when.test.ts.
+    // There is intentionally no browser assertion for it here: an action
+    // revalidation holds the route's content by default (stale-while-revalidate),
+    // so dropping the transition produces no observable skeleton, and on stable
+    // React the <ViewTransition> animation is a no-op. The action fields gate the
+    // animation, not a content-hold, so the only end-to-end coverage that adds
+    // signal is the unit test.
   });
 }
 

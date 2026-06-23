@@ -248,7 +248,8 @@ transition({
 | field                                                  | meaning                                      | populated                                                                             |
 | ------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `currentUrl` / `currentParams` / `fromRouteName`       | navigation **source**                        | soft nav + action-success; `undefined` on initial full load and action/PE error paths |
-| `nextUrl` / `nextParams` / `toRouteName`               | navigation **target**                        | always                                                                                |
+| `nextUrl` / `nextParams`                               | navigation **target**                        | always                                                                                |
+| `toRouteName` (and `fromRouteName`)                    | route **name**                               | when the route is named (undefined for unnamed/auto-generated)                        |
 | `actionId` / `actionUrl` / `actionResult` / `formData` | the server action that triggered this render | action-triggered renders only                                                         |
 | `method`                                               | `"GET"` (nav) / `"POST"` (action)            | always                                                                                |
 | `get` / `env`                                          | read handler/middleware vars + app env       | always                                                                                |

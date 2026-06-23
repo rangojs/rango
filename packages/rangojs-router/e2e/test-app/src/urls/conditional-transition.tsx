@@ -1,4 +1,9 @@
-import { urls, createVar, type Handler } from "@rangojs/router";
+import {
+  urls,
+  createVar,
+  type Handler,
+  type TransitionWhenContext,
+} from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 
 /**
@@ -87,7 +92,11 @@ export const conditionalTransitionPatterns = urls(
       loading(<div data-testid="tx-when-loading">tx-when-loading</div>),
     ]),
     path("/tx-src/:n", TxSrcHandler, { name: "txSrc" }, () => [
-      transition({ when: ({ currentParams }) => currentParams?.n !== "b" }),
+      // The explicit TransitionWhenContext annotation (imported from the public
+      // entry) guards that the type is exported from @rangojs/router.
+      transition({
+        when: (ctx: TransitionWhenContext) => ctx.currentParams?.n !== "b",
+      }),
       loading(<div data-testid="tx-src-loading">tx-src-loading</div>),
     ]),
   ],

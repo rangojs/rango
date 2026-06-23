@@ -25,7 +25,9 @@ export type ViewTransitionClass = Record<string, string> | string;
  *   populated on soft navigations and action-success revalidations. They are
  *   undefined on an initial full document load and on action-error / no-JS error
  *   paths that skip the navigation snapshot — there is no prior page to name.
- * - `nextUrl` / `nextParams` / `toRouteName` / `get` / `env` are always present.
+ * - `nextUrl` / `nextParams` / `get` / `env` / `method` are always present;
+ *   `toRouteName` is present only when the target route is named (undefined for
+ *   unnamed/auto-generated routes, like `fromRouteName`).
  * - `actionId` / `actionUrl` / `actionResult` / `formData` are populated only
  *   when a server action triggered the render; `method` is "POST" then, "GET"
  *   otherwise.
