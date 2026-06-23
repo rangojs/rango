@@ -5,6 +5,10 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import type { HandlerContext } from "../handler-context.js";
+import type {
+  ResolvedSegment,
+  TransitionWhenContext,
+} from "../../types/segments.js";
 
 // C1: a no-JS (PE) action that throws with NO matching error boundary must
 // re-render with HTTP 500, matching the JS path (server-action.ts sets
@@ -31,6 +35,16 @@ function buildDirectActionRequest(): Request {
   });
 }
 
+function buildMalformedFormRequest(): Request {
+  return new Request("http://localhost/pe", {
+    method: "POST",
+    headers: {
+      "content-type": "multipart/form-data; boundary=missing",
+    },
+    body: "not-a-valid-multipart-body",
+  });
+}
+
 function makeReqCtx(request: Request) {
   return createRequestContext({
     env: {},
@@ -38,6 +52,32 @@ function makeReqCtx(request: Request) {
     url: new URL(request.url),
     variables: {},
   });
+}
+
+function makeTransitionBoundaryResult(): unknown {
+  const segment = {
+    id: "pe-error-seg",
+    namespace: "r",
+    type: "error",
+    index: 0,
+    component: null,
+    transition: { enter: "fade" },
+  } as ResolvedSegment;
+  return {
+    segments: [segment],
+    matched: [],
+    diff: [],
+    resolvedIds: [],
+    params: {},
+    routeName: "pe.error",
+  };
+}
+
+function seedTransitionGate(
+  reqCtx: ReturnType<typeof makeReqCtx>,
+  onContext: (ctx: TransitionWhenContext) => boolean,
+) {
+  reqCtx._transitionWhen = [{ id: "pe-error-seg", when: onContext }];
 }
 
 interface StubCtxOptions {
@@ -209,5 +249,72 @@ describe("handleProgressiveEnhancement — PE re-render preserves request header
     // Re-render request is a non-form GET; accept forces the HTML path.
     expect(renderRequest!.method).toBe("GET");
     expect(renderRequest!.headers.get("accept")).toBe("text/html");
+  });
+});
+
+describe("handleProgressiveEnhancement — transition action metadata", () => {
+  it("does not expose actionUrl when a malformed form fails before action detection", async () => {
+    const request = buildMalformedFormRequest();
+    const reqCtx = makeReqCtx(request);
+    let seen: TransitionWhenContext | undefined;
+    seedTransitionGate(reqCtx, (ctx) => {
+      seen = ctx;
+      return true;
+    });
+    const ctx = makeStubCtx({
+      actionThrows: false,
+      matchErrorResult: makeTransitionBoundaryResult(),
+    });
+
+    const res = await runWithRequestContext(reqCtx, () =>
+      handleProgressiveEnhancement(
+        ctx,
+        request,
+        {},
+        new URL(request.url),
+        false,
+        reqCtx._handleStore,
+        undefined,
+      ),
+    );
+
+    expect(res).not.toBeNull();
+    expect(seen?.actionId).toBeUndefined();
+    expect(seen?.actionUrl).toBeUndefined();
+    expect(seen?.actionResult).toBeUndefined();
+    expect(seen?.formData).toBeUndefined();
+  });
+
+  it("exposes actionId and actionUrl when a known PE action renders an error boundary", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const request = buildDirectActionRequest();
+    const reqCtx = makeReqCtx(request);
+    let seen: TransitionWhenContext | undefined;
+    seedTransitionGate(reqCtx, (ctx) => {
+      seen = ctx;
+      return true;
+    });
+    const ctx = makeStubCtx({
+      actionThrows: true,
+      matchErrorResult: makeTransitionBoundaryResult(),
+    });
+
+    const res = await runWithRequestContext(reqCtx, () =>
+      handleProgressiveEnhancement(
+        ctx,
+        request,
+        {},
+        new URL(request.url),
+        false,
+        reqCtx._handleStore,
+        undefined,
+      ),
+    );
+
+    expect(res).not.toBeNull();
+    expect(seen?.actionId).toBe(ACTION_ID);
+    expect(seen?.actionUrl?.pathname).toBe("/pe");
+    expect(seen?.method).toBe("POST");
+    errSpy.mockRestore();
   });
 });

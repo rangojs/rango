@@ -30,11 +30,13 @@ export type ViewTransitionClass = Record<string, string> | string;
  *   unnamed/auto-generated routes, like `fromRouteName`).
  * - `actionId` / `actionUrl` / `actionResult` / `formData` are populated only
  *   when a server action triggered the render; `method` is "POST" then, "GET"
- *   otherwise. On no-JS (progressive-enhancement) error or form-parse-failure
- *   paths an action was attempted — so `actionUrl` (and possibly `formData`) is
- *   present — but `actionId` may be undefined because the failing action's id
- *   could not be resolved. Treat `actionId` as "the action, if known", not as
- *   "was this an action".
+ *   otherwise. On no-JS (progressive-enhancement) action paths `actionId` may be
+ *   undefined when React cannot surface the action's stable id: the success
+ *   re-render still sets `actionUrl`/`formData` for a recognized action, but the
+ *   error-boundary re-render exposes `actionUrl` only when `actionId` resolved.
+ *   Malformed form bodies that fail before action detection expose no action
+ *   fields. Treat `actionId` as "the action, if known", not as "was this an
+ *   action".
  *
  * PREFETCH / CACHE CAVEAT (read this before gating on the source): the gate runs
  * server-side during resolution. A PREFETCHED navigation renders at prefetch

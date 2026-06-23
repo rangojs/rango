@@ -8,7 +8,9 @@
  * predicate sees exactly the navigation/action metadata it would at runtime
  * (currentUrl/currentParams/fromRouteName, nextUrl/nextParams/toRouteName,
  * actionId/actionUrl/actionResult/formData/method, get/env), and `kept` reflects
- * whether the transition would apply this request.
+ * whether the transition would apply this request. The result also exposes the
+ * assembled `whenContext` so tests can assert the exact fields without reaching
+ * into private request-context state.
  *
  * This is the public way to exercise a transition gate: the full
  * match -> render pipeline that wires these together only runs under real RSC
@@ -25,7 +27,11 @@ import {
 import { applyViewTransitionDefault } from "../router/segment-resolution/view-transition-default.js";
 import { gateTransitions } from "../rsc/transition-gate.js";
 import { createTestRequestContext, type VarsInit } from "./internal/context.js";
-import type { TransitionConfig, ResolvedSegment } from "../types/segments.js";
+import type {
+  ResolvedSegment,
+  TransitionConfig,
+  TransitionWhenContext,
+} from "../types/segments.js";
 import type { OnErrorCallback } from "../types/error-types.js";
 
 const toURL = (v: string | URL, base: URL): URL =>
@@ -75,6 +81,11 @@ export interface RunTransitionWhenResult<TEnv = any> {
   kept: boolean;
   /** Convenience inverse of `kept`. */
   dropped: boolean;
+  /**
+   * The production-assembled predicate context. Undefined when the config has
+   * no `when` predicate.
+   */
+  whenContext?: TransitionWhenContext<Record<string, string>, TEnv>;
   /** The underlying RequestContext, for additional assertions (`ctx.get(...)`, etc.). */
   ctx: RequestContext<TEnv>;
 }
@@ -109,11 +120,28 @@ export function runTransitionWhen<TEnv = any>(
     reqCtx._gateActionResult = opts.actionResult;
   if (opts.formData !== undefined) reqCtx._gateFormData = opts.formData;
 
+  let whenContext:
+    | TransitionWhenContext<Record<string, string>, TEnv>
+    | undefined;
+  const when = config.when;
+  const configForGate: TransitionConfig = when
+    ? {
+        ...config,
+        when: (c) => {
+          whenContext = c as TransitionWhenContext<
+            Record<string, string>,
+            TEnv
+          >;
+          return when(c);
+        },
+      }
+    : config;
+
   return runWithRequestContext(reqCtx, () => {
     // The real resolution-time collection + post-handler gate, so the predicate
     // sees the production-assembled TransitionWhenContext.
     const serialized = applyViewTransitionDefault(
-      config,
+      configForGate,
       undefined,
       "tx-when-seg",
     );
@@ -131,6 +159,6 @@ export function runTransitionWhen<TEnv = any>(
       opts.onError,
     );
     const kept = segment.transition !== undefined;
-    return { kept, dropped: !kept, ctx: reqCtx };
+    return { kept, dropped: !kept, whenContext, ctx: reqCtx };
   });
 }

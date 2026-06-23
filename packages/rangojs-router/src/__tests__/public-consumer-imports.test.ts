@@ -220,6 +220,7 @@ import {
   runMiddleware,
   runLoader,
   runLoaderResult,
+  runTransitionWhen,
   dispatch,
   assertCacheStatus,
   assertCacheDecision,
@@ -233,6 +234,8 @@ import {
 } from "@rangojs/router/testing";
 import type {
   RunLoaderResult,
+  RunTransitionWhenOptions,
+  RunTransitionWhenResult,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -249,6 +252,8 @@ import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 // nameable at a consumer call site, not just structurally reachable.
 type _TelemetryTypesReachable = [
   RunLoaderResult<unknown>,
+  RunTransitionWhenOptions,
+  RunTransitionWhenResult,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -260,6 +265,7 @@ type _TelemetryTypesReachable = [
 void runMiddleware;
 void runLoader;
 void runLoaderResult;
+void runTransitionWhen;
 void dispatch;
 void rangoTestConfig;
 void rangoTestAliases;

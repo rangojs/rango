@@ -4,10 +4,7 @@ import { createVar } from "../../context-var.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { applyViewTransitionDefault } from "../../router/segment-resolution/view-transition-default.js";
 import { gateTransitions } from "../../rsc/transition-gate.js";
-import type {
-  ResolvedSegment,
-  TransitionWhenContext,
-} from "../../types/segments.js";
+import type { ResolvedSegment } from "../../types/segments.js";
 
 const HoldMark = createVar<boolean>();
 
@@ -126,16 +123,14 @@ describe("runTransitionWhen (public testing primitive)", () => {
   });
 
   it("passes the revalidate-shaped navigation + action metadata (plus get) to the predicate", () => {
-    let received: TransitionWhenContext | undefined;
-    const { kept } = runTransitionWhen(
+    const { kept, whenContext } = runTransitionWhen(
       {
-        when: (c) => {
-          received = c;
-          return true;
-        },
+        when: () => true,
       },
       {
-        request: "https://app.test/products/2",
+        request: new Request("https://app.test/products/2", {
+          method: "POST",
+        }),
         params: { id: "2" },
         toRouteName: "products.detail",
         currentUrl: "/products",
@@ -150,38 +145,34 @@ describe("runTransitionWhen (public testing primitive)", () => {
     );
     expect(kept).toBe(true);
     // source
-    expect(received?.currentUrl?.pathname).toBe("/products");
-    expect(received?.currentParams).toEqual({ id: "1" });
-    expect(received?.fromRouteName).toBe("products.list");
+    expect(whenContext?.currentUrl?.pathname).toBe("/products");
+    expect(whenContext?.currentParams).toEqual({ id: "1" });
+    expect(whenContext?.fromRouteName).toBe("products.list");
     // target
-    expect(received?.nextUrl.pathname).toBe("/products/2");
-    expect(received?.nextParams).toEqual({ id: "2" });
-    expect(received?.toRouteName).toBe("products.detail");
+    expect(whenContext?.nextUrl.pathname).toBe("/products/2");
+    expect(whenContext?.nextParams).toEqual({ id: "2" });
+    expect(whenContext?.toRouteName).toBe("products.detail");
     // action
-    expect(received?.actionId).toBe("src/actions/cart.ts#addToCart");
-    expect(received?.actionUrl?.pathname).toBe("/cart");
-    expect(received?.actionResult).toEqual({ ok: true });
-    expect(received?.formData).toBeInstanceOf(FormData);
-    expect(received?.method).toBe("GET");
+    expect(whenContext?.actionId).toBe("src/actions/cart.ts#addToCart");
+    expect(whenContext?.actionUrl?.pathname).toBe("/cart");
+    expect(whenContext?.actionResult).toEqual({ ok: true });
+    expect(whenContext?.formData).toBeInstanceOf(FormData);
+    expect(whenContext?.method).toBe("POST");
     // get reads what a handler/middleware set this request
-    expect(received?.get(HoldMark)).toBe(true);
+    expect(whenContext?.get(HoldMark)).toBe(true);
   });
 
   it("leaves the source/action halves undefined for an initial full load with no action", () => {
-    let received: TransitionWhenContext | undefined;
-    runTransitionWhen({
-      when: (c) => {
-        received = c;
-        return true;
-      },
+    const { whenContext } = runTransitionWhen({
+      when: () => true,
     });
-    expect(received?.currentUrl).toBeUndefined();
-    expect(received?.currentParams).toBeUndefined();
-    expect(received?.fromRouteName).toBeUndefined();
-    expect(received?.actionId).toBeUndefined();
-    expect(received?.actionResult).toBeUndefined();
+    expect(whenContext?.currentUrl).toBeUndefined();
+    expect(whenContext?.currentParams).toBeUndefined();
+    expect(whenContext?.fromRouteName).toBeUndefined();
+    expect(whenContext?.actionId).toBeUndefined();
+    expect(whenContext?.actionResult).toBeUndefined();
     // Target is always present.
-    expect(received?.nextUrl).toBeInstanceOf(URL);
+    expect(whenContext?.nextUrl).toBeInstanceOf(URL);
   });
 
   it("gates on the navigation source (currentUrl)", () => {

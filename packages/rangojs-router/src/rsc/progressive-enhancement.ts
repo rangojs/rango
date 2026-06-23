@@ -411,10 +411,14 @@ async function renderPeErrorBoundary<TEnv>(
   setRequestContextParams(errorResult.params, errorResult.routeName);
 
   // Only the failing action id + URL are in scope here (no formData/actionResult
-  // thread into this helper); expose them to the transition({ when }) gate.
-  const peErrCtx = getRequestContext();
-  peErrCtx._gateActionId = actionId ?? undefined;
-  peErrCtx._gateActionUrl = new URL(url);
+  // thread into this helper). Expose the URL only when the action id is known:
+  // this helper also handles malformed form bodies before action detection, and
+  // those should not look like action-triggered renders to transition({ when }).
+  if (actionId != null) {
+    const peErrCtx = getRequestContext();
+    peErrCtx._gateActionId = actionId;
+    peErrCtx._gateActionUrl = new URL(url);
+  }
 
   const payload: RscPayload = {
     metadata: {
