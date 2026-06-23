@@ -322,13 +322,13 @@ describe("route tree inspection", () => {
     const whenFn = (ctx: any) => ctx.from.pathname.startsWith("/products");
 
     const tree = buildRouteTree(
-      urls(({ path, layout, intercept, when }) => [
+      urls(({ path, layout, intercept }) => [
         layout(ShopLayout, () => [
           path("/products", ProductList, { name: "products" }),
           path("/products/:id", ProductDetail, { name: "product.detail" }),
-          intercept("@modal", ".product.detail", ProductModal, () => [
-            when(whenFn),
-          ]),
+          intercept("@modal", ".product.detail", ProductModal, {
+            when: whenFn,
+          }),
         ]),
       ]),
     );
@@ -343,14 +343,19 @@ describe("route tree inspection", () => {
 
   it("intercepts() returns structured info", () => {
     const tree = buildRouteTree(
-      urls(({ path, layout, intercept, when, loader }) => [
+      urls(({ path, layout, intercept, loader }) => [
         layout(ShopLayout, () => [
           path("/products", ProductList, { name: "products" }),
           path("/products/:id", ProductDetail, { name: "product.detail" }),
-          intercept("@modal", ".product.detail", ProductModal, () => [
-            when(() => true),
-            loader(PostLoader),
-          ]),
+          intercept(
+            "@modal",
+            ".product.detail",
+            ProductModal,
+            {
+              when: () => true,
+            },
+            () => [loader(PostLoader)],
+          ),
         ]),
       ]),
     );
@@ -1005,20 +1010,6 @@ describe("route tree inspection", () => {
     }).toThrow(/layout\(\) cannot be used inside parallel/);
   });
 
-  it("when() outside intercept throws", () => {
-    expect(() => {
-      buildRouteTree(
-        urls(({ path, layout, when }) => [
-          layout(RootLayout, () => [
-            path("/", HomePage, { name: "home" }),
-            // @ts-expect-error when is not a valid layout use item
-            when(() => true),
-          ]),
-        ]),
-      );
-    }).toThrow(/when\(\) can only be used inside intercept/);
-  });
-
   it("duplicate route names throw", () => {
     expect(() => {
       buildRouteTree(
@@ -1305,7 +1296,6 @@ describe("route tree inspection", () => {
           cache,
           parallel,
           intercept,
-          when,
           middleware,
           loader,
           loading,
@@ -1325,10 +1315,15 @@ describe("route tree inspection", () => {
                   loader(DetailLoader),
                   loading(LoadingSpinner),
                 ]),
-                intercept("@drawer", ".item.detail", ModalView, () => [
-                  when((ctx: any) => ctx.from.pathname.startsWith("/items")),
-                  loader(DetailLoader),
-                ]),
+                intercept(
+                  "@drawer",
+                  ".item.detail",
+                  ModalView,
+                  {
+                    when: (ctx: any) => ctx.from.pathname.startsWith("/items"),
+                  },
+                  () => [loader(DetailLoader)],
+                ),
               ]),
               path("/", HomePage, { name: "home" }),
             ]),

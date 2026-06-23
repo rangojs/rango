@@ -193,9 +193,9 @@ The main content always goes through `<Outlet />` via the `path()` handler.
 // Rango: explicit intercept in layout
 layout(<ShopLayout />, () => [
   path("/product/:id", ProductPage, { name: "product" }),
-  intercept("@modal", ".product", <ProductModal />, () => [
-    when(({ from }) => from.pathname.startsWith("/shop")),
-  ]),
+  intercept("@modal", ".product", <ProductModal />, {
+    when: ({ from }) => from.pathname.startsWith("/shop"),
+  }),
 ])
 ```
 

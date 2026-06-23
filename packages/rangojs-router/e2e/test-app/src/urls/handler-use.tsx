@@ -9,7 +9,6 @@ import {
   parallel,
   intercept,
   layout,
-  when,
   cookies,
 } from "@rangojs/router";
 import { Outlet, ParallelOutlet, Link } from "@rangojs/router/client";
@@ -515,11 +514,10 @@ export const handlerUsePatterns = urls(({ path, layout, parallel }) => [
       path("/intercept-target", InterceptTargetPage, {
         name: "interceptTarget",
       }),
-      intercept("@modal", ".interceptTarget", InterceptedModal, () => [
-        when(({ from }) =>
+      intercept("@modal", ".interceptTarget", InterceptedModal, {
+        when: ({ from }) =>
           from.pathname.startsWith("/handler-use/intercept-source"),
-        ),
-      ]),
+      }),
     ]),
   ]),
 ]);

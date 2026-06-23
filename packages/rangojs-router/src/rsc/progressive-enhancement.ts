@@ -14,6 +14,7 @@ import { getSSRSetup } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { gateTransitions } from "./transition-gate.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -278,12 +279,26 @@ export async function handleProgressiveEnhancement<TEnv>(
       });
     }
 
+    // Expose the no-JS action to the transition({ when }) gate. currentUrl/Params
+    // are absent on this full-render path (no navigation snapshot); useActionState
+    // ids are block-scoped, so only a direct action id is available here.
+    // actionUrl is the page the action was submitted from (this request's url).
+    const peReqCtx = getRequestContext();
+    peReqCtx._gateActionId = directActionId ?? undefined;
+    peReqCtx._gateActionUrl = new URL(url);
+    peReqCtx._gateActionResult = actionResult;
+    peReqCtx._gateFormData = formData;
+
     const payload: RscPayload = {
       metadata: {
         pathname: url.pathname,
         routerId: ctx.router.id,
         basename: ctx.router.basename,
-        segments: match.segments,
+        segments: gateTransitions(
+          match.segments,
+          getRequestContext(),
+          ctx.router.onError,
+        ),
         matched: match.matched,
         diff: match.diff,
         resolvedIds: match.resolvedIds,
@@ -395,12 +410,26 @@ async function renderPeErrorBoundary<TEnv>(
 
   setRequestContextParams(errorResult.params, errorResult.routeName);
 
+  // Only the failing action id + URL are in scope here (no formData/actionResult
+  // thread into this helper). Expose the URL only when the action id is known:
+  // this helper also handles malformed form bodies before action detection, and
+  // those should not look like action-triggered renders to transition({ when }).
+  if (actionId != null) {
+    const peErrCtx = getRequestContext();
+    peErrCtx._gateActionId = actionId;
+    peErrCtx._gateActionUrl = new URL(url);
+  }
+
   const payload: RscPayload = {
     metadata: {
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: errorResult.segments,
+      segments: gateTransitions(
+        errorResult.segments,
+        getRequestContext(),
+        ctx.router.onError,
+      ),
       matched: errorResult.matched,
       diff: errorResult.diff,
       resolvedIds: errorResult.resolvedIds,

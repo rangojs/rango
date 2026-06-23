@@ -22,7 +22,6 @@ import {
   loading,
   parallel,
   intercept,
-  when,
   errorBoundary,
   notFoundBoundary,
 } from "@rangojs/router";

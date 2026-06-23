@@ -151,6 +151,19 @@ export type InterceptWhenFn<TEnv = any> = (
 ) => boolean;
 
 /**
+ * Config object passed to intercept() (its 4th argument). `when` gates whether
+ * the intercept activates on a soft navigation — a single match-time selector or
+ * an array of them (ALL must return true; omit to always activate). This is the
+ * intercept counterpart to transition({ when }); both express conditional
+ * behavior as a config field rather than a separate DSL helper.
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export interface InterceptConfig<TEnv = any> {
+  when?: InterceptWhenFn<TEnv> | InterceptWhenFn<TEnv>[];
+}
+
+/**
  * Intercept entry stored in EntryData
  * Contains the slot name, route to intercept, and handler
  *

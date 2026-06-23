@@ -58,7 +58,6 @@ export function urls<
       loading: baseHelpers.loading,
       errorBoundary: baseHelpers.errorBoundary,
       notFoundBoundary: baseHelpers.notFoundBoundary,
-      when: baseHelpers.when,
       cache: baseHelpers.cache as PathHelpers<TEnv>["cache"],
       transition: baseHelpers.transition as PathHelpers<TEnv>["transition"],
     };

@@ -7,6 +7,7 @@ import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
 import { clientSuspensePatterns } from "./urls/client-suspense.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
+import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,
@@ -147,7 +148,6 @@ export const urlpatterns = urls(
     loader,
     loading,
     transition,
-    when,
     middleware,
     parallel,
   }) => [
@@ -730,11 +730,8 @@ export const urlpatterns = urls(
             </Modal>
           );
         },
-        () => [
-          when(({ from }) => shouldInterceptProduct(from.pathname)),
-          loader(ProductDetailLoader),
-          loader(CartQuantityLoader),
-        ],
+        { when: ({ from }) => shouldInterceptProduct(from.pathname) },
+        () => [loader(ProductDetailLoader), loader(CartQuantityLoader)],
       ),
 
       // Slow product intercept - with loading state
@@ -805,6 +802,7 @@ export const urlpatterns = urls(
 
       // Raw <Suspense> (no loading() DSL) streaming route
       include("/", suspenseStreamPatterns, { name: "" }),
+      include("/", conditionalTransitionPatterns, { name: "" }),
 
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),

@@ -346,6 +346,8 @@ export const NamedRoutes = {
   "transformCases.state": "/transform-cases/state",
   "txGroup.a": "/tx-group-a/:id",
   "txGroup.b": "/tx-group-b/:id",
+  txSrc: "/tx-src/:n",
+  txWhen: "/tx-when/:hold/:n",
   "useCacheTest.loaderSegmentPages.loaderSegmentPage": { path: "/use-cache-test/loader-segments/:pageId", search: { page: "number?" } },
   "useCacheTest.useCacheTest.basic": "/use-cache-test/basic",
   "useCacheTest.useCacheTest.brandCheck": "/use-cache-test/brand-check",

@@ -83,7 +83,7 @@ Caching: segment `cache({ ttl, swr })`, `"use cache: <profile>"` with
 Control flow: `errorBoundary()`, `notFoundBoundary()` (thrown
 `DataNotFoundError`), `redirect()`, global `notFound`.
 Streaming/UX: parallel slot with its own loader + `loading()`, `intercept()`
-modal gated by `when()`, `transition()` content-hold (component state survives a
+modal gated by the `when` config, `transition()` content-hold (component state survives a
 same-route param change).
 State & nav: `createLocationState` (flash + persistent), `useLocationState`,
 `Link state`, `useRouter`/`useNavigation`/`usePathname`/`useSegments`/`useParams`/

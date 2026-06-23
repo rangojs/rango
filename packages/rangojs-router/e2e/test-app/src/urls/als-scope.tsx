@@ -94,16 +94,7 @@ async function StreamedProbe() {
 }
 
 export const alsScopePatterns = urls(
-  ({
-    path,
-    layout,
-    middleware,
-    loader,
-    parallel,
-    intercept,
-    when,
-    revalidate,
-  }) => [
+  ({ path, layout, middleware, loader, parallel, intercept, revalidate }) => [
     // Route middleware: sets AlsRouteMark and runs next() inside customRouteAls.
     // Wraps renders and revalidation but NOT action execution.
     middleware(async (ctx, next) => {
@@ -281,8 +272,8 @@ export const alsScopePatterns = urls(
               </div>
             );
           },
+          { when: ({ from }) => from.pathname.startsWith("/als-scope") },
           () => [
-            when(({ from }) => from.pathname.startsWith("/als-scope")),
             middleware(async (ctx, next) => {
               ctx.set(AlsInterceptMark, "applied");
               await next();

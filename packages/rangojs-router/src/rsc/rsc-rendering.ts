@@ -21,6 +21,7 @@ import {
   attachLocationStateIfPresent,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
+import { gateTransitions } from "./transition-gate.js";
 
 export function handleRscRendering<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -70,7 +71,7 @@ async function handleRscRenderingInner<TEnv>(
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: m.segments,
+      segments: gateTransitions(m.segments, reqCtx, ctx.router.onError),
       matched: m.matched,
       diff: m.diff,
       resolvedIds: m.resolvedIds,
@@ -126,7 +127,11 @@ async function handleRscRenderingInner<TEnv>(
           // intercepted server-side (X-RSC-Reload) and never delivers a
           // different-router payload to the client.
           routerId: ctx.router.id,
-          segments: result.segments,
+          segments: gateTransitions(
+            result.segments,
+            reqCtx,
+            ctx.router.onError,
+          ),
           matched: result.matched,
           diff: result.diff,
           resolvedIds: result.resolvedIds,

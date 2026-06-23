@@ -51,13 +51,13 @@ Now `ProductPage` carries its loader, loading state, and response-header middlew
 
 `handler.use()` is the same callback shape regardless of where the handler runs, but the runtime validates that the items it returns are valid for the mount site. Driven by `MOUNT_SITE_ALLOWED_TYPES` in [resolve-handler-use.ts](../../src/route-definition/resolve-handler-use.ts):
 
-| Mount site                                        | Allowed item types                                                                                                                             |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path()` / `route()`                              | `layout`, `parallel`, `intercept`, `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `cache`, `transition` |
-| `layout()`                                        | All of the above, plus `route`, `include`                                                                                                      |
-| `parallel()` (per slot)                           | `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `transition`                                                           |
-| `intercept()`                                     | `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `layout`, `route`, `when`, `transition`                  |
-| Response routes (`path.json()`, `path.text()`, …) | `middleware`, `cache`                                                                                                                          |
+| Mount site                                        | Allowed item types                                                                                                                                                                        |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path()` / `route()`                              | `layout`, `parallel`, `intercept`, `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `cache`, `transition`                                            |
+| `layout()`                                        | All of the above, plus `route`, `include`                                                                                                                                                 |
+| `parallel()` (per slot)                           | `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `transition`                                                                                                      |
+| `intercept()`                                     | `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `layout`, `route`, `transition` (conditional activation is config-only: `intercept(..., { when })`) |
+| Response routes (`path.json()`, `path.text()`, …) | `middleware`, `cache`                                                                                                                                                                     |
 
 For per-item semantics see the dedicated skills: [middleware](../middleware/SKILL.md), [loader](../loader/SKILL.md), [parallel](../parallel/SKILL.md), [intercept](../intercept/SKILL.md), [layout](../layout/SKILL.md), [view-transitions](../view-transitions/SKILL.md).
 

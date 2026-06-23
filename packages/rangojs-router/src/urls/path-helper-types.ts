@@ -28,7 +28,6 @@ import type {
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
-  WhenItem,
   TypedCacheItem,
   TransitionItem,
   TypedTransitionItem,
@@ -42,7 +41,6 @@ import type {
   PassthroughHandlerDefinition,
 } from "../prerender.js";
 import type { StaticHandlerDefinition } from "../static-handler.js";
-import type { InterceptWhenFn } from "../server/context";
 import type {
   ResponseHandler,
   ResponseHandlerContext,
@@ -275,12 +273,18 @@ export type PathHelpers<TEnv> = {
         slotName: `@${string}`,
         routeName: string,
         handler: ReactNode | Handler<any, any, TEnv>,
+        config?:
+          | import("../server/context.js").InterceptConfig<TEnv>
+          | (() => InterceptUseItem[]),
         use?: () => InterceptUseItem[],
       ) => InterceptItem
     : (
         slotName: `@${string}`,
         routeName: (keyof Rango.GeneratedRouteMap & string) | `.${string}`,
         handler: ReactNode | Handler<any, any, TEnv>,
+        config?:
+          | import("../server/context.js").InterceptConfig<TEnv>
+          | (() => InterceptUseItem[]),
         use?: () => InterceptUseItem[],
       ) => InterceptItem;
 
@@ -336,11 +340,6 @@ export type PathHelpers<TEnv> = {
   ) => NotFoundBoundaryItem;
 
   /**
-   * Define a condition for when an intercept should activate
-   */
-  when: (fn: InterceptWhenFn) => WhenItem;
-
-  /**
    * Define cache configuration for segments
    */
   cache: {
@@ -365,6 +364,10 @@ export type PathHelpers<TEnv> = {
    * `{ viewTransition: false }` to keep #1 without the router boundary. A view
    * transition cannot fire without a startTransition. See
    * skills/view-transitions for the startTransition x ViewTransition matrix.
+   *
+   * Pass `when: (ctx) => boolean` to gate the transition per request: it runs
+   * server-side after the route handler (can read `ctx.get(...)`), and returning
+   * false drops the transition so the navigation streams its loading() skeleton.
    */
   transition: {
     (): TransitionItem;
