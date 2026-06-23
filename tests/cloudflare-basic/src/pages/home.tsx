@@ -70,6 +70,29 @@ export function HomePage(ctx: HandlerContext) {
           </li>
         ))}
       </ul>
+      {/* #622 follow-up: prefetch-transition regression entry points. */}
+      <ul style={{ marginLeft: "1.5rem" }} data-testid="pt-links">
+        <li>
+          {/* Plain link (no prefetch) for the cold-nav case. */}
+          <Link to="/pt-slow" data-testid="pt-slow-cold-link">
+            /pt-slow (cold)
+          </Link>
+        </li>
+        <li>
+          <Link
+            to="/pt-slow"
+            data-testid="pt-slow-prefetch-link"
+            prefetch="hover"
+          >
+            /pt-slow (prefetch=hover)
+          </Link>
+        </li>
+        <li>
+          <Link to="/pt-layout/from" data-testid="pt-layout-entry-link">
+            /pt-layout/from (client-mount-suspense regression)
+          </Link>
+        </li>
+      </ul>
     </main>
   );
 }

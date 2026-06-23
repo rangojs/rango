@@ -244,14 +244,21 @@ function executePrefetchFetch(
       const storageKey = scope === "source" ? sourceKey : wildcardKey;
 
       // Track stream completion off a tee so navigation's scroll/revalidation
-      // gating matches the fresh-fetch path; decode the other branch.
+      // gating matches the fresh-fetch path; decode the other branch. The
+      // completion callback reports whether the stream ended on a clean EOF
+      // (true) or was aborted/errored (false) — only a clean end can mark the
+      // entry complete (see below).
       let resolveStreamComplete!: () => void;
+      let endedCleanly = false;
       const streamComplete = new Promise<void>((resolve) => {
         resolveStreamComplete = resolve;
       });
       const tracked = teeWithCompletion(
         response,
-        () => resolveStreamComplete(),
+        (clean) => {
+          endedCleanly = clean;
+          resolveStreamComplete();
+        },
         effectiveSignal,
         // Speculative prefetch: a never-consumed/aborted stream error is benign.
         true,
@@ -277,10 +284,21 @@ function executePrefetchFetch(
       // no lingering timer while a stalled one is evicted when the timer fires.
       publishedKey = storageKey;
       publishedEntry = entry;
+      // Evict a broken prefetch IMMEDIATELY on the earliest failure signal — do not
+      // wait for both branches to settle. A decode that rejects while the tracking
+      // stream is still draining (or hung) would otherwise leave the rejected payload
+      // consumable (navigation reads entry.payload regardless of `complete`) until EOF
+      // or the stall timeout. removePrefetch is identity-guarded, so a fresh entry
+      // republished under the same key is never dropped, and a double call is a no-op.
+      payload.catch(() => removePrefetch(storageKey, entry));
       streamComplete.then(() => {
-        // Synchronous marker for navigation's fully-prefetched check (see
-        // DecodedPrefetch.complete). Set before clearing the stall timer.
-        entry.complete = true;
+        if (!endedCleanly) removePrefetch(storageKey, entry);
+      });
+      // Mark complete ONLY on a fully-healthy prefetch (decode resolved AND clean EOF).
+      Promise.allSettled([payload, streamComplete]).then(([decode]) => {
+        if (decode.status === "fulfilled" && endedCleanly) {
+          entry.complete = true;
+        }
         clearTimeout(timeoutId);
       });
       return entry;

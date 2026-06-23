@@ -94,12 +94,14 @@ describe("emptyResponse", () => {
 });
 
 describe("teeWithCompletion", () => {
-  it("calls onComplete synchronously when response has no body", () => {
+  it("calls onComplete synchronously with endedCleanly=true when response has no body", () => {
     const onComplete = vi.fn();
     const res = new Response(null);
     const result = teeWithCompletion(res, onComplete);
 
     expect(onComplete).toHaveBeenCalledOnce();
+    // An empty body is a clean, complete stream.
+    expect(onComplete).toHaveBeenCalledWith(true);
     expect(result).toBe(res);
   });
 
@@ -131,6 +133,8 @@ describe("teeWithCompletion", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(onComplete).toHaveBeenCalledOnce();
+    // Normal EOF drain -> endedCleanly true.
+    expect(onComplete).toHaveBeenCalledWith(true);
   });
 
   it("preserves response status, statusText, and headers", () => {
@@ -173,9 +177,11 @@ describe("teeWithCompletion", () => {
 
     // The finally block and the rejection's .catch must not both fire onComplete.
     expect(onComplete).toHaveBeenCalledOnce();
+    // A mid-read error is NOT a clean end.
+    expect(onComplete).toHaveBeenCalledWith(false);
   });
 
-  it("calls onComplete when abort signal fires", async () => {
+  it("calls onComplete with endedCleanly=false when abort signal fires", async () => {
     const onComplete = vi.fn();
     const controller = new AbortController();
 
@@ -197,6 +203,9 @@ describe("teeWithCompletion", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(onComplete).toHaveBeenCalledOnce();
+    // An abort cancels the reader (read() -> { done: true }), so the loop breaks
+    // via the finally; signal.aborted re-check reports the end as NOT clean.
+    expect(onComplete).toHaveBeenCalledWith(false);
   });
 });
 

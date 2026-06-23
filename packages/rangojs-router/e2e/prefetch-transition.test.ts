@@ -9,28 +9,53 @@ import { expectNoPageError, testId, waitForHydration } from "./helper";
  * ALREADY available client-side; otherwise it must stream the fallback so the
  * click has visible feedback. The matrix this pins:
  *
- *  - cold nav                         -> stream fallback/skeleton
- *  - partially-prefetched (in-flight) -> stream fallback/skeleton (NOT held)
- *  - fully-prefetched (stream drained)-> startTransition: resolve directly, no flash
- *  - FE history-cache hit (popstate)  -> no flash (resolved-before-commit)
+ *  - cold nav                          -> stream fallback/skeleton
+ *  - partially-prefetched (in-flight)  -> stream fallback/skeleton (NOT held)
+ *  - fully-prefetched (stream drained) -> forceAwait the ROUTER loaders + NORMAL
+ *                                         commit: no loading()/fallback flash for
+ *                                         router data, but a CLIENT component that
+ *                                         suspends on mount STILL shows its
+ *                                         fallback (a normal commit does not hold
+ *                                         content)
+ *  - FE history-cache hit (popstate)   -> no flash (resolved-before-commit)
  *
- * The fully-prefetched row is the behavior added by the `fullyPrefetched` flag
- * (navigation-client -> partial-update). It covers BOTH a router loading()
- * skeleton and a consumer's raw <Suspense> fallback. The partial/cold rows guard
- * against over-transitioning (they must keep streaming).
+ * The fully-prefetched row changed in the #622 follow-up: the commit used to run
+ * inside startTransition (which holds the OLD page until ALL suspense in the new
+ * tree settles, including client-initiated mount suspense). It now forceAwait-s
+ * the already-resolved router loaders during render and commits NORMALLY, so the
+ * router data never flashes while client-initiated suspense correctly reveals the
+ * new route's fallback. Explicit transition() routes keep the broader
+ * content-hold (the documented opt-in).
  *
  * Flash detection uses a MutationObserver on addedNodes so even a single-frame
  * fallback that is added then immediately removed is caught — a plain
  * toBeHidden() assertion would miss it.
  *
+ * De-flake: the fully/partially-prefetched distinction is synchronized on the
+ * prefetch network (request start for "partial", body fully received for
+ * "fully-prefetched") instead of fixed sleeps, so the click reliably lands at
+ * the intended point in the stream.
+ *
  * Routes (e2e/test-app):
- *  - /slow-streaming : loading() DSL + 1s loader (skeleton: slow-streaming-loading)
- *  - /suspense-stream: raw <Suspense> + 2s async child (fallback: suspense-stream-fallback)
- * Prefetch links live on "/" (slow-streaming-prefetch-link, suspense-stream-prefetch-link).
+ *  - /slow-streaming  : loading() DSL + 1s loader (skeleton: slow-streaming-loading)
+ *  - /suspense-stream : raw <Suspense> + 2s async SERVER child (fallback: suspense-stream-fallback)
+ *  - /cs-layout/{from,to} : a SHARED layout with a loading() boundary; /to renders a
+ *                           CLIENT component that suspends on MOUNT with no <Suspense>
+ *                           of its own (layout fallback: cs-layout-fallback). The
+ *                           persistent layout boundary is what distinguishes a normal
+ *                           commit (reveal fallback) from the old startTransition
+ *                           commit (hold the previous child's content).
+ * Prefetch links live on "/" (slow-streaming-prefetch-link, suspense-stream-prefetch-link)
+ * and inside the cs-layout (cs-from-link, cs-to-link with prefetch=hover).
  */
 
-const LOADER_DELAY = 1000;
-const SUSPENSE_DELAY = 2000;
+// Match a prefetch fetch for a given target path: a low-priority GET partial
+// request the Link fires on hover. Keyed on the target path + _rsc_partial so it
+// is not confused with the eventual navigation fetch (warm nav reuses the cache
+// and issues no fetch; a cold/partial nav would, but we sync BEFORE clicking).
+function isPrefetchFor(url: string, targetPath: string): boolean {
+  return url.includes(targetPath) && url.includes("_rsc_partial=true");
+}
 
 // Record whether a fallback/skeleton element is EVER inserted into the DOM during
 // the wrapped action (catches transient single-frame flashes).
@@ -96,10 +121,16 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
-      // Hover starts the prefetch; click well before the 1s loader resolves so the
-      // entry is still streaming (not fully prefetched).
+      // Synchronize on the prefetch REQUEST starting (event-driven), then click
+      // immediately — well before the 1s loader resolves — so the entry is still
+      // streaming (not fully prefetched). No fixed sleep gates this distinction.
+      const prefetchStarted = page.waitForRequest(
+        (req) =>
+          req.method() === "GET" && isPrefetchFor(req.url(), "/slow-streaming"),
+      );
       await page.hover('[data-testid="slow-streaming-prefetch-link"]');
-      await page.waitForTimeout(150);
+      await prefetchStarted;
+
       await watchFlash(page, "slow-streaming-loading");
       await testId(page, "slow-streaming-prefetch-link").click();
       await expect(testId(page, "slow-streaming-message")).toContainText(
@@ -112,16 +143,23 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       ).toBe(true);
     });
 
-    test("loading() fully-prefetched commits in a transition (no skeleton flash)", async ({
+    test("loading() fully-prefetched commits without a skeleton flash", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
-      // Hover then wait past the loader delay so the prefetch stream fully drains.
+      // Synchronize on the prefetch RESPONSE body being fully received
+      // (response.finished()), i.e. the stream drained -> entry.complete -> the
+      // fully-prefetched fast path. Event-driven, no fixed sleep.
+      const prefetchResponse = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/slow-streaming"),
+      );
       await page.hover('[data-testid="slow-streaming-prefetch-link"]');
-      await page.waitForTimeout(LOADER_DELAY + 800);
+      const resp = await prefetchResponse;
+      await resp.finished();
+
       await watchFlash(page, "slow-streaming-loading");
       await testId(page, "slow-streaming-prefetch-link").click();
       await expect(testId(page, "slow-streaming-message")).toContainText(
@@ -141,8 +179,13 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
+      const prefetchResponse = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/suspense-stream"),
+      );
       await page.hover('[data-testid="suspense-stream-prefetch-link"]');
-      await page.waitForTimeout(SUSPENSE_DELAY + 800);
+      const resp = await prefetchResponse;
+      await resp.finished();
+
       await watchFlash(page, "suspense-stream-fallback");
       await testId(page, "suspense-stream-prefetch-link").click();
       await expect(testId(page, "suspense-stream-content")).toHaveText(
@@ -155,6 +198,45 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       ).toBe(false);
     });
 
+    test("fully-prefetched nav whose CLIENT component suspends on mount reveals the layout fallback (does NOT hold the old page)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // Land on /cs-layout/from: a child under a SHARED layout that has a
+      // loading() boundary around its <Outlet/>.
+      await page.goto(f.url("/cs-layout/from"));
+      await waitForHydration(page);
+      await expect(testId(page, "cs-from-content")).toBeVisible();
+
+      // Prefetch the sibling /cs-layout/to fully (response body received). Its
+      // server render is immediate, so the entry is `complete` (fullyPrefetched).
+      const prefetchResponse = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/cs-layout/to"),
+      );
+      await page.hover('[data-testid="cs-to-link"]');
+      const resp = await prefetchResponse;
+      await resp.finished();
+
+      // Navigate from -> to. The SHARED layout segment persists, so its
+      // loading() boundary is the boundary whose behavior differs:
+      //  - OLD startTransition commit held /from's outlet content until the
+      //    client mount-suspense settled (old page retained, no feedback).
+      //  - NEW normal commit reveals the layout's loading() fallback while the
+      //    client-initiated mount suspense resolves.
+      await testId(page, "cs-to-link").click();
+
+      // The persistent layout boundary must reveal its fallback (the regression:
+      // the old /from content would otherwise be held in place). Then the client
+      // promise resolves to the new content.
+      await expect(testId(page, "cs-layout-fallback")).toBeVisible({
+        timeout: 8000,
+      });
+      await expect(testId(page, "client-suspense-content")).toHaveText(
+        "client-mounted",
+        { timeout: 8000 },
+      );
+    });
+
     test("fully-prefetched nav with a deferred Meta does not flash, and the title still lands", async ({
       page,
     }) => {
@@ -163,13 +245,18 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       await waitForHydration(page);
 
       // /suspense-stream-meta has a raw <Suspense> AND a deferred Meta title.
-      // Drain the prefetch fully (past the 2s child + meta), then navigate: the
+      // Drain the prefetch fully (response body received), then navigate: the
       // fully-prefetched commit must not flash the fallback, and the deferred
       // title must still be applied. This pins that the deferred-handle branch
-      // composes with the transition commit — it neither holds the commit (which
-      // would let the fallback flash on a revert) nor drops the title.
+      // composes with the commit — it neither holds the commit (which would let
+      // the fallback flash on a revert) nor drops the title.
+      const prefetchResponse = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/suspense-stream-meta"),
+      );
       await page.hover('[data-testid="suspense-stream-meta-prefetch-link"]');
-      await page.waitForTimeout(SUSPENSE_DELAY + 800);
+      const resp = await prefetchResponse;
+      await resp.finished();
+
       await watchFlash(page, "suspense-stream-fallback");
       await testId(page, "suspense-stream-meta-prefetch-link").click();
       await expect(testId(page, "suspense-stream-content")).toHaveText(

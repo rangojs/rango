@@ -96,7 +96,10 @@ function createMockStore(opts?: {
   };
 }
 
-function createMockClient(payload: any, opts?: { hangStream?: boolean }) {
+function createMockClient(
+  payload: any,
+  opts?: { hangStream?: boolean; fullyPrefetched?: boolean },
+) {
   let resolveStream: () => void;
   // By default, streamComplete resolves immediately.
   // The async function's return Promise adopts streamComplete (JS promise flattening),
@@ -112,6 +115,11 @@ function createMockClient(payload: any, opts?: { hangStream?: boolean }) {
       fetchPartial: vi.fn(async () => ({
         payload,
         streamComplete,
+        // fetchPartial returns fullyPrefetched only for a warm prefetch hit
+        // whose stream already drained; default off (cold / fresh fetch).
+        ...(opts?.fullyPrefetched !== undefined && {
+          fullyPrefetched: opts.fullyPrefetched,
+        }),
       })),
     },
     resolveStream: () => resolveStream!(),
@@ -1287,6 +1295,189 @@ describe("partial-update", () => {
         expect.any(Array),
         expect.objectContaining({ forceAwait: true }),
       );
+    });
+  });
+
+  /**
+   * Fully-prefetched commit branch (#622 follow-up, HIGH).
+   *
+   * A fully-prefetched navigation must render with `forceAwait` (so the
+   * already-resolved ROUTER loader data lands with no fallback frame) AND commit
+   * NORMALLY — never inside startTransition. Committing in a transition would
+   * hold the OLD UI until ALL suspense in the new tree settled, including a
+   * CLIENT component that suspends on mount (post-commit), retaining the previous
+   * page indefinitely with no fallback. A normal commit shows the new route's
+   * fallback for client-initiated suspense while router data never flashes.
+   *
+   * A cold/partial nav (fullyPrefetched=false) must NOT forceAwait, so its
+   * fallbacks stream like a cold load. An explicit transition() route still
+   * holds content via startTransition + addTransitionType.
+   */
+  describe("fully-prefetched commit branch (#622 follow-up)", () => {
+    it("renders with forceAwait when fullyPrefetched=true", async () => {
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient(
+        {
+          metadata: {
+            isPartial: true,
+            segments: [seg("R0", { component: "updated" })],
+            matched: ["R0"],
+            diff: ["R0"],
+          },
+        },
+        { fullyPrefetched: true },
+      );
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/", ["R0"], false, undefined, tx, {
+        type: "navigate",
+      });
+
+      expect(renderSegments).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({ forceAwait: true }),
+      );
+    });
+
+    it("commits NORMALLY (no startTransition, no addTransitionType) when fullyPrefetched=true", async () => {
+      const captured: Array<(...args: any[]) => any> = [];
+      const React = await import("react");
+      const spy = vi.spyOn(React, "startTransition").mockImplementation(((
+        fn: () => void,
+      ) => {
+        captured.push(fn);
+        fn();
+      }) as any);
+
+      try {
+        const store = createMockStore({ cachedSegments: [seg("R0")] });
+        const { client } = createMockClient(
+          {
+            metadata: {
+              isPartial: true,
+              segments: [seg("R0", { component: "updated" })],
+              matched: ["R0"],
+              diff: ["R0"],
+            },
+          },
+          { fullyPrefetched: true },
+        );
+
+        const onUpdate = vi.fn();
+        const tx = createMockTx();
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate,
+          renderSegments: vi.fn(async () => "tree"),
+        });
+
+        await updater("http://localhost/", ["R0"], false, undefined, tx, {
+          type: "navigate",
+        });
+
+        // Normal commit: onUpdate ran, but NOT through startTransition.
+        expect(onUpdate).toHaveBeenCalledOnce();
+        expect(captured.length).toBe(0);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("does NOT forceAwait a cold nav (fullyPrefetched=false) so its fallbacks stream", async () => {
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient(
+        {
+          metadata: {
+            isPartial: true,
+            segments: [seg("R0", { component: "updated" })],
+            matched: ["R0"],
+            diff: ["R0"],
+          },
+        },
+        { fullyPrefetched: false },
+      );
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/", ["R0"], false, undefined, tx, {
+        type: "navigate",
+      });
+
+      const opts = (renderSegments.mock.calls as any[][])[0][1];
+      expect(opts.forceAwait).toBeFalsy();
+    });
+
+    it("an explicit transition() route still holds content (startTransition + addTransitionType)", async () => {
+      const captured: Array<(...args: any[]) => any> = [];
+      const React = await import("react");
+      const spy = vi.spyOn(React, "startTransition").mockImplementation(((
+        fn: () => void,
+      ) => {
+        captured.push(fn);
+        fn();
+      }) as any);
+
+      try {
+        // A transition-tagged segment drives shouldStartViewTransition=true, so
+        // the hasTransition branch wins regardless of fullyPrefetched: a
+        // transition() route is the documented content-hold opt-in.
+        const store = createMockStore({
+          cachedSegments: [seg("R0", { transition: true } as any)],
+        });
+        const { client } = createMockClient(
+          {
+            metadata: {
+              isPartial: true,
+              segments: [
+                seg("R0", { component: "updated", transition: true } as any),
+              ],
+              matched: ["R0"],
+              diff: ["R0"],
+            },
+          },
+          { fullyPrefetched: true },
+        );
+
+        const onUpdate = vi.fn();
+        const tx = createMockTx();
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate,
+          renderSegments: vi.fn(async () => "tree"),
+        });
+
+        await updater("http://localhost/", ["R0"], false, undefined, tx, {
+          type: "navigate",
+        });
+
+        // Held in a transition (content-hold opt-in), unlike the plain
+        // fully-prefetched normal commit above.
+        expect(onUpdate).toHaveBeenCalledOnce();
+        expect(captured.length).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
