@@ -48,6 +48,7 @@ import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
+import type { TransitionWhenFn } from "../types/segments.js";
 import type { ResolvedTracing } from "../router/tracing.js";
 import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import {
@@ -160,6 +161,15 @@ export interface RequestContext<
 
   /** @internal Handle store for tracking handle data across segments */
   _handleStore: HandleStore;
+
+  /**
+   * @internal transition({ when }) predicates for segments matched this request,
+   * keyed by segment id. Collected during resolution (the function is stripped
+   * from the serialized segment config), then evaluated post-handler in
+   * rsc-rendering — outside any cache scope — to drop the transition of any
+   * segment whose predicate returns false.
+   */
+  _transitionWhen?: Array<{ id: string; when: TransitionWhenFn }>;
 
   /** @internal Cache store for segment caching (optional, used by CacheScope) */
   _cacheStore?: SegmentCacheStore;
@@ -413,6 +423,7 @@ export type PublicRequestContext<
   | "setCookie"
   | "deleteCookie"
   | "_handleStore"
+  | "_transitionWhen"
   | "_cacheStore"
   | "_explicitTaggedStores"
   | "_requestTags"
@@ -842,6 +853,7 @@ export function createRequestContext<TEnv>(
     method: request.method,
 
     _handleStore: handleStore,
+    _transitionWhen: [],
     _cacheStore: cacheStore,
     _explicitTaggedStores: explicitTaggedStores,
     _requestTags: new Set<string>(),

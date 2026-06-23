@@ -472,6 +472,13 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * transition({}) is startTransition + ViewTransition under the default and
    * startTransition only when the router sets viewTransition: false.
    *
+   * Conditional hold: pass `when: (ctx) => boolean` to gate the transition per
+   * request. It runs server-side AFTER the route handler (so it can read state
+   * the handler set via `ctx.get(...)`); returning false drops this transition
+   * for the request, so the navigation streams its loading() skeleton instead of
+   * holding. This is a post-handler predicate — distinct from intercept()'s
+   * match-time `when({ from })`.
+   *
    * ```typescript
    * // Attach to a single route
    * path("/about", AboutPage, { name: "about" }, () => [
@@ -488,10 +495,16 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * path("/product/:id", ProductPage, { name: "product" }, () => [
    *   transition({ viewTransition: false }),
    * ])
+   *
+   * // Hold only when the handler decided to (post-handler predicate):
+   * path("/product/:id", ProductPage, { name: "product" }, () => [
+   *   transition({ when: (ctx) => ctx.get(KeepScroll) === true }),
+   * ])
    * ```
    * @param config - ViewTransition configuration (enter, exit, update, share,
-   *   default, name) plus `viewTransition: "auto" | false` to toggle the router
-   *   boundary (createRouter({ viewTransition }) sets the app-wide default)
+   *   default, name), `viewTransition: "auto" | false` to toggle the router
+   *   boundary (createRouter({ viewTransition }) sets the app-wide default), and
+   *   `when: (ctx) => boolean` to gate the transition per request post-handler
    * @param children - Optional callback returning child routes to wrap
    */
   transition: {

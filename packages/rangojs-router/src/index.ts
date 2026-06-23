@@ -82,7 +82,11 @@ export { createLoader } from "./loader.js";
 
 // Route definition types (safe to import anywhere)
 export type { RouteHelpers, RouteHandlers } from "./route-definition.js";
-export type { TransitionConfig, ViewTransitionClass } from "./types.js";
+export type {
+  TransitionConfig,
+  TransitionWhenFn,
+  ViewTransitionClass,
+} from "./types.js";
 
 // Composition types for reusable callback factories
 export type {

@@ -14,6 +14,7 @@ import { getSSRSetup } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { gateTransitions } from "./transition-gate.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -283,7 +284,11 @@ export async function handleProgressiveEnhancement<TEnv>(
         pathname: url.pathname,
         routerId: ctx.router.id,
         basename: ctx.router.basename,
-        segments: match.segments,
+        segments: gateTransitions(
+          match.segments,
+          getRequestContext(),
+          ctx.router.onError,
+        ),
         matched: match.matched,
         diff: match.diff,
         resolvedIds: match.resolvedIds,
@@ -400,7 +405,11 @@ async function renderPeErrorBoundary<TEnv>(
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: errorResult.segments,
+      segments: gateTransitions(
+        errorResult.segments,
+        getRequestContext(),
+        ctx.router.onError,
+      ),
       matched: errorResult.matched,
       diff: errorResult.diff,
       resolvedIds: errorResult.resolvedIds,

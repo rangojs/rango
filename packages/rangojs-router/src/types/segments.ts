@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ErrorInfo, NotFoundInfo } from "./boundaries.js";
+import type { HandlerContext } from "./handler-context.js";
 
 /**
  * CSS class(es) for a ViewTransition phase.
@@ -7,6 +8,33 @@ import type { ErrorInfo, NotFoundInfo } from "./boundaries.js";
  * for direction-aware transitions (e.g., { "navigation": "slide-right", "navigation-back": "slide-left" }).
  */
 export type ViewTransitionClass = Record<string, string> | string;
+
+/**
+ * Predicate that gates whether a transition() applies for the current request.
+ *
+ * Evaluated server-side AFTER the route's handler runs, so it can read state the
+ * handler set via `ctx.get(...)`. Return false to drop this segment's transition
+ * for the request; return true to apply it. It must be READ-ONLY — do not call
+ * `ctx.set()` here (it runs post-handler, so a write would be observed out of
+ * order). If it throws, the error is reported to the router's onError (phase
+ * "rendering") and the transition is dropped (the navigation does not hold).
+ *
+ * Distinct from intercept()'s `when`, which is a match-time selector over
+ * `{ from }`; a transition `when` runs post-handler and receives the request
+ * context.
+ *
+ * Scope: dropping a transition removes only THIS segment's contribution to the
+ * navigation's hold. The startTransition hold is navigation-wide — it engages if
+ * any matched segment still has a transition — so `when: false` makes the
+ * navigation stream its loading fallback only when no other matched segment
+ * keeps a transition (the common case: a single transition on the route).
+ *
+ * Evaluated on every fresh (cache-miss) resolution; it is NOT re-run when a
+ * segment is replayed from the runtime cache or a build-time prerender — those
+ * replay the transition they had when stored. Avoid caching or prerendering a
+ * route whose transition decision is request-dependent.
+ */
+export type TransitionWhenFn = (ctx: HandlerContext) => boolean;
 
 /**
  * Configuration for React's <ViewTransition> component.
@@ -36,6 +64,15 @@ export interface TransitionConfig {
    * When unset, inherits the createRouter({ viewTransition }) default.
    */
   viewTransition?: "auto" | false;
+  /**
+   * Optional server-side predicate that gates this transition per request. When
+   * present and it returns false (evaluated post-handler), the router drops this
+   * segment's transition for the request, so the navigation streams its loading
+   * fallback instead of holding. The predicate is server-only and never
+   * serialized to the client; only its resolved effect (transition kept or
+   * dropped) crosses. See {@link TransitionWhenFn}.
+   */
+  when?: TransitionWhenFn;
 }
 
 /**

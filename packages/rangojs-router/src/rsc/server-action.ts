@@ -21,6 +21,7 @@ import {
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { gateTransitions } from "./transition-gate.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -376,7 +377,11 @@ async function revalidateAfterActionInner<TEnv>(
         // routerId exposed for the frontend (current app identity); see
         // rsc-rendering.ts partial branch.
         routerId: ctx.router.id,
-        segments: errorBoundary.segments,
+        segments: gateTransitions(
+          errorBoundary.segments,
+          reqCtx,
+          ctx.router.onError,
+        ),
         isPartial: true,
         matched: errorBoundary.matched,
         diff: errorBoundary.diff,
@@ -460,7 +465,11 @@ async function revalidateAfterActionInner<TEnv>(
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
-      segments: matchResult.segments,
+      segments: gateTransitions(
+        matchResult.segments,
+        reqCtx,
+        ctx.router.onError,
+      ),
       isPartial: true,
       matched: matchResult.matched,
       diff: matchResult.diff,

@@ -365,6 +365,10 @@ export type PathHelpers<TEnv> = {
    * `{ viewTransition: false }` to keep #1 without the router boundary. A view
    * transition cannot fire without a startTransition. See
    * skills/view-transitions for the startTransition x ViewTransition matrix.
+   *
+   * Pass `when: (ctx) => boolean` to gate the transition per request: it runs
+   * server-side after the route handler (can read `ctx.get(...)`), and returning
+   * false drops the transition so the navigation streams its loading() skeleton.
    */
   transition: {
     (): TransitionItem;
