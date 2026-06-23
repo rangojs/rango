@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runInRequestContext } from "../index.js";
+import { runInRequestContext, runTransitionWhen } from "../index.js";
 import { createVar } from "../../context-var.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { applyViewTransitionDefault } from "../../router/segment-resolution/view-transition-default.js";
@@ -10,16 +10,6 @@ import type {
 } from "../../types/segments.js";
 
 const HoldMark = createVar<boolean>();
-
-const makeSegment = (transition: unknown): ResolvedSegment =>
-  ({
-    id: "route-seg",
-    namespace: "r",
-    type: "route",
-    index: 0,
-    component: null,
-    transition,
-  }) as ResolvedSegment;
 
 /**
  * Exercises the full server-side transition({ when }) mechanism inside a real
@@ -121,94 +111,114 @@ describe("transition({ when }) server gate", () => {
     // ...and the failure is surfaced via onError rather than swallowed.
     expect(reported).toEqual([{ message: "boom", phase: "rendering" }]);
   });
+});
 
-  it("passes revalidate-shaped navigation + action metadata (plus get) to the predicate", async () => {
+/**
+ * The same contract through the PUBLIC @rangojs/router/testing primitive a
+ * consumer would use to test their own transition({ when }) predicate. It drives
+ * the real applyViewTransitionDefault + gateTransitions, so the predicate sees
+ * the production-assembled TransitionWhenContext — no internal functions or
+ * private _gate* fields touched here.
+ */
+describe("runTransitionWhen (public testing primitive)", () => {
+  it("keeps the transition when there is no `when`", () => {
+    expect(runTransitionWhen({ enter: "fade" }).kept).toBe(true);
+  });
+
+  it("passes the revalidate-shaped navigation + action metadata (plus get) to the predicate", () => {
     let received: TransitionWhenContext | undefined;
-    await runInRequestContext(() => {
-      const ctx = getRequestContext();
-      // What the match / action gate sites stash before the gate runs.
-      ctx._gateCurrentUrl = new URL("https://app.test/products");
-      ctx._gateCurrentParams = { category: "shoes" };
-      ctx._prevRouteKey = "products.list";
-      ctx._gateActionId = "src/actions/cart.ts#addToCart";
-      ctx._gateActionUrl = new URL("https://app.test/cart");
-      ctx._gateActionResult = { ok: true };
-      ctx._gateFormData = new FormData();
-      ctx.set(HoldMark, true);
-      const serialized = applyViewTransitionDefault(
-        {
-          enter: "fade",
-          when: (c) => {
-            received = c;
-            return true;
-          },
+    const { kept } = runTransitionWhen(
+      {
+        when: (c) => {
+          received = c;
+          return true;
         },
-        undefined,
-        "route-seg",
-      );
-      gateTransitions([makeSegment(serialized)], ctx);
-    });
-    // Source half — from the navigation snapshot.
+      },
+      {
+        request: "https://app.test/products/2",
+        params: { id: "2" },
+        toRouteName: "products.detail",
+        currentUrl: "/products",
+        currentParams: { id: "1" },
+        fromRouteName: "products.list",
+        actionId: "src/actions/cart.ts#addToCart",
+        actionUrl: "/cart",
+        actionResult: { ok: true },
+        formData: new FormData(),
+        vars: [[HoldMark, true]],
+      },
+    );
+    expect(kept).toBe(true);
+    // source
     expect(received?.currentUrl?.pathname).toBe("/products");
-    expect(received?.currentParams).toEqual({ category: "shoes" });
+    expect(received?.currentParams).toEqual({ id: "1" });
     expect(received?.fromRouteName).toBe("products.list");
-    // Target half — always present.
-    expect(received?.nextUrl).toBeInstanceOf(URL);
-    expect(received?.nextParams).toBeDefined();
-    // Action half.
+    // target
+    expect(received?.nextUrl.pathname).toBe("/products/2");
+    expect(received?.nextParams).toEqual({ id: "2" });
+    expect(received?.toRouteName).toBe("products.detail");
+    // action
     expect(received?.actionId).toBe("src/actions/cart.ts#addToCart");
     expect(received?.actionUrl?.pathname).toBe("/cart");
     expect(received?.actionResult).toEqual({ ok: true });
     expect(received?.formData).toBeInstanceOf(FormData);
-    expect(received?.method).toBeDefined();
-    // get still reads what the handler set (the "handler set a mark" pattern).
-    expect(typeof received?.get).toBe("function");
+    expect(received?.method).toBe("GET");
+    // get reads what a handler/middleware set this request
     expect(received?.get(HoldMark)).toBe(true);
   });
 
-  it("leaves the source half undefined when there is no navigation source (initial full load)", async () => {
+  it("leaves the source/action halves undefined for an initial full load with no action", () => {
     let received: TransitionWhenContext | undefined;
-    await runInRequestContext(() => {
-      const ctx = getRequestContext();
-      const serialized = applyViewTransitionDefault(
-        {
-          enter: "fade",
-          when: (c) => {
-            received = c;
-            return true;
-          },
-        },
-        undefined,
-        "route-seg",
-      );
-      gateTransitions([makeSegment(serialized)], ctx);
+    runTransitionWhen({
+      when: (c) => {
+        received = c;
+        return true;
+      },
     });
     expect(received?.currentUrl).toBeUndefined();
     expect(received?.currentParams).toBeUndefined();
     expect(received?.fromRouteName).toBeUndefined();
     expect(received?.actionId).toBeUndefined();
-    // Target stays present even with no source.
+    expect(received?.actionResult).toBeUndefined();
+    // Target is always present.
     expect(received?.nextUrl).toBeInstanceOf(URL);
   });
 
-  it("gates on the navigation source: keeps the transition only when arriving from /products", async () => {
-    const run = (source: string) =>
-      runInRequestContext(() => {
-        const ctx = getRequestContext();
-        ctx._gateCurrentUrl = new URL(source, "https://app.test");
-        const serialized = applyViewTransitionDefault(
-          {
-            enter: "fade",
-            when: (c) => c.currentUrl?.pathname === "/products",
-          },
-          undefined,
-          "route-seg",
-        );
-        const seg = makeSegment(serialized);
-        gateTransitions([seg], ctx);
-        return seg.transition;
-      });
-    expect((await run("/products")).result?.enter).toBe("fade"); // kept
-    expect((await run("/other")).result).toBeUndefined(); // dropped
+  it("gates on the navigation source (currentUrl)", () => {
+    const keptFrom = (currentUrl: string) =>
+      runTransitionWhen(
+        { when: (c) => c.currentUrl?.pathname === "/list" },
+        { currentUrl },
+      ).kept;
+    expect(keptFrom("/list")).toBe(true);
+    expect(keptFrom("/other")).toBe(false);
+  });
+
+  it("gates on the action that triggered the revalidation (actionId)", () => {
+    const keptFor = (actionId: string) =>
+      runTransitionWhen(
+        { when: (c) => c.actionId?.includes("addToCart") === true },
+        { actionId },
+      ).kept;
+    expect(keptFor("src/actions/cart.ts#addToCart")).toBe(true);
+    expect(keptFor("src/actions/cart.ts#removeFromCart")).toBe(false);
+  });
+
+  it("drops the transition and reports a throwing predicate to onError (phase 'rendering')", () => {
+    const reported: string[] = [];
+    const { kept } = runTransitionWhen(
+      {
+        when: () => {
+          throw new Error("boom");
+        },
+      },
+      {
+        onError: (e) => {
+          reported.push(`${e.phase}:${e.error.message}`);
+        },
+      },
+    );
+    expect(kept).toBe(false);
+    expect(reported).toEqual(["rendering:boom"]);
   });
 });
