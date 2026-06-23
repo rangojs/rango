@@ -447,6 +447,10 @@ export interface NavigationStore {
   // History-based segment cache (for back/forward navigation and partial merging)
   getHistoryKey(): string;
   setHistoryKey(key: string): void;
+  /** Monotonic token of the most recently committed navigation. */
+  getNavInstance(): number;
+  /** Nav-instance token recorded on a cache entry (undefined if absent). */
+  getCacheEntryInstance(historyKey: string): number | undefined;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],
@@ -458,10 +462,28 @@ export interface NavigationStore {
         stale: boolean;
         handleData?: HandleData;
         routerId?: string;
+        /**
+         * True when the entry's handle data is incomplete (a deferred Meta was
+         * still pending at navigate-away). A popstate return must revalidate with
+         * a FULL re-render so the server re-streams handles.
+         */
+        handlesPending?: boolean;
       }
     | undefined;
   hasHistoryCache(historyKey: string): boolean;
-  updateCacheHandleData(historyKey: string, handleData: HandleData): void;
+  /**
+   * Update only the handleData (and optionally the stale / handlesPending flags)
+   * of an existing cache entry. When a flag is omitted the entry's current value
+   * is preserved. `stale=true` marks a single entry stale so a popstate return
+   * revalidates it; `handlesPending=true` additionally forces that revalidation
+   * to be a full re-render (so a deferred Meta re-streams).
+   */
+  updateCacheHandleData(
+    historyKey: string,
+    handleData: HandleData,
+    stale?: boolean,
+    handlesPending?: boolean,
+  ): void;
   markCacheAsStale(): void;
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;

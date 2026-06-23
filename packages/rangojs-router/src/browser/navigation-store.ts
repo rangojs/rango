@@ -28,14 +28,28 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
 
-// Cache entry: [url-key, segments, stale, handleData?, routerId?]
-// stale=true means the data may be outdated and should be revalidated on access
+// Cache entry:
+//   [url-key, segments, stale, handleData?, routerId?, navInstance?, handlesPending?]
+// stale=true means the data may be outdated and should be revalidated on access.
+// navInstance is the monotonic nav-instance token (see navInstance below): it
+// identifies the per-commit visit that owns this entry. generateHistoryKey is
+// URL-only, so A->B->A reuses the same key; the token lets a late async
+// resolution tell its own visit's entry apart from a newer same-URL visit's, so
+// a stale nav can never clobber a fresher one.
+// handlesPending=true means the entry's handle data is INCOMPLETE (a deferred
+// Meta was still pending when the user navigated away, so it never streamed). A
+// popstate return must REVALIDATE WITH A FULL RE-RENDER (no client segment IDs)
+// to re-stream the handles — a diff-only revalidation omits unchanged segments'
+// handles, so the deferred Meta would never land. Cleared once the deferred Meta
+// resolves while the entry is still owned.
 type HistoryCacheEntry = [
   string,
   ResolvedSegment[],
   boolean,
   HandleData?,
   string?,
+  number?,
+  boolean?,
 ];
 
 /**
@@ -44,7 +58,7 @@ type HistoryCacheEntry = [
  * since mutations happen at the array level, not on individual data objects.
  * This preserves any non-serializable types (React elements, functions, etc.)
  */
-function cloneHandleData(handleData: HandleData): HandleData {
+export function cloneHandleData(handleData: HandleData): HandleData {
   const cloned: HandleData = {};
   for (const [handleKey, segmentMap] of Object.entries(handleData)) {
     cloned[handleKey] = {};
@@ -239,6 +253,14 @@ export function createNavigationStore(
   // Oldest entries (at front) are removed when over cacheSize limit
   const historyCache: HistoryCacheEntry[] = [];
 
+  // Monotonic nav-instance token. Bumped each time a cache entry is created or
+  // replaced in cacheSegmentsForHistory (i.e. once per commit). Because
+  // generateHistoryKey is URL-only, two visits to the same URL share a key; this
+  // token gives each visit a distinct identity so a late async handle resolution
+  // can tell whether it still owns the live page / the target cache entry, and
+  // never overwrite a newer same-URL visit's state.
+  let navInstance = 0;
+
   // Current history key (set on navigation, stored in history.state)
   let currentHistoryKey = config?.initialHistoryKey || generateHistoryKey();
 
@@ -247,6 +269,10 @@ export function createNavigationStore(
     historyCache.push([
       config.initialHistoryKey,
       config.initialSegments,
+      false,
+      undefined,
+      undefined,
+      ++navInstance,
       false,
     ]);
   }
@@ -566,6 +592,29 @@ export function createNavigationStore(
     },
 
     /**
+     * Current nav-instance token: the instance of the most recently committed
+     * navigation (the value last written by cacheSegmentsForHistory). A late
+     * async handle resolution captures this at the start of its own nav and
+     * compares it back here to detect whether a NEWER navigation has since
+     * committed (token advanced), guarding against a stale nav writing a fresher
+     * nav's live state.
+     */
+    getNavInstance(): number {
+      return navInstance;
+    },
+
+    /**
+     * The nav-instance token recorded on a specific cache entry, or undefined if
+     * no entry exists for that key. Because the history key is URL-only, this is
+     * how a late resolution tells "the entry I seeded is still mine" from "a
+     * newer same-URL visit replaced my entry".
+     */
+    getCacheEntryInstance(historyKey: string): number | undefined {
+      const entry = historyCache.find(([key]) => key === historyKey);
+      return entry ? entry[5] : undefined;
+    },
+
+    /**
      * Store segments for a history entry
      * Updates existing entry if key exists, otherwise adds new entry
      * Removes oldest entries (from front) when over configured cacheSize
@@ -583,6 +632,11 @@ export function createNavigationStore(
         ? cloneHandleData(handleData)
         : undefined;
 
+      // Each commit (create or replace) is a new nav instance. The bump happens
+      // here, exactly once per cacheSegmentsForHistory call, so getNavInstance()
+      // reflects the visit whose entry this is.
+      const instance = ++navInstance;
+
       // Check if entry already exists and update it
       const existingIndex = historyCache.findIndex(
         ([key]) => key === historyKey,
@@ -594,6 +648,8 @@ export function createNavigationStore(
           false,
           clonedHandleData,
           currentRouterId,
+          instance,
+          false, // fresh commit: handles complete unless a deferred apply marks it
         ];
       } else {
         // Add new entry at the end (not stale)
@@ -603,6 +659,8 @@ export function createNavigationStore(
           false,
           clonedHandleData,
           currentRouterId,
+          instance,
+          false,
         ]);
         // Remove oldest entries if over limit
         while (historyCache.length > cacheSize) {
@@ -621,6 +679,7 @@ export function createNavigationStore(
           stale: boolean;
           handleData?: HandleData;
           routerId?: string;
+          handlesPending?: boolean;
         }
       | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
@@ -630,6 +689,7 @@ export function createNavigationStore(
         stale: entry[2],
         handleData: entry[3],
         routerId: entry[4],
+        handlesPending: entry[6],
       };
     },
 
@@ -641,11 +701,23 @@ export function createNavigationStore(
     },
 
     /**
-     * Update only the handleData for an existing cache entry
-     * Does nothing if the cache entry doesn't exist
-     * This is used to fix stale handleData after async handles processing
+     * Update only the handleData (and optionally the stale flag) for an existing
+     * cache entry. Does nothing if the cache entry doesn't exist.
+     *
+     * Used to fix stale handleData after async handles processing AND to flip an
+     * entry's stale / handlesPending bits for the deferred-Meta
+     * invalidate+revalidate path: while a nav's Meta is deferred-pending its
+     * entry is marked stale + handlesPending (a popstate return then revalidates
+     * with a full re-render instead of serving the carry/seed as fresh), and once
+     * the deferred Meta resolves both are cleared. When a flag is omitted the
+     * entry's current value is preserved.
      */
-    updateCacheHandleData(historyKey: string, handleData: HandleData): void {
+    updateCacheHandleData(
+      historyKey: string,
+      handleData: HandleData,
+      stale?: boolean,
+      handlesPending?: boolean,
+    ): void {
       const existingIndex = historyCache.findIndex(
         ([key]) => key === historyKey,
       );
@@ -656,9 +728,11 @@ export function createNavigationStore(
         historyCache[existingIndex] = [
           entry[0],
           entry[1],
-          entry[2],
+          stale ?? entry[2], // set stale when provided, else preserve current
           clonedHandleData,
           entry[4], // preserve routerId
+          entry[5], // preserve navInstance (entry ownership identity)
+          handlesPending ?? entry[6], // set when provided, else preserve current
         ];
       }
     },
