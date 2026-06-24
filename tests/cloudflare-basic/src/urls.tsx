@@ -35,6 +35,7 @@ import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
+import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import {
@@ -458,6 +459,19 @@ export const urlpatterns = urls(
         cache({ ttl: 60, swr: 300 }, () => [
           path("/slow-cache", SlowCachePage, { name: "slowCache" }),
         ]),
+
+        // SWR + getRequestContext() regression: a "use cache: swr-ctx" function
+        // (ttl=2s) that reads getRequestContext().env inside its body. On the
+        // stale background revalidation the request-context ALS must be
+        // re-established or getRequestContext() throws on workerd and the cached
+        // value freezes. See pages/swr-ctx.tsx.
+        path("/swr-ctx", SwrCtxPage, { name: "swrCtx" }),
+
+        // foregroundOnAction opt-in: a "use cache: swr-action" function whose
+        // profile sets foregroundOnAction:true. A plain navigation keeps SWR, but
+        // a server action's revalidation render re-executes a stale entry in the
+        // foreground so the action response shows a fresh value.
+        path("/swr-action", SwrActionPage, { name: "swrAction" }),
 
         // Cached-handles regression route: a cache()-wrapped route whose handler
         // pushes a Promise<ReactNode> breadcrumb content that must survive the

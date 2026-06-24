@@ -36,6 +36,14 @@ export interface ReadThroughItemConfig<T> {
   key: string;
   /** Execute the underlying function/loader on miss or revalidation */
   execute: () => Promise<T>;
+  /**
+   * Optional wrapper applied to execute() ONLY on the background
+   * stale-revalidation path (not the foreground miss, where the caller's context
+   * is already established). Used to re-establish the request-context ALS, which
+   * a detached waitUntil task loses on workerd. Defaults to calling execute()
+   * directly.
+   */
+  wrapBackground?: (run: () => Promise<T>) => Promise<T>;
   /** Serialize result for storage. Return null to skip caching. */
   serialize: (data: T) => Promise<string | null>;
   /** Deserialize cached value back to the original type */
@@ -77,6 +85,7 @@ export async function readThroughItem<T>(
     onMiss,
     onCached,
     host,
+    wrapBackground,
   } = config;
 
   // Cache lookup. An infra read failure (getItem) is reported by the store
@@ -106,7 +115,12 @@ export async function readThroughItem<T>(
         host,
         async () => {
           try {
-            const fresh = await execute();
+            // Re-establish the caller's context (request-context ALS) for the
+            // detached background execution; the foreground miss below calls
+            // execute() directly since its context is already established.
+            const fresh = await (wrapBackground
+              ? wrapBackground(execute)
+              : execute());
             const serialized = await serialize(fresh);
             if (serialized !== null) {
               await setItem(key, serialized, storeOptions);

@@ -1263,10 +1263,12 @@ renderToFlightString(element, opts?: { request?: Request|string, headers?, env?,
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
 renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
-renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, theme? }):
+renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, inActionRevalidation?, theme? }):
   Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }>;
 // cacheStore (e.g. new MemorySegmentCacheStore()) + cacheProfiles exercise a "use cache" fn the handler
 // invokes; without cacheStore registerCachedFunction bypasses uncached (warns once under the runner).
+// inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
+// entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
 findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,children,element}[] (props excludes children); [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
 textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)
