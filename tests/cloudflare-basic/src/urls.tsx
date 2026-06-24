@@ -12,6 +12,7 @@ import { HomePage } from "./pages/home.js";
 import { AboutPage } from "./pages/about.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
+import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
 import {
@@ -348,6 +349,11 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        // Orphan fetchable loader: loader reachable only via a client import,
+        // never registered with loader(), never imported by the worker entry.
+        path("/orphan-fetch", () => <OrphanFetchTest />, {
+          name: "orphanFetch",
+        }),
         path("/render-stability/p/:id", RenderStabilityRoute, {
           name: "renderStability",
         }),

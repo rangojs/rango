@@ -46,6 +46,7 @@ export const NamedRoutes = {
   inlinePricing: "/inline/pricing",
   itemDetail: "/item/:itemId/detail",
   localeInfo: "/:locale(en|fr)/info",
+  orphanFetch: "/orphan-fetch",
   "prerenderCtx.detail": "/prerender-ctx/:slug",
   proactiveCache: "/proactive-cache",
   proactiveCacheItemA: "/proactive-cache/item-a",
