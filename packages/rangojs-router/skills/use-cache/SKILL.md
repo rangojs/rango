@@ -63,12 +63,23 @@ createRouter({
     short: { ttl: 60, swr: 120 },
     long: { ttl: 3600, swr: 7200 },
     products: { ttl: 300, swr: 600, tags: ["products"] },
+    // Opt-in: a stale entry re-executes in the foreground during a server
+    // action's revalidation render (fresh action response), instead of SWR.
+    cms: { ttl: 300, swr: 600, foregroundOnAction: true },
   },
 });
 ```
 
 - `"use cache"` (no name) resolves to `default`.
 - `"use cache: short"` resolves to the `short` profile.
+- `foregroundOnAction: true` (default false): a stale entry serves stale +
+  revalidates in the background on a plain navigation (SWR), but re-executes in
+  the FOREGROUND during a server action's revalidation render so the action
+  response reflects a fresh value (only the store write is deferred). Use it for
+  mutation-related cached data; incidental TTL staleness on an ordinary action
+  stays SWR so the action is not turned into a synchronous cache-refresh barrier.
+  For strong read-your-own-writes after a mutation, prefer `updateTag()` (a hard
+  purge, so the action's own re-render is a fresh foreground miss).
 - Unknown profile names throw at runtime, on the first invocation of the cached
   function (the Vite transform does not validate names at build/boot). The error
   is actionable -- it names the missing profile and shows the `createRouter({

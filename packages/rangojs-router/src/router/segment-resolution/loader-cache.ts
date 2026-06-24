@@ -21,7 +21,10 @@
 import type { LoaderEntry } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
-import { getRequestContext } from "../../server/request-context.js";
+import {
+  getRequestContext,
+  runWithRequestContext,
+} from "../../server/request-context.js";
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
@@ -202,11 +205,20 @@ export function resolveLoaderData<TEnv>(
       ctx.params,
     );
 
+    // Capture the request context up front (foreground, ALS present) so the
+    // background stale revalidation can re-establish it. On workerd a waitUntil
+    // task runs detached from the request's I/O context, so a loader body that
+    // reads the ambient getRequestContext() would otherwise throw "called
+    // outside of a request context" and the revalidation would fail silently.
+    // The wrap is applied via wrapBackground (background path only); the
+    // foreground miss runs execute() directly since its context is present.
+    const requestCtxForExecute = getRequestContext();
     return readThroughItem({
       getItem: (k) => store.getItem!(k),
       setItem: (k, v, o) => store.setItem!(k, v, o),
       key,
       execute: () => runMiss(loaderEntry.loader),
+      wrapBackground: (run) => runWithRequestContext(requestCtxForExecute, run),
       serialize: (d) => codec.serializeResult(d),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
@@ -214,7 +226,7 @@ export function resolveLoaderData<TEnv>(
       onStale: () => debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`),
       onMiss: () => debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`),
       onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
-      host: getRequestContext(),
+      host: requestCtxForExecute,
     });
   })();
 

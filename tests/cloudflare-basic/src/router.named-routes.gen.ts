@@ -69,6 +69,8 @@ export const NamedRoutes = {
   "staticContent.docsPage": "/static-content/:slug",
   "staticContent.index": "/static-content",
   streamedDocument: "/streamed-document",
+  swrAction: "/swr-action",
+  swrCtx: "/swr-ctx",
   taggedDocument: "/tagged-document",
   testCachedHtml: "/test/cached-html",
   testCachedJson: "/test/cached-json",

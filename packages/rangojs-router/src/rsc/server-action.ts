@@ -372,6 +372,12 @@ async function revalidateAfterActionInner<TEnv>(
   reqCtx._gateActionResult = actionContext?.actionResult;
   reqCtx._gateFormData = actionContext?.formData;
 
+  // Mark the rest of this request as an action revalidation render. The "use
+  // cache" runtime reads this to re-execute a stale entry in the foreground
+  // (fresh data in the action response) rather than serving stale + revalidating
+  // in the background. See registerCachedFunction in cache/cache-runtime.ts.
+  reqCtx._inActionRevalidation = true;
+
   // Action threw and a boundary matched: render the (already-matched) error
   // boundary here so it runs inside the route-middleware wrapper, exactly like
   // the success branch below. setRequestContextParams + the payload mirror the

@@ -462,6 +462,31 @@ describe("renderHandler: ctx.use(Handle).defer()", () => {
     expect(JSON.stringify(tree)).toContain("store=true profile=true");
   });
 
+  test("inActionRevalidation option marks the request context (foregroundOnAction gate input)", async () => {
+    // The `foregroundOnAction` cache profile foregrounds a stale entry only when
+    // requestCtx._inActionRevalidation is set (production sets it in
+    // revalidateAfterAction). This dogfoods the new renderHandler option and
+    // pins that it reaches that exact field, so a consumer can drive the
+    // foregroundOnAction path from a test. The foreground-vs-SWR decision the
+    // field gates is pinned in cache/__tests__/cache-runtime-stale.test.ts (where
+    // @vitejs/plugin-rsc/rsc is mocked, since cache-runtime is not importable in
+    // this bare react-server worker).
+    function Page() {
+      const ctx = getRequestContext() as unknown as {
+        _inActionRevalidation?: boolean;
+      };
+      return (
+        <main>{`actionRevalidation=${ctx._inActionRevalidation === true}`}</main>
+      );
+    }
+    const on = await renderHandler(Page, { inActionRevalidation: true });
+    expect(JSON.stringify(on.tree)).toContain("actionRevalidation=true");
+    // Default (a plain render / navigation): the flag is unset, so a stale entry
+    // would keep SWR.
+    const off = await renderHandler(Page);
+    expect(JSON.stringify(off.tree)).toContain("actionRevalidation=false");
+  });
+
   // Dogfood ctx.theme / ctx.setTheme — documented HandlerContext members. The
   // theme option resolves a ThemeConfig and seeds it into the request context;
   // ctx.setTheme writes the theme cookie (default storageKey "theme"), captured

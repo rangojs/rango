@@ -317,6 +317,16 @@ export interface RequestContext<
   _gateFormData?: FormData;
 
   /**
+   * @internal True while the post-action revalidation render is running (set by
+   * revalidateAfterAction). The "use cache" runtime reads this to prefer
+   * freshness over a fast stale response during an action: a stale entry
+   * re-executes in the foreground (so the action response reflects the refreshed
+   * value) with only the store write deferred, instead of serving stale and
+   * revalidating in the background. A plain navigation (flag unset) keeps SWR.
+   */
+  _inActionRevalidation?: boolean;
+
+  /**
    * @internal Render barrier for experimental `rendered()` API.
    * Resolves when all non-loader segments have settled and handle data
    * is available. Used by DSL loaders that call `ctx.rendered()`.
@@ -453,6 +463,7 @@ export type PublicRequestContext<
   | "_gateActionUrl"
   | "_gateActionResult"
   | "_gateFormData"
+  | "_inActionRevalidation"
   | "_reportedErrors"
   | "_renderBarrier"
   | "_resolveRenderBarrier"

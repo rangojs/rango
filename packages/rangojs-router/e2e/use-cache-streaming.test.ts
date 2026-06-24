@@ -228,6 +228,9 @@ test.describe("use-cache streaming", () => {
       expect(rand).not.toBe(rand1);
     }).toPass({ timeout: 15000 });
   });
+
+  runSwrCtxSpec(f);
+  runForegroundOnActionSpec(f);
 });
 
 // ============================================================================
@@ -428,4 +431,143 @@ test.describe("use-cache streaming (production)", () => {
       expect(rand).not.toBe(rand1);
     }).toPass({ timeout: 15000 });
   });
+
+  runSwrCtxSpec(f);
+  runForegroundOnActionSpec(f);
+});
+
+// Shared specs for the two cache-revalidation tests, invoked from both the dev
+// and (production) describes above (mirrors runForegroundOnActionPeSpec below)
+// so the dev/prod assertions cannot drift.
+function runSwrCtxSpec(f: ReturnType<typeof useFixture>): void {
+  test("SWR + getRequestContext: background revalidation re-establishes the request context", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit 1: cache miss — the "use cache" function runs and reads the ambient
+    // getRequestContext().url.pathname (the same shape as the reported
+    // getRequestContext().env.ApiKey), caches the result.
+    await page.goto(f.url("/use-cache-test/swr-ctx"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("use-cache-swr-ctx-page")).toBeVisible();
+    const ts1 = await page.getByTestId("use-cache-swr-ctx-ts").textContent();
+    const rand1 = await page
+      .getByTestId("use-cache-swr-ctx-rand")
+      .textContent();
+    // The cached function reached getRequestContext() on the miss.
+    await expect(page.getByTestId("use-cache-swr-ctx-pathname")).toHaveText(
+      "/use-cache-test/swr-ctx",
+    );
+    expect(ts1).toMatch(/^\d+$/);
+
+    // Wait for TTL to expire (profile: ttl=2s, swr=60s).
+    await page.waitForTimeout(3000);
+
+    // Stale hit returns the cached value and triggers background revalidation;
+    // the cached function re-runs and calls getRequestContext() again. If that
+    // threw "called outside of a request context" the value would freeze at ts1,
+    // so poll until a freshly-revalidated value whose pathname is still resolved
+    // from getRequestContext().
+    await expect(async () => {
+      await page.goto(f.url("/use-cache-test/swr-ctx"));
+      await waitForHydration(page);
+      const ts = await page.getByTestId("use-cache-swr-ctx-ts").textContent();
+      const rand = await page
+        .getByTestId("use-cache-swr-ctx-rand")
+        .textContent();
+      expect(ts).not.toBe(ts1);
+      expect(rand).not.toBe(rand1);
+      await expect(page.getByTestId("use-cache-swr-ctx-pathname")).toHaveText(
+        "/use-cache-test/swr-ctx",
+      );
+    }).toPass({ timeout: 15000 });
+  });
+}
+
+function runForegroundOnActionSpec(f: ReturnType<typeof useFixture>): void {
+  test("foregroundOnAction: a stale entry re-executes in the foreground during an action", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit 1: cache miss — the "use cache: swr-action" function (profile
+    // foregroundOnAction:true) runs and caches its value.
+    await page.goto(f.url("/use-cache-test/swr-action"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("use-cache-swr-action-page")).toBeVisible();
+    const ts1 = await page.getByTestId("use-cache-swr-action-ts").textContent();
+    expect(ts1).toMatch(/^\d+$/);
+
+    // Wait for TTL (2s) to expire — the entry is now stale.
+    await page.waitForTimeout(3000);
+
+    // Trigger the server action. Its revalidation render hits the stale entry;
+    // because the profile opts into foregroundOnAction, the function re-executes
+    // in the FOREGROUND, so the action response shows a fresh value (not the
+    // stale ts1). The page updates in place — no navigation.
+    await page.getByTestId("use-cache-swr-action-btn").click();
+
+    await expect(async () => {
+      const ts = await page
+        .getByTestId("use-cache-swr-action-ts")
+        .textContent();
+      expect(ts).not.toBe(ts1);
+    }).toPass({ timeout: 10000 });
+
+    // The foreground re-execution still resolved getRequestContext().
+    await expect(page.getByTestId("use-cache-swr-action-pathname")).toHaveText(
+      "/use-cache-test/swr-action",
+    );
+  });
+}
+
+// ============================================================================
+// Progressive enhancement (no-JS) — JS/PE parity for foregroundOnAction.
+// A no-JS form action submits a native POST handled by the PE path
+// (progressive-enhancement.ts). That re-render must set _inActionRevalidation
+// before matching, so a stale foregroundOnAction entry foregrounds exactly as
+// the JS action path does — otherwise the PE response would show stale data.
+// ============================================================================
+
+function runForegroundOnActionPeSpec(f: ReturnType<typeof useFixture>): void {
+  test("no-JS form action foregrounds a stale foregroundOnAction entry (JS/PE parity)", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/use-cache-test/swr-action"));
+    await expect(page.getByTestId("use-cache-swr-action-page")).toBeVisible();
+    const ts1 = await page.getByTestId("use-cache-swr-action-ts").textContent();
+    expect(ts1).toMatch(/^\d+$/);
+
+    // Let the entry go stale (profile ttl=2s).
+    await page.waitForTimeout(3000);
+
+    // Native no-JS form POST -> PE re-render. With the PE parity fix this
+    // foregrounds the stale entry, so the returned HTML shows a fresh value. If
+    // the PE path failed to set _inActionRevalidation, it would serve stale and
+    // ts2 would equal ts1.
+    await page.getByTestId("use-cache-swr-action-btn").click();
+    await page.waitForLoadState("domcontentloaded");
+
+    await expect(page.getByTestId("use-cache-swr-action-page")).toBeVisible();
+    const ts2 = await page.getByTestId("use-cache-swr-action-ts").textContent();
+    expect(ts2).not.toBe(ts1);
+    // getRequestContext() resolved on the foreground re-execution during PE.
+    await expect(page.getByTestId("use-cache-swr-action-pathname")).toHaveText(
+      "/use-cache-test/swr-action",
+    );
+  });
+}
+
+test.describe("use-cache foregroundOnAction PE", () => {
+  test.use({ javaScriptEnabled: false });
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  runForegroundOnActionPeSpec(f);
+});
+
+test.describe("use-cache foregroundOnAction PE (production)", () => {
+  test.use({ javaScriptEnabled: false });
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  runForegroundOnActionPeSpec(f);
 });

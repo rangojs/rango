@@ -21,10 +21,14 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
   createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
 }));
 
-// Mock request context
+// Mock request context. runWithRequestContext is exercised by the background
+// revalidation path (it re-establishes the request-context ALS so the cached
+// body's getRequestContext() resolves off the request's I/O context); the mock
+// just invokes the callback since getRequestContext is stubbed separately.
 const mockGetRequestContext = vi.fn<() => any>(() => null);
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => mockGetRequestContext(),
+  runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
 }));
 
 // Mock segment codec — identity transforms for testing
@@ -878,5 +882,114 @@ describe("use cache stale revalidation handle preservation", () => {
     // The message points the author at the fix.
     await expect(cached()).rejects.toThrow(/cacheProfiles/);
     expect(mockStore.setItem).not.toHaveBeenCalled();
+  });
+
+  it("foregroundOnAction: a stale entry re-executes in the FOREGROUND during an action revalidation", async () => {
+    // Profile opts into foregroundOnAction AND we are in an action revalidation
+    // render (_inActionRevalidation). A stale entry must NOT be served stale +
+    // background-revalidated; instead the function re-executes in the foreground
+    // so the caller (the action response) sees the fresh value, with only the
+    // store write deferred.
+    const waitUntilFns: Array<() => Promise<void>> = [];
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: {
+        "swr-action": { ttl: 60, swr: 120, foregroundOnAction: true },
+      },
+      _handleStore: mockHandleStore,
+      _inActionRevalidation: true,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+
+    // Stale entry present.
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      shouldRevalidate: true,
+    });
+
+    let callCount = 0;
+    const fn = async () => {
+      callCount++;
+      return `fresh-result-${callCount}`;
+    };
+    const cached = registerCachedFunction(fn, "fg-action-fn", "swr-action");
+
+    const result = await cached();
+
+    // Foreground re-execution: the caller gets the FRESH value, not the stale
+    // bytes. The function ran exactly once (in the foreground, not background).
+    expect(result).toBe("fresh-result-1");
+    expect(callCount).toBe(1);
+
+    // Only the store WRITE is deferred (miss-path cacheWrite via waitUntil).
+    await Promise.all(waitUntilFns.map((f) => f()));
+    expect(mockStore.setItem).toHaveBeenCalledTimes(1);
+    expect(mockStore.setItem.mock.calls[0][2].ttl).toBe(60);
+  });
+
+  it("foregroundOnAction: a stale entry on a plain navigation still keeps SWR", async () => {
+    // Same profile (foregroundOnAction: true) but NOT in an action revalidation
+    // (a plain GET navigation). The opt-in only applies to action re-renders, so
+    // a stale entry must keep SWR: serve the stale bytes + revalidate in the
+    // background.
+    const waitUntilFns: Array<() => Promise<void>> = [];
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: {
+        "swr-action": { ttl: 60, swr: 120, foregroundOnAction: true },
+      },
+      _handleStore: mockHandleStore,
+      // _inActionRevalidation is unset -> plain navigation.
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      shouldRevalidate: true,
+    });
+
+    let callCount = 0;
+    const fn = async () => {
+      callCount++;
+      return `fresh-result-${callCount}`;
+    };
+    const cached = registerCachedFunction(fn, "fg-nav-fn", "swr-action");
+
+    const result = await cached();
+
+    // SWR: caller gets the STALE bytes; the function has not run in the
+    // foreground.
+    expect(result).toBe("stale-result");
+    expect(callCount).toBe(0);
+
+    // Background revalidation re-runs the function and writes the fresh entry.
+    expect(waitUntilFns).toHaveLength(1);
+    await waitUntilFns[0]();
+    expect(callCount).toBe(1);
+    expect(mockStore.setItem).toHaveBeenCalledTimes(1);
   });
 });
