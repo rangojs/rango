@@ -117,6 +117,15 @@ export interface RenderHandlerOptions<TEnv = any> {
    */
   cacheProfiles?: Record<string, CacheProfile>;
   /**
+   * Render as if inside a server action's revalidation render (production sets
+   * this in revalidateAfterAction). A stale `"use cache"` entry whose profile
+   * opts into `foregroundOnAction` then re-executes in the FOREGROUND (fresh
+   * result in this render) instead of being served stale + revalidated in the
+   * background. Without it, a stale entry keeps SWR. Pair with `cacheStore` +
+   * `cacheProfiles` to exercise the `foregroundOnAction` opt-in.
+   */
+  inActionRevalidation?: boolean;
+  /**
    * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
    * or `{ themes: [...] }`). Without it `ctx.theme`/`ctx.setTheme` are inert,
    * mirroring an app with no theme configured. Pass one to exercise a handler
@@ -237,6 +246,11 @@ export async function renderHandler<TEnv = any>(
     themeConfig:
       opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
   });
+
+  // Simulate an action revalidation render (production sets this in
+  // revalidateAfterAction) so a `foregroundOnAction` cache profile foregrounds a
+  // stale entry. See the foregroundOnAction option doc.
+  if (opts.inActionRevalidation) reqCtx._inActionRevalidation = true;
 
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
   const handlePushes = new Map<Handle<any, any>, unknown[]>();

@@ -124,6 +124,21 @@ export async function triggerRevalidation(): Promise<{
 }
 
 /**
+ * Void-returning revalidation action usable as a DIRECT `<form action={...}>`
+ * form action (form actions must return void | Promise<void>, unlike
+ * triggerRevalidation which returns a value). Works under BOTH JS and no-JS
+ * progressive enhancement; used by the /use-cache-test/swr-action
+ * foregroundOnAction parity tests. The cookie write is a trivial mutation that
+ * causes the current route to re-render.
+ */
+export async function swrActionRevalidate(): Promise<void> {
+  cookies().set("swr-action-revalidated", new Date().toISOString(), {
+    path: "/",
+    maxAge: 60,
+  });
+}
+
+/**
  * Server action for form tests.
  * Compatible with useActionState: (prevState, formData) => newState
  */

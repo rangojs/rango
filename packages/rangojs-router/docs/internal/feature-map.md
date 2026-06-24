@@ -180,6 +180,7 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
 - Route-level segment caching (`cache()` DSL), named cache profiles (`cacheProfiles`)
 - `cache()` + segment scope propagation, global segment cache config on router
 - `"use cache"` directive runtime wrappers, response route cache layer
+- SWR background revalidation re-establishes the request-context ALS (so a cached body reading `getRequestContext()` resolves off the request's I/O context on workerd); profile opt-in `foregroundOnAction` re-executes a stale entry in the foreground during a server action's revalidation render (fresh action response) instead of serving stale + background-revalidating
 - Tag-based invalidation: `cacheTag()` (runtime) + `cache({ tags })` (static/dynamic); `updateTag()` (awaitable, read-your-own-writes) and `revalidateTag()` (background, non-blocking — both hard-purge; the only difference is awaitability) fan out to the store-level `invalidateTags()` (the whole tag batch in one call). Built-in stores index tags; the CF store keeps markers in its own KV (single-store, no companion tag store), and the tag-marker reads inherit the L1/L2 latency budgets and fail open. Explicit `cache({ store })` stores are registered for invalidation via a handler-owned, LRU-bounded registry. Document-cache entries are tagged with the request's tag union so they are tag-invalidatable too.
 
 ### Error and Control Flow

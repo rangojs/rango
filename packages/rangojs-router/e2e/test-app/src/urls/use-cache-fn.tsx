@@ -1,4 +1,9 @@
-import { cookies, headers, Breadcrumbs } from "@rangojs/router";
+import {
+  cookies,
+  headers,
+  Breadcrumbs,
+  getRequestContext,
+} from "@rangojs/router";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -131,6 +136,48 @@ export async function getSwrTestData(
     href: "/use-cache-test/swr",
   });
   return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
+ * SWR test function that reads the ambient request context via the standalone
+ * getRequestContext() (the AsyncLocalStorage seat), NOT a passed-in handler ctx.
+ * Mirrors the real consumer pattern `getRequestContext().env.ApiKey` inside a
+ * "use cache" function. On a stale hit the function re-executes in a background
+ * waitUntil task; that task must re-establish the request-context ALS, otherwise
+ * getRequestContext() throws "called outside of a request context", the
+ * revalidation fails, and the cached value is frozen forever. Short TTL (2s) via
+ * the swr-test profile so the stale window opens fast.
+ */
+export async function getSwrCtxData(): Promise<{
+  ts: number;
+  rand: number;
+  pathname: string;
+}> {
+  "use cache: swr-test";
+  const ctx = getRequestContext();
+  // Touch a context field (the ALS read is the part that throws when the
+  // background task runs outside the request context).
+  const pathname = ctx.url.pathname;
+  return { ts: Date.now(), rand: Math.random(), pathname };
+}
+
+/**
+ * Opt-in foreground-on-action test function. Uses the "swr-action" profile
+ * (foregroundOnAction: true). On a stale hit during a plain navigation it keeps
+ * SWR; on a stale hit during a server action's revalidation render it
+ * re-executes in the FOREGROUND so the action response reflects a fresh value.
+ * Reads the ambient getRequestContext() to confirm the context is available on
+ * the foreground re-execution path too.
+ */
+export async function getSwrActionData(): Promise<{
+  ts: number;
+  rand: number;
+  pathname: string;
+}> {
+  "use cache: swr-action";
+  const ctx = getRequestContext();
+  const pathname = ctx.url.pathname;
+  return { ts: Date.now(), rand: Math.random(), pathname };
 }
 
 /**

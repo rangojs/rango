@@ -153,6 +153,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         handleStore,
         nonce,
         useActionStateId,
+        true, // an action ran and threw
       );
       if (errorHtml) return errorHtml;
 
@@ -206,6 +207,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         handleStore,
         nonce,
         directActionId,
+        true, // an action ran and threw
       );
       if (errorHtml) return errorHtml;
 
@@ -269,6 +271,14 @@ export async function handleProgressiveEnhancement<TEnv>(
       method: "GET",
       headers,
     });
+
+    // JS/PE parity: this is an action's revalidation render, so mark it BEFORE
+    // matching — a stale `foregroundOnAction` cache entry must re-execute in the
+    // foreground during the re-render, exactly as the JS path's
+    // revalidateAfterAction does. The transition({ when }) gate fields below are
+    // set post-match (the gate reads them after rendering); foregroundOnAction
+    // reads _inActionRevalidation during the match, so it must be set here.
+    getRequestContext()._inActionRevalidation = true;
 
     const match = await ctx.router.match(renderRequest, { env });
 
@@ -383,7 +393,22 @@ async function renderPeErrorBoundary<TEnv>(
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
   actionId?: string | null,
+  // True when an action actually ran and threw (vs a malformed form body, where
+  // no action executed). Drives _inActionRevalidation for JS/PE parity — it must
+  // NOT be inferred from actionId, since a useActionState bound action can run
+  // and throw with no $$id (actionId === undefined) yet still be an action error.
+  actionRan = false,
 ): Promise<Response | null> {
+  // JS/PE parity for an action-triggered error re-render: a stale
+  // `foregroundOnAction` cache entry inside the error boundary must foreground
+  // too, exactly as the JS path (revalidateAfterAction sets this unconditionally
+  // before rendering the error boundary). Set BEFORE matchError (the cached fn
+  // runs during it). Gated on actionRan, NOT actionId — a malformed form body
+  // (actionRan=false) ran no action and must keep SWR.
+  if (actionRan) {
+    getRequestContext()._inActionRevalidation = true;
+  }
+
   let errorResult;
   try {
     errorResult = await ctx.router.matchError(request, { env }, error, "route");
