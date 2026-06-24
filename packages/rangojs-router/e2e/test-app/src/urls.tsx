@@ -32,6 +32,7 @@ import {
 } from "./urls/include-scoping-reverse.js";
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
+import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
@@ -788,6 +789,10 @@ export const urlpatterns = urls(
       ),
 
       // === INCLUDED PATTERNS (no intercepts needed) ===
+
+      // Orphan fetchable loader: loader reachable only via a client import,
+      // never registered with loader(). Exercises the build-time pre-scan path.
+      include("/", orphanFetchablePatterns, { name: "" }),
 
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),

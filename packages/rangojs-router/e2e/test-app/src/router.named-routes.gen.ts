@@ -240,6 +240,7 @@ export const NamedRoutes = {
   "ns.nsChild": "/ns-reverse",
   "optionalInclude.category": "/oi/:locale?/c/:slug",
   "optionalInclude.index": "/oi/:locale?",
+  orphanFetchable: "/orphan-fetchable",
   ownTxOne: "/own-tx-one/:id",
   ownTxTwo: "/own-tx-two/:id",
   "parallelMeta.index": "/parallel-meta",

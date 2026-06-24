@@ -51,7 +51,32 @@ export const renderHTML = createSSRHandler({
 });
 `.trim();
 
+/**
+ * Virtual modules an RSC entry must import at startup to register the data the
+ * request handler needs before the first request arrives:
+ *
+ * - routes-manifest: the pre-generated route map so href()/matching work on a
+ *   cold start (full map in build, in-memory no-op in dev).
+ * - loader-manifest: setLoaderImports() for fetchable loaders. Critical for
+ *   serverless/multi-process deployments and for fetchable loaders reachable
+ *   only through a client component — without it those loaders are never
+ *   registered for the _rsc_loader endpoint and fail in production.
+ *
+ * Single source of truth: both the generated virtual RSC entry below and the
+ * custom-entry injector (version-injector) consume this list, so a new
+ * bootstrap manifest cannot be added to one path and forgotten on the other.
+ * That exact drift (loader-manifest present here but missing from the injector)
+ * is what left fetchable loaders unresolved on custom worker entries.
+ */
+export const RSC_ENTRY_BOOTSTRAP_IMPORTS: readonly string[] = [
+  "virtual:rsc-router/routes-manifest",
+  "virtual:rsc-router/loader-manifest",
+];
+
 export function getVirtualEntryRSC(routerPath: string): string {
+  const bootstrapImports = RSC_ENTRY_BOOTSTRAP_IMPORTS.map(
+    (id) => `import "${id}";`,
+  ).join("\n");
   return `
 import {
   renderToReadableStream,
@@ -65,15 +90,9 @@ import { router } from "${routerPath}";
 import { createRSCHandler } from "@rangojs/router/internal/rsc-handler";
 import { VERSION } from "@rangojs/router:version";
 
-// Import loader manifest to ensure all fetchable loaders are registered at startup
-// This is critical for serverless/multi-process deployments where the loader module
-// might not be imported before a GET request arrives
-import "virtual:rsc-router/loader-manifest";
-
-// Import pre-generated route manifest so href() works immediately on cold start.
-// In build mode, this contains the full route map generated at build time.
-// In dev mode, this is a no-op (manifest is populated in-memory by the discovery plugin).
-import "virtual:rsc-router/routes-manifest";
+// Startup bootstrap imports (routes + loader manifests). See
+// RSC_ENTRY_BOOTSTRAP_IMPORTS — the same list the custom-entry injector uses.
+${bootstrapImports}
 
 // Lazily create the handler on first request so that ESM live bindings
 // have resolved by the time we read \`router\`. During HMR the module may

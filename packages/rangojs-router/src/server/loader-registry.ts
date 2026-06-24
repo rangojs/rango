@@ -67,7 +67,19 @@ export async function getLoaderLazy(
     }
   }
 
-  // Dev fallback: parse ID (format: "src/path/to/file.ts#ExportName") and import
+  // The remaining dev fallback (parse the id as "src/path/file.ts#ExportName"
+  // and import it by path) only makes sense in dev, where ids ARE file paths
+  // and the dev loader manifest is intentionally empty. In production ids are
+  // hashed ("<hash>#ExportName") and every resolvable loader is reached above
+  // via the in-memory registry or the lazy import manifest. The hash is not a
+  // path, so a production fall-through would run import("/<hash>") and throw a
+  // misleading "No such module <hash>" 500 instead of reporting the loader as
+  // unregistered. Return undefined in production so a genuinely unknown loader
+  // is a clean 404 "not found in registry" from handleLoaderFetch.
+  if (process.env.NODE_ENV === "production") {
+    return undefined;
+  }
+
   const hashIndex = id.indexOf("#");
   if (hashIndex !== -1) {
     const filePath = id.slice(0, hashIndex);
