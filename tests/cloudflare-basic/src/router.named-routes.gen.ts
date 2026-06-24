@@ -70,6 +70,8 @@ export const NamedRoutes = {
   "staticContent.docsPage": "/static-content/:slug",
   "staticContent.index": "/static-content",
   streamedDocument: "/streamed-document",
+  streamTestDetail: "/stream-test/:id",
+  streamTestIndex: "/stream-test",
   swrAction: "/swr-action",
   swrCtx: "/swr-ctx",
   taggedDocument: "/tagged-document",

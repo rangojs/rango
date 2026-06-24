@@ -1,4 +1,7 @@
-import { urls, updateTag, revalidateTag } from "@rangojs/router";
+import { urls, updateTag, revalidateTag, Meta } from "@rangojs/router";
+import { Suspense } from "react";
+import { Link } from "@rangojs/router/client";
+import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
@@ -502,6 +505,67 @@ export const urlpatterns = urls(
         path("/slow/1", SlowPage1, { name: "slow1" }),
         path("/slow/2", () => <SlowPage2 />, { name: "slow2" }),
         path("/slow/fast", FastPage, { name: "fast" }),
+
+        // Streaming repro: INLINE handlers (matching the user's repro form)
+        // that return immediately and stream a component-placed <Suspense> via
+        // a server promise (no router loading()). The fallback must show on a
+        // cold client nav.
+        path(
+          "/stream-test",
+          () => (
+            <div data-testid="stream-test-index">
+              <p>Stream test index</p>
+              <ul>
+                <li>
+                  <Link to="/stream-test/1">Go to stream-test/1</Link>
+                </li>
+                <li>
+                  <Link to="/stream-test/2">Go to stream-test/2</Link>
+                </li>
+              </ul>
+            </div>
+          ),
+          { name: "streamTestIndex" },
+        ),
+        path(
+          "/stream-test/:id",
+          async (ctx) => {
+            const data = new Promise<string>((resolve) =>
+              setTimeout(() => resolve("resolved " + ctx.params.id), 3000),
+            );
+
+            ctx.use(Meta)(
+              data.then((d) => ({
+                title: `Test with ID ${ctx.params.id}: ${d}`,
+              })),
+            );
+
+            return (
+              <div data-testid="stream-test-page">
+                <p data-testid="stream-test-id">Test with ID {ctx.params.id}</p>
+                <ul>
+                  <li>
+                    <Link to="/stream-test">Back to index</Link>
+                  </li>
+                  <li>
+                    <Link to="/stream-test/1">Go to stream-test/1</Link>
+                  </li>
+                  <li>
+                    <Link to="/stream-test/2">Go to stream-test/2</Link>
+                  </li>
+                </ul>
+                <Suspense
+                  fallback={
+                    <div data-testid="stream-test-fallback">Loading...</div>
+                  }
+                >
+                  <StreamTest data={data} />
+                </Suspense>
+              </div>
+            );
+          },
+          { name: "streamTestDetail" },
+        ),
 
         // Inline routes demo
         path("/inline", InlineIndexPage, { name: "inlineIndex" }),

@@ -8,6 +8,7 @@ import type {
 import { NetworkError, ServerRedirect, isNetworkError } from "../errors.js";
 import {
   browserDebugLog,
+  debugLog,
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
@@ -316,7 +317,18 @@ export function createNavigationClient(
       }
 
       try {
+        // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Times how long the RSC
+        // payload ROOT takes to resolve: ~full-stream duration means the root
+        // model is not flushed early (server/runtime buffering, e.g. wrangler
+        // dev gzip); fast means the block, if any, is downstream in render.
+        const vtDebugStart = isBrowserDebugEnabled() ? performance.now() : 0;
         const payload = await payloadPromise;
+        if (isBrowserDebugEnabled()) {
+          debugLog("[VT-DIAG] payloadResolved", {
+            ms: Math.round(performance.now() - vtDebugStart),
+            isPartial: payload.metadata?.isPartial,
+          });
+        }
 
         if (tx) {
           browserDebugLog(tx, "response received", {

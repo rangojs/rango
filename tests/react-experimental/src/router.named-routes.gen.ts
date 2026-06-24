@@ -14,6 +14,8 @@ export const NamedRoutes = {
   "prerender.article": "/prerender/:slug",
   refresh: "/refresh",
   static: "/static",
+  streamTestDetail: "/stream-test/:id",
+  streamTestIndex: "/stream-test",
   "swrProduct.detail": "/swr-product/:id",
   "transition.a": "/transition-a",
   "transition.b": "/transition-b",

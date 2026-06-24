@@ -20,7 +20,7 @@ import {
 } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
-import { debugLog } from "./logging.js";
+import { debugLog, isBrowserDebugEnabled } from "./logging.js";
 import {
   validateRedirectOrigin,
   validateExternalRedirect,
@@ -491,6 +491,21 @@ export function createPartialUpdater(
       debugLog("[partial-update] updating document");
 
       const hasTransition = shouldStartViewTransition(reconciled.segments);
+      // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Reports which reconciled
+      // segment still carries a transition after the server-side when-gate, and
+      // whether the commit will be held in a startTransition. If `withTransition`
+      // lists an ancestor (layout/root) id rather than the gated leaf, an ungated
+      // ancestor transition is holding the subtree (missing loading() fallback).
+      if (isBrowserDebugEnabled()) {
+        debugLog("[VT-DIAG] commit", {
+          mode: mode.type,
+          hasTransition,
+          withTransition: reconciled.segments
+            .filter((s) => s.transition)
+            .map((s) => s.id),
+          all: reconciled.segments.map((s) => s.id),
+        });
+      }
       const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {

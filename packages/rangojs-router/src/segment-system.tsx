@@ -10,6 +10,7 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
+import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
 import {
   buildLoaderPromise,
@@ -340,6 +341,21 @@ export async function renderSegments(
         segmentId: id,
       });
     } else {
+      // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. A segment in the no-loading()
+      // branch whose component decodes as a Promise/lazy gets registered into
+      // temporalLazyRefs and awaited before commit (see below) — which on builds
+      // where the segment component arrives deferred defeats client-nav streaming.
+      if (INTERNAL_RANGO_DEBUG && typeof window === "object") {
+        const c = resolvedComponent as unknown;
+        console.log("[VT-DIAG] renderSegments no-loading-branch segment", {
+          id,
+          type: node.segment.type,
+          componentIsPromise: c instanceof Promise,
+          componentIsLazy:
+            c != null && typeof c === "object" && "_payload" in c,
+          componentTypeof: typeof c,
+        });
+      }
       nodeContent = registerLazyRef(resolvedComponent);
     }
 
@@ -480,7 +496,24 @@ export async function renderSegments(
     children: content,
   });
   if (typeof window === "object") {
+    // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. If this await dominates the
+    // navigation time, a deferred/lazy segment component is being fully resolved
+    // before commit, which defeats client-nav streaming. The await itself is
+    // functional (it preloads lazy chunk refs); only the timing log is gated.
+    const vtDebug = INTERNAL_RANGO_DEBUG && temporalLazyRefs.length > 0;
+    const vtDebugStart = vtDebug ? performance.now() : 0;
+    if (vtDebug) {
+      console.log("[VT-DIAG] renderSegments awaiting temporalLazyRefs", {
+        count: temporalLazyRefs.length,
+      });
+    }
     await Promise.allSettled(temporalLazyRefs);
+    if (vtDebug) {
+      console.log("[VT-DIAG] renderSegments temporalLazyRefs settled", {
+        count: temporalLazyRefs.length,
+        ms: Math.round(performance.now() - vtDebugStart),
+      });
+    }
   }
 
   let result: ReactNode = errorBoundaryWrapped;
