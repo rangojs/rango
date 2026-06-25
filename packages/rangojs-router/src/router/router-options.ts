@@ -498,6 +498,36 @@ export interface RangoOptions<TEnv = any> {
   prefetchCacheTTL?: number | false;
 
   /**
+   * Maximum number of decoded prefetch payloads the client keeps in its
+   * in-memory prefetch cache. When the cache is full the oldest entry is
+   * evicted (FIFO) to make room for a new prefetch.
+   *
+   * Each entry retains a fully decoded RSC payload (and the route's client
+   * chunks pulled in while decoding), so this is the lever on client-side
+   * prefetch memory: a higher value warms more routes at the cost of more
+   * retained payloads. Staleness is bounded separately by `prefetchCacheTTL`;
+   * this bounds the entry COUNT.
+   *
+   * Values below 1 (or non-finite) fall back to the default. To turn
+   * prefetching off entirely, set `prefetchCacheTTL: false` instead.
+   *
+   * @default 100
+   */
+  prefetchCacheSize?: number;
+
+  /**
+   * Maximum number of speculative prefetch requests (viewport/render strategy)
+   * the client runs concurrently. Hover prefetches bypass this queue and fire
+   * immediately; this caps only the background, idle-gated queue so prefetches
+   * never saturate the browser's connection pool.
+   *
+   * Values below 1 (or non-finite) fall back to the default.
+   *
+   * @default 2
+   */
+  prefetchConcurrency?: number;
+
+  /**
    * Prefix for the rango state cookie name. The resolved name is
    * `{prefix}_{routerId}`; the prefix is sanitized to cookie-name-safe
    * characters (`[A-Za-z0-9-]`) and an empty result falls back to the default.

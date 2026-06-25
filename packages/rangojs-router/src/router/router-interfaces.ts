@@ -302,6 +302,20 @@ export interface RangoInternal<
   readonly prefetchCacheTTL: number;
 
   /**
+   * Maximum number of decoded prefetch payloads the client keeps in its
+   * in-memory prefetch cache (FIFO eviction at capacity). Shipped to the
+   * client in payload metadata. Derived from prefetchCacheSize.
+   */
+  readonly prefetchCacheSize: number;
+
+  /**
+   * Maximum number of speculative prefetch requests the client runs
+   * concurrently. Shipped to the client in payload metadata. Derived from
+   * prefetchConcurrency.
+   */
+  readonly prefetchConcurrency: number;
+
+  /**
    * Resolved rango state cookie name (`{prefix}_{routerId}`), composed once at
    * router init and shipped to the client in payload metadata. The server-side
    * cookie writer reads it from here; the client reads it from metadata.

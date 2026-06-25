@@ -84,7 +84,7 @@ test.describe("prefetch-cache-control (dev)", () => {
     expect(res.headers.get("cache-control")).toBeNull();
   });
 
-  test("partial navigation RSC payload includes prefetchCacheTTL", async () => {
+  test("partial navigation RSC payload includes prefetch config", async () => {
     const url = new URL("/blog", f.url("/"));
     url.searchParams.set("_rsc_partial", "true");
 
@@ -100,9 +100,15 @@ test.describe("prefetch-cache-control (dev)", () => {
     // Router is configured with prefetchCacheTTL: 60 (seconds),
     // which becomes 60000 ms in the metadata payload.
     expect(body).toContain("prefetchCacheTTL");
+    // Configured prefetch limits ride along in the same metadata block. These
+    // counts ship un-transformed (unlike TTL, which becomes ms), so assert the
+    // exact configured value (25/3, not the 100/2 defaults) to prove the option
+    // propagated end-to-end, not merely that the field exists.
+    expect(body).toMatch(/"prefetchCacheSize"\s*:\s*25\b/);
+    expect(body).toMatch(/"prefetchConcurrency"\s*:\s*3\b/);
   });
 
-  test("initial page load RSC payload includes prefetchCacheTTL", async () => {
+  test("initial page load RSC payload includes prefetch config", async () => {
     const url = new URL("/", f.url("/"));
     // Full RSC request (not partial, not HTML)
     url.searchParams.set("__rsc", "1");
@@ -116,6 +122,12 @@ test.describe("prefetch-cache-control (dev)", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("prefetchCacheTTL");
+    // Configured prefetch limits ride along in the same metadata block. These
+    // counts ship un-transformed (unlike TTL, which becomes ms), so assert the
+    // exact configured value (25/3, not the 100/2 defaults) to prove the option
+    // propagated end-to-end, not merely that the field exists.
+    expect(body).toMatch(/"prefetchCacheSize"\s*:\s*25\b/);
+    expect(body).toMatch(/"prefetchConcurrency"\s*:\s*3\b/);
   });
 });
 
@@ -191,7 +203,7 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.headers.get("cache-control")).toBeNull();
   });
 
-  test("partial navigation RSC payload includes prefetchCacheTTL", async () => {
+  test("partial navigation RSC payload includes prefetch config", async () => {
     const url = new URL("/blog", f.url("/"));
     url.searchParams.set("_rsc_partial", "true");
 
@@ -205,9 +217,15 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("prefetchCacheTTL");
+    // Configured prefetch limits ride along in the same metadata block. These
+    // counts ship un-transformed (unlike TTL, which becomes ms), so assert the
+    // exact configured value (25/3, not the 100/2 defaults) to prove the option
+    // propagated end-to-end, not merely that the field exists.
+    expect(body).toMatch(/"prefetchCacheSize"\s*:\s*25\b/);
+    expect(body).toMatch(/"prefetchConcurrency"\s*:\s*3\b/);
   });
 
-  test("initial page load RSC payload includes prefetchCacheTTL", async () => {
+  test("initial page load RSC payload includes prefetch config", async () => {
     const url = new URL("/", f.url("/"));
     url.searchParams.set("__rsc", "1");
 
@@ -220,5 +238,11 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("prefetchCacheTTL");
+    // Configured prefetch limits ride along in the same metadata block. These
+    // counts ship un-transformed (unlike TTL, which becomes ms), so assert the
+    // exact configured value (25/3, not the 100/2 defaults) to prove the option
+    // propagated end-to-end, not merely that the field exists.
+    expect(body).toMatch(/"prefetchCacheSize"\s*:\s*25\b/);
+    expect(body).toMatch(/"prefetchConcurrency"\s*:\s*3\b/);
   });
 });

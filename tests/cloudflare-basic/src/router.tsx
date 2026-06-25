@@ -26,6 +26,11 @@ export const router = createRouter<AppBindings>({
   // runtime provides no executionContext.tracing (the default), every span call
   // is a transparent pass-through.
   tracing: createCloudflareTracing(),
+  // Non-default prefetch limits so the e2e can pin that configured values reach
+  // the client payload metadata through a real Cloudflare build (defaults are
+  // size 100 / concurrency 2).
+  prefetchCacheSize: 25,
+  prefetchConcurrency: 3,
   // Enable theme support with system detection
   theme: {
     defaultTheme: "light",

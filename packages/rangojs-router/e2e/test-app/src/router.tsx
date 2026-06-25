@@ -181,6 +181,10 @@ export const router = createRouter<AppEnv>({
     "swr-action": { ttl: 2, swr: 60, foregroundOnAction: true },
   },
   prefetchCacheTTL: 60,
+  // Non-default values so the e2e can pin that configured prefetch limits
+  // reach the client payload metadata (defaults are size 100 / concurrency 2).
+  prefetchCacheSize: 25,
+  prefetchConcurrency: 3,
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],

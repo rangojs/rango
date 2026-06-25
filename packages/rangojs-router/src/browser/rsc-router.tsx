@@ -25,6 +25,7 @@ import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
 import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
+import { setPrefetchConcurrency } from "./prefetch/queue.js";
 import { setPrefetchDecoder } from "./prefetch/fetch.js";
 import { setAppVersion } from "./app-version.js";
 import {
@@ -245,11 +246,17 @@ export async function initBrowserApp(
   initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
   setAppVersion(version);
 
-  // Initialize the in-memory prefetch cache TTL from server config.
-  // A value of 0 disables the cache; undefined falls back to the module default.
+  // Initialize the in-memory prefetch cache (TTL + max size) and the prefetch
+  // queue concurrency from server config. A TTL of 0 disables the cache;
+  // undefined values fall back to the module defaults.
   const prefetchCacheTTL = initialPayload.metadata?.prefetchCacheTTL;
-  if (prefetchCacheTTL !== undefined) {
-    initPrefetchCache(prefetchCacheTTL);
+  const prefetchCacheSize = initialPayload.metadata?.prefetchCacheSize;
+  if (prefetchCacheTTL !== undefined || prefetchCacheSize !== undefined) {
+    initPrefetchCache(prefetchCacheTTL, prefetchCacheSize);
+  }
+  const prefetchConcurrency = initialPayload.metadata?.prefetchConcurrency;
+  if (prefetchConcurrency !== undefined) {
+    setPrefetchConcurrency(prefetchConcurrency);
   }
 
   // Wire the RSC decoder so prefetches decode eagerly and warm the route's

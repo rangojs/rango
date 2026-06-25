@@ -109,6 +109,55 @@ describe("prefetch queue", () => {
     await flush();
   });
 
+  it("respects a configured concurrency limit above the default", async () => {
+    const { enqueuePrefetch, setPrefetchConcurrency } =
+      await import("../browser/prefetch/queue");
+
+    setPrefetchConcurrency(3);
+
+    const started: string[] = [];
+    const gates = [deferred(), deferred(), deferred(), deferred()];
+    ["a", "b", "c", "d"].forEach((k, i) => {
+      enqueuePrefetch(k, () => {
+        started.push(k);
+        return gates[i].promise;
+      });
+    });
+
+    await flush();
+    // 3 run concurrently now (was 2); the 4th waits for a slot.
+    expect(started).toEqual(["a", "b", "c"]);
+
+    gates[0].resolve();
+    await flush();
+    expect(started).toEqual(["a", "b", "c", "d"]);
+
+    gates.forEach((g) => g.resolve());
+    await flush();
+  });
+
+  it("ignores a sub-1 concurrency and keeps the default of 2", async () => {
+    const { enqueuePrefetch, setPrefetchConcurrency } =
+      await import("../browser/prefetch/queue");
+
+    setPrefetchConcurrency(0); // invalid: default of 2 is kept
+
+    const started: string[] = [];
+    const gates = [deferred(), deferred(), deferred()];
+    ["a", "b", "c"].forEach((k, i) => {
+      enqueuePrefetch(k, () => {
+        started.push(k);
+        return gates[i].promise;
+      });
+    });
+
+    await flush();
+    expect(started).toEqual(["a", "b"]);
+
+    gates.forEach((g) => g.resolve());
+    await flush();
+  });
+
   it("deduplicates queued and executing keys", async () => {
     const { enqueuePrefetch } = await import("../browser/prefetch/queue");
 

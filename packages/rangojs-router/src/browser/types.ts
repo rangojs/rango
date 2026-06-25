@@ -71,6 +71,16 @@ export interface RscMetadata {
    */
   prefetchCacheTTL?: number;
   /**
+   * Max entries in the client-side in-memory prefetch cache (FIFO eviction).
+   * Sent on initial render so the browser can configure its cache capacity.
+   */
+  prefetchCacheSize?: number;
+  /**
+   * Max concurrent speculative prefetch requests on the client.
+   * Sent on initial render so the browser can configure its prefetch queue.
+   */
+  prefetchConcurrency?: number;
+  /**
    * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
    * reads it verbatim and binds the rango state cookie to it; composition
    * happens only server-side.

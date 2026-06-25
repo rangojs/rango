@@ -79,6 +79,8 @@ function createNotFoundRouter(): RangoInternal<unknown, any> {
     themeConfig: undefined,
     warmupEnabled: false,
     prefetchCacheTTL: 4242,
+    prefetchCacheSize: 7,
+    prefetchConcurrency: 5,
   } as any;
 }
 
@@ -109,5 +111,9 @@ describe("not-found Flight payload shape", () => {
     // resolvedIds mirrors the rendered segment list (the single notFound segment).
     expect(payload.metadata.resolvedIds).toEqual(["notFound"]);
     expect(payload.metadata.prefetchCacheTTL).toBe(4242);
+    // The 404 payload must carry the client prefetch limits like a matched
+    // full render, so prefetch config survives a not-found initial load.
+    expect(payload.metadata.prefetchCacheSize).toBe(7);
+    expect(payload.metadata.prefetchConcurrency).toBe(5);
   });
 });
