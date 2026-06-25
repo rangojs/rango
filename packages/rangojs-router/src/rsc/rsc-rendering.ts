@@ -81,6 +81,8 @@ async function handleRscRenderingInner<TEnv>(
       handles: handleStore.stream(),
       version: ctx.version,
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+      prefetchCacheSize: ctx.router.prefetchCacheSize,
+      prefetchConcurrency: ctx.router.prefetchConcurrency,
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       // Carry warmupEnabled on the initial full-render payload so the client
@@ -141,6 +143,8 @@ async function handleRscRenderingInner<TEnv>(
           handles: handleStore.stream(),
           version: ctx.version,
           prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+          prefetchCacheSize: ctx.router.prefetchCacheSize,
+          prefetchConcurrency: ctx.router.prefetchConcurrency,
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       };

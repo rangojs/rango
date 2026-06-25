@@ -111,6 +111,10 @@ import {
 } from "./router/prerender-match.js";
 import { resolveStateCookieName } from "./router/state-cookie-name.js";
 import { resolvePrefetchCacheTTL } from "./router/prefetch-cache-ttl.js";
+import {
+  resolvePrefetchCacheSize,
+  resolvePrefetchConcurrency,
+} from "./router/prefetch-limits.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -150,6 +154,8 @@ export function createRouter<TEnv = any>(
     nonce,
     version,
     prefetchCacheTTL: prefetchCacheTTLOption,
+    prefetchCacheSize: prefetchCacheSizeOption,
+    prefetchConcurrency: prefetchConcurrencyOption,
     stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
@@ -241,6 +247,14 @@ export function createRouter<TEnv = any>(
   const prefetchCacheTTL = resolvedPrefetchCacheTTL.ms;
   const prefetchCacheControl: string | false =
     resolvedPrefetchCacheTTL.cacheControl;
+
+  // Resolve client-side prefetch limits (in-memory cache size and queue
+  // concurrency). Both are positive-integer counts; sub-1/non-finite inputs
+  // fall back to the defaults. Shipped to the client in payload metadata.
+  const prefetchCacheSize = resolvePrefetchCacheSize(prefetchCacheSizeOption);
+  const prefetchConcurrency = resolvePrefetchConcurrency(
+    prefetchConcurrencyOption,
+  );
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -968,6 +982,8 @@ export function createRouter<TEnv = any>(
     // Expose prefetch cache settings
     prefetchCacheControl,
     prefetchCacheTTL,
+    prefetchCacheSize,
+    prefetchConcurrency,
 
     // Expose the resolved rango state cookie name for the server-side writer
     // (invalidateClientCache) and for shipping to the client in metadata.

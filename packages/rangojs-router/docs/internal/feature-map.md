@@ -132,6 +132,7 @@ Public API (`Rango` interface):
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
 - `strictMode` (default true) — wraps client hydration in `React.StrictMode`; shipped to the client via initial payload metadata and read once by the browser entry. `strictMode: false` opts out (used to isolate StrictMode's double-render when measuring hook stability)
+- `prefetchCacheSize` (default 100) and `prefetchConcurrency` (default 2) — client prefetch tuning knobs: max decoded prefetch payloads kept before FIFO eviction, and max concurrent speculative prefetches. Resolved server-side (`router/prefetch-limits.ts`), shipped via initial payload metadata, and applied once at init to `browser/prefetch/cache.ts` / `queue.ts`. Sub-1/non-finite values fall back to the default; disabling prefetch entirely remains `prefetchCacheTTL: false`'s job
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
 - Request timeouts via `timeout`/`timeouts`/`onTimeout` options
 - `basename` for sub-path deployments — auto-prefixes all routes, `reverse()`, `Link`, `redirect()`, `router.use()` patterns, and `useRouter()` navigation. `href()` is intentionally not basename-aware (raw path helper).

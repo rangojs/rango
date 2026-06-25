@@ -22,6 +22,7 @@ import {
   consumePrefetch,
   currentGeneration,
   hasPrefetch,
+  initPrefetchCache,
   markPrefetchInflight,
   setInflightPromise,
   storePrefetch,
@@ -137,19 +138,20 @@ describe("prefetch cache", () => {
     expect(invalidateRangoStateMock).toHaveBeenCalledTimes(1);
   });
 
-  it("evicts oldest entry when at max capacity", () => {
+  it("evicts oldest entry at the default max capacity (100)", () => {
     const gen = currentGeneration();
 
-    // Fill cache to capacity (50)
-    for (let i = 0; i < 50; i++) {
+    // Fill cache to the DEFAULT capacity (100) — no initPrefetchCache call, so
+    // this also pins the module default (configurable size is covered below).
+    for (let i = 0; i < 100; i++) {
       storePrefetch(`key-${i}`, makeEntry(), gen);
     }
 
     // Adding one more should evict the oldest (key-0)
-    storePrefetch("key-50", makeEntry(), gen);
+    storePrefetch("key-100", makeEntry(), gen);
 
     expect(hasPrefetch("key-0")).toBe(false);
-    expect(hasPrefetch("key-50")).toBe(true);
+    expect(hasPrefetch("key-100")).toBe(true);
     expect(hasPrefetch("key-1")).toBe(true);
   });
 
@@ -209,6 +211,44 @@ describe("prefetch cache", () => {
       clearPrefetchCache();
 
       expect(consumeInflightPrefetch(key)).toBe(null);
+    });
+  });
+
+  describe("configurable max size (FIFO eviction)", () => {
+    afterEach(() => {
+      // clearPrefetchCache (beforeEach) clears stored entries but NOT config,
+      // so restore the module default size for any later test in this file.
+      initPrefetchCache(300_000, 100);
+    });
+
+    it("evicts the oldest entry once the configured size is reached", () => {
+      // Drive eviction at a small, explicit capacity rather than the default 100.
+      initPrefetchCache(300_000, 3);
+      const gen = currentGeneration();
+      const keys = ["k1", "k2", "k3", "k4"].map((k) => `s\0/${k}`);
+      for (const key of keys) storePrefetch(key, makeEntry(), gen);
+
+      // Capacity 3: storing the 4th evicts the oldest (k1); newest 3 remain.
+      expect(hasPrefetch(keys[0])).toBe(false);
+      expect(hasPrefetch(keys[1])).toBe(true);
+      expect(hasPrefetch(keys[2])).toBe(true);
+      expect(hasPrefetch(keys[3])).toBe(true);
+    });
+
+    it("ignores a sub-1 size and keeps the previous capacity", () => {
+      initPrefetchCache(300_000, 3);
+      initPrefetchCache(300_000, 0); // ignored: size stays 3, not 0
+      const gen = currentGeneration();
+      const keys = ["a", "b", "c", "d"].map((k) => `s\0/${k}`);
+      for (const key of keys) storePrefetch(key, makeEntry(), gen);
+
+      // Capacity stayed 3 (the 0 was ignored): a evicted, newest 3 remain.
+      // b and c surviving is the discriminator — a buggy size 0 evicts-then-sets
+      // on every store, leaving only d.
+      expect(hasPrefetch(keys[0])).toBe(false);
+      expect(hasPrefetch(keys[1])).toBe(true);
+      expect(hasPrefetch(keys[2])).toBe(true);
+      expect(hasPrefetch(keys[3])).toBe(true);
     });
   });
 });
