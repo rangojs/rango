@@ -191,6 +191,31 @@ one `collectMeta` path, async == sync. This is a behavior change from today's
 Any path here touches wire/barrier semantics, so the semantic matrix and dev +
 production e2e are mandatory.
 
+## Default collect is the identity (lossless)
+
+Shipped alongside resolve-by-default: `createHandle()` with no collect no longer
+flattens. The data handed to `collect` is `TData[][]` — one array per segment that
+pushed, in segment order — and the default collect now passes it through as-is
+instead of `segments.flat()`. The reason is the same "don't silently discard
+structure" instinct as resolve-by-default: flattening erases which (and how many)
+segments contributed, and that's information a consumer can't recover. The flat list
+becomes an explicit opt-in, `createHandle<T, T[]>((segments) => segments.flat())`.
+
+- The default `TAccumulated` generic is `TData[][]`; `useHandle` on a no-collect
+  handle is `TData[][]`.
+- The built-in `Meta` / `Breadcrumbs` / `Script` handles pass explicit collects, so
+  they are unchanged. Only ad-hoc consumer handles see the new shape.
+- The "no registered collect" dev warning stays (reworded for the identity default)
+  in both `collectHandleData` (runtime, folded out of production) and `collectHandle`
+  (testing). The fallback is harmless ONLY for a handle that wanted the default — a
+  CUSTOM-collect handle whose module failed to register silently returns the identity
+  shape cast as its declared `TAccumulated`, and a `Handle` only carries `$$id`, so
+  the runtime can't tell the two apart. The warning is the only signal for that
+  footgun.
+- This is a breaking change for a consumer who relied on the flat default; the
+  migration is one line (add `(segments) => segments.flat()`), shown in the example
+  apps (`tests/*/src/handles/breadcrumbs.ts`, `rendered-barrier`).
+
 ## Related
 
 - [Handles completion research](./handles-completion.md) — the `settled` barrier,

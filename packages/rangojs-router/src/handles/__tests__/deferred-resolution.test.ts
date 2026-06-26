@@ -54,6 +54,40 @@ describe("root accumulation across layouts + parallel slots", () => {
   });
 });
 
+describe("collect shape: default per-segment grouping vs opt-in flat", () => {
+  // The chain: a top-level parallel slot pushed ONCE, the route handler pushed
+  // TWICE. The data handed to `collect` is grouped per segment (TData[][], one
+  // inner array per segment in segmentOrder). The DEFAULT collect now passes that
+  // through as-is, so a consumer can tell which/how-many segments pushed.
+  const buckets = {
+    "L0.@panel": ["from-slot"], // parallel slot: one push
+    R0: ["handler-1", "handler-2"], // route handler: two pushes
+  };
+  const order = ["L0.@panel", "R0"];
+
+  it("default collect (no arg) keeps the per-segment grouping as-is", () => {
+    // No collect -> identity. A single-push segment is [x] and a two-push segment
+    // is [x, y], so they are distinguishable.
+    const H = createHandle<string>(undefined, "__test_collect_default__");
+    expect(collectHandleData(H, { [H.$$id]: buckets }, order)).toEqual([
+      ["from-slot"],
+      ["handler-1", "handler-2"],
+    ]);
+  });
+
+  it("opt-in flat collect erases segment boundaries into one array", () => {
+    const H = createHandle<string, string[]>(
+      (segments) => segments.flat(),
+      "__test_collect_flat__",
+    );
+    expect(collectHandleData(H, { [H.$$id]: buckets }, order)).toEqual([
+      "from-slot",
+      "handler-1",
+      "handler-2",
+    ]);
+  });
+});
+
 describe("resolveDeferredHandleValues", () => {
   it("resolves top-level promises and leaves sync values untouched", async () => {
     const out = await resolveDeferredHandleValues({

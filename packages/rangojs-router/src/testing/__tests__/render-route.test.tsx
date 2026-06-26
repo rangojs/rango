@@ -451,7 +451,9 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
   // globally on the event controller (unlike loaders, which are segment-scoped
   // via OutletContext), so any component in the chain reads the seeded values.
   it("a LAYOUT reading useHandle sees the seeded values", async () => {
-    const Crumbs = createHandle<{ label: string }>();
+    const Crumbs = createHandle<{ label: string }, { label: string }[]>(
+      (segments) => segments.flat(),
+    );
     function Layout() {
       const crumbs = useHandle(Crumbs);
       return (

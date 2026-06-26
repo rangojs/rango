@@ -128,6 +128,19 @@ consumer-side `isThenable` narrowing are removed.
 Exported types: `HandlePush`, `HandlePushFn`, `DeferOptions`; exported value:
 `DEFAULT_DEFER_TIMEOUT_MS`. `createDeferred`/`withDefer` are internal building blocks.
 
+**Default collect is the identity (lossless):** `createHandle<TData>()` with no
+collect now passes the per-segment data through as-is — `TData[][]`, one array per
+segment that pushed, in segment order — so a consumer can tell which/how-many
+segments contributed. `useHandle` on such a handle is `TData[][]`. Opt into a single
+flat list with `createHandle<TData, TData[]>((segments) => segments.flat())` (the
+built-in `Meta`/`Breadcrumbs`/`Script` all pass explicit collects, so they are
+unaffected). The default `TAccumulated` generic is `TData[][]`. A handle whose
+module was never imported (collect unregistered) falls back to the same identity
+default and **warns in dev** (`collectHandleData` runtime, folded out of production;
+`collectHandle` testing): the fallback is harmless for a handle that wanted the
+default, but a CUSTOM-collect handle that failed to register silently gets the wrong
+shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
+
 ---
 
 ## Feature Map by Capability

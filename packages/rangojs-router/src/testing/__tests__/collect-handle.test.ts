@@ -8,16 +8,17 @@ import { Breadcrumbs } from "../../handles/breadcrumbs.js";
 // createHandle() with no injected id still registers its collect (via the runtime
 // fallback id), so a consumer's handle is fully testable in a bare test.
 describe("collectHandle", () => {
-  it("runs the default flatten collect when no custom collect is given", () => {
-    const Breadcrumbs = createHandle<{ label: string }>();
-    const result = collectHandle(Breadcrumbs, [
+  it("passes per-segment data through as-is when no custom collect is given (default identity)", () => {
+    const Crumbs = createHandle<{ label: string }>();
+    const result = collectHandle(Crumbs, [
       [{ label: "Home" }],
       [{ label: "Blog" }, { label: "Post" }],
     ]);
+    // Default collect is the identity: one array per segment that pushed, NOT a
+    // single flat list. Opt into flat with createHandle((s) => s.flat()).
     expect(result).toEqual([
-      { label: "Home" },
-      { label: "Blog" },
-      { label: "Post" },
+      [{ label: "Home" }],
+      [{ label: "Blog" }, { label: "Post" }],
     ]);
   });
 
@@ -41,12 +42,14 @@ describe("collectHandle", () => {
   });
 
   it("runs a custom dedupe collect", () => {
-    const Unique = createHandle<{ id: number }>((segments) => {
-      const all = segments.flat();
-      return all.filter(
-        (item, i) => all.findIndex((x) => x.id === item.id) === i,
-      );
-    });
+    const Unique = createHandle<{ id: number }, { id: number }[]>(
+      (segments) => {
+        const all = segments.flat();
+        return all.filter(
+          (item, i) => all.findIndex((x) => x.id === item.id) === i,
+        );
+      },
+    );
     const result = collectHandle(Unique, [
       [{ id: 1 }, { id: 2 }],
       [{ id: 1 }, { id: 3 }],
@@ -66,12 +69,16 @@ describe("collectHandle", () => {
     expect(collectHandle(SegmentCount, [[], [], []])).toBe(0);
   });
 
-  it("warns and flattens for a handle whose module never registered a collect", () => {
+  it("warns and falls back to the identity collect for an unregistered handle", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     // A bare object masquerading as a handle with an unregistered id.
     const fake = { __brand: "handle" as const, $$id: "never-registered#X" };
     const result = collectHandle(fake as never, [[1], [2, 3]]);
-    expect(result).toEqual([1, 2, 3]);
+    // Unregistered -> identity fallback (per-segment, as-is) PLUS a warning: a
+    // handle with a CUSTOM collect that failed to register would otherwise
+    // silently return the wrong shape, and the runtime can't tell it from a
+    // handle that intended the default.
+    expect(result).toEqual([[1], [2, 3]]);
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
   });

@@ -278,14 +278,27 @@ Create your own handle with `createHandle()`:
 ```typescript
 import { createHandle } from "@rangojs/router";
 
-// Default: flatten into array
+// Custom collect: last value wins.
 export const PageTitle = createHandle<string, string>(
   (segments) => segments.flat().at(-1) ?? "Default Title",
 );
 
-// No collect function: default flattens into T[]
+// No collect: the DEFAULT is the identity (lossless) — `collect` receives the
+// per-segment data (TData[][], one array per segment that pushed, in segment
+// order) and passes it through as-is. `useHandle(Warnings)` is `string[][]`, so a
+// consumer can tell which/how-many segments contributed.
 export const Warnings = createHandle<string>();
+
+// Want a single flat list instead? Opt in:
+export const FlatWarnings = createHandle<string, string[]>((segments) =>
+  segments.flat(),
+);
 ```
+
+A handle whose module is never imported (so `createHandle()` never ran to register
+its collect) falls back to this same identity default and **warns in dev** — a
+handle with a custom collect that failed to register would otherwise return the
+wrong shape silently, and the runtime can't tell it from one that wanted the default.
 
 The Vite `exposeInternalIds` plugin auto-injects a stable `$$id` based on
 file path and export name. No manual naming required for project-local code.

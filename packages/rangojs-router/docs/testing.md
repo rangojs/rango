@@ -635,16 +635,18 @@ expect(collectHandle(PageTitle, [["Home"], ["Products"], ["Shoes"]])).toBe(
   "Shoes",
 );
 
-const Breadcrumbs = createHandle<Item>(); // default flatten
+// Opt into a flat list; the default collect groups per segment (Item[][]).
+const Breadcrumbs = createHandle<Item, Item[]>((s) => s.flat());
 expect(collectHandle(Breadcrumbs, [[home], [post]])).toEqual([home, post]);
 ```
 
 This works because `createHandle()` registers its collect even in a bare test
 (it assigns a runtime fallback id when the Vite plugin did not inject one). The
-same applies to `renderRoute`'s `handles` seeding: a handle's **custom** collect
-now runs end-to-end, so a `useHandle(handle)` component sees the real
-accumulated value (not a default flatten). The collect is also just a function,
-so you can always export and call it directly if you prefer.
+same applies to `renderRoute`'s `handles` seeding: a handle's collect runs
+end-to-end, so a `useHandle(handle)` component sees the real accumulated value.
+The default collect passes the per-segment data through as-is (`TData[][]`); the
+collect is also just a function, so you can always export and call it directly if
+you prefer.
 
 Fidelity caveat: client tree only. It will NOT catch server/client boundary
 remount bugs, real Flight serialization, loader execution, middleware, or handler
