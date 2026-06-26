@@ -319,8 +319,8 @@ function breadcrumbTests(mode: "dev" | "build") {
     });
 
     // .defer() with NO `else`: the never-resolved slot auto-resolves to undefined
-    // on timeout. The page must still flush (no hang) and the deferred-aware
-    // renderer drops the undefined item rather than crashing on it.
+    // on timeout. The page must still flush (no hang); resolve-by-default drops
+    // the nullish resolved value so it never reaches collect (no crash).
     test("a deferred handle value with no else resolves to undefined on timeout (no hang, no crash)", async ({
       page,
     }) => {

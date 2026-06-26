@@ -22,6 +22,7 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
+import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 
 export function handleRscRendering<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -78,7 +79,10 @@ async function handleRscRenderingInner<TEnv>(
       params: m.params,
       isPartial: false,
       rootLayout: ctx.router.rootLayout,
-      handles: handleStore.stream(),
+      // Full render: resolve deferred handle values server-side so SSR markup and
+      // the first sync useHandle read see resolved values. Partial payloads below
+      // keep streaming (handleStore.stream()).
+      handles: resolvedHandleStream(handleStore),
       version: ctx.version,
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
       prefetchCacheSize: ctx.router.prefetchCacheSize,

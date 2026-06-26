@@ -195,6 +195,7 @@ function createSsrEventController(opts: {
     subscribeToHandles: () => () => {},
     setHandleData: () => {},
     getHandleState: () => handleState,
+    setRouteSegmentIds: () => {},
     setParams: (nextParams) => {
       params = nextParams;
     },

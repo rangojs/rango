@@ -148,7 +148,6 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 export {
   DEFAULT_DEFER_TIMEOUT_MS,
   type DeferOptions,
-  type DeferredHandleEntry,
   type HandlePush,
   type HandlePushFn,
 } from "./defer.js";

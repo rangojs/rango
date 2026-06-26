@@ -3,19 +3,16 @@
  * - FIX 16: ld+json serialization must be escaped before dangerouslySetInnerHTML
  *   so a value containing "</script>" cannot close the tag early (XSS / markup
  *   corruption).
- * - FIX 18: a rejected async meta descriptor must degrade to rendering nothing
- *   instead of throwing during render and crashing the document head.
  *
- * The rendered-behavior checks go through react-dom/server's streaming renderer
- * because the async use(promise) path resolves there exactly as it does in real
- * SSR; a client-only render under happy-dom does not reliably resume a suspended
- * use().
+ * Under resolve-by-default, meta descriptors are resolved BEFORE MetaTags renders
+ * (server-side on the full render, client-side before apply), so MetaTags only
+ * ever renders synchronous descriptors via renderMetaDescriptor — there is no
+ * async/use() render path to harden anymore.
  */
 
 import { describe, it, expect } from "vitest";
-import { Suspense } from "react";
 import { renderToReadableStream } from "react-dom/server.edge";
-import { AsyncMetaTag } from "../MetaTags.js";
+import { renderMetaDescriptor } from "../MetaTags.js";
 import { escapeJsonForScript } from "../../escape-script.js";
 import type { MetaDescriptorBase } from "../../router/types.js";
 
@@ -31,18 +28,13 @@ async function streamToString(stream: ReadableStream): Promise<string> {
   return out;
 }
 
-async function renderAsync(
-  promise: Promise<MetaDescriptorBase>,
+async function renderSync(
+  descriptor: MetaDescriptorBase,
   index = 0,
 ): Promise<string> {
   const stream = await renderToReadableStream(
-    <Suspense fallback={null}>
-      <AsyncMetaTag promise={promise} index={index} />
-    </Suspense>,
+    <>{renderMetaDescriptor(descriptor, index)}</>,
     {
-      // A rejected descriptor must NOT propagate as a fatal stream error; the
-      // promise-level guard should have already neutralized it. Surface any
-      // onError so an unexpected throw fails the test loudly.
       onError(error) {
         throw error;
       },
@@ -77,11 +69,9 @@ describe("escapeJsonForScript", () => {
 // </script> in the streamed markup.
 describe("ld+json rendered injection", () => {
   it("does not emit a literal </script> inside the injected payload", async () => {
-    const html = await renderAsync(
-      Promise.resolve<MetaDescriptorBase>({
-        "script:ld+json": { "@type": "Thing", name: "</script>" },
-      }),
-    );
+    const html = await renderSync({
+      "script:ld+json": { "@type": "Thing", name: "</script>" },
+    });
 
     expect(html).toContain('<script type="application/ld+json">');
     // The dangerous closing tag from the value must be escaped, not literal.
@@ -98,78 +88,5 @@ describe("ld+json rendered injection", () => {
       "@type": "Thing",
       name: "</script>",
     });
-  });
-});
-
-// FIX 18
-describe("AsyncMetaTag rejection handling", () => {
-  it("renders nothing and does not throw when the descriptor promise rejects", async () => {
-    const rejecting = Promise.reject(new Error("meta failed"));
-    // Swallow Node's unhandled-rejection bookkeeping; the component guards it.
-    rejecting.catch(() => {});
-
-    const html = await renderAsync(rejecting);
-
-    // No tag and no error fallback marker — just an empty Suspense boundary.
-    expect(html).not.toContain("<meta");
-    expect(html).not.toContain("<script");
-    expect(html).not.toContain("<link");
-    // No "switched to client rendering" recovery template (that marker carries
-    // data-msg); the guard neutralizes the rejection before it can surface.
-    expect(html).not.toContain("data-msg");
-  });
-
-  it("renders the resolved tag when the descriptor promise resolves", async () => {
-    const html = await renderAsync(
-      Promise.resolve<MetaDescriptorBase>({
-        name: "description",
-        content: "hello",
-      }),
-    );
-
-    expect(html).toContain('name="description"');
-    expect(html).toContain('content="hello"');
-  });
-
-  it("renders a non-native thenable descriptor whose then() returns void (React wakeable)", async () => {
-    const descriptor: MetaDescriptorBase = {
-      name: "description",
-      content: "from-wakeable",
-    };
-    // A PromiseLike whose then() invokes the fulfill callback but returns void
-    // (undefined) — the shape React wakeables and some loader-derived thenables
-    // have in SSR/RSC. Without the Promise.resolve normalization in
-    // toSafeMetaPromise, `safe` becomes undefined and use(undefined) throws
-    // ("unsupported type passed to use()"), 500-ing the page.
-    const wakeable = {
-      then(onFulfilled: (value: MetaDescriptorBase) => unknown) {
-        onFulfilled(descriptor);
-      },
-    };
-
-    const html = await renderAsync(
-      wakeable as unknown as Promise<MetaDescriptorBase>,
-    );
-
-    expect(html).toContain('name="description"');
-    expect(html).toContain('content="from-wakeable"');
-  });
-
-  it("renders nothing when a non-native thenable descriptor rejects", async () => {
-    const wakeable = {
-      then(
-        _onFulfilled: (value: MetaDescriptorBase) => unknown,
-        onRejected: (reason: unknown) => unknown,
-      ) {
-        onRejected(new Error("wakeable meta failed"));
-      },
-    };
-
-    const html = await renderAsync(
-      wakeable as unknown as Promise<MetaDescriptorBase>,
-    );
-
-    expect(html).not.toContain("<meta");
-    expect(html).not.toContain("data-msg");
   });
 });

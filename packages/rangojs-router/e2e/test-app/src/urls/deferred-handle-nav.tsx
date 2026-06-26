@@ -1,23 +1,27 @@
 import { urls, Meta, Breadcrumbs, type Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Suspense } from "react";
-import { DeferredPendingBreadcrumbs } from "../components/TrailBreadcrumbs.js";
+import { ResolvedTrailBreadcrumbs } from "../components/TrailBreadcrumbs.js";
 
 /**
- * Routes pinning the #622 deferred-handle navigation contract (P2) and the
- * history-cache poisoning fix (P1), exercised through CLIENT (soft) navigation.
+ * Routes pinning the resolve-by-default deferred-handle navigation contract and
+ * the history-cache poisoning fix (P1), exercised through CLIENT (soft) and full
+ * (SSR) navigation.
  *
  * The /dh-nav/deferred route does three things AT ONCE in its handler:
- *   1. pushes a SYNCHRONOUS breadcrumb (must apply immediately, never delayed by
- *      the deferred Meta),
- *   2. pushes a DEFERRED Meta title (resolves late; must NOT suspend MetaTags in
- *      <head> nor blank the previous title meanwhile),
+ *   1. pushes a SYNCHRONOUS breadcrumb,
+ *   2. pushes a DEFERRED Meta title (resolves late),
  *   3. reserves a DEFERRED breadcrumb slot via .defer() resolved by a deep async
- *      component (must reach the consumer AS A PROMISE during soft nav — P2
- *      contract — so the consumer can show a pending marker).
+ *      component.
  *
- * The route's own content renders SYNCHRONOUSLY so the sync breadcrumb and sync
- * content are observable while Meta and the deferred crumb are still pending.
+ * Resolve-by-default contract:
+ *   - SSR / full load: deferred values are resolved SERVER-SIDE, so the initial
+ *     HTML shows the resolved title + the resolved breadcrumb set.
+ *   - Soft nav: the Breadcrumbs handle has a deferred entry, so the store HOLDS
+ *     the PREVIOUS breadcrumbs (the whole handle) until it resolves, then swaps
+ *     in [sync crumb, deferred crumb]. Meta likewise holds the previous title.
+ *     The consumer never sees a Promise and never a per-crumb pending marker.
+ *   - The sync content still renders immediately at commit.
  */
 
 // Long enough to observe the pending state and to navigate away before it
@@ -68,7 +72,8 @@ const DhNavDeferredHandler: Handler = (ctx) => {
   ctx.use(Meta)(titleP.then((t) => ({ title: t })));
 
   // 3. DEFERRED breadcrumb via .defer(), resolved by a deep async component.
-  //    During soft nav this entry must reach the consumer AS A PROMISE.
+  //    Resolve-by-default: this is resolved before the consumer reads it (server
+  //    on SSR, client before apply on soft nav).
   const resolveCrumb = ctx
     .use(Breadcrumbs)
     .defer({ timeoutMs: 5000, else: null });
@@ -84,7 +89,7 @@ const DhNavDeferredHandler: Handler = (ctx) => {
       <h1>DH Deferred</h1>
       {/* Sync content — renders immediately at commit. */}
       <div data-testid="dh-sync-content">sync-content</div>
-      <DeferredPendingBreadcrumbs />
+      <ResolvedTrailBreadcrumbs />
       <Link to="/dh-nav/other" data-testid="dh-deferred-to-other">
         to other
       </Link>

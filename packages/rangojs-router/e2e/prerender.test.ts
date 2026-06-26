@@ -783,6 +783,9 @@ test.describe("prerender handle content (dev mode)", () => {
     await expect(
       page.locator('[data-testid="prerender-handle-content"]'),
     ).toHaveText("async-crumb-content");
+    // The top-level deferred crumb (.defer() resolved by a deep async component)
+    // was resolved at bake time (resolveSegmentHandleValues) and renders by label.
+    await expect(page.getByText("Prerender Deferred Crumb")).toBeVisible();
   });
 });
 
@@ -805,5 +808,6 @@ test.describe("prerender handle content (production)", () => {
     await expect(
       page.locator('[data-testid="prerender-handle-content"]'),
     ).toHaveText("async-crumb-content");
+    await expect(page.getByText("Prerender Deferred Crumb")).toBeVisible();
   });
 });

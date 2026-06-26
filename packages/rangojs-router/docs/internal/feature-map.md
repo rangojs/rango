@@ -111,11 +111,22 @@ handle pattern. `.defer({ timeoutMs, else })` reserves the handle's slot synchro
 same argument shapes as the push (value / `Promise` / thunk), same behavior — that a
 deep async component calls later. The always-on timeout (`timeoutMs`, default
 `DEFAULT_DEFER_TIMEOUT_MS`, 10s) auto-resolves the slot to `else` if the resolver is
-never called, so a forgotten resolve cannot hang the Flight stream / response. A
-deferred-aware consumer reads such slots as `DeferredHandleEntry<TData>` (a value or a
-pending `Promise`). Exported types: `HandlePush`, `HandlePushFn`, `DeferOptions`,
-`DeferredHandleEntry`; exported value: `DEFAULT_DEFER_TIMEOUT_MS`. `createDeferred` is
-internal (the `withDefer` building block), not a public export.
+never called, so a forgotten resolve cannot hang the render / response.
+
+**Resolve-by-default:** a deferred (Promise) handle value is RESOLVED before any
+consumer sees it — never passed through as a `Promise`. The full render resolves
+server-side (`handles/deferred-resolution.ts` `resolvedHandleStream`, wired into
+`rsc-rendering.ts`/`handler.ts`/`progressive-enhancement.ts` full payloads + the
+prerender bake), so SSR markup and the first sync `useHandle` read are resolved; soft
+navigation resolves client-side (`NavigationProvider.tsx` `processHandles` is
+await-then-apply — it `await`s each yield's deferred values before `setHandleData`,
+HOLDING the previous value for free by simply not touching the store until they
+resolve; no pending set, no `useHandle` short-circuit). So `collect`/`useHandle`
+always receive resolved `TData` (a deferred resolving to `null`/`undefined` is
+dropped; a sync nullish push passes through). The `DeferredHandleEntry` type and the
+consumer-side `isThenable` narrowing are removed.
+Exported types: `HandlePush`, `HandlePushFn`, `DeferOptions`; exported value:
+`DEFAULT_DEFER_TIMEOUT_MS`. `createDeferred`/`withDefer` are internal building blocks.
 
 ---
 
