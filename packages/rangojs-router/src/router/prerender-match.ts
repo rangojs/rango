@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import { createHandleStore } from "../server/handle-store.js";
+import { resolveSegmentHandleValues } from "../handles/deferred-resolution.js";
 import { getRequestContext } from "../server/request-context.js";
 import {
   runWithRequestContext,
@@ -293,7 +294,9 @@ export async function matchForPrerender<TEnv = any>(
       for (const seg of nonLoaderSegments) {
         const segHandles = handleStore.getDataForSegment(seg.id);
         if (Object.keys(segHandles).length > 0) {
-          handlesRecord[seg.id] = segHandles;
+          // Resolve deferred values before encoding so the baked artifact holds
+          // resolved data (prerender = build-time cache).
+          handlesRecord[seg.id] = await resolveSegmentHandleValues(segHandles);
         }
       }
       const handles = await encodeHandles(handlesRecord);
@@ -394,7 +397,8 @@ export async function matchForPrerender<TEnv = any>(
           for (const seg of interceptResolvedSegments) {
             const segHandles = handleStore.getDataForSegment(seg.id);
             if (Object.keys(segHandles).length > 0) {
-              interceptHandlesRecord[seg.id] = segHandles;
+              interceptHandlesRecord[seg.id] =
+                await resolveSegmentHandleValues(segHandles);
             }
           }
           // The intercept artifact serves main + intercept segments together, so
@@ -533,7 +537,7 @@ export async function renderStaticSegment<TEnv = any>(
     const segHandles = handleStore.getDataForSegment(handlerId);
     const handles =
       Object.keys(segHandles).length > 0
-        ? await encodeHandleValue(segHandles)
+        ? await encodeHandleValue(await resolveSegmentHandleValues(segHandles))
         : "";
 
     return { encoded: serialized.encoded, handles };

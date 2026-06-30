@@ -90,7 +90,9 @@ a deep async component, not the handler — call `.defer()` on the push function
 slot synchronously and returns a **resolver that is push-equal** — you call it
 later, anywhere in the render, with the same argument you'd have passed to the
 push (a value, a `Promise`, or a thunk). The only added behavior is a timeout, so a
-forgotten resolve can't hold the Flight stream (and the HTTP response) open forever.
+forgotten resolve can't hang the render (and the HTTP response): resolve-by-default
+awaits the reserved slot before any consumer reads it, and the timeout guarantees it
+settles to `else` instead of blocking forever.
 
 Reserve the slot in the handler, then resolve it from a nested async component
 that closes over the resolver — no extra wiring (the resolver is a plain closure,
@@ -131,15 +133,17 @@ hung request. `timeoutMs: 0` or `Infinity` disable the timeout intentionally; an
 other non-finite or negative value falls back to the default rather than silently
 disabling the safety net.
 
-**Consumer note:** because `.defer()` reserves the slot for the WHOLE item, a
-client reading the handle (`useHandle(Breadcrumbs)`) sees that entry as a
-`Promise` until it resolves. Type such reads with the exported
-`DeferredHandleEntry<BreadcrumbItem>` (from `@rangojs/router/client`); a
-deferred-aware consumer should `use()` thenable entries inside `<Suspense>`, while
-a simple one can skip them (`typeof entry.then === "function"`). Use `.defer()`
-only when even `label`/`href` are unknown at handler time — if you know them and
-only the `content` is async, push a concrete item with a `Promise` `content` field
-instead (no `.defer()` needed).
+**Consumer note (resolve-by-default):** a deferred crumb is RESOLVED before any
+consumer sees it — `useHandle(Breadcrumbs)` returns the resolved item, never a
+`Promise`, so you read it like any sync crumb (no `use()`, no thenable narrowing).
+On a full/SSR load the value is resolved server-side; on a soft navigation the
+breadcrumbs HOLD the previous resolved value until the deferred value lands, then
+swap in — no blank, no pending entry. If the slot times out to `else: null`/
+undefined, the entry is simply dropped. Use `.defer()` only when even
+`label`/`href` are unknown at handler time — if you know them and only the
+`content` is async, push a concrete item with a `Promise` `content` field instead
+(the `content` field is a nested promise you resolve with `use()` in your
+component; no `.defer()` needed).
 
 ## Consuming Breadcrumbs (Client)
 
@@ -274,14 +278,27 @@ Create your own handle with `createHandle()`:
 ```typescript
 import { createHandle } from "@rangojs/router";
 
-// Default: flatten into array
+// Custom collect: last value wins.
 export const PageTitle = createHandle<string, string>(
   (segments) => segments.flat().at(-1) ?? "Default Title",
 );
 
-// No collect function: default flattens into T[]
+// No collect: the DEFAULT is the identity (lossless) — `collect` receives the
+// per-segment data (TData[][], one array per segment that pushed, in segment
+// order) and passes it through as-is. `useHandle(Warnings)` is `string[][]`, so a
+// consumer can tell which/how-many segments contributed.
 export const Warnings = createHandle<string>();
+
+// Want a single flat list instead? Opt in:
+export const FlatWarnings = createHandle<string, string[]>((segments) =>
+  segments.flat(),
+);
 ```
+
+A handle whose module is never imported (so `createHandle()` never ran to register
+its collect) falls back to this same identity default and **warns in dev** — a
+handle with a custom collect that failed to register would otherwise return the
+wrong shape silently, and the runtime can't tell it from one that wanted the default.
 
 The Vite `exposeInternalIds` plugin auto-injects a stable `$$id` based on
 file path and export name. No manual naming required for project-local code.

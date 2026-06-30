@@ -15,6 +15,7 @@ import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { gateTransitions } from "./transition-gate.js";
+import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -315,7 +316,8 @@ export async function handleProgressiveEnhancement<TEnv>(
         params: match.params,
         isPartial: false,
         rootLayout: ctx.router.rootLayout,
-        handles: handleStore.stream(),
+        // PE full render: resolve deferred handle values server-side.
+        handles: resolvedHandleStream(handleStore),
         version: ctx.version,
         stateCookieName: ctx.router.resolvedStateCookieName,
         themeConfig: ctx.router.themeConfig,
@@ -462,7 +464,8 @@ async function renderPeErrorBoundary<TEnv>(
       isPartial: false,
       isError: true,
       rootLayout: ctx.router.rootLayout,
-      handles: handleStore.stream(),
+      // PE error-boundary full render: resolve deferred handle values server-side.
+      handles: resolvedHandleStream(handleStore),
       version: ctx.version,
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,

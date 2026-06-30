@@ -1,10 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { Suspense, use } from "react";
 import { cleanup } from "@testing-library/react";
 import { Outlet } from "../../client.js";
 import { Breadcrumbs, type BreadcrumbItem } from "../../handles/breadcrumbs.js";
-import type { DeferredHandleEntry } from "../../defer.js";
 import { useParams } from "../../browser/react/use-params.js";
 import { useReverse } from "../../browser/react/use-reverse.js";
 import { useHref } from "../../browser/react/use-href.js";
@@ -13,7 +11,7 @@ import { usePathname } from "../../browser/react/use-pathname.js";
 import { useLoader } from "../../use-loader.js";
 import { useHandle } from "../../browser/react/use-handle.js";
 import { useMount } from "../../browser/react/use-mount.js";
-import { createHandle } from "../../handle.js";
+import { createHandle, type Handle } from "../../handle.js";
 import type { LoaderDefinition } from "../../types.js";
 import { useNonce } from "../../browser/react/nonce-context.js";
 import { renderRoute } from "../render-route.js";
@@ -82,40 +80,69 @@ describe("renderRoute handles seeding runs the real collect", () => {
   });
 });
 
-// The client-read half of ctx.use(Handle).defer(): a deferred slot arrives in the
-// accumulated handle data as a Promise (a DeferredHandleEntry) that a
-// deferred-aware component use()s inside Suspense. renderRoute settles that
-// Suspense within act (see the awaited-act render), so a deferred handle renders
-// and is assertable from the resolved DOM exactly like a sync one — no e2e
-// needed. (The server-push half is covered by renderHandler's .defer() tests.)
-function isThenable(v: unknown): v is Promise<unknown> {
-  return v != null && typeof (v as { then?: unknown }).then === "function";
-}
+// Runtime read path (collectHandleData via useHandle): when a handle's module
+// was never imported, createHandle() never ran, so getCollectFn() returns
+// undefined. The runtime falls back to the identity (per-segment data as-is) AND
+// warns (folded out of production) — the warning is the only signal that a
+// CUSTOM-collect handle silently got the wrong shape. The testing-tier twin
+// (collectHandle) is pinned in collect-handle.test.ts; this pins the RUNTIME path
+// a consumer actually hits, through the public renderRoute/useHandle primitives.
+describe("renderRoute: runtime collectHandleData unregistered fallback", () => {
+  it("falls back to the identity shape and warns when the handle's collect is unregistered", async () => {
+    // A handle whose collect was never registered (its module was not imported).
+    // NOT created via createHandle(), so getCollectFn($$id) returns undefined.
+    const unregistered = {
+      __brand: "handle" as const,
+      $$id: "never-imported#Runtime",
+    } as unknown as Handle<string, string[][]>;
 
-function DeferredCrumb({ c }: { c: DeferredHandleEntry<BreadcrumbItem> }) {
-  const item = isThenable(c) ? (use(c) as BreadcrumbItem) : c;
-  return <span data-testid="crumb">{item.label}</span>;
-}
+    function View() {
+      const value = useHandle(unregistered);
+      return <span data-testid="out">{JSON.stringify(value)}</span>;
+    }
 
-function DeferredCrumbs() {
-  const crumbs = useHandle(Breadcrumbs) as Array<
-    DeferredHandleEntry<BreadcrumbItem>
-  >;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { getByTestId } = await renderRoute(
+        [{ path: "/", Component: View }],
+        { request: "/", handles: [[unregistered, ["a", "b"]]] },
+      );
+      // Identity fallback: per-segment data as-is (one array for the segment that
+      // pushed), NOT a flat ["a","b"].
+      expect(getByTestId("out").textContent).toBe(JSON.stringify([["a", "b"]]));
+      // The runtime warning fired (handle.ts), naming the missing-collect cause.
+      expect(
+        warn.mock.calls.some((c) =>
+          String(c[0]).includes("has no registered collect"),
+        ),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// Resolve-by-default: a deferred (Promise) seeded handle value is RESOLVED by
+// renderRoute before collect runs, so the consumer reads useHandle and gets the
+// resolved value directly — no use()/Suspense at the call site. (The server-push
+// half is covered by renderHandler's .defer() tests.)
+function CrumbsView() {
+  const crumbs = useHandle(Breadcrumbs) as BreadcrumbItem[];
   return (
     <div>
       {crumbs.map((c, i) => (
-        <Suspense key={i} fallback={<span data-testid="crumb-pending" />}>
-          <DeferredCrumb c={c} />
-        </Suspense>
+        <span key={i} data-testid="crumb">
+          {c.label}
+        </span>
       ))}
     </div>
   );
 }
 
-describe("renderRoute deferred handle entries (.defer())", () => {
-  it("renders a deferred (Promise) entry once it resolves, alongside sync ones", async () => {
+describe("renderRoute resolves deferred (Promise) seeded handle values", () => {
+  it("renders a deferred entry's RESOLVED value alongside sync ones", async () => {
     const { getAllByTestId } = await renderRoute(
-      [{ path: "/", Component: DeferredCrumbs }],
+      [{ path: "/", Component: CrumbsView }],
       {
         request: "/",
         handles: [
@@ -135,11 +162,9 @@ describe("renderRoute deferred handle entries (.defer())", () => {
     ]);
   });
 
-  it("renders multiple concurrent deferred entries without collapsing them (collectBreadcrumbs href dedup)", async () => {
-    // Before the deferred-aware collect, both pending Promises hashed to href
-    // `undefined` and the dedup kept only the last. Both must render.
+  it("dedups resolved crumbs by href without collapsing distinct ones", async () => {
     const { getAllByTestId } = await renderRoute(
-      [{ path: "/", Component: DeferredCrumbs }],
+      [{ path: "/", Component: CrumbsView }],
       {
         request: "/",
         handles: [
@@ -468,7 +493,9 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
   // globally on the event controller (unlike loaders, which are segment-scoped
   // via OutletContext), so any component in the chain reads the seeded values.
   it("a LAYOUT reading useHandle sees the seeded values", async () => {
-    const Crumbs = createHandle<{ label: string }>();
+    const Crumbs = createHandle<{ label: string }, { label: string }[]>(
+      (segments) => segments.flat(),
+    );
     function Layout() {
       const crumbs = useHandle(Crumbs);
       return (

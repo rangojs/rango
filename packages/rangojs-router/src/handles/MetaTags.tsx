@@ -3,8 +3,9 @@
 /**
  * Component to render collected meta descriptors in the document head.
  *
- * Supports both sync and async meta descriptors. Async descriptors
- * (Promise<MetaDescriptorBase>) are resolved using React's use() hook.
+ * Deferred (Promise) meta descriptors are resolved before MetaTags renders
+ * (server-side on the full render, client-side before apply on navigation), so
+ * it only ever receives resolved descriptors and never suspends.
  *
  * When theme is enabled in the router config, MetaTags also renders
  * the theme initialization script to prevent FOUC (flash of unstyled content).
@@ -28,11 +29,9 @@
  * ```
  */
 
-import { use } from "react";
 import { useHandle } from "../browser/react/use-handle.js";
 import { Meta } from "./meta.js";
-import { isThenable } from "./is-thenable.js";
-import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.js";
+import type { MetaDescriptorBase } from "../router/types.js";
 import { useThemeContext } from "../theme/theme-context.js";
 import { generateThemeScript } from "../theme/theme-script.js";
 import { useNonce } from "../browser/react/nonce-context.js";
@@ -96,17 +95,7 @@ function hasTagName(
   );
 }
 
-/**
- * Check if a value is a Promise. Uses the shared thenable predicate (callable
- * `then`) so collect (meta.ts) and render never disagree: an object carrying a
- * non-callable `then` (e.g. `{ then: 5 }`) is a SYNC descriptor on both sides,
- * not a Promise that would crash React's `use()`.
- */
-function isPromise(value: unknown): value is Promise<unknown> {
-  return isThenable(value);
-}
-
-function renderMetaDescriptor(
+export function renderMetaDescriptor(
   descriptor: MetaDescriptorBase,
   index: number,
 ): React.ReactNode {
@@ -189,57 +178,6 @@ function renderMetaDescriptor(
   );
 }
 
-// Sentinel a rejected async descriptor resolves to: renderMetaDescriptor sees
-// no recognized fields and returns nothing renderable (see renderRejected).
-const REJECTED_META: unique symbol = Symbol("rango.rejectedMeta");
-
-// Cache the rejection-swallowing wrapper per source promise so use() gets a
-// stable reference across re-renders (a fresh .then() each render would make
-// React treat it as a new pending promise and never settle). WeakMap keys on
-// the original promise so entries are collected with it.
-const safeMetaPromises = new WeakMap<
-  Promise<MetaDescriptorBase>,
-  Promise<MetaDescriptorBase | typeof REJECTED_META>
->();
-
-function toSafeMetaPromise(
-  promise: Promise<MetaDescriptorBase>,
-): Promise<MetaDescriptorBase | typeof REJECTED_META> {
-  let safe = safeMetaPromises.get(promise);
-  if (!safe) {
-    // Swallow the rejection at the promise boundary, not via an error boundary:
-    // an error boundary above a suspended use() makes React abandon the whole
-    // Suspense subtree (and on the server switch it to client rendering). A
-    // settled-to-sentinel promise degrades the single bad descriptor to nothing
-    // while every sibling descriptor still renders.
-    //
-    // Normalize via Promise.resolve first: a collected async descriptor may be a
-    // non-native thenable (a React wakeable in SSR/RSC) whose .then() returns
-    // void rather than a Promise. Calling .then directly would leave `safe`
-    // undefined and use(undefined) would throw ("unsupported type passed to
-    // use()"), 500-ing the page. Promise.resolve adopts the thenable into a
-    // native Promise whose .then always returns one.
-    safe = Promise.resolve(promise).then(
-      (value) => value,
-      () => REJECTED_META,
-    );
-    safeMetaPromises.set(promise, safe);
-  }
-  return safe;
-}
-
-export function AsyncMetaTag({
-  promise,
-  index,
-}: {
-  promise: Promise<MetaDescriptorBase>;
-  index: number;
-}): React.ReactNode {
-  const resolved = use(toSafeMetaPromise(promise));
-  if (resolved === REJECTED_META) return null;
-  return renderMetaDescriptor(resolved, index);
-}
-
 /**
  * Renders all collected meta descriptors from route handlers.
  *
@@ -249,11 +187,16 @@ export function AsyncMetaTag({
  * When theme is enabled in router config, also renders the theme initialization
  * script to prevent FOUC (flash of unstyled content).
  *
- * Async meta descriptors (Promise<MetaDescriptorBase>) are resolved using
- * React's use() hook. RSC streaming handles the Promise resolution.
+ * Deferred (Promise) meta descriptors are resolved BEFORE MetaTags renders —
+ * server-side on the full/SSR render, client-side before apply on navigation
+ * (resolve-by-default) — so MetaTags only ever receives resolved descriptors and
+ * never suspends.
  */
 export function MetaTags(): React.ReactNode {
-  const descriptors = useHandle(Meta) as MetaDescriptor[];
+  // Deferred descriptors are resolved BEFORE collect runs (resolve-by-default),
+  // and collectMeta strips unset markers, so the collected output is always
+  // resolved base descriptors (never a Promise).
+  const descriptors = useHandle(Meta) as MetaDescriptorBase[];
   const themeConfig = useThemeContext()?.config ?? null;
   const nonce = useNonce();
 
@@ -266,24 +209,9 @@ export function MetaTags(): React.ReactNode {
           dangerouslySetInnerHTML={{ __html: generateThemeScript(themeConfig) }}
         />
       )}
-      {descriptors.map((descriptor, index) => {
-        // A descriptor is only a Promise on the SSR/hydration path, where it is
-        // use()d to stream the tag into the document. On client navigation the
-        // store resolves deferred handle values before applying them (see
-        // processHandles), so MetaTags only ever receives resolved descriptors
-        // there and never suspends — which would otherwise revert the committed
-        // route (MetaTags lives in <head>, above the route's <Suspense>).
-        if (isPromise(descriptor)) {
-          return (
-            <AsyncMetaTag
-              key={`async-${index}`}
-              promise={descriptor}
-              index={index}
-            />
-          );
-        }
-        return renderMetaDescriptor(descriptor, index);
-      })}
+      {descriptors.map((descriptor, index) =>
+        renderMetaDescriptor(descriptor, index),
+      )}
     </>
   );
 }

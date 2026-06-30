@@ -213,7 +213,7 @@ describe("runLoader", () => {
 
   describe("rendered barrier + handle reads (rendered + handles options)", () => {
     it("mocks ctx.rendered() and seeds ctx.use(handle) by reference", async () => {
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
@@ -243,7 +243,7 @@ describe("runLoader", () => {
     });
 
     it("still throws on ctx.rendered() when the option is not set", async () => {
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       await expect(
         runLoader(
           async (ctx) => {
@@ -259,7 +259,7 @@ describe("runLoader", () => {
       // Post-barrier, production resolves an unseeded handle via collectHandleData
       // -> collect([]); for the default collect that is []. The testing tier must
       // not throw or leak the handle into the loader resolver.
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
@@ -287,7 +287,7 @@ describe("runLoader", () => {
     it("never feeds an unseeded handle into the opts.use loader resolver", async () => {
       // opts.use is a loaders-only resolver; a handle must resolve via the
       // collect path, not silently land in opts.use as if it were a loader.
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       let useResolverSaw: unknown;
       const data = await runLoader(
         async (ctx) => {
@@ -312,7 +312,7 @@ describe("runLoader", () => {
       // must fail in the test too — not silently return the seeded data — or
       // the bug (a loader that throws on the first real request) ships green.
       // This test fails on the pre-fix code (which returned the seed regardless).
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       await expect(
         runLoader(async (ctx) => ({ products: ctx.use(Products) }), {
           rendered: true,

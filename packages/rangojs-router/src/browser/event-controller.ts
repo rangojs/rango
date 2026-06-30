@@ -249,6 +249,14 @@ export interface EventController {
     resolvedIds?: string[],
   ): void;
   getHandleState(): HandleState;
+  /**
+   * Update ONLY `routeSegmentIds` (what `useSegments` reads) from `matched`,
+   * leaving `data` and `segmentOrder` (what `useHandle` collects over) untouched.
+   * Used while a deferred handle is resolving: the route has changed (so
+   * `useSegments` must reflect the new segment ids) but `useHandle` still holds
+   * its previous value until the deferred snapshot is applied.
+   */
+  setRouteSegmentIds(matched: string[]): void;
 
   // Params operations
   setParams(params: Record<string, string>): void;
@@ -860,6 +868,18 @@ export function createEventController(
     };
   }
 
+  function setRouteSegmentIds(matched: string[]): void {
+    const next = filterRouteSegmentIds(matched);
+    if (
+      next.length === routeSegmentIds.length &&
+      next.every((id, i) => id === routeSegmentIds[i])
+    ) {
+      return;
+    }
+    routeSegmentIds = next;
+    notifyHandles();
+  }
+
   // ========================================================================
   // Subscriptions
   // ========================================================================
@@ -928,6 +948,7 @@ export function createEventController(
     // Handles
     setHandleData,
     getHandleState,
+    setRouteSegmentIds,
 
     // Params
     setParams,

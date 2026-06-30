@@ -14,14 +14,14 @@
  *   // deep async component, far from ctx:
  *   resolve({ label, href, content });          // identical call, just deferred
  *
- * Under the hood the reserved slot is a Promise the renderer `use()`s; RSC Flight
- * streams it as a late row, so a deferred-aware consumer reading the handle
- * (`useHandle`) sees that entry as a `Promise` until it resolves (see
- * {@link DeferredHandleEntry}). The hazard that guards against bugs: a deferred
- * slot whose resolver is never called would keep the Flight stream — and the HTTP
- * response — open forever. So a deferred auto-resolves to `else` after `timeoutMs`
- * (default {@link DEFAULT_DEFER_TIMEOUT_MS}) if the resolver is never called,
- * degrading gracefully (and warning in dev) instead of hanging the request.
+ * Under the hood the reserved slot is a Promise. Handle values are resolved
+ * before any consumer sees them (resolve-by-default: the full render resolves
+ * server-side, navigation resolves client-side before apply), so `useHandle`
+ * receives the resolved value, never the Promise. The hazard that guards against
+ * bugs: a deferred slot whose resolver is never called would keep the render —
+ * and the HTTP response — waiting forever. So a deferred auto-resolves to `else`
+ * after `timeoutMs` (default {@link DEFAULT_DEFER_TIMEOUT_MS}) if the resolver is
+ * never called, degrading gracefully (and warning in dev) instead of hanging.
  */
 
 /** Default auto-resolve window. Long enough for genuine deep async work, short
@@ -74,23 +74,12 @@ export type HandlePush<TData> = HandlePushFn<TData> & {
    * re-enter the deadlock-guard push-callback scope a direct push thunk gets,
    * because a deferred resolver fires after the handler phase has closed.
    *
-   * The reserved slot appears in the accumulated handle data as a pending
-   * `Promise` until it resolves (see {@link DeferredHandleEntry}); a
-   * deferred-aware consumer narrows thenable entries (`use()`/`await` + null
-   * check) before dereferencing.
+   * The reserved slot is resolved before any consumer reads it
+   * (resolve-by-default), so `useHandle` receives the resolved value (or the
+   * `else` fallback on timeout), never a Promise.
    */
   defer(options?: DeferOptions<TData>): HandlePushFn<TData>;
 };
-
-/**
- * A handle entry a deferred-aware consumer may read from `useHandle`: either a
- * resolved value, or a pending `Promise` that resolves to the value, to `else`,
- * or (when no `else` was given) `undefined` on timeout. Reading code should treat
- * thenable entries as such and narrow before dereferencing.
- */
-export type DeferredHandleEntry<TData> =
-  | TData
-  | Promise<TData | null | undefined>;
 
 // Internal: a timeout-bounded { promise, resolve }. Not part of the public API
 // (the public surface is `ctx.use(Handle).defer()`); exported for `withDefer`

@@ -4,7 +4,9 @@ import { PriceDisplay } from "../components/PriceDisplay.js";
 
 // ─── Handle: product IDs pushed by handlers ────────────────────────────
 
-export const RenderedProducts = createHandle<string>();
+// Flat list of product ids (opt into a single array; the default collect groups
+// per segment).
+export const RenderedProducts = createHandle<string, string[]>((s) => s.flat());
 
 // ─── Loader: reads product IDs after rendered(), returns live prices ───
 

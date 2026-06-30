@@ -389,9 +389,6 @@ export {
 
 export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
-// Type a deferred-aware consumer narrows: an accumulated entry may be a Promise
-// (a `ctx.use(Handle).defer()` slot) until it resolves.
-export type { DeferredHandleEntry } from "./defer.js";
 
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";

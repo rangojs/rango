@@ -46,6 +46,7 @@ import {
   generateHistoryKey,
 } from "../browser/navigation-store.js";
 import { createEventController } from "../browser/event-controller.js";
+import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import type { NavigationStore, NavigationBridge } from "../browser/types.js";
 import type { EventController } from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
@@ -481,8 +482,12 @@ export async function renderRoute(
 
   const eventController = createEventController({ initialLocation: url });
   eventController.setParams(initialMatch.params);
+  // Resolve-by-default: resolve any deferred (Promise) seeded handle values
+  // before applying, so the seeded handles reach collect/useHandle resolved —
+  // matching what the server/client do in a real app.
+  const resolvedSeed = await resolveDeferredHandleValues(handleSeed);
   eventController.setHandleData(
-    handleSeed,
+    resolvedSeed,
     initialSegments.map((s) => s.id),
   );
 

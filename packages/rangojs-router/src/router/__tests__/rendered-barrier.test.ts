@@ -169,7 +169,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Prices = createHandle<string>(undefined, "test#Prices");
+      const Prices = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#Prices",
+      );
 
       const loader = createLoader("streamingLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
@@ -298,7 +301,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(undefined, "test#Products");
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#Products",
+      );
 
       const loader = createLoader("noRenderedLoader", async (loaderCtx) => {
         // Try to read handle without rendered()
@@ -323,7 +329,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(undefined, "test#Products");
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#Products",
+      );
 
       const loader = createLoader("priceLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
@@ -355,7 +364,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(undefined, "test#EmptyProducts");
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#EmptyProducts",
+      );
 
       const loader = createLoader("emptyLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
@@ -403,8 +415,8 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Breadcrumbs = createHandle<{ label: string }>(
-        undefined,
+      const Breadcrumbs = createHandle<{ label: string }, { label: string }[]>(
+        (s) => s.flat(),
         "test#Breadcrumbs",
       );
 
@@ -472,7 +484,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(undefined, "test#CachedProducts");
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#CachedProducts",
+      );
 
       // Pre-resolve barrier (simulating cache hit path)
       const handleStore = mockRequestContext._handleStore;
@@ -500,7 +515,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Meta = createHandle<{ title: string }>(undefined, "test#Meta");
+      const Meta = createHandle<{ title: string }, { title: string }[]>(
+        (s) => s.flat(),
+        "test#Meta",
+      );
 
       // Simulate prerender replay
       const handleStore = mockRequestContext._handleStore;
@@ -528,7 +546,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(undefined, "test#DepProducts");
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#DepProducts",
+      );
 
       const baseLoader = createLoader("baseLoader", async () => {
         return "base-data";
@@ -649,7 +670,10 @@ describe("rendered barrier", () => {
       (ctx as any)._currentSegmentId = "root.layout";
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(undefined, "test#PushProducts");
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#PushProducts",
+      );
 
       const loader = createLoader("pushCallbackLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
@@ -689,8 +713,8 @@ describe("rendered barrier", () => {
       (ctx as any)._currentSegmentId = "root.layout";
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(
-        undefined,
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
         "test#PostAwaitPushProducts",
       );
 
@@ -751,8 +775,8 @@ describe("rendered barrier", () => {
       (ctx as any)._currentSegmentId = "root.layout";
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(
-        undefined,
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
         "test#StreamPushProducts",
       );
 
@@ -812,7 +836,10 @@ describe("rendered barrier", () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
 
-      const Products = createHandle<string>(undefined, "test#DedupProducts");
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#DedupProducts",
+      );
 
       const loader = createLoader("dedupLoader", async (loaderCtx) => {
         await loaderCtx.rendered();

@@ -6,7 +6,9 @@ import {
 } from "@rangojs/router";
 import { PriceDisplay } from "../components/PriceDisplay.js";
 
-export const RenderedProducts = createHandle<string>();
+// Flat list of product ids (opt into a single array; the default collect groups
+// per segment).
+export const RenderedProducts = createHandle<string, string[]>((s) => s.flat());
 
 const PRICE_MAP: Record<string, number> = {
   "widget-a": 9.99,

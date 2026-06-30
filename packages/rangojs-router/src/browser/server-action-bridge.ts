@@ -558,18 +558,15 @@ export function createServerActionBridge(
           return undefined;
         }
 
-        // Update UI with error boundary
-        startTransition(() => {
-          onUpdate({ root: errorTree, metadata: metadata! });
-        });
-
         // Update segment tracking to exclude error segment IDs
         const errorSegmentIds = new Set(diff);
         const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
           (id) => !errorSegmentIds.has(id),
         );
 
-        // Update store state
+        // Cache (and bump the nav instance) BEFORE the UI update so a deferred
+        // handle pushed by the error-boundary render still applies — see the
+        // "normal" case below for why caching after onUpdate dropped it.
         store.setSegmentIds(segmentIdsAfterError);
         const currentHandleData = eventController.getHandleState().data;
         store.cacheSegmentsForHistory(
@@ -577,6 +574,11 @@ export function createServerActionBridge(
           errorResult.segments,
           currentHandleData,
         );
+
+        // Update UI with error boundary
+        startTransition(() => {
+          onUpdate({ root: errorTree, metadata: metadata! });
+        });
 
         // Throw the error so the action promise rejects
         if (returnValue && !returnValue.ok) {
@@ -779,10 +781,16 @@ export function createServerActionBridge(
             break;
           }
 
-          startTransition(() => {
-            onUpdate({ root: newTree, metadata: metadata! });
-          });
-
+          // Cache (and bump the nav instance) BEFORE the UI update, matching the
+          // navigation commit order (navigation-transaction.ts:157). processHandles
+          // is spawned by onUpdate and captures the current nav instance up front;
+          // a deferred handle value resolves asynchronously and is only applied
+          // while stillLive() (its captured instance still owns the page). Caching
+          // AFTER onUpdate bumped the instance out from under that in-flight
+          // resolve, so stillLive() turned false and the resolved handle snapshot
+          // was dropped on the action-revalidation path (sync siblings sharing the
+          // yield are held atomically, so they were dropped too).
+          //
           // Location state already applied above (pre-switch). Update store.
           store.setSegmentIds(matched);
           const currentHandleData = eventController.getHandleState().data;
@@ -791,6 +799,10 @@ export function createServerActionBridge(
             fullSegments,
             currentHandleData,
           );
+
+          startTransition(() => {
+            onUpdate({ root: newTree, metadata: metadata! });
+          });
           // Invalidation deferred to finalizeAction() (runs after this caches
           // the fresh segments), suppressed when the action called
           // keepClientCache().
