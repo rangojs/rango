@@ -1,8 +1,14 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { collectHandle } from "../collect-handle.js";
 import { createHandle } from "../../handle.js";
 import { Meta } from "../../handles/meta.js";
 import { Breadcrumbs } from "../../handles/breadcrumbs.js";
+
+// Restore any console.warn spy even if an assertion throws before an inline
+// restore would run, so a failing test can't leak a mocked console into the next.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // collectHandle runs a handle's REAL registered collect on per-segment values.
 // createHandle() with no injected id still registers its collect (via the runtime
@@ -26,7 +32,6 @@ describe("collectHandle", () => {
       [{ label: "Blog" }, { label: "Post" }],
     ]);
     expect(warn).not.toHaveBeenCalled();
-    warn.mockRestore();
   });
 
   it("runs a custom 'last wins' collect", () => {
@@ -87,7 +92,6 @@ describe("collectHandle", () => {
     // handle that intended the default.
     expect(result).toEqual([[1], [2, 3]]);
     expect(warn).toHaveBeenCalledOnce();
-    warn.mockRestore();
   });
 });
 
