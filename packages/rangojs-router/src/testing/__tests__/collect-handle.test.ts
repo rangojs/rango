@@ -9,6 +9,11 @@ import { Breadcrumbs } from "../../handles/breadcrumbs.js";
 // fallback id), so a consumer's handle is fully testable in a bare test.
 describe("collectHandle", () => {
   it("passes per-segment data through as-is when no custom collect is given (default identity)", () => {
+    // A no-collect handle still REGISTERS the identity collect (via the runtime
+    // fallback id), so the registered-default path must stay SILENT — the warning
+    // is reserved for the unregistered (module-not-imported) path below. Pin that
+    // so a regression moving the warn outside the `!collectFn` guard is caught.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const Crumbs = createHandle<{ label: string }>();
     const result = collectHandle(Crumbs, [
       [{ label: "Home" }],
@@ -20,6 +25,8 @@ describe("collectHandle", () => {
       [{ label: "Home" }],
       [{ label: "Blog" }, { label: "Post" }],
     ]);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("runs a custom 'last wins' collect", () => {

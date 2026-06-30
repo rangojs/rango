@@ -24,6 +24,7 @@ export const NamedRoutes = {
   counter: "/counter",
   "cr.index": "/cr/:tenantId",
   "cr.post": "/cr/:tenantId/posts/:postId",
+  "dhNav.actionDeferred": "/dh-nav/action-deferred",
   "dhNav.deferred": "/dh-nav/deferred",
   "dhNav.other": "/dh-nav/other",
   "dhNav.start": "/dh-nav",

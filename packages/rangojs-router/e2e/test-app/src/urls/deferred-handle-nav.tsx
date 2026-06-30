@@ -1,4 +1,10 @@
-import { urls, Meta, Breadcrumbs, type Handler } from "@rangojs/router";
+import {
+  urls,
+  Meta,
+  Breadcrumbs,
+  cookies,
+  type Handler,
+} from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Suspense } from "react";
 import { ResolvedTrailBreadcrumbs } from "../components/TrailBreadcrumbs.js";
@@ -108,8 +114,60 @@ const DhNavDeferredHandler: Handler = (ctx) => {
   );
 };
 
+// Server action: bump a cookie-backed counter so the route's DEFERRED title
+// differs after the action revalidates (or after a no-JS PE form POST), making
+// the resolve observable. The mutation triggers the default route revalidation.
+async function bumpDeferredCount(): Promise<void> {
+  "use server";
+  const prev = Number(cookies().get("dh-act")?.value ?? "0");
+  cookies().set("dh-act", String(prev + 1), { path: "/", maxAge: 60 });
+}
+
+/**
+ * Progressive-enhancement (no-JS) server-resolve coverage. A native form POST
+ * with JavaScript disabled is a PE re-render (progressive-enhancement.ts), which
+ * resolves the route's DEFERRED Meta title SERVER-side so the resolved title
+ * lands in the returned HTML — no Promise reaches the markup. The JS-enabled
+ * full-render twin (rsc-rendering.ts) is already covered by the SSR test; this
+ * pins the PE resolve site that GET full-render never reaches. The cookie counter
+ * makes the post-POST title differ from the GET title, proving the PE re-render
+ * actually re-resolved the deferred value from the action-mutated state.
+ */
+const DhNavActionDeferredHandler: Handler = (ctx) => {
+  // cookies() reads the request-context cookie store (server-only). On the GET it
+  // is unset ("0"); after the action bumps it, the PE re-render reads the new
+  // value in the SAME request.
+  const count = cookies().get("dh-act")?.value ?? "0";
+
+  // Plain push(promise) deferred title (no timeout): resolved SERVER-side on the
+  // full GET render and on the no-JS PE form-POST re-render.
+  const titleP = new Promise<string>((resolve) =>
+    setTimeout(() => resolve(`Action Deferred Title ${count}`), DEFER_DELAY),
+  );
+  ctx.use(Meta)(titleP.then((t) => ({ title: t })));
+
+  return (
+    <div data-testid="dh-action-page">
+      <h1>DH Action Deferred</h1>
+      <div data-testid="dh-action-count">{count}</div>
+      {/* Inline server-action form: React renders the real progressive-
+          enhancement form (method=post + action URL + hidden fields) itself, so
+          a no-JS native submit POSTs to the action. Do NOT add an explicit
+          method attribute — it hydration-mismatches against React's own. */}
+      <form action={bumpDeferredCount}>
+        <button type="submit" data-testid="dh-action-submit">
+          bump
+        </button>
+      </form>
+    </div>
+  );
+};
+
 export const deferredHandleNavPatterns = urls(({ path }) => [
   path("/dh-nav", DhNavStartHandler, { name: "dhNav.start" }),
   path("/dh-nav/other", DhNavOtherHandler, { name: "dhNav.other" }),
   path("/dh-nav/deferred", DhNavDeferredHandler, { name: "dhNav.deferred" }),
+  path("/dh-nav/action-deferred", DhNavActionDeferredHandler, {
+    name: "dhNav.actionDeferred",
+  }),
 ]);

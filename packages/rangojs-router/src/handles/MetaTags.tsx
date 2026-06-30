@@ -193,8 +193,9 @@ export function renderMetaDescriptor(
  * never suspends.
  */
 export function MetaTags(): React.ReactNode {
-  // collectMeta resolves deferred descriptors and strips unset markers, so the
-  // collected output is always resolved base descriptors (never a Promise).
+  // Deferred descriptors are resolved BEFORE collect runs (resolve-by-default),
+  // and collectMeta strips unset markers, so the collected output is always
+  // resolved base descriptors (never a Promise).
   const descriptors = useHandle(Meta) as MetaDescriptorBase[];
   const themeConfig = useThemeContext()?.config ?? null;
   const nonce = useNonce();

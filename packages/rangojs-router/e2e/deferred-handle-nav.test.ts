@@ -174,6 +174,28 @@ function deferredHandleNavTests(mode: "dev" | "build") {
         .toBe("DH Deferred Title");
       await expect.poll(() => page.title()).toBe("DH Deferred Title");
     });
+
+    test.describe("no-JS progressive enhancement", () => {
+      test.use({ javaScriptEnabled: false });
+
+      test("PE form POST re-render resolves the deferred title server-side into the HTML", async ({
+        page,
+      }) => {
+        // GET with JS off: the deferred title is resolved server-side at count 0.
+        await page.goto(f.url("/dh-nav/action-deferred"));
+        expect(await page.title()).toBe("Action Deferred Title 0");
+
+        // Native form POST (no JS) -> progressive-enhancement re-render. The
+        // action bumps the counter and the PE render resolves the NEW deferred
+        // title SERVER-side, so the returned HTML carries the resolved title
+        // (never a Promise) — exercising the progressive-enhancement.ts resolve
+        // site that the JS-enabled full-render twin never reaches.
+        await testId(page, "dh-action-submit").click();
+        await expect
+          .poll(() => page.title(), { timeout: RESOLVE_TIMEOUT })
+          .toBe("Action Deferred Title 1");
+      });
+    });
   });
 }
 

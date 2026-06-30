@@ -11,7 +11,7 @@ import { usePathname } from "../../browser/react/use-pathname.js";
 import { useLoader } from "../../use-loader.js";
 import { useHandle } from "../../browser/react/use-handle.js";
 import { useMount } from "../../browser/react/use-mount.js";
-import { createHandle } from "../../handle.js";
+import { createHandle, type Handle } from "../../handle.js";
 import type { LoaderDefinition } from "../../types.js";
 import { useNonce } from "../../browser/react/nonce-context.js";
 import { renderRoute } from "../render-route.js";
@@ -77,6 +77,48 @@ describe("renderRoute handles seeding runs the real collect", () => {
 
     expect(getByTestId("id").textContent).toBe("bob");
     expect(getByTestId("crumbs").textContent).toBe("Home > Users");
+  });
+});
+
+// Runtime read path (collectHandleData via useHandle): when a handle's module
+// was never imported, createHandle() never ran, so getCollectFn() returns
+// undefined. The runtime falls back to the identity (per-segment data as-is) AND
+// warns (folded out of production) — the warning is the only signal that a
+// CUSTOM-collect handle silently got the wrong shape. The testing-tier twin
+// (collectHandle) is pinned in collect-handle.test.ts; this pins the RUNTIME path
+// a consumer actually hits, through the public renderRoute/useHandle primitives.
+describe("renderRoute: runtime collectHandleData unregistered fallback", () => {
+  it("falls back to the identity shape and warns when the handle's collect is unregistered", async () => {
+    // A handle whose collect was never registered (its module was not imported).
+    // NOT created via createHandle(), so getCollectFn($$id) returns undefined.
+    const unregistered = {
+      __brand: "handle" as const,
+      $$id: "never-imported#Runtime",
+    } as unknown as Handle<string, string[][]>;
+
+    function View() {
+      const value = useHandle(unregistered);
+      return <span data-testid="out">{JSON.stringify(value)}</span>;
+    }
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { getByTestId } = await renderRoute(
+        [{ path: "/", Component: View }],
+        { request: "/", handles: [[unregistered, ["a", "b"]]] },
+      );
+      // Identity fallback: per-segment data as-is (one array for the segment that
+      // pushed), NOT a flat ["a","b"].
+      expect(getByTestId("out").textContent).toBe(JSON.stringify([["a", "b"]]));
+      // The runtime warning fired (handle.ts), naming the missing-collect cause.
+      expect(
+        warn.mock.calls.some((c) =>
+          String(c[0]).includes("has no registered collect"),
+        ),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

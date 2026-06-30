@@ -10,8 +10,10 @@ import { isThenable } from "./is-thenable.js";
  *
  * Resolution is SHALLOW: only an entry that is ITSELF a thenable is awaited. A
  * value that merely contains a promise (e.g. `{ data: somePromise }`) is a
- * non-thenable, so `Promise.allSettled` treats it as already-fulfilled and it
- * passes through verbatim — the nested promise is the consumer's responsibility.
+ * non-thenable, so the `isThenable` check skips it and it passes through verbatim
+ * — the nested promise is the consumer's responsibility. Resolution runs each
+ * entry through `Promise.all` with a per-entry `try/catch` (NOT `allSettled`), so
+ * one rejecting entry is dropped without rejecting the batch or aborting siblings.
  */
 
 /**
