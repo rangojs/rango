@@ -118,13 +118,15 @@ async function bumpDeferredCount(): Promise<void> {
 }
 
 /**
- * Exercises the server-resolve sites that the GET full-render twin does not, on
- * the Cloudflare (workerd) preset:
+ * Server-action + progressive-enhancement deferred-handle coverage on the
+ * Cloudflare (workerd) preset:
  *   - JS ON: the form runs a server action; the route revalidates and the partial
- *     STREAMS the deferred title, which the client resolves (hold-then-swap).
+ *     STREAMS the deferred breadcrumb, which the client resolves (hold-then-swap)
+ *     via processHandles. Regression guard for the action-revalidation
+ *     instance-ordering fix in server-action-bridge.ts.
  *   - JS OFF (progressive enhancement): the native form POST is a PE re-render
- *     that resolves the deferred title SERVER-side into the returned HTML.
- * The cookie counter makes the post-action title differ from the GET title.
+ *     that resolves the deferred Meta title SERVER-side into the returned HTML.
+ * The cookie counter makes the post-action values differ from the GET values.
  */
 const DhNavActionDeferredHandler: Handler = (ctx) => {
   const count = cookies().get("dh-act")?.value ?? "0";
@@ -134,10 +136,19 @@ const DhNavActionDeferredHandler: Handler = (ctx) => {
   );
   ctx.use(Meta)(titleP.then((t) => ({ title: t })));
 
+  const crumbP = new Promise<{ label: string; href: string }>((resolve) =>
+    setTimeout(
+      () => resolve({ label: `Action Crumb ${count}`, href: "/dh-nav/action" }),
+      DEFER_DELAY,
+    ),
+  );
+  ctx.use(Breadcrumbs)(crumbP);
+
   return (
     <div data-testid="dh-action-page">
       <h1>DH Action Deferred</h1>
       <div data-testid="dh-action-count">{count}</div>
+      <ResolvedTrailBreadcrumbs />
       {/* Inline server-action form: React renders the real progressive-
           enhancement form (method=post + action URL + hidden fields) itself, so
           a no-JS native submit POSTs to the action. Do NOT add an explicit

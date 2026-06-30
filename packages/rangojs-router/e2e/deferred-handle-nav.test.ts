@@ -175,6 +175,39 @@ function deferredHandleNavTests(mode: "dev" | "build") {
       await expect.poll(() => page.title()).toBe("DH Deferred Title");
     });
 
+    test("action revalidation re-streams a deferred handle: the client holds the previous value, then swaps in the resolved one", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/dh-nav/action-deferred"));
+      await waitForHydration(page);
+      const nav = page.locator('[data-testid="resolved-trail-nav"]');
+      // Full load resolved the deferred crumb SERVER-side at count 0.
+      await expect(nav).toContainText("Action Crumb 0");
+
+      // Trigger the server action (JS on): it bumps the cookie counter and the
+      // route revalidates, so the action partial STREAMS the new deferred crumb
+      // through the same processHandles client path as a soft nav.
+      await testId(page, "dh-action-submit").click();
+
+      // The sync body count (route content, NOT a handle) reflects the
+      // revalidated render reading the action-bumped cookie — the route re-ran.
+      await expect(testId(page, "dh-action-count")).toHaveText("1");
+
+      // The client HOLDS the previous resolved crumb (SWR) while the streamed
+      // deferred value is pending — not blanked, and the new value not yet landed.
+      await expect(nav).toContainText("Action Crumb 0");
+
+      // Once the streamed deferred crumb resolves client-side, it swaps in. This
+      // is the regression guard for the action-revalidation instance-ordering fix
+      // (cache-then-emit in server-action-bridge.ts) — before it, the resolved
+      // value was dropped and the crumb held "Action Crumb 0" forever.
+      await expect(nav).toContainText("Action Crumb 1", {
+        timeout: RESOLVE_TIMEOUT,
+      });
+    });
+
     test.describe("no-JS progressive enhancement", () => {
       test.use({ javaScriptEnabled: false });
 

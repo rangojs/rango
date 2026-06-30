@@ -124,32 +124,49 @@ async function bumpDeferredCount(): Promise<void> {
 }
 
 /**
- * Progressive-enhancement (no-JS) server-resolve coverage. A native form POST
- * with JavaScript disabled is a PE re-render (progressive-enhancement.ts), which
- * resolves the route's DEFERRED Meta title SERVER-side so the resolved title
- * lands in the returned HTML — no Promise reaches the markup. The JS-enabled
- * full-render twin (rsc-rendering.ts) is already covered by the SSR test; this
- * pins the PE resolve site that GET full-render never reaches. The cookie counter
- * makes the post-POST title differ from the GET title, proving the PE re-render
- * actually re-resolved the deferred value from the action-mutated state.
+ * Server-action + progressive-enhancement deferred-handle coverage. Both paths
+ * stream a deferred value the GET full-render twin (rsc-rendering.ts, covered by
+ * the SSR test) never exercises:
+ *   - JS ON: clicking the form runs a server action; the route revalidates and
+ *     the partial STREAMS the deferred breadcrumb, which the client resolves
+ *     (hold-previous-then-swap) via processHandles — the same client path as a
+ *     soft nav. Regression guard for the action-revalidation instance-ordering
+ *     fix in server-action-bridge.ts (cache-then-emit so stillLive() holds).
+ *   - JS OFF (progressive enhancement): the native form POST is a PE re-render
+ *     (progressive-enhancement.ts) that resolves the deferred Meta title
+ *     SERVER-side into the returned HTML — no Promise reaches the markup.
+ * The cookie counter makes the post-action values differ from the GET values, so
+ * each assertion proves the deferred value was actually re-resolved on its path.
  */
 const DhNavActionDeferredHandler: Handler = (ctx) => {
   // cookies() reads the request-context cookie store (server-only). On the GET it
-  // is unset ("0"); after the action bumps it, the PE re-render reads the new
-  // value in the SAME request.
+  // is unset ("0"); after the action bumps it, the revalidation / PE re-render
+  // reads the new value in the SAME request.
   const count = cookies().get("dh-act")?.value ?? "0";
 
-  // Plain push(promise) deferred title (no timeout): resolved SERVER-side on the
-  // full GET render and on the no-JS PE form-POST re-render.
+  // Deferred Meta title (no timeout): resolved SERVER-side on the full GET render
+  // and on the no-JS PE form-POST re-render (asserted via document.title).
   const titleP = new Promise<string>((resolve) =>
     setTimeout(() => resolve(`Action Deferred Title ${count}`), DEFER_DELAY),
   );
   ctx.use(Meta)(titleP.then((t) => ({ title: t })));
 
+  // Deferred BODY breadcrumb (read via useHandle in ResolvedTrailBreadcrumbs):
+  // the observable for the JS-on action path — STREAMED on the action partial and
+  // resolved client-side (hold-previous-then-swap), independent of document.title.
+  const crumbP = new Promise<{ label: string; href: string }>((resolve) =>
+    setTimeout(
+      () => resolve({ label: `Action Crumb ${count}`, href: "/dh-nav/action" }),
+      DEFER_DELAY,
+    ),
+  );
+  ctx.use(Breadcrumbs)(crumbP);
+
   return (
     <div data-testid="dh-action-page">
       <h1>DH Action Deferred</h1>
       <div data-testid="dh-action-count">{count}</div>
+      <ResolvedTrailBreadcrumbs />
       {/* Inline server-action form: React renders the real progressive-
           enhancement form (method=post + action URL + hidden fields) itself, so
           a no-JS native submit POSTs to the action. Do NOT add an explicit
