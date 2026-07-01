@@ -137,115 +137,117 @@ async function buildPrefixTreeNode(
     };
   }
   visited.add(patterns);
-  // Create context for running patterns with include tracking
-  const manifest = new Map<string, EntryData>();
-  const patternsMap = new Map<string, string>();
-  const patternsByPrefix = new Map<string, Map<string, string>>();
-  const trailingSlashMap = new Map<string, TrailingSlashMode>();
-  const searchSchemasMap = new Map<string, Record<string, string>>();
-  const trackedIncludes: TrackedInclude[] = [];
+  try {
+    // Create context for running patterns with include tracking
+    const manifest = new Map<string, EntryData>();
+    const patternsMap = new Map<string, string>();
+    const patternsByPrefix = new Map<string, Map<string, string>>();
+    const trailingSlashMap = new Map<string, TrailingSlashMode>();
+    const searchSchemasMap = new Map<string, Record<string, string>>();
+    const trackedIncludes: TrackedInclude[] = [];
 
-  RangoContext.run(
-    {
-      manifest,
-      patterns: patternsMap,
-      patternsByPrefix,
-      trailingSlash: trailingSlashMap,
-      searchSchemas: searchSchemasMap,
-      namespace: "build",
-      parent: null,
-      counters: {},
-      mountIndex,
-      trackedIncludes, // Enable nested include tracking
-    },
-    () => {
-      const helpers = createRouteHelpers();
-      // Wrap in root layout for correct parent hierarchy (matches runtime)
-      helpers.layout(MapRootLayout, () => {
-        if (urlPrefix || namePrefix) {
-          return runWithPrefixes(urlPrefix, namePrefix, () => {
-            return patterns.handler() as AllUseItems[];
-          });
-        }
-        return patterns.handler() as AllUseItems[];
-      });
-    },
-  );
+    RangoContext.run(
+      {
+        manifest,
+        patterns: patternsMap,
+        patternsByPrefix,
+        trailingSlash: trailingSlashMap,
+        searchSchemas: searchSchemasMap,
+        namespace: "build",
+        parent: null,
+        counters: {},
+        mountIndex,
+        trackedIncludes, // Enable nested include tracking
+      },
+      () => {
+        const helpers = createRouteHelpers();
+        // Wrap in root layout for correct parent hierarchy (matches runtime)
+        helpers.layout(MapRootLayout, () => {
+          if (urlPrefix || namePrefix) {
+            return runWithPrefixes(urlPrefix, namePrefix, () => {
+              return patterns.handler() as AllUseItems[];
+            });
+          }
+          return patterns.handler() as AllUseItems[];
+        });
+      },
+    );
 
-  // Collect route names defined in this include (routes have prefixes applied)
-  const routes = [...patternsMap.keys()];
-  Object.assign(routeManifest, Object.fromEntries(patternsMap));
+    // Collect route names defined in this include (routes have prefixes applied)
+    const routes = [...patternsMap.keys()];
+    Object.assign(routeManifest, Object.fromEntries(patternsMap));
 
-  // Collect trailing slash config
-  if (routeTrailingSlash) {
-    for (const [name, mode] of trailingSlashMap.entries()) {
-      routeTrailingSlash[name] = mode;
+    // Collect trailing slash config
+    if (routeTrailingSlash) {
+      for (const [name, mode] of trailingSlashMap.entries()) {
+        routeTrailingSlash[name] = mode;
+      }
     }
-  }
-  if (routeSearchSchemas) {
-    for (const [name, schema] of searchSchemasMap.entries()) {
-      routeSearchSchemas[name] = schema;
+    if (routeSearchSchemas) {
+      for (const [name, schema] of searchSchemasMap.entries()) {
+        routeSearchSchemas[name] = schema;
+      }
     }
-  }
 
-  // Capture ancestry from manifest entries' parent chains
-  captureAncestry(manifest, routeAncestry);
+    // Capture ancestry from manifest entries' parent chains
+    captureAncestry(manifest, routeAncestry);
 
-  // Collect prerender route names and handler definitions from manifest entries
-  if (prerenderRoutes) {
-    for (const [name, entry] of manifest) {
-      if (entry.type === "route" && entry.isPrerender) {
-        prerenderRoutes.push(name);
-        if (prerenderDefs && entry.prerenderDef) {
-          prerenderDefs[name] = entry.prerenderDef;
-        }
-        if (passthroughRoutes && entry.isPassthrough === true) {
-          passthroughRoutes.push(name);
+    // Collect prerender route names and handler definitions from manifest entries
+    if (prerenderRoutes) {
+      for (const [name, entry] of manifest) {
+        if (entry.type === "route" && entry.isPrerender) {
+          prerenderRoutes.push(name);
+          if (prerenderDefs && entry.prerenderDef) {
+            prerenderDefs[name] = entry.prerenderDef;
+          }
+          if (passthroughRoutes && entry.isPassthrough === true) {
+            passthroughRoutes.push(name);
+          }
         }
       }
     }
-  }
 
-  // Collect response type routes from manifest entries
-  if (responseTypeRoutes) {
-    for (const [name, entry] of manifest) {
-      if (entry.type === "route" && entry.responseType) {
-        responseTypeRoutes[name] = entry.responseType;
+    // Collect response type routes from manifest entries
+    if (responseTypeRoutes) {
+      for (const [name, entry] of manifest) {
+        if (entry.type === "route" && entry.responseType) {
+          responseTypeRoutes[name] = entry.responseType;
+        }
       }
     }
+
+    const children: Record<string, PrefixTreeNode> = {};
+    await mergeIncludeNodes(children, trackedIncludes, (include) =>
+      buildPrefixTreeNode(
+        include.fullPrefix,
+        include.namePrefix,
+        include.patterns as UrlPatterns<any> | IncludeProvider<any>,
+        routeManifest,
+        routeAncestry,
+        mountIndex,
+        visited,
+        routeTrailingSlash,
+        prerenderRoutes,
+        prerenderDefs,
+        passthroughRoutes,
+        responseTypeRoutes,
+        routeSearchSchemas,
+      ),
+    );
+
+    return {
+      staticPrefix: extractStaticPrefix(urlPrefix),
+      fullPrefix: urlPrefix,
+      namePrefix: namePrefix || undefined,
+      children,
+      routes,
+    };
+  } finally {
+    // Remove from visited so sibling branches can reuse the same patterns without
+    // false circular-include detection — and so a throwing handler (caught by the
+    // parent mergeIncludeNodes) does not leak this entry into the shared set.
+    visited.delete(patterns);
   }
-
-  const children: Record<string, PrefixTreeNode> = {};
-  await mergeIncludeNodes(children, trackedIncludes, (include) =>
-    buildPrefixTreeNode(
-      include.fullPrefix,
-      include.namePrefix,
-      include.patterns as UrlPatterns<any> | IncludeProvider<any>,
-      routeManifest,
-      routeAncestry,
-      mountIndex,
-      visited,
-      routeTrailingSlash,
-      prerenderRoutes,
-      prerenderDefs,
-      passthroughRoutes,
-      responseTypeRoutes,
-      routeSearchSchemas,
-    ),
-  );
-
-  // Remove from visited so sibling branches can reuse the same patterns
-  // without false circular-include detection. Only ancestors in the current
-  // recursion path should trigger the cycle guard.
-  visited.delete(patterns);
-
-  return {
-    staticPrefix: extractStaticPrefix(urlPrefix),
-    fullPrefix: urlPrefix,
-    namePrefix: namePrefix || undefined,
-    children,
-    routes,
-  };
 }
 
 /**
