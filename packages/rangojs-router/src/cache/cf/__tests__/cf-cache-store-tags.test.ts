@@ -732,6 +732,32 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(delSpy).not.toHaveBeenCalled();
     });
 
+    it("rejects an oversized segment KV key (>512 bytes) without calling KV, reports a clear onError", async () => {
+      // Symmetry with the tag-marker key guard: a data-segment key over the KV
+      // 512-byte limit (e.g. from large search params) would fail kv.put() and
+      // silently never persist to L2 -> cold-colo miss storm. It must be rejected
+      // up front with a clear, actionable error, not a doomed put inside waitUntil.
+      const store = makeStore();
+      const hugeKey = "x".repeat(600); // > 512 bytes even before the version prefix
+      const putSpy = vi.spyOn(kv, "put");
+      const { reqCtx, reported } = ctxWithReporter();
+
+      await runWithRequestContext(reqCtx, () =>
+        store.set(hugeKey, createTestData(), 300),
+      );
+      await ctx.flush();
+
+      // The oversized key is rejected before the KV write; kv.put never fires.
+      expect(putSpy).not.toHaveBeenCalled();
+      // ...and it surfaces as a clear cache-write error naming the limit.
+      const writeErr = reported.find((r) => r.category === "cache-write");
+      expect(writeErr).toBeDefined();
+      expect((writeErr!.error as Error).message).toMatch(
+        /over the 512-byte limit/,
+      );
+      putSpy.mockRestore();
+    });
+
     it("a TRANSIENT KV read error degrades to a miss WITHOUT evicting the still-good entry (#1)", async () => {
       // The whole point of reading KV as text + parsing manually: a 5xx/429/
       // network blip must not delete a healthy cross-colo entry (miss storm).
