@@ -98,6 +98,58 @@ function extractNamePrefixFromInclude(node: ts.CallExpression): string | null {
 }
 
 /**
+ * True when the thunk transforms its dynamic import via a `.then(cb)` whose
+ * callback selects a NAMED export other than `default` (e.g.
+ * `import("./x").then((m) => m.routes)`). The static resolver walks the module's
+ * `export default`, so such a selector would resolve the WRONG export — the
+ * caller must treat it as unresolvable instead of silently mis-resolving. Returns
+ * false for the supported shapes (no `.then`, `.then((m) => m)`,
+ * `.then((m) => m.default)`) and for any shape it cannot positively identify as a
+ * non-default member selection (those keep the existing resolve-via-default path).
+ */
+function thenSelectsNonDefaultMember(expr: ts.Expression): boolean {
+  const findThenCall = (e: ts.Expression): ts.CallExpression | null => {
+    if (
+      ts.isCallExpression(e) &&
+      ts.isPropertyAccessExpression(e.expression) &&
+      e.expression.name.text === "then"
+    ) {
+      return e;
+    }
+    if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+      return findThenCall(e.expression.expression);
+    }
+    if (ts.isPropertyAccessExpression(e)) return findThenCall(e.expression);
+    if (ts.isParenthesizedExpression(e)) return findThenCall(e.expression);
+    if (ts.isAwaitExpression(e)) return findThenCall(e.expression);
+    return null;
+  };
+
+  const thenCall = findThenCall(expr);
+  if (!thenCall || thenCall.arguments.length === 0) return false;
+  const cb = thenCall.arguments[0];
+  if (!ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb)) return false;
+
+  let ret: ts.Expression | undefined;
+  if (ts.isBlock(cb.body)) {
+    for (const stmt of cb.body.statements) {
+      if (ts.isReturnStatement(stmt) && stmt.expression) {
+        ret = stmt.expression;
+        break;
+      }
+    }
+  } else {
+    ret = cb.body;
+  }
+  if (!ret) return false;
+
+  if (ts.isPropertyAccessExpression(ret)) {
+    return ret.name.text !== "default";
+  }
+  return false;
+}
+
+/**
  * Extract the module specifier from an async include thunk
  * (`() => import("./mod")`). Handles arrow and function-expression thunks,
  * concise or block bodies, and `import("./mod").then(...)` chains. Returns the
@@ -146,6 +198,10 @@ function extractDynamicImportSpecifier(node: ts.Expression): string | null {
 
   const importCall = findImportCall(expr);
   if (!importCall || importCall.arguments.length === 0) return null;
+  // A `.then()` selecting a non-default named export can't be statically
+  // resolved to `export default`; return null so the caller emits a diagnostic
+  // rather than silently generating types for the wrong export.
+  if (thenSelectsNonDefaultMember(expr)) return null;
   return getStringValue(importCall.arguments[0]);
 }
 
