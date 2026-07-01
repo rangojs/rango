@@ -28,3 +28,8 @@ export const articlesPatterns = urls(({ path, layout, parallel, loader }) => [
     path("/:slug", ArticleDetail, { name: "detail" }),
   ]),
 ]);
+
+// Code-split the articles group behind an async include (see urls.tsx). Its
+// routes use Prerender() — this gives the existing prerender/articles e2e
+// coverage for build-time Prerender()/getParams INSIDE an async include().
+export default articlesPatterns;

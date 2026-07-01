@@ -46,7 +46,6 @@ import {
   InlineDocsPage,
   InlinePricingPage,
 } from "./pages/inline.js";
-import { articlesPatterns } from "./pages/articles.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -572,7 +571,9 @@ export const urlpatterns = urls(
         path("/inline/docs", InlineDocsPage, { name: "inlineDocs" }),
         path("/inline/pricing", InlinePricingPage, { name: "inlinePricing" }),
         // Pre-rendered articles (static content, build-time rendering)
-        include("/articles", articlesPatterns, { name: "articles" }),
+        include("/articles", () => import("./pages/articles.js"), {
+          name: "articles",
+        }),
 
         // Client useReverse() coverage on the Cloudflare preset
         include("/cr/:tenantId", clientReversePatterns, { name: "cr" }),
