@@ -111,6 +111,47 @@ describe("async include() via dispatch (public path)", () => {
     expect(shopProvider).toHaveBeenCalledTimes(1);
   });
 
+  it("resolves an async include whose module ALSO has an async include (async-within-async)", async () => {
+    // The internal-async-import case: an async provider whose module declares
+    // ANOTHER async include(). On the first /shop/product/* request, findMatch
+    // must resolve the shop provider, splice the product entry (itself a
+    // provider), then resolve the product provider on its own first hit — two
+    // awaited imports chained in a single request via the lazy-eval loop.
+    const productProvider = vi.fn(async () => ({
+      default: urls<{}>(({ path }) => [
+        path.json("/:id", (ctx: { params: { id: string } }) => ({
+          product: ctx.params.id,
+        })),
+      ]),
+    }));
+    const shopProvider = vi.fn(async () => ({
+      default: urls<{}>(({ path, include }) => [
+        path.json("/", () => ({ shop: "home" }), { name: "home" }),
+        include("/product", productProvider, { name: "product" }),
+      ]),
+    }));
+
+    const router = createRouter<{}>({}).routes(
+      urls(({ path, include }) => [
+        path.json("/", () => ({ root: true }), { name: "home" }),
+        include("/shop", shopProvider, { name: "shop" }),
+      ]),
+    ) as any;
+
+    // Deferred: neither module is evaluated at router construction.
+    expect(shopProvider).not.toHaveBeenCalled();
+    expect(productProvider).not.toHaveBeenCalled();
+
+    const product = await dispatch(router, { request: "/shop/product/42" });
+    expect(product.status).toBe(200);
+    expect(await product.json()).toEqual({ product: "42" });
+
+    // Both levels imported exactly once — the inner provider is not touched
+    // until the request actually descends into it.
+    expect(shopProvider).toHaveBeenCalledTimes(1);
+    expect(productProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("dedupes concurrent first-hits through dispatch (imports once)", async () => {
     // The helper-level concurrency test (async-include.test.ts) exercises
     // evaluateLazyEntry directly; this pins the same dedup through the real

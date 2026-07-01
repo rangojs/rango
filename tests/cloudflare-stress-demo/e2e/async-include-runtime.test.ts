@@ -36,8 +36,10 @@ async function expectAsyncIncludeRoutes(
   expect(siteBody.params.locale).toBe("en");
 
   // NESTED async include: the shop module is imported on first hit, THEN its
-  // product/category children are spliced. /shop is the module's own route;
-  // /shop/product/* and /shop/category/* are its nested includes.
+  // product/category children are spliced. /shop is the module's own route.
+  // ASYNC-WITHIN-ASYNC: /shop/product is ITSELF an async include(() => import())
+  // inside the already-async shop module, so /shop/product/* chains two deferred
+  // imports at runtime; /shop/category is an eager child for contrast.
   const shop = await request.get(url("/shop"));
   expect(shop.status()).toBe(200);
   expect((await shop.json()).route).toBe("/shop");
