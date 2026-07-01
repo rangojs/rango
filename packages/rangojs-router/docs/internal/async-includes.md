@@ -171,12 +171,12 @@ Migrating an include from eager to async must not quietly downgrade failure
 loudness. On `main`, an eager include whose module threw failed the build; a
 broken route at runtime surfaced as a 5xx. The async form holds the same line:
 
-| Layer                                    | A broken async include module ...                                                                                    |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Build / dev discovery (`mergeIncludeNodes`) | **hard-fails** — the provider throw rethrows, so no green build ships with the group silently missing from manifest/trie/types. |
-| Runtime match, route's **sole owner** (`find-match.ts` candidate scan, `loadManifest`) | **propagates a 5xx** — a real, trie-matched route whose module can't import is a server error, not a missing route (never masked as 404). |
-| Runtime match, a **non-owner sibling** sharing a static prefix | **isolated** — logged and skipped so it can't break the sibling that owns the route. |
-| Runtime match, a **genuinely unmatched** pathname (regex fallback) | **stays 404** — a failing lazy include (e.g. a root `include("/")`) probed while resolving an unmatched path must not upgrade its 404 to a 500. |
+| Layer                                                                                  | A broken async include module ...                                                                                                               |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Build / dev discovery (`mergeIncludeNodes`)                                            | **hard-fails** — the provider throw rethrows, so no green build ships with the group silently missing from manifest/trie/types.                 |
+| Runtime match, route's **sole owner** (`find-match.ts` candidate scan, `loadManifest`) | **propagates a 5xx** — a real, trie-matched route whose module can't import is a server error, not a missing route (never masked as 404).       |
+| Runtime match, a **non-owner sibling** sharing a static prefix                         | **isolated** — logged and skipped so it can't break the sibling that owns the route.                                                            |
+| Runtime match, a **genuinely unmatched** pathname (regex fallback)                     | **stays 404** — a failing lazy include (e.g. a root `include("/")`) probed while resolving an unmatched path must not upgrade its 404 to a 500. |
 
 The rule of thumb: **discovery hard-fails; at request time an owner's failure is
 loud (5xx) and only a genuine sibling skip is isolated.**
