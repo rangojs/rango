@@ -1284,6 +1284,18 @@ export const patterns = urls(({ include }) => [
       "./c.js",
     ]);
   });
+
+  it("flags a `.then()` selecting a non-default named export as unresolvable", () => {
+    const code = `
+export const patterns = urls(({ include }) => [
+  include("/x", () => import("./x.js").then((m) => m.routes), { name: "x" }),
+]);
+`;
+    const { resolved, unresolvable } = extractIncludesWithDiagnostics(code);
+    expect(resolved).toHaveLength(0);
+    expect(unresolvable).toHaveLength(1);
+    expect(unresolvable[0].reason).toBe("dynamic-expression");
+  });
 });
 
 // ---------------------------------------------------------------------------

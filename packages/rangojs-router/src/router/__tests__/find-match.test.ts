@@ -155,3 +155,80 @@ describe("createFindMatch", () => {
     }
   });
 });
+
+describe("createFindMatch — shared static-prefix async include candidate scan", () => {
+  function sharedPrefixLazyEntry(routes: Record<string, string>): RouteEntry {
+    return {
+      prefix: "",
+      staticPrefix: "/shop", // deliberately shared across candidates
+      routes,
+      lazy: true,
+      lazyEvaluated: false,
+    } as unknown as RouteEntry;
+  }
+
+  it("scans past a non-owner shared-prefix candidate to the owner (both evaluated)", async () => {
+    const first = sharedPrefixLazyEntry({}); // no route key -> not the owner
+    const second = sharedPrefixLazyEntry({ "shop.b": "/shop/b/:id" }); // owner
+    const evaluated: string[] = [];
+
+    setRouterTrie(
+      "find-match-shared-happy",
+      buildRouteTrie(
+        { "shop.b": "/shop/b/:id" },
+        { "shop.b": ["A:shop.b"] },
+        { "shop.b": "/shop" },
+      ),
+    );
+
+    const fm = createFindMatch({
+      routesEntries: [first, second],
+      evaluateLazyEntry: (e) => {
+        evaluated.push(e === first ? "first" : "second");
+        return Promise.resolve();
+      },
+      routerId: "find-match-shared-happy",
+    });
+
+    const r = await fm("/shop/b/5");
+    expect(r?.routeKey).toBe("shop.b");
+    expect(r?.params).toEqual({ id: "5" });
+    expect(r?.entry).toBe(second);
+    expect(evaluated).toEqual(["first", "second"]); // scanned both (cross-import)
+  });
+
+  it("isolates a failing shared-prefix provider and resolves via the sibling", async () => {
+    const failing = sharedPrefixLazyEntry({}); // provider rejects
+    const owner = sharedPrefixLazyEntry({ "shop.b": "/shop/b/:id" });
+
+    setRouterTrie(
+      "find-match-shared-isolate",
+      buildRouteTrie(
+        { "shop.b": "/shop/b/:id" },
+        { "shop.b": ["A:shop.b"] },
+        { "shop.b": "/shop" },
+      ),
+    );
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fm = createFindMatch({
+        routesEntries: [failing, owner],
+        evaluateLazyEntry: (e) =>
+          e === failing
+            ? Promise.reject(new Error("import failed"))
+            : Promise.resolve(),
+        routerId: "find-match-shared-isolate",
+      });
+
+      const r = await fm("/shop/b/9"); // must NOT throw
+      expect(r?.routeKey).toBe("shop.b");
+      expect(r?.entry).toBe(owner);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("failed to load"),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
