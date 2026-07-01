@@ -418,6 +418,20 @@ export const urlpatterns = urls(({ path, include }) => [
 ]);
 ```
 
+A heavy module like this is a good code-split candidate. Pass an async provider
+and the module — its handlers, response serializers, and any nested
+`include()`s — loads on the first request under the prefix instead of at startup:
+
+```typescript
+// blog/urls.tsx: `export default blogPatterns`
+include("/blog", () => import("./blog/urls"), { name: "blog" }),
+```
+
+Named routes and response types still resolve through the split: `TRoutes` and
+the `_responses` phantom are inferred from the resolved `urls()` value, so
+`Rango.PathResponse<"/blog/api/stats">` and `ctx.reverse` are unchanged. See
+`/composability`.
+
 ### Type safety after mounting
 
 ```typescript

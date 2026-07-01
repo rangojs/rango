@@ -220,7 +220,7 @@ export async function createMatchContextForPartial<TEnv>(
     matched.pt = true;
   }
 
-  const nav = resolveNavigation(request, url, matched.routeKey, {
+  const nav = await resolveNavigation(request, url, matched.routeKey, {
     findMatch: deps.findMatch,
   });
   if (!nav) {
@@ -404,7 +404,7 @@ export async function matchError<TEnv>(
 
   debugLog("matchError", "matching error", { pathname });
 
-  const matched = deps.findMatch(pathname);
+  const matched = await deps.findMatch(pathname);
   if (!matched) {
     debugWarn("matchError", "no route matched", { pathname });
     return null;

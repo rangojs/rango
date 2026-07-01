@@ -98,6 +98,91 @@ function extractNamePrefixFromInclude(node: ts.CallExpression): string | null {
 }
 
 /**
+ * Extract the module specifier from an async include thunk
+ * (`() => import("./mod")`). Handles arrow and function-expression thunks,
+ * concise or block bodies, and `import("./mod").then(...)` chains. Returns the
+ * specifier string, or null when the second arg is not a dynamic-import thunk
+ * (so the caller can fall through to identifier / factory-call / dynamic-expr
+ * classification).
+ */
+function extractDynamicImportSpecifier(node: ts.Expression): string | null {
+  let body: ts.ConciseBody | undefined;
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    body = node.body;
+  }
+  if (!body) return null;
+
+  // Concise body is the expression itself; block body: first `return <expr>`.
+  let expr: ts.Expression | undefined;
+  if (ts.isBlock(body)) {
+    for (const stmt of body.statements) {
+      if (ts.isReturnStatement(stmt) && stmt.expression) {
+        expr = stmt.expression;
+        break;
+      }
+    }
+  } else {
+    expr = body;
+  }
+  if (!expr) return null;
+
+  // Descend `import("./mod").then(...)` / parenthesized / await wrappers down to
+  // the `import(...)` call itself.
+  const findImportCall = (e: ts.Expression): ts.CallExpression | null => {
+    if (
+      ts.isCallExpression(e) &&
+      e.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      return e;
+    }
+    if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+      return findImportCall(e.expression.expression);
+    }
+    if (ts.isPropertyAccessExpression(e)) return findImportCall(e.expression);
+    if (ts.isParenthesizedExpression(e)) return findImportCall(e.expression);
+    if (ts.isAwaitExpression(e)) return findImportCall(e.expression);
+    return null;
+  };
+
+  const importCall = findImportCall(expr);
+  if (!importCall || importCall.arguments.length === 0) return null;
+  return getStringValue(importCall.arguments[0]);
+}
+
+/**
+ * Resolve a module's `export default` to either a same-file `urls()` variable
+ * name (`export default shopPatterns`) or the inline call block
+ * (`export default urls(...)`). Used to walk async include modules
+ * (`() => import("./mod")`), whose convention is `export default urls(...)`.
+ */
+function resolveDefaultExportTarget(
+  code: string,
+  sourceFile: ts.SourceFile,
+): { variableName?: string; inlineBlock?: string } | null {
+  let result: { variableName?: string; inlineBlock?: string } | null = null;
+
+  function visit(node: ts.Node) {
+    if (result) return;
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      const expr = node.expression;
+      if (ts.isIdentifier(expr)) {
+        result = { variableName: expr.text };
+      } else if (ts.isCallExpression(expr)) {
+        const callee = expr.expression;
+        if (ts.isIdentifier(callee) && callee.text === "urls") {
+          result = { inlineBlock: expr.getText(sourceFile) };
+        }
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return result;
+}
+
+/**
  * Extract include() calls with diagnostics for unresolvable ones.
  * Returns both resolved includes (identifier second args) and unresolvable
  * includes (factory calls, etc.) with reasons.
@@ -108,7 +193,12 @@ export function extractIncludesWithDiagnostics(
 ): {
   resolved: Array<{
     pathPrefix: string;
-    variableName: string;
+    // Exactly one of variableName / moduleSpecifier is set. variableName is the
+    // classic `include("/api", apiUrls)` identifier form; moduleSpecifier is the
+    // async `include("/api", () => import("./api"))` form, carrying the imported
+    // module path so resolution can walk its `export default`.
+    variableName?: string;
+    moduleSpecifier?: string;
     namePrefix: string | null;
   }>;
   unresolvable: Array<{
@@ -130,7 +220,8 @@ export function extractIncludesWithDiagnostics(
     );
   const resolved: Array<{
     pathPrefix: string;
-    variableName: string;
+    variableName?: string;
+    moduleSpecifier?: string;
     namePrefix: string | null;
   }> = [];
   const unresolvable: Array<{
@@ -158,10 +249,20 @@ export function extractIncludesWithDiagnostics(
         const secondArg = node.arguments[1];
         const namePrefix = extractNamePrefixFromInclude(node);
 
+        const dynamicImportSpec = extractDynamicImportSpecifier(secondArg);
+
         if (ts.isIdentifier(secondArg)) {
           resolved.push({
             pathPrefix,
             variableName: secondArg.text,
+            namePrefix,
+          });
+        } else if (dynamicImportSpec !== null) {
+          // Async include: `include("/api", () => import("./api"))`. Resolvable
+          // statically by walking the imported module's `export default`.
+          resolved.push({
+            pathPrefix,
+            moduleSpecifier: dynamicImportSpec,
             namePrefix,
           });
         } else if (ts.isCallExpression(secondArg)) {
@@ -348,65 +449,157 @@ function buildRouteMapFromBlock(
     }
   }
 
-  for (const { pathPrefix, variableName, namePrefix } of includes) {
+  for (const inc of includes) {
+    const { pathPrefix, namePrefix } = inc;
     let childResult: {
       routes: Record<string, string>;
       searchSchemas: Record<string, Record<string, string>>;
     };
 
-    // Try import resolution first
-    const imported = resolveImportedVariable(fullSource, variableName);
-    if (imported) {
-      const targetFile = resolveImportPath(imported.specifier, filePath);
+    if (inc.moduleSpecifier) {
+      // Async include `() => import("./mod")`: resolve the imported module's
+      // `export default` (convention: `export default urls(...)`), then recurse
+      // into it exactly like an identifier include. Nested include()s inside the
+      // async module — eager or async — resolve through the same recursion.
+      const targetFile = resolveImportPath(inc.moduleSpecifier, filePath);
       if (!targetFile) {
-        if (diagnosticsOut) {
-          diagnosticsOut.push({
-            pathPrefix,
-            namePrefix,
-            reason: "file-not-found",
-            sourceFile: filePath,
-            detail: `import "${imported.specifier}" resolved to no file`,
-          });
-        }
+        diagnosticsOut?.push({
+          pathPrefix,
+          namePrefix,
+          reason: "file-not-found",
+          sourceFile: filePath,
+          detail: `import("${inc.moduleSpecifier}") resolved to no file`,
+        });
         continue;
       }
-      childResult = buildCombinedRouteMapWithSearch(
-        targetFile,
-        imported.exportedName,
-        visited,
-        diagnosticsOut,
-        undefined,
-        memo,
+      let targetSource: string;
+      try {
+        targetSource = readSourceMemoized(memo, resolve(targetFile));
+      } catch {
+        continue;
+      }
+      const def = resolveDefaultExportTarget(
+        targetSource,
+        parseBlock(memo, targetSource),
       );
+      if (!def) {
+        diagnosticsOut?.push({
+          pathPrefix,
+          namePrefix,
+          reason: "unresolvable-import",
+          sourceFile: filePath,
+          detail: `import("${inc.moduleSpecifier}") has no resolvable \`export default urls(...)\``,
+        });
+        continue;
+      }
+      if (def.inlineBlock) {
+        // `export default urls(...)` — recurse into the inline call block.
+        childResult = buildCombinedRouteMapWithSearch(
+          targetFile,
+          undefined,
+          visited,
+          diagnosticsOut,
+          def.inlineBlock,
+          memo,
+        );
+      } else {
+        // `export default <name>`. That name may be a same-file
+        // `const name = urls(...)` OR itself re-exported from an import
+        // (`import { name } from "./x"; export default name`). Resolve the
+        // import chain first (mirroring the identifier include branch below),
+        // else fall back to same-file extraction — without this, a re-exported
+        // default silently yields empty routes.
+        const variableName = def.variableName!;
+        const reimported = resolveImportedVariable(targetSource, variableName);
+        if (reimported) {
+          const reTarget = resolveImportPath(reimported.specifier, targetFile);
+          if (!reTarget) {
+            diagnosticsOut?.push({
+              pathPrefix,
+              namePrefix,
+              reason: "file-not-found",
+              sourceFile: filePath,
+              detail: `import("${inc.moduleSpecifier}") default re-exports "${variableName}" from "${reimported.specifier}", which resolved to no file`,
+            });
+            continue;
+          }
+          childResult = buildCombinedRouteMapWithSearch(
+            reTarget,
+            reimported.exportedName,
+            visited,
+            diagnosticsOut,
+            undefined,
+            memo,
+          );
+        } else {
+          childResult = buildCombinedRouteMapWithSearch(
+            targetFile,
+            variableName,
+            visited,
+            diagnosticsOut,
+            undefined,
+            memo,
+          );
+        }
+      }
+    } else if (inc.variableName) {
+      const variableName = inc.variableName;
+      // Try import resolution first
+      const imported = resolveImportedVariable(fullSource, variableName);
+      if (imported) {
+        const targetFile = resolveImportPath(imported.specifier, filePath);
+        if (!targetFile) {
+          if (diagnosticsOut) {
+            diagnosticsOut.push({
+              pathPrefix,
+              namePrefix,
+              reason: "file-not-found",
+              sourceFile: filePath,
+              detail: `import "${imported.specifier}" resolved to no file`,
+            });
+          }
+          continue;
+        }
+        childResult = buildCombinedRouteMapWithSearch(
+          targetFile,
+          imported.exportedName,
+          visited,
+          diagnosticsOut,
+          undefined,
+          memo,
+        );
+      } else {
+        // Check if variable exists as a same-file urls() definition. Share the
+        // full-source SourceFile parse via the memo (block === fullSource hits the
+        // same cache entry already used above).
+        const sameFileBlock = extractUrlsBlockForVariable(
+          fullSource,
+          variableName,
+          parseBlock(memo, fullSource),
+        );
+        if (!sameFileBlock) {
+          if (diagnosticsOut) {
+            diagnosticsOut.push({
+              pathPrefix,
+              namePrefix,
+              reason: "unresolvable-import",
+              sourceFile: filePath,
+              detail: `variable "${variableName}" not found in imports or same-file scope`,
+            });
+          }
+          continue;
+        }
+        childResult = buildCombinedRouteMapWithSearch(
+          filePath,
+          variableName,
+          visited,
+          diagnosticsOut,
+          undefined,
+          memo,
+        );
+      }
     } else {
-      // Check if variable exists as a same-file urls() definition. Share the
-      // full-source SourceFile parse via the memo (block === fullSource hits the
-      // same cache entry already used above).
-      const sameFileBlock = extractUrlsBlockForVariable(
-        fullSource,
-        variableName,
-        parseBlock(memo, fullSource),
-      );
-      if (!sameFileBlock) {
-        if (diagnosticsOut) {
-          diagnosticsOut.push({
-            pathPrefix,
-            namePrefix,
-            reason: "unresolvable-import",
-            sourceFile: filePath,
-            detail: `variable "${variableName}" not found in imports or same-file scope`,
-          });
-        }
-        continue;
-      }
-      childResult = buildCombinedRouteMapWithSearch(
-        filePath,
-        variableName,
-        visited,
-        diagnosticsOut,
-        undefined,
-        memo,
-      );
+      continue;
     }
 
     // Includes without a name keep their child names private to the mounted

@@ -620,8 +620,15 @@ export function createRouter<TEnv = any>(
     routerId,
   };
 
-  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
-    _evaluateLazyEntry(entry, lazyEvalDeps);
+  // Must return the Promise from _evaluateLazyEntry: an async include provider
+  // (`() => import("./routes")`) resolves off the startup path, and createFindMatch
+  // awaits this to know when the import + expansion have completed. Dropping it
+  // (typing this `void`) makes the import fire-and-forget, so findMatch spins the
+  // lazy-eval retry loop to its cap and returns null on the first request to any
+  // async include whose prefix isn't already covered by a unique precomputed entry
+  // (nested includes, shared prefixes, regex fallback).
+  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void | Promise<void> {
+    return _evaluateLazyEntry(entry, lazyEvalDeps);
   }
 
   // Create findMatch with single-entry cache, bound to router state

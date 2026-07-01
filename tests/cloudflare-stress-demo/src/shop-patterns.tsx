@@ -93,3 +93,5 @@ export const shopPatterns = urls(({ path, include }) => [
   include("/product", productPatterns, { name: "product" }),
   include("/category", categoryPatterns, { name: "category" }),
 ]);
+
+export default shopPatterns;

@@ -104,9 +104,11 @@ Completed, superseded, and point-in-time plan/handoff docs are moved to
 
 - [Prerender passthrough action plan](./internal/archive/prerender-passthrough-action-plan.md) (archived)
   - superseded — documents the migration from `{ passthrough: true }` to `Passthrough()` wrapper
-- [Why include() is synchronous](./internal/why-includes-is-sync.md) -
-  design rationale for the `UrlPatterns`-only `include()` signature and
-  the trie/reverse-map/type-gen/prerender invariants it protects
+- [include() and async route loading](./internal/async-includes.md) -
+  the eager vs. async `() => import()` include forms, how discovery awaits
+  providers to keep the trie/reverse-map/type-gen/prerender invariants complete
+  while the module import defers, and the runtime contract (sometimes-async
+  `evaluateLazyEntry`, the three handler-run sites, concurrent dedupe)
 - [Why SSR/RSC streaming uses Web Streams everywhere](./internal/why-web-streams-everywhere.md) -
   why both render layers use `renderToReadableStream` on Node (not
   `renderToPipeableStream`), the conversion-tax and plugin-locked-Flight

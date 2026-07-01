@@ -20,27 +20,39 @@ function cloneMatchResult<TEnv>(
 
 export interface FindMatchDeps<TEnv = any> {
   routesEntries: RouteEntry<TEnv>[];
-  evaluateLazyEntry: (entry: RouteEntry<TEnv>) => void;
+  // Returns a Promise only when it had to resolve an async include provider
+  // (`() => import()`); void for eager/precomputed includes, so the per-entry
+  // match loop pays no microtask in the common case.
+  evaluateLazyEntry: (entry: RouteEntry<TEnv>) => void | Promise<void>;
   routerId: string;
 }
 
 /**
  * Create a findMatch function bound to router state.
  * Includes single-entry cache to avoid redundant matching within the same request.
+ *
+ * Async because a lazy include may be backed by an async provider
+ * (`() => import("./routes")`) that must be resolved before its routes can be
+ * matched. The hot path is unaffected: `await` only suspends on the first
+ * request to a not-yet-loaded dynamic include; eager routes resolve in the same
+ * microtask. Every caller already runs inside an async match pipeline.
  */
 export function createFindMatch<TEnv = any>(
   deps: FindMatchDeps<TEnv>,
-): (pathname: string, ms?: MetricsStore) => RouteMatchResult<TEnv> | null {
+): (
+  pathname: string,
+  ms?: MetricsStore,
+) => Promise<RouteMatchResult<TEnv> | null> {
   // Single-entry cache for findMatch to avoid redundant matching within the same request.
   // previewMatch and match both call findMatch with the same pathname — this ensures
   // the route matching work (which may check thousands of routes) only happens once.
   let lastFindMatchPathname: string | null = null;
   let lastFindMatchResult: RouteMatchResult<TEnv> | null = null;
 
-  return function findMatch(
+  return async function findMatch(
     pathname: string,
     ms?: MetricsStore,
-  ): RouteMatchResult<TEnv> | null {
+  ): Promise<RouteMatchResult<TEnv> | null> {
     if (lastFindMatchPathname === pathname) {
       return cloneMatchResult(lastFindMatchResult);
     }
@@ -75,7 +87,22 @@ export function createFindMatch<TEnv = any>(
         for (const e of deps.routesEntries) {
           if (e.staticPrefix !== trieResult.sp) continue;
           if (!fallbackEntry) fallbackEntry = e;
-          deps.evaluateLazyEntry(e);
+          try {
+            const ev = deps.evaluateLazyEntry(e);
+            if (ev) await ev;
+          } catch (err) {
+            // Multiple async includes can share one collapsed static prefix, so
+            // this loop may evaluate a candidate that is not the route's owner.
+            // A failing async provider (`() => import()` rejected) for one such
+            // candidate must not throw out of findMatch and break the sibling
+            // include that actually owns the route. Skip it — its _lazyInflight
+            // was cleared, so a later request retries — and keep scanning.
+            console.error(
+              `[@rangojs/router] include at "${e.staticPrefix}" failed to load: ` +
+                `${(err as Error)?.message ?? String(err)}`,
+            );
+            continue;
+          }
           if (
             e.routes &&
             trieResult.routeKey in (e.routes as Record<string, unknown>)
@@ -95,7 +122,8 @@ export function createFindMatch<TEnv = any>(
           );
           if (parent) {
             const lazyStart = performance.now();
-            deps.evaluateLazyEntry(parent);
+            const ev = deps.evaluateLazyEntry(parent);
+            if (ev) await ev;
             pushMetric?.("match:lazy-eval", lazyStart);
           }
           entry = deps.routesEntries.find(
@@ -141,7 +169,8 @@ export function createFindMatch<TEnv = any>(
         lastFindMatchResult = null;
         return null;
       }
-      deps.evaluateLazyEntry(result.lazyEntry);
+      const ev = deps.evaluateLazyEntry(result.lazyEntry);
+      if (ev) await ev;
       result = findRouteMatch(pathname, deps.routesEntries);
     }
     pushMetric?.("match:regex-fallback", regexStart);

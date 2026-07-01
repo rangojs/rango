@@ -121,7 +121,9 @@ export type {
 };
 
 export interface ClassifyRequestDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   routerVersion: string;
   routerId: string;
 }

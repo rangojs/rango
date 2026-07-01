@@ -398,6 +398,18 @@ export const urlpatterns = urls(({ path, include }) => [
 ]);
 ```
 
+`include()` also accepts an async provider to code-split that group into its own
+chunk, imported on the first request reaching the prefix instead of at startup:
+
+```typescript
+// urls/shop.tsx: `export default shopPatterns`
+include("/shop", () => import("./urls/shop"), { name: "shop" }),
+```
+
+Build-time discovery still `await`s the provider, so route types, `href()`, and
+prerender see every route in the split group. Reach for it when a group is a
+large, independently-loadable unit — see `/composability`.
+
 ## Environment Types
 
 ```typescript

@@ -11,6 +11,10 @@ import MapRootLayout from "../server/root-layout";
 import { joinPrefix } from "./pattern-matching.js";
 import type { RouteEntry } from "../types";
 import type { UrlPatterns } from "../urls";
+import {
+  isIncludeProvider,
+  resolveIncludeModule,
+} from "../urls/include-provider.js";
 import { VERSION } from "@rangojs/router:version";
 
 // Module-level manifest cache: avoids re-executing DSL handler on every request.
@@ -165,6 +169,16 @@ export async function loadManifest(
         // not exist in the non-lazy (root handler) path and would produce
         // mismatched shortCodes.
         if (entry.lazy && entry.lazyPatterns) {
+          // Resolve an async include provider (`() => import("./routes")`) before
+          // running its handler. The match-time precomputed shortcut can skip
+          // evaluateLazyEntry's resolution, so render-time must resolve it here;
+          // cache the resolved patterns on the entry so later renders reuse them.
+          if (isIncludeProvider(entry.lazyPatterns)) {
+            entry.lazyPatterns = resolveIncludeModule(
+              await entry.lazyPatterns(),
+              entry.staticPrefix,
+            ) as unknown as UrlPatterns<any>;
+          }
           const lazyPatterns = entry.lazyPatterns as UrlPatterns<any>;
           const includePrefix = (entry as any)._lazyPrefix || "";
           // Slash-collapsing join so a trailing-slash parent prefix does not
@@ -192,12 +206,7 @@ export async function loadManifest(
 
         if (promiseResult !== null) {
           const load = await (promiseResult as Promise<any>);
-          if (
-            load &&
-            load !== null &&
-            typeof load === "object" &&
-            "default" in load
-          ) {
+          if (load && typeof load === "object" && "default" in load) {
             // Promise<{ default: () => Array }> - e.g., dynamic import
             if (typeof load.default !== "function") {
               throw new Error(
