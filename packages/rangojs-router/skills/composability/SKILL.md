@@ -195,12 +195,14 @@ export const shopPatterns = urls(({ path, include }) => [
 export default shopPatterns; // async include() resolves this
 ```
 
-Reach for the async form when a route group is a large, independently-loadable
-unit (a localized section, an admin area, an API surface with heavy handlers) —
-it trims the eagerly-parsed entry bundle and keeps that subgraph off the
-cold-start path. Keep the eager form for small groups or ones that share most of
-their module graph with the entry (the bundler keeps shared modules common
-regardless, so splitting a thin group buys little).
+**Prefer the async form** for any route group that is a natural,
+independently-loadable unit (a localized section, an admin area, an API surface
+with heavy handlers) — it trims the eagerly-parsed entry bundle and keeps that
+subgraph off the cold-start path. The **eager form is still fully valid** (not
+deprecated): keep it for small groups, or ones that share most of their module
+graph with the entry (the bundler keeps shared modules common regardless, so
+splitting a thin group buys little). Both match identically at runtime — only the
+module's runtime evaluation timing differs.
 
 What you do NOT lose by splitting: build-time discovery `await`s the provider, so
 `href()`, `reverse()`, generated route types, and prerender still see every route

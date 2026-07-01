@@ -135,12 +135,19 @@ flag clears so a later request can retry rather than wedging the route.
 
 ## When to use which
 
-Reach for async `() => import()` when a route group is a natural,
-independently-loadable unit whose runtime code you'd rather not compile on cold
-start — a large localized section, an admin area, an API surface with heavy
-handlers. Keep the eager form when the group is small, or shares most of its
-module graph with the entry anyway (the bundler will keep shared modules in the
-common chunk regardless, so splitting a thin group buys little).
+**Prefer the async `() => import()` form** — it is the default recommendation for
+any route group that is a natural, independently-loadable unit (a large localized
+section, an admin area, an API surface with heavy handlers). The bundler moves
+its whole subgraph — including nested `include()`s — off the eagerly-parsed entry
+and off the cold-start path, and discovery still resolves it at build time so the
+trie, generated types, and prerender output stay complete.
+
+**The eager form remains fully valid** — it is not deprecated. Keep it when the
+group is small, or shares most of its module graph with the entry anyway (the
+bundler keeps shared modules in the common chunk regardless, so splitting a thin
+group buys little). Both forms match identically at runtime; the only difference
+is _when_ the module's runtime code is evaluated. The built-in lazy evaluation is
+the point — migrating eager → async must not eager-evaluate the patterns.
 
 For splitting a whole **app** (its own trie, reverse map, and generated types),
 the host router's `.lazy()` is still the right tool — see
@@ -157,3 +164,19 @@ scan is fault-isolated (a failing candidate import is logged and skipped so it
 can't break a sibling that shares the prefix), but the eager cross-import
 remains. A distinct prefix per async include (`/site`, `/api`, `/shop`) avoids
 both: the trie routes straight to the owning entry and imports only it.
+
+## Failure semantics — async must stay as loud as eager
+
+Migrating an include from eager to async must not quietly downgrade failure
+loudness. On `main`, an eager include whose module threw failed the build; a
+broken route at runtime surfaced as a 5xx. The async form holds the same line:
+
+| Layer                                    | A broken async include module ...                                                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Build / dev discovery (`mergeIncludeNodes`) | **hard-fails** — the provider throw rethrows, so no green build ships with the group silently missing from manifest/trie/types. |
+| Runtime match, route's **sole owner** (`find-match.ts` candidate scan, `loadManifest`) | **propagates a 5xx** — a real, trie-matched route whose module can't import is a server error, not a missing route (never masked as 404). |
+| Runtime match, a **non-owner sibling** sharing a static prefix | **isolated** — logged and skipped so it can't break the sibling that owns the route. |
+| Runtime match, a **genuinely unmatched** pathname (regex fallback) | **stays 404** — a failing lazy include (e.g. a root `include("/")`) probed while resolving an unmatched path must not upgrade its 404 to a 500. |
+
+The rule of thumb: **discovery hard-fails; at request time an owner's failure is
+loud (5xx) and only a genuine sibling skip is isolated.**

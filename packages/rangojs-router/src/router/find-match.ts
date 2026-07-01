@@ -83,6 +83,8 @@ export function createFindMatch<TEnv = any>(
         const entryStart = performance.now();
         let entry: RouteEntry<TEnv> | undefined;
         let fallbackEntry: RouteEntry<TEnv> | undefined;
+        let candidateError: unknown;
+        let candidateFailed = false;
 
         for (const e of deps.routesEntries) {
           if (e.staticPrefix !== trieResult.sp) continue;
@@ -92,11 +94,16 @@ export function createFindMatch<TEnv = any>(
             if (ev) await ev;
           } catch (err) {
             // Multiple async includes can share one collapsed static prefix, so
-            // this loop may evaluate a candidate that is not the route's owner.
-            // A failing async provider (`() => import()` rejected) for one such
-            // candidate must not throw out of findMatch and break the sibling
-            // include that actually owns the route. Skip it — its _lazyInflight
-            // was cleared, so a later request retries — and keep scanning.
+            // this loop may evaluate a candidate that is NOT the route's owner.
+            // Remember the failure and keep scanning: if another candidate owns
+            // the route, this sibling's failure is correctly isolated (its
+            // _lazyInflight was cleared, so a later request retries). But if NO
+            // candidate ends up owning it, the failing one WAS the owner — a
+            // real, trie-matched route whose module failed to import — and we
+            // rethrow below as a 5xx rather than silently 404ing (see finding 3:
+            // owner failure must stay loud).
+            candidateError = err;
+            candidateFailed = true;
             console.error(
               `[@rangojs/router] include at "${e.staticPrefix}" failed to load: ` +
                 `${(err as Error)?.message ?? String(err)}`,
@@ -110,6 +117,14 @@ export function createFindMatch<TEnv = any>(
             entry = e;
             break;
           }
+        }
+
+        // The trie matched this route, so it EXISTS. If no same-prefix candidate
+        // could own it AND one failed to load, the owning module is the one that
+        // threw — surface the module failure as a 5xx, not the misleading 404 a
+        // fallthrough would give.
+        if (!entry && candidateFailed) {
+          throw candidateError;
         }
 
         if (!entry) entry = fallbackEntry;
@@ -169,8 +184,28 @@ export function createFindMatch<TEnv = any>(
         lastFindMatchResult = null;
         return null;
       }
-      const ev = deps.evaluateLazyEntry(result.lazyEntry);
-      if (ev) await ev;
+      try {
+        const ev = deps.evaluateLazyEntry(result.lazyEntry);
+        if (ev) await ev;
+      } catch (err) {
+        // If the trie matched this pathname, the route is REAL and this lazy
+        // entry owns (part of) it — a module-load failure is a genuine error, so
+        // propagate it as a 5xx. If the trie did NOT match, this is a
+        // genuinely-unmatched pathname (a typo, a bot probe): its 404 must not be
+        // upgraded to a 500 just because some lazy include — e.g. a failing root
+        // `include("/")` — happened to need evaluating while we probed. Isolate
+        // and fall through to the 404 (finding 4: the two match phases agree —
+        // owner failure is loud, unmatched stays 404).
+        if (trieMatched) throw err;
+        console.error(
+          `[@rangojs/router] include at "${result.lazyEntry.staticPrefix}" ` +
+            `failed to load while resolving unmatched path "${pathname}": ` +
+            `${(err as Error)?.message ?? String(err)}`,
+        );
+        lastFindMatchPathname = pathname;
+        lastFindMatchResult = null;
+        return null;
+      }
       result = findRouteMatch(pathname, deps.routesEntries);
     }
     pushMetric?.("match:regex-fallback", regexStart);

@@ -17,6 +17,11 @@ import {
 } from "../urls/include-provider.js";
 import { VERSION } from "@rangojs/router:version";
 
+// Tags an error thrown while dynamically importing an async include's module
+// (`() => import("./routes")`) so loadManifest's outer catch re-raises it as a
+// server error rather than masking it as a RouteNotFoundError (404).
+const MODULE_LOAD_FAILURE = Symbol.for("rango.moduleLoadFailure");
+
 // Module-level manifest cache: avoids re-executing DSL handler on every request.
 // Handler execution is deterministic (components, loaders, middleware are module-level
 // stable references), so the resulting EntryData tree can be safely cached and reused
@@ -174,10 +179,23 @@ export async function loadManifest(
           // evaluateLazyEntry's resolution, so render-time must resolve it here;
           // cache the resolved patterns on the entry so later renders reuse them.
           if (isIncludeProvider(entry.lazyPatterns)) {
-            entry.lazyPatterns = resolveIncludeModule(
-              await entry.lazyPatterns(),
-              entry.staticPrefix,
-            ) as unknown as UrlPatterns<any>;
+            try {
+              entry.lazyPatterns = resolveIncludeModule(
+                await entry.lazyPatterns(),
+                entry.staticPrefix,
+              ) as unknown as UrlPatterns<any>;
+            } catch (err) {
+              // A failed dynamic import of a REAL, matched route's module is a
+              // server error, not a missing route. Tag it so the outer catch
+              // surfaces it as a 5xx instead of masking it as a
+              // RouteNotFoundError — which renders the 404 page (monitoring
+              // misses the failure and a CDN could cache the 404).
+              if (err && typeof err === "object") {
+                (err as Record<PropertyKey, unknown>)[MODULE_LOAD_FAILURE] =
+                  true;
+              }
+              throw err;
+            }
           }
           const lazyPatterns = entry.lazyPatterns as UrlPatterns<any>;
           const includePrefix = (entry as any)._lazyPrefix || "";
@@ -264,6 +282,16 @@ export async function loadManifest(
 
     return Store.manifest.get(routeKey)!;
   } catch (e) {
+    // A tagged async-include module-load failure is a server error for a REAL
+    // matched route — re-raise it unchanged (becomes a 5xx) instead of masking
+    // it as a RouteNotFoundError (which renders/caches a 404).
+    if (
+      e &&
+      typeof e === "object" &&
+      (e as Record<PropertyKey, unknown>)[MODULE_LOAD_FAILURE]
+    ) {
+      throw e;
+    }
     throw new RouteNotFoundError(
       `Failed to load route handlers for ${path}: ${(e as Error).message}`,
       {

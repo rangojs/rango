@@ -475,7 +475,17 @@ function buildRouteMapFromBlock(
       let targetSource: string;
       try {
         targetSource = readSourceMemoized(memo, resolve(targetFile));
-      } catch {
+      } catch (err) {
+        // Every other failure path in this function emits a diagnostic; a bare
+        // `continue` here would drop the group from generated types with no
+        // signal at all. Emit one like the siblings do.
+        diagnosticsOut?.push({
+          pathPrefix,
+          namePrefix,
+          reason: "file-not-found",
+          sourceFile: filePath,
+          detail: `import("${inc.moduleSpecifier}") resolved to "${targetFile}" but reading it failed: ${(err as Error)?.message ?? String(err)}`,
+        });
         continue;
       }
       const def = resolveDefaultExportTarget(
@@ -505,99 +515,52 @@ function buildRouteMapFromBlock(
       } else {
         // `export default <name>`. That name may be a same-file
         // `const name = urls(...)` OR itself re-exported from an import
-        // (`import { name } from "./x"; export default name`). Resolve the
-        // import chain first (mirroring the identifier include branch below),
-        // else fall back to same-file extraction — without this, a re-exported
-        // default silently yields empty routes.
+        // (`import { name } from "./x"; export default name`). The shared helper
+        // resolves the import chain first, then falls back to same-file
+        // extraction — without this a re-exported default silently yields empty
+        // routes. Resolution scope is the imported module (targetFile); the
+        // diagnostic is still attributed to the file with the async include.
         const variableName = def.variableName!;
-        const reimported = resolveImportedVariable(targetSource, variableName);
-        if (reimported) {
-          const reTarget = resolveImportPath(reimported.specifier, targetFile);
-          if (!reTarget) {
-            diagnosticsOut?.push({
-              pathPrefix,
-              namePrefix,
-              reason: "file-not-found",
-              sourceFile: filePath,
-              detail: `import("${inc.moduleSpecifier}") default re-exports "${variableName}" from "${reimported.specifier}", which resolved to no file`,
-            });
-            continue;
-          }
-          childResult = buildCombinedRouteMapWithSearch(
-            reTarget,
-            reimported.exportedName,
-            visited,
-            diagnosticsOut,
-            undefined,
-            memo,
-          );
-        } else {
-          childResult = buildCombinedRouteMapWithSearch(
-            targetFile,
-            variableName,
-            visited,
-            diagnosticsOut,
-            undefined,
-            memo,
-          );
-        }
+        const resolved = resolveIncludedVariable({
+          variableName,
+          resolutionFile: targetFile,
+          resolutionSource: targetSource,
+          reportFile: filePath,
+          memo,
+          visited,
+          diagnosticsOut,
+          pathPrefix,
+          namePrefix,
+          fileNotFoundDetail: (specifier) =>
+            `import("${inc.moduleSpecifier}") default re-exports "${variableName}" from "${specifier}", which resolved to no file`,
+          notFoundDetail: () =>
+            `import("${inc.moduleSpecifier}") default "${variableName}" not found in its imports or same-file scope`,
+        });
+        if (!resolved) continue;
+        childResult = resolved;
       }
     } else if (inc.variableName) {
+      // Identifier include `include(prefix, patterns)`: resolve `patterns`
+      // (imported or same-file) through the same shared helper as the async
+      // `export default <name>` form above.
       const variableName = inc.variableName;
-      // Try import resolution first
-      const imported = resolveImportedVariable(fullSource, variableName);
-      if (imported) {
-        const targetFile = resolveImportPath(imported.specifier, filePath);
-        if (!targetFile) {
-          if (diagnosticsOut) {
-            diagnosticsOut.push({
-              pathPrefix,
-              namePrefix,
-              reason: "file-not-found",
-              sourceFile: filePath,
-              detail: `import "${imported.specifier}" resolved to no file`,
-            });
-          }
-          continue;
-        }
-        childResult = buildCombinedRouteMapWithSearch(
-          targetFile,
-          imported.exportedName,
-          visited,
-          diagnosticsOut,
-          undefined,
-          memo,
-        );
-      } else {
-        // Check if variable exists as a same-file urls() definition. Share the
-        // full-source SourceFile parse via the memo (block === fullSource hits the
-        // same cache entry already used above).
-        const sameFileBlock = extractUrlsBlockForVariable(
-          fullSource,
-          variableName,
-          parseBlock(memo, fullSource),
-        );
-        if (!sameFileBlock) {
-          if (diagnosticsOut) {
-            diagnosticsOut.push({
-              pathPrefix,
-              namePrefix,
-              reason: "unresolvable-import",
-              sourceFile: filePath,
-              detail: `variable "${variableName}" not found in imports or same-file scope`,
-            });
-          }
-          continue;
-        }
-        childResult = buildCombinedRouteMapWithSearch(
-          filePath,
-          variableName,
-          visited,
-          diagnosticsOut,
-          undefined,
-          memo,
-        );
-      }
+      const resolved = resolveIncludedVariable({
+        variableName,
+        resolutionFile: filePath,
+        resolutionSource: fullSource,
+        reportFile: filePath,
+        memo,
+        visited,
+        diagnosticsOut,
+        pathPrefix,
+        namePrefix,
+        fileNotFoundDetail: (specifier) =>
+          `import "${specifier}" resolved to no file`,
+        notFoundDetail: () =>
+          `variable "${variableName}" not found in imports or same-file scope`,
+      });
+      if (!resolved) continue;
+      childResult = resolved;
     } else {
       continue;
     }
@@ -629,6 +592,94 @@ function buildRouteMapFromBlock(
   }
 
   return routeMap;
+}
+
+/**
+ * Resolve an include's target VARIABLE to its child route map. The variable may
+ * be imported (`import { name } from "./x"`) or defined in the same file
+ * (`const name = urls(...)`). Shared by the identifier include branch and the
+ * async-include `export default <name>` branch so a future import-resolution fix
+ * cannot silently miss one form. Returns null (with a diagnostic pushed) when
+ * the variable is unresolvable — the caller should skip the include.
+ *
+ * `resolutionFile`/`resolutionSource` is the module whose import + same-file
+ * scope is searched; `reportFile` is the file the diagnostic is attributed to
+ * (the one containing the include() call), which differs for async includes.
+ */
+function resolveIncludedVariable(opts: {
+  variableName: string;
+  resolutionFile: string;
+  resolutionSource: string;
+  reportFile: string;
+  memo: ScanMemo | undefined;
+  visited: Set<string> | undefined;
+  diagnosticsOut: UnresolvableInclude[] | undefined;
+  pathPrefix: string;
+  namePrefix: string | null;
+  fileNotFoundDetail: (specifier: string) => string;
+  notFoundDetail: () => string;
+}): {
+  routes: Record<string, string>;
+  searchSchemas: Record<string, Record<string, string>>;
+} | null {
+  const {
+    variableName,
+    resolutionFile,
+    resolutionSource,
+    reportFile,
+    memo,
+    visited,
+    diagnosticsOut,
+    pathPrefix,
+    namePrefix,
+  } = opts;
+  const imported = resolveImportedVariable(resolutionSource, variableName);
+  if (imported) {
+    const targetFile = resolveImportPath(imported.specifier, resolutionFile);
+    if (!targetFile) {
+      diagnosticsOut?.push({
+        pathPrefix,
+        namePrefix,
+        reason: "file-not-found",
+        sourceFile: reportFile,
+        detail: opts.fileNotFoundDetail(imported.specifier),
+      });
+      return null;
+    }
+    return buildCombinedRouteMapWithSearch(
+      targetFile,
+      imported.exportedName,
+      visited,
+      diagnosticsOut,
+      undefined,
+      memo,
+    );
+  }
+  // Not imported: it must be a same-file `const name = urls(...)`. Confirm it
+  // exists so an undefined name emits a diagnostic instead of empty routes.
+  const sameFileBlock = extractUrlsBlockForVariable(
+    resolutionSource,
+    variableName,
+    parseBlock(memo, resolutionSource),
+  );
+  if (!sameFileBlock) {
+    diagnosticsOut?.push({
+      pathPrefix,
+      namePrefix,
+      reason: "unresolvable-import",
+      sourceFile: reportFile,
+      detail: opts.notFoundDetail(),
+    });
+    return null;
+  }
+  return buildCombinedRouteMapWithSearch(
+    resolutionFile,
+    variableName,
+    visited,
+    diagnosticsOut,
+    undefined,
+    memo,
+  );
 }
 
 /**

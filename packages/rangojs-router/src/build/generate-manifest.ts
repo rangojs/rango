@@ -76,17 +76,21 @@ async function mergeIncludeNodes(
     try {
       node = await buildChild(include);
     } catch (err) {
-      // A failing async include provider (`() => import()` with a broken import
-      // or a module that throws at eval) must not abort discovery for its
-      // SIBLING includes — otherwise one broken module silently drops unrelated
-      // routes from the manifest/trie/types. Surface it and skip only the
-      // offending include; siblings still resolve.
-      console.error(
-        `[@rangojs/router] Failed to resolve include at prefix "${include.fullPrefix}": ` +
-          `${(err as Error)?.message ?? String(err)}. Its routes are omitted from the ` +
-          `generated manifest; sibling includes are unaffected.`,
+      // Discovery (build-time, and the dev trie-rebuild) populates the
+      // manifest / trie / generated types for the WHOLE app. A failing async
+      // include provider here — a broken import, a module that throws at eval —
+      // must HARD-FAIL, not be swallowed: swallowing produces a green build with
+      // the entire route group silently absent from the manifest/trie/types, so
+      // CI passes, the deploy ships, and every one of that group's URLs then
+      // 404s/500s in production. On main an eager include that threw failed the
+      // build loudly; the async form must keep that contract. Rethrow with the
+      // offending prefix so the failure is actionable. (Sibling isolation
+      // belongs at PER-REQUEST runtime — see find-match.ts — not at discovery.)
+      throw new Error(
+        `[@rangojs/router] Failed to resolve include at prefix "${include.fullPrefix}" ` +
+          `during route discovery: ${(err as Error)?.message ?? String(err)}`,
+        { cause: err },
       );
-      continue;
     }
     const existing = target[include.fullPrefix];
     if (existing) {

@@ -149,6 +149,8 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 
 `urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `map()`, `route()`, `revalidate()`
 
+`include(prefix, patterns, opts?)` takes its second argument two ways: **eager** (a `urls()` value already in the graph) or **async** (`() => import("./routes")`, code-split behind a thunk resolved on first match — the split module exposes its `urls()` value as `export default`). Both are supported; prefer async for large independently-loadable groups. Because discovery must resolve the provider to build the trie/types/prerender, the `./build` `generateManifest*` functions and `Rango.findMatch` are `async`; provider normalization lives in the internal `urls/include-provider.ts` (`isIncludeProvider`, `resolveIncludeModule`). See `docs/internal/async-includes.md`.
+
 ### Router Lifecycle
 
 Public API (`Rango` interface):

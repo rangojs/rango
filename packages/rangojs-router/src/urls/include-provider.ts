@@ -44,9 +44,17 @@ export function resolveIncludeModule<TEnv = any>(
   mod: IncludeModule<TEnv>,
   id?: string,
 ): UrlPatterns<TEnv> {
-  if (isUrlPatterns(mod)) return mod as UrlPatterns<TEnv>;
+  // Prefer an explicit `default` export (the `export default urls(...)`
+  // convention) BEFORE duck-typing the namespace. isUrlPatterns() keys on a
+  // `.handler` function, but a routes module can legitimately carry a NAMED
+  // `export function handler(...)` alongside its `export default urls(...)`;
+  // checking the namespace first would then misidentify the whole module as the
+  // urls() value and invoke the user's helper as the DSL handler (the group
+  // 404s with a misleading error). A bare `() => urls(...)` provider (no
+  // module) has no `default`, so it still resolves via the mod-as-value branch.
   const def = (mod as { default?: unknown })?.default;
   if (isUrlPatterns(def)) return def as UrlPatterns<TEnv>;
+  if (isUrlPatterns(mod)) return mod as UrlPatterns<TEnv>;
   // The common failure is a module namespace whose `default` is missing or not a
   // urls() value (e.g. only named exports); `typeof` alone says "object" and
   // hides that, so name the keys present. "provider" (not "async provider") —

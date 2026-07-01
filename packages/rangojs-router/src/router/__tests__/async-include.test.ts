@@ -4,6 +4,8 @@ import { urls } from "../../urls.js";
 import type { RouteEntry } from "../../types.js";
 import type { EntryData } from "../../server/context.js";
 import { evaluateLazyEntry } from "../lazy-includes.js";
+import { createFindMatch } from "../find-match.js";
+import { resolveIncludeModule } from "../../urls/include-provider.js";
 import { buildRouterTrieFromUrlpatterns } from "../../rsc/manifest-init.js";
 import { getRouterPrecomputedEntries } from "../../route-map-builder.js";
 
@@ -207,5 +209,56 @@ describe("async include() — () => import() route modules", () => {
       "handler boom",
     );
     expect(entry.lazyEvaluated).toBe(false);
+  });
+});
+
+// PR review: migrating an include from eager to async must not quietly
+// downgrade failure loudness. Build/dev discovery hard-fails; per-request match
+// keeps owner failures loud (5xx) while isolating genuinely-unmatched paths.
+describe("async include() — error-loudness policy", () => {
+  it("hard-fails discovery when an async include provider throws — no silent green build (finding 1)", async () => {
+    // Discovery (build + dev trie-rebuild) evaluates providers to build the
+    // trie/types; a broken module here must abort, not ship a green build with
+    // the group silently absent. (Runtime lazy eval is unaffected — this is the
+    // discovery path, which always evaluates to know every route.)
+    const patterns = urls(({ include, path }) => [
+      path("/ok", Page, { name: "ok" }),
+      include("/broken", () => {
+        throw new Error("bad transitive import");
+      }),
+    ]);
+    const router = { id: "r-hardfail", urlpatterns: patterns, basename: "" };
+    await expect(
+      buildRouterTrieFromUrlpatterns(router as unknown as never),
+    ).rejects.toThrow(/bad transitive import|Failed to resolve include/);
+  });
+
+  it("regex fallback isolates a failing lazy include for an UNMATCHED path — 404 (null), not 500 (finding 4)", async () => {
+    const failing = lazyEntry("/", "root", null);
+    const findMatch = createFindMatch({
+      routerId: "r-finding4-isolate",
+      routesEntries: [failing],
+      // No trie registered for this routerId -> trieMatched is false, so this
+      // pathname is genuinely unmatched. A failing root include must not upgrade
+      // its 404 to a 500 just because probing it threw.
+      evaluateLazyEntry: () => {
+        throw new Error("root include module failed to import");
+      },
+    });
+    await expect(findMatch("/definitely/not/a/route")).resolves.toBeNull();
+  });
+
+  it("resolveIncludeModule prefers `default` over a named `handler` export (finding 5)", () => {
+    const patterns = urls(({ path }) => [path("/x", Page, { name: "x" })]);
+    // A routes module can carry a named `export function handler` alongside its
+    // `export default urls(...)`; duck-typing the namespace first would misread
+    // the whole module as the urls() value and 404 the group.
+    const moduleNamespace = {
+      default: patterns,
+      handler: () => "user helper, not the DSL handler",
+    };
+    expect(resolveIncludeModule(moduleNamespace as never)).toBe(patterns);
+    // A bare urls() value (no module) still resolves via the mod-as-value branch.
+    expect(resolveIncludeModule(patterns as never)).toBe(patterns);
   });
 });
