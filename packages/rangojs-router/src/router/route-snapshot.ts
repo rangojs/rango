@@ -56,7 +56,9 @@ export type ResolveRouteResult<TEnv = any> =
   | null;
 
 export interface ResolveRouteDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   metricsStore?: MetricsStore;
   isSSR?: boolean;
   /**
@@ -105,7 +107,7 @@ export async function resolveRoute<TEnv = any>(
 
   const routeMatchStart =
     metricsStore && !skipRouteMatchMetric ? performance.now() : 0;
-  const matched = deps.findMatch(pathname);
+  const matched = await deps.findMatch(pathname);
   if (metricsStore && !skipRouteMatchMetric) {
     metricsStore.metrics.push({
       label: "route-matching",

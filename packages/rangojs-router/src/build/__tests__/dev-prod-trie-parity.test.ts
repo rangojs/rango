@@ -85,33 +85,39 @@ const PROBE_URLS = [
 ];
 
 describe("dev/prod per-router trie parity (buildPerRouterTrie)", () => {
-  it("dev (mountIndex undefined->0) equals prod router-0 exactly", () => {
+  it("dev (mountIndex undefined->0) equals prod router-0 exactly", async () => {
     const patterns = makePatterns();
     const devTrie = buildPerRouterTrie(
-      generateManifestFull(patterns, undefined),
+      await generateManifestFull(patterns, undefined),
     );
-    const prodTrie = buildPerRouterTrie(generateManifestFull(patterns, 0));
+    const prodTrie = buildPerRouterTrie(
+      await generateManifestFull(patterns, 0),
+    );
     expect(devTrie).toEqual(prodTrie);
   });
 
-  it("a 2nd-router prod trie (mountIndex 1) differs only in leaf ancestry", () => {
+  it("a 2nd-router prod trie (mountIndex 1) differs only in leaf ancestry", async () => {
     const patterns = makePatterns();
     const devTrie = buildPerRouterTrie(
-      generateManifestFull(patterns, undefined),
+      await generateManifestFull(patterns, undefined),
     );
-    const prodR1Trie = buildPerRouterTrie(generateManifestFull(patterns, 1));
+    const prodR1Trie = buildPerRouterTrie(
+      await generateManifestFull(patterns, 1),
+    );
     // Raw tries differ (leaf.a embeds the mount index)...
     expect(devTrie).not.toEqual(prodR1Trie);
     // ...but only in the debug-only ancestry: structurally identical otherwise.
     expect(stripAncestry(devTrie!)).toEqual(stripAncestry(prodR1Trie!));
   });
 
-  it("match results are identical across mount indices for every probe URL", () => {
+  it("match results are identical across mount indices for every probe URL", async () => {
     const patterns = makePatterns();
     const devTrie = buildPerRouterTrie(
-      generateManifestFull(patterns, undefined),
+      await generateManifestFull(patterns, undefined),
     );
-    const prodR1Trie = buildPerRouterTrie(generateManifestFull(patterns, 1));
+    const prodR1Trie = buildPerRouterTrie(
+      await generateManifestFull(patterns, 1),
+    );
     for (const url of PROBE_URLS) {
       expect(tryTrieMatch(devTrie, url)).toEqual(tryTrieMatch(prodR1Trie, url));
     }

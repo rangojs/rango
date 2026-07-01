@@ -6,7 +6,9 @@ import type { MiddlewareFn } from "./middleware.js";
 import { resolveRoute } from "./route-snapshot.js";
 
 export interface PreviewMatchDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
 }
 
 /**

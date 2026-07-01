@@ -20,27 +20,39 @@ function cloneMatchResult<TEnv>(
 
 export interface FindMatchDeps<TEnv = any> {
   routesEntries: RouteEntry<TEnv>[];
-  evaluateLazyEntry: (entry: RouteEntry<TEnv>) => void;
+  // Returns a Promise only when it had to resolve an async include provider
+  // (`() => import()`); void for eager/precomputed includes, so the per-entry
+  // match loop pays no microtask in the common case.
+  evaluateLazyEntry: (entry: RouteEntry<TEnv>) => void | Promise<void>;
   routerId: string;
 }
 
 /**
  * Create a findMatch function bound to router state.
  * Includes single-entry cache to avoid redundant matching within the same request.
+ *
+ * Async because a lazy include may be backed by an async provider
+ * (`() => import("./routes")`) that must be resolved before its routes can be
+ * matched. The hot path is unaffected: `await` only suspends on the first
+ * request to a not-yet-loaded dynamic include; eager routes resolve in the same
+ * microtask. Every caller already runs inside an async match pipeline.
  */
 export function createFindMatch<TEnv = any>(
   deps: FindMatchDeps<TEnv>,
-): (pathname: string, ms?: MetricsStore) => RouteMatchResult<TEnv> | null {
+): (
+  pathname: string,
+  ms?: MetricsStore,
+) => Promise<RouteMatchResult<TEnv> | null> {
   // Single-entry cache for findMatch to avoid redundant matching within the same request.
   // previewMatch and match both call findMatch with the same pathname — this ensures
   // the route matching work (which may check thousands of routes) only happens once.
   let lastFindMatchPathname: string | null = null;
   let lastFindMatchResult: RouteMatchResult<TEnv> | null = null;
 
-  return function findMatch(
+  return async function findMatch(
     pathname: string,
     ms?: MetricsStore,
-  ): RouteMatchResult<TEnv> | null {
+  ): Promise<RouteMatchResult<TEnv> | null> {
     if (lastFindMatchPathname === pathname) {
       return cloneMatchResult(lastFindMatchResult);
     }
@@ -71,11 +83,33 @@ export function createFindMatch<TEnv = any>(
         const entryStart = performance.now();
         let entry: RouteEntry<TEnv> | undefined;
         let fallbackEntry: RouteEntry<TEnv> | undefined;
+        let candidateError: unknown;
+        let candidateFailed = false;
 
         for (const e of deps.routesEntries) {
           if (e.staticPrefix !== trieResult.sp) continue;
           if (!fallbackEntry) fallbackEntry = e;
-          deps.evaluateLazyEntry(e);
+          try {
+            const ev = deps.evaluateLazyEntry(e);
+            if (ev) await ev;
+          } catch (err) {
+            // Multiple async includes can share one collapsed static prefix, so
+            // this loop may evaluate a candidate that is NOT the route's owner.
+            // Remember the failure and keep scanning: if another candidate owns
+            // the route, this sibling's failure is correctly isolated (its
+            // _lazyInflight was cleared, so a later request retries). But if NO
+            // candidate ends up owning it, the failing one WAS the owner — a
+            // real, trie-matched route whose module failed to import — and we
+            // rethrow below as a 5xx rather than silently 404ing (see finding 3:
+            // owner failure must stay loud).
+            candidateError = err;
+            candidateFailed = true;
+            console.error(
+              `[@rangojs/router] include at "${e.staticPrefix}" failed to load: ` +
+                `${(err as Error)?.message ?? String(err)}`,
+            );
+            continue;
+          }
           if (
             e.routes &&
             trieResult.routeKey in (e.routes as Record<string, unknown>)
@@ -83,6 +117,14 @@ export function createFindMatch<TEnv = any>(
             entry = e;
             break;
           }
+        }
+
+        // The trie matched this route, so it EXISTS. If no same-prefix candidate
+        // could own it AND one failed to load, the owning module is the one that
+        // threw — surface the module failure as a 5xx, not the misleading 404 a
+        // fallthrough would give.
+        if (!entry && candidateFailed) {
+          throw candidateError;
         }
 
         if (!entry) entry = fallbackEntry;
@@ -95,7 +137,8 @@ export function createFindMatch<TEnv = any>(
           );
           if (parent) {
             const lazyStart = performance.now();
-            deps.evaluateLazyEntry(parent);
+            const ev = deps.evaluateLazyEntry(parent);
+            if (ev) await ev;
             pushMetric?.("match:lazy-eval", lazyStart);
           }
           entry = deps.routesEntries.find(
@@ -141,7 +184,28 @@ export function createFindMatch<TEnv = any>(
         lastFindMatchResult = null;
         return null;
       }
-      deps.evaluateLazyEntry(result.lazyEntry);
+      try {
+        const ev = deps.evaluateLazyEntry(result.lazyEntry);
+        if (ev) await ev;
+      } catch (err) {
+        // If the trie matched this pathname, the route is REAL and this lazy
+        // entry owns (part of) it — a module-load failure is a genuine error, so
+        // propagate it as a 5xx. If the trie did NOT match, this is a
+        // genuinely-unmatched pathname (a typo, a bot probe): its 404 must not be
+        // upgraded to a 500 just because some lazy include — e.g. a failing root
+        // `include("/")` — happened to need evaluating while we probed. Isolate
+        // and fall through to the 404 (finding 4: the two match phases agree —
+        // owner failure is loud, unmatched stays 404).
+        if (trieMatched) throw err;
+        console.error(
+          `[@rangojs/router] include at "${result.lazyEntry.staticPrefix}" ` +
+            `failed to load while resolving unmatched path "${pathname}": ` +
+            `${(err as Error)?.message ?? String(err)}`,
+        );
+        lastFindMatchPathname = pathname;
+        lastFindMatchResult = null;
+        return null;
+      }
       result = findRouteMatch(pathname, deps.routesEntries);
     }
     pushMetric?.("match:regex-fallback", regexStart);

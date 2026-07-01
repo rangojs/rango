@@ -18,10 +18,12 @@ import {
   enableMatchDebug,
   getMatchDebugStats,
 } from "@rangojs/router/__internal";
-import { includedPatterns } from "./included-patterns.js";
-import { localizedPatterns } from "./localized-patterns.js";
-import { shopPatterns } from "./shop-patterns.js";
-import { jsonApiPatterns } from "./json-api-patterns.js";
+// Route groups are loaded via async include providers (`() => import()`): each
+// becomes a separate chunk in the worker bundle that is not evaluated at startup
+// — only on the first request to its prefix. The bundler handles the subgraph
+// (shared modules stay in the common chunk); the router awaits the import once
+// on first match and caches it. Build-time discovery awaits the same providers,
+// so href()/named routes/types still cover every route in these groups.
 import { HomePage } from "./pages/benchmark.js";
 import { LinksDemo } from "./pages/links-demo.js";
 
@@ -166,22 +168,28 @@ export const urlpatterns = urls(({ path, include }) => [
   // === LOCALIZED ROUTES (5,000+ under /site/:locale) ===
   // Static "/site" prefix enables short-circuit optimization
   // Patterns are lazily evaluated on first /site/* request (default behavior)
-  include("/site/:locale", localizedPatterns, { name: "site" }),
+  include("/site/:locale", () => import("./localized-patterns.js"), {
+    name: "site",
+  }),
 
   // === API ROUTES (5,000) ===
   // Static "/api" prefix enables short-circuit optimization
   // Patterns are lazily evaluated on first /api/* request (default behavior)
-  include("/api", includedPatterns, { name: "api" }),
+  include("/api", () => import("./included-patterns.js"), { name: "api" }),
 
-  // === SHOP ROUTES (nested includes demo) ===
-  // Demonstrates nested include optimization:
+  // === SHOP ROUTES (nested includes demo, async-loaded) ===
+  // Async include whose split module ITSELF declares nested includes:
   // - /shop/product/* (staticPrefix: "/shop/product") skips /shop/category
   // - /shop/category/* (staticPrefix: "/shop/category") skips /shop/product
-  include("/shop", shopPatterns, { name: "shop" }),
+  // On the first /shop/* request the router awaits the import, then splices the
+  // nested product/category entries — the nested async-include path.
+  include("/shop", () => import("./shop-patterns.js"), { name: "shop" }),
 
   // === JSON API ROUTES (response routes with typed responses) ===
   // Tests PathResponse type resolution through the single RegisteredRoutes registry
-  include("/json-api", jsonApiPatterns, { name: "jsonApi" }),
+  include("/json-api", () => import("./json-api-patterns.js"), {
+    name: "jsonApi",
+  }),
 
   // === BENCHMARK: Last route (after ALL routes) ===
   path("/bench/last", BenchmarkHandler, { name: "benchLast" }),

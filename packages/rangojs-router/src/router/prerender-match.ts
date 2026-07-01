@@ -33,7 +33,9 @@ import type {
 import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface PrerenderMatchDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
   resolveAllSegments: (
@@ -74,7 +76,7 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
 } | null> {
   // 1. Find the matching route entry
-  const matched = deps.findMatch(pathname);
+  const matched = await deps.findMatch(pathname);
   if (!matched) return null;
 
   // Use params from trie match if available, fall back to provided params

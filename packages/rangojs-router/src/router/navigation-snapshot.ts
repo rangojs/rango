@@ -25,15 +25,17 @@ export interface NavigationSnapshot {
 }
 
 export interface ResolveNavigationDeps {
-  findMatch: (pathname: string) => RouteMatchResult | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult | null | Promise<RouteMatchResult | null>;
 }
 
-export function resolveNavigation(
+export async function resolveNavigation(
   request: Request,
   url: URL,
   currentRouteKey: string,
   deps: ResolveNavigationDeps,
-): NavigationSnapshot | null {
+): Promise<NavigationSnapshot | null> {
   const clientSegmentIds =
     url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
   const stale = url.searchParams.get("_rsc_stale") === "true";
@@ -65,10 +67,10 @@ export function resolveNavigation(
     interceptContextUrl = prevUrl;
   }
 
-  const prevMatch = deps.findMatch(prevUrl.pathname);
+  const prevMatch = await deps.findMatch(prevUrl.pathname);
   const prevParams = prevMatch?.params || {};
   const interceptContextMatch = interceptSourceUrl
-    ? deps.findMatch(interceptContextUrl.pathname)
+    ? await deps.findMatch(interceptContextUrl.pathname)
     : prevMatch;
 
   const isSameRouteNavigation = !!(

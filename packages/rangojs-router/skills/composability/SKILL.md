@@ -160,6 +160,56 @@ export const adminPatterns = urls(({ path }) => [
 ]);
 ```
 
+## Code-splitting a route group with async include()
+
+`include()` takes a route module two ways. Eager — the module is already in the
+graph:
+
+```typescript
+import { shopPatterns } from "./shop-patterns";
+
+urls(({ include }) => [include("/shop", shopPatterns, { name: "shop" })]);
+```
+
+Async — the module is code-split behind a `() => import()` thunk. It becomes its
+own chunk that is NOT evaluated at startup; the router imports it on the first
+request that reaches the prefix, then caches it:
+
+```typescript
+urls(({ include }) => [
+  include("/shop", () => import("./shop-patterns"), { name: "shop" }),
+]);
+```
+
+The split module exposes its `urls()` value as the default export (convention):
+
+```typescript
+// src/shop-patterns.ts
+import { urls } from "@rangojs/router";
+
+export const shopPatterns = urls(({ path, include }) => [
+  path("/", ShopHome, { name: "home" }),
+  include("/product", productPatterns, { name: "product" }), // nesting is fine
+]);
+
+export default shopPatterns; // async include() resolves this
+```
+
+**Prefer the async form** for any route group that is a natural,
+independently-loadable unit (a localized section, an admin area, an API surface
+with heavy handlers) — it trims the eagerly-parsed entry bundle and keeps that
+subgraph off the cold-start path. The **eager form is still fully valid** (not
+deprecated): keep it for small groups, or ones that share most of their module
+graph with the entry (the bundler keeps shared modules common regardless, so
+splitting a thin group buys little). Both match identically at runtime — only the
+module's runtime evaluation timing differs.
+
+What you do NOT lose by splitting: build-time discovery `await`s the provider, so
+`href()`, `reverse()`, generated route types, and prerender still see every route
+in the group — including nested `include()`s inside the split module. Only the
+module's runtime evaluation defers. `rango generate` resolves the `() => import()`
+the same way, so a code-split group is still fully typed.
+
 ## Composition Types
 
 For typed factories, import the composition types:
