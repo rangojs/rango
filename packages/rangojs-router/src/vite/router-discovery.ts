@@ -544,6 +544,14 @@ export function createRouterDiscoveryPlugin(
           );
           console.warn(`[rango] Failed to create temp runner: ${err.message}`);
         }
+        // Reached only on failure (runner unavailable, or create/import threw
+        // AFTER the server was created). Close the just-created server so a
+        // failed discovery does not leak it until the next call or dev shutdown,
+        // and null the refs so the reuse path above starts clean. Mirrors the
+        // close pattern used when an existing server is discarded (above).
+        await prerenderTempServer?.close().catch(() => {});
+        prerenderTempServer = null;
+        prerenderNodeRegistry = null;
         return null;
       }
 
