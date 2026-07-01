@@ -23,6 +23,17 @@ const ShopBenchmarkHandler: Handler<"home"> = async (ctx) => {
   );
 };
 
+// Product page handler (no URL params, just static paths like /1, /2, ...)
+const ProductPage: Handler<"home"> = async (ctx) => {
+  return (
+    <div>
+      <h1>Product {ctx.pathname}</h1>
+      <p>Product details page</p>
+      <pre>{JSON.stringify(ctx.params, null, 2)}</pre>
+    </div>
+  );
+};
+
 // Category page handler (no URL params, just static paths like /1, /2, ...)
 const CategoryPage: Handler<"home"> = async (ctx) => {
   return (
@@ -33,6 +44,23 @@ const CategoryPage: Handler<"home"> = async (ctx) => {
     </div>
   );
 };
+
+/**
+ * Product routes - 100 routes under /shop/product/*
+ * staticPrefix = "/shop/product"
+ */
+export const productPatterns = urls(({ path }) => [
+  // Benchmark route at start
+  path("/bench/first", ShopBenchmarkHandler, { name: "benchFirst" }),
+
+  // 100 product routes
+  ...Array.from({ length: 100 }, (_, i) =>
+    path(`/${i + 1}`, ProductPage, { name: `item${i + 1}` }),
+  ),
+
+  // Benchmark route at end
+  path("/bench/last", ShopBenchmarkHandler, { name: "benchLast" }),
+]);
 
 /**
  * Category routes - 100 routes under /shop/category/*
@@ -52,25 +80,17 @@ export const categoryPatterns = urls(({ path }) => [
 ]);
 
 /**
- * Main shop patterns - demonstrates nested include optimization AND
- * async-within-async: this shop module is itself loaded via an async include
- * (`() => import("./shop-patterns.js")` from urls.tsx), and its /product child
- * is ALSO an async include (`() => import("./product-patterns.js")`) — so
- * /shop/product/* chains two deferred imports. /category stays eager for
- * contrast (an eager child inside an async parent).
+ * Main shop patterns - demonstrates nested include optimization
  *
- * /shop/product/* and /shop/category/* are separate entries with different
- * staticPrefixes, so they skip each other.
+ * /shop/product/* and /shop/category/* are separate entries
+ * with different staticPrefixes, so they skip each other
  */
 export const shopPatterns = urls(({ path, include }) => [
   // Shop home
   path("/", ShopBenchmarkHandler, { name: "home" }),
 
-  // Nested includes with different static prefixes. /product is async
-  // (code-split, loaded on first /shop/product/* request); /category is eager.
-  include("/product", () => import("./product-patterns.js"), {
-    name: "product",
-  }),
+  // Nested includes with different static prefixes
+  include("/product", productPatterns, { name: "product" }),
   include("/category", categoryPatterns, { name: "category" }),
 ]);
 
