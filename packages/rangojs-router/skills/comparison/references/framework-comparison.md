@@ -45,8 +45,8 @@ and multi-region composition without replacing its routing or data model.
 | Dimension               | **Rango**                                                                                                  | Next.js (App Router)                                                           | TanStack Start                                                                     | Waku                                                                    |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Routing model           | Code DSL (`urls()`/`include()`), named + `reverse()`                                                       | File-system convention                                                         | File or code, type-first                                                           | File-system (+ `createPages`)                                           |
-| Foundation              | Vite + plugin-rsc                                                                                          | Turbopack/Webpack                                                              | [Vite or Rsbuild](https://tanstack.com/start/latest/docs/framework/react/overview) | Vite + plugin-rsc                                                       |
-| RSC model               | RSC-first                                                                                                  | RSC-first                                                                      | SSR/client-first; RSC opt-in                                                       | RSC-first                                                               |
+| Foundation              | Vite + plugin-rsc                                                                                          | Turbopack (default in 16; Webpack opt-in)                                      | [Vite or Rsbuild](https://tanstack.com/start/latest/docs/framework/react/overview) | Vite + plugin-rsc                                                       |
+| RSC model               | RSC-first                                                                                                  | RSC-first                                                                      | SSR/client-first; RSC opt-in (experimental)                                        | RSC-first                                                               |
 | Type-safe routes/params | Generated names, params, search, `reverse()`, response MIME                                                | Stable typed links; route-local param types                                    | Best-in-class                                                                      | Typed path params                                                       |
 | Client render selection | Per-segment/loader `revalidate()` policy; typed action and result matching                                 | Automatic segment reuse; refresh/invalidation APIs                             | Match/loader reload policy                                                         | Route refetch/reload                                                    |
 | Slots and intercepts    | Code-defined named slots with their own loaders/policy; conditional alternate soft-navigation compositions | File-system `@slot` + intercept conventions                                    | Route masking, no parallel RSC slot graph                                          | No equivalent route-slot graph                                          |
@@ -54,12 +54,12 @@ and multi-region composition without replacing its routing or data model.
 | Request/cache safety    | Tainted request contexts, non-cacheable typed vars, guarded effects                                        | Runtime APIs isolated from `"use cache"`; optional React client-boundary taint | Application policy                                                                 | Application policy                                                      |
 | Prerender               | Build-time cache; worker serves every request; per-param `Passthrough()`                                   | SSG/ISR + Cache Components/PPR                                                 | Static prerender + HTTP/CDN ISR patterns                                           | Static prerender                                                        |
 | No-JS parity            | First-class, tested (semantic matrix)                                                                      | Forms/Server Actions supported; no parity harness                              | Server functions support forms; no parity harness                                  | Server Actions/forms; no parity harness                                 |
-| Middleware              | Global + segment-scoped subtree                                                                            | Single request Proxy; no segment subtree scope                                 | Request/server-function middleware                                                 | [Hono middleware + handler interceptors](https://waku.gg/#interceptors) |
+| Middleware              | Global + segment-scoped subtree                                                                            | Single root Proxy (matcher filters paths); no subtree scope                    | Request/server-function middleware                                                 | [Hono middleware + handler interceptors](https://waku.gg/#interceptors) |
 | Observability           | Built-in CF + Vercel OTel phase spans, `Server-Timing`, perf waterfall                                     | Built-in OTel spans; no equivalent router-phase waterfall                      | Client/data devtools                                                               | No equivalent built-in phase model                                      |
 | Deploy targets          | Node, Cloudflare, Vercel — all with presets                                                                | Node/Vercel first; other platforms through adapters                            | Broad Vite/Rsbuild runtime support                                                 | Node plus adapters                                                      |
-| Deployment skew         | Automatic build-version handshake for navigation, prefetch, and actions; safe reload on mismatch           | `deploymentId` mismatch reload; Vercel can pin clients to an immutable deploy  | Application/platform policy                                                        | Application/platform policy                                             |
+| Deployment skew         | Automatic build-version handshake for navigation, prefetch, and actions; safe reload on mismatch           | `deploymentId` mismatch reload; Vercel can pin clients to an immutable deploy  | Application/platform policy                                                        | Build-id mismatch reload (v1.0-beta)                                    |
 | Multi-tenant            | `createHostRouter()` built-in                                                                              | Roll your own                                                                  | Roll your own                                                                      | Roll your own                                                           |
-| Testing primitives      | Ships `@rangojs/router/testing` (handlers/loaders/mw/Flight/e2e)                                           | No comparable handler/Flight primitives                                        | Router test utils                                                                  | No comparable handler/Flight primitives                                 |
+| Testing primitives      | Ships `@rangojs/router/testing` (handlers/loaders/mw/Flight/e2e)                                           | No comparable handler/Flight primitives                                        | Documented patterns; no shipped utils                                              | No comparable handler/Flight primitives                                 |
 | Client runtime          | ~50 KB Rango + ~115 KB React/RSC, per-route chunks                                                         | Configuration-dependent                                                        | Configuration-dependent                                                            | Deliberately light                                                      |
 | Ecosystem               | Smaller                                                                                                    | Largest                                                                        | Growing                                                                            | Small                                                                   |
 
@@ -190,9 +190,11 @@ every request and either replays a stored Flight payload (a cache or prerender
 hit) or renders live. The browser cannot tell which happened.
 
 Next.js's
-[Cache Components](https://nextjs.org/docs/app/getting-started/cache-components)
-model is powerful, but server data/output lifetimes and the client router cache
-still have distinct rules. TanStack Router has its own loader cache and integrates
+[Cache Components](https://nextjs.org/docs/app/getting-started/caching)
+model (stable opt-in `cacheComponents: true` in Next 16) is powerful, but server
+data/output lifetimes and the client router cache still follow distinct rules
+(one `cacheLife` profile can now span both). TanStack Router has its own loader
+cache and integrates
 deeply with Query when an application wants a richer data cache; HTTP/CDN policy
 remains another layer. Waku keeps caching minimal. Rango's bet is that one model
 for "cached, `use cache`, and prerendered" is easier to hold in your head than
@@ -288,8 +290,9 @@ The router gives you guarantees most file-based routers leave implicit:
   context that children read.
 - **Two clear middleware scopes** — request-level (`router.use()`) versus
   **segment-scoped subtree** middleware, which is more granular than Next's single
-  root [`proxy.ts`](https://nextjs.org/docs/app/api-reference/file-conventions/proxy)
-  request boundary.
+  root [`proxy.ts`](https://nextjs.org/docs/app/api-reference/file-conventions/proxy):
+  its `matcher` filters which paths the one Proxy runs on, but there is no
+  per-segment subtree middleware.
 - **Structural context visibility** — `ctx.set()`/`ctx.get()` flow down the tree
   only; parallel siblings do not bleed into each other.
 - **Dev/prod matching parity** — one trie is used in both dev and production, so
@@ -314,9 +317,11 @@ ship an equivalent request-phase model. See
 
 Three presets, each with its own cache store: `CFCacheStore` (Cloudflare KV, L1+L2),
 `VercelCacheStore` (Vercel Runtime Cache, Node runtime), and
-`MemorySegmentCacheStore`. Next.js deployments beyond its Node/Vercel path depend
-on platform adapters such as OpenNext. Rango owns both its Cloudflare and Vercel
-presets and was designed for the edge-worker model from the start.
+`MemorySegmentCacheStore`. Next.js self-hosts on Node/Docker with all features
+first-class, and now ships an official Deployment Adapters API (`adapterPath`,
+with verified adapters — Vercel and Bun today, Cloudflare and Netlify building on
+it) for other platforms; the difference is that Rango owns its Cloudflare and
+Vercel presets directly and was designed for the edge-worker model from the start.
 
 On top of that, `createHostRouter()` routes by domain/subdomain to independent
 sub-apps (each its own `createRouter()` with its own route map and cache store),
@@ -341,30 +346,36 @@ For action requests, the reload returns to the same-origin referrer rather than 
 internal action URL. The cache side follows the same correctness rule:
 `CFCacheStore` automatically versions its physical Cache API and KV keys, so a new
 build cannot replay Flight containing an old component shape or dead client-chunk
-reference. `VercelCacheStore` exposes the same version segmentation and recommends a
-deployment-specific Runtime Cache namespace. The browser's Rango state also includes
+reference. `VercelCacheStore` exposes the same version segmentation, but — unlike
+`CFCacheStore` — does not default `version` to the build version: skew safety is
+opt-in via the `version` option or the recommended deployment-specific Runtime
+Cache namespace. The browser's Rango state also includes
 the build version, rotating HTTP and in-memory prefetch cache identity on boot.
 
 Next.js deserves explicit credit here: its
 [`deploymentId`](https://nextjs.org/docs/app/api-reference/config/next-config-js/deploymentId)
 also detects navigation skew and forces a hard navigation, while
 [Vercel Skew Protection](https://vercel.com/docs/skew-protection) can route an old
-client back to its original immutable deployment. Rango's distinction is an
-automatic, framework-owned handshake across its Node, Cloudflare, and Vercel
-presets, integrated with RSC navigation, prefetch, actions, and its cache model.
+client back to its original immutable deployment. Waku (v1.0-beta) also ships a
+framework-owned build-id handshake now — a build id in every RSC payload, a reload
+on mismatch, overridable via `onBuildIdMismatch`. Rango's distinction is the
+breadth of one automatic handshake across its Node, Cloudflare, and Vercel presets,
+integrated with RSC navigation, prefetch, actions, and its cache-key versioning.
 Rango's recovery is reload-based; it does not claim Vercel's stronger
 old-deployment request pinning.
 
 ### A shipped testing harness for server code
 
-`@rangojs/router/testing` gives you `runLoader`, `runMiddleware`, `dispatch`,
-`renderHandler`, `renderRoute`, real Flight rendering (`renderServerTree`,
-`findClientBoundaries`, `findElements`), and a Playwright e2e harness with dev/prod
-parity helpers (`parityDescribe`, `expectParity`). You can unit-test a loader, a
-middleware, or an RSC handler in isolation. Next.js and Waku ship no official
-primitives for testing server components/handlers; TanStack has router test utils
-but nothing at the RSC-handler level. See
-[testing.md](../../../docs/testing.md).
+The `@rangojs/router/testing/*` entry points give you `runLoader`,
+`runMiddleware`, `dispatch` (base `./testing`), `renderHandler` and real Flight
+rendering (`renderServerTree`, `findClientBoundaries`, `findElements`) from
+`./testing/flight`, `renderRoute` from `./testing/dom`, and a Playwright e2e
+harness with dev/prod parity helpers (`parityDescribe`, `expectParity`) from
+`./testing/e2e`. You can unit-test a loader, a middleware, or an RSC handler in
+isolation. Next.js and Waku ship no official primitives for testing server
+components/handlers; TanStack documents testing patterns (build your own harness
+from `createRouter`/`createMemoryHistory`) but ships no testing package, and
+nothing at the RSC-handler level. See [testing.md](../../../docs/testing.md).
 
 ### Bundle discipline
 
@@ -466,12 +477,17 @@ into a slot during eligible soft navigation:
 
 ```tsx
 layout(<ShopLayout />, () => [
-  intercept("@modal", "product.detail", ProductQuickView, () => [
-    when(({ from }) => from.pathname === "/products"),
-    loader(ProductLoader),
-    loading(<QuickViewSkeleton />),
-    middleware(trackQuickView),
-  ]),
+  intercept(
+    "@modal",
+    "product.detail",
+    ProductQuickView,
+    { when: ({ from }) => from.pathname === "/products" },
+    () => [
+      loader(ProductLoader),
+      loading(<QuickViewSkeleton />),
+      middleware(trackQuickView),
+    ],
+  ),
   path("/products/:slug", ProductPage, { name: "product.detail" }),
 ]);
 ```
@@ -480,7 +496,8 @@ A click from the list renders `ProductQuickView` into `@modal` and preserves the
 list behind it. A direct visit or reload renders the canonical full page. Back
 closes the modal and restores the preserved background. The intercept can own its
 middleware, layout, loaders, loading/error policy, loader-level caching, and
-`revalidate()` rules; `when()` can choose by navigation source.
+`revalidate()` rules; the `when` config selector (the 4th argument to
+`intercept()`) can choose by navigation source.
 
 This is integrated with the rest of the runtime rather than implemented as URL
 masking plus local component state. Intercepts get source-scoped prefetch entries
@@ -514,9 +531,10 @@ There are two distinct things named "revalidate", and the split is deliberate:
 Both are separate from `revalidateTag()`/`updateTag()`, which hard-purge tagged
 cache entries. `updateTag()` is awaitable for read-your-own-writes;
 `revalidateTag()` schedules the same invalidation in the background. Neither API
-selects a client segment to render. Next.js offers `router.refresh()` plus path/tag
-cache invalidation, but no per-segment render predicate and no typed action
-discrimination. TanStack's `shouldReload`/`router.invalidate()` is the nearest
+selects a client segment to render. Next.js offers `router.refresh()` (and
+`refresh()` from `next/cache`) plus path/tag cache invalidation, but no per-segment
+render predicate and no typed action discrimination — and its invalidations clear
+the whole client cache rather than selecting a segment. TanStack's `shouldReload`/`router.invalidate()` is the nearest
 analog but operates on loader/query reload, not RSC-segment render.
 
 ### Prefetching: stability and control
@@ -577,8 +595,9 @@ TanStack Router is the real peer here (`preload="intent|viewport|render"`,
 `preloadDelay`, `preloadStaleTime`); Rango's edge is the resource-aware
 idle + image-ready gating and RSC-payload reuse. Next has an internal prefetch
 scheduler, but its public `<Link prefetch>` surface does not expose Rango's choice
-of trigger and resource gates. Waku exposes manual route prefetching without this
-policy layer.
+of trigger and resource gates. Waku has manual route prefetching plus experimental
+`unstable_prefetchOnEnter` / `unstable_prefetchOnView` Link triggers, but without
+this resource-aware policy layer.
 
 ### Loaders, and tagged loading
 
@@ -754,9 +773,11 @@ remain in `Server-Timing` even without the full debug timeline, so ordinary
 responses retain a low-level latency baseline.
 
 The distinctive part is that measured router work and distributed tracing share
-one phase registry. `observePhase()` co-emits the perf metric and trace span from
-one wrap site where both surfaces apply; request totals and middleware pre/post
-own-time retain their intentional surface-specific representations. The local and
+one phase registry. A single internal wrap site (`observePhase()` in
+`src/router/instrument.ts` — an implementation detail, not a public export)
+co-emits the perf metric and trace span where both surfaces apply; request totals
+and middleware pre/post own-time retain their intentional surface-specific
+representations. The local and
 production views therefore use the same execution vocabulary instead of two sets
 of hand-maintained instrumentation. It is best-effort and construction-bound
 (never buffers the response; streaming phases settle at stream construction, not

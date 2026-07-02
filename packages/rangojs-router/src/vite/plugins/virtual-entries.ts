@@ -128,7 +128,7 @@ export default function handler(request, env) {
 export function getVirtualEntryRSCHost(hostEntryPath: string): string {
   return `
 import * as __hostEntry from "${hostEntryPath}";
-import { NoRouteMatchError } from "@rangojs/router/host";
+import { isNoRouteMatchError } from "@rangojs/router/host";
 
 // Register every sub-app's fetchable loaders + route manifests at startup, same
 // as the single-router entry. Discovery's host fallback populates these for all
@@ -138,11 +138,12 @@ import "virtual:rsc-router/routes-manifest";
 
 // The host entry module must export the HostRouter instance (createHostRouter()),
 // as a default export or a named \`hostRouter\`/\`router\` export. A Cloudflare-style
-// \`export default { fetch }\` object is not a HostRouter and is rejected here.
+// \`export default { fetch }\` object is not a HostRouter and is rejected (on first
+// request; see the lazy resolution below).
 // We require BOTH .match() and .host(): a regular createRouter() also exposes
 // .match(), so matching on .match() alone would accept an ordinary router and then
 // return its MatchResult (not a Response) at runtime. .host() is unique to a
-// HostRouter, so it disambiguates a mistaken \`hostRouter\` path at build time.
+// HostRouter, so it disambiguates a mistaken \`hostRouter\` path.
 // Exports are read dynamically (m[name]) so Rollup does not emit IMPORT_IS_UNDEFINED
 // warnings for the named exports a default-only host module legitimately omits.
 const __resolveHostRouter = (m) => {
@@ -157,13 +158,14 @@ const __resolveHostRouter = (m) => {
   }
   return undefined;
 };
-const hostRouter = __resolveHostRouter(__hostEntry);
 
-if (!hostRouter) {
-  throw new Error(
-    "[rango] The host entry (${hostEntryPath}) must export a HostRouter instance (createHostRouter()) for the node/vercel preset: a default export, or a named 'hostRouter'/'router' export. An ordinary createRouter() is not a host router (it has no .host()), and a Cloudflare-style 'export default { fetch }' object is not supported on this preset."
-  );
-}
+// Resolve + validate the HostRouter lazily on first request, mirroring the
+// single-router entry's \`_handler\`. During HMR the host module can re-evaluate
+// before its createHostRouter() export has resolved; validating at module-
+// evaluation time would then throw a spurious "must export a HostRouter" error
+// overlay for a perfectly valid app. Resolving on first request lets the live
+// binding settle first.
+let _hostRouter;
 
 // input = { env, ctx } from the launcher / node server. The host router threads
 // it unchanged to each matched sub-app's handler and cache factory.
@@ -171,10 +173,22 @@ if (!hostRouter) {
 // an unmatched host into a response: catch NoRouteMatchError and return 404
 // (parity with the documented Cloudflare catch). Other errors propagate.
 export default async function handler(request, input) {
+  if (!_hostRouter) {
+    _hostRouter = __resolveHostRouter(__hostEntry);
+    if (!_hostRouter) {
+      throw new Error(
+        "[rango] The host entry (${hostEntryPath}) must export a HostRouter instance (createHostRouter()) for the node/vercel preset: a default export, or a named 'hostRouter'/'router' export. An ordinary createRouter() is not a host router (it has no .host()), and a Cloudflare-style 'export default { fetch }' object is not supported on this preset."
+      );
+    }
+  }
   try {
-    return await hostRouter.match(request, input);
+    return await _hostRouter.match(request, input);
   } catch (err) {
-    if (err instanceof NoRouteMatchError) {
+    // isNoRouteMatchError also matches by name: a workspace with a duplicated
+    // @rangojs/router copy can throw a NoRouteMatchError whose prototype differs
+    // from this module's import, so a bare instanceof would turn an
+    // unmatched-host 404 into a 500.
+    if (isNoRouteMatchError(err)) {
       return new Response("Not Found", { status: 404 });
     }
     throw err;

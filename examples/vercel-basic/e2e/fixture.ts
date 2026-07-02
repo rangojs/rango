@@ -115,12 +115,15 @@ export function useFixture(options: {
         cwd,
         ...options.cliOptions,
       });
-      const port = await proc.findPort();
-      baseURL = `http://localhost:${port}`;
+      // Register teardown BEFORE awaiting findPort: if findPort times out it
+      // throws out of beforeAll, and a cleanup assigned only afterwards would be
+      // undefined, leaking the detached dev server (holding its port).
       cleanup = async () => {
         proc.kill();
         await proc.done;
       };
+      const port = await proc.findPort();
+      baseURL = `http://localhost:${port}`;
     }
     if (options.mode === "build") {
       if (!process.env.TEST_SKIP_BUILD) {
@@ -148,12 +151,14 @@ export function useFixture(options: {
         cwd,
         ...options.cliOptions,
       });
-      const port = await proc.findPort();
-      baseURL = `http://localhost:${port}`;
+      // Register teardown BEFORE awaiting findPort (see the dev branch): a
+      // findPort timeout would otherwise leak the detached preview server.
       cleanup = async () => {
         proc.kill();
         await proc.done;
       };
+      const port = await proc.findPort();
+      baseURL = `http://localhost:${port}`;
     }
   });
 

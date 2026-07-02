@@ -28,9 +28,6 @@ import { recordingTracer } from "./trace-debug.js";
 
 const DEBUG = process.env.RANGO_TRACE_DEBUG === "1";
 
-/** Whether the e2e trace-recording path (and its /__debug/trace route) is on. */
-export const traceDebugEnabled = DEBUG;
-
 export function buildTracing(): RouterTracingConfig {
   if (DEBUG) {
     return createVercelTracing({ tracer: recordingTracer });

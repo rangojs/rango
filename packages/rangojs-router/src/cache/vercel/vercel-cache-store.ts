@@ -48,6 +48,7 @@ import {
   DEFAULT_FUNCTION_TTL,
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
+import type { CacheErrorCategory } from "../cache-error.js";
 
 /**
  * Minimal structural shape of the Vercel Runtime Cache returned by `getCache()`
@@ -88,6 +89,19 @@ export const VERCEL_MAX_TAGS_PER_ITEM: number = 128;
 
 /** Max tag length in UTF-8 bytes accepted by Vercel; longer tags are skipped. */
 export const VERCEL_MAX_TAG_BYTES: number = 256;
+
+/**
+ * URL metacharacters a tag must not contain. The official `@vercel/functions`
+ * client interpolates the tag straight into `revalidate?tags=${tag}` with NO
+ * URL-encoding (and also sends it in a request header), so a tag carrying one of
+ * these is stored intact on write but silently mangled server-side on
+ * invalidate: `&` starts a new query param, `?` a query, `#` truncates as a
+ * fragment, `%` is read as a (bad) percent-escape, `,` splits the tag list. The
+ * entry then never clears while `updateTag()`/`expireTag()` report success -
+ * the exact false-success the store's one deliberate throw exists to prevent.
+ * Such tags are dropped symmetrically on both the write and invalidate paths.
+ */
+const VERCEL_UNSAFE_TAG_CHARS = /[,&#%?]/;
 
 /**
  * Herd-dampening window (ms). On a stale read the store pushes the entry's
@@ -276,6 +290,16 @@ function base64ToBuffer(b64: string): ArrayBuffer {
  * that propagates expireTag rejections does get the strict guarantee, which is
  * what the unit suite exercises.)
  *
+ * Key hashing / family isolation. The store namespaces its three value tiers as
+ * `rg:{s|i|r}:{key}` so segment, `"use cache"`, and response entries occupy
+ * disjoint keyspaces. That separation is only as strong as the cache's
+ * `keyHashFunction`: `getCache`'s default is djb2, which folds every key to 32
+ * bits (8 hex chars), so at a large live-key count a collision can let one
+ * entry's body be served for another key (same-family) or be misread as corrupt
+ * (cross-family). For deployments with many cached keys, pass a wider hash so
+ * the family split is real isolation, e.g. `getCache({ keyHashFunction })` with
+ * a sha256-based function.
+ *
  * @example
  * ```ts
  * import { getCache, waitUntil } from "@vercel/functions";
@@ -284,7 +308,9 @@ function base64ToBuffer(b64: string): ArrayBuffer {
  * export const router = createRouter({
  *   cache: () => ({
  *     store: new VercelCacheStore({
- *       cache: getCache({ namespace: import.meta.env.VERCEL_DEPLOYMENT_ID }),
+ *       // `process.env` (not `import.meta.env`, which needs a VITE_ prefix and
+ *       // would be undefined here) so cross-deploy busting via `version` works.
+ *       cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
  *       waitUntil,
  *       defaults: { ttl: 60, swr: 300 },
  *     }),
@@ -410,12 +436,23 @@ export class VercelCacheStore<
     try {
       const swrWindow = resolveSwrWindow(swr, this.defaults);
       const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
-      const env: VercelSegmentEnvelope = { d: data, s: staleAt, e: expiresAt };
+      // Embed the CLAMPED tags, like putResponse/setItem: the segment family
+      // carries its tags inside `d`, and a raw list would resurface dropped
+      // tags into recordRequestTags on every hit AND get re-clamped (with a
+      // spurious cache-write report) by markRevalidating on every stale read.
+      const safeTags = this.clampTagsForWrite(
+        data.tags,
+        "[VercelCacheStore] set",
+      );
+      const d: CachedEntryData = data.tags
+        ? { ...data, tags: safeTags.length > 0 ? safeTags : undefined }
+        : data;
+      const env: VercelSegmentEnvelope = { d, s: staleAt, e: expiresAt };
       await this.write(
         this.toStoreKey(key, "s"),
         env,
         ttl + swrWindow,
-        data.tags,
+        safeTags,
         "[VercelCacheStore] set",
       );
     } catch (error) {
@@ -541,19 +578,28 @@ export class VercelCacheStore<
       });
       const swrWindow = resolveSwrWindow(swr, this.defaults);
       const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
+      // Embed the CLAMPED tags in the envelope, not the raw list: tags dropped
+      // on write (unsafe/over-cap) would otherwise resurface on a hit and be
+      // merged into an upstream document's tag set, letting it claim a tag this
+      // entry can't actually be invalidated by. write() re-clamps (idempotent
+      // and silent on an already-clean list).
+      const safeTags = this.clampTagsForWrite(
+        tags,
+        "[VercelCacheStore] putResponse",
+      );
       const env: VercelResponseEnvelope = {
         b: bufferToBase64(body),
         st: response.status,
         hd: headers,
         s: staleAt,
         e: expiresAt,
-        t: tags,
+        t: safeTags.length > 0 ? safeTags : undefined,
       };
       await this.write(
         this.toStoreKey(key, "r"),
         env,
         ttl + swrWindow,
-        tags,
+        safeTags,
         "[VercelCacheStore] putResponse",
       );
     } catch (error) {
@@ -595,7 +641,14 @@ export class VercelCacheStore<
     const now = Date.now();
     if (now > env.e) {
       void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getItem", key, outcome: "expired", readMs });
+      this.emitDebug({
+        op: "getItem",
+        key,
+        outcome: "expired",
+        staleAt: env.s,
+        expiresAt: env.e,
+        readMs,
+      });
       return null;
     }
 
@@ -629,18 +682,24 @@ export class VercelCacheStore<
       const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
       const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
+      // Store the clamped tags (see putResponse) so dropped tags don't resurface
+      // on a hit; write() re-clamps idempotently.
+      const safeTags = this.clampTagsForWrite(
+        options?.tags,
+        "[VercelCacheStore] setItem",
+      );
       const env: VercelItemEnvelope = {
         v: value,
         h: options?.handles,
         s: staleAt,
         e: expiresAt,
-        t: options?.tags,
+        t: safeTags.length > 0 ? safeTags : undefined,
       };
       await this.write(
         this.toStoreKey(key, "i"),
         env,
         ttl + swrWindow,
-        options?.tags,
+        safeTags,
         "[VercelCacheStore] setItem",
       );
     } catch (error) {
@@ -653,7 +712,11 @@ export class VercelCacheStore<
   async invalidateTags(tags: string[]): Promise<void> {
     if (!tags || tags.length === 0) return;
     // No per-item cap here: an invalidation must reach every requested tag.
-    const safe = this.validateTags(tags, "[VercelCacheStore] invalidateTags");
+    const safe = this.validateTags(
+      tags,
+      "[VercelCacheStore] invalidateTags",
+      "cache-invalidate",
+    );
     if (safe.length === 0) return;
     try {
       await this.cache.expireTag(safe);
@@ -675,6 +738,12 @@ export class VercelCacheStore<
 
   // --- Internals ---
 
+  // The `rg:{family}:` prefix keeps the three value tiers in disjoint
+  // keyspaces, but the isolation is only as strong as the cache's
+  // keyHashFunction: djb2 (getCache's default) folds this to 32 bits, so at a
+  // large live-key count a same-family collision can serve the wrong body and a
+  // cross-family one reads as corrupt. See the class doc for passing a wider
+  // hash (sha256) when many keys are live.
   private toStoreKey(key: string, family: CacheFamily): string {
     const versionPrefix = this.version ? `v/${this.version}/` : "";
     return `${versionPrefix}rg:${family}:${key}`;
@@ -702,6 +771,15 @@ export class VercelCacheStore<
    * (clamped to the hard expiry) and re-write the same envelope under the
    * remaining lifetime, so concurrent same-region readers see it as fresh while
    * one revalidates. Best-effort and non-blocking; never throws.
+   *
+   * Two races are accepted here because `getCache` offers no compare-and-set: a
+   * fast background revalidation that lands between this stale read and the
+   * re-stamp write can be overwritten by the (staler) locked envelope, and an
+   * `expireTag` that deletes the entry in the same window can be resurrected by
+   * the re-stamp. Both self-heal within REVALIDATION_LOCK_MS (the re-stamped
+   * copy is then re-read as stale and revalidated again, or re-deleted). The
+   * window is narrow and the cost is at most one extra revalidation / one brief
+   * stale serve; a read-compare would not close it atomically without CAS.
    */
   private markRevalidating<E extends { s: number; e: number }>(
     storeKey: string,
@@ -744,15 +822,30 @@ export class VercelCacheStore<
     return true;
   }
 
-  /** Drop tags Vercel rejects (commas, over-length). Used by invalidateTags. */
-  private validateTags(tags: string[], label: string): string[] {
+  /**
+   * Drop tags Vercel cannot round-trip: over-length tags, and tags carrying a
+   * URL metacharacter the `@vercel/functions` client does not encode (see
+   * VERCEL_UNSAFE_TAG_CHARS). Runs on BOTH paths - the write path
+   * (clampTagsForWrite) and invalidateTags - so a tag that would silently fail
+   * invalidation is never stored in the first place. `category` reports the
+   * drop under the caller's real operation (write vs invalidate).
+   */
+  private validateTags(
+    tags: string[],
+    label: string,
+    category: CacheErrorCategory,
+  ): string[] {
     const encoder = new TextEncoder();
     const out: string[] = [];
     for (const tag of tags) {
-      if (tag.includes(",")) {
+      const unsafe = VERCEL_UNSAFE_TAG_CHARS.exec(tag);
+      if (unsafe) {
         reportCacheError(
-          new Error(`tag "${tag}" contains a comma; skipped`),
-          "cache-invalidate",
+          new Error(
+            `tag "${tag}" contains an unencodable URL character "${unsafe[0]}"; ` +
+              `skipped (it would not round-trip through Vercel tag invalidation)`,
+          ),
+          category,
           label,
         );
         continue;
@@ -760,7 +853,7 @@ export class VercelCacheStore<
       if (encoder.encode(tag).length > VERCEL_MAX_TAG_BYTES) {
         reportCacheError(
           new Error(`tag exceeds ${VERCEL_MAX_TAG_BYTES} bytes; skipped`),
-          "cache-invalidate",
+          category,
           label,
         );
         continue;
@@ -776,7 +869,7 @@ export class VercelCacheStore<
     label: string,
   ): string[] {
     if (!tags || tags.length === 0) return [];
-    const valid = this.validateTags(tags, label);
+    const valid = this.validateTags(tags, label, "cache-write");
     if (valid.length > VERCEL_MAX_TAGS_PER_ITEM) {
       reportCacheError(
         new Error(

@@ -302,7 +302,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -332,7 +332,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -422,6 +422,11 @@ jobs:
             workers: 1
           - project: hmr-intercept
             workers: 1
+          # Host-routing runs in its own project + servers (gated by
+          # RANGO_E2E_HOST below), so the sharded dev/production jobs above no
+          # longer each boot the two host Vite servers (OOM-sensitive) or the
+          # host:build, and a host-fixture breakage fails only this job.
+          - project: host
 
     steps:
       - uses: actions/checkout@v5
@@ -455,6 +460,9 @@ jobs:
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         env:
           CHOKIDAR_USEPOLLING: ${{ matrix.workers && 'true' || '' }}
+          # Only the dedicated host job starts the host fixture servers (and, via
+          # HOST_ONLY in playwright.config.ts, skips the heavy test-app servers).
+          RANGO_E2E_HOST: ${{ matrix.project == 'host' && '1' || '' }}
         run: |
           WORKERS_FLAG=""
           if [ -n "${{ matrix.workers }}" ]; then

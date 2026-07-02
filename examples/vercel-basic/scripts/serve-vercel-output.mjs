@@ -62,6 +62,12 @@ export async function createVercelOutputServer(outputDir) {
       if (!res.headersSent) {
         res.statusCode = err instanceof URIError ? 400 : 500;
         res.end();
+      } else {
+        // Headers already sent: end() would silently deliver a truncated body
+        // as success and an in-flight client request would hang. Destroy the
+        // socket so the client fails fast with a visible error.
+        console.error("handler failed mid-stream:", err);
+        res.destroy(err instanceof Error ? err : new Error(String(err)));
       }
     }
   });

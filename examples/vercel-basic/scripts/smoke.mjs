@@ -12,26 +12,13 @@
 // Cache store is Vercel-only; locally the app falls back to the in-memory store,
 // so the cache observation is informational.
 import os from "node:os";
-import { rm, cp } from "node:fs/promises";
+import { rm, cp, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createVercelOutputServer } from "./serve-vercel-output.mjs";
 
 const appRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
 const builtOutput = path.join(appRoot, ".vercel", "output");
-
-// Copy the build output to an isolated temp dir (no parent package.json /
-// node_modules) so resolution matches the deployed function.
-const isolated = path.join(os.tmpdir(), "rango-vercel-smoke");
-await rm(isolated, { recursive: true, force: true });
-await cp(builtOutput, isolated, { recursive: true });
-
-const server = await createVercelOutputServer(isolated);
-
-const port = await new Promise((resolve) => {
-  server.listen(0, () => resolve(server.address().port));
-});
-const base = `http://localhost:${port}`;
 
 let failed = false;
 const check = (name, ok) => {
@@ -43,7 +30,24 @@ const check = (name, ok) => {
 // RSC stream instead, which is the browser navigation/prefetch contract).
 const htmlHeaders = { accept: "text/html" };
 
+// Copy the build output to an isolated temp dir (no parent package.json /
+// node_modules) so resolution matches the deployed function. mkdtemp gives a
+// unique dir per run so concurrent smokes never clobber each other.
+const isolated = await mkdtemp(path.join(os.tmpdir(), "rango-vercel-smoke-"));
+let server;
+// Everything after mkdtemp runs inside this try so the finally removes the
+// unique temp dir even when the copy, function import, or server startup fails
+// (a fixed-name dir self-heals by reuse; unique dirs would accumulate).
 try {
+  await cp(builtOutput, isolated, { recursive: true });
+
+  server = await createVercelOutputServer(isolated);
+
+  const port = await new Promise((resolve) => {
+    server.listen(0, () => resolve(server.address().port));
+  });
+  const base = `http://localhost:${port}`;
+
   console.log(`(serving isolated build output from ${isolated})`);
   const home = await fetch(`${base}/`, { headers: htmlHeaders });
   const homeHtml = await home.text();
@@ -78,7 +82,7 @@ try {
     }`,
   );
 } finally {
-  server.close();
+  server?.close();
   await rm(isolated, { recursive: true, force: true });
 }
 

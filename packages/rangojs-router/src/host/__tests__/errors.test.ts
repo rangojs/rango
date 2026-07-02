@@ -6,6 +6,7 @@ import {
   InvalidHostnameError,
   HostValidationError,
   NoRouteMatchError,
+  isNoRouteMatchError,
 } from "../errors";
 
 describe("HostRouterError", () => {
@@ -101,5 +102,31 @@ describe("NoRouteMatchError", () => {
     expect(error.message).toContain("example.com");
     expect(error.message).toContain("/admin");
     expect(error.name).toBe("NoRouteMatchError");
+  });
+});
+
+describe("isNoRouteMatchError", () => {
+  it("matches an instance of this module's class", () => {
+    expect(isNoRouteMatchError(new NoRouteMatchError("a.com", "/"))).toBe(true);
+  });
+
+  it("matches a duplicated-package copy by its stamped name", () => {
+    // Simulates a second @rangojs/router copy in the module graph: a different
+    // class identity (instanceof fails) but the same constructor-stamped name.
+    class ForeignNoRouteMatchError extends Error {
+      constructor() {
+        super("No route matched for a.com/");
+        this.name = "NoRouteMatchError";
+      }
+    }
+    const foreign = new ForeignNoRouteMatchError();
+    expect(foreign instanceof NoRouteMatchError).toBe(false);
+    expect(isNoRouteMatchError(foreign)).toBe(true);
+  });
+
+  it("rejects other errors and non-errors", () => {
+    expect(isNoRouteMatchError(new Error("NoRouteMatchError"))).toBe(false);
+    expect(isNoRouteMatchError({ name: "NoRouteMatchError" })).toBe(false);
+    expect(isNoRouteMatchError(undefined)).toBe(false);
   });
 });

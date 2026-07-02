@@ -201,6 +201,47 @@ describe("VercelCacheStore", () => {
       expect(await s.get("k")).toBeNull();
     });
 
+    it("drops tags with URL metacharacters (&, #, %, ?) Vercel cannot round-trip", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.set(
+        "k",
+        segment(["ok", "sale&fall", "a#b", "x%y", "q?z"]),
+        60,
+        300,
+      );
+      // The metachar tags never reached the backend (dropped symmetrically on
+      // write AND invalidate), so they cannot invalidate the entry.
+      for (const bad of ["sale&fall", "a#b", "x%y", "q?z"]) {
+        await s.invalidateTags([bad]);
+      }
+      expect(await s.get("k")).not.toBeNull();
+      // The one valid tag still invalidates.
+      await s.invalidateTags(["ok"]);
+      expect(await s.get("k")).toBeNull();
+    });
+
+    it("stores the CLAMPED tag list in the item envelope (dropped tags don't resurface on a hit)", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("use-cache:fn", "v", { ttl: 60, tags: ["ok", "a&b"] });
+      const hit = await s.getItem("use-cache:fn");
+      // "a&b" was dropped on write, so it must not reappear in the hit's tags
+      // (which flow into an upstream document's tag set).
+      expect(hit?.tags).toEqual(["ok"]);
+    });
+
+    it("stores the CLAMPED tag list in the segment envelope too (set/get family)", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.set("k", segment(["ok", "a&b"]), 60, 300);
+      const hit = await s.get("k");
+      // "a&b" was dropped from the backend tag index on write; it must not
+      // ride back via env.d.tags into recordRequestTags (nor be re-clamped
+      // with a spurious cache-write report on every stale read).
+      expect(hit?.data.tags).toEqual(["ok"]);
+    });
+
     it("clamps tags per item on write; tags beyond the cap cannot invalidate", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });

@@ -176,17 +176,17 @@ router.fallback().map((request) => {
 });
 ```
 
-For unmatched hosts without `hostOverride`, catch `NoRouteMatchError` in your worker fetch:
+For unmatched hosts without `hostOverride`, catch `NoRouteMatchError` in your worker fetch. Use the `isNoRouteMatchError()` guard rather than a bare `instanceof`: a workspace with a duplicated `@rangojs/router` copy can throw the error with a different class identity, and `instanceof` would then turn the 404 into an opaque 500.
 
 ```typescript
-import { NoRouteMatchError } from "@rangojs/router/host";
+import { isNoRouteMatchError } from "@rangojs/router/host";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     try {
       return await router.match(request, { env, ctx });
     } catch (err) {
-      if (err instanceof NoRouteMatchError) {
+      if (isNoRouteMatchError(err)) {
         return new Response("Not Found", { status: 404 });
       }
       throw err;

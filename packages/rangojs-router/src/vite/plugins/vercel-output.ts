@@ -46,7 +46,11 @@ import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import type { RangoVercelOptions } from "../plugin-types.js";
+import { escapeRegExp } from "../../regex-escape.js";
+import type {
+  RangoVercelOptions,
+  VercelPresetOptions,
+} from "../plugin-types.js";
 
 // Minimal structural types for the esbuild API we use, resolved dynamically from
 // the app so @rangojs/router does not depend on esbuild's type package.
@@ -100,13 +104,105 @@ export function assertVercelNodeRuntime(runtime: string | undefined): void {
   }
 }
 
+/**
+ * The function name becomes a `.func` directory segment and the config.json
+ * route `dest` (`/${functionName}`). An empty or space/slash-containing value
+ * would land raw in both, producing a broken function path, so restrict it to a
+ * safe single path segment and fail loudly rather than emit unroutable output.
+ */
+export function assertValidVercelFunctionName(functionName: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(functionName)) {
+    throw new Error(
+      `[rango] preset "vercel": invalid functionName ${JSON.stringify(
+        functionName,
+      )}. Use letters, digits, ".", "_" or "-" only (it becomes the .func directory and the routing dest).`,
+    );
+  }
+}
+
+/** The `.vc-config.json` body: a Node serverless function with streaming. */
+export function buildVercelVcConfig(
+  vercel: VercelPresetOptions,
+): Record<string, unknown> {
+  const vcConfig: Record<string, unknown> = {
+    runtime: vercel.runtime ?? "nodejs22.x",
+    handler: "index.mjs",
+    launcherType: "Nodejs",
+    shouldAddHelpers: false,
+    supportsResponseStreaming: true,
+    maxDuration: vercel.maxDuration ?? 30,
+  };
+  if (vercel.memory != null) vcConfig.memory = vercel.memory;
+  if (vercel.regions != null) vcConfig.regions = vercel.regions;
+  return vcConfig;
+}
+
+/**
+ * The Build Output API v3 `config.json` body. Routes, in order: long-cache the
+ * content-hashed assets under `${assetsDir}/` (safe to serve `immutable`;
+ * without this Vercel serves them `max-age=0, must-revalidate` and browsers
+ * re-request every asset on each visit), then the filesystem handler, then
+ * everything to the function. The header route uses `continue: true` so it falls
+ * through to the filesystem handler that actually serves the file.
+ *
+ * Route `src` values are REGEXES on Vercel, so the prefix is regex-escaped
+ * (an unescaped `assetsDir: "static.v2"` would immutable-stamp any
+ * `/static?v2/...` path, including function-rendered pages). An empty
+ * assetsDir (assets at the outDir root) gets no header route at all: there is
+ * no prefix separating hashed from non-hashed files, so fall back to Vercel's
+ * safe default headers. Two accepted edges, matching what other framework
+ * adapters (Astro, SvelteKit) emit: files a user places in
+ * `public/${assetsDir}/` land under the same prefix and are also stamped
+ * immutable (assemble() warns about the collision), and a request for a
+ * MISSING asset falls through to the function whose 404 carries the header.
+ */
+export function buildVercelOutputConfig(
+  functionName: string,
+  assetsDir: string,
+): { version: number; routes: unknown[] } {
+  const assetsPrefix = assetsDir.replace(/^\/+|\/+$/g, "");
+  const assetHeaderRoute = assetsPrefix
+    ? [
+        {
+          src: `/${escapeRegExp(assetsPrefix)}/(.*)`,
+          headers: { "cache-control": "public, max-age=31536000, immutable" },
+          continue: true,
+        },
+      ]
+    : [];
+  return {
+    version: 3,
+    routes: [
+      ...assetHeaderRoute,
+      { handle: "filesystem" },
+      { src: "/(.*)", dest: `/${functionName}` },
+    ],
+  };
+}
+
 async function assemble(
   root: string,
   options: RangoVercelOptions,
+  assetsDir: string,
+  publicDir: string,
 ): Promise<void> {
   const vercel = options.vercel ?? {};
   // Validate config before touching the build output.
   assertVercelNodeRuntime(vercel.runtime);
+
+  // Files in public/<assetsDir>/ are copied into the same output prefix as the
+  // content-hashed build assets, so the immutable cache-control route stamps
+  // them too -- replacing such a file after a deploy never reaches returning
+  // visitors. Warn instead of silently pinning.
+  const assetsPrefix = assetsDir.replace(/^\/+|\/+$/g, "");
+  if (publicDir && assetsPrefix && existsSync(join(publicDir, assetsPrefix))) {
+    console.warn(
+      `[rango] preset "vercel": ${join(publicDir, assetsPrefix)} exists. ` +
+        `Files under public/${assetsPrefix}/ share the /${assetsPrefix}/ URL prefix ` +
+        `with hashed build assets and will be served with a one-year immutable ` +
+        `cache-control header. Move un-hashed public files out of "${assetsPrefix}/".`,
+    );
+  }
 
   const dist = join(root, "dist");
   for (const dir of ["client", "rsc", "ssr"]) {
@@ -117,6 +213,7 @@ async function assemble(
     }
   }
   const functionName = vercel.functionName ?? "index";
+  assertValidVercelFunctionName(functionName);
   const out = join(root, ".vercel", "output");
   const funcDir = join(out, "functions", `${functionName}.func`);
 
@@ -235,35 +332,16 @@ async function assemble(
   );
 
   // 4. Function config: Node serverless with response streaming.
-  const vcConfig: Record<string, unknown> = {
-    runtime: vercel.runtime ?? "nodejs22.x",
-    handler: "index.mjs",
-    launcherType: "Nodejs",
-    shouldAddHelpers: false,
-    supportsResponseStreaming: true,
-    maxDuration: vercel.maxDuration ?? 30,
-  };
-  if (vercel.memory != null) vcConfig.memory = vercel.memory;
-  if (vercel.regions != null) vcConfig.regions = vercel.regions;
   await writeFile(
     join(funcDir, ".vc-config.json"),
-    JSON.stringify(vcConfig, null, 2) + "\n",
+    JSON.stringify(buildVercelVcConfig(vercel), null, 2) + "\n",
   );
 
-  // 5. Routing: filesystem (static/) first, then everything to the function.
+  // 5. Routing config (immutable assets -> filesystem -> function).
   await writeFile(
     join(out, "config.json"),
-    JSON.stringify(
-      {
-        version: 3,
-        routes: [
-          { handle: "filesystem" },
-          { src: "/(.*)", dest: `/${functionName}` },
-        ],
-      },
-      null,
-      2,
-    ) + "\n",
+    JSON.stringify(buildVercelOutputConfig(functionName, assetsDir), null, 2) +
+      "\n",
   );
 
   console.log(
@@ -274,11 +352,22 @@ async function assemble(
 export function createVercelOutputPlugin(options: RangoVercelOptions): Plugin {
   let root = process.cwd();
   let isBuild = false;
+  // The client build's assetsDir (Vite default "assets"); used to scope the
+  // immutable cache-control route to the content-hashed asset output.
+  let assetsDir = "assets";
+  // Resolved publicDir ("" when disabled); used to warn when public/<assetsDir>
+  // exists, since its un-hashed files share the immutable-header prefix.
+  let publicDir = "";
   return {
     name: "@rangojs/router:vercel-output",
     configResolved(config) {
       root = resolve(config.root);
       isBuild = config.command === "build";
+      assetsDir =
+        config.environments?.client?.build?.assetsDir ??
+        config.build?.assetsDir ??
+        "assets";
+      publicDir = config.publicDir || "";
     },
     // buildApp runs once after the whole multi-environment build (rsc, client,
     // ssr), so dist/ is complete here. closeBundle is unusable for this: it
@@ -288,7 +377,7 @@ export function createVercelOutputPlugin(options: RangoVercelOptions): Plugin {
       order: "post",
       async handler() {
         if (!isBuild) return;
-        await assemble(root, options);
+        await assemble(root, options, assetsDir, publicDir);
       },
     },
   };

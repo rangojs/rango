@@ -8,8 +8,14 @@ import { Document } from "./components/Document.js";
 import { HomePage } from "./components/pages/HomePage.js";
 import { AboutPage } from "./components/pages/AboutPage.js";
 import { CachedTimePage } from "./components/pages/CachedTimePage.js";
-import { buildTracing, traceDebugEnabled } from "./instrumentation.js";
+import { buildTracing } from "./instrumentation.js";
 import { getLastTrace } from "./trace-debug.js";
+
+// Read the gate as a direct `process.env` expression (not the imported
+// `traceDebugEnabled` const, which the bundler keeps as a live binding): the
+// vite `define` folds this to a literal so the /__debug/trace branch below is
+// dead-code-eliminated entirely from a production build.
+const TRACE_DEBUG = process.env.RANGO_TRACE_DEBUG === "1";
 
 const defaults = { ttl: 60, swr: 300 };
 
@@ -55,7 +61,7 @@ const base = createRouter({
 // tree, so the e2e can assert span emission and nesting. Gated so a real
 // production deploy never exposes it. (A `.use()` middleware, not a route, so it
 // stays out of the route manifest either way.)
-const withDebug = traceDebugEnabled
+const withDebug = TRACE_DEBUG
   ? base.use(
       "/__debug/trace",
       () =>

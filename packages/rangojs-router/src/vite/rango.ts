@@ -1,5 +1,5 @@
 import { type PluginOption } from "vite";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
 import {
@@ -23,6 +23,7 @@ import { createVersionPlugin } from "./plugins/version-plugin.js";
 import {
   sharedRolldownOptions,
   createVirtualEntriesPlugin,
+  normalizeHostRouterEntry,
   onwarn,
   getManualChunks,
 } from "./utils/shared-utils.js";
@@ -266,7 +267,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
         // 1. Explicit host entry wins: serve the createHostRouter() instance.
         if (explicitHostRouter) {
-          routerRef.path = explicitHostRouter.replaceAll("\\", "/");
+          routerRef.path = normalizeHostRouterEntry(
+            explicitHostRouter,
+            root,
+            existsSync,
+          );
           routerRef.kind = "host";
           return;
         }
@@ -279,7 +284,16 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         // hostRouter.match()).
         const hostCandidates = findHostRouterFiles(root);
         if (hostCandidates.length === 1) {
-          routerRef.path = toRootRelative(hostCandidates[0]);
+          const hostPath = toRootRelative(hostCandidates[0]);
+          // Auto-detection preempts single-router discovery, so name the winning
+          // file: a stale prototype still containing `createHostRouter(` would
+          // otherwise silently become the served entry in place of the app.
+          // eslint-disable-next-line no-console
+          console.info(
+            `[rango] Serving host router entry ${hostPath} (auto-detected). ` +
+              `Set the \`hostRouter\` option to override.`,
+          );
+          routerRef.path = hostPath;
           routerRef.kind = "host";
           return;
         }
@@ -335,21 +349,17 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         // into the rsc + ssr builds instead of externalizing them (the node
         // default, which only works because `vite preview` runs where
         // node_modules exists). node: builtins stay external automatically.
+        //
+        // BUILD ONLY. In `vite dev` this must NOT apply: noExternal forces every
+        // server dependency through the RSC/SSR dev module runners, which cannot
+        // load many CJS packages (pg, mysql2, most SDKs, @vercel/functions) and
+        // crashes the dev server -- while the same app runs fine under
+        // preset: "node" and in the production build. Gating on `build` restores
+        // node-preset dev semantics (deps externalized to Node's require).
         const vercelServerEnv =
-          preset === "vercel"
+          preset === "vercel" && configEnv.command === "build"
             ? { resolve: { noExternal: true as const } }
             : undefined;
-        // Dev only: @vercel/functions is a CJS package (consumed at its root for
-        // getCache/waitUntil) whose nested internal requires vite's RSC + SSR dev
-        // module runners cannot load directly, so a vercel app using
-        // VercelCacheStore crashes on `vite dev`. Pre-bundle it for the server
-        // environments (the production build bundles it via noExternal above, so
-        // this is serve-only). The preset already requires @vercel/functions at
-        // build time, so the unconditional include matches the existing contract.
-        const vercelServerInclude =
-          preset === "vercel" && configEnv.command === "serve"
-            ? ["@vercel/functions"]
-            : [];
         return {
           ...(vercelDefine ? { define: vercelDefine } : {}),
           optimizeDeps: {
@@ -407,7 +417,6 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   nested(
                     "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
                   ),
-                  ...vercelServerInclude,
                 ],
                 exclude: excludeDeps,
                 rolldownOptions: sharedRolldownOptions,
@@ -424,7 +433,6 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   nested(
                     "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
                   ),
-                  ...vercelServerInclude,
                 ],
                 // Vite 8 does not propagate the top-level optimizeDeps.exclude
                 // (set in config()) to non-client envs, so the rsc env must set
@@ -532,8 +540,10 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   );
 
   // Vercel preset: assemble .vercel/output from dist/ after the build. Pushed
-  // last so its (ssr-gated) closeBundle runs after the discovery plugin's
-  // rsc-env postprocess and after every environment has been written.
+  // last so its buildApp (order "post") hook runs after the discovery plugin's
+  // rsc-env postprocess. buildApp fires once after the whole multi-environment
+  // build, so dist/ is complete (closeBundle is unusable here -- it fires per
+  // environment, twice for ssr; see the plugin's own note).
   if (preset === "vercel") {
     plugins.push(
       createVercelOutputPlugin(resolvedOptions as RangoVercelOptions),

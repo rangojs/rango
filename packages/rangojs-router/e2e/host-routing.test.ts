@@ -11,8 +11,10 @@ import { waitForHydration } from "./helper";
 // host-dev-warmup project primes the dev server's dep optimizer first, so dev
 // client boot is fast (no cold-import noise). Real Host-header routing of the
 // Vercel Build Output is covered separately by examples/vercel-multi-router's smoke.
-const HOST_DEV_PORT = 5198;
-const HOST_PREVIEW_PORT = 5199;
+// Keep in sync with the HOST_*_PORT constants in playwright.config.ts. Chosen to
+// not collide with tests/cloudflare-basic (5198/5199).
+const HOST_DEV_PORT = 5296;
+const HOST_PREVIEW_PORT = 5297;
 
 function hostRoutingTests(port: number) {
   const visit = async (page: import("@playwright/test").Page, host: string) => {

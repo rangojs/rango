@@ -2,7 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createVirtualEntriesPlugin } from "../utils/shared-utils.js";
+import {
+  createVirtualEntriesPlugin,
+  normalizeHostRouterEntry,
+} from "../utils/shared-utils.js";
 import {
   VIRTUAL_IDS,
   getVirtualEntryRSCHost,
@@ -32,7 +35,13 @@ describe("getVirtualEntryRSCHost", () => {
     expect(code).toContain(
       'import * as __hostEntry from "/src/worker.rsc.tsx"',
     );
-    expect(code).toContain("hostRouter.match(request, input)");
+    expect(code).toContain("_hostRouter.match(request, input)");
+    // Resolution + validation happen LAZILY on first request (mirroring the
+    // single-router entry's _handler), not at module-evaluation time -- otherwise
+    // an HMR re-evaluation before the export settles throws a spurious
+    // "must export a HostRouter" overlay for a valid app.
+    expect(code).toContain("if (!_hostRouter)");
+    expect(code).not.toContain("const hostRouter = __resolveHostRouter");
     // It must NOT wrap a single router in createRSCHandler like the router entry.
     expect(code).not.toContain("createRSCHandler");
     // Accepts the instance as default or a named hostRouter/router export,
@@ -54,10 +63,14 @@ describe("getVirtualEntryRSCHost", () => {
     const code = getVirtualEntryRSCHost("/src/worker.rsc.tsx");
     // node/vercel users no longer own the worker wrapper, so an unmatched host
     // must not surface as an unhandled throw (500).
+    // isNoRouteMatchError (not a bare instanceof): a duplicated @rangojs/router
+    // copy in a workspace can throw a NoRouteMatchError with a different
+    // prototype, so instanceof alone would turn an unmatched-host 404 into a
+    // 500. The shared helper also matches by the stamped name.
     expect(code).toContain(
-      'import { NoRouteMatchError } from "@rangojs/router/host"',
+      'import { isNoRouteMatchError } from "@rangojs/router/host"',
     );
-    expect(code).toContain("err instanceof NoRouteMatchError");
+    expect(code).toContain("isNoRouteMatchError(err)");
     expect(code).toContain("status: 404");
   });
 });
@@ -76,7 +89,7 @@ describe("createVirtualEntriesPlugin entry kind", () => {
 
   it('renders the host entry for kind "host"', () => {
     const host = loadRsc({ path: "./src/worker.rsc.tsx", kind: "host" });
-    expect(host).toContain("hostRouter.match(request, input)");
+    expect(host).toContain("_hostRouter.match(request, input)");
     expect(host).toContain(
       'import * as __hostEntry from "/src/worker.rsc.tsx"',
     );
@@ -85,6 +98,63 @@ describe("createVirtualEntriesPlugin entry kind", () => {
     // createRouter() also exposes .match(), so .host() disambiguates a mistaken
     // `hostRouter` path (which would otherwise return a non-Response MatchResult).
     expect(host).toContain('typeof candidate.host === "function"');
+  });
+});
+
+describe("normalizeHostRouterEntry", () => {
+  const root = "/proj";
+  // Only <root>/src/worker.rsc.tsx and the genuine absolute path "exist".
+  const exists = (p: string) =>
+    p === "/proj/src/worker.rsc.tsx" || p === "/abs/worker.rsc.tsx";
+
+  it("rewrites a bare specifier to an explicitly-relative path", () => {
+    expect(normalizeHostRouterEntry("src/worker.rsc.tsx", root, exists)).toBe(
+      "./src/worker.rsc.tsx",
+    );
+  });
+
+  it("keeps an already-relative ./ path", () => {
+    expect(normalizeHostRouterEntry("./src/worker.rsc.tsx", root, exists)).toBe(
+      "./src/worker.rsc.tsx",
+    );
+  });
+
+  it("passes a leading-slash (Vite root-relative) path through unchanged, without an existence check", () => {
+    // Regression guard: a "/src/..." path must NOT be treated as filesystem-
+    // absolute and rejected. It is root-relative to Vite and passes through.
+    expect(
+      normalizeHostRouterEntry("/src/worker.rsc.tsx", root, () => false),
+    ).toBe("/src/worker.rsc.tsx");
+  });
+
+  it("passes a filesystem-absolute path through unchanged", () => {
+    expect(
+      normalizeHostRouterEntry("/abs/worker.rsc.tsx", root, () => false),
+    ).toBe("/abs/worker.rsc.tsx");
+  });
+
+  it("normalizes backslashes to forward slashes", () => {
+    expect(normalizeHostRouterEntry("src\\worker.rsc.tsx", root, exists)).toBe(
+      "./src/worker.rsc.tsx",
+    );
+  });
+
+  it("throws a rango error for a missing root-resolvable entry", () => {
+    expect(() =>
+      normalizeHostRouterEntry("./does/not/exist.tsx", root, exists),
+    ).toThrow(/hostRouter entry not found/);
+  });
+
+  it("passes a bare specifier that does not exist under root through verbatim (alias/package)", () => {
+    // Regression guard: "@/worker.rsc.tsx" with a configured "@" alias worked
+    // before normalization was added (emitted verbatim, resolved by the
+    // bundler). It must not be rewritten to "./@/..." and existsSync-rejected.
+    expect(normalizeHostRouterEntry("@/worker.rsc.tsx", root, exists)).toBe(
+      "@/worker.rsc.tsx",
+    );
+    expect(
+      normalizeHostRouterEntry("#app/worker.rsc.tsx", root, () => false),
+    ).toBe("#app/worker.rsc.tsx");
   });
 });
 
