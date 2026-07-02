@@ -112,9 +112,12 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   (the root branch, the base case, and the in-path branch — the last one matters for a
   malformed `/docs//` whose trailing empty segment would otherwise satisfy `+`). So
   `/docs/:slug+` rejects the bare `/docs` while `:slug*` still binds `""` there. The regex
-  fallback matches: `/(.+)` for `+`; for a NAMED `:name*` it emits `(?:/(.*))?` so the bare
-  prefix matches directly (binding `""`, aligning with the trie — bare `*` keeps its C1
-  divergence). A `+`/`*` is a catch-all modifier only as a bare trailing token: any other
+  fallback matches: `/(.+)` for `+`; for any zero-or-more catch-all — a NAMED `:name*` OR
+  the bare `/*` — it emits `(?:/(.*))?` so the bare prefix matches directly, binding `""`
+  and aligning with the trie. (Bare `/*` used to keep a required `/(.*)`, so its regex
+  fallback failed to match the bare prefix and fell through to trailing-slash
+  normalization, emitting a corrupt `/file` redirect — the old C1 divergence, fixed in
+  #636.) A `+`/`*` is a catch-all modifier only as a bare trailing token: any other
   combination (`:v+build`, `:name*.min`, `:name(a|b)+`, a non-terminal catch-all) folds back
   to the pre-feature literal-suffix parse rather than erroring. When two DISTINCT wildcard
   forms collide on the single `node.w` slot (`/x/*` and `/x/:p+`), the first-declared wins
@@ -207,7 +210,7 @@ is the list:
 
 - `trie-matching.test.ts` — trie precedence, plus the C1 bare / param-prefixed wildcard.
 - `pattern-matching.test.ts` — the regex matcher and `joinPrefix` (C5).
-- `trie-regex-parity.test.ts` — where the trie and regex agree (and the M3/M4/C1 spots
+- `trie-regex-parity.test.ts` — where the trie and regex agree (and the M3/M4 spots
   where they don't, with the trie winning).
 - `dev-prod-trie-parity.test.ts` — the dev rebuilt trie really does equal the prod
   serialized one.

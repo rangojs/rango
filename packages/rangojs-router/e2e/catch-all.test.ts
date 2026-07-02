@@ -84,6 +84,27 @@ function catchAllTests(mode: "dev" | "build") {
       await expect(testId(page, "catchall-shop-heading")).toHaveCount(0);
       expect(res?.status()).toBe(404);
     });
+
+    // Issue #636: bare `*` is a zero-or-more catch-all, so `/catch-all/files/*`
+    // matches its bare prefix `/catch-all/files` binding `"*" === ""` — the same
+    // shape as `:slug*`. The trie is the live matcher in both dev and production,
+    // so this pins the observable contract in both modes (the fix aligned the
+    // regex fallback with this already-correct trie behavior).
+    test("bare * (zero-or-more) matches the bare prefix, binding an empty string", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/catch-all/files"));
+      await expect(testId(page, "catchall-files-heading")).toHaveText("Files");
+      await expect(testId(page, "catchall-files-empty")).toHaveText("empty");
+    });
+
+    test("bare * captures a multi-segment remainder", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/catch-all/files/a/b/c"));
+      await expect(testId(page, "catchall-files-splat")).toHaveText("a/b/c");
+      await expect(testId(page, "catchall-files-empty")).toHaveText("nonempty");
+    });
   });
 }
 

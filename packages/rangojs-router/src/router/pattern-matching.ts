@@ -110,16 +110,19 @@ export function compilePattern(pattern: string): CompiledPattern {
       paramNames.push(segment.value);
       catchAll = { name: segment.value, oneOrMore: Boolean(segment.oneOrMore) };
       if (segment.oneOrMore) {
-        // `:name+` — one-or-more, rejects the zero-segment case.
+        // `:name+` — one-or-more, rejects the zero-segment (bare-prefix) case.
         regexPattern += "/(.+)";
-      } else if (segment.value === "*") {
-        // Bare `/*` — unchanged: matches the bare prefix only via the trailing-
-        // slash alternate (the documented C1 divergence the trie compensates for).
-        regexPattern += "/(.*)";
       } else {
-        // Named `:name*` — zero-or-more. The whole `/segment` is optional so the
-        // bare prefix matches directly (aligning the fallback with the trie);
-        // buildParamsFromMatch binds "" when the group is absent.
+        // Zero-or-more catch-all: named `:name*` OR the bare `/*` (both parse to
+        // `oneOrMore: false`). The whole `/segment` is optional so the bare
+        // prefix matches directly, aligning the regex fallback with the trie
+        // (which already matches the bare prefix binding "" — trie-matching.ts);
+        // buildParamsFromMatch binds "" when the optional group is absent.
+        //
+        // The bare `/*` previously used a required `/(.*)`, so `/files/*` failed
+        // to match `/files` and fell through to trailing-slash normalization,
+        // emitting a corrupt `/file` redirect instead of a match (issue #636,
+        // parity row C1). It is the same alignment #635 made for named `:name*`.
         regexPattern += "(?:/(.*))?";
       }
     } else if (segment.type === "param") {
@@ -229,7 +232,8 @@ export function buildParamsFromMatch(
       // single decode is correct and cheapest.
       params[name] = safeDecodeURIComponent(captured);
     } else if (catchAll && name === catchAll.name && !catchAll.oneOrMore) {
-      // Only a named `:name*` can leave its optional group absent; bind "".
+      // A zero-or-more catch-all (`:name*` or the bare `/*`) whose optional
+      // group was absent binds "" rather than being omitted.
       params[name] = "";
     }
   });
