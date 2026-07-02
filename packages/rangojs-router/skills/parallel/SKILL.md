@@ -344,9 +344,17 @@ parallel(
 )
 ```
 
-Revalidating only the parallel does not re-run outer handlers/layouts.
-If the slot reads `ctx.get()` data established above it, opt the outer
-segment into revalidation as well.
+Where the slot sits decides its action default. A parallel under a
+`path()` (or one of its orphan layouts) belongs to the route entry and
+revalidates together with it on every action — handler-set data stays
+consistent with no configuration. A parallel under a standalone
+`layout()` entry follows the parent-chain default instead: skipped on
+actions unless a `revalidate()` opts it in.
+
+In either position, revalidating only the parallel does not re-run outer
+handlers/layouts. If the slot reads `ctx.get()` data established above
+it, opt the outer segment into revalidation as well (see `/rango` →
+"Passing data down the tree").
 
 A `revalidate()` callback may return a hard `boolean`, a soft
 `{ defaultShouldRevalidate }` object, or nothing (`void` / `null` /

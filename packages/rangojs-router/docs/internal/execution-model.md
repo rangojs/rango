@@ -439,6 +439,24 @@ should not be treated as equivalent.
 ## Revalidation Contract
 
 - Revalidation is segment-scoped and opt-in by rules (`revalidate(...)`).
+- Default decisions during action revalidation (no `revalidate()` configured;
+  seeds for user predicates — see `evaluateRevalidation` in
+  `router/revalidation.ts`):
+
+  | Segment                                                | Default | Trace reason               |
+  | ------------------------------------------------------ | ------- | -------------------------- |
+  | route segment                                          | `true`  | `action:route-segment`     |
+  | loader segment                                         | `true`  | `action:loader-segment`    |
+  | `belongsToRoute` child (orphan layout, entry parallel) | `true`  | `action:belongs-to-route`  |
+  | parent-chain segment (outer layout, its parallels)     | `false` | `action:parent-chain-skip` |
+
+  Consequence: a route entry re-runs as a unit on actions (handler-first
+  preserved), so handler `ctx.set()` data consumed by the entry's own
+  children needs no contract. Producer/consumer contracts are required only
+  when narrowing with a hard `false` predicate or when the producer is an
+  outer entry. The consumer-facing ladder is documented in
+  `skills/rango/SKILL.md` ("Passing data down the tree").
+
 - During partial action revalidation:
   - only revalidated segments recompute
   - non-revalidated ancestors do not rerun just to rebuild `ctx.set()` state
