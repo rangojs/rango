@@ -40,6 +40,7 @@ export const NamedRoutes = {
   featuresDetail: "/features/:slug",
   filesWildcard: "/files/*",
   "guides.detail": "/guides/:slug",
+  guidesTrigger: "/guide-trigger/:slug",
   "handlerFirst.index": "/handler-first",
   home: "/",
   inlineDocs: "/inline/docs",

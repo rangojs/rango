@@ -98,6 +98,12 @@ import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
+import {
+  isStoredEntryStale,
+  type PrerenderKey,
+  type PrerenderStoredEntry,
+} from "../../prerender/writable-store.js";
+import type { ResolvedPrerender } from "../../prerender/on-demand.js";
 import type { HandleStore } from "../../server/handle-store.js";
 import {
   getRequestContext,
@@ -315,23 +321,107 @@ async function* tryPrerenderLookup<TEnv>(
   state: MatchPipelineState,
   pipelineStart: number,
   handleStoreRef?: HandleStore,
+  overlay?: ResolvedPrerender,
+  // env is `unknown` (not TEnv): onRevalidate on the resolved config takes `any`,
+  // and binding this to withCacheLookup's TEnv rejects a concrete `Rango.Env`
+  // from _getRequestContext() when the router is compiled in a consumer app.
+  reqCtxForSchedule?: {
+    env: unknown;
+    waitUntil: (fn: () => Promise<void>) => void;
+    _reportBackgroundError?: (
+      error: unknown,
+      category: import("../../cache/cache-error.js").CacheErrorCategory,
+    ) => void;
+  },
 ): AsyncGenerator<ResolvedSegment, boolean> {
   const paramHash = _hashParams!(ctx.matched.params);
   const isPassthroughPrerenderRoute = ctx.entries.some(
     (entry) => entry.type === "route" && entry.isPassthrough === true,
   );
   const lookupHash = ctx.isIntercept ? paramHash + "/i" : paramHash;
-  const entry = await prerenderStoreInstance!.get(
-    ctx.matched.routeKey,
-    lookupHash,
-    {
-      pathname: ctx.pathname,
-      isPassthroughRoute: isPassthroughPrerenderRoute,
-    },
-  );
-  if (!entry) return false;
-  yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
-  return true;
+
+  // 1. Writable durable overlay (per-request, env-scoped). Read first — it is
+  //    always newer than the bundled manifest below it. Verify-on-read guards
+  //    the 8-hex param-hash collision; a stale hit still serves and (with swr)
+  //    schedules a background refresh. Only on-demand routes are read: the
+  //    overlay is written solely by router.prerender() (which refuses non-od
+  //    routes), so a pr-only route would always miss here — skip its durable read.
+  if (overlay && ctx.matched.od) {
+    const key: PrerenderKey = {
+      routerId: overlay.routerId,
+      buildId: overlay.buildId,
+      routeName: ctx.matched.routeKey,
+      paramHash,
+      intercept: ctx.isIntercept || undefined,
+    };
+    // A transient store error (e.g. KV outage) must degrade to an overlay miss —
+    // fall through to the bundled manifest / live handler below — not 500 every
+    // on-demand route for the duration of the outage. Mirrors the trigger's own
+    // onlyIfStale read guard.
+    let stored: PrerenderStoredEntry | null = null;
+    try {
+      stored = await overlay.config.store.get(key, {
+        params: ctx.matched.params,
+      });
+    } catch {
+      stored = null;
+    }
+    if (stored) {
+      if (
+        overlay.config.swr &&
+        overlay.config.onRevalidate &&
+        reqCtxForSchedule &&
+        isStoredEntryStale(stored, Date.now())
+      ) {
+        // SWR is scheduling-only: the stale entry still serves this request.
+        const onRevalidate = overlay.config.onRevalidate;
+        const env = reqCtxForSchedule.env;
+        const target = {
+          route: ctx.matched.routeKey,
+          params: ctx.matched.params,
+        };
+        const reportError = reqCtxForSchedule._reportBackgroundError;
+        reqCtxForSchedule.waitUntil(() =>
+          Promise.resolve(onRevalidate(target, env)).then(
+            () => {},
+            (err) => {
+              // A failed onRevalidate (e.g. a broken queue binding) must not
+              // fail the response, but must be visible — surface it through the
+              // router's onError, not swallow it, mirroring the runtime cache's
+              // stale-revalidation reporting.
+              reportError?.(err, "stale-revalidation");
+            },
+          ),
+        );
+      }
+      yield* yieldFromStore(
+        stored.entry,
+        ctx,
+        state,
+        pipelineStart,
+        handleStoreRef,
+      );
+      return true;
+    }
+  }
+
+  // 2. Bundled build manifest (immutable). Absent for on-demand-only routes.
+  if (prerenderStoreInstance) {
+    const entry = await prerenderStoreInstance.get(
+      ctx.matched.routeKey,
+      lookupHash,
+      {
+        pathname: ctx.pathname,
+        isPassthroughRoute: isPassthroughPrerenderRoute,
+      },
+    );
+    if (entry) {
+      yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -369,7 +459,10 @@ export function withCacheLookup<TEnv>(
     // can disrupt AsyncLocalStorage, causing getRequestContext() to return
     // undefined afterward. Capturing the reference early ensures handle replay
     // and handler handle-push work regardless of ALS state.
-    const handleStoreRef = _getRequestContext()?._handleStore;
+    const earlyReqCtx = _getRequestContext();
+    const handleStoreRef = earlyReqCtx?._handleStore;
+    // Per-request writable prerender overlay (durable), resolved by the handler.
+    const prerenderOverlay = earlyReqCtx?._prerender;
 
     const {
       evaluateRevalidation,
@@ -379,14 +472,19 @@ export function withCacheLookup<TEnv>(
     } = getRouterContext<TEnv>();
 
     const isHmr = !!ctx.request.headers.get("X-RSC-HMR");
-    if (!ctx.isAction && !isHmr && ctx.matched.pr) {
+    // Gate on pr OR od: an on-demand route may have no build-baked entry yet
+    // still needs a writable-overlay lookup. The retained producer is NEVER run
+    // by this pipeline — a miss falls through exactly like today's pr + miss.
+    if (!ctx.isAction && !isHmr && (ctx.matched.pr || ctx.matched.od)) {
       await ensurePrerenderDeps();
-      if (prerenderStoreInstance) {
+      if (prerenderStoreInstance || prerenderOverlay) {
         const served = yield* tryPrerenderLookup(
           ctx,
           state,
           pipelineStart,
           handleStoreRef,
+          prerenderOverlay,
+          earlyReqCtx,
         );
         if (served) return;
       }

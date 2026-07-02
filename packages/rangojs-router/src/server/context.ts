@@ -221,8 +221,13 @@ export type EntryData =
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
       prerenderDef?: {
         getParams?: (ctx: any) => Promise<any[]> | any[];
-        options?: { concurrency?: number };
+        options?: {
+          concurrency?: number;
+          onDemand?: import("../prerender/on-demand.js").OnDemandOption;
+        };
       };
+      /** Set when the route opted into on-demand prerender (Prerender(..., { onDemand })) */
+      isOnDemand?: true;
       /** Set when route is wrapped with Passthrough() — has a separate live handler */
       isPassthrough?: true;
       /** Live handler for runtime fallback (only set on Passthrough routes) */

@@ -4,6 +4,7 @@ import {
   CFCacheStore,
 } from "@rangojs/router/cache";
 import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
@@ -47,6 +48,14 @@ export const router = createRouter<AppBindings>({
       ctx: ctx!, // Always provided in Cloudflare Workers
       kv: env.KV, // KV L2 for global persistence
     }),
+  }),
+  // On-demand (ISR-style) prerender: a KV-backed writable overlay. A requestless
+  // router.prerender() render is stored here and served on the next request as a
+  // cache hit, short-circuiting the Passthrough live handler. Keys are
+  // build+router-scoped; entries carry a soft staleAt (no KV expirationTtl).
+  prerender: (env) => ({
+    store: createKVPrerenderStore(env.PRERENDER_KV),
+    defaultTtl: 3600,
   }),
   // Short-TTL profile for the SWR + getRequestContext() regression (see
   // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the

@@ -34,6 +34,7 @@ import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
 import { prerenderPatterns } from "./urls/prerender.js";
+import { onDemandPatterns } from "./urls/on-demand-prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
@@ -876,6 +877,10 @@ export const urlpatterns = urls(
 
       // Pre-render handler test patterns
       include("/", prerenderPatterns, { name: "" }),
+
+      // On-demand (ISR-style) prerender: Passthrough + onDemand route and its
+      // requestless router.prerender() trigger.
+      include("/", onDemandPatterns, { name: "" }),
 
       // Pre-render complex test patterns (layout + parallel + fresh loader)
       include("/prerender-complex", prerenderComplexPatterns, {

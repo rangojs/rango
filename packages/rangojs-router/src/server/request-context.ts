@@ -175,6 +175,30 @@ export interface RequestContext<
   _cacheStore?: SegmentCacheStore;
 
   /**
+   * @internal Env-scoped writable prerender store (the durable overlay) plus the
+   * deployment identity for build-scoped keys, resolved per request from the
+   * `prerender` router option. Read by the serve-path overlay lookup before the
+   * bundled build manifest. Absent when no prerender store is configured.
+   */
+  // ResolvedPrerender<any> (not <TEnv>): onRevalidate's contravariant `env` would
+  // otherwise make RequestContext invariant in TEnv, breaking existing
+  // RequestContext<{}> -> RequestContext<unknown> assignments.
+  _prerender?: import("../prerender/on-demand.js").ResolvedPrerender<any>;
+
+  /**
+   * @internal Set only on the requestless on-demand producer's context. When
+   * present, the standalone request-scoped READS — `cookies()`, `headers()`,
+   * `invalidateClientCache()`, `keepClientCache()` — throw a
+   * PrerenderPersonalizationError so a personalized render is skipped rather than
+   * baked into a shared payload. Response MUTATIONS on the producer context
+   * (`ctx.setStatus`/`header`/`setCookie`) stay silent no-op stubs, matching
+   * build-time prerender (the design's "throw or skip" contract permits skip):
+   * they write to a discarded synthetic response, so there is nothing to leak.
+   * Never set on the live request path.
+   */
+  _onDemandProducer?: true;
+
+  /**
    * @internal Handler-owned registry of explicit per-scope stores from
    * cache({ store }). Created once per createRSCHandler() and threaded into
    * every request context, so it accumulates every explicit store the handler
@@ -449,6 +473,8 @@ export type PublicRequestContext<
   | "_handleStore"
   | "_transitionWhen"
   | "_cacheStore"
+  | "_prerender"
+  | "_onDemandProducer"
   | "_explicitTaggedStores"
   | "_requestTags"
   | "_cacheProfiles"
@@ -608,6 +634,12 @@ export interface CreateRequestContextOptions<TEnv> {
   /** Optional cache store for segment caching (used by CacheScope) */
   cacheStore?: SegmentCacheStore;
   /**
+   * Optional env-scoped writable prerender store + deployment identity (the
+   * durable overlay), resolved per request by the RSC handler from the
+   * `prerender` router option.
+   */
+  prerender?: import("../prerender/on-demand.js").ResolvedPrerender<any>;
+  /**
    * Handler-owned registry of explicit per-scope stores for cross-store tag
    * invalidation. Created once per handler, reused across requests.
    */
@@ -645,6 +677,7 @@ export function createRequestContext<TEnv>(
     variables,
     initialResponse,
     cacheStore,
+    prerender,
     explicitTaggedStores,
     cacheProfiles,
     executionContext,
@@ -892,6 +925,7 @@ export function createRequestContext<TEnv>(
     _handleStore: handleStore,
     _transitionWhen: [],
     _cacheStore: cacheStore,
+    _prerender: prerender,
     _explicitTaggedStores: explicitTaggedStores,
     _requestTags: new Set<string>(),
     _cacheProfiles: cacheProfiles,

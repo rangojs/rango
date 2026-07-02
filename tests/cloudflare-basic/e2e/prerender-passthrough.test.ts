@@ -281,11 +281,15 @@ test.describe("prerender passthrough bundle output (production)", () => {
     ssrBundle = concatBundleContents(path.join(DIST, "rsc/ssr/assets"));
   });
 
-  test("prerender definitions are evicted from RSC bundle", () => {
-    // GuidesDetailDef (Prerender def) should be replaced with a stub
-    expect(prerenderHandlersBundle).toMatch(
-      /const\s+GuidesDetailDef\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
+  test("onDemand prerender definition is RETAINED in RSC bundle", () => {
+    // GuidesDetailDef opts into on-demand (Prerender(..., { onDemand })), so the
+    // bundle-eviction pass must KEEP its producer body — router.prerender() has
+    // to invoke it at runtime. It is therefore NOT replaced with a stub.
+    expect(prerenderHandlersBundle).not.toMatch(
+      /(?:const|let|var)\s+GuidesDetailDef\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
     );
+    // The retained producer keeps its build-handler marker in the RSC bundle.
+    expect(prerenderHandlersBundle).toContain("guide-source");
   });
 
   test("PaginatedArticlesDef is evicted from RSC bundle", () => {

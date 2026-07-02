@@ -47,7 +47,7 @@ export type ParamsFor<TRoutes, TName extends keyof TRoutes> = ExtractParams<
 /**
  * Check if an object type has any keys
  */
-type IsEmptyObject<T> = keyof T extends never ? true : false;
+export type IsEmptyObject<T> = keyof T extends never ? true : false;
 
 /**
  * Extract search schema from a route entry.

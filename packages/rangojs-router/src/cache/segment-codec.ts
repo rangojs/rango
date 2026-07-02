@@ -62,11 +62,15 @@ export function stringToStream(str: string): ReadableStream<Uint8Array> {
  */
 export async function rscSerialize(
   value: unknown,
+  options?: { onError?: (error: unknown) => void },
 ): Promise<string | undefined> {
   if (value === undefined || value === null) return undefined;
 
   const temporaryReferences = createTemporaryReferenceSet();
-  const stream = renderToReadableStream(value, { temporaryReferences });
+  const stream = renderToReadableStream(value, {
+    temporaryReferences,
+    onError: options?.onError,
+  });
   return streamToString(stream);
 }
 
@@ -133,7 +137,15 @@ export const deserializeComponent: (encoded: string) => Promise<unknown> =
  */
 export async function serializeSegments(
   segments: ResolvedSegment[],
+  // onError observes errors thrown while Flight-encoding a component/layout —
+  // e.g. a deep async child calling cookies(). React embeds such an error as a
+  // Flight error row and completes the stream, so the caller can't see it
+  // otherwise. The on-demand prerender producer uses this to avoid baking a
+  // personalized/failed render into a shared payload; default undefined keeps
+  // build/dev/runtime-cache serialization exactly as-is.
+  options?: { onError?: (error: unknown) => void },
 ): Promise<SerializedSegmentData[]> {
+  const onError = options?.onError;
   return Promise.all(
     segments.map(async (segment): Promise<SerializedSegmentData> => {
       const temporaryReferences = createTemporaryReferenceSet();
@@ -147,6 +159,7 @@ export async function serializeSegments(
       // Serialize the component to RSC stream
       const stream = renderToReadableStream(componentResolved, {
         temporaryReferences,
+        onError,
       });
 
       // RSC-serialize loading: "null" string distinguishes explicit null from undefined
@@ -154,7 +167,7 @@ export async function serializeSegments(
         segment.loading !== undefined
           ? segment.loading === null
             ? "null"
-            : await rscSerialize(segment.loading)
+            : await rscSerialize(segment.loading, { onError })
           : undefined;
 
       // Await loaderData / loaderDataPromise if they're Promises
@@ -175,9 +188,9 @@ export async function serializeSegments(
         encodedLoaderDataPromise,
       ] = await Promise.all([
         streamToString(stream),
-        segment.layout ? rscSerialize(segment.layout) : undefined,
-        rscSerialize(loaderDataResolved),
-        rscSerialize(loaderDataPromiseResolved),
+        segment.layout ? rscSerialize(segment.layout, { onError }) : undefined,
+        rscSerialize(loaderDataResolved, { onError }),
+        rscSerialize(loaderDataPromiseResolved, { onError }),
       ]);
 
       return {

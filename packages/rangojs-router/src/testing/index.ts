@@ -56,6 +56,24 @@ export type {
 export { dispatch } from "./dispatch.js";
 export type { DispatchOptions } from "./dispatch.js";
 
+// On-demand prerender: an in-memory WritablePrerenderStore fake for unit-testing
+// code that calls router.prerender(). Dep-free (a plain Map), so it stays on this
+// React/RSC-free barrel. See @rangojs/router/prerender for the store contracts.
+export { createMemoryPrerenderStore } from "../prerender/memory-prerender-store.js";
+export type {
+  MemoryPrerenderStore,
+  MemoryPrerenderStoreOptions,
+} from "../prerender/memory-prerender-store.js";
+export type {
+  WritablePrerenderStore,
+  PrerenderStoredEntry,
+  PrerenderKey,
+} from "../prerender/writable-store.js";
+export type {
+  PrerenderConfig,
+  PrerenderResult,
+} from "../prerender/on-demand.js";
+
 export {
   assertCacheStatus,
   assertCacheDecision,

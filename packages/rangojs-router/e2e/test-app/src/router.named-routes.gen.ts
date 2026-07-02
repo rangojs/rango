@@ -239,6 +239,8 @@ export const NamedRoutes = {
   negotiateTestMd: "/negotiate-test",
   notFoundNoBoundary: "/not-found-no-boundary",
   "ns.nsChild": "/ns-reverse",
+  onDemandDetail: "/on-demand/:slug",
+  onDemandTrigger: "/od-trigger/:slug",
   "optionalInclude.category": "/oi/:locale?/c/:slug",
   "optionalInclude.index": "/oi/:locale?",
   orphanFetchable: "/orphan-fetchable",

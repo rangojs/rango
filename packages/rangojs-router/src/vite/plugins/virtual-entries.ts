@@ -102,7 +102,12 @@ export default function handler(request, env) {
   if (!_handler) {
     _handler = createRSCHandler({
       router,
-      version: VERSION,
+      // Forward the router's version (createRouter({ version })), not the raw
+      // VERSION default: the on-demand prerender overlay keys off buildId =
+      // version ?? VERSION on both the trigger and serve sides, so a custom
+      // version that isn't forwarded here makes every overlay read miss. Same
+      // forwarding gap the nonce comment below documents.
+      version: router.version ?? VERSION,
       // Forward the router's CSP nonce provider. createRSCHandler reads the
       // provider only from options.nonce; without this, createRouter({ nonce })
       // is silently dropped on the Node preset (the Cloudflare path wires it via

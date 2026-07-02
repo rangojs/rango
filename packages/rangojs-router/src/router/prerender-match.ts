@@ -31,6 +31,8 @@ import type {
   SegmentHandleData,
 } from "../cache/types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
+import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 
 export interface PrerenderMatchDeps<TEnv = any> {
   findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
@@ -59,6 +61,14 @@ export async function matchForPrerender<TEnv = any>(
   buildEnv?: TEnv,
   /** Dev-only: check getParams() for passthrough routes to skip unknown params. */
   devMode?: boolean,
+  /**
+   * Requestless on-demand refresh (router.prerender()). Arms the personalization
+   * guard: cookies()/headers()/response mutations throw a
+   * PrerenderPersonalizationError so the caller maps a personalized render to
+   * skipped-personalized instead of baking a shared payload. `buildEnv` here is
+   * the live trigger env, not the shared build env.
+   */
+  onDemand?: boolean,
 ): Promise<{
   segments: SerializedSegmentData[];
   /** RSC-encoded handle map ("" when none) — see handle-snapshot.ts. Encoded in
@@ -72,6 +82,9 @@ export async function matchForPrerender<TEnv = any>(
    *  the sinks store it as-is (no longer merge raw records). */
   interceptHandles?: string;
   passthrough?: true;
+  /** Route-level onDemand config (ttl/tags) read off the route entry; only set
+   *  when `onDemand` and the route declared an onDemand object literal. */
+  onDemandConfig?: OnDemandRouteConfig;
 } | null> {
   // 1. Find the matching route entry
   const matched = deps.findMatch(pathname);
@@ -111,6 +124,23 @@ export async function matchForPrerender<TEnv = any>(
       entries.push(entry);
     }
 
+    // On-demand refresh: read the route's onDemand config (ttl/tags) off the
+    // retained route entry. `tags` is a function, so it can't ride the trie; the
+    // trigger resolves it from here. Only an object literal carries config;
+    // `onDemand: true` uses router-level defaults (config stays undefined).
+    let onDemandConfig: OnDemandRouteConfig | undefined;
+    if (onDemand) {
+      const routeEntry = entries.find(
+        (e) =>
+          e.type === "route" &&
+          !!(e as { prerenderDef?: unknown }).prerenderDef,
+      ) as { prerenderDef?: { options?: { onDemand?: unknown } } } | undefined;
+      const od = routeEntry?.prerenderDef?.options?.onDemand;
+      if (od && typeof od === "object") {
+        onDemandConfig = od as OnDemandRouteConfig;
+      }
+    }
+
     // 3b. Dev-mode passthrough shortcut: if the route is a Passthrough route
     // and has getParams(), check if the matched params are in the known list.
     // In production, only known params are pre-rendered; unknown params fall
@@ -119,7 +149,10 @@ export async function matchForPrerender<TEnv = any>(
     // Vars collected from getParams() probe — merged into render context below.
     let devProbeBuildVars: Record<string, any> | undefined;
 
-    if (devMode && matchedPassthroughRoute) {
+    // On-demand refresh renders exactly the requested param set, even one not
+    // returned by getParams() (that is the point of an explicit refresh), so the
+    // dev getParams() passthrough probe is skipped for onDemand.
+    if (devMode && matchedPassthroughRoute && !onDemand) {
       const routeEntry = entries.find(
         (
           e,
@@ -190,6 +223,11 @@ export async function matchForPrerender<TEnv = any>(
     const stubRes = new Response(null, { status: 200 });
     const minimalRequestContext: RequestContext<TEnv> = {
       env: buildEnv ?? ({} as TEnv),
+      // Requestless refresh: arm the personalization guard so standalone
+      // cookies()/headers() (and the cache-directive helpers) throw a
+      // PrerenderPersonalizationError, which the producer maps to
+      // skipped-personalized. Build/dev prerender leave this unset.
+      ...(onDemand ? { _onDemandProducer: true as const } : {}),
       request: new Request("http://prerender" + pathname),
       url: new URL("http://prerender" + pathname),
       originalUrl: new URL("http://prerender" + pathname),
@@ -246,6 +284,7 @@ export async function matchForPrerender<TEnv = any>(
         matchedPassthroughRoute,
         buildEnv,
         devMode,
+        onDemand,
       );
 
       // 7. Wire use() for handles only (loaders throw)
@@ -280,10 +319,31 @@ export async function matchForPrerender<TEnv = any>(
       handleStore.seal();
       await handleStore.settled;
 
-      // 12. Serialize segments using the cache serializer
+      // 12. Serialize segments using the cache serializer.
+      // On-demand refresh: capture errors thrown DURING Flight encoding — a deep
+      // async child calling cookies()/headers() throws here, not in
+      // resolveAllSegments, and React would otherwise embed it as a Flight error
+      // row and complete the stream, baking a personalized/failed render into the
+      // shared payload as a healthy 200. Surface the captured error so the trigger
+      // maps it to skipped-personalized / render-failed and keeps the old entry.
       const { serializeSegments } = await import("../cache/segment-codec.js");
       const { encodeHandles } = await import("../cache/handle-snapshot.js");
-      const serializedSegments = await serializeSegments(nonLoaderSegments);
+      const serializationErrors: unknown[] = [];
+      const serializedSegments = await serializeSegments(
+        nonLoaderSegments,
+        onDemand ? { onError: (e) => serializationErrors.push(e) } : undefined,
+      );
+      // Surface ONLY a personalization error (the cross-user-leak vector this
+      // guards). Other serialization errors are left to React's existing
+      // embed-error-row behavior — same as build-time prerender, which bakes an
+      // error/notFound boundary's fallback as a valid render; treating those as
+      // failures would regress routes that legitimately render a boundary.
+      const personalized = serializationErrors.find((e) =>
+        isPrerenderPersonalizationError(e),
+      );
+      if (onDemand && personalized) {
+        throw personalized;
+      }
 
       // 13. Collect handle data per segment (skip segments with no handle data).
       // Encoded through the Flight codec (not stored raw) so Promise/ReactNode
@@ -418,6 +478,7 @@ export async function matchForPrerender<TEnv = any>(
         params: matchedParams,
         interceptSegments,
         interceptHandles,
+        onDemandConfig,
       };
     });
   });

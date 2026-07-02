@@ -113,6 +113,7 @@ export function createFindMatch<TEnv = any>(
             redirectTo: trieResult.redirectTo,
             ...(trieResult.pr ? { pr: true } : {}),
             ...(trieResult.pt ? { pt: true } : {}),
+            ...(trieResult.od ? { od: true } : {}),
             ...(trieResult.responseType
               ? { responseType: trieResult.responseType }
               : {}),

@@ -144,6 +144,18 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
               ? (handler.handler as Handler<any, any, TEnv>)
               : () => handler;
 
+    // On-demand opt-in lives on the (inner) Prerender def's options for both
+    // plain Prerender and Passthrough-wrapped routes. Presence (truthy, not
+    // false) marks the route ISR-eligible; the trie od flag + producer retention
+    // key off it.
+    const onDemandDef = isPassthroughHandler(handler)
+      ? handler.prerenderDef
+      : isPrerenderHandler(handler)
+        ? handler
+        : undefined;
+    const onDemandOpt = onDemandDef?.options?.onDemand;
+    const isOnDemand = onDemandOpt != null && onDemandOpt !== false;
+
     const entry = {
       ...emptySegmentBase(),
       id: namespace,
@@ -166,6 +178,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
               prerenderDef: handler as PrerenderHandlerDefinition,
             }
           : {}),
+      ...(isOnDemand ? { isOnDemand: true as const } : {}),
       ...(isStaticHandler(handler)
         ? {
             isStaticPrerender: true as const,

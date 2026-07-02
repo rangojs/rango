@@ -6,6 +6,7 @@ import {
   type Middleware,
 } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
 import { urlpatterns } from "./urls.js";
 import { onErrorLog } from "./error-log.js";
 
@@ -13,6 +14,12 @@ import { onErrorLog } from "./error-log.js";
 export const cacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
+
+// Writable prerender overlay for on-demand (ISR-style) refresh. A single
+// in-memory instance persists across requests within this node process, so the
+// router.prerender() trigger and the serve-path overlay lookup share it in BOTH
+// dev and the production preview build.
+export const prerenderStore = createMemoryPrerenderStore();
 
 /**
  * App-level bindings (platform resources like DB, KV, etc.)
@@ -172,6 +179,7 @@ export const router = createRouter<AppEnv>({
     (globalThis as { process?: { env?: Record<string, string | undefined> } })
       .process?.env?.RANGO_STRICT !== "off",
   cache: { store: cacheStore },
+  prerender: { store: prerenderStore, defaultTtl: 3600 },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },

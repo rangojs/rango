@@ -79,6 +79,12 @@ export interface RouteEntry<TEnv = any> {
    */
   passthroughRouteKeys?: Set<string>;
 
+  /**
+   * Route keys in this entry that opted into on-demand prerender.
+   * Used by the non-trie match path to set the `od` flag.
+   */
+  onDemandRouteKeys?: Set<string>;
+
   // === Lazy evaluation fields ===
 
   /**

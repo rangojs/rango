@@ -323,6 +323,7 @@ export async function discoverRouters(
       // Collect prerender route names and response type routes from all manifests
       const prerenderRouteNames = new Set<string>();
       const passthroughRouteNames = new Set<string>();
+      const onDemandRouteNames = new Set<string>();
       const mergedResponseTypeRoutes: Record<string, string> = {};
       for (const { manifest } of allManifests) {
         if (manifest.prerenderRoutes) {
@@ -333,6 +334,11 @@ export async function discoverRouters(
         if (manifest.passthroughRoutes) {
           for (const name of manifest.passthroughRoutes) {
             passthroughRouteNames.add(name);
+          }
+        }
+        if (manifest.onDemandRoutes) {
+          for (const name of manifest.onDemandRoutes) {
+            onDemandRouteNames.add(name);
           }
         }
         if (manifest.responseTypeRoutes) {
@@ -350,6 +356,7 @@ export async function discoverRouters(
         prerenderRouteNames,
         passthroughRouteNames,
         mergedResponseTypeRoutes,
+        onDemandRouteNames,
       );
 
       // Build per-router tries for multi-router isolation. Uses the single

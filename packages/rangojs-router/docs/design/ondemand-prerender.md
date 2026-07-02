@@ -1,7 +1,33 @@
 # On-demand prerender
 
-**Status:** Proposed. This doc sketches the target API and the safety rules for
-ISR-style prerender refresh from a running app.
+**Status:** Implemented (v1). This doc is the design of record for ISR-style
+prerender refresh from a running app; the API and safety rules below ship in
+`@rangojs/router`.
+
+**Shipped in v1:** the `prerender` router option, `router.prerender()` /
+`.many()` / `.invalidateTags()`, the `Prerender(..., { onDemand })` opt-in and
+`od` trie flag, per-request store resolution, the writable durable overlay read
+path with SWR scheduling, the requestless producer + personalization guard, the
+versioned envelope with build-scoped keys and verify-on-read, producer-code
+retention in the bundle, and the in-memory (`@rangojs/router/prerender`) and
+Cloudflare KV (`@rangojs/router/prerender/cloudflare`) stores.
+
+**Deferred (as the phasing below anticipates):** intercept-variant refresh (the
+producer renders the main variant first) — INTERIM CONSISTENCY CALL-OUT: after a
+`router.prerender()` refresh of a route's main variant, an intercepted
+(soft-nav/modal) navigation to that route keeps serving the older _bundled_
+intercept artifact until the next deploy, because the trigger writes only the
+main-variant key and the serve path's `:i` lookup finds no overlay entry. The
+modal and the full page can therefore show different data in the window between a
+refresh and a redeploy; `prerender.invalidateTags()` does not reach the intercept
+variant. Track under the intercept-refresh follow-up. Also deferred: build-time
+durable seeding (Phase 8),
+a Vercel Blob adapter (the interface is platform-agnostic; the concrete v1
+adapters are in-memory + CF KV), and a tombstone/delete invalidation mode
+(invalidation is mark-stale only). One status was added beyond the original
+result union: `skipped-passthrough`, returned when a `Passthrough + onDemand`
+route's build handler returns `ctx.passthrough()` for the refreshed param (no
+shared payload to persist; the live handler keeps serving it).
 
 Start from the existing prerender mental model: prerendering is cached RSC
 segment payloads, not static HTML. Build-time prerender writes immutable payloads
@@ -137,6 +163,20 @@ post-bundle pass that already skips a names set for Passthrough handlers
 `onDemandRouteNames` set and eviction skips those exports the same way. That in
 turn means `onDemand` must be statically detectable in the `Prerender()` call
 at discovery time — a literal in the options object, not a computed value.
+
+**Accepted constraint (static literal required).** There are two independent
+detection surfaces and they are NOT cross-checked at build time: the runtime
+`od` trie flag is set from the manifest's _value_ of `onDemand` (any truthy
+value works), while producer _retention_ is a regex over the bundled call body
+(`/onDemand\s*:\s*(?:true|!0|\{)/`) that only matches a literal. So a
+boolean-typed identifier — `Prerender(..., { onDemand: SOME_CONST })` — gets
+`od: true` at runtime but has its producer evicted from the bundle, and every
+`router.prerender()` refresh of that route then returns `render-failed` with no
+build-time diagnostic. This is an accepted v1 constraint: write `onDemand` as a
+literal (`true` or `{ … }`), which the JSDoc and every example do. A build-time
+error when the manifest-derived onDemand-route set and the regex-derived
+retention set disagree (joinable via each route's `prerenderDef.$$id`) is the
+right closing move and is tracked as a follow-up.
 
 Plain `Prerender()` remains build-only and can still be evicted from production
 bundles. `Passthrough()` alone is not an on-demand opt-in. If a `Passthrough()`

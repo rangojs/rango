@@ -25,6 +25,8 @@ export interface TrieMatchResult {
   pr?: true;
   /** Passthrough: handler kept for live fallback on unknown params */
   pt?: true;
+  /** On-demand prerender eligible (router.prerender() refreshable) */
+  od?: true;
   /** Response type for non-RSC routes (json, text, image, any) */
   responseType?: string;
   /** Negotiate variants: response-type routes sharing this path */
@@ -335,6 +337,7 @@ function validateAndBuild(
   if (redirectTo) result.redirectTo = redirectTo;
   if (leaf.pr) result.pr = true;
   if (leaf.pt) result.pt = true;
+  if (leaf.od) result.od = true;
   if (leaf.rt) result.responseType = leaf.rt;
   if (leaf.nv) result.negotiateVariants = leaf.nv;
   if (leaf.rf) result.rscFirst = true;

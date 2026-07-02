@@ -115,6 +115,16 @@
       "react-server": "./src/cloudflare/index.ts",
       "default": "./src/cloudflare/index.ts"
     },
+    "./prerender": {
+      "types": "./src/prerender/index.ts",
+      "react-server": "./src/prerender/index.ts",
+      "default": "./src/prerender/index.ts"
+    },
+    "./prerender/cloudflare": {
+      "types": "./src/prerender/cloudflare.ts",
+      "react-server": "./src/prerender/cloudflare.ts",
+      "default": "./src/prerender/cloudflare.ts"
+    },
     "./theme": {
       "types": "./src/theme/index.ts",
       "default": "./src/theme/index.ts"

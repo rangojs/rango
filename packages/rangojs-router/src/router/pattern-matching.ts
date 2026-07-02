@@ -341,6 +341,8 @@ export interface RouteMatchResult<TEnv = any> {
   pr?: true;
   /** Passthrough: handler kept for live fallback on unknown params (from trie) */
   pt?: true;
+  /** On-demand prerender eligible (router.prerender() refreshable) */
+  od?: true;
   /** Response type for non-RSC routes (json, text, image, any) */
   responseType?: string;
   /** Negotiate variants: response-type routes sharing this path */
@@ -466,6 +468,9 @@ export function findMatch<TEnv>(
       const ptFlag = entry.passthroughRouteKeys?.has(routeKey)
         ? { pt: true as const }
         : {};
+      const odFlag = entry.onDemandRouteKeys?.has(routeKey)
+        ? { od: true as const }
+        : {};
 
       const match = regex.exec(pathname);
       if (match) {
@@ -495,6 +500,7 @@ export function findMatch<TEnv>(
             redirectTo: pathname + "/",
             ...prFlag,
             ...ptFlag,
+            ...odFlag,
           };
         } else if (trailingSlashMode === "never" && pathnameHasTrailingSlash) {
           return {
@@ -504,6 +510,7 @@ export function findMatch<TEnv>(
             redirectTo: pathname.slice(0, -1),
             ...prFlag,
             ...ptFlag,
+            ...odFlag,
           };
         }
 
@@ -513,6 +520,7 @@ export function findMatch<TEnv>(
           params,
           ...prFlag,
           ...ptFlag,
+          ...odFlag,
         };
       }
 
@@ -531,6 +539,7 @@ export function findMatch<TEnv>(
             params,
             ...prFlag,
             ...ptFlag,
+            ...odFlag,
           };
         } else if (trailingSlashMode === "never") {
           if (pathnameHasTrailingSlash) {
@@ -541,6 +550,7 @@ export function findMatch<TEnv>(
               redirectTo: alternatePathname,
               ...prFlag,
               ...ptFlag,
+              ...odFlag,
             };
           }
           return {
@@ -549,6 +559,7 @@ export function findMatch<TEnv>(
             params,
             ...prFlag,
             ...ptFlag,
+            ...odFlag,
           };
         } else if (trailingSlashMode === "always") {
           if (!pathnameHasTrailingSlash) {
@@ -559,6 +570,7 @@ export function findMatch<TEnv>(
               redirectTo: alternatePathname,
               ...prFlag,
               ...ptFlag,
+              ...odFlag,
             };
           }
           return {
@@ -567,6 +579,7 @@ export function findMatch<TEnv>(
             params,
             ...prFlag,
             ...ptFlag,
+            ...odFlag,
           };
         } else {
           const canonicalPath = hasTrailingSlash
@@ -579,6 +592,7 @@ export function findMatch<TEnv>(
             redirectTo: canonicalPath,
             ...prFlag,
             ...ptFlag,
+            ...odFlag,
           };
         }
       }

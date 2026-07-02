@@ -29,19 +29,34 @@ export function findMatchingParenInBundle(
 
 /**
  * Scan a bundled chunk for handler exports and extract their names + $$id values.
- * Optionally detects passthrough flag. @internal Exported for testing only.
+ * Optionally detects the passthrough and onDemand flags by parsing the call body.
+ * @internal Exported for testing only.
  */
 export function extractHandlerExportsFromChunk(
   chunkCode: string,
   handlerModules: Map<string, string[]>,
   fnName: string,
   detectPassthrough: boolean,
-): Array<{ name: string; handlerId: string; passthrough: boolean }> {
+  detectOnDemand = false,
+): Array<{
+  name: string;
+  handlerId: string;
+  passthrough: boolean;
+  onDemand: boolean;
+}> {
   const handlers: Array<{
     name: string;
     handlerId: string;
     passthrough: boolean;
+    onDemand: boolean;
   }> = [];
+
+  // Only parse a call body (an O(callBody) paren walk per export) when the whole
+  // chunk actually contains the marker we're detecting — the common case (no
+  // passthrough/onDemand opt-in anywhere in the chunk) skips the walk entirely.
+  const scanPassthrough =
+    detectPassthrough && chunkCode.includes("passthrough");
+  const scanOnDemand = detectOnDemand && chunkCode.includes("onDemand");
 
   for (const [, handlerNames] of handlerModules) {
     for (const name of handlerNames) {
@@ -53,7 +68,8 @@ export function extractHandlerExportsFromChunk(
       if (!match) continue;
 
       let isPassthrough = false;
-      if (detectPassthrough) {
+      let isOnDemand = false;
+      if (scanPassthrough || scanOnDemand) {
         const eFnName = escapeRegExp(fnName);
         const callStartRe = new RegExp(
           `(?:const|let|var)\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
@@ -64,11 +80,27 @@ export function extractHandlerExportsFromChunk(
           const closePos = findMatchingParenInBundle(chunkCode, afterOpen);
           if (closePos !== -1) {
             const callBody = chunkCode.slice(callStart.index, closePos);
-            isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody); // !0 is minified true
+            if (scanPassthrough) {
+              isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody); // !0 is minified true
+            }
+            if (scanOnDemand) {
+              // onDemand opts in only as a literal `true` (minified `!0`) or an
+              // object literal. Requiring one of those values (rather than bare
+              // key presence) avoids retaining a producer whose body merely
+              // contains an `onDemand:` key — e.g. `{ onDemand: false }` or a
+              // ternary — while still matching every valid opt-in (a computed
+              // value is unsupported by design, so a miss there is intended).
+              isOnDemand = /onDemand\s*:\s*(?:true|!0|\{)/.test(callBody);
+            }
           }
         }
       }
-      handlers.push({ name, handlerId: match[1], passthrough: isPassthrough });
+      handlers.push({
+        name,
+        handlerId: match[1],
+        passthrough: isPassthrough,
+        onDemand: isOnDemand,
+      });
     }
   }
 
@@ -82,7 +114,12 @@ export function extractHandlerExportsFromChunk(
  */
 export function evictHandlerCode(
   code: string,
-  exports: Array<{ name: string; handlerId: string; passthrough?: boolean }>,
+  exports: Array<{
+    name: string;
+    handlerId: string;
+    passthrough?: boolean;
+    onDemand?: boolean;
+  }>,
   fnName: string,
   brand: string,
 ): { code: string; savedBytes: number } | null {
@@ -90,8 +127,10 @@ export function evictHandlerCode(
   let modified = code;
 
   const eFnName = escapeRegExp(fnName);
-  for (const { name, handlerId, passthrough } of exports) {
-    if (passthrough) continue;
+  for (const { name, handlerId, passthrough, onDemand } of exports) {
+    // Keep the producer body for passthrough (live fallback) and onDemand
+    // (router.prerender() must be able to invoke the retained producer).
+    if (passthrough || onDemand) continue;
 
     const eName = escapeRegExp(name);
     // Match const/let/var: Rolldown (Vite 8) emits top-level bindings in the

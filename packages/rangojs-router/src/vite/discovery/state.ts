@@ -47,7 +47,12 @@ export interface PrecomputedEntry {
 
 export interface ChunkInfo {
   fileName: string;
-  exports: Array<{ name: string; handlerId: string; passthrough: boolean }>;
+  exports: Array<{
+    name: string;
+    handlerId: string;
+    passthrough: boolean;
+    onDemand: boolean;
+  }>;
 }
 
 export interface PerRouterManifestEntry {

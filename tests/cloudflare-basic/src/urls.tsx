@@ -1,4 +1,10 @@
-import { urls, updateTag, revalidateTag, Meta } from "@rangojs/router";
+import {
+  urls,
+  updateTag,
+  revalidateTag,
+  Meta,
+  type Handler,
+} from "@rangojs/router";
 import { Suspense } from "react";
 import { Link } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
@@ -84,6 +90,19 @@ import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
+// On-demand prerender trigger handler. Explicitly typed as Handler so the lazy
+// `import("./router.js")` inside it does not force TypeScript to infer this
+// module's type from the router (which is built from urlpatterns) — that would
+// be a circular type. Returns the PrerenderResult as JSON for the e2e.
+const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("./router.js");
+  const result = await router.prerender(
+    { route: "guides.detail", params: { slug: ctx.params.slug } },
+    { env: ctx.env, ctx: ctx.executionContext },
+  );
+  return Response.json(result);
+};
+
 /**
  * Main URL patterns - Django-style routing API
  */
@@ -119,6 +138,14 @@ export const urlpatterns = urls(
       },
       { name: "testClearErrorLog" },
     ),
+
+    // On-demand (ISR-style) prerender trigger. Renders the guides.detail build
+    // handler requestlessly and stores it in the KV overlay so the next
+    // /guides/:slug request is served from the overlay, short-circuiting the
+    // Passthrough live handler. Defined as a top-level typed Handler (below) so
+    // its lazy `import("./router.js")` does not create a type cycle with the
+    // router (which is initialized from these urlpatterns).
+    path("/guide-trigger/:slug", GuidesTrigger, { name: "guidesTrigger" }),
 
     // robots.txt (response route)
     path.text(
