@@ -59,22 +59,57 @@ appears, not up front.
 To decide where something can live: **does it define a URL? structure, stays in
 `urls()`. Does it modify a node? config, compose freely.**
 
+## Passing data down the tree
+
+Four ways to get per-request data to a segment below you, ordered safest-first.
+Reach for the next rung only when the one above doesn't fit — the higher rungs
+are immune to partial-revalidation staleness by construction.
+
+1. **A loader** (`loader()` + `useLoader()`). Loaders resolve fresh on every
+   pass — full renders, action revalidations, cache hits. Nothing to keep in
+   sync. If the data can be a loader, make it a loader.
+2. **Middleware `ctx.set()`**. Route middleware wraps every render pass,
+   including post-action revalidation and PE re-renders, so its variables are
+   never stale. Right for request-shaped context: auth, session, locale.
+3. **Handler `ctx.set()` to its own children** —
+   `path(handler, ..., () => [layout(...)])`. Orphan layouts and their
+   parallels belong to the route entry: on an action the whole entry re-runs
+   together by default (handler-first preserved), so the data stays consistent
+   with zero configuration. Right for data the page must compute anyway —
+   e.g. pagination, where the handler's search decides how many pages the
+   layout chrome renders. One rule: if you narrow the entry's revalidation
+   with a predicate that can return a hard `false`, put the same contract on
+   the entry's children too — a hard `false` on one side of a
+   producer/consumer pair desyncs it.
+4. **Cross-entry sharing** — an outer `layout()` entry feeding descendants.
+   Outer entries do NOT revalidate on actions by default (the revalidation
+   trace calls this `action:parent-chain-skip`), so this rung always requires
+   a shared revalidation contract: the same named `revalidate()` function on
+   the producer and every consumer. See `/layout` → "Revalidation Contracts".
+   Before writing one, check whether the producer can move down a rung.
+
+The failure mode this ladder prevents: a consumer re-runs, its producer
+doesn't, `ctx.get()` reads `undefined`, and fallback UI silently replaces good
+UI after an action. Rungs 1–3 make that unrepresentable; rung 4 makes it a
+stated, greppable contract.
+
 ## Pick a primitive
 
-| I need to…                            | Use                              | Skill                   |
-| ------------------------------------- | -------------------------------- | ----------------------- |
-| render data fresh every request       | `loader()` + `useLoader()`       | /loader                 |
-| cache a rendered subtree              | `cache()` on a segment           | /caching                |
-| cache one function/component's result | `"use cache"`                    | /use-cache              |
-| cache a loader's data                 | `loader(L, () => [cache()])`     | /loader, /caching       |
-| re-render a segment after an action   | `revalidate()`                   | /loader                 |
-| mutate                                | `"use server"` action            | /server-actions         |
-| debug a slow request                  | `debugPerformance` / telemetry   | /observability          |
-| share config across routes            | factory returning a helper array | /composability          |
-| compose a sub-app / module            | `include()`                      | /route                  |
-| modal / soft navigation               | `intercept()`                    | /intercept              |
-| pre-render a route at build time      | `Prerender(...)` wrapper         | /prerender              |
-| stream SSE / upgrade a WebSocket      | `path.stream()` / `path.any()`   | /streams-and-websockets |
+| I need to…                            | Use                                | Skill                   |
+| ------------------------------------- | ---------------------------------- | ----------------------- |
+| render data fresh every request       | `loader()` + `useLoader()`         | /loader                 |
+| cache a rendered subtree              | `cache()` on a segment             | /caching                |
+| cache one function/component's result | `"use cache"`                      | /use-cache              |
+| cache a loader's data                 | `loader(L, () => [cache()])`       | /loader, /caching       |
+| re-render a segment after an action   | `revalidate()`                     | /loader                 |
+| mutate                                | `"use server"` action              | /server-actions         |
+| debug a slow request                  | `debugPerformance` / telemetry     | /observability          |
+| share config across routes            | factory returning a helper array   | /composability          |
+| compose a sub-app / module            | `include()`                        | /route                  |
+| modal / soft navigation               | `intercept()`                      | /intercept              |
+| pre-render a route at build time      | `Prerender(...)` wrapper           | /prerender              |
+| feed live loaders from a cached shell | replayed handle + `ctx.rendered()` | /shell-manifest         |
+| stream SSE / upgrade a WebSocket      | `path.stream()` / `path.any()`     | /streams-and-websockets |
 
 ## Invariants
 
@@ -212,15 +247,16 @@ Grouped by concern — read when you need to…
 
 **Data & caching** — fetch, mutate, and cache:
 
-| Skill             | Description                                                             |
-| ----------------- | ----------------------------------------------------------------------- |
-| `/loader`         | Data loaders with `createLoader()` and `revalidate()`                   |
-| `/server-actions` | Mutations with `"use server"`, useActionState, validation, revalidation |
-| `/caching`        | Segment caching with memory or KV stores                                |
-| `/use-cache`      | Function-level caching with `"use cache"` directive                     |
-| `/cache-guide`    | When to use `cache()` vs `"use cache"` — differences and decision guide |
-| `/document-cache` | Edge caching with Cache-Control headers                                 |
-| `/prerender`      | Pre-render route segments at build time (Passthrough live fallback)     |
+| Skill             | Description                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------ |
+| `/loader`         | Data loaders with `createLoader()` and `revalidate()`                                      |
+| `/server-actions` | Mutations with `"use server"`, useActionState, validation, revalidation                    |
+| `/caching`        | Segment caching with memory or KV stores                                                   |
+| `/use-cache`      | Function-level caching with `"use cache"` directive                                        |
+| `/cache-guide`    | When to use `cache()` vs `"use cache"` — differences and decision guide                    |
+| `/document-cache` | Edge caching with Cache-Control headers                                                    |
+| `/prerender`      | Pre-render route segments at build time (Passthrough live fallback)                        |
+| `/shell-manifest` | Replayed handles as cache metadata read by live loaders (frozen shell, batched live holes) |
 
 **Client & presentation** — build the client-side UX:
 

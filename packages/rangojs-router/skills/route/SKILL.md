@@ -154,6 +154,13 @@ first. Use `ctx.set(key, value)` to share data with children, who read it
 via `ctx.get(key)`. Caching wraps all segments together, so either all run
 or none do.
 
+This pattern is also safe under partial action revalidation: on an action,
+the route entry re-runs as a unit by default — route segment, loaders, and
+`belongsToRoute` children (orphan layouts, entry parallels) all seed
+revalidate-true, with handler-first ordering preserved. Handler-set data
+stays consistent with no configuration. See `/rango` → "Passing data down
+the tree" for the safest-first ladder.
+
 ### Typed context variables with createVar
 
 Use `createVar<T>()` to create a typed token for `ctx.set()`/`ctx.get()`.
@@ -240,9 +247,18 @@ Cacheable vars (the default) can be read freely inside cache scopes.
 > decides hit/miss/ttl/swr independently and never reads `revalidate()`. See
 > `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
 
-Handler-first guarantees apply within a single full render pass. For partial
-action revalidation, define named revalidation contracts and reuse them on both
-the producer route and the consumer child segments.
+With no `revalidate()` configured, an entry needs no contract: on an action
+the route handler and its children re-run together by default, so handler
+data stays consistent on its own. Contracts matter in two cases:
+
+1. **You narrow the entry's revalidation** with a predicate that can return a
+   hard `false` (e.g. bare `ctx.isAction(X)`). A hard `false` on one side of a
+   producer/consumer pair desyncs it — the child re-runs by default and reads
+   `undefined`, or vice versa. Put the same named contract on the route and
+   its dependent children so they narrow together.
+2. **The producer is an outer entry** (a standalone `layout()` above this
+   route). Outer entries skip action revalidation by default, so the shared
+   contract is mandatory — see `/layout` → "Revalidation Contracts".
 
 ```typescript
 // revalidation-contracts.ts

@@ -20,6 +20,11 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 
 ## Core Topics
 
+- [Why Rango](./why-rango.md) - the load-bearing ideas, each shown in code:
+  the explicit route tree, named routes, content-negotiated and type-inferred
+  response routes, the two freshness axes, live-by-default loaders, metadata
+  through handles, the shell manifest pattern, instant navigation with safe
+  invalidation, and semantics as a tested contract
 - [`README.md`](../README.md) - package overview and quick start
 - [Route definition rules](./route-definition-rules.md) - what the route DSL
   allows and rejects

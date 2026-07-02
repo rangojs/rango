@@ -94,6 +94,7 @@ The following docs in `packages/rangojs-router/docs/` must stay in sync with the
 - `docs/README.md` — docs navigation hub; update when adding or removing doc files
 - `docs/internal/feature-map.md` — export surface tables and capability inventory; update when exports, hooks, DSL primitives, or architectural layers change
 - `docs/internal/feature-file-map.md` — feature-to-source-file ownership map; update when files are added, removed, renamed, or when feature ownership shifts
+- `docs/why-rango.md` — consumer-facing positioning with a hard editorial bar: **nothing aspirational**. Every claim describes shipped, source-verified behavior, backed by a real-API snippet or a named greppable mechanism. Features in progress stay in `docs/design/` until they ship with dev+prod e2e coverage. When a public API referenced in one of its snippets changes, update this page in the same PR (see the editing contract in the HTML comment at the top of the file). `pnpm check:docs-api` (CI lint) verifies API identifiers referenced in why-rango.md and the package README still exist in router src
 
 When a PR changes exports, adds/removes source files, or introduces new features, update these docs in the same PR.
 

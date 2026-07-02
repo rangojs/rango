@@ -79,7 +79,11 @@ Mutation: `"use server"` actions via `useActionState`, imperative + `useAction`,
 Middleware: global `.use()` (header + `ctx.set` var) and route-level
 `middleware()` on a subtree.
 Caching: segment `cache({ ttl, swr })`, `"use cache: <profile>"` with
-`cacheProfiles`, loaders staying fresh inside a cached segment.
+`cacheProfiles`, loaders staying fresh inside a cached segment, and the
+shell-manifest pattern on `/manifest` — the cached shell pushes its rendered
+ids into a handle, replay-on-hit feeds the live `ManifestPricesLoader`
+(`ctx.rendered()`), so prices stay fresh under a frozen shell (see the
+`/shell-manifest` skill).
 Control flow: `errorBoundary()`, `notFoundBoundary()` (thrown
 `DataNotFoundError`), `redirect()`, global `notFound`.
 Streaming/UX: parallel slot with its own loader + `loading()`, `intercept()`

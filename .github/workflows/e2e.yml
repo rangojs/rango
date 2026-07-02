@@ -52,6 +52,9 @@ jobs:
       - name: Check internal doc links
         run: pnpm check:doc-links
 
+      - name: Check positioning-doc API references
+        run: pnpm check:docs-api
+
   format:
     needs: [debounce]
     runs-on: ubuntu-latest
