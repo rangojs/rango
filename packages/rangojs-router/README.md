@@ -10,7 +10,7 @@ everything past the core is opt-in.
 This page is a tour: it builds one small shop and meets the entire core API
 along the way — about six primitives. Everything else is opt-in and linked at
 the end. For the design rationale behind these APIs, read
-[Why Rango](./docs/why-rango.md); this page shows how it feels, that page
+[Why Rango](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/why-rango.md); this page shows how it feels, that page
 argues why it's right.
 
 ## Install
@@ -132,7 +132,7 @@ per group — while matching stays an `O(path length)` prefix trie, identical
 in dev and production. None of this is assumed: the trie is benchmarked
 in-repo against multi-thousand-route manifests, and the lazy guarantees are
 pinned by run-count tests (see
-[matching & lazy discovery](./docs/internal/matching-and-lazy-discovery.md)).
+[matching & lazy discovery](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/internal/matching-and-lazy-discovery.md)).
 Grow the tree without watching the boot time.
 
 That's a working site. Everything below adds to this app.
@@ -420,15 +420,15 @@ npx rango generate src/             # recursive scan
 
 ### Examples
 
-- [`e2e/mini`](./e2e/mini) — single-file demo app
-- [`cloudflare-basic`](../../tests/cloudflare-basic) — Cloudflare Workers with caching, loaders, theme, and pre-rendering
-- [`cloudflare-multi-router`](../../examples/cloudflare-multi-router) — multi-app host routing
+- [`e2e/mini`](https://github.com/ivogt/vite-rsc/tree/main/packages/rangojs-router/e2e/mini) — single-file demo app
+- [`cloudflare-basic`](https://github.com/ivogt/vite-rsc/tree/main/tests/cloudflare-basic) — Cloudflare Workers with caching, loaders, theme, and pre-rendering
+- [`cloudflare-multi-router`](https://github.com/ivogt/vite-rsc/tree/main/examples/cloudflare-multi-router) — multi-app host routing
 
 ### Going deeper
 
-- [Why Rango](./docs/why-rango.md) — the design rationale, claim by claim
-- [Docs index](./docs/README.md) — architecture, caching, prerender, testing
-- [Execution model](./docs/internal/execution-model.md) — the runtime contract
+- [Why Rango](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/why-rango.md) — the design rationale, claim by claim
+- [Docs index](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/README.md) — architecture, caching, prerender, testing
+- [Execution model](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/internal/execution-model.md) — the runtime contract
 
 ## License
 
