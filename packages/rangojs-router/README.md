@@ -340,25 +340,25 @@ That was the core: `path`/`layout`/`include`, names, loaders, actions +
 `revalidate`, `cache`, response routes. The rest is opt-in — reach for it
 when the requirement appears:
 
-| I need to…                                     | Skill                                                                                        |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| guard or shape requests (auth, headers)        | [`/middleware`](./skills/middleware/SKILL.md)                                                |
-| multi-column layouts, independent slots        | [`/parallel`](./skills/parallel/SKILL.md)                                                    |
-| open a route as a modal on soft navigation     | [`/intercept`](./skills/intercept/SKILL.md)                                                  |
-| compose route modules / sub-apps               | [`/route`](./skills/route/SKILL.md), [`/composability`](./skills/composability/SKILL.md)     |
-| cache a single function or component           | [`/use-cache`](./skills/use-cache/SKILL.md), [`/cache-guide`](./skills/cache-guide/SKILL.md) |
-| feed live loaders from a cached shell          | [`/shell-manifest`](./skills/shell-manifest/SKILL.md)                                        |
-| edge caching with Cache-Control                | [`/document-cache`](./skills/document-cache/SKILL.md)                                        |
-| light/dark mode without FOUC                   | [`/theme`](./skills/theme/SKILL.md)                                                          |
-| analytics / third-party scripts with CSP nonce | [`/scripts`](./skills/scripts/SKILL.md)                                                      |
-| locale routing                                 | [`/i18n`](./skills/i18n/SKILL.md)                                                            |
-| SSE and WebSockets                             | [`/streams-and-websockets`](./skills/streams-and-websockets/SKILL.md)                        |
-| multi-app routing by domain                    | [`/host-router`](./skills/host-router/SKILL.md)                                              |
-| animate navigations                            | [`/view-transitions`](./skills/view-transitions/SKILL.md)                                    |
-| test loaders, middleware, handlers, Flight     | [`/testing`](./skills/testing/SKILL.md)                                                      |
-| see where request time goes                    | [`/observability`](./skills/observability/SKILL.md)                                          |
+| I need to…                                      | Skill                                                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| guard or shape requests (auth, headers)         | [`/middleware`](./skills/middleware/SKILL.md)                                                |
+| multi-column layouts, independent slots         | [`/parallel`](./skills/parallel/SKILL.md)                                                    |
+| open a route as a modal on soft navigation      | [`/intercept`](./skills/intercept/SKILL.md)                                                  |
+| compose route modules / sub-apps                | [`/route`](./skills/route/SKILL.md), [`/composability`](./skills/composability/SKILL.md)     |
+| cache a single function or component            | [`/use-cache`](./skills/use-cache/SKILL.md), [`/cache-guide`](./skills/cache-guide/SKILL.md) |
+| feed live loaders from a cached shell           | [`/shell-manifest`](./skills/shell-manifest/SKILL.md)                                        |
+| edge caching with Cache-Control                 | [`/document-cache`](./skills/document-cache/SKILL.md)                                        |
+| light/dark mode without FOUC                    | [`/theme`](./skills/theme/SKILL.md)                                                          |
+| analytics / third-party scripts with CSP nonce  | [`/scripts`](./skills/scripts/SKILL.md)                                                      |
+| locale routing                                  | [`/i18n`](./skills/i18n/SKILL.md)                                                            |
+| SSE and WebSockets                              | [`/streams-and-websockets`](./skills/streams-and-websockets/SKILL.md)                        |
+| multi-app routing by domain                     | [`/host-router`](./skills/host-router/SKILL.md)                                              |
+| animate navigations                             | [`/view-transitions`](./skills/view-transitions/SKILL.md)                                    |
+| test loaders, middleware, handlers, Flight      | [`/testing`](./skills/testing/SKILL.md)                                                      |
+| see where request time goes                     | [`/observability`](./skills/observability/SKILL.md)                                          |
 | deploy to Vercel (cache store, tracing, output) | [`/vercel`](./skills/vercel/SKILL.md)                                                        |
-| compare Rango with Next.js / TanStack / Waku   | [`/comparison`](./skills/comparison/SKILL.md)                                                |
+| compare Rango with Next.js / TanStack / Waku    | [`/comparison`](./skills/comparison/SKILL.md)                                                |
 
 The [`/rango` skill](./skills/rango/SKILL.md) is the full catalog and the
 mental model that ties it together.
