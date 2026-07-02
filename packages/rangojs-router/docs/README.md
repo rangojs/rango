@@ -29,6 +29,9 @@ that route tree.
 
 - [Prerender design](./prerender-api-design.md) - build-time rendering and
   runtime cache lookup model
+- [On-demand prerender design](./design/ondemand-prerender.md) - proposed
+  ISR-style durable prerender refresh from fetch, cron, queues, workflows, and
+  webhooks
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching and cache profiles
 
