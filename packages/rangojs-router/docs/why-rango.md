@@ -12,6 +12,9 @@ Editing contract for this page. The bar is: nothing aspirational.
   same PR — same rule as feature-map.md.
 - The closing "What it costs" section is part of the contract: new trade-offs
   introduced by new claims get added there, not omitted.
+- `pnpm check:docs-api` (CI lint) verifies that API identifiers referenced
+  here still exist in router src — a failing run means the doc must be
+  updated in the same PR as the rename.
 -->
 
 # Why Rango
