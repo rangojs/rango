@@ -88,6 +88,21 @@ The Document component replaces `app/layout.tsx`'s `<html>` wrapper. See `/route
 | `app/shop/[...path]/page.tsx`   | `path("/shop/:path+", CatchAll, { name: "shopCatchAll" })` |
 | `app/docs/[[...slug]]/page.tsx` | `path("/docs/:slug*", Docs, { name: "docs" })`             |
 
+The catch-all remainder is a single string at `ctx.params.<name>` with the `/`
+separators preserved — split it to recover the array Next gives you:
+
+```typescript
+// app/docs/[[...slug]]/page.tsx  ->  params.slug is string[] | undefined in Next
+path("/docs/:slug*", (ctx) => {
+  // "" for /docs, "a/b/c" for /docs/a/b/c
+  const slug = ctx.params.slug === "" ? [] : ctx.params.slug.split("/");
+  return <Docs slug={slug} />;
+}, { name: "docs" });
+```
+
+`[...path]` (required, ≥1 segment) maps to `:path+`; `[[...slug]]` (optional,
+matches the bare parent too) maps to `:slug*` — which binds `""` at `/docs`.
+
 ### Layouts
 
 ```typescript

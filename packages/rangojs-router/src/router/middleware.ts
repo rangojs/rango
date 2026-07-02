@@ -104,11 +104,20 @@ export function compileMiddlewarePattern(pattern: string): {
     const segment = segments[i];
 
     if (segment.type === "wildcard") {
-      // Optional subtree match (parity with the original middleware parser,
-      // which compiled every `*` as `(?:/.*)?`). A trailing `*` matches the
-      // subtree; a non-trailing `*` matches zero-or-more intermediate segments,
-      // so `/a/<star>/b` still matches `/a/b`.
-      regexStr += "(?:/.*)?";
+      if (segment.value === "*") {
+        // Bare `*`: optional subtree match, no capture (parity with the original
+        // middleware parser). A trailing `*` matches the subtree; a non-trailing
+        // `*` matches zero-or-more intermediate segments, so `/a/<star>/b` still
+        // matches `/a/b`.
+        regexStr += "(?:/.*)?";
+      } else {
+        // Named catch-all `:name+` / `:name*`: capture the remainder under the
+        // name so a scoping middleware sees `ctx.params.<name>`, and respect the
+        // one-or-more arity (`+` must not match the bare prefix), mirroring the
+        // route matcher instead of collapsing to the bare-`*` subtree.
+        paramNames.push(segment.value);
+        regexStr += segment.oneOrMore ? "/(.+)" : "(?:/(.*))?";
+      }
       if (i === segments.length - 1) {
         hasTrailingWildcard = true;
       }

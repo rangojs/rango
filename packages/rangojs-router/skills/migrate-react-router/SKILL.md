@@ -199,7 +199,7 @@ Key shift: the route module's scattered exports consolidate into the handler
 | `app/routes/_index.tsx`                  | `path("/", HomePage, { name: "home" })`                       |
 | `app/routes/about.tsx`                   | `path("/about", AboutPage, { name: "about" })`                |
 | `app/routes/blog.$slug.tsx`              | `path("/blog/:slug", BlogPost, { name: "blogPost" })`         |
-| `app/routes/files.$.tsx` (splat)         | `path("/files/:path+", FileBrowser, { name: "files" })`       |
+| `app/routes/files.$.tsx` (splat)         | `path("/files/:path*", FileBrowser, { name: "files" })`       |
 | `app/routes/dashboard.tsx` (layout)      | `layout(<DashboardLayout />, () => [...])`                    |
 | `app/routes/dashboard._index.tsx`        | `path("/dashboard", DashboardIndex, { name: "dashboard" })`   |
 | `app/routes/dashboard.settings.tsx`      | `path("/dashboard/settings", Settings, { name: "settings" })` |
@@ -213,8 +213,21 @@ Key shift: the route module's scattered exports consolidate into the handler
 | `path: "/"`                            | `path("/", HomePage, { name: "home" })`                 |
 | `path: "about"`                        | `path("/about", AboutPage, { name: "about" })`          |
 | `path: "blog/:slug"`                   | `path("/blog/:slug", BlogPost, { name: "blogPost" })`   |
-| `path: "files/*"` (splat)              | `path("/files/:path+", FileBrowser, { name: "files" })` |
+| `path: "files/*"` (splat)              | `path("/files/:path*", FileBrowser, { name: "files" })` |
 | `path: "docs/:lang?"` (optional param) | `path("/docs/:lang?", Docs, { name: "docs" })`          |
+
+The RR splat (`$` / `*`) matches the bare parent too (`/files` binds `""`), so
+it maps to `:path*` (zero-or-more). Use `:path+` only when you require at least
+one trailing segment. RR reads the splat at `params["*"]`; Rango exposes it as a
+named string at `ctx.params.path` with the `/` separators preserved (split to
+recover RR's array):
+
+```typescript
+path("/files/:path*", (ctx) => {
+  const parts = ctx.params.path === "" ? [] : ctx.params.path.split("/");
+  return <FileBrowser path={parts} />;
+}, { name: "files" });
+```
 
 ### Layouts
 

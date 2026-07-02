@@ -104,6 +104,23 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   too — `/users/:id/*` matches `/users/5` as `{ id:"5", "*":"" }` (a zero-or-more splat,
   the way React Router does it). A real static or param route at that spot still wins.
   Pinned by `trie-matching.test.ts`.
+- **Named catch-alls reuse the wildcard slot, keyed by name, with a one-or-more variant.**
+  `:name*` and `:name+` both parse to the same `node.w` terminal as bare `/*`, but carry
+  the param name in `pn` (so `/docs/:slug*` binds `ctx.params.slug`, not `"*"`) instead of
+  the hard-coded `"*"`. `:name+` (one-or-more, Next `[...name]` / RR splat) additionally
+  sets the `w1` flag, which gates off ALL THREE empty-remainder match sites in `walkTrie`
+  (the root branch, the base case, and the in-path branch — the last one matters for a
+  malformed `/docs//` whose trailing empty segment would otherwise satisfy `+`). So
+  `/docs/:slug+` rejects the bare `/docs` while `:slug*` still binds `""` there. The regex
+  fallback matches: `/(.+)` for `+`; for a NAMED `:name*` it emits `(?:/(.*))?` so the bare
+  prefix matches directly (binding `""`, aligning with the trie — bare `*` keeps its C1
+  divergence). A `+`/`*` is a catch-all modifier only as a bare trailing token: any other
+  combination (`:v+build`, `:name*.min`, `:name(a|b)+`, a non-terminal catch-all) folds back
+  to the pre-feature literal-suffix parse rather than erroring. When two DISTINCT wildcard
+  forms collide on the single `node.w` slot (`/x/*` and `/x/:p+`), the first-declared wins
+  (regex declaration-order tiebreak) instead of last-wins clobbering its `pn`/`w1`. Pinned by
+  `trie-matching.test.ts`, `pattern-matching.test.ts`, and the catch-all rows in
+  `trie-regex-parity.test.ts`.
 - **Nested-include prefixes get their slashes collapsed via `joinPrefix` (C5).** Write
   `include("/parent/", …)` around a nested `include("/child", …)` and the naive join
   gives you `/parent//child` — a staticPrefix the trie's `sp` can never match, so the

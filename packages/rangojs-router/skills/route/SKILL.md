@@ -53,6 +53,49 @@ For the common pattern of an optional locale prefix
 locale detection, fallback chains, URL generation with absent locale —
 see `/i18n`.
 
+### Named catch-all params (`:name+` / `:name*`)
+
+A catch-all consumes the **rest of the path** and exposes it as a single
+decoded string at `ctx.params.<name>`, with the internal `/` separators kept.
+It must be the **last** segment of the pattern.
+
+- `:name+` — **one-or-more** segments (Next `[...name]`, React-Router splat).
+  `/docs/:slug+` matches `/docs/a` and `/docs/a/b/c`, but **not** the bare
+  `/docs`.
+- `:name*` — **zero-or-more** segments (Next `[[...name]]`). `/docs/:slug*`
+  additionally matches the bare `/docs`, binding `ctx.params.slug` to `""`.
+
+```typescript
+urls(({ path }) => [
+  // /shop/electronics/phones -> ctx.params.path === "electronics/phones"
+  path("/shop/:path+", ShopCatchAll, { name: "shopCatchAll" }),
+
+  // /docs         -> ctx.params.slug === ""
+  // /docs/intro   -> ctx.params.slug === "intro"
+  // /docs/a/b     -> ctx.params.slug === "a/b"
+  path("/docs/:slug*", (ctx) => {
+    const parts = ctx.params.slug === "" ? [] : ctx.params.slug.split("/");
+    return <Docs segments={parts} />;
+  }, { name: "docs" }),
+]);
+```
+
+`ctx.params.<name>` is always a `string` for a catch-all (never `undefined`) —
+`:name*` binds `""` for the empty case, so read it directly. `reverse()` /
+`ctx.reverse()` rebuild the URL with separators preserved:
+`reverse("docs", { slug: "a/b" })` -> `/docs/a/b`.
+
+The value is the URL-decoded remainder. `split("/")` recovers the segments in the
+common case, but note that a segment containing an encoded slash (`%2F`) decodes
+to a literal `/` and is therefore indistinguishable from a separator — the same
+trade-off the bare `*` splat has. If you need to distinguish those, match on the
+raw pathname instead.
+
+The bare unnamed wildcard `path("/files/*", …)` still works and is read at
+`ctx.params["*"]`; prefer a named catch-all when you want a typed param key.
+Combining a modifier with `?`, a literal suffix, or a constraint
+(`:slug*?`, `:slug*.html`, `:slug(a|b)+`) is rejected at build time.
+
 ## Route Handler Patterns
 
 ### Component Function

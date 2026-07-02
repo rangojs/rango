@@ -56,6 +56,7 @@ import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { clientReversePatterns } from "./urls/client-reverse.js";
+import { catchAllPatterns } from "./urls/catch-all.js";
 import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
@@ -857,6 +858,9 @@ export const urlpatterns = urls(
 
       // Href test patterns
       include("/href", hrefPatterns, { name: "href" }),
+
+      // Named catch-all (:slug* / :path+) probes (issue #634)
+      include("/catch-all", catchAllPatterns, { name: "catchall" }),
 
       // Include scoping reverse behavior probes
       include("/unnamed-reverse", unnamedIncludeReversePatterns),
