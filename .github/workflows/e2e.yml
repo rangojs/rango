@@ -281,6 +281,95 @@ jobs:
           path: packages/rangojs-router/playwright-report/
           retention-days: 7
 
+  # Validates the Vercel preset's Build Output (.vercel/output) for a multi-app
+  # host router: builds the app, then drives the isolated function with Host
+  # headers, asserting each sub-app renders and an unmatched host returns 404
+  # through the generated host entry. Pure Node (no Playwright).
+  vercel-smoke:
+    needs: [debounce]
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Smoke the Vercel host Build Output
+        run: pnpm --filter rangojs-vercel-multi-router smoke
+
+  vercel-basic-e2e:
+    needs: [install-playwright]
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-
+
+      - name: Install Playwright system deps
+        run: pnpm --filter rangojs-vercel-basic exec playwright install-deps chromium
+
+      # Real @vercel/otel registerOTel() path: builds and serves the isolated
+      # .vercel/output, asserting it bundles + initializes without a cold-start
+      # failure (the e2e below exercises the recording-tracer path instead).
+      - name: Smoke the Vercel Build Output
+        run: pnpm --filter rangojs-vercel-basic smoke
+
+      - name: Run vercel-basic e2e tests (dev + production)
+        run: pnpm --filter rangojs-vercel-basic test:e2e
+        env:
+          TEST_DEBUG: "1"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report-vercel-basic
+          path: examples/vercel-basic/playwright-report/
+          retention-days: 7
+
   rangojs-router-e2e:
     needs: [install-playwright]
     if: |
@@ -336,6 +425,11 @@ jobs:
             workers: 1
           - project: hmr-intercept
             workers: 1
+          # Host-routing runs in its own project + servers (gated by
+          # RANGO_E2E_HOST below), so the sharded dev/production jobs above no
+          # longer each boot the two host Vite servers (OOM-sensitive) or the
+          # host:build, and a host-fixture breakage fails only this job.
+          - project: host
 
     steps:
       - uses: actions/checkout@v5
@@ -369,6 +463,9 @@ jobs:
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         env:
           CHOKIDAR_USEPOLLING: ${{ matrix.workers && 'true' || '' }}
+          # Only the dedicated host job starts the host fixture servers (and, via
+          # HOST_ONLY in playwright.config.ts, skips the heavy test-app servers).
+          RANGO_E2E_HOST: ${{ matrix.project == 'host' && '1' || '' }}
         run: |
           WORKERS_FLAG=""
           if [ -n "${{ matrix.workers }}" ]; then

@@ -220,6 +220,12 @@ resolve `dist/` outside `./vite`, and it may lag `src/`.
 
 Grouped by concern — read when you need to…
 
+**Positioning & evaluation**:
+
+| Skill         | Description                                                  |
+| ------------- | ------------------------------------------------------------ |
+| `/comparison` | Compare Rango with Next.js, TanStack Start, and Waku fairly. |
+
 **Structure & routing** — shape URLs, layouts, navigation, and request processing:
 
 | Skill                     | Description                                                                |
@@ -274,6 +280,12 @@ Grouped by concern — read when you need to…
 | `/observability`   | `debugPerformance`, `Server-Timing`, structured telemetry, tracing       |
 | `/bundle-analysis` | Audit your app's production bundle for server leaks and oversized chunks |
 | `/debug-manifest`  | Inspect route manifest structure                                         |
+
+**Deployment**:
+
+| Skill     | Description                                                                               |
+| --------- | ----------------------------------------------------------------------------------------- |
+| `/vercel` | Deploy to Vercel Functions (`preset: "vercel"`), Runtime Cache, and `createVercelTracing` |
 
 **Testing**:
 

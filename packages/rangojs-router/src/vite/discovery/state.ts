@@ -19,7 +19,7 @@ export interface PluginOptions {
   /** Build-time env option from rango() config. */
   buildEnv?: import("../plugin-types.js").BuildEnvOption;
   /** Deployment preset (needed for buildEnv "auto" resolution). */
-  preset?: "node" | "cloudflare";
+  preset?: "node" | "cloudflare" | "vercel";
   /**
    * Route-discovery scan filter (glob include/exclude) from rango() config.
    * Compiled into `DiscoveryState.scanFilter` once `projectRoot` is known.

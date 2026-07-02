@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rango Comparison"
+  short_description: "Compare Rango with other React frameworks"
+  default_prompt: "Use $comparison to compare Rango with Next.js, TanStack Start, and Waku."

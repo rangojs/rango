@@ -6,6 +6,18 @@ If you are new to Rango, start with named routes, `urls()`, `path()`,
 `layout()`, `include()`, and `reverse()`. Everything else builds on top of
 that route tree.
 
+If you are evaluating Rango against other frameworks, start with the comparison.
+
+## Positioning
+
+- [Comparison](./comparison.md) - Rango versus Next.js, TanStack Start, and Waku:
+  the unified caching/prerender model, progressive-enhancement parity, the runtime
+  mechanics (partial rendering, named slots/intercepts, `revalidate()`, prefetch
+  gating, Rango State and userland invalidation, loaders and tagged loading),
+  deployment-skew recovery, CSP nonce propagation, default CSRF origin checks,
+  tainted request-context cache safety, why the loader is a genuinely new primitive,
+  and an account of where the established frameworks still lead
+
 ## Core Topics
 
 - [Why Rango](./why-rango.md) - the load-bearing ideas, each shown in code:

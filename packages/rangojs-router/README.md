@@ -31,7 +31,10 @@ export default defineConfig({
 ```
 
 The `cloudflare` preset targets Cloudflare Workers (add
-`@cloudflare/vite-plugin`); omit `preset` for the default Node setup.
+`@cloudflare/vite-plugin`); the `vercel` preset emits a ready-to-deploy
+`.vercel/output` (Build Output API) from a plain `vite build` — see the
+[`/vercel` skill](./skills/vercel/SKILL.md); omit `preset` for the default
+Node setup.
 
 ## 1. Pages
 
@@ -337,23 +340,25 @@ That was the core: `path`/`layout`/`include`, names, loaders, actions +
 `revalidate`, `cache`, response routes. The rest is opt-in — reach for it
 when the requirement appears:
 
-| I need to…                                     | Skill                                                                                        |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| guard or shape requests (auth, headers)        | [`/middleware`](./skills/middleware/SKILL.md)                                                |
-| multi-column layouts, independent slots        | [`/parallel`](./skills/parallel/SKILL.md)                                                    |
-| open a route as a modal on soft navigation     | [`/intercept`](./skills/intercept/SKILL.md)                                                  |
-| compose route modules / sub-apps               | [`/route`](./skills/route/SKILL.md), [`/composability`](./skills/composability/SKILL.md)     |
-| cache a single function or component           | [`/use-cache`](./skills/use-cache/SKILL.md), [`/cache-guide`](./skills/cache-guide/SKILL.md) |
-| feed live loaders from a cached shell          | [`/shell-manifest`](./skills/shell-manifest/SKILL.md)                                        |
-| edge caching with Cache-Control                | [`/document-cache`](./skills/document-cache/SKILL.md)                                        |
-| light/dark mode without FOUC                   | [`/theme`](./skills/theme/SKILL.md)                                                          |
-| analytics / third-party scripts with CSP nonce | [`/scripts`](./skills/scripts/SKILL.md)                                                      |
-| locale routing                                 | [`/i18n`](./skills/i18n/SKILL.md)                                                            |
-| SSE and WebSockets                             | [`/streams-and-websockets`](./skills/streams-and-websockets/SKILL.md)                        |
-| multi-app routing by domain                    | [`/host-router`](./skills/host-router/SKILL.md)                                              |
-| animate navigations                            | [`/view-transitions`](./skills/view-transitions/SKILL.md)                                    |
-| test loaders, middleware, handlers, Flight     | [`/testing`](./skills/testing/SKILL.md)                                                      |
-| see where request time goes                    | [`/observability`](./skills/observability/SKILL.md)                                          |
+| I need to…                                      | Skill                                                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| guard or shape requests (auth, headers)         | [`/middleware`](./skills/middleware/SKILL.md)                                                |
+| multi-column layouts, independent slots         | [`/parallel`](./skills/parallel/SKILL.md)                                                    |
+| open a route as a modal on soft navigation      | [`/intercept`](./skills/intercept/SKILL.md)                                                  |
+| compose route modules / sub-apps                | [`/route`](./skills/route/SKILL.md), [`/composability`](./skills/composability/SKILL.md)     |
+| cache a single function or component            | [`/use-cache`](./skills/use-cache/SKILL.md), [`/cache-guide`](./skills/cache-guide/SKILL.md) |
+| feed live loaders from a cached shell           | [`/shell-manifest`](./skills/shell-manifest/SKILL.md)                                        |
+| edge caching with Cache-Control                 | [`/document-cache`](./skills/document-cache/SKILL.md)                                        |
+| light/dark mode without FOUC                    | [`/theme`](./skills/theme/SKILL.md)                                                          |
+| analytics / third-party scripts with CSP nonce  | [`/scripts`](./skills/scripts/SKILL.md)                                                      |
+| locale routing                                  | [`/i18n`](./skills/i18n/SKILL.md)                                                            |
+| SSE and WebSockets                              | [`/streams-and-websockets`](./skills/streams-and-websockets/SKILL.md)                        |
+| multi-app routing by domain                     | [`/host-router`](./skills/host-router/SKILL.md)                                              |
+| animate navigations                             | [`/view-transitions`](./skills/view-transitions/SKILL.md)                                    |
+| test loaders, middleware, handlers, Flight      | [`/testing`](./skills/testing/SKILL.md)                                                      |
+| see where request time goes                     | [`/observability`](./skills/observability/SKILL.md)                                          |
+| deploy to Vercel (cache store, tracing, output) | [`/vercel`](./skills/vercel/SKILL.md)                                                        |
+| compare Rango with Next.js / TanStack / Waku    | [`/comparison`](./skills/comparison/SKILL.md)                                                |
 
 The [`/rango` skill](./skills/rango/SKILL.md) is the full catalog and the
 mental model that ties it together.
@@ -366,9 +371,10 @@ mental model that ties it together.
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `@rangojs/router`         | Server/RSC core and shared types: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta`                       |
 | `@rangojs/router/client`  | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`                                                     |
-| `@rangojs/router/cache`   | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`                                              |
+| `@rangojs/router/cache`   | Cache: `CFCacheStore`, `VercelCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`                          |
 | `@rangojs/router/theme`   | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                                                              |
-| `@rangojs/router/host`    | Host routing: `createHostRouter`, `defineHosts`                                                                                |
+| `@rangojs/router/host`    | Host routing: `createHostRouter`, `defineHosts`, `isNoRouteMatchError`                                                         |
+| `@rangojs/router/vercel`  | Vercel: `createVercelTracing` (phase spans via `@vercel/otel`'s global tracer)                                                 |
 | `@rangojs/router/vite`    | Vite plugin: `rango()`                                                                                                         |
 | `@rangojs/router/testing` | Consumer testing primitives: `runLoader`, `runMiddleware`, `dispatch` (plus `/testing/dom`, `/testing/flight`, `/testing/e2e`) |
 | `@rangojs/router/rsc`     | Advanced server pipeline APIs: `createRSCHandler`, request-context access                                                      |
@@ -423,10 +429,13 @@ npx rango generate src/             # recursive scan
 - [`e2e/mini`](https://github.com/ivogt/vite-rsc/tree/main/packages/rangojs-router/e2e/mini) — single-file demo app
 - [`cloudflare-basic`](https://github.com/ivogt/vite-rsc/tree/main/tests/cloudflare-basic) — Cloudflare Workers with caching, loaders, theme, and pre-rendering
 - [`cloudflare-multi-router`](https://github.com/ivogt/vite-rsc/tree/main/examples/cloudflare-multi-router) — multi-app host routing
+- [`vercel-basic`](https://github.com/ivogt/vite-rsc/tree/main/examples/vercel-basic) — Vercel deployment with `preset: "vercel"`, `VercelCacheStore`, and OTel tracing
+- [`vercel-multi-router`](https://github.com/ivogt/vite-rsc/tree/main/examples/vercel-multi-router) — multi-app host routing on Vercel (single function, routed by Host header)
 
 ### Going deeper
 
 - [Why Rango](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/why-rango.md) — the design rationale, claim by claim
+- [Framework comparison](./skills/comparison/references/framework-comparison.md) — Rango vs Next.js App Router, TanStack Start, and Waku, capability by capability
 - [Docs index](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/README.md) — architecture, caching, prerender, testing
 - [Execution model](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/internal/execution-model.md) — the runtime contract
 
