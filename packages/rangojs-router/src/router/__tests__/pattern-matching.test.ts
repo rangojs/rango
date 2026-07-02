@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   compilePattern,
+  buildParamsFromMatch,
   extractStaticPrefix,
   findMatch as rawFindMatch,
   isLazyEvaluationNeeded,
@@ -180,12 +181,21 @@ describe("compilePattern", () => {
       expect(match![1]).toBe("docs/readme.md");
     });
 
-    it("should match wildcard with prefix", () => {
-      const { regex, paramNames } = compilePattern("/api/*");
+    it("should match wildcard with prefix, including the bare prefix", () => {
+      const { regex, paramNames, catchAll } = compilePattern("/api/*");
       expect(regex.test("/api/users")).toBe(true);
       expect(regex.test("/api/users/123/posts")).toBe(true);
       expect(regex.test("/api/")).toBe(true);
-      expect(regex.test("/api")).toBe(false);
+      // Bare `*` is a zero-or-more catch-all: the bare prefix matches and binds
+      // "*" === "", aligning the regex fallback with the trie (issue #636).
+      expect(regex.test("/api")).toBe(true);
+      expect(
+        buildParamsFromMatch(regex.exec("/api")!, paramNames, catchAll),
+      ).toEqual({ "*": "" });
+      // A deeper path still binds the full remainder.
+      expect(
+        buildParamsFromMatch(regex.exec("/api/a/b")!, paramNames, catchAll),
+      ).toEqual({ "*": "a/b" });
       expect(paramNames).toEqual(["*"]);
     });
   });

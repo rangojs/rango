@@ -71,6 +71,7 @@ export const NamedRoutes = {
   "cacheTest.useLoaderDetail": "/cache-test/useloader/:itemId",
   "cacheTest.useLoaderIndex": "/cache-test/useloader",
   "catchall.docs": "/catch-all/docs/:slug*",
+  "catchall.files": "/catch-all/files/*",
   "catchall.shop": "/catch-all/shop/:path+",
   changelog: "/changelog",
   "colocatedFr.index": "/colocated-fr",
