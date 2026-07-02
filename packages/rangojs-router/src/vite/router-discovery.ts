@@ -43,6 +43,7 @@ import {
   peekSelfGenWrite,
 } from "./discovery/self-gen-tracking.js";
 import { discoverRouters } from "./discovery/discover-routers.js";
+import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
 import {
   writeCombinedRouteTypesWithTracking,
   writeRouteTypesFiles,
@@ -653,6 +654,30 @@ export function createRouterDiscoveryPlugin(
         return tempRscEnv;
       }
 
+      // Surface a discovery failure on either dev path (Node RSC runner or the
+      // Cloudflare temp Node server). `hashBefore`/`hashAfter` are the discovering
+      // environment's dep-optimizer browserHash snapshots: a change across the
+      // attempt means a reload-causing re-optimization landed mid-flight, so an
+      // empty registry was the transient race (downgraded to a warning) rather
+      // than a genuine misconfig (loud, actionable error). Shared so both catch
+      // sites frame the same failure identically.
+      const emitDiscoveryFailure = (
+        err: unknown,
+        hashBefore: string | undefined,
+        hashAfter: string | undefined,
+      ): void => {
+        const reoptimizeObserved =
+          hashBefore !== undefined &&
+          hashAfter !== undefined &&
+          hashBefore !== hashAfter;
+        const report = describeDiscoveryFailure(err, { reoptimizeObserved });
+        if (report.level === "warn") {
+          console.warn(report.message);
+        } else {
+          console.error(report.message);
+        }
+      };
+
       const discover = async () => {
         const discoverStart = performance.now();
         const rscEnv = (server.environments as any)?.rsc;
@@ -668,18 +693,26 @@ export function createRouterDiscoveryPlugin(
 
           // Create a temp Node.js server to run runtime discovery and generate
           // named route types (static parser can't resolve factory calls).
+          // The temp server is a separate Vite instance with its own dep
+          // optimizer; snapshot ITS browserHash (hoisted so the catch can tell a
+          // transient re-optimization apart from a genuine empty registry, the
+          // same way the Node path below does).
+          let tempRscEnv: any;
+          let optimizerHashBefore: string | undefined;
           try {
             // Acquire build-time env bindings for dev prerender
             await timed(debugDiscovery, "acquireBuildEnv", () =>
               acquireBuildEnv(s, viteCommand, viteMode),
             );
 
-            const tempRscEnv = await timed(
+            tempRscEnv = await timed(
               debugDiscovery,
               "getOrCreateTempServer",
               () => getOrCreateTempServer(),
             );
             if (tempRscEnv) {
+              optimizerHashBefore =
+                tempRscEnv.depsOptimizer?.metadata?.browserHash;
               await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
                 discoverRouters(s, tempRscEnv),
               );
@@ -688,8 +721,10 @@ export function createRouterDiscoveryPlugin(
               );
             }
           } catch (err: any) {
-            console.warn(
-              `[rango] Cloudflare dev discovery failed: ${err.message}\n${err.stack}`,
+            emitDiscoveryFailure(
+              err,
+              optimizerHashBefore,
+              tempRscEnv?.depsOptimizer?.metadata?.browserHash,
             );
           }
 
@@ -701,6 +736,13 @@ export function createRouterDiscoveryPlugin(
           return;
         }
 
+        // Snapshot the dep-optimizer hash before discovery so the catch can tell
+        // a transient re-optimization race apart from a genuine empty registry.
+        // A reload-causing re-optimization regenerates browserHash; if it changed
+        // across the attempt, an empty read was almost certainly the race below.
+        const optimizerHashBefore: string | undefined =
+          rscEnv.depsOptimizer?.metadata?.browserHash;
+
         try {
           // Acquire build-time env bindings for dev prerender (Node.js path)
           debugDiscovery?.("dev: node path start");
@@ -708,20 +750,30 @@ export function createRouterDiscoveryPlugin(
             acquireBuildEnv(s, viteCommand, viteMode),
           );
 
-          // Set the readiness gate BEFORE discovery so early requests
-          // block until manifest is populated
-          const serverMod = await timed(
-            debugDiscovery,
-            "import @rangojs/router/server",
-            () => rscEnv.runner.import("@rangojs/router/server"),
+          // Discover routers FIRST, then arm the manifest-readiness gate on the
+          // server module discovery actually read the registry from.
+          //
+          // We deliberately do NOT pre-import "@rangojs/router/server" before the
+          // entry to arm the gate early. During a Vite dependency re-optimization
+          // (dev boot after a lockfile change, or `vite dev --force`), a module
+          // imported here before the entry resolves to the pre-optimize copy of
+          // the runner's module graph, while discoverRouters' entry import — which
+          // awaits the in-flight re-optimization — resolves to the post-optimize
+          // copy. createRouter() then populates RouterRegistry on the fresh copy,
+          // but a stale pre-imported "@rangojs/router/server" reads the other
+          // copy's empty Map and discovery throws a spurious "No routers found"
+          // even though the app is configured correctly. discoverRouters imports
+          // the entry first and reads the registry off the same instance, keeping
+          // read and write on one copy. The virtual manifest module's own gate
+          // (s.discoveryDone, armed by beginDiscoveryGate) already blocks early
+          // requests during discovery on the Node path, so arming
+          // manifestReadyPromise after discovery is sufficient here.
+          const serverMod = await timed(debugDiscovery, "discoverRouters", () =>
+            discoverRouters(s, rscEnv),
           );
           if (serverMod?.setManifestReadyPromise) {
             serverMod.setManifestReadyPromise(discoveryPromise);
           }
-
-          await timed(debugDiscovery, "discoverRouters", () =>
-            discoverRouters(s, rscEnv),
-          );
 
           // Store server origin for dev prerender endpoint (virtual module injection)
           s.devServerOrigin = getDevServerOrigin();
@@ -740,8 +792,10 @@ export function createRouterDiscoveryPlugin(
             propagateDiscoveryState(rscEnv),
           );
         } catch (err: any) {
-          console.warn(
-            `[rango] Router discovery failed: ${err.message}\n${err.stack}`,
+          emitDiscoveryFailure(
+            err,
+            optimizerHashBefore,
+            rscEnv.depsOptimizer?.metadata?.browserHash,
           );
         } finally {
           debugDiscovery?.(
