@@ -11,6 +11,7 @@ export const NamedRoutes = {
   home: "/",
   hooks: "/hooks",
   login: "/login",
+  manifest: "/manifest",
   "products.detail": "/products/:id",
   "products.index": "/products",
   search: { path: "/search", search: { q: "string?", page: "number?" } },

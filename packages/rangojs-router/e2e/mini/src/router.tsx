@@ -6,7 +6,9 @@
 // global and route-level middleware, route params, typed search schemas, segment
 // cache() and a function-level "use cache", error + not-found boundaries,
 // redirect(), parallel slots, an intercept() modal, loading() boundaries,
-// transition() (content-hold same-route navigation), and Meta / Breadcrumbs.
+// transition() (content-hold same-route navigation), Meta / Breadcrumbs, and
+// a shell-manifest route (replayed handle read by a live loader via
+// ctx.rendered() — see skills/shell-manifest).
 //
 // File organization mirrors the RSC boundary:
 //   - Server-only config (context-var tokens) plus the route tree live here.
@@ -31,7 +33,13 @@ import {
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
 
-import { ClockLoader, CounterLoader, FlashMessage } from "./shared.js";
+import {
+  ClockLoader,
+  CounterLoader,
+  FlashMessage,
+  ManifestPricesLoader,
+  RenderedProducts,
+} from "./shared.js";
 import { increment, incrementWithResult } from "./actions.js";
 import { productsPatterns } from "./urls/products.js";
 // Route-colocated client components (each in its own directory) used to
@@ -60,6 +68,7 @@ import {
   LinkStatusDemo,
   StaticHref,
   GlobalReverse,
+  ManifestPrice,
 } from "./client.js";
 
 // ---------------------------------------------------------------------------
@@ -105,6 +114,19 @@ async function getCachedStamp(): Promise<{ seq: number }> {
 // actually re-rendered (a cache miss), so a stable value across reloads proves
 // a cache hit.
 let segmentRenderSeq = 0;
+
+// Shell-manifest demo state (see the /manifest route + skills/shell-manifest).
+// The catalog is server-only; the render counter proves the shell froze while
+// the prices (ManifestPricesLoader) stayed live.
+interface ManifestProduct {
+  id: string;
+  name: string;
+}
+const MANIFEST_CATALOG: ManifestProduct[] = [
+  { id: "1", name: "Widget" },
+  { id: "2", name: "Gadget" },
+];
+let manifestRenderSeq = 0;
 
 // ---------------------------------------------------------------------------
 // Middleware.
@@ -403,6 +425,38 @@ export const router = createRouter({
               },
               { name: "cache" },
               () => [loader(ClockLoader)],
+            ),
+          ]),
+
+          // Shell manifest (skills/shell-manifest): the cached shell pushes
+          // the ids it rendered into RenderedProducts; on a hit the handler is
+          // skipped but its pushes replay, and the live loader reads the
+          // replayed ids after ctx.rendered() to price exactly those. A stable
+          // manifest-shell-seq across reloads = frozen shell; an advancing
+          // loader seq (data-seq on each price) = live holes.
+          cache({ ttl: 60, swr: 120 }, () => [
+            path(
+              "/manifest",
+              (ctx) => {
+                ctx.use(Meta)({ title: "Shell manifest" });
+                manifestRenderSeq += 1;
+                const track = ctx.use(RenderedProducts);
+                for (const p of MANIFEST_CATALOG) track(p.id);
+                return (
+                  <div data-testid="manifest-page">
+                    <p data-testid="manifest-shell-seq">{manifestRenderSeq}</p>
+                    <ul>
+                      {MANIFEST_CATALOG.map((p) => (
+                        <li key={p.id} data-testid={`manifest-row-${p.id}`}>
+                          {p.name}: <ManifestPrice id={p.id} />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              },
+              { name: "manifest" },
+              () => [loader(ManifestPricesLoader)],
             ),
           ]),
 
