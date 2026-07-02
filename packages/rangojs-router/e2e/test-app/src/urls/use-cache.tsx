@@ -16,9 +16,12 @@ import {
   cachedCallsCtxSet,
   cachedCallsCtxHeadersSet,
   getSwrTestData,
+  getSwrCtxData,
+  getSwrActionData,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { RevalidateButton } from "../components/RevalidateButton.js";
+import { swrActionRevalidate } from "../actions.js";
 import { UseCacheTestLoader, LayoutCountLoader } from "../loaders.js";
 
 // Included routes for loader segment tracking test.
@@ -69,7 +72,7 @@ const loaderSegmentPages = urls(({ path }) => [
  * and inline "use cache" in handlers and layouts with handle data.
  */
 export const useCachePatterns = urls(
-  ({ path, layout, loading, intercept, loader, when, revalidate, include }) => [
+  ({ path, layout, loading, intercept, loader, revalidate, include }) => [
     // Basic: file-level "use cache", no args
     path(
       "/basic",
@@ -158,6 +161,62 @@ export const useCachePatterns = urls(
         );
       },
       { name: "useCacheTest.swr" },
+    ),
+
+    // SWR + getRequestContext(): a "use cache" function that reads the ambient
+    // request context via getRequestContext() (the ALS), mirroring the real
+    // consumer pattern getRequestContext().env.ApiKey. On the stale background
+    // revalidation the ALS must be re-established or getRequestContext() throws
+    // and the cached value never refreshes. Third visit must see a fresh value.
+    path(
+      "/swr-ctx",
+      async () => {
+        const data = await getSwrCtxData();
+        const serverNow = Date.now();
+        return (
+          <div data-testid="use-cache-swr-ctx-page">
+            <h1>SWR Cache + getRequestContext Test</h1>
+            <span data-testid="use-cache-swr-ctx-ts">{data.ts}</span>
+            <span data-testid="use-cache-swr-ctx-rand">{data.rand}</span>
+            <span data-testid="use-cache-swr-ctx-pathname">
+              {data.pathname}
+            </span>
+            <span data-testid="use-cache-swr-ctx-server-ts">{serverNow}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.swrCtx" },
+    ),
+
+    // foregroundOnAction opt-in: the "use cache: swr-action" function uses a
+    // profile with foregroundOnAction:true. A plain navigation keeps SWR, but a
+    // server action's revalidation render re-executes a stale entry in the
+    // FOREGROUND so the action response shows a fresh value. A DIRECT server
+    // action form (not useActionState) so it works under BOTH JS and no-JS
+    // progressive enhancement — the PE re-render must foreground too (JS/PE
+    // parity), which exercises progressive-enhancement.ts setting
+    // _inActionRevalidation before its match.
+    path(
+      "/swr-action",
+      async () => {
+        const data = await getSwrActionData();
+        return (
+          <div data-testid="use-cache-swr-action-page">
+            <h1>SWR foregroundOnAction Test</h1>
+            <span data-testid="use-cache-swr-action-ts">{data.ts}</span>
+            <span data-testid="use-cache-swr-action-rand">{data.rand}</span>
+            <span data-testid="use-cache-swr-action-pathname">
+              {data.pathname}
+            </span>
+            <form action={swrActionRevalidate}>
+              <button type="submit" data-testid="use-cache-swr-action-btn">
+                Revalidate
+              </button>
+            </form>
+          </div>
+        );
+      },
+      { name: "useCacheTest.swrAction" },
     ),
 
     // Streaming: slow cached data function rendered via loading() boundary.
@@ -389,11 +448,10 @@ export const useCachePatterns = urls(
               </div>
             );
           },
-          () => [
-            when(({ from }) =>
+          {
+            when: ({ from }) =>
               from.pathname.startsWith("/use-cache-test/intercept-"),
-            ),
-          ],
+          },
         ),
       ],
     ),

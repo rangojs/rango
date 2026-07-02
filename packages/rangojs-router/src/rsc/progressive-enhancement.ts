@@ -14,6 +14,8 @@ import { getSSRSetup } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { gateTransitions } from "./transition-gate.js";
+import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -152,6 +154,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         handleStore,
         nonce,
         useActionStateId,
+        true, // an action ran and threw
       );
       if (errorHtml) return errorHtml;
 
@@ -205,6 +208,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         handleStore,
         nonce,
         directActionId,
+        true, // an action ran and threw
       );
       if (errorHtml) return errorHtml;
 
@@ -269,6 +273,14 @@ export async function handleProgressiveEnhancement<TEnv>(
       headers,
     });
 
+    // JS/PE parity: this is an action's revalidation render, so mark it BEFORE
+    // matching — a stale `foregroundOnAction` cache entry must re-execute in the
+    // foreground during the re-render, exactly as the JS path's
+    // revalidateAfterAction does. The transition({ when }) gate fields below are
+    // set post-match (the gate reads them after rendering); foregroundOnAction
+    // reads _inActionRevalidation during the match, so it must be set here.
+    getRequestContext()._inActionRevalidation = true;
+
     const match = await ctx.router.match(renderRequest, { env });
 
     if (match.redirect) {
@@ -278,19 +290,34 @@ export async function handleProgressiveEnhancement<TEnv>(
       });
     }
 
+    // Expose the no-JS action to the transition({ when }) gate. currentUrl/Params
+    // are absent on this full-render path (no navigation snapshot); useActionState
+    // ids are block-scoped, so only a direct action id is available here.
+    // actionUrl is the page the action was submitted from (this request's url).
+    const peReqCtx = getRequestContext();
+    peReqCtx._gateActionId = directActionId ?? undefined;
+    peReqCtx._gateActionUrl = new URL(url);
+    peReqCtx._gateActionResult = actionResult;
+    peReqCtx._gateFormData = formData;
+
     const payload: RscPayload = {
       metadata: {
         pathname: url.pathname,
         routerId: ctx.router.id,
         basename: ctx.router.basename,
-        segments: match.segments,
+        segments: gateTransitions(
+          match.segments,
+          getRequestContext(),
+          ctx.router.onError,
+        ),
         matched: match.matched,
         diff: match.diff,
         resolvedIds: match.resolvedIds,
         params: match.params,
         isPartial: false,
         rootLayout: ctx.router.rootLayout,
-        handles: handleStore.stream(),
+        // PE full render: resolve deferred handle values server-side.
+        handles: resolvedHandleStream(handleStore),
         version: ctx.version,
         stateCookieName: ctx.router.resolvedStateCookieName,
         themeConfig: ctx.router.themeConfig,
@@ -368,7 +395,22 @@ async function renderPeErrorBoundary<TEnv>(
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
   actionId?: string | null,
+  // True when an action actually ran and threw (vs a malformed form body, where
+  // no action executed). Drives _inActionRevalidation for JS/PE parity — it must
+  // NOT be inferred from actionId, since a useActionState bound action can run
+  // and throw with no $$id (actionId === undefined) yet still be an action error.
+  actionRan = false,
 ): Promise<Response | null> {
+  // JS/PE parity for an action-triggered error re-render: a stale
+  // `foregroundOnAction` cache entry inside the error boundary must foreground
+  // too, exactly as the JS path (revalidateAfterAction sets this unconditionally
+  // before rendering the error boundary). Set BEFORE matchError (the cached fn
+  // runs during it). Gated on actionRan, NOT actionId — a malformed form body
+  // (actionRan=false) ran no action and must keep SWR.
+  if (actionRan) {
+    getRequestContext()._inActionRevalidation = true;
+  }
+
   let errorResult;
   try {
     errorResult = await ctx.router.matchError(request, { env }, error, "route");
@@ -395,12 +437,26 @@ async function renderPeErrorBoundary<TEnv>(
 
   setRequestContextParams(errorResult.params, errorResult.routeName);
 
+  // Only the failing action id + URL are in scope here (no formData/actionResult
+  // thread into this helper). Expose the URL only when the action id is known:
+  // this helper also handles malformed form bodies before action detection, and
+  // those should not look like action-triggered renders to transition({ when }).
+  if (actionId != null) {
+    const peErrCtx = getRequestContext();
+    peErrCtx._gateActionId = actionId;
+    peErrCtx._gateActionUrl = new URL(url);
+  }
+
   const payload: RscPayload = {
     metadata: {
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: errorResult.segments,
+      segments: gateTransitions(
+        errorResult.segments,
+        getRequestContext(),
+        ctx.router.onError,
+      ),
       matched: errorResult.matched,
       diff: errorResult.diff,
       resolvedIds: errorResult.resolvedIds,
@@ -408,7 +464,8 @@ async function renderPeErrorBoundary<TEnv>(
       isPartial: false,
       isError: true,
       rootLayout: ctx.router.rootLayout,
-      handles: handleStore.stream(),
+      // PE error-boundary full render: resolve deferred handle values server-side.
+      handles: resolvedHandleStream(handleStore),
       version: ctx.version,
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,

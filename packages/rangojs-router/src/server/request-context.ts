@@ -48,6 +48,7 @@ import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
+import type { TransitionWhenFn } from "../types/segments.js";
 import type { ResolvedTracing } from "../router/tracing.js";
 import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import {
@@ -160,6 +161,15 @@ export interface RequestContext<
 
   /** @internal Handle store for tracking handle data across segments */
   _handleStore: HandleStore;
+
+  /**
+   * @internal transition({ when }) predicates for segments matched this request,
+   * keyed by segment id. Collected during resolution (the function is stripped
+   * from the serialized segment config), then evaluated post-handler in
+   * rsc-rendering — outside any cache scope — to drop the transition of any
+   * segment whose predicate returns false.
+   */
+  _transitionWhen?: Array<{ id: string; when: TransitionWhenFn }>;
 
   /** @internal Cache store for segment caching (optional, used by CacheScope) */
   _cacheStore?: SegmentCacheStore;
@@ -293,6 +303,30 @@ export interface RequestContext<
   _prevRouteKey?: string;
 
   /**
+   * @internal Navigation/action source data the transition({ when }) gate reads
+   * to build its ShouldRevalidateFn-shaped predicate context. currentUrl/Params
+   * come from the navigation snapshot (set at match time); action* are stashed
+   * at the action-bearing gate call sites. All undefined when there is no source
+   * (initial full load) or no action (plain navigation).
+   */
+  _gateCurrentUrl?: URL;
+  _gateCurrentParams?: Record<string, string>;
+  _gateActionId?: string;
+  _gateActionUrl?: URL;
+  _gateActionResult?: unknown;
+  _gateFormData?: FormData;
+
+  /**
+   * @internal True while the post-action revalidation render is running (set by
+   * revalidateAfterAction). The "use cache" runtime reads this to prefer
+   * freshness over a fast stale response during an action: a stale entry
+   * re-executes in the foreground (so the action response reflects the refreshed
+   * value) with only the store write deferred, instead of serving stale and
+   * revalidating in the background. A plain navigation (flag unset) keeps SWR.
+   */
+  _inActionRevalidation?: boolean;
+
+  /**
    * @internal Render barrier for experimental `rendered()` API.
    * Resolves when all non-loader segments have settled and handle data
    * is available. Used by DSL loaders that call `ctx.rendered()`.
@@ -413,6 +447,7 @@ export type PublicRequestContext<
   | "setCookie"
   | "deleteCookie"
   | "_handleStore"
+  | "_transitionWhen"
   | "_cacheStore"
   | "_explicitTaggedStores"
   | "_requestTags"
@@ -422,6 +457,13 @@ export type PublicRequestContext<
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
+  | "_gateCurrentUrl"
+  | "_gateCurrentParams"
+  | "_gateActionId"
+  | "_gateActionUrl"
+  | "_gateActionResult"
+  | "_gateFormData"
+  | "_inActionRevalidation"
   | "_reportedErrors"
   | "_renderBarrier"
   | "_resolveRenderBarrier"
@@ -527,11 +569,17 @@ export function setRequestContextParams(
  */
 export function setRequestContextPrevRouteKey(
   prevRouteKey: string | undefined,
+  currentUrl?: URL,
+  currentParams?: Record<string, string>,
 ): void {
   const ctx = requestContextStorage.getStore();
-  if (ctx && prevRouteKey !== undefined) {
-    ctx._prevRouteKey = prevRouteKey;
-  }
+  if (!ctx) return;
+  if (prevRouteKey !== undefined) ctx._prevRouteKey = prevRouteKey;
+  // Source URL/params for the transition({ when }) gate (effectiveFromUrl /
+  // effectiveFromMatch.params from the navigation snapshot). Same write point as
+  // _prevRouteKey, which doubles as fromRouteName.
+  if (currentUrl !== undefined) ctx._gateCurrentUrl = currentUrl;
+  if (currentParams !== undefined) ctx._gateCurrentParams = currentParams;
 }
 
 /**
@@ -842,6 +890,7 @@ export function createRequestContext<TEnv>(
     method: request.method,
 
     _handleStore: handleStore,
+    _transitionWhen: [],
     _cacheStore: cacheStore,
     _explicitTaggedStores: explicitTaggedStores,
     _requestTags: new Set<string>(),

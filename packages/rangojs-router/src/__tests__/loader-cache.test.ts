@@ -25,6 +25,9 @@ const mockRequestCtx: any = {
 vi.mock("../server/request-context.js", () => ({
   getRequestContext: vi.fn(() => mockRequestCtx),
   _getRequestContext: vi.fn(() => mockRequestCtx),
+  // The loader-cache read-through re-establishes the request-context ALS around
+  // the background revalidation execute(); the mock just invokes the callback.
+  runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
 }));
 
 // Mock internal debug

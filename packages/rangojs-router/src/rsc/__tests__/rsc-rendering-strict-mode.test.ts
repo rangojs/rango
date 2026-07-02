@@ -31,6 +31,8 @@ function makeStubCtx(strictMode: boolean): {
       resolvedStateCookieName: "rango-state",
       themeConfig: undefined,
       prefetchCacheTTL: 0,
+      prefetchCacheSize: 33,
+      prefetchConcurrency: 4,
       warmupEnabled: true,
       strictMode,
       async match() {
@@ -95,5 +97,11 @@ describe("handleRscRendering — initial full payload carries strictMode", () =>
   it("includes strictMode: true when the router keeps StrictMode (default)", async () => {
     const payload = await runFullRender(true);
     expect(payload.metadata!.strictMode).toBe(true);
+  });
+
+  it("carries the client prefetch limits (cache size + concurrency)", async () => {
+    const payload = await runFullRender(true);
+    expect(payload.metadata!.prefetchCacheSize).toBe(33);
+    expect(payload.metadata!.prefetchConcurrency).toBe(4);
   });
 });

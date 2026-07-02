@@ -23,7 +23,6 @@
 
 import type { ReactNode } from "react";
 import { createHandle, type Handle } from "../handle.js";
-import { isThenable } from "./is-thenable.js";
 
 /**
  * A single breadcrumb item.
@@ -42,34 +41,33 @@ export interface BreadcrumbItem {
  * Collect function for Breadcrumbs handle.
  * Flattens segments in parent-to-child order with deduplication by href: each
  * href keeps its FIRST position but takes the LAST value (re-pushing a parent
- * href refreshes the label in place without reordering the trail).
- * Deferred slots (`ctx.use(Breadcrumbs).defer()`)
- * arrive as pending Promise entries with no href yet; they are passed through by
- * identity and excluded from the href dedup so concurrent deferred crumbs do not
- * all collapse under a single `undefined` href.
+ * href refreshes the label in place without reordering the trail). Deferred
+ * crumbs (a pushed Promise or `ctx.use(Breadcrumbs).defer()`) are resolved
+ * BEFORE collect runs (resolve-by-default), so collect only ever sees resolved
+ * items. An item without a string `href` is passed through by identity and
+ * excluded from the href dedup.
  */
 function collectBreadcrumbs(segments: BreadcrumbItem[][]): BreadcrumbItem[] {
   const all = segments.flat();
 
-  const isResolvedItem = (item: unknown): item is BreadcrumbItem =>
+  const hasHref = (item: unknown): item is BreadcrumbItem =>
     item != null &&
     typeof item === "object" &&
-    !isThenable(item) &&
     typeof (item as { href?: unknown }).href === "string";
 
-  // Dedup resolved crumbs by href: keep the FIRST position (preserving
-  // parent->child order) but the LAST value (a child re-pushing a parent's href
-  // can refresh its label). Deferred items bypass dedup entirely (they have no
-  // href yet) and are passed through by identity at their original position.
+  // Dedup crumbs by href: keep the FIRST position (preserving parent->child
+  // order) but the LAST value (a child re-pushing a parent's href can refresh
+  // its label). Items without an href pass through by identity at their original
+  // position.
   const valueByHref = new Map<string, BreadcrumbItem>();
   for (const item of all) {
-    if (isResolvedItem(item)) valueByHref.set(item.href, item);
+    if (hasHref(item)) valueByHref.set(item.href, item);
   }
 
   const result: BreadcrumbItem[] = [];
   const emitted = new Set<string>();
   for (const item of all) {
-    if (!isResolvedItem(item)) {
+    if (!hasHref(item)) {
       result.push(item);
       continue;
     }

@@ -310,8 +310,8 @@ devTest.describe("shop-navigation", () => {
 });
 
 /**
- * Shop conditional intercept tests - when() condition behavior
- * The shop intercept has: when(({ from }) => !from.pathname.startsWith("/shop/products/"))
+ * Shop conditional intercept tests - { when } config selector behavior
+ * The shop intercept has: { when: ({ from }) => !from.pathname.startsWith("/shop/products/") }
  * This means modal shows from /shop index, but NOT from category pages
  */
 devTest.describe("shop-conditional-intercept", () => {

@@ -7,6 +7,9 @@ import type { RouteEntry } from "../../types.js";
 // No router trie is registered for these routerIds, so createFindMatch skips
 // Phase 1 (trie) and exercises Phase 2 (regex fallback) directly — the path
 // where the single-entry cache, the lazy-eval retry loop, and the cap live.
+//
+// findMatch is async (a lazy include may be backed by an async `() => import()`
+// provider); for these eager-route cases it resolves in the same microtask.
 
 function nonLazyEntry(routes: Record<string, string>): RouteEntry {
   return {
@@ -17,13 +20,13 @@ function nonLazyEntry(routes: Record<string, string>): RouteEntry {
 }
 
 describe("createFindMatch", () => {
-  it("resolves a route via the Phase-2 fallback when no trie is registered", () => {
+  it("resolves a route via the Phase-2 fallback when no trie is registered", async () => {
     const fm = createFindMatch({
       routesEntries: [nonLazyEntry({ "user.show": "/users/:id" })],
       evaluateLazyEntry: () => {},
       routerId: "find-match-test-basic",
     });
-    const r = fm("/users/5");
+    const r = await fm("/users/5");
     expect(r?.routeKey).toBe("user.show");
     expect(r?.params).toEqual({ id: "5" });
   });
@@ -31,14 +34,14 @@ describe("createFindMatch", () => {
   // Regression (C7): the single-entry cache is module-lifetime and shared across
   // same-pathname requests. ctx.params aliases the result's params, so a caller
   // mutating params must NOT corrupt the cached entry for the next request.
-  it("returns an independent params object on a cache hit (no cross-request bleed)", () => {
+  it("returns an independent params object on a cache hit (no cross-request bleed)", async () => {
     const fm = createFindMatch({
       routesEntries: [nonLazyEntry({ "user.show": "/users/:id" })],
       evaluateLazyEntry: () => {},
       routerId: "find-match-test-clone",
     });
 
-    const first = fm("/users/5");
+    const first = await fm("/users/5");
     expect(first?.params).toEqual({ id: "5" });
 
     // Simulate a handler mutating ctx.params (which aliases result.params).
@@ -46,12 +49,12 @@ describe("createFindMatch", () => {
     (first!.params as Record<string, string>).injected = "x";
 
     // Same pathname → cache hit. Must be a clean clone, not the corrupted object.
-    const second = fm("/users/5");
+    const second = await fm("/users/5");
     expect(second?.params).toEqual({ id: "5" });
     expect(second?.params).not.toBe(first?.params);
   });
 
-  it("recomputes for a different pathname after caching", () => {
+  it("recomputes for a different pathname after caching", async () => {
     const fm = createFindMatch({
       routesEntries: [
         nonLazyEntry({ "user.show": "/users/:id", about: "/about" }),
@@ -59,9 +62,9 @@ describe("createFindMatch", () => {
       evaluateLazyEntry: () => {},
       routerId: "find-match-test-recompute",
     });
-    expect(fm("/users/7")?.routeKey).toBe("user.show");
-    expect(fm("/about")?.routeKey).toBe("about");
-    expect(fm("/users/9")?.params).toEqual({ id: "9" });
+    expect((await fm("/users/7"))?.routeKey).toBe("user.show");
+    expect((await fm("/about"))?.routeKey).toBe("about");
+    expect((await fm("/users/9"))?.params).toEqual({ id: "9" });
   });
 
   // Regression (R3): the dev-only "regex fallback resolved while the trie was
@@ -70,7 +73,7 @@ describe("createFindMatch", () => {
   // first-request lazy-splicing flow). We force the entry-resolve to miss by
   // giving the entry a staticPrefix that differs from the trie leaf's sp, so
   // findMatch falls through to the regex fallback even though the trie matched.
-  it("does NOT warn when the trie matched but the entry resolved via the fallback (lazy lag)", () => {
+  it("does NOT warn when the trie matched but the entry resolved via the fallback (lazy lag)", async () => {
     // Trie knows the route (sp "/foo"); the flat entry has sp "" so the
     // trie-side entry-resolve misses and we fall through to Phase 2.
     setRouterTrie(
@@ -88,14 +91,14 @@ describe("createFindMatch", () => {
         evaluateLazyEntry: () => {},
         routerId: "find-match-r3-suppress",
       });
-      expect(fm("/foo/5")?.routeKey).toBe("foo.show");
+      expect((await fm("/foo/5"))?.routeKey).toBe("foo.show");
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }
   });
 
-  it("DOES warn when the trie was present but did not match (genuine trie gap)", () => {
+  it("DOES warn when the trie was present but did not match (genuine trie gap)", async () => {
     // Trie holds an unrelated route, so it returns no match for "/foo/5" while
     // the regex fallback resolves it — a real trie gap worth surfacing in dev.
     setRouterTrie(
@@ -113,7 +116,7 @@ describe("createFindMatch", () => {
         evaluateLazyEntry: () => {},
         routerId: "find-match-r3-warn",
       });
-      expect(fm("/foo/5")?.routeKey).toBe("foo.show");
+      expect((await fm("/foo/5"))?.routeKey).toBe("foo.show");
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("regex fallback"),
       );
@@ -125,7 +128,7 @@ describe("createFindMatch", () => {
   // Regression: a lazy entry whose evaluateLazyEntry never marks it evaluated
   // would loop forever; the cap must bound it and return null (404) rather than
   // hang. Identical outcome in dev and production.
-  it("caps runaway lazy evaluation and returns null", () => {
+  it("caps runaway lazy evaluation and returns null", async () => {
     const lazyEntry = {
       prefix: "",
       staticPrefix: "/api",
@@ -143,9 +146,86 @@ describe("createFindMatch", () => {
         evaluateLazyEntry: () => {},
         routerId: "find-match-test-cap",
       });
-      expect(fm("/api/anything")).toBeNull();
+      expect(await fm("/api/anything")).toBeNull();
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("lazy evaluation iterations"),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+describe("createFindMatch — shared static-prefix async include candidate scan", () => {
+  function sharedPrefixLazyEntry(routes: Record<string, string>): RouteEntry {
+    return {
+      prefix: "",
+      staticPrefix: "/shop", // deliberately shared across candidates
+      routes,
+      lazy: true,
+      lazyEvaluated: false,
+    } as unknown as RouteEntry;
+  }
+
+  it("scans past a non-owner shared-prefix candidate to the owner (both evaluated)", async () => {
+    const first = sharedPrefixLazyEntry({}); // no route key -> not the owner
+    const second = sharedPrefixLazyEntry({ "shop.b": "/shop/b/:id" }); // owner
+    const evaluated: string[] = [];
+
+    setRouterTrie(
+      "find-match-shared-happy",
+      buildRouteTrie(
+        { "shop.b": "/shop/b/:id" },
+        { "shop.b": ["A:shop.b"] },
+        { "shop.b": "/shop" },
+      ),
+    );
+
+    const fm = createFindMatch({
+      routesEntries: [first, second],
+      evaluateLazyEntry: (e) => {
+        evaluated.push(e === first ? "first" : "second");
+        return Promise.resolve();
+      },
+      routerId: "find-match-shared-happy",
+    });
+
+    const r = await fm("/shop/b/5");
+    expect(r?.routeKey).toBe("shop.b");
+    expect(r?.params).toEqual({ id: "5" });
+    expect(r?.entry).toBe(second);
+    expect(evaluated).toEqual(["first", "second"]); // scanned both (cross-import)
+  });
+
+  it("isolates a failing shared-prefix provider and resolves via the sibling", async () => {
+    const failing = sharedPrefixLazyEntry({}); // provider rejects
+    const owner = sharedPrefixLazyEntry({ "shop.b": "/shop/b/:id" });
+
+    setRouterTrie(
+      "find-match-shared-isolate",
+      buildRouteTrie(
+        { "shop.b": "/shop/b/:id" },
+        { "shop.b": ["A:shop.b"] },
+        { "shop.b": "/shop" },
+      ),
+    );
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fm = createFindMatch({
+        routesEntries: [failing, owner],
+        evaluateLazyEntry: (e) =>
+          e === failing
+            ? Promise.reject(new Error("import failed"))
+            : Promise.resolve(),
+        routerId: "find-match-shared-isolate",
+      });
+
+      const r = await fm("/shop/b/9"); // must NOT throw
+      expect(r?.routeKey).toBe("shop.b");
+      expect(r?.entry).toBe(owner);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("failed to load"),
       );
     } finally {
       errorSpy.mockRestore();

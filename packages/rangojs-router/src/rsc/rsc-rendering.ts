@@ -21,6 +21,8 @@ import {
   attachLocationStateIfPresent,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
+import { gateTransitions } from "./transition-gate.js";
+import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 
 export function handleRscRendering<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -70,16 +72,21 @@ async function handleRscRenderingInner<TEnv>(
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: m.segments,
+      segments: gateTransitions(m.segments, reqCtx, ctx.router.onError),
       matched: m.matched,
       diff: m.diff,
       resolvedIds: m.resolvedIds,
       params: m.params,
       isPartial: false,
       rootLayout: ctx.router.rootLayout,
-      handles: handleStore.stream(),
+      // Full render: resolve deferred handle values server-side so SSR markup and
+      // the first sync useHandle read see resolved values. Partial payloads below
+      // keep streaming (handleStore.stream()).
+      handles: resolvedHandleStream(handleStore),
       version: ctx.version,
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+      prefetchCacheSize: ctx.router.prefetchCacheSize,
+      prefetchConcurrency: ctx.router.prefetchConcurrency,
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       // Carry warmupEnabled on the initial full-render payload so the client
@@ -126,7 +133,11 @@ async function handleRscRenderingInner<TEnv>(
           // intercepted server-side (X-RSC-Reload) and never delivers a
           // different-router payload to the client.
           routerId: ctx.router.id,
-          segments: result.segments,
+          segments: gateTransitions(
+            result.segments,
+            reqCtx,
+            ctx.router.onError,
+          ),
           matched: result.matched,
           diff: result.diff,
           resolvedIds: result.resolvedIds,
@@ -136,6 +147,8 @@ async function handleRscRenderingInner<TEnv>(
           handles: handleStore.stream(),
           version: ctx.version,
           prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+          prefetchCacheSize: ctx.router.prefetchCacheSize,
+          prefetchConcurrency: ctx.router.prefetchConcurrency,
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       };

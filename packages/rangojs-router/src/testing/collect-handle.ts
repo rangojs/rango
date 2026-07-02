@@ -12,7 +12,9 @@
  * It relies on createHandle registering the collect even in a bare test (it
  * assigns a runtime fallback id when the Vite plugin did not inject one). If a
  * handle's module was never imported (so createHandle never ran), the collect is
- * unregistered and this falls back to a flat array with a warning.
+ * unregistered and this falls back to the default identity collect — with a
+ * warning, since a CUSTOM collect that failed to register silently returns the
+ * wrong shape.
  */
 
 import { getCollectFn, type Handle } from "../handle.js";
@@ -25,16 +27,20 @@ export function collectHandle<TData, TAccumulated>(
     | ((segments: TData[][]) => TAccumulated)
     | undefined;
 
-  if (!collectFn) {
-    console.warn(
-      `[rango] collectHandle: handle "${handle.$$id}" has no registered collect ` +
-        `function. Import the handle's module so createHandle() runs. Falling ` +
-        `back to a flat array.`,
-    );
-    return segments.flat() as unknown as TAccumulated;
-  }
-
   // Drop empty arrays matching production behavior (segment count/indices).
   const nonEmpty = segments.filter((seg) => seg.length > 0) as TData[][];
+
+  // No registered collect (the handle's module was not imported): fall back to the
+  // default identity collect — the per-segment arrays as-is, mirroring production
+  // collectHandleData. Warn, because a handle with a CUSTOM collect would silently
+  // get the wrong shape (the runtime can't tell it from an intended default).
+  if (!collectFn) {
+    console.warn(
+      `[rango] collectHandle: handle "${handle.$$id}" has no registered collect — ` +
+        `falling back to the identity (per-segment data as-is). Import the handle's ` +
+        `module so createHandle() runs if you expected a custom collect.`,
+    );
+    return nonEmpty as unknown as TAccumulated;
+  }
   return collectFn(nonEmpty);
 }

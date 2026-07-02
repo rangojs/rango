@@ -11,7 +11,7 @@ import {
  * Shop URL patterns with modal intercept
  * Routes: shop.index, shop.product, shop.cart
  */
-export const shopPatterns = urls(({ path, layout, intercept, when }) => [
+export const shopPatterns = urls(({ path, layout, intercept }) => [
   layout(ShopLayout, () => [
     path("/", ShopIndexPage, { name: "index" }),
     path(
@@ -23,7 +23,7 @@ export const shopPatterns = urls(({ path, layout, intercept, when }) => [
       "@modal",
       ".product",
       (ctx) => <ProductModal params={ctx.params} />,
-      () => [when(({ from }) => from.pathname === "/app/shop")],
+      { when: ({ from }) => from.pathname === "/app/shop" },
     ),
     path("/cart", CartPage, { name: "cart" }),
   ]),

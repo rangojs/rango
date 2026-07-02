@@ -20,7 +20,10 @@ import {
   encodeReply,
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
-import { getRequestContext } from "../server/request-context.js";
+import {
+  getRequestContext,
+  runWithRequestContext,
+} from "../server/request-context.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import {
   isTainted,
@@ -307,7 +310,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
     }
 
-    if (cached?.shouldRevalidate) {
+    // foregroundOnAction (opt-in; see CacheProfile.foregroundOnAction): during an
+    // action's revalidation render, a stale entry falls through to the foreground
+    // miss path below instead of SWR. The flag is set by revalidateAfterAction.
+    const foregroundOnActionRevalidation =
+      requestCtx?._inActionRevalidation === true &&
+      profile.foregroundOnAction === true;
+    if (cached?.shouldRevalidate && !foregroundOnActionRevalidation) {
       // Stale hit: return stale value, revalidate in background
       try {
         const result = await serveCached(cached);
@@ -316,8 +325,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         // live response or throw LateHandlePushError on the completed store.
         // Same isolation pattern as route-level background-revalidation.ts.
         runBackground(requestCtx, async () => {
-          // Reuse closure-captured requestCtx instead of calling
-          // getRequestContext() — ALS context may be gone inside waitUntil.
+          // The closure-captured requestCtx is reused for the framework's own
+          // reads (handle store swap, error reporting) AND, below, to
+          // re-establish the request-context ALS around the user fn. ALS context
+          // may be gone inside waitUntil: on workerd a waitUntil task runs
+          // detached from the request's I/O context, so getRequestContext()
+          // inside the cached body would otherwise throw.
           let originalHandleStore:
             | ReturnType<typeof createHandleStore>
             | undefined;
@@ -360,7 +373,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           }
 
           try {
-            const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+            // Re-establish the request-context ALS so a "use cache" body that
+            // reads the ambient getRequestContext() (e.g.
+            // getRequestContext().env.ApiKey) resolves during the background
+            // revalidation instead of throwing "called outside of a request
+            // context". runWithRequestContext sets the store for fn's
+            // synchronous kickoff; its async continuations inherit it.
+            const scoped = runWithRequestContext(requestCtx, () =>
+              runWithCacheTagScope(() => fn.apply(this, args)),
+            );
             const freshResult = await scoped.result;
             bgStopCapture?.();
             // Merge profile/DSL tags with runtime cacheTag() tags, read after

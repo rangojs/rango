@@ -14,8 +14,6 @@ import {
   loader,
   loading,
   parallel,
-  intercept,
-  when,
   errorBoundary,
   notFoundBoundary,
 } from "../route-definition.js";
@@ -462,13 +460,6 @@ describe("global helper imports", () => {
       );
       expect(() => parallel({ "@slot": () => <div>Slot</div> })).toThrow(
         "parallel() must be called inside urls()",
-      );
-    });
-
-    it("when() keeps its intercept-specific guard message", () => {
-      expect(() => when(() => true)).toThrowError(DslContextError);
-      expect(() => when(() => true)).toThrow(
-        "when() must be called inside intercept()",
       );
     });
   });

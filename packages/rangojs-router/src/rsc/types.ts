@@ -43,6 +43,10 @@ export interface RscPayload {
     version?: string;
     /** TTL in milliseconds for the client-side in-memory prefetch cache */
     prefetchCacheTTL?: number;
+    /** Max entries in the client-side in-memory prefetch cache (FIFO eviction) */
+    prefetchCacheSize?: number;
+    /** Max concurrent speculative prefetch requests on the client */
+    prefetchConcurrency?: number;
     /** Server-resolved rango state cookie name; the client reads it verbatim. */
     stateCookieName?: string;
     /** Theme configuration for FOUC prevention */

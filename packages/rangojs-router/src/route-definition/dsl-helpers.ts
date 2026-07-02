@@ -17,6 +17,7 @@ import {
   type EntryPropSegments,
   type HelperContext,
   type InterceptEntry,
+  type InterceptConfig,
 } from "../server/context";
 import { invariant } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
@@ -36,7 +37,6 @@ import type {
   ErrorBoundaryItem,
   NotFoundBoundaryItem,
   LayoutItem,
-  WhenItem,
   CacheItem,
   TransitionItem,
   UseItems,
@@ -263,34 +263,6 @@ const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
   const name = `$${store.getNextIndex("notFoundBoundary")}`;
   parent.notFoundBoundary.push(fallback);
   return { name, type: "notFoundBoundary" } as NotFoundBoundaryItem;
-};
-
-/**
- * When helper - defines a condition for intercept activation
- *
- * Only valid inside intercept() use() callback. The when() function
- * is captured by the intercept and stored in its `when` array.
- * During soft navigation, all when() conditions must return true
- * for the intercept to activate.
- */
-const when: RouteHelpers<any, any>["when"] = (fn) => {
-  const { store, ctx } = requireDslContext(
-    "when() must be called inside intercept()",
-  );
-
-  // The when() function needs to be captured by the intercept's tempParent
-  // which should have a `when` array. If not present, we're not inside intercept()
-  const parent = ctx.parent as any;
-  if (!parent || !("when" in parent)) {
-    invariant(
-      false,
-      "when() can only be used inside intercept() use() callback",
-    );
-  }
-
-  const name = `$${store.getNextIndex("when")}`;
-  parent.when.push(fn);
-  return { name, type: "when" } as WhenItem;
 };
 
 /**
@@ -701,8 +673,19 @@ const intercept = (
   slotName: `@${string}`,
   routeName: string,
   handler: any,
+  configOrUse?: InterceptConfig | (() => any[]),
   use?: () => any[],
 ) => {
+  // arg4 discrimination: a function is the use() callback (no config); an object
+  // is the config carrying `when`. With config given, the use() callback is
+  // arg5. Keeps the no-config form intercept(slot, route, handler, () => [...])
+  // working unchanged.
+  const config: InterceptConfig | undefined =
+    typeof configOrUse === "function" || configOrUse == null
+      ? undefined
+      : configOrUse;
+  const useFn = typeof configOrUse === "function" ? configOrUse : use;
+
   const { store, ctx } = requireDslContext(
     "intercept() must be called inside urls()",
   );
@@ -740,9 +723,17 @@ const intercept = (
     when: [], // Selector conditions for conditional interception
   };
 
+  // Conditional interception: `when` from the config object — a single selector
+  // or an array (ALL must return true to activate). Replaces the former when()
+  // use-item captured inside the callback.
+  if (config?.when) {
+    const selectors = Array.isArray(config.when) ? config.when : [config.when];
+    entry.when.push(...selectors);
+  }
+
   // Merge handler.use defaults with explicit use
   const handlerUseFn = resolveHandlerUse(handler);
-  const mergedUse = mergeHandlerUse(handlerUseFn, use, "intercept");
+  const mergedUse = mergeHandlerUse(handlerUseFn, useFn, "intercept");
 
   // Run merged use callback to collect loaders, revalidate, middleware, etc.
   if (mergedUse) {
@@ -759,7 +750,6 @@ const intercept = (
       notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
       layout: capturedLayouts, // Capture layout() calls
-      when: entry.when, // Capture when() conditions
       get loading() {
         return entry.loading;
       },
@@ -1114,7 +1104,6 @@ export {
   revalidate,
   parallel,
   intercept,
-  when,
   errorBoundary,
   notFoundBoundary,
   route,

@@ -15,6 +15,7 @@ import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {
   getRequestContext,
+  runWithRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
@@ -330,7 +331,13 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
         runBackground(requestCtx, async () => {
           try {
-            const fresh = await next();
+            // Re-establish the request-context ALS around the background
+            // re-render: next() re-runs the full handler pipeline, and on
+            // workerd a waitUntil task runs detached from the request's I/O
+            // context, so a handler/component reading getRequestContext() would
+            // otherwise throw. Same fix as the route-level/use-cache background
+            // revalidation paths.
+            const fresh = await runWithRequestContext(requestCtx, () => next());
             const directives = shouldCacheResponse(fresh);
 
             if (directives && fresh.body) {
@@ -348,10 +355,15 @@ export function createDocumentCacheMiddleware<TEnv = any>(
               log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
             }
           } catch (error) {
+            // Pass requestCtx explicitly: this runs in a detached waitUntil task
+            // where the ALS context is gone, so onError only fires if we hand it
+            // the captured context (reportCacheError falls back to _getRequestContext
+            // otherwise, which is null here).
             reportCacheError(
               error,
               "cache-write",
               "[DocumentCache] revalidation",
+              requestCtx,
             );
           }
         });
@@ -401,10 +413,14 @@ export function createDocumentCacheMiddleware<TEnv = any>(
               collectRequestTags(requestCtx),
             );
           } catch (error) {
+            // Detached waitUntil task — pass the captured requestCtx so onError
+            // fires even though the ALS context is gone (see the revalidation
+            // catch above).
             reportCacheError(
               error,
               "cache-write",
               "[DocumentCache] cache write",
+              requestCtx,
             );
           }
         });

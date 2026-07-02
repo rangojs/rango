@@ -19,6 +19,7 @@ import {
   createScanFilter,
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
+import { injectClientDebugFlag } from "./inject-client-debug.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
@@ -310,19 +311,13 @@ export function createRouterDiscoveryPlugin(
   return {
     name: "@rangojs/router:discovery",
 
-    config() {
-      const config: any = {
-        define: {
-          __RANGO_DEBUG__: JSON.stringify(!!process.env.INTERNAL_RANGO_DEBUG),
-        },
-      };
-      // Prerender/static handler modules are bundled naturally with the
-      // rest of the RSC entry.  A previous design forced them into dedicated
-      // __prerender-handlers / __static-handlers chunks via manualChunks,
-      // but Rollup hoisted all shared dependencies into those chunks,
-      // inflating them to ~1 MB with active runtime code.  Handler code is
-      // evicted in closeBundle regardless of which chunk it lands in.
-      return config;
+    // Make INTERNAL_RANGO_DEBUG reach the CLIENT debug logs by just setting the
+    // env var. See injectClientDebugFlag: bakes the resolved flag into the
+    // internal-debug module so FE debug no longer depends on Vite delivering the
+    // `__RANGO_DEBUG__` define to the client (which it does only as an injected
+    // global whose presence varies across consumer setups). Runs in dev and build.
+    transform(_code, id) {
+      return injectClientDebugFlag(id);
     },
 
     configResolved(config) {
@@ -549,6 +544,14 @@ export function createRouterDiscoveryPlugin(
           );
           console.warn(`[rango] Failed to create temp runner: ${err.message}`);
         }
+        // Reached only on failure (runner unavailable, or create/import threw
+        // AFTER the server was created). Close the just-created server so a
+        // failed discovery does not leak it until the next call or dev shutdown,
+        // and null the refs so the reuse path above starts clean. Mirrors the
+        // close pattern used when an existing server is discarded (above).
+        await prerenderTempServer?.close().catch(() => {});
+        prerenderTempServer = null;
+        prerenderNodeRegistry = null;
         return null;
       }
 

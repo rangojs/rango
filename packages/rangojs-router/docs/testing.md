@@ -635,16 +635,18 @@ expect(collectHandle(PageTitle, [["Home"], ["Products"], ["Shoes"]])).toBe(
   "Shoes",
 );
 
-const Breadcrumbs = createHandle<Item>(); // default flatten
+// Opt into a flat list; the default collect groups per segment (Item[][]).
+const Breadcrumbs = createHandle<Item, Item[]>((s) => s.flat());
 expect(collectHandle(Breadcrumbs, [[home], [post]])).toEqual([home, post]);
 ```
 
 This works because `createHandle()` registers its collect even in a bare test
 (it assigns a runtime fallback id when the Vite plugin did not inject one). The
-same applies to `renderRoute`'s `handles` seeding: a handle's **custom** collect
-now runs end-to-end, so a `useHandle(handle)` component sees the real
-accumulated value (not a default flatten). The collect is also just a function,
-so you can always export and call it directly if you prefer.
+same applies to `renderRoute`'s `handles` seeding: a handle's collect runs
+end-to-end, so a `useHandle(handle)` component sees the real accumulated value.
+The default collect passes the per-segment data through as-is (`TData[][]`); the
+collect is also just a function, so you can always export and call it directly if
+you prefer.
 
 Fidelity caveat: client tree only. It will NOT catch server/client boundary
 remount bugs, real Flight serialization, loader execution, middleware, or handler
@@ -1263,10 +1265,12 @@ renderToFlightString(element, opts?: { request?: Request|string, headers?, env?,
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
 renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
-renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, theme? }):
+renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, inActionRevalidation?, theme? }):
   Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }>;
 // cacheStore (e.g. new MemorySegmentCacheStore()) + cacheProfiles exercise a "use cache" fn the handler
 // invokes; without cacheStore registerCachedFunction bypasses uncached (warns once under the runner).
+// inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
+// entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
 findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,children,element}[] (props excludes children); [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
 textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)

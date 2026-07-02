@@ -87,6 +87,7 @@ import { createSSRHandler } from "@rangojs/router/ssr";
 import {
   runLoader,
   runLoaderResult,
+  runTransitionWhen,
   dispatch,
   createTestRequestContext,
   runInRequestContext,
@@ -116,6 +117,7 @@ void createRSCHandler;
 void createSSRHandler;
 void runLoader;
 void runLoaderResult;
+void runTransitionWhen;
 void rangoTestAliases;
 void rangoTestConfig;
 void createTestRequestContext;

@@ -153,6 +153,18 @@ export const marketingPatterns = urls(({ path }) => [
 include("/", marketingPatterns, { name: "marketing" }),
 ```
 
+Next.js code-splits each route segment automatically. Rango's eager `include()`
+bundles the group into the entry chunk; to get Next-style per-section splitting,
+pass an async provider so the group loads on the first request under its prefix:
+
+```typescript
+// urls/admin.tsx: `export default adminPatterns` — loads on first /admin request
+include("/admin", () => import("./urls/admin"), { name: "admin" }),
+```
+
+Route types, `href()`, and prerender still see every route in the split group.
+See `/composability`.
+
 ### Parallel routes
 
 In Next.js, `@sidebar` and `@main` are both named slots. In Rango, the main content
@@ -193,9 +205,9 @@ The main content always goes through `<Outlet />` via the `path()` handler.
 // Rango: explicit intercept in layout
 layout(<ShopLayout />, () => [
   path("/product/:id", ProductPage, { name: "product" }),
-  intercept("@modal", ".product", <ProductModal />, () => [
-    when(({ from }) => from.pathname.startsWith("/shop")),
-  ]),
+  intercept("@modal", ".product", <ProductModal />, {
+    when: ({ from }) => from.pathname.startsWith("/shop"),
+  }),
 ])
 ```
 

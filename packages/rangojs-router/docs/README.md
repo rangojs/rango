@@ -86,6 +86,10 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 - [Handles completion detection](./design/handles-completion.md) - research &
   options for detecting RSC render completion to finalize handle collection; why
   every in-band completion signal is circular, and the cache bugs the audit found
+- [Resolved-by-default handles](./design/handles-resolved-by-default.md) - a
+  deferred (Promise) handle value is resolved before any consumer sees it
+  (server-side on full render, client-side await-then-apply on navigation), so
+  `collect`/`useHandle` only ever see resolved values
 - [Rango state cookie storage & single invalidation API](../../../docs/design/rango-state-cookie.md) -
   moving the rango state from localStorage to a session cookie and collapsing
   cache invalidation to `invalidateClientCache()` / `keepClientCache()`
@@ -112,9 +116,11 @@ Completed, superseded, and point-in-time plan/handoff docs are moved to
 
 - [Prerender passthrough action plan](./internal/archive/prerender-passthrough-action-plan.md) (archived)
   - superseded — documents the migration from `{ passthrough: true }` to `Passthrough()` wrapper
-- [Why include() is synchronous](./internal/why-includes-is-sync.md) -
-  design rationale for the `UrlPatterns`-only `include()` signature and
-  the trie/reverse-map/type-gen/prerender invariants it protects
+- [include() and async route loading](./internal/async-includes.md) -
+  the eager vs. async `() => import()` include forms, how discovery awaits
+  providers to keep the trie/reverse-map/type-gen/prerender invariants complete
+  while the module import defers, and the runtime contract (sometimes-async
+  `evaluateLazyEntry`, the three handler-run sites, concurrent dedupe)
 - [Why SSR/RSC streaming uses Web Streams everywhere](./internal/why-web-streams-everywhere.md) -
   why both render layers use `renderToReadableStream` on Node (not
   `renderToPipeableStream`), the conversion-tax and plugin-locked-Flight

@@ -60,8 +60,7 @@ urls(
     cache, // Configure caching
     middleware, // Add middleware
     revalidate, // Control revalidation
-    intercept, // Intercept routes for modals
-    when, // Conditional rendering
+    intercept, // Intercept routes for modals (conditional via intercept(..., { when }))
     errorBoundary, // Add an error boundary
     notFoundBoundary, // Add a not-found boundary
     transition, // Configure view transitions
@@ -398,6 +397,18 @@ export const urlpatterns = urls(({ path, include }) => [
   include("/shop", shopPatterns, { name: "shop" }),
 ]);
 ```
+
+`include()` also accepts an async provider to code-split that group into its own
+chunk, imported on the first request reaching the prefix instead of at startup:
+
+```typescript
+// urls/shop.tsx: `export default shopPatterns`
+include("/shop", () => import("./urls/shop"), { name: "shop" }),
+```
+
+Build-time discovery still `await`s the provider, so route types, `href()`, and
+prerender see every route in the split group. Reach for it when a group is a
+large, independently-loadable unit — see `/composability`.
 
 ## Environment Types
 

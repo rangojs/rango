@@ -96,6 +96,11 @@ export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
       <p data-testid="blog-post-content">
         Content for post {ctx.params.postId}
       </p>
+      {/* Soft-nav target with a deferred Meta title — used to assert the previous
+          page's title is kept (not blanked) while the deferred meta resolves. */}
+      <Link to="/suspense-stream-meta" data-testid="blog-to-suspense-meta">
+        suspense-stream-meta
+      </Link>
     </div>
   );
 };

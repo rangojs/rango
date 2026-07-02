@@ -9,6 +9,7 @@ import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
+import type { RouteMatchResult } from "./pattern-matching.js";
 import type { ExtractParams } from "../types/route-config.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
@@ -302,6 +303,20 @@ export interface RangoInternal<
   readonly prefetchCacheTTL: number;
 
   /**
+   * Maximum number of decoded prefetch payloads the client keeps in its
+   * in-memory prefetch cache (FIFO eviction at capacity). Shipped to the
+   * client in payload metadata. Derived from prefetchCacheSize.
+   */
+  readonly prefetchCacheSize: number;
+
+  /**
+   * Maximum number of speculative prefetch requests the client runs
+   * concurrently. Shipped to the client in payload metadata. Derived from
+   * prefetchConcurrency.
+   */
+  readonly prefetchConcurrency: number;
+
+  /**
    * Resolved rango state cookie name (`{prefix}_{routerId}`), composed once at
    * router init and shipped to the client in payload metadata. The server-side
    * cookie writer reads it from here; the client reads it from metadata.
@@ -502,7 +517,14 @@ export interface RangoInternal<
    * Used by classifyRequest() for request classification without
    * entering the full match pipeline.
    */
-  findMatch(pathname: string, metricsStore?: any): any;
+  // Async since a lazy async include (`() => import()`) must resolve before its
+  // routes can match. Typed (not `any`) so a consumer doing
+  // `const m = router.findMatch(p); if (!m) ...; m.entry` gets a compile error
+  // (m is a Promise) instead of the silent always-truthy bug.
+  findMatch(
+    pathname: string,
+    metricsStore?: any,
+  ): Promise<RouteMatchResult<TEnv> | null>;
 
   /**
    * Debug utility to serialize the manifest for inspection

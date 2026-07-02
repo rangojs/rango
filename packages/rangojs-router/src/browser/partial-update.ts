@@ -20,7 +20,7 @@ import {
 } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
-import { debugLog } from "./logging.js";
+import { debugLog, isBrowserDebugEnabled } from "./logging.js";
 import {
   validateRedirectOrigin,
   validateExternalRedirect,
@@ -188,7 +188,11 @@ export function createPartialUpdater(
       routerId: store.getRouterId?.(),
     });
     const streamingToken = tx.startStreaming();
-    const { payload, streamComplete: rawStreamComplete } = fetchResult;
+    const {
+      payload,
+      streamComplete: rawStreamComplete,
+      fullyPrefetched,
+    } = fetchResult;
     debugLog("payload.metadata", payload.metadata);
 
     // Side effect only: end the streaming token once the stream settles.
@@ -395,7 +399,14 @@ export function createPartialUpdater(
 
       const renderOptions = {
         isAction: mode.type === "action",
-        forceAwait: mode.type === "stale-revalidation",
+        // forceAwait unwraps the ROUTER loader promises during render so they
+        // land without a loading()/fallback frame. A fully-prefetched nav has
+        // its router data already resolved (the prefetch stream drained), so
+        // awaiting it here is free and lets us commit NORMALLY (not in a
+        // transition) below — a normal commit still shows fallbacks for any
+        // CLIENT component that suspends on mount, which a transition would
+        // wrongly suppress by holding the old UI until that suspense settles.
+        forceAwait: mode.type === "stale-revalidation" || fullyPrefetched,
         interceptSegments:
           reconciled.interceptSegments.length > 0
             ? reconciled.interceptSegments
@@ -480,6 +491,21 @@ export function createPartialUpdater(
       debugLog("[partial-update] updating document");
 
       const hasTransition = shouldStartViewTransition(reconciled.segments);
+      // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Reports which reconciled
+      // segment still carries a transition after the server-side when-gate, and
+      // whether the commit will be held in a startTransition. If `withTransition`
+      // lists an ancestor (layout/root) id rather than the gated leaf, an ungated
+      // ancestor transition is holding the subtree (missing loading() fallback).
+      if (isBrowserDebugEnabled()) {
+        debugLog("[VT-DIAG] commit", {
+          mode: mode.type,
+          hasTransition,
+          withTransition: reconciled.segments
+            .filter((s) => s.transition)
+            .map((s) => s.id),
+          all: reconciled.segments.map((s) => s.id),
+        });
+      }
       const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
@@ -505,6 +531,20 @@ export function createPartialUpdater(
           });
         });
       } else {
+        // Normal commit (cold/partial nav AND fully-prefetched nav). For a
+        // fully-prefetched nav, renderOptions.forceAwait (above) unwrapped the
+        // already-resolved ROUTER loader data AND route content during render, so
+        // the new tree carries it inline with no loading()/fallback frame — yet we
+        // still commit NORMALLY here rather than in a transition. A transition
+        // holds the OLD UI until ALL suspense in the new tree settles, including a
+        // CLIENT component that starts its own data request only when mounted
+        // (post-commit) under a persistent boundary; that would retain the
+        // previous page indefinitely with no feedback. A normal commit lets such
+        // client-initiated suspense reveal a fallback (correct) while the router
+        // data — genuinely ready — never flashes. Cold/partial navs
+        // (fullyPrefetched=false) do not forceAwait, so they stream their
+        // fallbacks. Explicit transition() routes keep the broader content-hold
+        // via the hasTransition branch above (the documented opt-in).
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,

@@ -10,6 +10,7 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
+import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
 import {
   buildLoaderPromise,
@@ -316,14 +317,47 @@ export async function renderSegments(
       resolvedComponent = await component;
     }
 
-    let nodeContent: ReactNode = isRenderableLoading(loading)
-      ? createElement(RouteContentWrapper, {
-          key: `suspense-loading-${id}`,
-          content: getMemoizedContentPromise(resolvedComponent),
-          fallback: loading,
-          segmentId: id,
-        })
-      : registerLazyRef(resolvedComponent);
+    let nodeContent: ReactNode = null;
+    if (isRenderableLoading(loading)) {
+      // forceAwait (popstate, stale-revalidation, fully-prefetched nav) renders a
+      // loading() route with the route content ALREADY resolved, so its
+      // RouteContentWrapper Suspender does not suspend for a microtask and flash
+      // the loading() fallback on a NORMAL (non-transition) commit. The router
+      // data is known-ready on these paths, so awaiting the content here is free.
+      // The wrapper tree is unchanged (RouteContentWrapper is still created with
+      // the same key/fallback) — only the `content` prop is a resolved node
+      // instead of a pending promise, which Suspender renders synchronously. This
+      // mirrors the forceAwait loaderData unwrap above; a CLIENT component that
+      // suspends on mount inside the content still reveals a fallback (it is not
+      // pre-resolved).
+      const contentPromise = getMemoizedContentPromise(resolvedComponent);
+      const loadingContent: Promise<ReactNode> | ReactNode = forceAwait
+        ? await contentPromise
+        : contentPromise;
+      nodeContent = createElement(RouteContentWrapper, {
+        key: `suspense-loading-${id}`,
+        content: loadingContent,
+        fallback: loading,
+        segmentId: id,
+      });
+    } else {
+      // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. A segment in the no-loading()
+      // branch whose component decodes as a Promise/lazy gets registered into
+      // temporalLazyRefs and awaited before commit (see below) — which on builds
+      // where the segment component arrives deferred defeats client-nav streaming.
+      if (INTERNAL_RANGO_DEBUG && typeof window === "object") {
+        const c = resolvedComponent as unknown;
+        console.log("[VT-DIAG] renderSegments no-loading-branch segment", {
+          id,
+          type: node.segment.type,
+          componentIsPromise: c instanceof Promise,
+          componentIsLazy:
+            c != null && typeof c === "object" && "_payload" in c,
+          componentTypeof: typeof c,
+        });
+      }
+      nodeContent = registerLazyRef(resolvedComponent);
+    }
 
     // Wrap with <ViewTransition> if transition config exists (React experimental only).
     // An empty config ({}) creates a bare <ViewTransition> boundary that participates
@@ -462,7 +496,24 @@ export async function renderSegments(
     children: content,
   });
   if (typeof window === "object") {
+    // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. If this await dominates the
+    // navigation time, a deferred/lazy segment component is being fully resolved
+    // before commit, which defeats client-nav streaming. The await itself is
+    // functional (it preloads lazy chunk refs); only the timing log is gated.
+    const vtDebug = INTERNAL_RANGO_DEBUG && temporalLazyRefs.length > 0;
+    const vtDebugStart = vtDebug ? performance.now() : 0;
+    if (vtDebug) {
+      console.log("[VT-DIAG] renderSegments awaiting temporalLazyRefs", {
+        count: temporalLazyRefs.length,
+      });
+    }
     await Promise.allSettled(temporalLazyRefs);
+    if (vtDebug) {
+      console.log("[VT-DIAG] renderSegments temporalLazyRefs settled", {
+        count: temporalLazyRefs.length,
+        ms: Math.round(performance.now() - vtDebugStart),
+      });
+    }
   }
 
   let result: ReactNode = errorBoundaryWrapped;

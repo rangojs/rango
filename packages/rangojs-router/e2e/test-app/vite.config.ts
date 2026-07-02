@@ -41,6 +41,14 @@ export default defineConfig(({ command }) => ({
     ...analyze(),
   ],
   define: productionDefines(command),
+  server: {
+    hmr: {
+      // Several e2e routes intentionally throw to verify router error payloads.
+      // Vite's dev overlay is broadcast to connected clients and can block
+      // unrelated parallel tests that are running against the shared dev server.
+      overlay: false,
+    },
+  },
   oxc: {
     target: "es2022",
   },

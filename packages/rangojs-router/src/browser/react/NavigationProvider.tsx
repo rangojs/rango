@@ -31,6 +31,11 @@ import { handleNavigationEnd } from "../scroll-restoration.js";
 import { createAppShellRef, type AppShellRef } from "../app-shell.js";
 import { startConnectionWarmup } from "../connection-warmup.js";
 import { debugLog } from "../logging.js";
+import { cloneHandleData } from "../navigation-store.js";
+import {
+  deferredHandleNames,
+  resolveDeferredHandleValues,
+} from "../../handles/deferred-resolution.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -66,6 +71,19 @@ async function processHandles(
     historyKey,
   } = opts;
 
+  // This nav's instance token, captured before any await — processHandles runs
+  // right after its own commit, so this is that commit's token. generateHistoryKey
+  // is URL-only, so an A->B->A revisit reuses the key; the token lets a late
+  // resolution tell its own visit apart from a newer same-URL visit, so a stale
+  // nav can never clobber a fresher one's live state or cache (P1).
+  const myInstance = store.getNavInstance();
+
+  // True while this nav still owns the live page: same history key AND the most
+  // recent commit is still ours (no newer nav has committed since).
+  const stillLive = (): boolean =>
+    historyKey === store.getHistoryKey() &&
+    myInstance === store.getNavInstance();
+
   let yieldCount = 0;
   for await (const handleData of handlesGenerator) {
     // Check if user navigated away before each update.
@@ -79,7 +97,89 @@ async function processHandles(
     }
 
     yieldCount++;
-    eventController.setHandleData(handleData, matched, isPartial, resolvedIds);
+
+    // Resolve-by-default: hold the previous resolved value until this yield's
+    // deferred (Promise) handle values settle, then apply the fully-resolved
+    // snapshot. The hold needs NO extra state — we simply do not touch the store
+    // until the values resolve, so useHandle keeps reading (and showing) the
+    // previous data. A yield with no deferred value applies synchronously.
+    const hasDeferred = deferredHandleNames(handleData).size > 0;
+
+    if (!hasDeferred) {
+      eventController.setHandleData(
+        handleData,
+        matched,
+        isPartial,
+        resolvedIds,
+      );
+      // Keep the cache fresh. The token guard stops a stale same-URL nav writing
+      // a newer entry.
+      if (store.getCacheEntryInstance(historyKey) === myInstance) {
+        store.updateCacheHandleData(
+          historyKey,
+          eventController.getHandleState().data,
+          false,
+        );
+      }
+      continue;
+    }
+
+    // The PREVIOUS (held) snapshot — captured before the await so the cache and
+    // the navigate-away merge below reflect what useHandle is still showing.
+    const previousSnapshot = cloneHandleData(
+      eventController.getHandleState().data,
+    );
+
+    // The route HAS changed even though the handle data is held, so update
+    // `routeSegmentIds` (what useSegments reads) now. This leaves `data` /
+    // `segmentOrder` (what useHandle collects over) untouched, so useHandle keeps
+    // holding its previous value while useSegments reflects the new route.
+    eventController.setRouteSegmentIds(matched ?? []);
+
+    // Deferred-pending: the new values are not applied yet (the previous value is
+    // held), so the cache entry must NOT be served as fresh on a popstate return.
+    // Mark it STALE + handlesPending (token-guarded), storing the PREVIOUS (held)
+    // snapshot. P1 fix: a deferred value is a SERVER-side promise streamed via
+    // Flight, so a navigate-away ABORTS the stream and the resolve below never
+    // settles. stale makes a popstate return revalidate; handlesPending makes that
+    // revalidation a FULL re-render (no client segment IDs) so the server
+    // re-streams the handles — a diff-only revalidation would omit the unchanged
+    // segments' handles and the deferred value would never land (see the
+    // segmentIds branch in navigation-bridge.ts).
+    if (store.getCacheEntryInstance(historyKey) === myInstance) {
+      store.updateCacheHandleData(historyKey, previousSnapshot, true, true);
+    }
+
+    // Resolve every deferred value (allSettled; rejected + nullish dropped, sync
+    // values pass through). Each stream yield is a full cumulative snapshot.
+    const resolved = await resolveDeferredHandleValues(handleData);
+
+    if (!stillLive()) {
+      // Navigated away (or a same-URL nav superseded us) while resolving. We do
+      // NOT write `resolved` into the entry. It is THIS yield's snapshot only (on a
+      // partial nav, just the re-resolved segments' buckets), and a correct write
+      // needs setHandleData's nested per-segment merge + matched/resolvedIds
+      // cleanup: HandleData is handleName -> segmentId -> entries[], so a
+      // handle-name-level spread would drop a shared layout bucket (e.g. a
+      // Breadcrumbs layout crumb under L0 when the route pushed under R0) and would
+      // mark stale previous-route buckets fresh. We cannot run that merge here
+      // without touching the now-different live page. Instead leave the entry as it
+      // was marked before the await — stale + handlesPending — so a popstate return
+      // revalidates with a full re-render and re-streams the handles. A newer nav
+      // owning the entry has already overwritten it; nothing to do either way.
+      continue;
+    }
+
+    // Still live: apply the fully-resolved snapshot and refresh the cache fresh.
+    eventController.setHandleData(resolved, matched, isPartial, resolvedIds);
+    if (store.getCacheEntryInstance(historyKey) === myInstance) {
+      store.updateCacheHandleData(
+        historyKey,
+        eventController.getHandleState().data,
+        false,
+        false,
+      );
+    }
   }
 
   // Check again before final updates
@@ -97,8 +197,9 @@ async function processHandles(
   // After handles processing completes, update the cache's handleData.
   // This fixes a race condition where commit() caches stale handleData before
   // the async handles processing completes.
-  // Only update if we're still on the same page (historyKey matches).
-  if (historyKey === store.getHistoryKey()) {
+  // Only update if we're still on the same page AND this is still the live nav
+  // (the token guard stops a stale same-URL nav writing a newer nav's state).
+  if (stillLive()) {
     const finalHandleData = eventController.getHandleState().data;
     store.updateCacheHandleData(historyKey, finalHandleData);
   }
@@ -362,7 +463,8 @@ export function NavigationProvider({
     payload.root instanceof Promise ? use(payload.root) : payload.root;
 
   // Wrap content in RootErrorBoundary to catch:
-  // 1. Errors from NetworkErrorThrower (rendered during network failures)
+  // 1. Errors from RenderErrorThrower (network failures and unprocessable
+  //    navigation responses, routed here by the navigation bridge)
   // 2. Client component errors that occur before/outside the segment tree's error boundary
   // 3. Errors during promise resolution or navigation state updates
   // This acts as a safety net - the segment tree has its own RootErrorBoundary that

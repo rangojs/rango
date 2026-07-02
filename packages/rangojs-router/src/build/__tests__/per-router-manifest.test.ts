@@ -87,9 +87,9 @@ const adminPatterns = urls(({ path }) => [
 ]);
 
 describe("per-router manifest generation", () => {
-  it("should generate disjoint route manifests for two routers", () => {
-    const siteManifest = generateManifestFull(sitePatterns, 0);
-    const adminManifest = generateManifestFull(adminPatterns, 1);
+  it("should generate disjoint route manifests for two routers", async () => {
+    const siteManifest = await generateManifestFull(sitePatterns, 0);
+    const adminManifest = await generateManifestFull(adminPatterns, 1);
 
     // Site manifest should only contain site routes
     expect(siteManifest.routeManifest).toEqual({
@@ -109,9 +109,9 @@ describe("per-router manifest generation", () => {
     expect(siteKeys.filter((k) => adminKeys.includes(k))).toEqual([]);
   });
 
-  it("should build per-router tries that only match own routes", () => {
-    const siteManifest = generateManifestFull(sitePatterns, 0);
-    const adminManifest = generateManifestFull(adminPatterns, 1);
+  it("should build per-router tries that only match own routes", async () => {
+    const siteManifest = await generateManifestFull(sitePatterns, 0);
+    const adminManifest = await generateManifestFull(adminPatterns, 1);
 
     // Build per-router static prefix maps
     const siteStaticPrefix: Record<string, string> = {};
@@ -157,9 +157,9 @@ describe("per-router manifest generation", () => {
     expect(Object.keys(adminTrieRoutes)).not.toContain("about");
   });
 
-  it("should produce isolated precomputed entries per router", () => {
-    const siteManifest = generateManifestFull(sitePatterns, 0);
-    const adminManifest = generateManifestFull(adminPatterns, 1);
+  it("should produce isolated precomputed entries per router", async () => {
+    const siteManifest = await generateManifestFull(sitePatterns, 0);
+    const adminManifest = await generateManifestFull(adminPatterns, 1);
 
     const sitePrecomputed: Array<{
       staticPrefix: string;
@@ -196,9 +196,9 @@ describe("per-router manifest generation", () => {
     expect(adminRouteNames).not.toContain("about");
   });
 
-  it("merged manifest should contain all routes from both routers", () => {
-    const siteManifest = generateManifestFull(sitePatterns, 0);
-    const adminManifest = generateManifestFull(adminPatterns, 1);
+  it("merged manifest should contain all routes from both routers", async () => {
+    const siteManifest = await generateManifestFull(sitePatterns, 0);
+    const adminManifest = await generateManifestFull(adminPatterns, 1);
 
     const merged: Record<string, string> = {};
     Object.assign(merged, siteManifest.routeManifest);
@@ -212,9 +212,9 @@ describe("per-router manifest generation", () => {
     });
   });
 
-  it("merged trie should contain routes from all routers", () => {
-    const siteManifest = generateManifestFull(sitePatterns, 0);
-    const adminManifest = generateManifestFull(adminPatterns, 1);
+  it("merged trie should contain routes from all routers", async () => {
+    const siteManifest = await generateManifestFull(sitePatterns, 0);
+    const adminManifest = await generateManifestFull(adminPatterns, 1);
 
     const mergedManifest: Record<string, string> = {};
     Object.assign(mergedManifest, siteManifest.routeManifest);
@@ -260,9 +260,9 @@ describe("per-router manifest with includes", () => {
     path("/settings", () => null, { name: "settings" }),
   ]);
 
-  it("should produce per-router precomputed entries for routers with includes", () => {
-    const siteManifest = generateManifestFull(siteWithIncludes, 0);
-    const adminManifest = generateManifestFull(adminWithIncludes, 1);
+  it("should produce per-router precomputed entries for routers with includes", async () => {
+    const siteManifest = await generateManifestFull(siteWithIncludes, 0);
+    const adminManifest = await generateManifestFull(adminWithIncludes, 1);
 
     // Site should have blog routes
     expect(siteManifest.routeManifest).toHaveProperty("blog.list", "/blog");
@@ -294,9 +294,9 @@ describe("per-router manifest with includes", () => {
     expect(blogEntry!.routes).toHaveProperty("blog.detail");
   });
 
-  it("per-router tries should resolve dynamic params independently", () => {
-    const siteManifest = generateManifestFull(siteWithIncludes, 0);
-    const adminManifest = generateManifestFull(adminWithIncludes, 1);
+  it("per-router tries should resolve dynamic params independently", async () => {
+    const siteManifest = await generateManifestFull(siteWithIncludes, 0);
+    const adminManifest = await generateManifestFull(adminWithIncludes, 1);
 
     const siteStaticPrefix: Record<string, string> = {};
     for (const name of Object.keys(siteManifest.routeManifest)) {
@@ -342,7 +342,7 @@ describe("per-router storage isolation", () => {
     setRouteTrie(null);
   });
 
-  it("should store and retrieve per-router manifests independently", () => {
+  it("should store and retrieve per-router manifests independently", async () => {
     setRouterManifest("site", { home: "/", about: "/about" });
     setRouterManifest("admin", { dashboard: "/", users: "/users" });
 
@@ -354,7 +354,7 @@ describe("per-router storage isolation", () => {
     expect(getRouterManifest("unknown")).toBeUndefined();
   });
 
-  it("should store and retrieve per-router tries independently", () => {
+  it("should store and retrieve per-router tries independently", async () => {
     const siteTrie: TrieNode = { r: { n: "home", sp: "", a: ["M0L0"] } };
     const adminTrie: TrieNode = { r: { n: "dashboard", sp: "", a: ["M1L0"] } };
 
@@ -366,7 +366,7 @@ describe("per-router storage isolation", () => {
     expect(getRouterTrie("unknown")).toBeUndefined();
   });
 
-  it("should store and retrieve per-router precomputed entries independently", () => {
+  it("should store and retrieve per-router precomputed entries independently", async () => {
     const siteEntries = [
       { staticPrefix: "", routes: { home: "/", about: "/about" } },
     ];
@@ -382,7 +382,7 @@ describe("per-router storage isolation", () => {
     expect(getRouterPrecomputedEntries("unknown")).toBeUndefined();
   });
 
-  it("should not affect global manifest when setting per-router data", () => {
+  it("should not affect global manifest when setting per-router data", async () => {
     setCachedManifest({ all: "/all" });
     setRouterManifest("site", { home: "/" });
 

@@ -10,7 +10,7 @@ import {
   prefetchQueued,
   setPrefetchDecoder,
 } from "../browser/prefetch/fetch";
-import { clearPrefetchCache } from "../browser/prefetch/cache";
+import { clearPrefetchCache, consumePrefetch } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
 import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
@@ -1143,5 +1143,188 @@ describe("same-page cache poisoning regression", () => {
 
     prefetchDirect("/page/1", ["A0"], "v1");
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+/**
+ * #622 follow-up (MEDIUM): `entry.complete` must mean "decoded + clean EOF",
+ * never just "stream settled". teeWithCompletion resolves streamComplete on a
+ * normal EOF AND on abort/read-error, so the flag must be gated on the
+ * completion callback reporting `endedCleanly === true` AND a successful decode.
+ * A broken or undecodable stream that is marked complete would let navigation
+ * treat it as fully-prefetched and commit a corrupt fast path with no fallback.
+ */
+describe("prefetch entry.complete clean-EOF gating (#622 follow-up)", () => {
+  beforeEach(() => {
+    setupBrowser();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  const WILDCARD_KEY =
+    "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+  // Drain queued microtasks so the Promise.allSettled([payload, streamComplete])
+  // callback that sets entry.complete has run.
+  async function flushMicrotasks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  it("marks complete=true on a clean EOF with a successful decode", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const entry = consumePrefetch(WILDCARD_KEY);
+    expect(entry).not.toBeNull();
+    await entry!.streamComplete;
+    await flushMicrotasks();
+
+    expect(entry!.complete).toBe(true);
+  });
+
+  it("evicts the entry when the stream errors mid-flight (not just complete=false)", async () => {
+    // A body whose pull() throws errors the tracking stream's read(). The error
+    // rejects out of teeWithCompletion's read loop into its .catch, which settles
+    // streamComplete with endedCleanly = false. This is the stream-error path that
+    // is NOT driven by the stall timeout (no abort, no 31s wait), so it isolates
+    // the Promise.allSettled eviction from the timeout's own eviction. A broken
+    // (errored) prefetch must be evicted, not left in the cache — navigation reads
+    // `payload` regardless of `complete`, so a lingering errored entry would be
+    // consumed once instead of refetching.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              throw new Error("stream read error");
+            },
+          }),
+          { status: 200, headers: { "X-Test": "1" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    // Decode resolves immediately (the decoder mock is synchronous): even with a
+    // "successful" decode, an errored stream must NOT linger in the cache.
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The entry IS published once headers arrive — assert that first so the
+    // eviction assertion below is not vacuously true. hasPrefetch is
+    // non-destructive (unlike consumePrefetch, which deletes on read), so it
+    // safely observes the published-then-evicted transition.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(true));
+    // The eviction runs in the Promise.allSettled([payload, streamComplete])
+    // callback, which only fires after the stream-error settles streamComplete
+    // through teeWithCompletion's async reader. Poll until the entry is gone.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(false));
+    // And a single consume confirms the cache map no longer holds it.
+    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
+  });
+
+  it("evicts the entry when the eager decode fails (drained but undecodable)", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response("garbage", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    // Decoder rejects: the stream drains cleanly (EOF) but the payload is
+    // undecodable, so the entry is broken and must be evicted, not cached.
+    decodeMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("decode failed")),
+    );
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The entry IS published once headers arrive — assert that first so the
+    // eviction assertion below is not vacuously true. hasPrefetch is
+    // non-destructive, so it safely observes the published-then-evicted
+    // transition (consumePrefetch deletes on read and would mask the bug).
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(true));
+    // The entry is evicted: navigation reads `payload` regardless of `complete`,
+    // so a rejected payload left in the cache would be consumed once instead of
+    // refetching. The eviction runs in the Promise.allSettled([payload,
+    // streamComplete]) callback after the rejected decode settles. Poll until the
+    // entry is gone.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(false));
+    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
+  });
+
+  it("evicts on the early decode rejection even while the stream is still hung (does not wait for the stall timeout)", async () => {
+    // The decode rejects EARLY while the response body / tracking stream HANGS:
+    // a ReadableStream whose pull() never enqueues or closes, so it never reaches
+    // EOF and never aborts. streamComplete therefore never settles on its own.
+    // Eviction must fire off the earliest failure signal (the rejected decode),
+    // NOT wait for Promise.allSettled([payload, streamComplete]) — which would
+    // hang until the 30s stall-timeout backstop fires. We assert eviction well
+    // before that timeout, proving the early payload.catch handler did the work.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              return new Promise<void>(() => {}); // never enqueues/closes -> read() hangs, no EOF, no abort
+            },
+          }),
+          { status: 200, headers: { "X-Test": "1" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    // Decoder rejects early, before the (hung) stream reaches EOF.
+    decodeMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("decode failed early")),
+    );
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // Entry IS published once headers arrive — assert first so the eviction
+    // assertion is not vacuously true.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(true));
+    // Eviction must happen on the early payload.catch, NOT the stall timeout:
+    // poll with a timeout WELL BELOW the 30s stall timer. If eviction only
+    // happened in the allSettled/stall backstop, this would time out (the
+    // stream never settles streamComplete on its own).
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(false), {
+      timeout: 2_000,
+    });
+    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
   });
 });

@@ -140,11 +140,11 @@ interface DispatchableRouter<TEnv> {
   routeMap: Record<string, unknown>;
   middleware: MiddlewareEntry<TEnv>[];
   onError?: OnErrorCallback<TEnv>;
-  findMatch(pathname: string): {
+  findMatch(pathname: string): Promise<{
     redirectTo?: string;
     routeKey?: string;
     params?: Record<string, string>;
-  } | null;
+  } | null>;
   previewMatch(
     request: Request,
     input?: { env?: TEnv },
@@ -351,7 +351,7 @@ export async function dispatch<TEnv = any>(
 
   // findMatch carries trailing-slash/redirect targets and null on no match.
   // previewMatch swallows redirects, so detect them here first.
-  const match = router.findMatch(url.pathname);
+  const match = await router.findMatch(url.pathname);
   const redirectTo = match?.redirectTo;
   const isUnmatched = !match;
 

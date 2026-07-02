@@ -783,6 +783,25 @@ describe("createEventController", () => {
       expect(state.segmentOrder).toEqual(["L0", "R0", "R0.@panel"]);
     });
 
+    it("setRouteSegmentIds updates routeSegmentIds (useSegments) WITHOUT touching data/segmentOrder (deferred hold)", () => {
+      const ctrl = createController();
+      // Route A applied.
+      ctrl.setHandleData({ Crumbs: { A0: ["a"] } }, ["A0"]);
+      const before = ctrl.getHandleState();
+      expect(before.routeSegmentIds).toEqual(["A0"]);
+
+      // Soft-nav to route B with a deferred handle: the route changed, so
+      // useSegments must see B's segment ids, but useHandle still holds A's value
+      // (data + segmentOrder untouched) until the deferred snapshot lands. This
+      // decoupling is what lets the simpler await-then-apply model keep
+      // useSegments correct while holding useHandle.
+      ctrl.setRouteSegmentIds(["B0"]);
+      const held = ctrl.getHandleState();
+      expect(held.routeSegmentIds).toEqual(["B0"]); // useSegments sees B
+      expect(held.data).toEqual(before.data); // useHandle data held
+      expect(held.segmentOrder).toEqual(before.segmentOrder); // collect order held
+    });
+
     /**
      * Regression: a layout-mounted parallel slot must not stomp the parent
      * layout's handle data on a slot-only revalidation.

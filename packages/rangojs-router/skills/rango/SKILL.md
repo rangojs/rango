@@ -331,7 +331,11 @@ dotfiles, and existing `.gen.` files.
 ### Recursive includes
 
 The generator follows `include()` calls across files, resolving imports to build
-the full route tree. Circular includes are detected and warned about.
+the full route tree. It resolves both the eager form `include("/x", patterns)`
+and the code-split async form `include("/x", () => import("./x"))` — for the
+latter it walks the imported module's `export default urls(...)`, including any
+nested `include()`s inside it — so a code-split route group is still fully typed
+(see `/composability`). Circular includes are detected and warned about.
 
 ### First-wins deduplication
 

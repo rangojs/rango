@@ -2,6 +2,8 @@ import { urls, Static, Prerender, Script } from "@rangojs/router";
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, href, Outlet } from "@rangojs/router/client";
+import { Suspense } from "react";
+import { StreamTest } from "./components/StreamTest.js";
 import { DEFAULT_GTM_ID, generateGtmInit } from "./gtm/gtm.js";
 import { Counter } from "./components/Counter.js";
 import { Comments } from "./components/Comments.js";
@@ -1463,6 +1465,67 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+
+        // Streaming repro (user's exact shape): inline async handler returns
+        // immediately, pushes a Meta handle derived from the streamed data, and
+        // passes a server promise into a component-placed <Suspense>. NO router
+        // loading(). The fallback must show on a cold client nav.
+        path(
+          "/stream-test",
+          () => (
+            <main data-testid="stream-test-index">
+              <p>Stream test index</p>
+              <ul>
+                <li>
+                  <Link to="/stream-test/1">Go to stream-test/1</Link>
+                </li>
+                <li>
+                  <Link to="/stream-test/2">Go to stream-test/2</Link>
+                </li>
+              </ul>
+            </main>
+          ),
+          { name: "streamTestIndex" },
+        ),
+        path(
+          "/stream-test/:id",
+          async (ctx: HandlerContext<{ id: string }>) => {
+            const data = new Promise<string>((resolve) =>
+              setTimeout(() => resolve("resolved " + ctx.params.id), 3000),
+            );
+
+            ctx.use(Meta)(
+              data.then((d) => ({
+                title: `Test with ID ${ctx.params.id}: ${d}`,
+              })),
+            );
+
+            return (
+              <main data-testid="stream-test-page">
+                <p data-testid="stream-test-id">Test with ID {ctx.params.id}</p>
+                <ul>
+                  <li>
+                    <Link to="/stream-test">Back to index</Link>
+                  </li>
+                  <li>
+                    <Link to="/stream-test/1">Go to stream-test/1</Link>
+                  </li>
+                  <li>
+                    <Link to="/stream-test/2">Go to stream-test/2</Link>
+                  </li>
+                </ul>
+                <Suspense
+                  fallback={
+                    <div data-testid="stream-test-fallback">Loading...</div>
+                  }
+                >
+                  <StreamTest data={data} />
+                </Suspense>
+              </main>
+            );
+          },
+          { name: "streamTestDetail" },
+        ),
         path("/refresh", RefreshDemoPage, { name: "refresh" }, () => [
           loader(RevenueLoader),
           loader(ProductLoader),

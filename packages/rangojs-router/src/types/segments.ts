@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ErrorInfo, NotFoundInfo } from "./boundaries.js";
+import type { RevalidateParams, HandlerContext } from "./handler-context.js";
 
 /**
  * CSS class(es) for a ViewTransition phase.
@@ -7,6 +8,96 @@ import type { ErrorInfo, NotFoundInfo } from "./boundaries.js";
  * for direction-aware transitions (e.g., { "navigation": "slide-right", "navigation-back": "slide-left" }).
  */
 export type ViewTransitionClass = Record<string, string> | string;
+
+/**
+ * The context a transition({ when }) predicate receives.
+ *
+ * It mirrors the {@link ShouldRevalidateFn} args a `revalidate()` predicate
+ * gets — the same navigation/action metadata — so the two read the same shape,
+ * plus `get`/`env` for post-handler reads. There is no full `HandlerContext`
+ * here: the gate runs at the RSC-payload layer with the request context, not a
+ * handler context, so handler-only sugar (`search`/`build`/`dev`/`headers`) is
+ * absent by design. `get` is the way to read what the handler/middleware set
+ * via `ctx.set(...)` this request.
+ *
+ * Field availability (all source fields are optional — never fabricated):
+ * - `currentUrl` / `currentParams` / `fromRouteName` (the navigation SOURCE) are
+ *   populated on soft navigations and action-success revalidations. They are
+ *   undefined on an initial full document load and on action-error / no-JS error
+ *   paths that skip the navigation snapshot — there is no prior page to name.
+ * - `nextUrl` / `nextParams` / `get` / `env` / `method` are always present;
+ *   `toRouteName` is present only when the target route is named (undefined for
+ *   unnamed/auto-generated routes, like `fromRouteName`).
+ * - `actionId` / `actionUrl` / `actionResult` / `formData` are populated only
+ *   when a server action triggered the render; `method` is "POST" then, "GET"
+ *   otherwise. On no-JS (progressive-enhancement) action paths `actionId` may be
+ *   undefined when React cannot surface the action's stable id: the success
+ *   re-render still sets `actionUrl`/`formData` for a recognized action, but the
+ *   error-boundary re-render exposes `actionUrl` only when `actionId` resolved.
+ *   Malformed form bodies that fail before action detection expose no action
+ *   fields. Treat `actionId` as "the action, if known", not as "was this an
+ *   action".
+ *
+ * PREFETCH / CACHE CAVEAT (read this before gating on the source): the gate runs
+ * server-side during resolution. A PREFETCHED navigation renders at prefetch
+ * time, so `currentUrl`/`currentParams`/`fromRouteName` reflect the page the
+ * prefetch fired from, NOT necessarily the page the user actually navigates from
+ * — the decision is baked into the stored Flight payload and replayed verbatim.
+ * A `cache()`/prerender hit replays the stored transition with the predicate NOT
+ * re-run at all. So a source-sensitive predicate can be frozen to prefetch-time
+ * or store-time state. This is accepted (~99% of navigations match), but if your
+ * gate must reflect the exact click-time source, source-scope the prefetch
+ * (`<Link prefetchKey=":source">`) and do not `cache()` that segment.
+ */
+export type TransitionWhenContext<
+  TParams = Record<string, string>,
+  TEnv = unknown,
+> = Partial<
+  Pick<
+    RevalidateParams<TParams, TEnv>,
+    "currentUrl" | "currentParams" | "fromRouteName"
+  >
+> &
+  Pick<
+    RevalidateParams<TParams, TEnv>,
+    | "nextUrl"
+    | "nextParams"
+    | "toRouteName"
+    | "actionId"
+    | "actionUrl"
+    | "actionResult"
+    | "formData"
+    | "method"
+  > &
+  Pick<HandlerContext<any, TEnv>, "get" | "env">;
+
+/**
+ * Predicate that gates whether a transition() applies for the current request.
+ *
+ * Evaluated server-side AFTER the route's handler runs (so `get(...)` can read
+ * handler/middleware-set state) and outside any cache scope. Return false to
+ * drop this segment's transition for the request; return true to apply it. The
+ * context ({@link TransitionWhenContext}) carries the same navigation/action
+ * metadata a `revalidate()` predicate sees plus `get`/`env`. If it throws, the
+ * error is reported to the router's onError (phase "rendering") and the
+ * transition is dropped (the navigation does not hold).
+ *
+ * Distinct from intercept()'s `when` config selector, which runs at MATCH time
+ * over `{ from, to, params, segments, … }`; a transition `when` runs
+ * post-handler over the resolved payload.
+ *
+ * Scope: dropping a transition removes only THIS segment's contribution to the
+ * navigation's hold. The startTransition hold is navigation-wide — it engages if
+ * any matched segment still has a transition — so `when: false` makes the
+ * navigation stream its loading fallback only when no other matched segment
+ * keeps a transition (the common case: a single transition on the route).
+ *
+ * Evaluated on every fresh (cache-miss) resolution; it is NOT re-run when a
+ * segment is replayed from the runtime cache or a build-time prerender, and a
+ * prefetched navigation freezes it to prefetch-time state — see the caveat on
+ * {@link TransitionWhenContext}.
+ */
+export type TransitionWhenFn = (ctx: TransitionWhenContext) => boolean;
 
 /**
  * Configuration for React's <ViewTransition> component.
@@ -36,6 +127,15 @@ export interface TransitionConfig {
    * When unset, inherits the createRouter({ viewTransition }) default.
    */
   viewTransition?: "auto" | false;
+  /**
+   * Optional server-side predicate that gates this transition per request. When
+   * present and it returns false (evaluated post-handler), the router drops this
+   * segment's transition for the request, so the navigation streams its loading
+   * fallback instead of holding. The predicate is server-only and never
+   * serialized to the client; only its resolved effect (transition kept or
+   * dropped) crosses. See {@link TransitionWhenFn}.
+   */
+  when?: TransitionWhenFn;
 }
 
 /**

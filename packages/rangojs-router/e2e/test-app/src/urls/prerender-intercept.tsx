@@ -84,7 +84,7 @@ function PrerenderInterceptModalHandler(ctx: {
 }
 
 export const prerenderInterceptPatterns = urls(
-  ({ path, layout, intercept, loader, when }) => [
+  ({ path, layout, intercept, loader }) => [
     layout(PrerenderInterceptLayout, () => [
       path("/", PrerenderInterceptIndex, { name: "index" }),
 
@@ -109,10 +109,10 @@ export const prerenderInterceptPatterns = urls(
             />
           );
         },
-        () => [
-          when(({ from }) => from.pathname.startsWith("/prerender-intercept")),
-          loader(FreshTimestampLoader),
-        ],
+        {
+          when: ({ from }) => from.pathname.startsWith("/prerender-intercept"),
+        },
+        () => [loader(FreshTimestampLoader)],
       ),
     ]),
   ],

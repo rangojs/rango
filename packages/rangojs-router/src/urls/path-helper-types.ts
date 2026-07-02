@@ -28,7 +28,6 @@ import type {
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
-  WhenItem,
   TypedCacheItem,
   TransitionItem,
   TypedTransitionItem,
@@ -42,7 +41,6 @@ import type {
   PassthroughHandlerDefinition,
 } from "../prerender.js";
 import type { StaticHandlerDefinition } from "../static-handler.js";
-import type { InterceptWhenFn } from "../server/context";
 import type {
   ResponseHandler,
   ResponseHandlerContext,
@@ -155,6 +153,30 @@ export type TextResponsePathFn<TEnv> = <
 ) => TypedRouteItem<TName, TPattern, string, TSearch>;
 
 /**
+ * What an async include() provider resolves to. Route types (`TRoutes`) are
+ * inferred from the resolved `urls()` value so `href()` and named routes stay
+ * type-safe through a code-split module (`() => import("./routes")`).
+ */
+type IncludeResolved<
+  TEnv,
+  TRoutes extends Record<string, any>,
+  TResponses extends Record<string, unknown>,
+> =
+  | UrlPatterns<TEnv, TRoutes, TResponses>
+  | { default: UrlPatterns<TEnv, TRoutes, TResponses> };
+
+/** include() argument: an eager `urls()` value or an async provider thunk. */
+export type IncludeArg<
+  TEnv,
+  TRoutes extends Record<string, any>,
+  TResponses extends Record<string, unknown>,
+> =
+  | UrlPatterns<TEnv, TRoutes, TResponses>
+  | (() =>
+      | IncludeResolved<TEnv, TRoutes, TResponses>
+      | Promise<IncludeResolved<TEnv, TRoutes, TResponses>>);
+
+/**
  * Base include function signature.
  */
 export type IncludeFn<TEnv> = <
@@ -164,7 +186,7 @@ export type IncludeFn<TEnv> = <
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 >(
   prefix: TUrlPrefix,
-  patterns: UrlPatterns<TEnv, TRoutes, TResponses>,
+  patterns: IncludeArg<TEnv, TRoutes, TResponses>,
   options?: IncludeOptions<TNamePrefix>,
 ) => TypedIncludeItem<TRoutes, TNamePrefix, TUrlPrefix, TResponses>;
 
@@ -275,12 +297,18 @@ export type PathHelpers<TEnv> = {
         slotName: `@${string}`,
         routeName: string,
         handler: ReactNode | Handler<any, any, TEnv>,
+        config?:
+          | import("../server/context.js").InterceptConfig<TEnv>
+          | (() => InterceptUseItem[]),
         use?: () => InterceptUseItem[],
       ) => InterceptItem
     : (
         slotName: `@${string}`,
         routeName: (keyof Rango.GeneratedRouteMap & string) | `.${string}`,
         handler: ReactNode | Handler<any, any, TEnv>,
+        config?:
+          | import("../server/context.js").InterceptConfig<TEnv>
+          | (() => InterceptUseItem[]),
         use?: () => InterceptUseItem[],
       ) => InterceptItem;
 
@@ -336,11 +364,6 @@ export type PathHelpers<TEnv> = {
   ) => NotFoundBoundaryItem;
 
   /**
-   * Define a condition for when an intercept should activate
-   */
-  when: (fn: InterceptWhenFn) => WhenItem;
-
-  /**
    * Define cache configuration for segments
    */
   cache: {
@@ -365,6 +388,10 @@ export type PathHelpers<TEnv> = {
    * `{ viewTransition: false }` to keep #1 without the router boundary. A view
    * transition cannot fire without a startTransition. See
    * skills/view-transitions for the startTransition x ViewTransition matrix.
+   *
+   * Pass `when: (ctx) => boolean` to gate the transition per request: it runs
+   * server-side after the route handler (can read `ctx.get(...)`), and returning
+   * false drops the transition so the navigation streams its loading() skeleton.
    */
   transition: {
     (): TransitionItem;

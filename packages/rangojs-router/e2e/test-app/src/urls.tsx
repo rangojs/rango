@@ -4,6 +4,10 @@ import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
+import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
+import { clientSuspensePatterns } from "./urls/client-suspense.js";
+import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
+import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,
@@ -28,6 +32,7 @@ import {
 } from "./urls/include-scoping-reverse.js";
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
+import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
@@ -144,7 +149,6 @@ export const urlpatterns = urls(
     loader,
     loading,
     transition,
-    when,
     middleware,
     parallel,
   }) => [
@@ -229,6 +233,66 @@ export const urlpatterns = urls(
                       data-testid="slow-skip-ssr-link"
                     >
                       /slow-streaming-skip-ssr - Skip SSR loading
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream"
+                      data-testid="suspense-stream-link"
+                    >
+                      /suspense-stream - Raw &lt;Suspense&gt; (no loading())
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream-meta"
+                      data-testid="suspense-stream-meta-link"
+                    >
+                      /suspense-stream-meta - Raw &lt;Suspense&gt; + Meta
+                      promise
+                    </Link>
+                  </li>
+                  <li>
+                    <Link to="/plp-meta" data-testid="plp-meta-link">
+                      /plp-meta - use(promise) + deferred Meta
+                    </Link>
+                    <Link to="/plp-meta-tx" data-testid="plp-meta-tx-link">
+                      /plp-meta-tx - transition() + use(promise) + slow Meta
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream"
+                      data-testid="suspense-stream-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /suspense-stream (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/slow-streaming"
+                      data-testid="slow-streaming-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /slow-streaming (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream-meta"
+                      data-testid="suspense-stream-meta-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /suspense-stream-meta (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/cs-layout/from"
+                      data-testid="cs-layout-entry-link"
+                    >
+                      /cs-layout/from (client-mount-suspense regression)
                     </Link>
                   </li>
                   <li>
@@ -667,11 +731,8 @@ export const urlpatterns = urls(
             </Modal>
           );
         },
-        () => [
-          when(({ from }) => shouldInterceptProduct(from.pathname)),
-          loader(ProductDetailLoader),
-          loader(CartQuantityLoader),
-        ],
+        { when: ({ from }) => shouldInterceptProduct(from.pathname) },
+        () => [loader(ProductDetailLoader), loader(CartQuantityLoader)],
       ),
 
       // Slow product intercept - with loading state
@@ -729,6 +790,10 @@ export const urlpatterns = urls(
 
       // === INCLUDED PATTERNS (no intercepts needed) ===
 
+      // Orphan fetchable loader: loader reachable only via a client import,
+      // never registered with loader(). Exercises the build-time pre-scan path.
+      include("/", orphanFetchablePatterns, { name: "" }),
+
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),
 
@@ -739,6 +804,16 @@ export const urlpatterns = urls(
 
       // Slow/streaming patterns (without slowProduct.detail which is inline above)
       include("/", slowPatternsWithoutDetail, { name: "" }),
+
+      // Raw <Suspense> (no loading() DSL) streaming route
+      include("/", suspenseStreamPatterns, { name: "" }),
+      include("/", conditionalTransitionPatterns, { name: "" }),
+
+      // #622 follow-up (HIGH): shared layout + client-mount-suspense children
+      include("/", clientSuspensePatterns, { name: "" }),
+
+      // Deferred-handle navigation contract + history-cache fixes (#622 follow-ups)
+      include("/", deferredHandleNavPatterns, { name: "" }),
 
       // Error patterns - already has /errors prefix in paths
       include("/", errorsPatterns, { name: "" }),

@@ -142,18 +142,41 @@ layout(ProductLayout, () => [
 ]);
 ```
 
-## Conditional Intercept with when()
+## Conditional Intercept with the `when` config
 
-Only intercept based on navigation context:
+Only intercept based on navigation context. `when` is the 4th argument
+(an `InterceptConfig` object); the other use-items go in the 5th-argument
+callback.
 
 ```typescript
 intercept(
   "@modal",
   "product",
   <ProductModal />,
+  // Only intercept when coming from a different section
+  { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
   () => [
-    // Only intercept when coming from a different section
-    when(({ from }) => !from.pathname.startsWith("/shop/product/")),
+    loader(ProductLoader),
+  ]
+)
+```
+
+`when` is a match-time selector receiving `{ from, to, params, segments, ... }`.
+Pass an array of predicates for AND logic (all must return true). Omit `when`
+entirely and the intercept always activates.
+
+```typescript
+intercept(
+  "@modal",
+  "product",
+  <ProductModal />,
+  {
+    when: [
+      ({ from }) => from.pathname.startsWith("/shop"),
+      ({ params }) => params.slug !== "featured",
+    ],
+  },
+  () => [
     loader(ProductLoader),
   ]
 )
@@ -242,10 +265,13 @@ layout(ShopLayout, () => [
   ]),
 
   // This intercept is also pre-rendered at build time
-  intercept("@modal", ".detail", <ProductModal />, () => [
-    when(({ from }) => from.pathname.startsWith("/shop")),
-    loader(ProductLoader),
-  ]),
+  intercept(
+    "@modal",
+    ".detail",
+    <ProductModal />,
+    { when: ({ from }) => from.pathname.startsWith("/shop") },
+    () => [loader(ProductLoader)],
+  ),
 ])
 ```
 
@@ -253,8 +279,8 @@ Build-time behavior:
 
 - The intercept handler (`<ProductModal />`) is resolved with BuildContext
 - Result is stored under the key `"detail/paramHash/i"` (intercept variant)
-- `when()` conditions are skipped at build time (all intercepts pre-rendered unconditionally)
-- `when()` is still evaluated at runtime by the intercept-resolution middleware
+- `when` config conditions are skipped at build time (all intercepts pre-rendered unconditionally)
+- `when` is still evaluated at runtime by the intercept-resolution middleware
 
 Runtime behavior:
 
@@ -305,7 +331,6 @@ export const shopPatterns = urls(({
   intercept,
   loader,
   loading,
-  when,
 }) => [
   layout(<ShopLayout />, () => [
     parallel({
@@ -317,8 +342,8 @@ export const shopPatterns = urls(({
       "@modal",
       "product",  // Route name (without prefix)
       <ProductModalContent />,
+      { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
       () => [
-        when(({ from }) => !from.pathname.startsWith("/shop/product/")),
         layout(<ModalWrapper />),
         loading(<ProductModalSkeleton />),
         loader(ProductLoader, () => [cache()]),
@@ -338,7 +363,7 @@ export const shopPatterns = urls(({
 
 ## Handler-attached `.use`
 
-Intercept handlers can carry their own middleware, loaders, loading state, error/notFound boundaries, and even nested `layout`/`route`/`when` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome.
+Intercept handlers can carry their own middleware, loaders, loading state, error/notFound boundaries, and even nested `layout`/`route` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome. (Conditional activation is set via the `when` config on the mount-site `intercept()` call, not inside `.use`.)
 
 ```typescript
 const QuickViewModal: Handler = async (ctx) => {

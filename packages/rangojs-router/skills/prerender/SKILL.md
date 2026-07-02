@@ -243,16 +243,16 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 
 ## Interaction with DSL Items
 
-| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                             |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                       |
-| `revalidate()` | Not allowed without Passthrough. Allowed with Passthrough.                                                                                                                                                                                                          |
-| `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                    |
-| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                |
-| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                        |
-| `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                                                                                                                                           |
-| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                              |
-| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when()` conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
+| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                            |
+| `revalidate()` | Not allowed without Passthrough. Allowed with Passthrough.                                                                                                                                                                                                               |
+| `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                         |
+| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                     |
+| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                             |
+| `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                                                                                                                                                |
+| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                   |
+| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
 
 When Passthrough revalidation is enabled, remember that revalidation is
 still partial: opting a child segment into revalidation does not
@@ -609,12 +609,12 @@ At runtime, the cache-lookup middleware checks `ctx.isIntercept`:
   (filtered by `namespace?.startsWith("intercept:")`) and sets up slots.
 - **Direct navigation**: looks up `paramHash` (no suffix). Standard prerender path.
 - **Intercept miss (no `/i` entry)**: falls through to the normal pipeline so
-  intercept-resolution middleware runs live. This handles `when()` conditions
+  intercept-resolution middleware runs live. This handles `when` config conditions
   that prevented pre-rendering.
 
-The `when()` callback receives an `InterceptSelectorContext` with `from.pathname`
+The `when` config selector receives an `InterceptSelectorContext` with `from.pathname`
 which is unknown at build time. All intercepts are pre-rendered unconditionally;
-`when()` is evaluated at runtime by the intercept-resolution middleware.
+`when` is evaluated at runtime by the intercept-resolution middleware.
 
 ### Example: Pre-rendered route with intercept
 
@@ -633,10 +633,13 @@ layout(ShopLayout, () => [
 
   // Intercept detail from shop index into a modal.
   // At build time, this is resolved and stored under the /i key.
-  intercept("@modal", ".detail", <ProductModal />, () => [
-    when(({ from }) => from.pathname === "/shop"),
-    loader(ProductLoader),
-  ]),
+  intercept(
+    "@modal",
+    ".detail",
+    <ProductModal />,
+    { when: ({ from }) => from.pathname === "/shop" },
+    () => [loader(ProductLoader)],
+  ),
 ])
 ```
 

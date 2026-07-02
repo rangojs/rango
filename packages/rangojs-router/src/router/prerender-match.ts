@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import { createHandleStore } from "../server/handle-store.js";
+import { resolveSegmentHandleValues } from "../handles/deferred-resolution.js";
 import { getRequestContext } from "../server/request-context.js";
 import {
   runWithRequestContext,
@@ -32,7 +33,9 @@ import type {
 import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface PrerenderMatchDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
   resolveAllSegments: (
@@ -73,7 +76,7 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
 } | null> {
   // 1. Find the matching route entry
-  const matched = deps.findMatch(pathname);
+  const matched = await deps.findMatch(pathname);
   if (!matched) return null;
 
   // Use params from trie match if available, fall back to provided params
@@ -293,7 +296,9 @@ export async function matchForPrerender<TEnv = any>(
       for (const seg of nonLoaderSegments) {
         const segHandles = handleStore.getDataForSegment(seg.id);
         if (Object.keys(segHandles).length > 0) {
-          handlesRecord[seg.id] = segHandles;
+          // Resolve deferred values before encoding so the baked artifact holds
+          // resolved data (prerender = build-time cache).
+          handlesRecord[seg.id] = await resolveSegmentHandleValues(segHandles);
         }
       }
       const handles = await encodeHandles(handlesRecord);
@@ -394,7 +399,8 @@ export async function matchForPrerender<TEnv = any>(
           for (const seg of interceptResolvedSegments) {
             const segHandles = handleStore.getDataForSegment(seg.id);
             if (Object.keys(segHandles).length > 0) {
-              interceptHandlesRecord[seg.id] = segHandles;
+              interceptHandlesRecord[seg.id] =
+                await resolveSegmentHandleValues(segHandles);
             }
           }
           // The intercept artifact serves main + intercept segments together, so
@@ -533,7 +539,7 @@ export async function renderStaticSegment<TEnv = any>(
     const segHandles = handleStore.getDataForSegment(handlerId);
     const handles =
       Object.keys(segHandles).length > 0
-        ? await encodeHandleValue(segHandles)
+        ? await encodeHandleValue(await resolveSegmentHandleValues(segHandles))
         : "";
 
     return { encoded: serialized.encoded, handles };

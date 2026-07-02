@@ -2267,6 +2267,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv || !this.waitUntil || totalTtl < 60) return;
 
     const kvKey = this.toKVKey(key);
+
+    // Reject an oversized data-segment KV key the same way tag-marker keys are
+    // rejected in invalidateTags(). A key over KV_MAX_KEY_BYTES makes kv.put()
+    // fail, so the segment silently never lands in L2 (KV) and every cold-colo
+    // or TTL-expired read re-renders instead of serving stale. Segment keys can
+    // grow with user-controlled inputs (e.g. a route's search params), so report
+    // a clear, actionable error and skip the doomed write rather than letting it
+    // reject deep inside waitUntil as an opaque cache-write failure.
+    const kvKeyBytes = kvKeyByteLength(kvKey);
+    if (kvKeyBytes > KV_MAX_KEY_BYTES) {
+      reportCacheError(
+        new Error(
+          `cache segment key produces a ${kvKeyBytes}-byte KV key, over the ` +
+            `${KV_MAX_KEY_BYTES}-byte limit; the segment was not persisted to KV (L2). ` +
+            `Reduce the cache-key inputs (e.g. large search params on this route).`,
+        ),
+        "cache-write",
+        "[CFCacheStore] kvSetSegment",
+      );
+      return;
+    }
+
     const expiresAt = staleAt + swrWindow * 1000;
 
     this.waitUntil(() =>

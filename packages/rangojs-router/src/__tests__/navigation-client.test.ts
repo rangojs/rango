@@ -32,11 +32,13 @@ const {
 function makeEntry(
   payload: unknown,
   scope: "source" | "wildcard" = "wildcard",
+  complete = false,
 ): DecodedPrefetch {
   return {
     payload: Promise.resolve(payload) as Promise<any>,
     streamComplete: Promise.resolve(),
     scope,
+    complete,
   };
 }
 
@@ -280,6 +282,48 @@ describe("navigation-client", () => {
       expect(createFromFetch).not.toHaveBeenCalled();
       expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    // #622 follow-up: fullyPrefetched is the prefetch entry's `complete` flag,
+    // which after the MEDIUM fix is true ONLY on a clean EOF + successful decode.
+    // It plumbs straight through fetchPartial into the partial-update commit
+    // branch, so navigation only takes the no-flash fast path on a healthy entry.
+    it("propagates fullyPrefetched=true when the cache entry is complete", async () => {
+      consumePrefetchMock.mockReturnValue(
+        makeEntry({ metadata: { matched: [], diff: [] } }, "wildcard", true),
+      );
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: vi.fn(),
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(result.fullyPrefetched).toBe(true);
+    });
+
+    it("propagates fullyPrefetched=false when the cache entry is not complete (aborted/errored/streaming)", async () => {
+      consumePrefetchMock.mockReturnValue(
+        makeEntry({ metadata: { matched: [], diff: [] } }, "wildcard", false),
+      );
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: vi.fn(),
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(result.fullyPrefetched).toBe(false);
     });
 
     it("reuses an in-flight prefetch entry without fetching or re-decoding", async () => {

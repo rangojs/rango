@@ -71,6 +71,16 @@ export interface RscMetadata {
    */
   prefetchCacheTTL?: number;
   /**
+   * Max entries in the client-side in-memory prefetch cache (FIFO eviction).
+   * Sent on initial render so the browser can configure its cache capacity.
+   */
+  prefetchCacheSize?: number;
+  /**
+   * Max concurrent speculative prefetch requests on the client.
+   * Sent on initial render so the browser can configure its prefetch queue.
+   */
+  prefetchConcurrency?: number;
+  /**
    * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
    * reads it verbatim and binds the rango state cookie to it; composition
    * happens only server-side.
@@ -447,6 +457,10 @@ export interface NavigationStore {
   // History-based segment cache (for back/forward navigation and partial merging)
   getHistoryKey(): string;
   setHistoryKey(key: string): void;
+  /** Monotonic token of the most recently committed navigation. */
+  getNavInstance(): number;
+  /** Nav-instance token recorded on a cache entry (undefined if absent). */
+  getCacheEntryInstance(historyKey: string): number | undefined;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],
@@ -458,10 +472,28 @@ export interface NavigationStore {
         stale: boolean;
         handleData?: HandleData;
         routerId?: string;
+        /**
+         * True when the entry's handle data is incomplete (a deferred Meta was
+         * still pending at navigate-away). A popstate return must revalidate with
+         * a FULL re-render so the server re-streams handles.
+         */
+        handlesPending?: boolean;
       }
     | undefined;
   hasHistoryCache(historyKey: string): boolean;
-  updateCacheHandleData(historyKey: string, handleData: HandleData): void;
+  /**
+   * Update only the handleData (and optionally the stale / handlesPending flags)
+   * of an existing cache entry. When a flag is omitted the entry's current value
+   * is preserved. `stale=true` marks a single entry stale so a popstate return
+   * revalidates it; `handlesPending=true` additionally forces that revalidation
+   * to be a full re-render (so a deferred Meta re-streams).
+   */
+  updateCacheHandleData(
+    historyKey: string,
+    handleData: HandleData,
+    stale?: boolean,
+    handlesPending?: boolean,
+  ): void;
   markCacheAsStale(): void;
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
@@ -521,6 +553,15 @@ export interface FetchPartialResult {
   payload: RscPayload;
   /** Promise that resolves when the response stream is fully consumed */
   streamComplete: Promise<void>;
+  /**
+   * True only when this payload came from a prefetch-cache hit whose stream had
+   * ALREADY fully drained at fetch time (the route was fully prefetched). The
+   * commit then runs in a startTransition so loading()/Suspense content — already
+   * resolved — swaps in directly without flashing a fallback. A partially-warmed
+   * (still-streaming) prefetch hit and a cold fetch leave this false so their
+   * fallbacks stream as usual.
+   */
+  fullyPrefetched?: boolean;
 }
 
 /**

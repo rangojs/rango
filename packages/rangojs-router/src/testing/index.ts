@@ -47,6 +47,12 @@ export type {
   TestLoaderContext,
 } from "./run-loader.js";
 
+export { runTransitionWhen } from "./run-transition-when.js";
+export type {
+  RunTransitionWhenOptions,
+  RunTransitionWhenResult,
+} from "./run-transition-when.js";
+
 export { dispatch } from "./dispatch.js";
 export type { DispatchOptions } from "./dispatch.js";
 

@@ -5,6 +5,7 @@ import {
   getRequestContext,
   Breadcrumbs,
 } from "@rangojs/router";
+import { Suspense } from "react";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
@@ -122,11 +123,28 @@ export const PrerenderHandle = Prerender(async (ctx) => {
       <span data-testid="prerender-handle-content">async-crumb-content</span>,
     ),
   });
+  // Top-level DEFERRED crumb: reserve the slot via .defer() in the handler, then
+  // resolve it from a deep async component during the prerender render. resolve-
+  // by-default awaits it (resolveSegmentHandleValues) before baking, so the
+  // artifact holds the RESOLVED crumb, not a Promise.
+  const resolveDeferredCrumb = breadcrumb.defer({ timeoutMs: 5000 });
+  async function DeepCrumbResolver() {
+    await Promise.resolve();
+    resolveDeferredCrumb({
+      label: "Prerender Deferred Crumb",
+      href: "/prerender-handle/deferred",
+    });
+    return null;
+  }
+
   // The app's global breadcrumb component (rendered by the root layout) displays
   // the pushed crumbs, including the Promise<ReactNode> content via use().
   return (
     <div data-testid="prerender-handle-page">
       <h1 data-testid="prerender-handle-title">Prerender Handle</h1>
+      <Suspense>
+        <DeepCrumbResolver />
+      </Suspense>
     </div>
   );
 });

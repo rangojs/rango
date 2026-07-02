@@ -387,8 +387,8 @@ After main segment serialization in `matchForPrerender()`:
    `namespace: "intercept:${routeName}"`, `type: "parallel"`, `slot: slotName`
 5. Serialize and return as `interceptSegments` + `interceptHandles`
 
-`when()` conditions are not evaluated at build time (no `InterceptSelectorContext`
-available). All intercepts are pre-rendered unconditionally. `when()` is evaluated
+`when` config conditions are not evaluated at build time (no `InterceptSelectorContext`
+available). All intercepts are pre-rendered unconditionally. `when` is evaluated
 at runtime by the intercept-resolution middleware.
 
 ### Runtime intercept lookup

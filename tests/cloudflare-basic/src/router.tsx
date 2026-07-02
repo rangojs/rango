@@ -26,6 +26,11 @@ export const router = createRouter<AppBindings>({
   // runtime provides no executionContext.tracing (the default), every span call
   // is a transparent pass-through.
   tracing: createCloudflareTracing(),
+  // Non-default prefetch limits so the e2e can pin that configured values reach
+  // the client payload metadata through a real Cloudflare build (defaults are
+  // size 100 / concurrency 2).
+  prefetchCacheSize: 25,
+  prefetchConcurrency: 3,
   // Enable theme support with system detection
   theme: {
     defaultTheme: "light",
@@ -43,6 +48,15 @@ export const router = createRouter<AppBindings>({
       kv: env.KV, // KV L2 for global persistence
     }),
   }),
+  // Short-TTL profile for the SWR + getRequestContext() regression (see
+  // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the
+  // entry in the stale-serve range so the background revalidation path runs.
+  cacheProfiles: {
+    "swr-ctx": { ttl: 2, swr: 120 },
+    // Opt-in: a stale entry re-executes in the foreground during an action's
+    // revalidation render (fresh action response) instead of SWR.
+    "swr-action": { ttl: 2, swr: 120, foregroundOnAction: true },
+  },
   onError: (ctx) => {
     console.error("Router error ctx:", ctx);
     console.error("Router error:", ctx.error.stack || ctx.error);

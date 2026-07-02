@@ -63,6 +63,9 @@ function createMockRequestContext(
     waitUntil: vi.fn((fn: () => Promise<void>) => {
       fn().catch(() => {});
     }),
+    // Router onError seam: reportCacheError routes background failures here when
+    // the captured requestCtx is passed (the ALS is gone in a waitUntil task).
+    _reportBackgroundError: vi.fn(),
   };
 }
 
@@ -121,9 +124,12 @@ describe("createDocumentCacheMiddleware", () => {
     mockStore = createMockCacheStore();
     mockRequestCtx = createMockRequestContext(mockStore);
 
-    // Mock getRequestContext to return our mock
+    // Mock getRequestContext to return our mock. runWithRequestContext is
+    // exercised by the background document revalidation (it re-establishes the
+    // request-context ALS around next()); the mock just invokes the callback.
     vi.doMock("../../server/request-context.js", () => ({
       getRequestContext: () => mockRequestCtx,
+      runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
     }));
   });
 
@@ -521,6 +527,47 @@ describe("createDocumentCacheMiddleware", () => {
 
       // next() should have been called for revalidation
       expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a background revalidation write failure via _reportBackgroundError (captured requestCtx)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Stale entry so the request serves stale + revalidates in the background.
+      const staleResponse = new Response("Stale content", {
+        headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=300" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: staleResponse,
+        staleAt: Date.now() - 1000,
+      });
+      // The detached background write fails.
+      const writeError = new Error("putResponse boom");
+      mockStore.putResponse = vi.fn().mockRejectedValue(writeError);
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+      const freshResponse = new Response("Fresh content", {
+        headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=300" },
+      });
+      const next = vi.fn().mockResolvedValue(freshResponse);
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
+      // The failure surfaced through onError because reportCacheError received
+      // the captured requestCtx — in a waitUntil task the ALS context is gone,
+      // so its _getRequestContext() fallback would be null and the error would
+      // only log.
+      expect(mockRequestCtx._reportBackgroundError).toHaveBeenCalledWith(
+        writeError,
+        "cache-write",
+      );
     });
   });
 

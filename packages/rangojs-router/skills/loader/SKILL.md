@@ -671,6 +671,16 @@ export const SearchLoader = createLoader(async (ctx) => {
 }, true); // true = fetchable
 ```
 
+> **No registration needed — and no worker-entry import.** A fetchable loader
+> does not have to be registered with `loader()` in the route DSL, and it does
+> not have to be imported by any server module. Importing it into the client
+> component that calls `useFetchLoader()` / `load()` is enough. Rango discovers
+> every `createLoader(fn, true)` at build time and registers it for the
+> `_rsc_loader` endpoint, so a loader reachable only through a client component
+> still resolves in production — on both the generated entry and a hand-written
+> worker entry (e.g. a Cloudflare `worker.rsc.tsx`). You do **not** need to
+> force-import the loader in your worker entry to make it resolve.
+
 ### Fetchable Loader with Middleware
 
 Pass an options object instead of `true` to attach per-loader middleware.

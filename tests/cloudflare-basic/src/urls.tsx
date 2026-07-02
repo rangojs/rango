@@ -1,4 +1,7 @@
-import { urls, updateTag, revalidateTag } from "@rangojs/router";
+import { urls, updateTag, revalidateTag, Meta } from "@rangojs/router";
+import { Suspense } from "react";
+import { Link } from "@rangojs/router/client";
+import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
@@ -12,6 +15,7 @@ import { HomePage } from "./pages/home.js";
 import { AboutPage } from "./pages/about.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
+import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
 import {
@@ -34,6 +38,7 @@ import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
+import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import {
@@ -41,7 +46,6 @@ import {
   InlineDocsPage,
   InlinePricingPage,
 } from "./pages/inline.js";
-import { articlesPatterns } from "./pages/articles.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -72,6 +76,9 @@ import { buildEnvPatterns } from "./pages/build-env-handler.js";
 import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
+import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
+import { txWhenPatterns } from "./pages/tx-when.js";
+import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
@@ -344,6 +351,11 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        // Orphan fetchable loader: loader reachable only via a client import,
+        // never registered with loader(), never imported by the worker entry.
+        path("/orphan-fetch", () => <OrphanFetchTest />, {
+          name: "orphanFetch",
+        }),
         path("/render-stability/p/:id", RenderStabilityRoute, {
           name: "renderStability",
         }),
@@ -450,6 +462,19 @@ export const urlpatterns = urls(
           path("/slow-cache", SlowCachePage, { name: "slowCache" }),
         ]),
 
+        // SWR + getRequestContext() regression: a "use cache: swr-ctx" function
+        // (ttl=2s) that reads getRequestContext().env inside its body. On the
+        // stale background revalidation the request-context ALS must be
+        // re-established or getRequestContext() throws on workerd and the cached
+        // value freezes. See pages/swr-ctx.tsx.
+        path("/swr-ctx", SwrCtxPage, { name: "swrCtx" }),
+
+        // foregroundOnAction opt-in: a "use cache: swr-action" function whose
+        // profile sets foregroundOnAction:true. A plain navigation keeps SWR, but
+        // a server action's revalidation render re-executes a stale entry in the
+        // foreground so the action response shows a fresh value.
+        path("/swr-action", SwrActionPage, { name: "swrAction" }),
+
         // Cached-handles regression route: a cache()-wrapped route whose handler
         // pushes a Promise<ReactNode> breadcrumb content that must survive the
         // cache round-trip (see pages/cached-handles.tsx).
@@ -480,12 +505,75 @@ export const urlpatterns = urls(
         path("/slow/2", () => <SlowPage2 />, { name: "slow2" }),
         path("/slow/fast", FastPage, { name: "fast" }),
 
+        // Streaming repro: INLINE handlers (matching the user's repro form)
+        // that return immediately and stream a component-placed <Suspense> via
+        // a server promise (no router loading()). The fallback must show on a
+        // cold client nav.
+        path(
+          "/stream-test",
+          () => (
+            <div data-testid="stream-test-index">
+              <p>Stream test index</p>
+              <ul>
+                <li>
+                  <Link to="/stream-test/1">Go to stream-test/1</Link>
+                </li>
+                <li>
+                  <Link to="/stream-test/2">Go to stream-test/2</Link>
+                </li>
+              </ul>
+            </div>
+          ),
+          { name: "streamTestIndex" },
+        ),
+        path(
+          "/stream-test/:id",
+          async (ctx) => {
+            const data = new Promise<string>((resolve) =>
+              setTimeout(() => resolve("resolved " + ctx.params.id), 3000),
+            );
+
+            ctx.use(Meta)(
+              data.then((d) => ({
+                title: `Test with ID ${ctx.params.id}: ${d}`,
+              })),
+            );
+
+            return (
+              <div data-testid="stream-test-page">
+                <p data-testid="stream-test-id">Test with ID {ctx.params.id}</p>
+                <ul>
+                  <li>
+                    <Link to="/stream-test">Back to index</Link>
+                  </li>
+                  <li>
+                    <Link to="/stream-test/1">Go to stream-test/1</Link>
+                  </li>
+                  <li>
+                    <Link to="/stream-test/2">Go to stream-test/2</Link>
+                  </li>
+                </ul>
+                <Suspense
+                  fallback={
+                    <div data-testid="stream-test-fallback">Loading...</div>
+                  }
+                >
+                  <StreamTest data={data} />
+                </Suspense>
+              </div>
+            );
+          },
+          { name: "streamTestDetail" },
+        ),
+
         // Inline routes demo
         path("/inline", InlineIndexPage, { name: "inlineIndex" }),
         path("/inline/docs", InlineDocsPage, { name: "inlineDocs" }),
         path("/inline/pricing", InlinePricingPage, { name: "inlinePricing" }),
         // Pre-rendered articles (static content, build-time rendering)
-        include("/articles", articlesPatterns, { name: "articles" }),
+        include("/articles", () => import("./pages/articles.js"), {
+          name: "articles",
+        }),
 
         // Client useReverse() coverage on the Cloudflare preset
         include("/cr/:tenantId", clientReversePatterns, { name: "cr" }),
@@ -529,6 +617,18 @@ export const urlpatterns = urls(
         include("/rendered-barrier", renderedBarrierPatterns, {
           name: "renderedBarrier",
         }),
+
+        // #622 follow-up: fully-prefetched no-flash + client-mount-suspense
+        // layout-hold regression (mirrors the router e2e app).
+        include("/", prefetchTransitionPatterns, { name: "" }),
+        // transition({ when }) conditional-gate coverage (mirrors the router
+        // e2e app's /tx-when/:hold/:n).
+        include("/", txWhenPatterns, { name: "" }),
+
+        // Deferred-handle navigation contract + history-cache fixes
+        // (#622 follow-ups), exercised through client (soft) navigation under
+        // the workerd runtime.
+        include("/", deferredHandleNavPatterns, { name: "" }),
 
         // Prerender manifest introspection for e2e tests
         path.json(

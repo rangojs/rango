@@ -21,6 +21,7 @@ import {
 } from "../server/request-context.js";
 import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { gateTransitions } from "./transition-gate.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -363,6 +364,20 @@ async function revalidateAfterActionInner<TEnv>(
   const reqCtx = getRequestContext();
   const metricsStore = reqCtx._metricsStore;
 
+  // Expose the action that triggered this revalidation to the transition({ when })
+  // gate (covers both the error-boundary and success gate calls below). Mirrors
+  // the action fields a revalidate() predicate sees.
+  reqCtx._gateActionId = actionContext?.actionId;
+  reqCtx._gateActionUrl = actionContext?.actionUrl;
+  reqCtx._gateActionResult = actionContext?.actionResult;
+  reqCtx._gateFormData = actionContext?.formData;
+
+  // Mark the rest of this request as an action revalidation render. The "use
+  // cache" runtime reads this to re-execute a stale entry in the foreground
+  // (fresh data in the action response) rather than serving stale + revalidating
+  // in the background. See registerCachedFunction in cache/cache-runtime.ts.
+  reqCtx._inActionRevalidation = true;
+
   // Action threw and a boundary matched: render the (already-matched) error
   // boundary here so it runs inside the route-middleware wrapper, exactly like
   // the success branch below. setRequestContextParams + the payload mirror the
@@ -376,7 +391,11 @@ async function revalidateAfterActionInner<TEnv>(
         // routerId exposed for the frontend (current app identity); see
         // rsc-rendering.ts partial branch.
         routerId: ctx.router.id,
-        segments: errorBoundary.segments,
+        segments: gateTransitions(
+          errorBoundary.segments,
+          reqCtx,
+          ctx.router.onError,
+        ),
         isPartial: true,
         matched: errorBoundary.matched,
         diff: errorBoundary.diff,
@@ -460,7 +479,11 @@ async function revalidateAfterActionInner<TEnv>(
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
-      segments: matchResult.segments,
+      segments: gateTransitions(
+        matchResult.segments,
+        reqCtx,
+        ctx.router.onError,
+      ),
       isPartial: true,
       matched: matchResult.matched,
       diff: matchResult.diff,

@@ -186,7 +186,7 @@ export async function discoverRouters(
       continue;
     }
 
-    const manifest = generateManifestFull(
+    const manifest = await generateManifestFull(
       router.urlpatterns,
       routerMountIndex,
       {

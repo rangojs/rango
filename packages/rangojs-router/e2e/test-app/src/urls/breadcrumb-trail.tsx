@@ -1,10 +1,7 @@
 import { urls, Breadcrumbs } from "@rangojs/router";
 import { Outlet, Link } from "@rangojs/router/client";
 import { Suspense } from "react";
-import {
-  TrailBreadcrumbs,
-  DeferredTrailBreadcrumbs,
-} from "../components/TrailBreadcrumbs.js";
+import { TrailBreadcrumbs } from "../components/TrailBreadcrumbs.js";
 
 /**
  * Test routes for the built-in Breadcrumbs handle with a user-land component.
@@ -105,7 +102,7 @@ function DeferredResolvePage(ctx: any) {
 
   return (
     <div data-testid="deferred-resolve-page">
-      <DeferredTrailBreadcrumbs />
+      <TrailBreadcrumbs />
       <Suspense fallback={<div data-testid="deep-loading">loading</div>}>
         <DeepResolver />
       </Suspense>
@@ -127,7 +124,7 @@ function DeferredTimeoutPage(ctx: any) {
 
   return (
     <div data-testid="deferred-timeout-page">
-      <DeferredTrailBreadcrumbs />
+      <TrailBreadcrumbs />
     </div>
   );
 }
@@ -140,7 +137,7 @@ function DeferredTimeoutUndefinedPage(ctx: any) {
   return (
     <div data-testid="deferred-timeout-undefined-page">
       <span data-testid="deferred-timeout-undefined-marker">flushed</span>
-      <DeferredTrailBreadcrumbs />
+      <TrailBreadcrumbs />
     </div>
   );
 }

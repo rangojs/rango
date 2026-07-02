@@ -175,8 +175,16 @@ export const router = createRouter<AppEnv>({
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },
+    // Opt-in: a stale entry re-executes in the foreground during an action's
+    // revalidation render (fresh action response), instead of SWR. ttl=2 so the
+    // stale window opens fast.
+    "swr-action": { ttl: 2, swr: 60, foregroundOnAction: true },
   },
   prefetchCacheTTL: 60,
+  // Non-default values so the e2e can pin that configured prefetch limits
+  // reach the client payload metadata (defaults are size 100 / concurrency 2).
+  prefetchCacheSize: 25,
+  prefetchConcurrency: 3,
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],

@@ -78,3 +78,5 @@ export const includedPatterns = urls(({ path }) => [
   // === BENCHMARK: Last API route ===
   path("/bench/last", ApiBenchmarkHandler, { name: "benchLast" }),
 ]);
+
+export default includedPatterns;

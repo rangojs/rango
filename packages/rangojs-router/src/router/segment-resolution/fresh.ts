@@ -202,6 +202,7 @@ export async function resolveSegment<TEnv>(
       transition: applyViewTransitionDefault(
         entry.transition,
         deps.viewTransitionDefault,
+        entry.shortCode,
       ),
       params,
       belongsToRoute: false,
@@ -345,6 +346,7 @@ export async function resolveSegment<TEnv>(
       transition: applyViewTransitionDefault(
         entry.transition,
         deps.viewTransitionDefault,
+        entry.shortCode,
       ),
       params,
       belongsToRoute: true,
@@ -432,6 +434,7 @@ export async function resolveOrphanLayout<TEnv>(
     transition: applyViewTransitionDefault(
       orphan.transition,
       deps.viewTransitionDefault,
+      orphan.shortCode,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
@@ -565,6 +568,7 @@ export async function resolveParallelEntry<TEnv>(
       transition: applyViewTransitionDefault(
         parallelEntry.transition,
         deps.viewTransitionDefault,
+        `${parentShortCode}.${slot}`,
       ),
       params,
       slot,

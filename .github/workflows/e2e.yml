@@ -41,7 +41,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Run oxlint
         run: pnpm lint
@@ -69,7 +69,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Check formatting
         run: pnpm format
@@ -91,7 +91,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Cache Playwright browsers
         id: playwright-cache
@@ -124,7 +124,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       # No router build: typecheck resolves @rangojs/router types from src
       # (the exports map `types` points at ./src/*), so dist/ is not needed.
@@ -149,7 +149,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       # The build is needed here: generate-cli.test.ts spawns the built CLI
       # (dist/bin/rango.js) as a subprocess, so the unit suite needs dist/.
@@ -194,7 +194,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -251,7 +251,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -436,7 +436,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -503,7 +503,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -554,7 +554,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -605,7 +605,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -654,7 +654,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -703,7 +703,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build

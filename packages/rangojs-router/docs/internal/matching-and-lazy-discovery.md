@@ -144,6 +144,16 @@ A fair first reaction to lazy-by-default is "hang on, are we re-running route ha
 every request?" Good question — we asked it too, and measured. The short answer:
 **lazy-by-default is the right call, and the win is at boot, not per-request.**
 
+One thing this section predates: an include can now be **async** —
+`include("/x", () => import("./routes"))`. That form defers more than handler
+execution; the route module itself isn't evaluated until the first request
+reaches the prefix (it's a separate chunk), which is the cold-start and
+entry-bundle win. Everything below still holds — build-time discovery `await`s
+the provider, so the trie, `reverse()`, generated types, and prerender see every
+route in the split group. If you're touching async include specifically, read
+[async-includes.md](./async-includes.md) first; it owns that contract and the
+scars behind it.
+
 What the measurements actually showed: defining `urls()` doesn't run the handler;
 `include()` captures its patterns by reference without running them; `Rango.routes()`
 runs only the top-level handler once and leaves empty placeholders for the rest; an

@@ -65,17 +65,36 @@ export interface DecodedPrefetch {
    * when it adopted an inflight entry through the wildcard key.
    */
   scope: "source" | "wildcard";
+  /**
+   * Synchronously-readable flag, flipped to true when `streamComplete` resolves
+   * (the entire RSC stream has drained). Navigation reads this at click time to
+   * tell a FULLY warmed prefetch (payload commits without suspending → safe to
+   * commit in a startTransition, no fallback flash) from a partially-warmed one
+   * (still streaming → stream its fallbacks like a cold load). Starts false.
+   */
+  complete: boolean;
 }
 
 let cacheTTL = 300_000;
 
+// Max stored entries before FIFO eviction. Mirrors DEFAULT_PREFETCH_CACHE_SIZE
+// (router/prefetch-limits.ts); kept as a local literal so the client bundle
+// doesn't pull in router-layer code, matching the cacheTTL default above.
+// Overridden at startup by initPrefetchCache from server metadata.
+let maxPrefetchCacheSize = 100;
+
 /**
- * Initialize the prefetch cache with the configured TTL.
- * Called once at app startup with the value from server metadata.
- * A TTL of 0 disables the in-memory cache and all prefetching.
+ * Initialize the prefetch cache with the configured TTL and max size.
+ * Called once at app startup with the values from server metadata. Each
+ * argument is applied only when provided, so a caller can set just the TTL.
+ * A TTL of 0 disables the in-memory cache and all prefetching. A size below 1
+ * is ignored (the default is kept) — disabling prefetch is the TTL's job.
  */
-export function initPrefetchCache(ttlMs: number): void {
-  cacheTTL = ttlMs;
+export function initPrefetchCache(ttlMs?: number, maxSize?: number): void {
+  if (ttlMs !== undefined) cacheTTL = ttlMs;
+  if (maxSize !== undefined && Number.isFinite(maxSize) && maxSize >= 1) {
+    maxPrefetchCacheSize = Math.floor(maxSize);
+  }
 }
 
 /**
@@ -85,7 +104,6 @@ export function initPrefetchCache(ttlMs: number): void {
 export function isPrefetchCacheDisabled(): boolean {
   return cacheTTL <= 0;
 }
-const MAX_PREFETCH_CACHE_SIZE = 50;
 
 interface PrefetchCacheEntry {
   entry: DecodedPrefetch;
@@ -260,7 +278,7 @@ export function storePrefetch(
   }
 
   // FIFO eviction if at capacity
-  if (cache.size >= MAX_PREFETCH_CACHE_SIZE) {
+  if (cache.size >= maxPrefetchCacheSize) {
     const oldest = cache.keys().next().value;
     if (oldest) cache.delete(oldest);
   }

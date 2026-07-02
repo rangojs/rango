@@ -31,6 +31,7 @@ import {
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
+import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import {
   isWebSocketUpgradeResponse,
   appendVaryAccept,
@@ -1131,9 +1132,12 @@ export function createRSCHandler<
               params: {},
               isPartial: false,
               rootLayout: router.rootLayout,
-              handles: handleStore.stream(),
+              // Full (404) render: resolve deferred handle values server-side.
+              handles: resolvedHandleStream(handleStore),
               version,
               prefetchCacheTTL: router.prefetchCacheTTL,
+              prefetchCacheSize: router.prefetchCacheSize,
+              prefetchConcurrency: router.prefetchConcurrency,
               stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,

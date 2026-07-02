@@ -101,7 +101,10 @@
  *   - Non-GET request (only GET requests are cacheable)
  */
 import type { ResolvedSegment } from "../../types.js";
-import { getRequestContext } from "../../server/request-context.js";
+import {
+  getRequestContext,
+  runWithRequestContext,
+} from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
@@ -231,34 +234,46 @@ export function withCacheStore<TEnv>(
             setupLoaderAccess(proactiveHandlerContext, proactiveLoaderPromises);
 
             const Store = ctx.Store;
-            const freshSegments = await Store.run(() =>
-              resolveAllSegments(
-                ctx.entries,
-                ctx.routeKey,
-                ctx.matched.params,
-                proactiveHandlerContext,
-                proactiveLoaderPromises,
-                { skipLoaders: true },
+            // Re-establish the request-context ALS around the re-render. Store
+            // is a different ALS (DSL build context); on workerd a waitUntil
+            // task runs detached from the request's I/O context, so a handler/
+            // component that reads the ambient getRequestContext() during this
+            // background re-render would otherwise throw "called outside of a
+            // request context".
+            const freshSegments = await runWithRequestContext(requestCtx, () =>
+              Store.run(() =>
+                resolveAllSegments(
+                  ctx.entries,
+                  ctx.routeKey,
+                  ctx.matched.params,
+                  proactiveHandlerContext,
+                  proactiveLoaderPromises,
+                  { skipLoaders: true },
+                ),
               ),
             );
 
             let freshInterceptSegments: ResolvedSegment[] = [];
             if (ctx.interceptResult) {
-              freshInterceptSegments = await Store.run(() =>
-                resolveInterceptEntry(
-                  ctx.interceptResult!.intercept,
-                  ctx.interceptResult!.entry,
-                  ctx.matched.params,
-                  proactiveHandlerContext,
-                  true, // belongsToRoute
-                  // No revalidationContext = render fresh
-                  undefined,
-                  // Skip intercept middleware: the foreground already ran it
-                  // before the response was sent. Re-running here (post-response,
-                  // background) would fire side effects twice and a short-circuit
-                  // Response would silently abort this cache write.
-                  { skipMiddleware: true },
-                ),
+              freshInterceptSegments = await runWithRequestContext(
+                requestCtx,
+                () =>
+                  Store.run(() =>
+                    resolveInterceptEntry(
+                      ctx.interceptResult!.intercept,
+                      ctx.interceptResult!.entry,
+                      ctx.matched.params,
+                      proactiveHandlerContext,
+                      true, // belongsToRoute
+                      // No revalidationContext = render fresh
+                      undefined,
+                      // Skip intercept middleware: the foreground already ran it
+                      // before the response was sent. Re-running here (post-
+                      // response, background) would fire side effects twice and a
+                      // short-circuit Response would silently abort this write.
+                      { skipMiddleware: true },
+                    ),
+                  ),
               );
             }
 
