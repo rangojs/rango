@@ -51,7 +51,10 @@ import type { NavigationStore, NavigationBridge } from "../browser/types.js";
 import type { EventController } from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
-import { compilePattern } from "../router/pattern-matching.js";
+import {
+  compilePattern,
+  buildParamsFromMatch,
+} from "../router/pattern-matching.js";
 import { normalizeBasename } from "../router/basename.js";
 import type { LoaderDefinition } from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
@@ -303,14 +306,9 @@ function matchLeaf(
   const compiled = compilePattern(pattern);
   const match = compiled.regex.exec(pathname);
   if (!match) return null;
-  const params: Record<string, string> = {};
-  compiled.paramNames.forEach((name, index) => {
-    const value = match[index + 1];
-    if (value !== undefined) {
-      params[name] = decodeURIComponent(value);
-    }
-  });
-  return params;
+  // Reuse the production param builder so the harness matches the real matcher
+  // exactly (named catch-all "" binding, decoding) instead of forking it.
+  return buildParamsFromMatch(match, compiled.paramNames, compiled.catchAll);
 }
 
 function staticPrefix(pattern: string): string {

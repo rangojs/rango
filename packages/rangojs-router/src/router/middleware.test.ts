@@ -59,6 +59,28 @@ describe("middleware", () => {
       expect(regex.test("/foo/bar/baz")).toBe(true);
     });
 
+    // Review F4: a named catch-all in a middleware pattern must expose the param
+    // and respect one-or-more, not collapse to the bare-`*` optional subtree.
+    it("compiles a one-or-more catch-all :name+ with a captured name", () => {
+      const { regex, paramNames } = parsePattern("/docs/:rest+");
+      expect(paramNames).toEqual(["rest"]);
+      // one-or-more: must NOT match the bare prefix
+      expect(regex.test("/docs")).toBe(false);
+      expect(regex.test("/docs/a/b")).toBe(true);
+      expect(extractParams("/docs/a/b", regex, paramNames)).toEqual({
+        rest: "a/b",
+      });
+    });
+
+    it("compiles a zero-or-more catch-all :name* with a captured name", () => {
+      const { regex, paramNames } = parsePattern("/tenant/:path*");
+      expect(paramNames).toEqual(["path"]);
+      expect(regex.test("/tenant")).toBe(true);
+      expect(extractParams("/tenant/a/b", regex, paramNames)).toEqual({
+        path: "a/b",
+      });
+    });
+
     it("should match exact path", () => {
       const { regex } = parsePattern("/admin");
       expect(regex.test("/admin")).toBe(true);

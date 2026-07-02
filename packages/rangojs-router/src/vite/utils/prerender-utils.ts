@@ -10,12 +10,10 @@ import {
 import { resolve } from "node:path";
 
 import { escapeRegExp } from "../../regex-escape.js";
+import { encodePathRemainder } from "../../router/url-params.js";
 
 export function encodePathParam(value: unknown): string {
-  return String(value)
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+  return encodePathRemainder(String(value), encodeURIComponent);
 }
 
 export function substituteRouteParams(
@@ -28,6 +26,21 @@ export function substituteRouteParams(
 
   for (const [key, value] of Object.entries(params)) {
     const escaped = escapeRegExp(key);
+    // Named catch-all `:key+` / `:key*` (issue #634). Like the runtime reverse,
+    // the value is multi-segment: encode each segment and keep the `/` separators
+    // (a whole-value encode would turn `a/b` into `a%2Fb`), and consume the
+    // trailing modifier so it does not leak into the URL. `*` (zero-or-more)
+    // absent collapses via the trailing cleanup below.
+    const catchAllRe = new RegExp(`:${escaped}[+*]`);
+    if (catchAllRe.test(result)) {
+      if (value === "") {
+        result = result.replace(catchAllRe, "");
+        hadOmittedOptional = true;
+      } else {
+        result = result.replace(catchAllRe, encodePathRemainder(value, encode));
+      }
+      continue;
+    }
     if (value === "") {
       result = result.replace(
         new RegExp(`:${escaped}(\\([^)]*\\))?(?!\\?)`),

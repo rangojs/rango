@@ -70,6 +70,8 @@ export const NamedRoutes = {
   "cacheTest.statusJson500": "/cache-status-json/server-error",
   "cacheTest.useLoaderDetail": "/cache-test/useloader/:itemId",
   "cacheTest.useLoaderIndex": "/cache-test/useloader",
+  "catchall.docs": "/catch-all/docs/:slug*",
+  "catchall.shop": "/catch-all/shop/:path+",
   changelog: "/changelog",
   "colocatedFr.index": "/colocated-fr",
   "colocatedLp.fresh": "/colocated-lp/fresh",

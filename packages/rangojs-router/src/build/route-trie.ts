@@ -62,8 +62,13 @@ export interface TrieNode {
   p?: { n: string; c: TrieNode };
   /** Suffix-param children keyed by suffix (e.g., ".html" → { n: "productId", c: ... }) */
   xp?: Record<string, { n: string; c: TrieNode }>;
-  /** Wildcard terminal: leaf + paramName */
-  w?: TrieLeaf & { pn: string };
+  /**
+   * Wildcard terminal: leaf + paramName (`pn`). `pn` is "*" for the bare `/*`
+   * form and the param name for a named catch-all (`:name+`/`:name*`). `w1`
+   * marks a one-or-more catch-all (`:name+`): the runtime walker then rejects
+   * the zero-segment/empty-remainder case. Absent `w1` is zero-or-more.
+   */
+  w?: TrieLeaf & { pn: string; w1?: true };
 }
 
 /**
@@ -383,12 +388,35 @@ function insertSegments(
   } else if (segment.type === "wildcard") {
     // Wildcard consumes all remaining segments. Carry any params bound before
     // the wildcard in pa so they zip correctly against paramValues at match.
-    const wildLeaf: TrieLeaf & { pn: string } = {
+    // `pn` is "*" for the bare `/*` and the param name for a named catch-all;
+    // `w1` marks the one-or-more variant (`:name+`) so the walker rejects the
+    // empty-remainder case.
+    const wildLeaf: TrieLeaf & { pn: string; w1?: true } = {
       ...buildLeaf(leafBase, paramNames),
-      pn: "*",
+      pn: segment.value,
+      ...(segment.oneOrMore ? { w1: true as const } : {}),
     };
-    const existing = node.w ? ({ ...node.w } as TrieLeaf) : undefined;
-    const merged = mergeLeaves(existing, wildLeaf);
-    node.w = merged as TrieLeaf & { pn: string };
+    const existing = node.w;
+    // Merge when there's no existing wildcard, when this is a response-type
+    // content-negotiation variant of the same catch-all (one side carries `rt`),
+    // or when it's the SAME catch-all identity (same param name + arity).
+    // Otherwise two DISTINCT catch-all forms (`/x/*` vs `/x/:p+`) would collide on
+    // the single wildcard slot with no non-lossy merge — so keep the first-declared
+    // (matching the regex matcher's declaration-order tiebreak) rather than let
+    // mergeLeaves' last-wins overwrite silently drop its `pn`/`w1` identity (which
+    // stranded the first route and fell through to a corrupt regex-fallback redirect).
+    const canMerge =
+      existing === undefined ||
+      Boolean(existing.rt) ||
+      Boolean(wildLeaf.rt) ||
+      (existing.pn === wildLeaf.pn &&
+        Boolean(existing.w1) === Boolean(wildLeaf.w1));
+    if (canMerge) {
+      const merged = mergeLeaves(
+        existing ? ({ ...existing } as TrieLeaf) : undefined,
+        wildLeaf,
+      );
+      node.w = merged as TrieLeaf & { pn: string; w1?: true };
+    }
   }
 }

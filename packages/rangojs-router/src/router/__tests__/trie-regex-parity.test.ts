@@ -109,6 +109,23 @@ describe("trie vs regex matcher parity (stable surface)", () => {
       routes: { A: "/a/:s/b" },
       urls: ["/a//b", "/a/x/b"],
     },
+    {
+      // Named catch-all `:name+` (one-or-more): matches 1+ trailing segments,
+      // rejects the bare prefix. Both matchers agree on all three, including the
+      // null on "/docs" (regex `(.+)` needs a char; trie's one-or-more flag
+      // suppresses the empty-remainder terminal). Issue #634.
+      name: "named catch-all one-or-more",
+      routes: { "docs.any": "/docs/:slug+" },
+      urls: ["/docs/a", "/docs/a/b/c", "/docs"],
+    },
+    {
+      // Named catch-all `:name*` (zero-or-more). Review F6 aligned the regex
+      // fallback with the trie on the bare prefix, so "/blog" now agrees too
+      // (both bind rest === "") — unlike bare `*`, whose C1 divergence remains.
+      name: "named catch-all zero-or-more (incl. bare prefix)",
+      routes: { "blog.any": "/blog/:rest*" },
+      urls: ["/blog", "/blog/a", "/blog/a/b"],
+    },
   ];
 
   for (const row of AGREEING) {
