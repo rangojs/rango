@@ -24,7 +24,22 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
 import { buildFullPayload } from "./full-payload.js";
-import { scheduleShellCapture } from "./shell-capture.js";
+import {
+  scheduleShellCapture,
+  type ShellCaptureDescriptor,
+} from "./shell-capture.js";
+import {
+  SHELL_STATUS_HEADER,
+  resolvePprConfig,
+  buildShellKey,
+  isValidShellHit,
+  base64ToBytes,
+  hasShellFamily,
+  warnShellStoreMissingOnce,
+} from "./shell-serve.js";
+import { reportCacheError } from "../cache/cache-error.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
+import type { ShellCacheEntry } from "../cache/types.js";
 
 export function handleRscRendering<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -66,6 +81,105 @@ async function handleRscRenderingInner<TEnv>(
 
   let payload: RscPayload;
   let hasInterceptSlots = false;
+
+  // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
+  //
+  // COMMIT POINT. This function is the render pass executeRender wraps, so it runs
+  // strictly AFTER the whole middleware chain — the global router.use() chain AND
+  // route DSL middleware() both wrap it. Any middleware rejection/redirect/401 has
+  // already returned before this line, which is what makes a shared shell safe:
+  // not a single shell byte can precede a guard decision, on MISS or HIT.
+  //
+  // PPR is opt-in per PAGE ROUTE via the `ppr` path option (read off the classified
+  // route snapshot — the same matched entry match() will resolve). No `ppr` option
+  // means pure axis 1: no store read, no capture, no logs, zero cost.
+  //
+  // On a valid HIT the composed response is committed HERE — the stored prelude
+  // bytes flush immediately while match()/segment resolution/Flight render/resume
+  // run behind them inside the response stream (ring-3 reads and render setup hide
+  // behind wire bytes). On a MISS the request continues as plain axis 1 and a
+  // background capture is scheduled after the response is built.
+  let pprMiss: {
+    descriptor: ShellCaptureDescriptor;
+    ssrModule: SSRModule;
+  } | null = null;
+  if (
+    !isPartial &&
+    nonce === undefined &&
+    request.method === "GET" &&
+    !url.searchParams.has("__prerender_collect") &&
+    !isRscRequest(request, url, false)
+  ) {
+    const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
+    if (pprConfig) {
+      const store = reqCtx._cacheStore;
+      const key = buildShellKey(url);
+      if (!hasShellFamily(store)) {
+        // Declared intent that cannot be honored deserves a diagnostic (unlike an
+        // undeclared route, which is silent). Axis 1 after the warning.
+        warnShellStoreMissingOnce(key);
+      } else {
+        // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
+        // streaming, so bots/SEO crawlers get one complete axis-1 document.
+        const [ssrModule, streamMode] = await getSSRSetup(
+          ctx,
+          request,
+          env,
+          url,
+          reqCtx._metricsStore,
+        );
+        if (
+          streamMode !== "allReady" &&
+          ssrModule.resumeShellHTML &&
+          ssrModule.captureShellHTML
+        ) {
+          const descriptor: ShellCaptureDescriptor = {
+            key,
+            ttl: pprConfig.ttl,
+            swr: pprConfig.swr,
+            tags: pprConfig.tags,
+            store,
+            debug: INTERNAL_RANGO_DEBUG,
+          };
+          let cached: Awaited<ReturnType<typeof store.getShell>> = null;
+          try {
+            cached = await store.getShell(key);
+          } catch (error) {
+            // A failing store read degrades to axis 1 (MISS), never a 500.
+            reportCacheError(error, "cache-read", "[ShellServe] getShell");
+          }
+          if (cached && isValidShellHit(cached.entry)) {
+            // Stale (SWR) hit: serve the stale shell now, recapture in the
+            // background (stampede-guarded + backoff inside scheduleShellCapture).
+            if (cached.shouldRevalidate) {
+              scheduleShellCapture(
+                ctx,
+                request,
+                env,
+                url,
+                reqCtx,
+                ssrModule,
+                descriptor,
+              );
+            }
+            return serveShellHit(
+              ctx,
+              request,
+              env,
+              url,
+              reqCtx,
+              handleStore,
+              ssrModule,
+              cached.entry,
+            );
+          }
+          // MISS (no entry, invalid reactVersion, or store read failure): axis 1
+          // + a background capture scheduled once the response is known servable.
+          pprMiss = { descriptor, ssrModule };
+        }
+      }
+    }
+  }
 
   if (isPartial) {
     // Partial render (navigation)
@@ -233,105 +347,142 @@ async function handleRscRenderingInner<TEnv>(
     metricsStore,
   );
 
-  // --- Axis 2: PPR shell RESUME (see docs/design/ppr-shell-resume.md) ---
-  // The shell-cache middleware armed reqCtx._shellResume optimistically on a
-  // validated shell HIT. The render layer is the FINAL AUTHORITY: resume only on
-  // the main 200 HTML document path (we are past the isRscRequest early return, so
-  // !isPartial holds), with no per-request nonce (a frozen prelude cannot carry a
-  // fresh nonce), not under allReady buffering (which defeats streaming), and only
-  // when the SSR module actually exports the resume strategy. When we resume we
-  // MUST mark the response with x-rango-shell-resumed so the middleware prepends
-  // the cached prelude; if any guard fails we fall through to a normal renderHTML
-  // with no marker and the middleware fails open to axis 1.
-  const shellResume = reqCtx._shellResume;
-  let response: Response;
-  if (
-    shellResume &&
-    !isPartial &&
-    nonce === undefined &&
-    streamMode !== "allReady" &&
-    ssrModule.resumeShellHTML
-  ) {
-    const resumedStream = await observePhase(PHASES.ssr, () =>
-      ssrModule.resumeShellHTML!(rscStream, {
-        postponed: shellResume.postponed,
-        nonce,
-      }),
-    );
-    response = createResponseWithMergedHeaders(resumedStream, {
-      headers: {
-        "content-type": "text/html;charset=utf-8",
-        "x-rango-shell-resumed": "1",
-      },
-    });
-  } else {
-    // ssr-render-html metric + rango.ssr span from one boundary. render:total is
-    // recorded by the observePhase wrapper around this function.
-    const htmlStream = await observePhase(PHASES.ssr, () =>
-      ssrModule.renderHTML(rscStream, {
-        nonce,
-        streamMode,
-      }),
-    );
-    response = createResponseWithMergedHeaders(htmlStream, {
-      headers: { "content-type": "text/html;charset=utf-8" },
-    });
-  }
-
-  // --- Axis 2: PPR shell CAPTURE (background task; see design doc) ---
-  // The middleware set reqCtx._shellCapture (the "capture wanted" descriptor)
-  // before its single next(). Capture does NOT flow through the HTTP pipeline: we
-  // schedule a background task that re-derives the shell via router.match() under
-  // its own derived context (fresh handle store, _shellCaptureRun: true), so the
-  // middleware chain never re-runs. Eligibility mirrors resume plus a servable
-  // 200-HTML gate; the descriptor is read now (still set — the middleware clears
-  // it in a finally after next() returns, which is after this synchronous point).
-  maybeScheduleShellCapture(
-    ctx,
-    request,
-    env,
-    url,
-    reqCtx,
-    ssrModule,
-    nonce,
-    streamMode,
-    isPartial,
-    response,
+  // ssr-render-html metric + rango.ssr span from one boundary. render:total is
+  // recorded by the observePhase wrapper around this function.
+  const htmlStream = await observePhase(PHASES.ssr, () =>
+    ssrModule.renderHTML(rscStream, {
+      nonce,
+      streamMode,
+    }),
   );
+  const response = createResponseWithMergedHeaders(htmlStream, {
+    headers: { "content-type": "text/html;charset=utf-8" },
+  });
+
+  // --- Axis 2: PPR shell CAPTURE on MISS (background task; see design doc) ---
+  // The ppr route missed its shell above. Schedule the background capture only
+  // when the served response is a 200 HTML document (a 404/error render is not a
+  // cacheable shell), and tag the response for observability either way. Capture
+  // does NOT flow through the HTTP pipeline: scheduleShellCapture re-derives the
+  // page via router.match() under a derived context (fresh handle store,
+  // _shellCaptureRun: true) — middleware never re-runs; it already ran for this
+  // request and guarding is serve-time.
+  if (pprMiss) {
+    if (
+      response.status === 200 &&
+      (response.headers.get("content-type") ?? "").includes("text/html")
+    ) {
+      scheduleShellCapture(
+        ctx,
+        request,
+        env,
+        url,
+        reqCtx,
+        pprMiss.ssrModule,
+        pprMiss.descriptor,
+      );
+    }
+    response.headers.set(SHELL_STATUS_HEADER, "MISS");
+  }
 
   return response;
 }
 
 /**
- * Schedule a background PPR shell capture when the middleware requested one
- * (`reqCtx._shellCapture` descriptor present) and this render is eligible: no
- * per-request nonce (a frozen prelude cannot carry a fresh nonce), not under
- * allReady buffering (which defeats streaming), the document path (never a
- * partial), the SSR module exports the capture strategy, and the served response
- * is a 200 HTML document (a 404/redirect/JSON is not a cacheable shell). All
- * gating lives here so the middleware stays a thin descriptor-setter.
+ * Serve a validated shell HIT: commit the composed response NOW — the stored
+ * prelude bytes are the first thing on the wire — and run the live tail
+ * (match(), fresh loaders, full Flight render for hydration, fizz resume of just
+ * the holes) BEHIND them inside the response stream. React relies on HTML-parser
+ * foster-parenting for content streamed after the prelude's closing
+ * `</body></html>`, so plain byte concatenation is the correct composition.
+ *
+ * Status and headers are committed at the flush: middleware already ran (their
+ * ctx.res headers merge in via createResponseWithMergedHeaders), and route
+ * middleware code after its next() can still adjust headers on the returned
+ * Response object. A failing hole cannot become a 500/redirect after this point —
+ * error UI renders inline via Suspense/error boundaries, the documented PPR
+ * constraint.
+ *
+ * The tail promise is kicked off SYNCHRONOUSLY so match/Flight/resume run inside
+ * the current ALS request-context frame (the stream may be pulled by the server
+ * adapter outside it).
  */
-function maybeScheduleShellCapture(
+function serveShellHit(
   ctx: HandlerContext<any>,
   request: Request,
   env: any,
   url: URL,
   reqCtx: RequestContext<any>,
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   ssrModule: SSRModule,
-  nonce: string | undefined,
-  streamMode: import("../router/router-options.js").SSRStreamMode,
-  isPartial: boolean,
-  response: Response,
-): void {
-  const descriptor = reqCtx._shellCapture;
-  if (!descriptor) return;
-  if (nonce !== undefined) return;
-  if (streamMode === "allReady") return;
-  if (isPartial) return;
-  if (!ssrModule.captureShellHTML) return;
-  if (response.status !== 200) return;
-  if (!(response.headers.get("content-type") ?? "").includes("text/html")) {
-    return;
-  }
-  scheduleShellCapture(ctx, request, env, url, reqCtx, ssrModule, descriptor);
+  entry: ShellCacheEntry,
+): Response {
+  const preludeBytes = base64ToBytes(entry.prelude);
+
+  const tailPromise: Promise<
+    ReadableStream<Uint8Array> | { redirect: string }
+  > = (async () => {
+    const match = await ctx.router.match(request, { env });
+    if (match.redirect) return { redirect: match.redirect };
+    setRequestContextParams(match.params, match.routeName);
+    const payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
+    // Full Flight render per request: hydration needs the whole payload (there
+    // is no Flight-side resume — a React limitation, not ours).
+    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+      onError: (error: unknown) => {
+        ctx.callOnError(error, "rendering", { request, url, env });
+      },
+    });
+    return observePhase(PHASES.ssr, () =>
+      ssrModule.resumeShellHTML!(rscStream, {
+        postponed: entry.postponed,
+        nonce: undefined,
+      }),
+    );
+  })();
+  // The stream below is the only consumer; pre-attach a no-op catch so a tail
+  // failure before the stream is pulled never surfaces as an unhandled rejection.
+  tailPromise.catch(() => {});
+
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(preludeBytes);
+      try {
+        const tail = await tailPromise;
+        if (tail instanceof ReadableStream) {
+          const reader = tail.getReader();
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+          } finally {
+            reader.releaseLock();
+          }
+        } else {
+          // Defensive, near-unreachable: a redirecting match cannot have captured
+          // a shell (capture bails on redirects), so a HIT on a redirecting URL
+          // requires the route to have BECOME redirecting within the shell TTL.
+          // The 200 + prelude are already committed; degrade to a client-side
+          // replace so the user still lands on the target.
+          controller.enqueue(
+            new TextEncoder().encode(
+              `<script>location.replace(${JSON.stringify(tail.redirect)})</script>`,
+            ),
+          );
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  });
+
+  return createResponseWithMergedHeaders(body, {
+    headers: {
+      "content-type": "text/html;charset=utf-8",
+      [SHELL_STATUS_HEADER]: "HIT",
+    },
+  });
 }

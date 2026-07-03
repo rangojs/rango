@@ -110,6 +110,7 @@ export type {
   TextResponsePathFn,
   RouteResponse,
   ProblemDetails,
+  PartialPrerenderProps,
 } from "./urls.js";
 
 // Middleware context types
@@ -226,23 +227,6 @@ export function cookies(): never {
  */
 export function headers(): never {
   throw serverOnlyStubError("headers");
-}
-
-/**
- * Client/SSR passthrough for `live()` (the PPR hole primitive). Unlike the
- * cookies()/headers() stubs this is a REAL function: there is no shell capture
- * off the react-server condition, so live() simply runs the thunk (or returns
- * the promise). The capture-aware implementation lives in index.rsc.ts
- * (./server/live.js). See docs/design/ppr-shell-resume.md.
- */
-export function live<T>(fn: () => Promise<T> | T): Promise<T>;
-export function live<T>(promise: Promise<T>): Promise<T>;
-export function live<T>(
-  input: (() => Promise<T> | T) | Promise<T>,
-): Promise<T> {
-  return typeof input === "function"
-    ? Promise.resolve((input as () => Promise<T> | T)())
-    : input;
 }
 
 /**

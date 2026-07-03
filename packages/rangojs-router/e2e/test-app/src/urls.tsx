@@ -23,11 +23,9 @@ import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
-import {
-  shellCachePatterns,
-  shellCacheDslPatterns,
-} from "./urls/shell-cache.js";
+import { shellCachePatterns } from "./urls/shell-cache.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
+import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
@@ -858,18 +856,19 @@ export const urlpatterns = urls(
       // Cache test patterns (includes intercepts with layouts)
       include("/", cachePatterns, { name: "" }),
 
-      // PPR shell caching (docs/design/ppr-shell-resume.md). The shell-cache
-      // middleware is wired path-scoped in router.tsx; the loader is the live
-      // hole that resumes into the frozen prelude on a HIT.
+      // PPR shell caching (docs/design/ppr-shell-resume.md). Opt-in per route
+      // via the `ppr` path option — serving is integral to the router (no
+      // middleware); the loader behind loading() is the live hole that resumes
+      // into the frozen prelude on a HIT.
       include("/", shellCachePatterns, { name: "" }),
 
-      // PPR shell caching attached via the urls() middleware() DSL (Deliverable
-      // 4c) — the middleware lives in shellCacheDslPatterns, NOT router.tsx, and
-      // covers only /shell-cache-dsl. Proves DSL attachment works identically.
-      include("/", shellCacheDslPatterns, { name: "" }),
-
-      // PPR action-correctness fixtures (Deliverable 10) — /shell-cache-action.
+      // PPR action-correctness fixtures — /shell-cache-action.
       include("/", shellCacheActionPatterns, { name: "" }),
+
+      // PPR guarding + scope-fidelity fixtures — /shell-secure (global auth
+      // middleware, mounted in router.tsx) and /shell-secure-dsl (route DSL
+      // middleware rejection); the commit point is after ALL middleware.
+      include("/", shellSecurePatterns, { name: "" }),
 
       // Theme patterns
       include("/theme", themePatterns, { name: "theme" }),

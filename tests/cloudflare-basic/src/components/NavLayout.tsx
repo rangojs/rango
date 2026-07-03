@@ -67,9 +67,6 @@ export function NavLayout() {
         <Link to={href("/ppr-shell/no-hole")} data-testid="nav-ppr-no-hole">
           PPR no-hole (negative)
         </Link>
-        <Link to={href("/ppr-shell-dsl")} data-testid="nav-ppr-dsl">
-          PPR DSL (middleware())
-        </Link>
       </nav>
       <BreadcrumbNav />
       <Outlet />

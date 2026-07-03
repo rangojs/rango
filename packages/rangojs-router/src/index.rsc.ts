@@ -157,6 +157,7 @@ export {
   urls,
   type PathHelpers,
   type PathOptions,
+  type PartialPrerenderProps,
   type UrlPatterns,
   type IncludeOptions,
   type IncludeItem,
@@ -218,11 +219,6 @@ export {
   type Cookie,
   type ReadonlyHeaders,
 } from "./server/cookie-store.js";
-
-// live() — the deterministic PPR hole primitive. Real (capture-aware)
-// implementation under the react-server condition; index.ts ships a client/SSR
-// passthrough (there is no shell capture off this condition).
-export { live } from "./server/live.js";
 
 // Cache tag APIs (server-only)
 // cacheTag: tag the current "use cache" entry at runtime.

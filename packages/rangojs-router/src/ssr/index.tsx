@@ -173,13 +173,25 @@ export interface SSRDependencies<TEnv = unknown> {
 const DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS = 5000;
 
 /**
- * Fixed number of macrotask hops between `quiesce` resolving and the abort. By
- * the time `quiesce` resolves the Flight input is byte-quiet and frozen, so
- * these hops are deterministic: they only give React's fizz worker turns to
- * flush the settled shell and mark still-pending boundaries as POSTPONED (rather
- * than errored) before controller.abort() lands. Not a wall-clock wait.
+ * Fixed number of macrotask hops between `quiesce` resolving and the abort. These
+ * give React's fizz worker turns to flush the settled shell into the prelude and
+ * mark still-pending boundaries as POSTPONED (rather than errored) before
+ * controller.abort() lands. Not a wall-clock wait.
+ *
+ * Why 16 and not the original 2: under the REPLAY-ONLY capture model
+ * (docs/design/ppr-shell-resume.md), the capture Flight render serializes ring-3
+ * cached segments that are ALREADY serialized, so it emits the whole shell payload
+ * in the first tick and the gate declares quiesce almost immediately (~a few ms).
+ * On the old fresh-execution path the Flight dribbled out as handlers ran, so
+ * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed. Under
+ * replay, Flight-quiet fires BEFORE the fizz side has consumed the instant payload
+ * and rendered the shell to `<body>`, so the fizz needs a real buffer of turns after
+ * quiesce — otherwise the abort lands on an unrendered tree (empty prelude, root
+ * postpone) and the sanity gate refuses. Still task-based (masked loaders never
+ * emit, so more hops never lets a hole settle); a cold worker whose first
+ * attempt still under-renders heals on the in-place retry. Bounded by maxWaitMs.
  */
-const POST_QUIESCE_TASK_HOPS = 2;
+const POST_QUIESCE_TASK_HOPS = 16;
 
 /**
  * Route an SSR error through the deps.onError notification callback with the

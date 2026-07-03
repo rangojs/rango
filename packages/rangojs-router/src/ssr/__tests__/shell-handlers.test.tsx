@@ -24,15 +24,6 @@ import { resume } from "react-dom/server.edge";
 import { renderToReadableStream } from "react-dom/server.edge";
 import { injectRSCPayload } from "rsc-html-stream/server";
 
-// live() (the deterministic PPR hole primitive) exercised THROUGH the capture
-// primitive — the userland dogfood the repo mandates. The real capture-aware
-// implementation reads _shellCaptureRun off the ALS request context.
-import { live } from "../../server/live.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../../server/request-context.js";
-
 const mockedRenderSegments = vi.mocked(renderSegments);
 
 const encoder = new TextEncoder();
@@ -436,87 +427,6 @@ describe("createShellResumeHandler", () => {
     await expect(
       resumeHandler(makeRscStream("X"), { postponed: "{}" }),
     ).rejects.toThrow(/resume/);
-  });
-});
-
-describe("live() PPR hole through the capture primitive", () => {
-  function makeLiveTree(label: string, spy: { invoked: number }) {
-    function LivePart() {
-      const value = React.use(
-        live(() => {
-          spy.invoked += 1;
-          return Promise.resolve(`LIVE-${label}`);
-        }),
-      );
-      return React.createElement("p", { id: "live" }, value);
-    }
-    return React.createElement(
-      "html",
-      null,
-      React.createElement(
-        "body",
-        null,
-        React.createElement("h1", null, "SHELL-CONTENT"),
-        React.createElement(
-          React.Suspense,
-          { fallback: React.createElement("span", null, "LIVE-FALLBACK") },
-          React.createElement(LivePart),
-        ),
-      ),
-    );
-  }
-
-  function captureRunContext() {
-    const ctx = createRequestContext({
-      env: {},
-      request: new Request("https://example.com/"),
-      url: new URL("https://example.com/"),
-      variables: {},
-    });
-    (ctx as { _shellCaptureRun?: boolean })._shellCaptureRun = true;
-    return ctx;
-  }
-
-  it("a resolved live() thunk is a HOLE under capture: fallback frozen, value + thunk-run absent, postponed non-null", async () => {
-    const spy = { invoked: 0 };
-    mockedRenderSegments.mockImplementation(() =>
-      Promise.resolve(makeLiveTree("cap", spy)),
-    );
-    const capture = createShellCaptureHandler(makeDeps());
-    const result = await runWithRequestContext(captureRunContext(), () =>
-      capture(makeRscStream("LIVE_CAPTURE_FLIGHT"), {
-        quiesce: Promise.resolve(),
-      }),
-    );
-    expect(result).not.toBeNull();
-
-    const preludeText = decoder.decode(result!.prelude);
-    expect(preludeText).toContain("SHELL-CONTENT");
-    // Even though the data is Promise.resolve(...) (microtask-settleable), live()
-    // held it out of the shared shell: the fallback is frozen, the value is not.
-    expect(preludeText).toContain("LIVE-FALLBACK");
-    expect(preludeText).not.toContain("LIVE-cap");
-    // The thunk never ran during capture (no fetch, no cost).
-    expect(spy.invoked).toBe(0);
-    // Holes were pending -> postponed round-trips.
-    expect(typeof result!.postponed).toBe("string");
-  });
-
-  it("outside capture (serve) live() runs the thunk and the value renders", async () => {
-    const spy = { invoked: 0 };
-    mockedRenderSegments.mockImplementation(() =>
-      Promise.resolve(makeLiveTree("serve", spy)),
-    );
-    const renderHTML = createSSRHandler(makeDeps());
-    const stream = await renderHTML(makeRscStream("LIVE_SERVE_FLIGHT"), {});
-    const html = await readAll(stream);
-    expect(html).toContain("LIVE-serve");
-    // The thunk ran (>= 1): outside capture live() is a passthrough. React
-    // re-renders the use()-ing component after its promise resolves, so an inline
-    // thunk fires once per render attempt (a general React inline-use() property,
-    // not specific to live()); the contract pinned here is capture (0 runs) vs
-    // serve (>= 1 run), not memoization.
-    expect(spy.invoked).toBeGreaterThanOrEqual(1);
   });
 });
 

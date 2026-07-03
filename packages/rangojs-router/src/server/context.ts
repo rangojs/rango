@@ -233,6 +233,13 @@ export type EntryData =
       staticHandlerId?: string;
       /** Response type for non-RSC routes (json, text, image, any) */
       responseType?: string;
+      /**
+       * PPR (partial pre-rendering) opt-in from the path() `ppr` option. A
+       * document-level property of the page route: `true` uses the default
+       * shell policy, an object carries ttl/swr/tags. Read by the integrated
+       * PPR serve path (rsc/shell-serve.ts resolvePprConfig).
+       */
+      ppr?: boolean | import("../urls/pattern-types.js").PartialPrerenderProps;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments &

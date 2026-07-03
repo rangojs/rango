@@ -12,10 +12,10 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 //       tag cascade dropped the shell), then recaptures with the new shell content
 //       in the prelude;
 //   (c) progressive enhancement: a no-JS form POST renders via axis 1, with no HIT
-//       composition on the POST response;
-//   (d) the DSL-attached route (/shell-cache-dsl): a POST action bypasses the shell
-//       middleware (non-GET) — the action response is untouched.
-// Every test guards against hydration/console errors. Runs dev + production.
+//       composition on the POST response (a POST is never a shell candidate).
+// The route opts in via the `ppr` path option (serving is integral — no
+// middleware). Every test guards against hydration/console errors. Runs dev +
+// production.
 
 const HTML_HEADERS = { Accept: "text/html" };
 
@@ -131,37 +131,6 @@ function runActionSpec(f: Fixture): void {
     const html = await hit.text();
     const prelude = html.slice(0, html.indexOf("</html>"));
     expect(prelude).toContain(newBanner);
-  });
-
-  // 10(d): the DSL-attached route — a POST action bypasses the shell middleware.
-  test("DSL route: a POST action bypasses shell logic (no HIT composition on the action response)", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-    using __ = guardConsoleErrors(page);
-
-    const url = f.url("/shell-cache-dsl?probe=dsl-d");
-    // Warm the DSL route to HIT so the GET path is composing shells...
-    await warmToHit(page.request, url);
-
-    await page.goto(url);
-    await waitForHydration(page);
-
-    // Capture the action POST response (an _rsc_action fetch) to assert the
-    // middleware did NOT compose a shell onto it (non-GET bypass).
-    const actionResponse = page.waitForResponse(
-      (r) =>
-        r.url().includes("/shell-cache-dsl") && r.request().method() === "POST",
-    );
-    await testId(page, "shell-dsl-action-btn").click();
-    const res = await actionResponse;
-
-    // The action ran and the client applied the result...
-    await expect(testId(page, "shell-dsl-action-result")).toContainText(
-      "applied:",
-    );
-    // ...and the action response was untouched by the shell middleware.
-    expect(res.headers()["x-rango-shell"]).toBeUndefined();
   });
 }
 

@@ -175,6 +175,11 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       ...(resolveResponseType(options)
         ? { responseType: resolveResponseType(options) }
         : {}),
+      // PPR shell-caching opt-in (document-level). Stored raw; the integrated
+      // serve path normalizes it via resolvePprConfig (rsc/shell-serve.ts).
+      ...(options?.ppr !== undefined && options.ppr !== false
+        ? { ppr: options.ppr }
+        : {}),
     };
 
     if (isStaticHandler(handler) && handler.$$id && ctx.namePrefix) {

@@ -88,11 +88,12 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 - [PPR shell caching and resume](./design/ppr-shell-resume.md) - the opt-in
   second render axis: caches the rendered HTML shell (React `prerender` prelude
   bytes + `postponed` state) and, on a hit, serves the shell bytes immediately
-  and resumes fizz for just the live loader holes. Covers
-  `createShellCacheMiddleware` (`@rangojs/router/cache`), the
-  `createShellCaptureHandler`/`createShellResumeHandler` SSR factories, the
-  `getShell`/`putShell` store family, and the loader-masking / capture / resume
-  contracts
+  and resumes fizz for just the live holes. Covers the `ppr` path option
+  (`PartialPrerenderProps`), the integrated serve path (commit after all
+  middleware), the hole doctrine (structural/physics/shell + the handles
+  contract), the `createShellCaptureHandler`/`createShellResumeHandler` SSR
+  factories, the `getShell`/`putShell` store family, and the loader-masking /
+  capture / resume contracts
 - [Vercel chain PPR adapter spec](./design/vercel-chain-ppr.md) - serving
   build-time PPR shells via Vercel's CDN-stitched `chain` protocol (shell from
   the PoP cache + `next-resume: 1` POST to the resume function). Source-derived

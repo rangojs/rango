@@ -175,54 +175,16 @@ export interface RequestContext<
   _cacheStore?: SegmentCacheStore;
 
   /**
-   * @internal PPR shell-resume signal. Set by the shell-cache middleware on a
-   * validated shell HIT before it awaits next(); read in the render orchestration
-   * (rsc-rendering) to call the resume strategy instead of a full fizz render. The
-   * middleware sets it optimistically — the render layer is the final authority
-   * (nonce/formState/allReady bypass) and marks the response only when it actually
-   * resumed. Single-request; the middleware clears it in a finally.
-   */
-  _shellResume?: { postponed: string | null };
-
-  /**
-   * @internal PPR shell-capture DESCRIPTOR ("a capture of this document is
-   * wanted"). Set by the shell-cache middleware BEFORE its single foreground
-   * next() on a MISS or SWR stale hit, and read by the render orchestration
-   * (rsc-rendering) AFTER the response is built to schedule a background capture
-   * task. Its mere presence must NOT change the foreground render — loader
-   * masking and the cookie/header capture guard key off `_shellCaptureRun`, not
-   * this descriptor. `store` carries the SAME store the middleware resolved for
-   * its getShell read (options.store ?? _cacheStore), so a store-attached
-   * middleware writes captures where it reads them; without it an explicit
-   * options.store distinct from the app-level _cacheStore would read one store
-   * and write another and the shell would never HIT. `tags` carries the
-   * middleware's OPERATIONAL `tags` option (evaluated per request); the background
-   * capture UNIONS it with the shell's own auto-collected (non-loader) request tags
-   * from its derived render (the collected set stays authoritative). Single-request;
-   * the middleware clears it in a finally after next() settles.
-   */
-  _shellCapture?: {
-    key: string;
-    ttl?: number;
-    swr?: number;
-    tags?: string[];
-    store?: SegmentCacheStore<any>;
-    // Mirrors the middleware's `debug` option. The background capture layer
-    // (shell-capture.ts) cannot see the middleware's options, so its concise
-    // per-attempt retry breadcrumbs are gated on this threaded flag — the same
-    // debug switch that gates the middleware's own [ShellCache] HIT/MISS lines.
-    debug?: boolean;
-  };
-
-  /**
    * @internal PPR shell-capture ACTIVE marker. True ONLY inside the background
    * capture task's derived request context (built by shell-capture.ts). This is
    * the switch every capture-specific behavior reads: loader masking
    * (loader-mask.ts isShellCaptureActive / fresh.ts emitStreaming) and the
    * cookies()/headers() capture guard (cookie-store.ts
-   * assertNotInsideShellCapture). The foreground render never sets it — even when
-   * `_shellCapture` (the "capture wanted" descriptor) is present — so the served
-   * response is byte-identical to axis 1.
+   * assertNotInsideShellCapture). The foreground render never sets it, so the
+   * served response is byte-identical to axis 1. The capture descriptor itself
+   * (key/ttl/swr/tags/store) is NOT threaded through the request context — the
+   * integrated PPR serve path (rsc/shell-serve.ts + rsc-rendering.ts) builds it
+   * locally and passes it to scheduleShellCapture directly.
    */
   _shellCaptureRun?: boolean;
 
@@ -501,8 +463,6 @@ export type PublicRequestContext<
   | "_handleStore"
   | "_transitionWhen"
   | "_cacheStore"
-  | "_shellResume"
-  | "_shellCapture"
   | "_shellCaptureRun"
   | "_explicitTaggedStores"
   | "_requestTags"

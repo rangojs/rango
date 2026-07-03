@@ -1,18 +1,19 @@
 /**
  * PPR shell capture orchestration (Axis 2, see docs/design/ppr-shell-resume.md).
  *
- * Capture does NOT flow through the HTTP middleware pipeline. The shell-cache
- * middleware sets a `_shellCapture` DESCRIPTOR before its single foreground
- * next(); the render layer (rsc-rendering.ts) reads it after building the served
- * response and calls scheduleShellCapture. The capture then runs as a background
- * task that re-derives the shell via `ctx.router.match()` under its OWN derived
- * request context — fresh handle store, `_shellCaptureRun: true` so loaders mask
- * (loader-mask.ts) and every loader-consuming subtree postpones. It drives the
- * static prerender to a quiescent shell, aborts to freeze the prelude + postponed
- * state, and stores the pair via putShell. Because it uses match() rather than a
- * second next(), the middleware chain (auth, logging, the single-use next() latch)
- * never re-runs — and the capture inherits the foreground's post-middleware
- * context state (variables, cache store) it delegates to.
+ * Capture does NOT flow through the HTTP middleware pipeline. The integrated PPR
+ * serve path (rsc-rendering.ts + shell-serve.ts) builds a ShellCaptureDescriptor
+ * from the route's `ppr` path option after the served response is built and calls
+ * scheduleShellCapture. The capture then runs as a background task that re-derives
+ * the page via `ctx.router.match()` under its OWN derived request context — fresh
+ * handle store, `_shellCaptureRun: true` so loaders mask (loader-mask.ts) and every
+ * loading() subtree postpones. The render is MIXED-CHAIN: cache()'d segments replay
+ * from ring 3, uncached segments execute their handlers fresh. It drives the static
+ * prerender to a quiescent shell, aborts to freeze the prelude + postponed state,
+ * and stores the pair via putShell. Because it uses match() rather than the HTTP
+ * pipeline, the middleware chain (auth, logging) never re-runs — it already ran for
+ * the triggering request, and the derived context inherits its post-middleware
+ * state (variables, cache store). Guarding is serve-time.
  */
 
 import React from "react";
@@ -26,10 +27,11 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { createHandleStore, type HandleStore } from "../server/handle-store.js";
-import type { ShellCacheEntry } from "../cache/types.js";
+import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { RscPayload, SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
+import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 
 /**
  * Task-quantized quiesce: the number of consecutive macrotask hops with zero new
@@ -50,7 +52,7 @@ import { buildFullPayload } from "./full-payload.js";
  * window (the masked loaders, and any genuinely pending I/O) becomes a hole. The
  * only residual is raw per-request I/O rendered directly in shell (not via a
  * loader) that resolves inside the window — a documented shell anti-pattern; put
- * per-request data in loaders or behind live(). See docs/design/ppr-shell-resume.md.
+ * per-request data in loaders. See docs/design/ppr-shell-resume.md.
  */
 const FLIGHT_QUIET_HOPS = 2;
 
@@ -218,10 +220,23 @@ export interface FlightCaptureGate {
  * hop timers are unref'd so they never keep a Node process alive, and the source
  * closing (no holes) fires quiesce immediately for the DATA variant — the
  * TransformStream then closes the readable, so fizz completes with postponed null.
+ *
+ * `holdUntil` keeps the gate from FREEZING before shell material with real latency
+ * has emitted. The hole doctrine bakes TOP-LEVEL pushed handle promises into the
+ * shell (resolvedHandleStream awaits them before the handles row emits), but a
+ * pushed promise that takes longer than the quiet window would otherwise be frozen
+ * out — the handles row would never reach fizz and the prelude would come back
+ * trivial. While `holdUntil` is pending, byte-quiet detection keeps running but the
+ * gate neither fires nor freezes; once it resolves, the quiet counter restarts so a
+ * burst of rows unblocked by it (the resolved handles row) is still captured. It
+ * never delays a HOLE from postponing: holes are pending promises that emit no
+ * bytes, so holding the gate open longer only ever admits shell rows. Bounded by
+ * captureShellHTML's maxWaitMs like every other quiesce input.
  */
 export function gateFlightForCapture(
   source: ReadableStream<Uint8Array>,
   quietHops: number = FLIGHT_QUIET_HOPS,
+  holdUntil?: Promise<unknown>,
 ): FlightCaptureGate {
   let resolveQuiet!: () => void;
   const quiesce = new Promise<void>((resolve) => {
@@ -233,9 +248,32 @@ export function gateFlightForCapture(
   let settled = false;
   let disposed = false;
   let frozen = false;
+  let held = holdUntil !== undefined;
+  let heldFirePending = false;
+
+  if (holdUntil !== undefined) {
+    const release = (): void => {
+      held = false;
+      if (heldFirePending && !settled && !disposed) {
+        // Quiet elapsed while held: restart the quiet count instead of firing
+        // immediately, so rows unblocked by the hold (the baked handles row)
+        // still flow before the freeze.
+        heldFirePending = false;
+        armed = false;
+        arm();
+      }
+    };
+    // Resolve OR reject releases the hold (a rejected handle value is dropped by
+    // resolveDeferredHandleValues; the capture must not hang on it).
+    holdUntil.then(release, release);
+  }
 
   const fire = (): void => {
     if (settled) return;
+    if (held) {
+      heldFirePending = true;
+      return;
+    }
     settled = true;
     frozen = true;
     resolveQuiet();
@@ -300,6 +338,27 @@ export function gateFlightForCapture(
 }
 
 /**
+ * The background shell-capture descriptor: everything the capture task needs to
+ * store the shell. Built by the integrated PPR serve path (rsc-rendering.ts) from
+ * the route's `ppr` path option (`PartialPrerenderProps`) and the app-level cache
+ * store, and passed to scheduleShellCapture directly — it is NOT threaded through
+ * the request context. `tags` carries the route's OPERATIONAL `ppr.tags`; the
+ * capture UNIONS them with the shell's own auto-collected (non-loader) request
+ * tags from its derived render (the collected set stays authoritative). `store`
+ * is the same store the serve path resolved for its getShell read
+ * (requestCtx._cacheStore), so the capture writes where the serve reads.
+ */
+export interface ShellCaptureDescriptor {
+  key: string;
+  ttl?: number;
+  swr?: number;
+  tags?: string[];
+  store?: SegmentCacheStore<any>;
+  /** Gates the concise per-attempt capture breadcrumbs (INTERNAL_RANGO_DEBUG). */
+  debug?: boolean;
+}
+
+/**
  * Schedule the background shell capture for a served document. Stampede-guarded:
  * one capture per key per isolate. Runs via runBackground (waitUntil on workerd,
  * fire-and-forget in Node dev), so the served response is never blocked on it. Any
@@ -317,7 +376,7 @@ export function scheduleShellCapture(
   url: URL,
   reqCtx: RequestContext<any>,
   ssrModule: SSRModule,
-  descriptor: NonNullable<RequestContext["_shellCapture"]>,
+  descriptor: ShellCaptureDescriptor,
 ): void {
   const key = descriptor.key;
   if (inFlightCaptures.has(key)) return;
@@ -390,7 +449,7 @@ async function runShellCapture(
   url: URL,
   reqCtx: RequestContext<any>,
   ssrModule: SSRModule,
-  descriptor: NonNullable<RequestContext["_shellCapture"]>,
+  descriptor: ShellCaptureDescriptor,
   retryDelayMs: number = SHELL_CAPTURE_RETRY_DELAY_MS,
 ): Promise<CaptureAttemptOutcome> {
   const log = descriptor.debug
@@ -458,9 +517,15 @@ async function runShellCapture(
  *     set a shell entry should be invalidatable by (loader tags belong to holes).
  *   - _transitionWhen: a fresh [] so the capture's transition gating is its own.
  *   - _shellCaptureRun: true — the switch loaders/cookies/headers guards read.
- *   - _shellCapture: the descriptor (informational; putShell target/ttl/swr).
  *   - _metricsStore: undefined so the capture never appends to the foreground's
  *     (already-finalized) metrics.
+ *
+ * The capture is MIXED-CHAIN: its match() behaves like a normal render with
+ * respect to the segment cache — cache()'d segments replay from ring 3, UNCACHED
+ * segments execute their handlers fresh (which is why the cookies()/headers()
+ * capture guard is load-bearing). Middleware is NOT re-run: it already ran for the
+ * triggering request, and the derived context inherits its post-middleware state
+ * (guarding is serve-time; the shell is never served without the full chain).
  *
  * A FRESH context (and match/render) per attempt is what makes the retry sound:
  * the second attempt is a clean capture, not a resumption of the first.
@@ -472,7 +537,7 @@ async function attemptCapture(
   url: URL,
   reqCtx: RequestContext<any>,
   ssrModule: SSRModule,
-  descriptor: NonNullable<RequestContext["_shellCapture"]>,
+  descriptor: ShellCaptureDescriptor,
 ): Promise<CaptureAttemptOutcome> {
   const freshHandleStore = createHandleStore();
   freshHandleStore.onError = reqCtx._handleStore.onError;
@@ -482,7 +547,6 @@ async function attemptCapture(
   derivedCtx._requestTags = new Set<string>();
   derivedCtx._transitionWhen = [];
   derivedCtx._shellCaptureRun = true;
-  derivedCtx._shellCapture = descriptor;
   derivedCtx._metricsStore = undefined;
 
   return runWithRequestContext(derivedCtx, async () => {
@@ -490,6 +554,7 @@ async function attemptCapture(
     // A route that redirects has no shell to capture — bail (no store write, no
     // retry: a redirect is deterministic).
     if (match.redirect) return "redirect";
+
     setRequestContextParams(match.params, match.routeName);
 
     const payload = buildFullPayload(
@@ -545,7 +610,7 @@ async function captureAndStoreShell(
   rscStream: ReadableStream<Uint8Array>,
   handleStore: HandleStore,
   reqCtx: RequestContext<any>,
-  capture: NonNullable<RequestContext["_shellCapture"]>,
+  capture: ShellCaptureDescriptor,
 ): Promise<Exclude<CaptureAttemptOutcome, "redirect">> {
   const captureShellHTML = ssrModule.captureShellHTML!;
 
@@ -566,7 +631,19 @@ async function captureAndStoreShell(
   // excludes loaders. See docs/design/ppr-shell-resume.md ("Loaders and handles").
   handleStore.seal();
 
-  const gate = gateFlightForCapture(rscStream);
+  // Handles contract, shell half ("nesting = liveness"): TOP-LEVEL pushed handle
+  // promises are BAKED into the shell — resolvedHandleStream awaits them before
+  // the payload's handles row emits. A pushed promise with real latency would lose
+  // the byte-quiet race (the pending handles row emits no bytes, the gate freezes,
+  // the row is dropped, SsrRoot suspends at the root), so the gate is HELD open
+  // until the same await completes: handlesBaked mirrors resolvedHandleStream's
+  // resolution (getData waits the tracked-handler barrier; resolveDeferredHandleValues
+  // awaits the top-level thenables). NESTED promises inside pushed containers are
+  // shallow-skipped by isThenable and never hold the gate — they stay holes.
+  // Bounded by maxWaitMs like every quiesce input (a defer hanging on a masked
+  // loader still ends in the sanity-gate refusal).
+  const handlesBaked = handleStore.getData().then(resolveDeferredHandleValues);
+  const gate = gateFlightForCapture(rscStream, undefined, handlesBaked);
   // Quiesce = handles settled AND the Flight shell rows went task-quiet. Either
   // half stalling is bounded by captureShellHTML's maxWaitMs.
   const quiesce = Promise.all([handleStore.settled, gate.quiesce]).then(
