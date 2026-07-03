@@ -1,11 +1,13 @@
 import { Suspense } from "react";
 import { urls, Meta, Breadcrumbs, live } from "@rangojs/router";
+import { createShellCacheMiddleware } from "@rangojs/router/cache";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { ShellPriceLoader, ShellStreamLoader } from "./shell-cache.defs.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
+import { ShellDslActionButton } from "../components/ShellDslActionButton.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -81,6 +83,55 @@ function ShellCachePricePage() {
 function ShellCacheStreamPage() {
   return <ShellCacheStream loader={ShellStreamLoader} />;
 }
+
+// DSL-attached PPR shell caching (Deliverable 4c). The SAME middleware, attached
+// via the urls() middleware() primitive (route middleware) instead of
+// router.use() (global). Route middleware wraps the RENDER PASS: on a GET it arms
+// the _shellCapture descriptor exactly like the global attachment, so MISS -> HIT
+// and HIT composition are byte-identical. A POST action bypasses it (non-GET), and
+// the background capture never re-enters it (match() only COLLECTS route
+// middleware; the RSC handler's executeRender() executes it, which the capture
+// bypasses — plus the _shellCaptureRun guard). NEW paths (/shell-cache-dsl) — the
+// existing /shell-cache/* routes (router.use attachment) are untouched.
+function ShellCacheDslLayout(ctx: HandlerContext) {
+  ctx.use(Meta)({ title: "Shell Cache DSL" });
+  return (
+    <main data-testid="shell-dsl-page">
+      <h1 data-testid="shell-dsl-header">Shell Cache DSL Demo</h1>
+      <p data-testid="shell-dsl-static">
+        Static DSL shell content frozen into the cached prelude.
+      </p>
+      <ShellCacheCounter />
+      <ShellDslActionButton />
+      <Outlet />
+      <nav>
+        <Link to="/" data-testid="shell-dsl-nav-home">
+          Home
+        </Link>
+      </nav>
+    </main>
+  );
+}
+
+export const shellCacheDslPatterns = urls(
+  ({ path, layout, loader, loading, middleware }) => [
+    layout(ShellCacheDslLayout, () => [
+      // The shell-cache middleware, attached as ROUTE middleware (not router.use()).
+      middleware(createShellCacheMiddleware({ debug: true })),
+      path(
+        "/shell-cache-dsl",
+        ShellCachePricePage,
+        { name: "shellCacheDsl" },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="shell-dsl-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+    ]),
+  ],
+);
 
 export const shellCachePatterns = urls(({ path, layout, loader, loading }) => [
   layout(ShellCacheLayout, () => [

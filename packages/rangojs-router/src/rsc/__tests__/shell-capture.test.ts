@@ -9,6 +9,7 @@ import {
 import { createHandleStore } from "../../server/handle-store.js";
 import {
   createRequestContext,
+  getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
 import type { HandlerContext } from "../handler-context.js";
@@ -248,58 +249,74 @@ describe("captureAndStoreShell", () => {
     expect(ctxPut).not.toHaveBeenCalled();
   });
 
-  it("stores nothing when the sanity gate refuses (null result)", async () => {
+  it("returns 'no-shell' and stores nothing when the sanity gate refuses (null result)", async () => {
     const putShell = makePutShell();
     const ssrModule = {
       renderHTML: vi.fn(),
       captureShellHTML: vi.fn(async () => null),
     } as unknown as SSRModule;
 
-    await captureAndStoreShell(
+    // captureAndStoreShell no longer warns (the caller owns retry/warn). It reports
+    // the retryable outcome so runShellCapture can retry once, then warn.
+    const outcome = await captureAndStoreShell(
       ssrModule,
       emptyStream(),
       createHandleStore(),
       makeReqCtx(putShell),
       { key: "/p:shell", store: { putShell } as any },
     );
+    expect(outcome).toBe("no-shell");
     expect(putShell).not.toHaveBeenCalled();
   });
 
-  // The eternal-MISS shape (a loader route without loading()) refuses on EVERY
-  // request, so the diagnostic warning is deduped to once per key per isolate.
-  // The e2e negative test can only observe the MISS header (the warning is a
-  // worker-side console.warn); this pins the "at most once per key" contract and
-  // the loading()-boundary guidance in the message.
-  it("warns at most once per key on repeated refused (null) captures", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("returns 'no-shell' (retryable) when captureShellHTML rejects with an AbortError", async () => {
+    // Defensive: captureShellHTML normally converts its own abort to a null return.
+    // If an AbortError still escapes as a rejection, captureAndStoreShell classifies
+    // it as the same retryable degradation — NOT a reported failure.
+    const putShell = makePutShell();
+    const abortErr = Object.assign(new Error("aborted"), {
+      name: "AbortError",
+    });
+    const ssrModule = {
+      renderHTML: vi.fn(),
+      captureShellHTML: vi.fn(async () => {
+        throw abortErr;
+      }),
+    } as unknown as SSRModule;
+    const reqCtx = makeReqCtx(putShell);
+
+    const outcome = await captureAndStoreShell(
+      ssrModule,
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/p:shell", store: { putShell } as any },
+    );
+    expect(outcome).toBe("no-shell");
+    expect(putShell).not.toHaveBeenCalled();
+    // An abort is expected degradation, not an error — nothing reported.
+    expect(reqCtx._reportBackgroundError).not.toHaveBeenCalled();
+  });
+
+  it("rethrows a genuine (non-abort) captureShellHTML error so the caller reports it", async () => {
     const putShell = makePutShell();
     const ssrModule = {
       renderHTML: vi.fn(),
-      captureShellHTML: vi.fn(async () => null),
+      captureShellHTML: vi.fn(async () => {
+        throw new Error("shell component blew up");
+      }),
     } as unknown as SSRModule;
-    // Unique key: warnedNullCaptures is module-level and persists across tests.
-    const key = "/no-loading-once-per-key:shell";
 
-    try {
-      for (let i = 0; i < 3; i++) {
-        await captureAndStoreShell(
-          ssrModule,
-          emptyStream(),
-          createHandleStore(),
-          makeReqCtx(putShell),
-          { key, store: { putShell } as any },
-        );
-      }
-
-      expect(putShell).not.toHaveBeenCalled();
-      const keyWarnings = warnSpy.mock.calls.filter(
-        (c) => typeof c[0] === "string" && c[0].includes(key),
-      );
-      expect(keyWarnings).toHaveLength(1);
-      expect(keyWarnings[0][0]).toContain("loading() boundary");
-    } finally {
-      warnSpy.mockRestore();
-    }
+    await expect(
+      captureAndStoreShell(
+        ssrModule,
+        emptyStream(),
+        createHandleStore(),
+        makeReqCtx(putShell),
+        { key: "/p:shell", store: { putShell } as any },
+      ),
+    ).rejects.toThrow("shell component blew up");
+    expect(putShell).not.toHaveBeenCalled();
   });
 
   it("does not throw and routes putShell failures through reportCacheError", async () => {
@@ -442,7 +459,7 @@ describe("runShellCapture", () => {
     expect(putShell).not.toHaveBeenCalled();
   });
 
-  it("stores nothing when the capture sanity gate refuses (null)", async () => {
+  it("retries once, then stores nothing, when the capture sanity gate refuses twice (null)", async () => {
     const putShell = makePutShell();
     const { ctx, ssrModule } = makeCtx(
       okMatch,
@@ -457,17 +474,243 @@ describe("runShellCapture", () => {
       makeReqCtx(),
       ssrModule,
       { key: "/p:shell", store: { putShell } as any },
+      0, // retryDelayMs=0: exercise the retry without a real wall-clock wait
     );
 
-    expect(ssrModule.captureShellHTML).toHaveBeenCalledTimes(1);
+    // A `no-shell` first attempt triggers exactly ONE in-place retry.
+    expect(ssrModule.captureShellHTML).toHaveBeenCalledTimes(2);
+    expect(ctx.router.match).toHaveBeenCalledTimes(2); // fresh match per attempt
     expect(putShell).not.toHaveBeenCalled();
+  });
+
+  // Deliverable 1(a): a cold first attempt (null) that the retry heals.
+  it("retries a null first attempt and stores when the retry succeeds (putShell once)", async () => {
+    const putShell = makePutShell();
+    const captureShellHTML = vi
+      .fn()
+      .mockResolvedValueOnce(null) // attempt 1: cold, no usable shell
+      .mockResolvedValueOnce({
+        prelude: enc("<html><body>warm</body></html>"),
+        postponed: null,
+      }); // attempt 2: warm, captured
+    const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", ttl: 300, store: { putShell } as any },
+      0,
+    );
+
+    expect(captureShellHTML).toHaveBeenCalledTimes(2);
+    expect(putShell).toHaveBeenCalledTimes(1);
+    expect(putShell.mock.calls[0]![0]).toBe("/p:shell");
+  });
+
+  // Deliverable 1(b): a first attempt that REJECTS with an AbortError is retryable.
+  it("retries when the first attempt rejects with an AbortError, then stores", async () => {
+    const putShell = makePutShell();
+    const abortErr = Object.assign(new Error("aborted"), {
+      name: "AbortError",
+    });
+    const captureShellHTML = vi
+      .fn()
+      .mockRejectedValueOnce(abortErr)
+      .mockResolvedValueOnce({
+        prelude: enc("<html><body>warm</body></html>"),
+        postponed: null,
+      });
+    const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any },
+      0,
+    );
+
+    expect(captureShellHTML).toHaveBeenCalledTimes(2);
+    expect(putShell).toHaveBeenCalledTimes(1);
+  });
+
+  // Deliverable 1(c): a genuine (non-abort) error is NOT retried — it propagates so
+  // scheduleShellCapture reports it once.
+  it("does NOT retry a genuine (non-abort) capture error — it propagates (one attempt)", async () => {
+    const putShell = makePutShell();
+    const captureShellHTML = vi.fn(async () => {
+      throw new Error("shell component blew up");
+    });
+    const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
+
+    await expect(
+      runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        { key: "/p:shell", store: { putShell } as any },
+        0,
+      ),
+    ).rejects.toThrow("shell component blew up");
+
+    expect(captureShellHTML).toHaveBeenCalledTimes(1); // no retry
+    expect(putShell).not.toHaveBeenCalled();
+  });
+
+  // scheduleShellCapture routes a propagated genuine error through
+  // reportCacheError exactly once, does NOT retry, and (Deliverable 8) backs the
+  // key off since a genuine failure recurs.
+  it("reports a genuine capture error once via reportCacheError, then backs the key off", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const captured: Array<() => Promise<void>> = [];
+      const captureShellHTML = vi.fn(async () => {
+        throw new Error("boom");
+      });
+      const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
+      const reqCtx = makeReqCtx();
+      (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+        captured.push(task);
+      };
+      const request = new Request("http://localhost/err");
+      const url = new URL("http://localhost/err");
+      const descriptor = {
+        key: "/err-genuine:shell",
+        store: { putShell: makePutShell() } as any,
+      };
+
+      scheduleShellCapture(
+        ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        ssrModule,
+        descriptor,
+      );
+      await captured[0]!();
+
+      // No retry on a non-abort error, reported exactly once.
+      expect(captureShellHTML).toHaveBeenCalledTimes(1);
+      expect(reqCtx._reportBackgroundError).toHaveBeenCalledTimes(1);
+
+      // Backed off: a second schedule within the window is skipped (no new task).
+      scheduleShellCapture(
+        ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        ssrModule,
+        descriptor,
+      );
+      expect(captured).toHaveLength(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  // Deliverable 1(d) + Deliverable 3: both attempts fail → nothing stored, no throw,
+  // and the once-per-key warning fires ONLY after the retry (attempt 2) also failed.
+  it("both attempts fail: nothing stored, no throw, and warns at most once per key", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const putShell = makePutShell();
+    // Unique key: warnedNullCaptures is module-level and persists across tests.
+    const key = "/no-loading-once-per-key:shell";
+
+    try {
+      for (let i = 0; i < 3; i++) {
+        const { ctx, ssrModule } = makeCtx(
+          okMatch,
+          vi.fn(async () => null),
+        );
+        await expect(
+          runShellCapture(
+            ctx,
+            new Request("http://localhost/p"),
+            {},
+            new URL("http://localhost/p"),
+            makeReqCtx(),
+            ssrModule,
+            { key, store: { putShell } as any },
+            0,
+          ),
+        ).resolves.toBe("no-shell"); // no throw; terminal outcome is no-shell
+        // Each run: two attempts (retry), still nothing stored.
+        expect(ssrModule.captureShellHTML).toHaveBeenCalledTimes(2);
+      }
+
+      expect(putShell).not.toHaveBeenCalled();
+      const keyWarnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes(key),
+      );
+      // Deduped to once per key across all three runs.
+      expect(keyWarnings).toHaveLength(1);
+      // The message names BOTH causes with the distinguishing signal.
+      expect(keyWarnings[0][0]).toContain("loading() boundary");
+      expect(keyWarnings[0][0]).toContain("Cold-start");
+      expect(keyWarnings[0][0]).toContain("SELF-HEALS");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // Cold-start does NOT warn: a null first attempt that the retry heals must never
+  // reach the once-per-key warning (Deliverable 3 ordering).
+  it("does not warn when the retry heals a cold first attempt", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const putShell = makePutShell();
+    const key = "/cold-heals-no-warn:shell";
+    const captureShellHTML = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        prelude: enc("<html><body>warm</body></html>"),
+        postponed: null,
+      });
+    const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
+
+    try {
+      await runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        { key, store: { putShell } as any },
+        0,
+      );
+      expect(putShell).toHaveBeenCalledTimes(1);
+      const keyWarnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes(key),
+      );
+      expect(keyWarnings).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("stampede guard: a second schedule for the same in-flight key is skipped, then allowed after it settles", async () => {
     const captured: Array<() => Promise<void>> = [];
+    // A valid (stored) capture so the task settles in one attempt — this test is
+    // about the stampede guard / key lifecycle, not the retry path.
     const { ctx, ssrModule } = makeCtx(
       okMatch,
-      vi.fn(async () => null),
+      vi.fn(async () => ({
+        prelude: enc("<body>x</body>"),
+        postponed: null,
+      })),
     );
     const reqCtx = makeReqCtx();
     // Capture the background task instead of running it, so the key stays
@@ -494,6 +737,195 @@ describe("runShellCapture", () => {
     scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, descriptor);
     expect(captured).toHaveLength(2);
     await captured[1]!();
+  });
+
+  // Deliverable 8: refused-capture backoff. A key that produced no usable shell
+  // after the in-place retry is negatively cached for a window, so an ineligible
+  // route (no loading(), cookie-reading handler) mounted app-wide does not
+  // reschedule a doomed background render on every request. Fake timers control
+  // both the retry delay and the 60s window.
+  it("backs off a refused key: no re-schedule within the window, re-probes after expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      const captured: Array<() => Promise<void>> = [];
+      const captureShellHTML = vi.fn(async () => null);
+      const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
+      const reqCtx = makeReqCtx();
+      (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+        captured.push(task);
+      };
+      const request = new Request("http://localhost/bo1");
+      const url = new URL("http://localhost/bo1");
+      const descriptor = {
+        key: "/bo1-backoff:shell",
+        store: { putShell: makePutShell() } as any,
+      };
+
+      // 1st schedule: runs both attempts (retry), both null → marks backoff.
+      scheduleShellCapture(
+        ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        ssrModule,
+        descriptor,
+      );
+      expect(captured).toHaveLength(1);
+      const t1 = captured[0]!();
+      await vi.runAllTimersAsync(); // flush the in-place retry delay
+      await t1;
+      expect(captureShellHTML).toHaveBeenCalledTimes(2);
+
+      // 2nd schedule within the 60s window: skipped (no new background task).
+      scheduleShellCapture(
+        ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        ssrModule,
+        descriptor,
+      );
+      expect(captured).toHaveLength(1);
+
+      // Past the window: re-probed.
+      vi.setSystemTime(Date.now() + 120_000); // well past the (exponential) backoff window
+      scheduleShellCapture(
+        ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        ssrModule,
+        descriptor,
+      );
+      expect(captured).toHaveLength(2);
+      const t2 = captured[1]!();
+      await vi.runAllTimersAsync();
+      await t2;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a successful capture clears the refused-key backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      const captured: Array<() => Promise<void>> = [];
+      const reqCtx = makeReqCtx();
+      (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+        captured.push(task);
+      };
+      const request = new Request("http://localhost/bo2");
+      const url = new URL("http://localhost/bo2");
+      const putShell = makePutShell();
+      const descriptor = {
+        key: "/bo2-backoff:shell",
+        store: { putShell } as any,
+      };
+
+      // Refuse → backoff.
+      const nullMod = makeCtx(
+        okMatch,
+        vi.fn(async () => null),
+      );
+      scheduleShellCapture(
+        nullMod.ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        nullMod.ssrModule,
+        descriptor,
+      );
+      const t1 = captured[0]!();
+      await vi.runAllTimersAsync();
+      await t1;
+
+      // Within the window scheduling is skipped.
+      scheduleShellCapture(
+        nullMod.ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        nullMod.ssrModule,
+        descriptor,
+      );
+      expect(captured).toHaveLength(1);
+
+      // Past the window a VALID capture stores AND clears the backoff.
+      vi.setSystemTime(Date.now() + 120_000); // well past the (exponential) backoff window
+      const okMod = makeCtx(
+        okMatch,
+        vi.fn(async () => ({
+          prelude: enc("<body>x</body>"),
+          postponed: null,
+        })),
+      );
+      scheduleShellCapture(
+        okMod.ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        okMod.ssrModule,
+        descriptor,
+      );
+      expect(captured).toHaveLength(2);
+      const t2 = captured[1]!();
+      await vi.runAllTimersAsync();
+      await t2;
+      expect(putShell).toHaveBeenCalledTimes(1);
+
+      // Backoff cleared: an immediate re-schedule runs right away (no lingering
+      // negative entry), even for a would-be-refusing module.
+      scheduleShellCapture(
+        nullMod.ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        nullMod.ssrModule,
+        descriptor,
+      );
+      expect(captured).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Deliverable 9(a): the middleware's operational `tags` option (threaded on the
+  // descriptor) is UNIONED with the render-collected non-loader tags in putShell.
+  it("unions option tags (descriptor.tags) with the render-collected tags into putShell", async () => {
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({ prelude: enc("<body>x</body>"), postponed: null })),
+    );
+    // The capture render records a tag on its derived context's _requestTags (as a
+    // cacheTag / cache() read would). Simulate that side effect in the Flight render.
+    (ctx as any).renderToReadableStream = vi.fn(() => {
+      getRequestContext()._requestTags.add("collected:y");
+      return emptyStream();
+    });
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any, tags: ["op:x"] },
+      0,
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const tags = putShell.mock.calls[0]![4];
+    // Both the operational option tag and the render-collected tag are present.
+    expect(new Set(tags)).toEqual(new Set(["op:x", "collected:y"]));
   });
 
   it("does not mask via _shellCaptureRun on the caller's foreground context", async () => {

@@ -316,6 +316,75 @@ re-derived) handle pushes settle; if a deferred handle depends on a masked loade
 it can never resolve, so `SsrRoot` suspends at the root, the prelude comes back
 trivial, and the sanity gate refuses to store — the designed fail-safe no-op.
 
+### Capture retry-in-place, and why cold-start stopped being noisy
+
+This started as a DX bug: a `/shell-cache` route with `loading()` (a perfectly
+shell-capturable shape) needed roughly five MISS requests before it flipped to
+HIT in dev, and every one of those requests dumped a full `DOMException
+[AbortError]` stack to the console. Two things were wrong, and both are worth
+knowing before you touch capture.
+
+**The abort dumps were React, not us.** Capture WORKS by aborting: once the shell
+is byte-quiet we `controller.abort()` to freeze the prelude and let the still-
+pending holes postpone. `prerender` reports the abort reason for each pending
+boundary through its `onError`, and `captureShellHTML` passed no `onError`, so
+React fell back to `console.error` — one DOMException dump per pending hole, on
+EVERY capture that still had a live hole at abort time (i.e. the normal case, and
+every cold capture where the shell had not finished). The fix is a one-liner with
+a load-bearing shape: pass `prerender` an `onError` that SWALLOWS the abort
+(`signal.aborted && name === "AbortError"`) and routes only genuine shell errors
+to `deps.onError` (`src/ssr/index.tsx`). A fair reaction is "won't that hide real
+errors?" — no: a real component throw is not the abort and still surfaces.
+
+**The multi-request warmup was cold modules.** In dev the module transform graph
+(route modules, the SSR/Flight transforms) is built lazily and outlasts the task-
+quantized quiesce, so the first capture freezes a shell that has not finished
+rendering — the prelude comes back trivial and the sanity gate refuses. The old
+code stored nothing and waited for the NEXT HTTP request to try again; several
+requests each warmed a little more of the graph until one finally stuck. The first
+attempt already warmed the graph, so we now retry ONCE in place: `runShellCapture`
+is a two-attempt loop (`attemptCapture` × 2) with a short `delay`
+(`SHELL_CAPTURE_RETRY_DELAY_MS`, 400 ms) between them. Each attempt re-derives
+EVERYTHING — fresh context, fresh `router.match()`, fresh Flight render — because a
+capture consumes its handle store, its request-tag set, and its one-shot Flight
+stream; a second attempt is a clean capture, not a resumption. We retry only on the
+retryable outcome (`no-shell`, or a defensively-caught abort); a genuine render
+error is NOT retried — it propagates to `reportCacheError`.
+
+The two changes compose: cold-start now heals inside one background task, so the
+once-per-key "no usable shell" warning fires only AFTER the in-place retry also
+failed. That makes the warning meaningful again — by the time it fires, cold-start
+has usually healed, so it points at the structural cause (a loader route without
+`loading()`), and its text names both causes with the distinguishing signal (does
+the route ever flip to HIT). Under the middleware's `debug` flag (threaded onto the
+`_shellCapture` descriptor, since the capture layer cannot see the middleware's
+options) each attempt emits one concise breadcrumb instead of a stack dump.
+
+### Refused-capture backoff (mounting the middleware app-wide)
+
+An ineligible route — a loader route without `loading()`, or a cookie-reading
+handler whose capture throws — refuses on every request. Without a memory of that,
+mounting the shell middleware broadly (`router.use("/*", …)`) would schedule a
+doomed background render on EVERY request the route serves. `scheduleShellCapture`
+keeps a module-level negative cache (`refusedCaptures`): a key enters backoff only
+after the in-place retry ALSO failed (or a genuine error), and within the window
+the key is not re-probed.
+
+The window is EXPONENTIAL in the consecutive-failure count —
+`min(BASE * 2^(failures-1), MAX)`, so 1 s, 2 s, 4 s, … capped at 60 s
+(`REFUSED_CAPTURE_BASE_MS` / `REFUSED_CAPTURE_MAX_MS`). A flat 60 s conflated two
+very different failures. A structurally ineligible route fails forever and wants
+the long cap. But a cold-but-ELIGIBLE route can also fail the retry under a truly
+cold graph (dev module transform, or a cold worker under parallel load), and it
+must recover on the next request or two — freezing it for 60 s would re-break the
+cold-start DX the retry exists to fix (this is not hypothetical: a flat 60 s
+backoff made the cloudflare dev PPR e2e time out, because `warmToHit`'s
+multi-request recovery was blocked). Escalating from 1 s lets the eligible route
+re-probe almost immediately (warm now → HIT, which clears the entry), while the
+doomed route ramps to the 60 s cap within a handful of failures. Either way an
+app-wide mount never re-renders a doomed route on every request. A successful
+capture clears the entry outright.
+
 ### Capture quiesce: task-based, not wall-clock
 
 Capture has to decide when the shell has finished streaming so it can abort

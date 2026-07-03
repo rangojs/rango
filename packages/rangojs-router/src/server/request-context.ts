@@ -195,10 +195,11 @@ export interface RequestContext<
    * its getShell read (options.store ?? _cacheStore), so a store-attached
    * middleware writes captures where it reads them; without it an explicit
    * options.store distinct from the app-level _cacheStore would read one store
-   * and write another and the shell would never HIT. `tags` is left unset here —
-   * the background capture collects the shell's own (non-loader) request tags
-   * from its derived render. Single-request; the middleware clears it in a
-   * finally after next() settles.
+   * and write another and the shell would never HIT. `tags` carries the
+   * middleware's OPERATIONAL `tags` option (evaluated per request); the background
+   * capture UNIONS it with the shell's own auto-collected (non-loader) request tags
+   * from its derived render (the collected set stays authoritative). Single-request;
+   * the middleware clears it in a finally after next() settles.
    */
   _shellCapture?: {
     key: string;
@@ -206,6 +207,11 @@ export interface RequestContext<
     swr?: number;
     tags?: string[];
     store?: SegmentCacheStore<any>;
+    // Mirrors the middleware's `debug` option. The background capture layer
+    // (shell-capture.ts) cannot see the middleware's options, so its concise
+    // per-attempt retry breadcrumbs are gated on this threaded flag — the same
+    // debug switch that gates the middleware's own [ShellCache] HIT/MISS lines.
+    debug?: boolean;
   };
 
   /**

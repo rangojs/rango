@@ -32,6 +32,24 @@ export function RootLayout(ctx: any) {
         <Link to="/" data-testid="nav-home">
           Home
         </Link>
+        {/* PPR shell-cache routes — clickable for manual testing. Soft-nav to any
+            of these is a partial navigation (bypasses the shell middleware by
+            design); hard-refresh to observe MISS/HIT. */}
+        <Link to="/shell-cache" data-testid="nav-ppr-shell">
+          PPR shell
+        </Link>
+        <Link to="/shell-cache/stream" data-testid="nav-ppr-stream">
+          PPR stream (live/nested)
+        </Link>
+        <Link to="/shell-cache/no-hole" data-testid="nav-ppr-no-hole">
+          PPR no-hole (negative)
+        </Link>
+        <Link to="/shell-cache-dsl" data-testid="nav-ppr-dsl">
+          PPR DSL (middleware())
+        </Link>
+        <Link to="/shell-cache-action" data-testid="nav-ppr-action">
+          PPR actions (hole/shell/PE)
+        </Link>
         <NavigationStatus testId="nav-status" />
       </nav>
       <BreadcrumbNav testId="breadcrumbs" />

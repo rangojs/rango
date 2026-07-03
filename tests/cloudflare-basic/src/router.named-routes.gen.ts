@@ -49,6 +49,7 @@ export const NamedRoutes = {
   localeInfo: "/:locale(en|fr)/info",
   orphanFetch: "/orphan-fetch",
   pprShell: "/ppr-shell",
+  pprShellDsl: "/ppr-shell-dsl",
   pprShellNoHole: "/ppr-shell/no-hole",
   pprShellStream: "/ppr-shell/stream",
   "prerenderCtx.detail": "/prerender-ctx/:slug",

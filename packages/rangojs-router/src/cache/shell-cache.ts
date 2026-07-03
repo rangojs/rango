@@ -178,6 +178,21 @@ export interface ShellCacheOptions<TEnv = any> {
   skipPaths?: string[];
 
   /**
+   * Operational tags to attach to captured shell entries, for
+   * {@link invalidateTags}-driven eviction. Either a static array or a function of
+   * the request context (e.g. `(ctx) => [\`tenant:${ctx.get("tenant")}\`]`).
+   *
+   * These are UNIONED with the tags the capture render auto-collects (the shell's
+   * own non-loader request tags). The auto-collected set stays authoritative — it
+   * is the render's ground truth; this option only ADDS tags the render cannot know
+   * (a tenant id, a deploy marker, a content-source key). Invalidating any tag a
+   * shell carries drops that shell (and the segments sharing the tag), so the next
+   * request MISSes and recaptures. See the /ppr skill, "Invalidation: tags vs
+   * revalidate()".
+   */
+  tags?: string[] | ((ctx: MiddlewareContext<TEnv>) => string[]);
+
+  /**
    * Enable debug logging for shell cache operations (HIT / MISS / CAPTURED).
    * Defaults to false.
    */
@@ -210,6 +225,7 @@ export function createShellCacheMiddleware<TEnv = any>(
     isEnabled,
     skipPaths = [],
     debug = false,
+    tags: tagsOption,
   } = options;
 
   const log = debug ? (message: string) => console.log(message) : () => {};
@@ -222,6 +238,22 @@ export function createShellCacheMiddleware<TEnv = any>(
     // ctx.url is stripped of _rsc_* params by the pipeline (stripInternalParams);
     // read the raw request URL for internal-param detection, like document-cache.
     const rawUrl = new URL(ctx.request.url);
+
+    // --- Capture-render bypass (scar tissue; see docs/design/ppr-shell-resume.md
+    // "DSL middleware() attachment") ---
+    //
+    // The background capture (shell-capture.ts) re-derives the shell via
+    // ctx.router.match() under a derived context with _shellCaptureRun: true. Route
+    // middleware attached via the urls() `middleware()` DSL is COLLECTED by match()
+    // (match-result.ts) but EXECUTED only by the RSC handler's executeRender()
+    // (rsc/handler.ts) — which the capture bypasses entirely — so today this
+    // middleware does NOT re-run inside a capture. This guard makes that a hard
+    // invariant regardless of attachment (DSL or router.use()) or future changes to
+    // where route middleware runs: inside ANY capture render the middleware must be
+    // inert — never getShell, never arm _shellResume, never set the _shellCapture
+    // descriptor (which would recursively schedule a capture-within-a-capture). Fall
+    // straight through to next().
+    if (getRequestContext()?._shellCaptureRun) return next();
 
     // --- Bypass matrix (each bypass = plain next(), axis 1) ---
 
@@ -268,6 +300,14 @@ export function createShellCacheMiddleware<TEnv = any>(
       ttl: ttlSeconds,
       swr: swrSeconds,
       store,
+      // Thread the debug flag so the background capture layer can gate its concise
+      // per-attempt retry breadcrumbs on the same switch as this middleware's lines.
+      debug,
+      // Operational tags from the option (evaluated per request). The background
+      // capture UNIONS these with the shell's auto-collected non-loader tags — the
+      // collected set stays authoritative; this only adds tags the render can't know
+      // (tenant id, deploy marker). A throwing tags fn degrades via the outer catch.
+      tags: typeof tagsOption === "function" ? tagsOption(ctx) : tagsOption,
     });
 
     try {
