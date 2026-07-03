@@ -378,6 +378,25 @@ export const urlpatterns = urls(
           () => [loading(<FeatureLoading />), transition()],
         ),
 
+        // #642 regression guard: a NAME-LESS 3-arg children-fn route
+        // (path(pattern, component, () => [...]) with no { name } options).
+        // Before the ExtractRoutes widened-name fix, this form let TName infer
+        // to the bare `string` constraint, emitting an index signature that
+        // collapsed the ENTIRE app route map: this app registers
+        // `RegisteredRoutes extends typeof router.routeMap`, so Rango.Path
+        // became `never` and every href()/Link.to in the app failed to
+        // typecheck. Kept unnamed on purpose; its presence keeps this app's
+        // `pnpm typecheck` an end-to-end guard. Reachable by URL only.
+        path(
+          "/unnamed-children-fn",
+          () => (
+            <div data-testid="unnamed-children-fn-route">
+              unnamed children-fn route works
+            </div>
+          ),
+          () => [loading(<FeatureLoading />)],
+        ),
+
         // Blog routes with sidebar
         layout(BlogLayout, () => [
           parallel({ "@sidebar": BlogSidebarHandler }, () => [
