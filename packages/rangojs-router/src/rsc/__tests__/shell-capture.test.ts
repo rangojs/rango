@@ -124,6 +124,57 @@ describe("gateFlightForCapture", () => {
     await readLoop.catch(() => {});
   });
 
+  it("holdUntil keeps the gate open (no freeze, no quiesce) until the baked handles resolve", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const source = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+    let releaseHold!: () => void;
+    const hold = new Promise<void>((r) => {
+      releaseHold = r;
+    });
+
+    const { stream, quiesce, dispose } = gateFlightForCapture(
+      source,
+      undefined,
+      hold,
+    );
+    const chunks: string[] = [];
+    const reader = stream.getReader();
+    const readLoop = (async () => {
+      for (;;) {
+        const r = await reader.read();
+        if (r.done) break;
+        if (r.value.length > 0) chunks.push(new TextDecoder().decode(r.value));
+      }
+    })();
+
+    controller.enqueue(enc("shell"));
+    // Byte-quiet elapses many times over, but the hold is pending: no quiesce.
+    expect(await settlesWithin(quiesce, 60)).toBe(false);
+
+    // And crucially NO FREEZE: a late byte (the resolved top-level handles row)
+    // still reaches the fizz side while held.
+    controller.enqueue(enc("handles-row"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(chunks).toEqual(["shell", "handles-row"]);
+
+    // Releasing the hold lets the quiet detection complete and fire.
+    releaseHold();
+    expect(await settlesWithin(quiesce, 100)).toBe(true);
+
+    // Post-quiesce the gate is frozen as usual.
+    controller.enqueue(enc("LATE"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(chunks).toEqual(["shell", "handles-row"]);
+
+    dispose();
+    await reader.cancel();
+    await readLoop.catch(() => {});
+  });
+
   it("quiets immediately when the source closes (DATA variant / no holes)", async () => {
     const source = new ReadableStream<Uint8Array>({
       start(c) {

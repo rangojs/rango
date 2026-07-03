@@ -11,6 +11,7 @@ export type {
   UnnamedRoute,
   LocalOnlyInclude,
   PathOptions,
+  PartialPrerenderProps,
   UrlPatterns,
   IncludeOptions,
 } from "./pattern-types.js";

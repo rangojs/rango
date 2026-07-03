@@ -9,10 +9,11 @@ import {
   goBack,
 } from "./helper";
 
-// End-to-end coverage for PPR shell caching (createShellCacheMiddleware) wired
-// path-scoped onto /shell-cache in test-app/src/router.tsx, backed by the app's
-// MemorySegmentCacheStore (getShell/putShell). Runs in BOTH the dev server and the
-// built preview server. See docs/design/ppr-shell-resume.md.
+// End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
+// option (test-app/src/urls/shell-cache.tsx) — serving is integral to the router
+// (no middleware to mount) and backed by the app's MemorySegmentCacheStore
+// (getShell/putShell). Runs in BOTH the dev server and the built preview server.
+// See docs/design/ppr-shell-resume.md.
 //
 // Each describe uses isolatedServer so the shell-cache route's per-request work
 // (and the background-capture error below) stays contained to this suite's own
@@ -20,8 +21,9 @@ import {
 // their own ?probe= query param to isolate their shell entry.
 //
 // Capture runs as a render-layer BACKGROUND task (router.match under a derived
-// context), so the middleware calls next() exactly once. The full MISS -> capture
-// -> HIT round-trip is live: the fixture route follows the PPR hole contract —
+// context, mixed-chain: uncached segments execute fresh, middleware never
+// re-runs). The full MISS -> capture -> HIT round-trip is live: the fixture
+// follows the PPR hole doctrine —
 // shell material in a layout segment, the loader route behind route-level
 // loading() (LoaderBoundary is the Suspense boundary capture postpones at). A
 // loader route WITHOUT loading() awaits its loader at tree-build, so capture's
@@ -193,38 +195,58 @@ function runShellCacheSpec(f: Fixture): void {
     expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
   });
 
-  // --- live(): a resolved promise made a deterministic hole. ---
+  // --- The hole doctrine: PHYSICS and HANDLES holes ---
 
-  // ShellCacheLayout wraps <ShellCacheLiveValue> (await live(() =>
-  // Promise.resolve("LIVE-RESOLVED"))) in its own Suspense INSIDE the frozen
-  // shell. Without live() that resolved value would settle during the capture
-  // quiet window and bake into the shared prelude; live() holds it out, so capture
-  // postpones there and the resume streams it in. See
-  // docs/design/ppr-shell-resume.md ("The live() hole primitive").
-  test("live() makes a resolved promise a HOLE: fallback in the prelude, value in the resume", async ({
+  // PHYSICS hole: ShellCacheLayout hands a PENDING handler-created promise
+  // (~250ms) to a client component that use()s it under its OWN Suspense. Real
+  // I/O cannot win the capture's task-quantized quiet window, so the boundary
+  // postpones: the frozen prelude carries the fallback, and the resume streams
+  // the value in the same body. Holes are render-defined — no registration
+  // needed beyond the Suspense boundary.
+  test("physics hole: a pending handler promise under Suspense postpones (fallback in prelude, value resumed)", async ({
     request,
   }) => {
-    const url = f.url("/shell-cache?probe=livehole");
+    const url = f.url("/shell-cache?probe=physics");
     await warmToHit(request, url);
 
     const { html } = await measureFirstChunk(url);
-
-    // The prelude/resume boundary is </html>: the frozen shell prelude ends
-    // there and React foster-parents the resumed hole content after it. live()
-    // resolves on a microtask, so the value lands in the same network chunk —
-    // the proof is POSITIONAL, not timing-based (contrast the ~400ms loader).
     const preludeEnd = html.indexOf("</html>");
     expect(preludeEnd).toBeGreaterThan(-1);
     const prelude = html.slice(0, preludeEnd);
     const resumed = html.slice(preludeEnd);
 
-    // The live() boundary postponed during capture even though its data is
-    // Promise.resolve(...): the frozen shell shows the fallback, NOT the value.
-    expect(prelude).toContain("Loading live...");
-    expect(prelude).not.toContain("LIVE-RESOLVED");
-    // The value streams into the frozen hole in the resumed portion.
-    expect(resumed).toContain("LIVE-RESOLVED");
+    expect(prelude).toContain("physics pending...");
+    expect(prelude).not.toContain("PHYSICS-HOLE-VALUE");
+    expect(resumed).toContain("PHYSICS-HOLE-VALUE");
     expect(html).toContain("$RC");
+  });
+
+  // HANDLES contract ("nesting = liveness"): a TOP-LEVEL pushed handle promise is
+  // awaited server-side before SSR and BAKED into the prelude (the capture gate
+  // holds for the same await), while a promise NESTED in a pushed container
+  // passes through verbatim and streams into the consumer's own Suspense — a
+  // hole. A promise nested inside your data is never baked; the container
+  // settles.
+  test("handles pair: top-level push(promise) bakes into the prelude; nested push({x: promise}) streams as a hole", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache?probe=handles");
+    await warmToHit(request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const preludeEnd = html.indexOf("</html>");
+    expect(preludeEnd).toBeGreaterThan(-1);
+    const prelude = html.slice(0, preludeEnd);
+    const resumed = html.slice(preludeEnd);
+
+    // Top-level promise push (~150ms real latency): resolved BEFORE the shell
+    // froze — its value is shell material, in the prelude.
+    expect(prelude).toContain("TOP-LEVEL-BAKED");
+    // Nested promise in a pushed container: the prelude froze the consumer's
+    // fallback; the value streams in the resumed portion.
+    expect(prelude).toContain("nested pending...");
+    expect(prelude).not.toContain("NESTED-HANDLE-STREAMED");
+    expect(resumed).toContain("NESTED-HANDLE-STREAMED");
   });
 
   test("HIT page hydrates with zero errors (cached prelude / fresh payload consistency)", async ({
@@ -243,8 +265,6 @@ function runShellCacheSpec(f: Fixture): void {
       "Shell Cache Demo",
     );
     await expect(testId(page, "shell-price")).toContainText("Live price:");
-    // The live() hole resumed into the frozen shell and hydrated cleanly.
-    await expect(testId(page, "shell-live")).toHaveText("LIVE-RESOLVED");
 
     const counter = testId(page, "shell-counter");
     await counter.click();

@@ -44,9 +44,4 @@ export {
   type DocumentCacheOptions,
 } from "./document-cache.js";
 
-export {
-  createShellCacheMiddleware,
-  type ShellCacheOptions,
-} from "./shell-cache.js";
-
 export type { CacheErrorCategory } from "./cache-error.js";

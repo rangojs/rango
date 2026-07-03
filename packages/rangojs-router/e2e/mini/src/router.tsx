@@ -30,10 +30,7 @@ import {
   DataNotFoundError,
   type Middleware,
 } from "@rangojs/router";
-import {
-  MemorySegmentCacheStore,
-  createShellCacheMiddleware,
-} from "@rangojs/router/cache";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
 
 import {
@@ -226,23 +223,13 @@ export const router = createRouter({
 })
   // Global middleware: tags every request with an id (header + ctx var).
   .use(requestIdMiddleware)
-  // PPR shell caching (docs/design/ppr-shell-resume.md), path-scoped to the
-  // shell-manifest route: cache the rendered HTML shell (prelude + postponed) and,
-  // on a later GET, flush those bytes immediately while the live ManifestPricesLoader
-  // holes resume into them. An app-level middleware (like createDocumentCacheMiddleware)
-  // so it wraps the whole document render. The /manifest segment cache below keeps
-  // the shell deterministic, so the frozen prelude and the fresh hydration payload
-  // agree. Store passed explicitly to mirror the app cache store above.
-  .use(
-    "/manifest",
-    createShellCacheMiddleware({ store: cacheStore, debug: true }),
-  )
   .routes(
     ({
       path,
       layout,
       include,
       loader,
+      loading,
       cache,
       revalidate,
       middleware,
@@ -448,6 +435,13 @@ export const router = createRouter({
           // replayed ids after ctx.rendered() to price exactly those. A stable
           // manifest-shell-seq across reloads = frozen shell; an advancing
           // loader seq (data-seq on each price) = live holes.
+          // The `ppr` path option opts /manifest into PPR shell capture —
+          // serving is integral to the router (no middleware); the shell store
+          // is the app-level cacheStore. The route carries loading() so the
+          // masked loader postpones at that boundary during capture; the
+          // handler's RenderedProducts pushes replay from the segment cache
+          // (cache() below), and the live ManifestPricesLoader fills the hole
+          // on serve.
           cache({ ttl: 60, swr: 120 }, () => [
             path(
               "/manifest",
@@ -469,8 +463,13 @@ export const router = createRouter({
                   </div>
                 );
               },
-              { name: "manifest" },
-              () => [loader(ManifestPricesLoader)],
+              { name: "manifest", ppr: { ttl: 60, swr: 120 } },
+              () => [
+                loader(ManifestPricesLoader),
+                loading(
+                  <p data-testid="manifest-loading">Loading manifest...</p>,
+                ),
+              ],
             ),
           ]),
 

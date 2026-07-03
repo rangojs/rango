@@ -77,6 +77,32 @@ global middleware
   Without `loading()`, parallel loaders block the parent.
 - Slot override: when multiple `parallel()` calls define the same `@slot` name,
   the last definition wins. Earlier definitions of that slot are removed.
+- **PPR commits after the whole middleware chain.** The shell serve path (opt-in
+  per page route via the `ppr` path option; integral, no middleware to mount)
+  lives at the top of the render pass that `executeRender` wraps — strictly
+  after the global `router.use()` chain AND route DSL `middleware()`. Any
+  middleware rejection/redirect/401 returns before a single shell byte, on MISS
+  and on a warmed HIT alike. On a HIT the composed response is committed there:
+  prelude bytes flush first, and match/Flight/resume run behind them inside the
+  response stream. Pinned by the `[PPR1]` semantic matrix row and
+  `e2e/shell-secure.test.ts`.
+- **PPR capture is mixed-chain and never re-runs middleware.** The background
+  capture renders the page under a derived context that INHERITS the triggering
+  request's post-middleware state (so middleware-derived ctx values photograph
+  into the shell — scope fidelity) while the chain itself runs exactly once per
+  HTTP request (pinned by the middleware-run counter in `[PPR1]`). Within the
+  capture, `cache()`d segments replay from the segment cache and UNCACHED
+  segments execute their handlers fresh (the `cookies()`/`headers()` capture
+  guard is load-bearing); loaders are masked — they are the structural holes.
+  Holes are render-defined: `loading()` subtrees (structural), pending promises
+  in handed-over data under the consumer's Suspense (physics), everything else
+  is shell — including TOP-LEVEL pushed handle promises, which are awaited
+  before SSR ("a promise nested inside your data is never baked; the container
+  settles").
+- **Serve-time guarding is guaranteed on every serve.** Every serve — MISS and
+  HIT — runs the full chain (middleware + handlers + fresh loaders); only the
+  shell HTML is cached, so a HIT still runs the loader holes fresh. Pinned by
+  the `[PPR2]` semantic matrix row.
 
 ## Handler Loading Contract
 

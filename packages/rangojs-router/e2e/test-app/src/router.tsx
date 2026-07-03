@@ -5,11 +5,9 @@ import {
   redirect,
   type Middleware,
 } from "@rangojs/router";
-import {
-  MemorySegmentCacheStore,
-  createShellCacheMiddleware,
-} from "@rangojs/router/cache";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
+import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
 
 // App-level cache store with defaults
@@ -61,6 +59,9 @@ export interface AppVariables {
   childData?: string;
   // Action → ctx.set → handler reads test variable
   actionCtxValue?: string;
+  // PPR scope-fidelity: set by the /shell-secure auth middleware, rendered by
+  // the shell layout (urls/shell-secure.tsx)
+  shellMwVar?: string;
 }
 
 export type AppEnv = AppBindings;
@@ -312,19 +313,15 @@ export const router = createRouter<AppEnv>({
     });
     await next();
   })
-  // PPR shell caching (docs/design/ppr-shell-resume.md), path-scoped to the
-  // /shell-cache subtree (the `/*` also covers /shell-cache itself). Caches the
-  // rendered HTML shell (prelude + postponed) in the app MemorySegmentCacheStore
-  // (getShell/putShell) and, on a later GET, flushes those bytes immediately while
-  // the live loader hole resumes into them. Covers /shell-cache (price hole),
-  // /shell-cache/stream (loader-carried promise), and /shell-cache/no-hole
-  // (negative: no loading(), eternal MISS). Store defaults to the app cache store.
-  .use("/shell-cache/*", createShellCacheMiddleware({ debug: true }))
-  // PPR action-correctness fixtures (Deliverable 10): a PPR route whose shell
-  // carries a cached+tagged banner and whose hole is a live loader, plus JS/PE
-  // action surfaces. Separate subtree so the action write-paths don't disturb the
-  // read-only /shell-cache routes above.
-  .use("/shell-cache-action/*", createShellCacheMiddleware({ debug: true }))
+  // PPR guarding fixture (docs/design/ppr-shell-resume.md): a GLOBAL auth
+  // middleware upstream of the ppr /shell-secure route. The PPR commit point is
+  // after the whole middleware chain, so an unauthorized request gets its 401
+  // with zero shell bytes even when the shell is warm; an authorized request's
+  // post-middleware ctx state (shellMwVar) is inherited by the background
+  // capture and photographed into the shared shell (scope fidelity). PPR itself
+  // needs NO middleware — serving is integral; routes opt in via the `ppr` path
+  // option (see urls/shell-cache.tsx, urls/shell-secure.tsx).
+  .use("/shell-secure/*", shellSecureAuthMiddleware)
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

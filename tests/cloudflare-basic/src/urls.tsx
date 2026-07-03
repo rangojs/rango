@@ -19,9 +19,7 @@ import {
   PprShellLayout,
   PprShellPricePage,
   PprShellStreamPage,
-  PprShellDslLayout,
 } from "./pages/ppr-shell.js";
-import { createShellCacheMiddleware } from "@rangojs/router/cache";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
@@ -362,21 +360,29 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
-        // PPR shell caching (docs/design/ppr-shell-resume.md). The shell-cache
-        // middleware is wired path-scoped in router.tsx; the loader is the live
-        // hole that resumes into the frozen prelude on a HIT.
-        // Shell = PprShellLayout (static text + counter + handle reads); hole =
-        // the price route behind loading() (LoaderBoundary is the Suspense
-        // boundary capture postpones at). A loader route without loading()
-        // awaits its loader at tree-build and can never produce a shell -- see
-        // pages/ppr-shell.tsx and docs/design/ppr-shell-resume.md.
+        // PPR shell caching (docs/design/ppr-shell-resume.md). Opt-in per PAGE
+        // ROUTE via the `ppr` path option — serving is integral to the router
+        // (no middleware); the shell store is the app CFCacheStore (KV-backed
+        // getShell/putShell) from createRouter({ cache }).
+        // Shell = PprShellLayout (static text + counter + handle reads + the
+        // physics fallback); STRUCTURAL hole = the price route behind loading()
+        // (LoaderBoundary is the Suspense boundary capture postpones at);
+        // PHYSICS hole = the pending handler promise under PprShellPhysicsValue's
+        // own Suspense. A loader route without loading() awaits its loader at
+        // tree-build and can never produce a shell — the /ppr-shell/no-hole
+        // negative below. See pages/ppr-shell.tsx.
         layout(PprShellLayout, () => [
-          path("/ppr-shell", PprShellPricePage, { name: "pprShell" }, () => [
-            loader(PprShellPriceLoader),
-            loading(
-              <div data-testid="ppr-price-fallback">Loading price...</div>,
-            ),
-          ]),
+          path(
+            "/ppr-shell",
+            PprShellPricePage,
+            { name: "pprShell", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-price-fallback">Loading price...</div>,
+              ),
+            ],
+          ),
           // Loader-carried promise WITH loading(): the loading() boundary is the
           // hole. On a HIT the resume streams three layers in one body — cached
           // shell, then the outer loader value + the inner Suspense fallback,
@@ -384,7 +390,7 @@ export const urlpatterns = urls(
           path(
             "/ppr-shell/stream",
             PprShellStreamPage,
-            { name: "pprShellStream" },
+            { name: "pprShellStream", ppr: { ttl: 300, swr: 120 } },
             () => [
               loader(PprShellStreamLoader),
               loading(
@@ -392,36 +398,17 @@ export const urlpatterns = urls(
               ),
             ],
           ),
-          // Same loader/component, but NO loading(): the loading-less branch
-          // awaits loader data at tree-build, so capture's masked loader pins the
-          // tree and the sanity gate refuses — x-rango-shell stays MISS forever.
-          // The nested inner promise still streams under axis 1 (no loading()
-          // degrades only the caching, never the route).
+          // Same loader/component, ppr DECLARED, but NO loading(): the
+          // loading-less branch awaits loader data at tree-build, so capture's
+          // masked loader pins the tree and the sanity gate refuses —
+          // x-rango-shell stays MISS forever. The nested inner promise still
+          // streams under axis 1 (no loading() degrades only the caching, never
+          // the route).
           path(
             "/ppr-shell/no-hole",
             PprShellStreamPage,
-            { name: "pprShellNoHole" },
+            { name: "pprShellNoHole", ppr: true },
             () => [loader(PprShellStreamLoader)],
-          ),
-        ]),
-        // DSL-attached PPR shell caching (Deliverable 4c) — the shell-cache
-        // middleware attached via the urls() middleware() primitive, NOT
-        // router.tsx. Covers only /ppr-shell-dsl; proves DSL attachment works
-        // identically to the global router.use() attachment above.
-        layout(PprShellDslLayout, () => [
-          middleware(createShellCacheMiddleware({ debug: true })),
-          path(
-            "/ppr-shell-dsl",
-            PprShellPricePage,
-            { name: "pprShellDsl" },
-            () => [
-              loader(PprShellPriceLoader),
-              loading(
-                <div data-testid="ppr-dsl-price-fallback">
-                  Loading price...
-                </div>,
-              ),
-            ],
           ),
         ]),
         // Orphan fetchable loader: loader reachable only via a client import,

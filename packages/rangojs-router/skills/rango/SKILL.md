@@ -109,7 +109,7 @@ stated, greppable contract.
 | modal / soft navigation                 | `intercept()`                      | /intercept              |
 | pre-render a route at build time        | `Prerender(...)` wrapper           | /prerender              |
 | feed live loaders from a cached shell   | replayed handle + `ctx.rendered()` | /shell-manifest         |
-| cache the HTML shell, keep loaders live | `createShellCacheMiddleware()`     | /ppr                    |
+| cache the HTML shell, keep loaders live | `ppr` path option                  | /ppr                    |
 | stream SSE / upgrade a WebSocket        | `path.stream()` / `path.any()`     | /streams-and-websockets |
 
 ## Invariants
@@ -153,7 +153,7 @@ Same words, different jobs — this is the most common source of the
 | Next.js `revalidateTag` / `updateTag`   | **Axis 1** (cache) | Cache busting by tag. Tag via `cache({ tags })` / `cacheTag(...tags)`; invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking). Built-in stores index by tag. No `revalidatePath` (path-based busting); use tags. |
 | React Router / Remix `shouldRevalidate` | **Axis 2**         | This is the correct mental model for Rango's `revalidate()`.                                                                                                                                                                                                                            |
 | HTTP `Cache-Control` / ISR              | **Axis 1**         | Edge/document layer — see `/document-cache`. Separate from both `cache()` and `revalidate()`.                                                                                                                                                                                           |
-| Next.js PPR (partial prerendering)      | HTML shell layer   | Same idea, different wiring: opt-in `createShellCacheMiddleware()` captures at runtime (no build-time default), and holes are route-level `loading()` boundaries — a hand-rolled `<Suspense>` is not a hole. See `/ppr`.                                                                |
+| Next.js PPR (partial prerendering)      | HTML shell layer   | Same idea, different wiring: the opt-in `ppr` path option captures at runtime (no build-time default); holes are render-defined — `loading()` subtrees plus pending promises under a consumer's own `<Suspense>`. See `/ppr`.                                                           |
 | Remix/RR `loader`                       | live data          | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.                                                                                                                                |
 
 See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for

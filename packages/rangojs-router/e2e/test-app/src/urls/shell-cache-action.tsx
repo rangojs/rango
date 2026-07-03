@@ -67,10 +67,16 @@ function ShellPePage(ctx: HandlerContext) {
 export const shellCacheActionPatterns = urls(
   ({ path, layout, loader, loading }) => [
     layout(ShellActionLayout, () => [
+      // The ppr path option opts the route in. The banner is a tagged "use cache"
+      // read executed by the capture render (mixed-chain: uncached segments run
+      // fresh), and its cacheTag lands in the capture's request tags, so the shell
+      // AUTO-carries SHELL_ACTION_BANNER_TAG — updateTag() in the 10(b) action
+      // drops the shell (and the ring-1 value), and the recapture re-reads the
+      // fresh banner.
       path(
         "/shell-cache-action",
         ShellActionHolePage,
-        { name: "shellCacheAction" },
+        { name: "shellCacheAction", ppr: { ttl: 300, swr: 120 } },
         () => [
           loader(ShellActionCounterLoader),
           loading(
@@ -79,6 +85,8 @@ export const shellCacheActionPatterns = urls(
         ],
       ),
     ]),
+    // 10(c) PE route stays axis 1 (no ppr): a native server-action form is not a
+    // shell candidate and is only ever exercised no-JS.
     path("/shell-cache-action/pe", ShellPePage, { name: "shellCacheActionPe" }),
   ],
 );

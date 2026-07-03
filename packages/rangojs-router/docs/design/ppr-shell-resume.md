@@ -1,6 +1,6 @@
 # PPR shell caching and resume (revived streams)
 
-If you're about to touch the shell-cache middleware, the SSR capture/resume
+If you're about to touch the PPR serve path, the SSR capture/resume
 strategies, or the render orchestration around them, start here. This doc is
 the contract the implementation was built against, and it records why each
 piece has the shape it has.
@@ -28,7 +28,7 @@ holes. The browser sees one ordinary streamed document.
 
 The existing render path is untouched and stays the default:
 
-|                     | Axis 1 — HTML stream (default)     | Axis 2 — PPR (opt-in middleware)                        |
+|                     | Axis 1 — HTML stream (default)     | Axis 2 — PPR (opt-in via `cache({ ppr: true })`)        |
 | ------------------- | ---------------------------------- | ------------------------------------------------------- |
 | HTML production     | full fizz `renderToReadableStream` | stored prelude bytes + `resume(postponed)`              |
 | Shell definition    | n/a                                | everything that isn't a live loader hole                |
@@ -40,11 +40,127 @@ replay, fresh loaders, and the **full** Flight render (the browser still needs
 the complete payload for hydration; there is no Flight-side resume — that is a
 React limitation, not ours).
 
-A correctness property we get for free: `resume` requires the tree above the
-holes to match the prerendered tree. Both the capture pass and every serve
-pass render `SsrRoot` over the same replayed cached segments, so shell
-identity holds by construction. This is what Next needs its resume-data-cache
-for; our segment cache already is that mechanism.
+## Opt-in: the `ppr` path option, and integral serving
+
+If you are adding a PPR route or touching the serve path, read this first — it
+is the whole opt-in story.
+
+PPR is a DOCUMENT-level property declared on the PAGE ROUTE:
+
+```ts
+path("/products/:id", PricePage, { name: "product", ppr: { ttl: 600, swr: 120 } }, () => [
+  loader(LivePriceLoader),
+  loading(<PriceSkeleton />),
+]);
+```
+
+`ppr: true` uses the default policy (`DEFAULT_PPR_TTL_SECONDS` = 300);
+`PartialPrerenderProps { ttl?, swr?, tags? }` sets it explicitly
+(`src/urls/pattern-types.ts`; stored on the route `EntryData` by
+`src/urls/path-helper.ts`; normalized by `resolvePprConfig` in
+`src/rsc/shell-serve.ts`). There is NO subtree inheritance in v1 — declaring
+`ppr` on a layout is not supported (a possible follow-up). A route without the
+option is pure axis 1: no store read, no capture, no logs, zero cost.
+
+Serving is INTEGRAL to the router — `createShellCacheMiddleware` and
+`ShellCacheOptions` were removed from the public surface entirely (pre-release
+rule: removed, not deprecated). The shell store is the app-level
+`createRouter({ cache })` store (`requestCtx._cacheStore`); a ppr route on a
+store without the `getShell`/`putShell` family degrades to axis 1 with a
+once-per-key warning (declared intent that cannot be honored deserves a
+diagnostic; an undeclared route stays silent).
+
+### The serve pipeline and the commit point
+
+The PPR serve block lives at the top of `handleRscRenderingInner`
+(`src/rsc/rsc-rendering.ts`) — the render pass that `executeRender` wraps. That
+placement IS the security model:
+
+```
+request ──> global middleware chain (router.use(), onion)
+              └─> route DSL middleware() (executeRender onion)
+                    └─> handleRscRenderingInner        <-- THE COMMIT POINT
+                          ppr config off the classified route snapshot
+                          store family check (warn-once + axis 1 if absent)
+                          getSSRSetup (allReady => bypass, axis 1)
+                          getShell(key)
+                          ├─ HIT: commit composed response NOW
+                          │    prelude bytes flush first; match()/Flight/resume
+                          │    run BEHIND them inside the response stream
+                          │    (+ SWR recapture scheduled on a stale hit)
+                          └─ MISS: axis-1 serve, x-rango-shell: MISS,
+                               background capture scheduled after the response
+```
+
+Both middleware layers are GUARDS, and the commit point is after all of them:
+any rejection/redirect/401 returns before a single shell byte — on MISS and on
+a warmed HIT alike. On a HIT the composed response is committed eagerly so the
+stored prelude hides segment resolution, the fresh Flight render, and the
+resume setup behind wire bytes; the tail promise is kicked off synchronously
+(inside the ALS request-context frame) and the stream awaits it. Status and
+headers are committed at the flush — a failing hole cannot become a
+500/redirect after the first shell byte (error UI renders inline via
+Suspense/error boundaries), and a near-unreachable redirecting match on a HIT
+degrades to a client-side `location.replace` script.
+
+`x-rango-shell: HIT | MISS` is the only header; the old
+`x-rango-shell-resumed` marker handshake is gone — one layer now decides AND
+composes, so there is nothing to hand off.
+
+## The hole doctrine (encode verbatim)
+
+Holes are RENDER-DEFINED. The capture is MIXED-CHAIN: it renders the page under
+a derived context — `cache()`d segments replay per normal ring-3 semantics,
+UNCACHED segments execute their handlers fresh, and no special-casing of
+ring-3 writes happens during capture (a capture render behaves like a normal
+render with respect to the segment cache). Middleware is NOT re-run: it
+already ran for the triggering request, and the derived context inherits its
+post-middleware state; guarding is serve-time (the commit point above).
+
+> **(a) STRUCTURAL: the ENTIRE segment subtree under a `loading()`
+> registration** — loaders masked at capture, the boundary postpones, the
+> fallback baked in the shell as route structure.
+>
+> **(b) PHYSICS: any promise NESTED in handed-over data still pending at
+> capture, under the consumer's own Suspense** — handler props, handle values
+> (`push({ x: promise })`), loader-carried. Deterministic via the
+> task-quantized quiesce (real I/O cannot win the window).
+>
+> **(c) SHELL: awaited handler data (the `handleStore.settled` precondition
+> stays), TOP-LEVEL `push(promise)` — awaited before SSR, baked — resolved
+> promises, replayed cached segments.**
+
+### The handles contract: "nesting = liveness"
+
+Verified against the shipped semantics (`src/handles/deferred-resolution.ts`):
+the full-render payload uses `resolvedHandleStream`, whose resolution is
+SHALLOW — only an entry that is ITSELF a thenable is awaited
+(`isThenable`); a container that merely holds a promise passes through
+verbatim. So the contract holds without new resolution code:
+
+- `push(promise)` TOP-LEVEL: awaited server-side before the payload's handles
+  row emits — baked shell material. The capture gate is HELD open for the same
+  await (`gateFlightForCapture`'s `holdUntil` = `getData().then(
+resolveDeferredHandleValues)`), because a pushed promise with real latency
+  would otherwise lose the byte-quiet race, freeze out the handles row, and
+  root-suspend the prerender. Holding the gate can never delay a hole (holes
+  emit no bytes; holding only admits shell rows) and is bounded by `maxWaitMs`.
+- `push({ x: promise })` NESTED: preserved by FlightSerialize, streams to the
+  consumer, who must Suspense it — a hole under capture.
+
+The one asymmetry versus loaders, stated once: a LOADER container is a hole via
+`loading()` (the entire loader value is the live lane), while a HANDLE
+container is shell via root consumption (the handles generator drains before
+SSR). The unified rule: **a promise nested inside your data is never baked;
+the container settles.** Related `cache()` fact, orthogonal to ppr: the segment
+codec deep-settles promises at the ring-3 write, so nothing inside a `cache()`
+boundary can stay live.
+
+Because uncached handlers EXECUTE during capture, the `cookies()`/`headers()`
+capture guard (`assertNotInsideShellCapture`, `src/server/cookie-store.ts`) is
+load-bearing: identity reads throw inside a capture render. Loaders are exempt
+(always fresh). And `ssr.resolveStreaming` returning `"allReady"` bypasses PPR
+entirely — bots/SEO crawlers get one complete axis-1 document.
 
 ## Proven by POC (do not re-derive)
 
@@ -74,55 +190,44 @@ A two-process POC (scratchpad `poc-flight.mjs` + `poc-fizz.mjs`, results
 
 ## Architecture
 
-The middleware calls `next()` EXACTLY ONCE on every path — the executor's
-per-entry `next()` is a single-use latch (`src/router/middleware.ts`), so a
-second call throws `"Middleware called next() more than once."`. Capture does not
-re-run the pipeline; it runs as a render-layer background task that re-derives
-the shell via `router.match()` under its own derived context.
+The serve path is integral to the RSC render pipeline (see "The serve pipeline
+and the commit point" above). Capture does not re-run the pipeline; it runs as
+a render-layer background task that re-derives the page via `router.match()`
+under its own derived context.
 
 ```
-request ──> shell-cache middleware (src/cache/shell-cache.ts)
-              │ GET + HTML document only, bypass matrix below
-              │
-              ├─ getShell(key) HIT ──> set requestCtx._shellResume
-              │     (+ set requestCtx._shellCapture descriptor if stale/SWR)
-              │     ──> next()  [called once]
-              │        rsc-rendering resume branch:
-              │          full Flight render ──> ssrModule.resumeShellHTML
-              │          response marked x-rango-shell-resumed
-              │        rsc-rendering, after building the response:
-              │          _shellCapture set + eligible ──> scheduleShellCapture (recapture)
-              │     middleware: strip marker, prepend prelude bytes, return composite
-              │
-              └─ MISS ──> set requestCtx._shellCapture descriptor ──> next()  [called once]
-                    rsc-rendering, after building the axis-1 response:
-                      _shellCapture set + eligible (nonce/allReady/200-HTML gate)
-                      ──> scheduleShellCapture(ctx, request, env, url, reqCtx, ssrModule, descriptor)
-                           runBackground: runWithRequestContext(derivedCtx, () =>
-                             router.match() [loaders MASKED via _shellCaptureRun]
-                             ──> buildFullPayload ──> Flight render
-                             ──> ssrModule.captureShellHTML (prerender + abort)
-                             ──> store.putShell(key, { prelude, postponed, ... }))
-                    middleware: clear the descriptor, tag x-rango-shell: MISS
+MISS ──> axis-1 serve (x-rango-shell: MISS)
+           rsc-rendering, after building the response (200 HTML only):
+             scheduleShellCapture(descriptor from the ppr path option)
+               runBackground: runWithRequestContext(derivedCtx, () =>
+                 router.match()  [MIXED-CHAIN: cache()'d segments replay,
+                                  uncached handlers execute; loaders MASKED]
+                 ──> buildFullPayload ──> Flight render
+                 ──> ssrModule.captureShellHTML (prerender + abort)
+                 ──> store.putShell(key, { prelude, postponed, ... }))
+
+HIT  ──> committed composed response (x-rango-shell: HIT)
+           prelude bytes flushed immediately
+           tail (inside the response stream, kicked off synchronously):
+             router.match() ──> buildFullPayload ──> Flight render
+             ──> ssrModule.resumeShellHTML(postponed)
+           (+ scheduleShellCapture on a stale/SWR hit)
 ```
 
-Two request-context fields carry the handshake. `_shellCapture` is the DESCRIPTOR
-(`{ key, ttl, swr, store }`) — "a capture is wanted" — set by the middleware
-before its single `next()`; its presence must NOT change the foreground render.
-`_shellCaptureRun` is the ACTIVE marker, set to `true` only on the background
-task's derived context; loader masking (`loader-mask.ts`), the `emitStreaming`
-guard (`fresh.ts`), and the `cookies()`/`headers()` capture guard
-(`cookie-store.ts assertNotInsideShellCapture`) all key off it.
+Why `router.match()` and not a pipeline re-run for capture: the middleware
+chain (auth, logging) must run exactly once per request. It already ran for the
+triggering request; the derived context inherits the post-middleware state
+(variables, cache store) while overriding the render-scoped accumulators (a
+fresh handle store, request-tag set, and transition list). No double middleware
+side effects, and the served response is never blocked on the capture
+(`runBackground` = `waitUntil` on workerd, fire-and-forget in Node dev).
 
-Why `router.match()` and not a second `next()`: the middleware chain (auth,
-logging, and that single-use `next()` latch) must run exactly once per request.
-Re-deriving through `match()` re-runs only the route handlers/segment resolution
-— not the middleware — and the derived context inherits the foreground's
-post-middleware state (variables, cache store) while overriding the render-scoped
-accumulators (a fresh handle store, request-tag set, and transition list). This
-is strictly better than a pipeline re-run: no double middleware side effects, and
-the served response is never blocked on the capture (`runBackground` =
-`waitUntil` on workerd, fire-and-forget in Node dev).
+`_shellCaptureRun` on the derived context is the single ACTIVE marker: loader
+masking (`loader-mask.ts`), the `emitStreaming` guard (`fresh.ts`), and the
+`cookies()`/`headers()` capture guard (`cookie-store.ts`) all key off it. The
+old `_shellResume`/`_shellCapture` request-context flags are gone — the
+integrated serve path builds the `ShellCaptureDescriptor` locally and passes it
+to `scheduleShellCapture` directly.
 
 ## Contracts
 
@@ -154,12 +259,24 @@ Capture semantics:
   `injectRSCPayload` (the hydration payload must be fresh per request). No
   `formState`. No nonce (nonce'd requests never reach capture).
 - Abort ordering: await the caller's `quiesce` (bounded by `maxWaitMs`), then a
-  fixed `POST_QUIESCE_TASK_HOPS` (= 2) macrotask hops, then `controller.abort()`.
+  fixed `POST_QUIESCE_TASK_HOPS` (= 16) macrotask hops, then `controller.abort()`.
   `prerender`'s promise settles only after the abort when holes are pending —
   start it first, run the abort logic concurrently. By the time `quiesce`
   resolves the Flight input is byte-quiet AND frozen (see "Capture quiesce:
   task-based, not wall-clock" below), so the hops are deterministic and
   `maxWaitMs` is only a pathological guard that should never fire.
+- Why 16 hops and not 2 (replay-only scar tissue): under replay-only the capture
+  Flight render serializes ALREADY-serialized ring-3 segments, so it emits the whole
+  payload in the first tick and the gate quiesces almost immediately. On the old
+  fresh-execution capture the Flight dribbled out as handlers ran, so Flight-quiet
+  effectively meant "the shell has rendered" and 2 hops sufficed. Under replay,
+  Flight-quiet fires BEFORE the fizz side has consumed the instant payload and
+  rendered the shell to `<body>`, so the fizz needs a real buffer of turns after
+  quiesce — with 2 hops the abort lands on an unrendered tree (empty prelude, root
+  postpone) and the sanity gate refuses (this is exactly what the cloudflare-basic CF
+  store surfaced: `segs=7` replayed, `0B` prelude). Still task-based — masked loaders
+  never emit, so more hops never lets a hole settle; a cold worker whose
+  first attempt still under-renders heals on the in-place retry.
 - Sanity gate: if the prelude is trivial (no `<body`) or empty, return `null`
   and store nothing. This is the safe failure mode for the root-postpone /
   hung-handles cases.
@@ -197,124 +314,57 @@ cache; respect the 2 MB item cap — skip storage with a debug log when over).
 Shell entries participate in `invalidateTags` via the same tag machinery as
 their store's item family.
 
-Stores that don't implement the family simply disable the middleware
-(fail-open to axis 1, log once under `debug`).
+Stores that don't implement the family degrade a `ppr` route to axis 1 (with a
+once-per-key warning, since the declared intent cannot be honored).
 
-### Request-context flags (`src/server/request-context.ts`, internal)
+### Serve plumbing (`src/rsc/shell-serve.ts` + `src/server/request-context.ts`)
 
-```ts
-_shellResume?: { postponed: string | null };
-// The DESCRIPTOR: "a capture is wanted". Set by the middleware before its single
-// foreground next(); its presence must NOT change the foreground render.
-_shellCapture?: {
-  key: string;
-  ttl?: number;
-  swr?: number;
-  tags?: string[];
-  // The same store the middleware resolved for its getShell read
-  // (options.store ?? _cacheStore), threaded so a store-attached middleware
-  // writes captures where it reads them.
-  store?: SegmentCacheStore;
-};
-// The ACTIVE marker: true ONLY on the background capture task's derived context.
-// Loader masking, the fresh.ts emitStreaming guard, and the cookies()/headers()
-// capture guard all read this — NOT the descriptor.
-_shellCaptureRun?: boolean;
-```
+`shell-serve.ts` owns the config/key/store helpers the render layer uses at the
+commit point: `resolvePprConfig` (normalizes the route's `ppr` option;
+`DEFAULT_PPR_TTL_SECONDS` = 300), `buildShellKey`
+(`${host}${pathname}${sortedSearch}:shell` — host-scoped so multi-tenant shells
+never collide), `isValidShellHit` (reactVersion gate), `hasShellFamily`, and
+the once-per-key missing-store-family warning. The route's ppr config is read
+off the CLASSIFIED route snapshot (`reqCtx._classifiedRoute.manifestEntry`),
+which the RSC handler stores before dispatching the render — available before
+`match()` runs, which is what makes the eager HIT flush possible.
 
-`tags` on the descriptor is left unset by the middleware; the background capture
-collects the shell's own non-loader request tags from its derived render. None of
-the three fields are on `PublicRequestContext`.
+The only request-context flag left is `_shellCaptureRun` (the ACTIVE capture
+marker; internal). The capture descriptor (`ShellCaptureDescriptor` in
+`shell-capture.ts`: key/ttl/swr/tags/store/debug) is passed by value.
 
-### Middleware (`src/cache/shell-cache.ts`)
-
-`createShellCacheMiddleware<TEnv>(options)` — exported from
-`@rangojs/router/cache` beside `createDocumentCacheMiddleware`, and modeled on
-it (store from `requestCtx._cacheStore` unless `options.store` is given;
-`reportCacheError`; fail-open pre-handler, throw post-handler). It calls `next()`
-exactly once and never schedules background work itself — that is the render
-layer's job (below).
-
-```ts
-interface ShellCacheOptions<TEnv> {
-  store?: SegmentCacheStore<TEnv>;
-  ttlSeconds?: number; // default 300
-  swrSeconds?: number;
-  keyGenerator?: (url: URL) => string;
-  isEnabled?: (ctx: MiddlewareContext<TEnv>) => boolean | Promise<boolean>;
-  skipPaths?: string[];
-  debug?: boolean;
-}
-```
-
-Bypass matrix (every bypass = plain `next()`, axis 1):
-
-| Condition                                             | Why                                                                                                                                   |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| non-GET                                               | mutations are dynamic                                                                                                                 |
-| `_rsc_action` / `_rsc_loader` / `_rsc_partial` params | not document requests                                                                                                                 |
-| RSC request (`!mayNeedSSR`)                           | Flight path is untouched by PPR                                                                                                       |
-| CSP nonce in play                                     | frozen prelude cannot carry a fresh nonce                                                                                             |
-| `streamMode: "allReady"` render                       | buffering defeats PPR                                                                                                                 |
-| `skipPaths` / `isEnabled` false                       | consumer opt-out                                                                                                                      |
-| store lacks `getShell`/`putShell`                     | fail-open                                                                                                                             |
-| entry `reactVersion !== React.version`                | postponed blobs are build-coupled; treated as a miss (recapture overwrites the key, entry ages out via TTL — v1 has no `deleteShell`) |
-
-HIT flow: validate entry, set `_shellResume` (and, on a stale/SWR hit, the
-`_shellCapture` descriptor), `await next()` once, then compose **only if** the
-response carries the internal `x-rango-shell-resumed` marker (the resume branch
-engages solely on the main 200 document path — redirects, 404s, and error renders
-never resumed, so their responses pass through untouched). Strip the marker,
-prepend prelude bytes via a TransformStream, keep the live response's
-status/headers (Set-Cookie and friends are per-request and belong to the live
-pass), add `x-rango-shell: HIT`. The recapture on a stale hit is scheduled by the
-render layer off the descriptor — not by the middleware.
-
-MISS flow: set the `_shellCapture` descriptor, `await next()` once (streaming the
-live response to the user, plus `x-rango-shell: MISS`), then clear the descriptor
-in a finally. The render layer schedules the background capture off the descriptor
-after building the response.
-
-Resume failure policy (v1): if `next()` throws while `_shellResume` is set,
-disarm both single-request flags and rethrow (v1 has no `deleteShell` to eagerly
-evict the entry). The entry is version-keyed so this is rare; the next request
-self-heals via axis 1 + re-capture, which overwrites the same key.
+There is NO public middleware: `createShellCacheMiddleware`/`ShellCacheOptions`
+were removed (see the dead-ideas ledger).
 
 ### Render orchestration (`src/rsc/rsc-rendering.ts` + `src/rsc/shell-capture.ts`)
 
-In the document branch (where `ssrModule.renderHTML` is called), the foreground
-render is unchanged except for the resume branch and a post-response hook:
+The document branch of `handleRscRenderingInner` starts with the PPR serve
+block (commit point, above). On a HIT, `serveShellHit` commits the composed
+response and runs the live tail inside the stream. On a MISS the axis-1 flow is
+unchanged; after building the response, a servable 200-HTML document schedules
+`scheduleShellCapture` with the descriptor built from the route's ppr config,
+and the response is tagged `x-rango-shell: MISS`.
 
-- `_shellResume` set and `ssrModule.resumeShellHTML` present (and no nonce, not
-  `allReady`): render the full payload Flight stream as usual, call
-  `resumeShellHTML` instead of `renderHTML`, mark the response
-  `x-rango-shell-resumed`.
-- After building the served response (axis 1 OR resume), `maybeScheduleShellCapture`
-  fires: if `_shellCapture` (the descriptor) is set and the render is eligible —
-  no nonce, not `allReady`, document path, `ssrModule.captureShellHTML` present,
-  and the response is a 200 HTML document — call `scheduleShellCapture`.
-- Neither flag: axis 1, byte-identical to today. The foreground render NEVER masks
-  loaders — masking keys off `_shellCaptureRun`, which only the background context
-  sets.
-
-`scheduleShellCapture` (in `shell-capture.ts`) is the single owner of the stampede
-guard (a module-level in-flight key set: one capture per key per isolate, added on
-schedule and cleared in the task's finally). It dispatches `runBackground(reqCtx,
-runShellCapture)`. `runShellCapture` builds the derived context (`Object.create`
-of `reqCtx` overriding a fresh handle store / request-tag set / transition list,
+`scheduleShellCapture` (in `shell-capture.ts`) is the single owner of the
+stampede guard (one capture per key per isolate) and the refused-capture
+backoff. It dispatches `runBackground(reqCtx, runShellCapture)`.
+`runShellCapture` builds the derived context (`Object.create` of `reqCtx`
+overriding a fresh handle store / request-tag set / transition list,
 `_shellCaptureRun: true`, a fresh `_metricsStore`), then under
-`runWithRequestContext` re-derives the shell: `router.match()` (loaders masked),
-`buildFullPayload` (extracted to `src/rsc/full-payload.ts` so foreground and
-capture build the same shape), a fresh Flight render, then the seal → quiesce →
+`runWithRequestContext` re-derives the page: `router.match()` (mixed-chain;
+loaders masked), `buildFullPayload` (`full-payload.ts`, shared with the
+foreground so the captured tree matches the served tree — the `resume`
+precondition), a fresh Flight render, then the seal → holdUntil/quiesce →
 `captureShellHTML` → `putShell` flow. A redirecting match aborts with no store
 write; every error routes through `reportCacheError`.
 
-Known trap — the handles generator: `SsrRoot` consumes `payload.metadata.handles`
-to completion before rendering anything (`consumeAsyncGenerator`,
-`src/ssr/ssr-root.tsx`). In capture the generator completes once the (freshly
-re-derived) handle pushes settle; if a deferred handle depends on a masked loader
-it can never resolve, so `SsrRoot` suspends at the root, the prelude comes back
-trivial, and the sanity gate refuses to store — the designed fail-safe no-op.
+Known trap — the handles generator: `SsrRoot` consumes
+`payload.metadata.handles` to completion before rendering anything
+(`consumeAsyncGenerator`, `src/ssr/ssr-root.tsx`). In capture the generator
+completes once the pushes settle; a deferred handle whose resolver depends on a
+masked loader can never resolve, so `SsrRoot` suspends at the root, the prelude
+comes back trivial, and the sanity gate refuses to store — the designed
+fail-safe no-op.
 
 ### Capture retry-in-place, and why cold-start stopped being noisy
 
@@ -356,16 +406,15 @@ once-per-key "no usable shell" warning fires only AFTER the in-place retry also
 failed. That makes the warning meaningful again — by the time it fires, cold-start
 has usually healed, so it points at the structural cause (a loader route without
 `loading()`), and its text names both causes with the distinguishing signal (does
-the route ever flip to HIT). Under the middleware's `debug` flag (threaded onto the
-`_shellCapture` descriptor, since the capture layer cannot see the middleware's
-options) each attempt emits one concise breadcrumb instead of a stack dump.
+the route ever flip to HIT). Under `descriptor.debug` (INTERNAL_RANGO_DEBUG)
+each attempt emits one concise breadcrumb instead of a stack dump.
 
-### Refused-capture backoff (mounting the middleware app-wide)
+### Refused-capture backoff (declaring ppr on an ineligible route)
 
 An ineligible route — a loader route without `loading()`, or a cookie-reading
-handler whose capture throws — refuses on every request. Without a memory of that,
-mounting the shell middleware broadly (`router.use("/*", …)`) would schedule a
-doomed background render on EVERY request the route serves. `scheduleShellCapture`
+handler whose capture throws — refuses on every request. Without a memory of
+that, a `ppr`-declared route in that shape would schedule a doomed background
+render on EVERY request it serves. `scheduleShellCapture`
 keeps a module-level negative cache (`refusedCaptures`): a key enters backoff only
 after the in-place retry ALSO failed (or a genuine error), and within the window
 the key is not re-probed.
@@ -424,17 +473,19 @@ produce no bytes, so they are always holes — that is deterministic. The residu
 race window is exactly one class: raw per-request I/O rendered DIRECTLY in the
 shell (a server component doing its own `await fetch()`, not via a loader) that
 resolves and flushes within two hops of the shell going quiet. That is a
-documented shell anti-pattern — put per-request data in a loader (masked) or
-behind `live()` (below) — and it degrades to a hydration repair, not corruption,
-if it happens. Freezing also guarantees no post-quiesce byte, including an error
+documented shell anti-pattern — put per-request data in a loader (masked) —
+and it degrades to a hydration repair, not corruption, if it happens. Freezing also guarantees no post-quiesce byte, including an error
 row from any later abort/cancel of the underlying render, can corrupt the frozen
 prelude.
 
 On the fizz side (`captureShellHTML`, `src/ssr/index.tsx`) the wall clock is gone
 too: once `quiesce` resolves the input is frozen, so a fixed `POST_QUIESCE_TASK_HOPS`
-(= 2) macrotask hops — enough turns for React to flush the settled shell and mark
-still-pending boundaries as postponed — precede `controller.abort()`. No
-`Promise.race` against a clock except the `maxWaitMs` guard.
+(= 16) macrotask hops — enough turns for React to consume the instant replay payload,
+flush the settled shell, and mark still-pending boundaries as postponed — precede
+`controller.abort()`. No `Promise.race` against a clock except the `maxWaitMs` guard.
+(The count rose from 2 to 16 with replay-only: the replay Flight is emitted in one
+tick, so the fizz needs more post-quiesce turns to render the shell before the abort
+— see "Abort ordering" above.)
 
 ### The hole contract: a hole needs a loading() boundary
 
@@ -488,7 +539,7 @@ null (and does not hang) when tree-build awaits a masked loader").
 OTel: resume and capture both reuse `observePhase(PHASES.ssr, ...)` rather
 than introducing new phase names — the shell render lands under the existing
 `ssr` phase/span (resume wrapper in `rsc-rendering.ts`, capture wrapper in
-`shell-capture.ts`). The middleware's shell lookup (`getShell`) is not
+`shell-capture.ts`). The serve path's shell lookup (`getShell`) is not
 separately instrumented in v1.
 
 ## Loaders and handles under PPR
@@ -500,7 +551,7 @@ and postpones there (see "The hole contract" above — without `loading()` the
 await happens at tree-build and there is no hole, only a refused capture).
 Serve runs them fresh through the unchanged execution path; `resume` streams
 their output into the frozen shell's holes. Fetchable loaders and refresh
-groups are `_rsc_loader` requests and never touch this middleware.
+groups are `_rsc_loader` requests and never touch the PPR serve path.
 
 Handles are shell material. `SsrRoot` consumes the handles generator to
 completion before rendering anything (`consumeAsyncGenerator` sits above every
@@ -529,57 +580,6 @@ segments feed the captured shell and every resumed render. Consumer guidance:
 shell-cache routes whose non-loader content is cached or deterministic; put
 per-request data in loaders (holes); keep handles on the replay path.
 
-## The live() hole primitive
-
-The loader mask makes a route loader a hole. `live()` (`src/server/live.ts`,
-exported from `@rangojs/router` under the react-server condition; a passthrough
-under the default/client condition in `index.ts`) is the userland analogue — it
-makes ANY Suspense boundary a deterministic hole, including one whose data is
-already resolved.
-
-Why it exists: the capture quiet window (above) freezes anything that settles
-synchronously or on a microtask into the shared prelude. That is correct for
-deterministic content but wrong for a per-request value that happens to resolve
-fast — `Promise.resolve(x)`, an in-memory lookup, a cached read. Under
-`<Suspense>` such a value settles inside the quiet window and bakes into the
-shell. `live()` holds it out: during the background capture it returns a
-never-settling promise (the SAME mechanism as `createMaskedLoaderPromise`), so
-the consuming boundary postpones and the prelude freezes only the fallback. On
-the serve pass — and on the client, where there is no capture — it is a
-passthrough.
-
-```ts
-// hole even though the data is already resolved:
-const name = await live(() => Promise.resolve(currentUserName()));
-```
-
-Two forms, keyed on `typeof input === "function"`:
-
-- `live(fn)` — thunk, preferred. During capture the thunk is NOT invoked: no
-  fetch, no side effect, no cost. Outside capture it runs and its result (value
-  or promise) is returned as a promise.
-- `live(promise)` — value form. The work already fired before `live()` saw it,
-  so during capture the real promise is discarded and a hole returned in its
-  place (the promise still runs — prefer the thunk). Outside capture the promise
-  passes through unchanged.
-
-Settle policy: the capture-time hole is **never-settling**, deliberately
-identical to the loader mask (`createMaskedLoaderPromise`). Nothing awaits it to
-resolve — the capture aborts fizz to freeze the prelude, and workerd/GC reclaims
-the pending promise when the capture render tree is dropped. A capture-scoped
-reject signal was considered and rejected: it would buy no capture-behavior
-difference (the abort, not the hole promise, ends the render) at the cost of
-diverging from the loader mask.
-
-Guard gating: `live()` keys off `_getRequestContext()?._shellCaptureRun`, the
-same ACTIVE marker the loader mask and the `cookies()`/`headers()` capture guard
-read — so it is a hole ONLY inside the background capture render, never in the
-foreground serve pass (whose `_shellCapture` descriptor merely means "a capture
-is wanted"). The capture/serve split is pinned unit (`live()` through the capture
-primitive, `src/ssr/__tests__/shell-handlers.test.tsx`; the function contract,
-`src/server/__tests__/live.test.ts`) and dev + production e2e (the "live() makes
-a resolved promise a HOLE" case in both apps).
-
 ## Constraints (the contract with consumers)
 
 | Case                       | Behavior                                                                                                                                                                                                                                                                               |
@@ -590,8 +590,8 @@ a resolved promise a HOLE" case in both apps).
 | Actions / PE / formState   | always axis 1                                                                                                                                                                                                                                                                          |
 | Per-request nonce          | always axis 1                                                                                                                                                                                                                                                                          |
 | React/router upgrade       | shells invalidated via `reactVersion` check (treated as a miss on mismatch; recapture overwrites and TTL ages the entry out — v1 has no `deleteShell`)                                                                                                                                 |
-| Dev server                 | middleware works; shells are memory-store-scoped and cheap to recapture; HMR edits produce stale shells until TTL/recapture — documented, acceptable                                                                                                                                   |
-| Composite response         | per-request; only the shell entry is cacheable. Note ordering with the document cache: if both middlewares wrap a route, the document cache may cache the composite — correct output, but it makes shell caching redundant for that route. Pick one per route.                         |
+| Dev server                 | works; shells are memory-store-scoped and cheap to recapture; HMR edits produce stale shells until TTL/recapture — documented, acceptable                                                                                                                                              |
+| Composite response         | per-request; only the shell entry is cacheable. Note ordering with the document cache: if the document-cache middleware wraps a ppr route, it may cache the composite — correct output, but it makes shell caching redundant for that route. Pick one per route.                       |
 
 ## Platform notes
 
@@ -605,6 +605,60 @@ Vercel: identical in-function pattern on Fluid Compute via the Vercel store.
 The Build Output API `chain` mechanism (platform-appended streaming, shell
 served from the PoP cache) exists but is undocumented and Next-only in
 practice — deliberately out of scope; revisit with Vercel directly.
+
+## Dead ideas (do not re-propose)
+
+The design was settled after a long exploration. These alternatives were
+considered (some shipped briefly on a branch) and rejected; record them so they
+are not revived.
+
+- **`createShellCacheMiddleware` as the public surface.** Opt-in belongs on the
+  ROUTE (a document-level property of the page), and serving is integral to the
+  render pipeline — a middleware split the decision across two layers, forced a
+  marker-header handshake (`x-rango-shell-resumed`) between the layer that
+  decided and the layer that composed, and made the freshness policy live far
+  from the route it governed. Removed entirely (pre-release rule: remove, never
+  deprecate); the `ppr` path option + integral serving replaced it.
+- **`cache({ ppr: true })` as the opt-in.** A segment-granular primitive for a
+  document-level property — the granularity mismatch produced inheritance
+  questions (nearest-declaration-wins chains, min-ttl folding) that the path
+  option simply does not have, and it coupled PPR eligibility to ring-3 caching
+  when the two are orthogonal.
+- **Replay-only capture** (the capture may only photograph ring-3 cached
+  segments; a fresh segment aborts it). Superseded by the mixed-chain capture:
+  replay-only required fully cached chains — where the cache-boundary guards
+  already constrain what runs — and it DELETED the promise-hole contract
+  (physics holes: a pending handler promise under Suspense) that the design
+  requires. Under mixed-chain, uncached handlers execute during capture and the
+  `cookies()`/`headers()` guard is load-bearing again.
+- **`live()`, the userland hole primitive.** Created as the deterministic
+  hole-maker for the fresh-handler capture era (the `connection()` /
+  `makeHangingPromise` analogue; the thunk form elided capture work for a
+  resolved-fast per-request value that would otherwise settle into the quiet
+  window). Two shifts removed its habitat: the interim replay-only model made
+  it unreachable (capture executed nothing), and the final mixed-chain model
+  subsumes its guarantee through the loader lane —
+  `loader(() => Promise.resolve(x))` + `loading()` is a hole for
+  already-resolved data with zero capture cost. Removed entirely. The guards'
+  reasoning stays instructive: deep-settle at the ring-3 write is why nothing
+  inside `cache()` can stay live, so a "keep this live" primitive inside cached
+  content was never coherent anyway.
+- **Response-header opt-in** (a route sets a header the serve layer reads).
+  Headers are not replayed on a cache hit, so the signal cannot survive the
+  serve path PPR is built around. Opt-in belongs in route config, which the
+  match layer reads directly.
+- **A standalone `shellCache()` DSL entry.** A separate boundary declaring
+  "this is a shell" duplicates what the route already declares; the `ppr` path
+  option lives on the page route itself.
+- **Automatic no-key capture** (capture any document the store can hold, keyed
+  implicitly). Turning on caching for data must never silently change HTML
+  serving; PPR requires the explicit `ppr` declaration. Silent axis 1
+  otherwise.
+- **Full-pipeline capture dispatch** (re-run the whole middleware pipeline for
+  the capture instead of `router.match()` under a derived context). It would
+  double every middleware side effect (auth, logging) and re-trip the
+  single-use `next()` latch; the derived context inherits the post-middleware
+  state instead, and guarding is serve-time.
 
 ## Out of scope (v1)
 
@@ -621,7 +675,7 @@ practice — deliberately out of scope; revisit with Vercel directly.
   in-shell async settle (closing the last residual quiesce window — raw
   in-component I/O in the shell, above) rather than relying on the anti-pattern
   guidance. Deferred because the current mechanism (mask loaders, task-quantized
-  quiesce, `live()` for the resolved-value case) covers the intended shapes; the
+  quiesce) covers the intended shapes; the
   research on the alternatives — Flight static `prerender` with halt semantics
   (microtask retries) vs. the regular-render gate we ship, and Next's
   `runInSequentialTasks` / `makeHangingPromise` — is captured in the design
@@ -629,17 +683,29 @@ practice — deliberately out of scope; revisit with Vercel directly.
 
 ## Testing requirements (repo mandates)
 
-- Unit: SSR strategies tested with an injected fake `createFromReadableStream`
-  (the deps-injection seam means no react-server condition is needed);
-  middleware tested against the memory store, including the bypass matrix,
-  version-mismatch deletion, marker-gated composition, and stampede guard.
-- Userland dogfood: a consumer-visible test in the mini suite
-  (`packages/rangojs-router/e2e/mini/test/`) exercising the middleware through
-  the real server.
-- E2e dev + production in cloudflare-basic and test-app: slow live loader
-  (~400 ms); assert MISS then HIT via `x-rango-shell`; on HIT the first chunk
-  contains shell content without the dynamic content and arrives before the
-  loader delay elapses; the dynamic content arrives in the same response;
-  hydration and interactivity work. `(production)` describe-title bucketing
-  rules apply.
-- Semantic matrix must stay green (axis 1 untouched).
+- Unit: SSR strategies with an injected fake `createFromReadableStream`
+  (deps-injection seam, no react-server condition needed); the integrated serve
+  path (`rsc-rendering-shell-ppr.test.ts`) against a REAL memory store — MISS
+  descriptor policy (default ttl 300, PartialPrerenderProps flow-through),
+  HIT composition (prelude-first byte order), stale/SWR recapture, reactVersion
+  gate, host-scoped keys, and the bypass set (no ppr = zero cost/logs, nonce,
+  allReady, missing store family warn-once); the capture gate incl. the
+  `holdUntil` handles hold; the shell store family.
+- Userland dogfood: the store family through the public `@rangojs/router/cache`
+  surface in the mini suite; the `/manifest` route carries the `ppr` path
+  option.
+- E2e dev + production in cloudflare-basic and test-app: MISS → HIT; HIT
+  streaming order + TTFB under the loader delay; hydration-zero-errors;
+  loader-carried three-layer streaming; the PHYSICS hole (pending handler
+  promise under Suspense: fallback in prelude, value resumed); the HANDLES pair
+  (top-level push(promise) baked, nested push({x: promise}) streamed);
+  ppr+no-loading() negative (eternal MISS + warning); SECURITY (401 with zero
+  shell bytes on a warmed route, global AND route-DSL middleware); SCOPE
+  FIDELITY (middleware ctx value photographed into the prelude); the
+  middleware-run counter (capture never re-runs the chain); action correctness
+  (hole mutation stays HIT; updateTag drops + recaptures the shell; PE POST
+  never composes). `(production)` describe-title bucketing rules apply.
+- Semantic matrix rows `[PPR1]` (commit-after-all-middleware + capture never
+  re-runs the chain + scope fidelity) and `[PPR2]` (serve-time guarding: HIT
+  runs the full chain, loader hole fresh) must stay green, alongside the
+  axis-1 rows (axis 1 untouched).

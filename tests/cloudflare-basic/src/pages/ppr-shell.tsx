@@ -1,13 +1,14 @@
-import { Suspense } from "react";
-import { Meta, live } from "@rangojs/router";
+import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
+import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
 import { PprShellCounter } from "../components/PprShellCounter.js";
+import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -30,18 +31,6 @@ import { PprShellCounter } from "../components/PprShellCounter.js";
 // LoaderBoundary postpones -> prelude = layout + "Loading price..." fallback);
 // a later GET is served x-rango-shell: HIT with the frozen prelude flushed
 // immediately and the live price resumed into it after the ~400ms loader.
-// live() demo (docs/design/ppr-shell-resume.md): a deterministic PPR hole even
-// though the data is Promise.resolve(). Without live() a resolved promise settles
-// during the capture quiet window and bakes into the shared shell prelude; live()
-// holds it out, so capture postpones HERE (the prelude freezes the "Loading
-// live..." fallback) and the resumed serve pass streams the value in. This sits
-// inside PprShellLayout — the frozen shell region — precisely to show a value
-// that would otherwise be captured being made a hole.
-async function PprShellLiveValue() {
-  const value = await live(() => Promise.resolve("LIVE-RESOLVED"));
-  return <span data-testid="ppr-live">{value}</span>;
-}
-
 export function PprShellLayout(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
   meta({ title: "PPR Shell - RSC Router Cloudflare" });
@@ -49,7 +38,6 @@ export function PprShellLayout(ctx: HandlerContext) {
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({ label: "Home", href: "/" });
   breadcrumb({ label: "PPR Shell", href: "/ppr-shell" });
-
   return (
     <main data-testid="ppr-shell-page">
       <h1 data-testid="ppr-shell-header">PPR Shell Demo</h1>
@@ -57,11 +45,7 @@ export function PprShellLayout(ctx: HandlerContext) {
         This static shell content is frozen into the cached prelude.
       </p>
       <PprShellCounter />
-      <Suspense
-        fallback={<span data-testid="ppr-live-fallback">Loading live...</span>}
-      >
-        <PprShellLiveValue />
-      </Suspense>
+      <PprShellPhysicsValue promise={makePprPhysicsPromise()} />
       <Outlet />
       <nav>
         <Link to="/counter" data-testid="ppr-nav-counter">
@@ -74,25 +58,6 @@ export function PprShellLayout(ctx: HandlerContext) {
 
 export function PprShellPricePage() {
   return <PprShellPrice loader={PprShellPriceLoader} />;
-}
-
-// DSL-attached PPR shell caching (Deliverable 4c): the SAME middleware attached via
-// the urls() middleware() primitive (route middleware) instead of router.use()
-// (global). Route middleware wraps the render pass, so on a GET it arms the capture
-// descriptor exactly like the global attachment — MISS -> HIT and HIT composition
-// are identical. NEW path (/ppr-shell-dsl); the /ppr-shell/* routes are untouched.
-export function PprShellDslLayout(ctx: HandlerContext) {
-  ctx.use(Meta)({ title: "PPR Shell DSL - RSC Router Cloudflare" });
-  return (
-    <main data-testid="ppr-dsl-page">
-      <h1 data-testid="ppr-dsl-header">PPR Shell DSL Demo</h1>
-      <p data-testid="ppr-dsl-static">
-        Static DSL shell content frozen into the cached prelude.
-      </p>
-      <PprShellCounter />
-      <Outlet />
-    </main>
-  );
 }
 
 // Loader-carried-promise page, reused by BOTH /ppr-shell/stream (WITH loading(),

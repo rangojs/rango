@@ -9,9 +9,9 @@ import {
   goBack,
 } from "./helper";
 
-// End-to-end coverage for PPR shell caching (createShellCacheMiddleware) wired
-// path-scoped onto /ppr-shell in src/router.tsx, backed by the app's KV-backed
-// CFCacheStore (getShell/putShell). Runs in BOTH the dev worker and the built
+// End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
+// option (src/urls.tsx) — serving is integral to the router (no middleware) —
+// backed by the app's KV-backed CFCacheStore (getShell/putShell). Runs in BOTH the dev worker and the built
 // preview worker. See docs/design/ppr-shell-resume.md.
 //
 // Cache keys are per-URL (pathname + sorted search + ":shell"), so each test uses
@@ -212,37 +212,28 @@ function describePprShell(mode: "dev" | "build") {
       expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
     });
 
-    // --- live(): a resolved promise made a deterministic hole. ---
+    // --- Replay-only capture: the shell is a PHOTOGRAPH, not a re-render. ---
 
-    // PprShellLayout wraps <PprShellLiveValue> (await live(() =>
-    // Promise.resolve("LIVE-RESOLVED"))) in its own Suspense INSIDE the frozen
-    // shell. Without live() that resolved value would settle during the capture
-    // quiet window and bake into the shared prelude; live() holds it out, so
-    // capture postpones there and the resume streams it in. See
-    // docs/design/ppr-shell-resume.md ("The live() hole primitive").
-    test("live() makes a resolved promise a HOLE: fallback in the prelude, value in the resume", async ({
+    // PHYSICS hole: PprShellLayout hands a PENDING handler-created promise
+    // (~250ms) to a client component that use()s it under its OWN Suspense. Real
+    // I/O cannot win the capture's task-quantized quiet window, so the boundary
+    // postpones: the frozen prelude carries the fallback and the resume streams
+    // the value in the same body. Holes are render-defined.
+    test("physics hole: a pending handler promise under Suspense postpones (fallback in prelude, value resumed)", async ({
       request,
     }) => {
-      const url = f.url("/ppr-shell?probe=livehole");
+      const url = f.url("/ppr-shell?probe=physics");
       await warmToHit(request, url);
 
       const { html } = await measureFirstChunk(url);
-
-      // The prelude/resume boundary is </html>: the frozen shell prelude ends
-      // there and React foster-parents the resumed hole content after it. live()
-      // resolves on a microtask, so the value lands in the same network chunk —
-      // the proof is POSITIONAL, not timing-based (contrast the ~400ms loader).
       const preludeEnd = html.indexOf("</html>");
       expect(preludeEnd).toBeGreaterThan(-1);
       const prelude = html.slice(0, preludeEnd);
       const resumed = html.slice(preludeEnd);
 
-      // The live() boundary postponed during capture even though its data is
-      // Promise.resolve(...): the frozen shell shows the fallback, NOT the value.
-      expect(prelude).toContain("Loading live...");
-      expect(prelude).not.toContain("LIVE-RESOLVED");
-      // The value streams into the frozen hole in the resumed portion.
-      expect(resumed).toContain("LIVE-RESOLVED");
+      expect(prelude).toContain("physics pending...");
+      expect(prelude).not.toContain("PHYSICS-HOLE-VALUE");
+      expect(resumed).toContain("PHYSICS-HOLE-VALUE");
       expect(html).toContain("$RC");
     });
 
@@ -262,8 +253,6 @@ function describePprShell(mode: "dev" | "build") {
         "PPR Shell Demo",
       );
       await expect(testId(page, "ppr-price")).toContainText("Live price:");
-      // The live() hole resumed into the frozen shell and hydrated cleanly.
-      await expect(testId(page, "ppr-live")).toHaveText("LIVE-RESOLVED");
 
       const counter = testId(page, "ppr-counter");
       await counter.click();
@@ -378,43 +367,5 @@ function describePprShell(mode: "dev" | "build") {
 // middleware) instead of router.use() (global). The middleware covers only the NEW
 // /ppr-shell-dsl route; the /ppr-shell/* routes are untouched. Pins MISS -> HIT and
 // HIT composition are identical under DSL attachment. See docs/design/ppr-shell-resume.md.
-function describeDslShell(mode: "dev" | "build") {
-  const label = mode === "build" ? "production" : "dev";
-
-  test.describe(`ppr-shell DSL attachment (${label})`, () => {
-    const f = useFixture({ root: ".", mode });
-
-    test("DSL-attached route flips MISS -> HIT identically to router.use()", async ({
-      request,
-    }) => {
-      const url = f.url("/ppr-shell-dsl?probe=hit");
-      const res1 = await request.get(url, { headers: HTML_HEADERS });
-      expect(res1.headers()["x-rango-shell"]).toBe("MISS");
-      await warmToHit(request, url);
-    });
-
-    test("DSL-attached HIT composes the cached shell before the live hole", async ({
-      request,
-    }) => {
-      const url = f.url("/ppr-shell-dsl?probe=compose");
-      await warmToHit(request, url);
-
-      const { ttfb, firstChunk, html } = await measureFirstChunk(url);
-      expect(firstChunk).toContain("PPR Shell DSL Demo");
-      expect(firstChunk).toContain("Loading price...");
-      expect(firstChunk).not.toContain("Live price:");
-      expect(html).toContain("Live price:");
-      expect(html).toContain("$RC");
-      expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
-    });
-    // Browser hydration under DSL attachment is covered comprehensively by the
-    // test-app DSL suite (e2e/shell-cache-dsl.test.ts) and cloudflare-basic's own
-    // /ppr-shell hydration test; the two API-level cases above pin the cloudflare
-    // DSL contract (MISS -> HIT + composition) without a redundant browser test.
-  });
-}
-
 describePprShell("dev");
 describePprShell("build");
-describeDslShell("dev");
-describeDslShell("build");

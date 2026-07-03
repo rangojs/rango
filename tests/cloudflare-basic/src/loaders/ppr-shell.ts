@@ -1,5 +1,18 @@
 import { createLoader } from "@rangojs/router";
 
+// Physics fixture: a handler-created promise passed as a PROP to a client
+// component that use()s it under its own <Suspense>. Genuinely pending real I/O
+// (~250ms) cannot win the capture's task-quantized quiet window, so the boundary
+// postpones — a HOLE by physics, not by registration. Deterministic value (no
+// drift; the resumed HTML and hydration payload come from the same tail render).
+const PPR_PHYSICS_DELAY_MS = 250;
+
+export function makePprPhysicsPromise(): Promise<string> {
+  return new Promise((resolve) =>
+    setTimeout(() => resolve("PHYSICS-HOLE-VALUE"), PPR_PHYSICS_DELAY_MS),
+  );
+}
+
 // The live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md).
 // A ~400ms loader whose seq advances on EVERY request: it proves loaders stay
 // fresh (the hole is re-run per request) while the shell prelude is served from
