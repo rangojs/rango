@@ -440,6 +440,57 @@ today. The chain path is strictly additive: a per-route opt-in that, when the
 platform honours it, moves the shell's TTFB down to edge latency, and when it
 doesn't, is simply not emitted and nothing changes.
 
+### Front-worker alternative: a Cloudflare Worker as the PoP (CF/Vercel mix)
+
+There is a way to get edge-served shells over a Vercel origin without touching
+the chain protocol at all: put a small Cloudflare "eyeball" worker in front and
+let it play the PoP's role. This is the two-worker PPR pattern (an edge splicer
+in front of an app tier), with the app tier being the Rango deployment on
+Vercel:
+
+```
+client ──> CF Worker (~330 colos)
+             ├─ shell HIT (Cache API L1 per colo, KV L2 global):
+             │    flush prelude bytes instantly; concurrently
+             │    POST /__rango/resume to the Vercel origin
+             │    (postponed + HMAC + forwarded request headers)
+             │    and splice the resumed stream after the prelude
+             └─ MISS: pass through to Vercel (axis-1 / in-function PPR)
+                  waitUntil: pull { prelude, postponed } from the origin's
+                  secret-gated shell endpoint, mirror into CF KV
+```
+
+Compared to the chain path, this trades a second vendor for the removal of
+every unknown in this document:
+
+- No undocumented contract. The splice is our worker code; the resume endpoint
+  is our API. The PoP-honours-chain question (Q1) does not exist here.
+- No build-time capture prerequisite. Runtime capture already populates the
+  origin's store; the worker mirrors entries on demand. The mix is buildable
+  against the feature as shipped today.
+- Shell locality is Cloudflare's colo footprint with KV as the warm global
+  tier; the resume hop (CF colo to Vercel region) is the same shape and RTT
+  class as the PoP-to-function hop the chain path pays.
+- The two origin endpoints it needs — a secret-gated shell-fetch and the
+  HMAC-validated resume POST — are exactly the pieces the chain adapter needs
+  anyway, so building the mix first de-risks a later chain adoption rather
+  than competing with it.
+
+Hardening is standard front-proxy work: a shared secret so only the worker can
+invoke resume, forwarded request headers so loaders see the real cookies,
+direct-to-origin bypass protection (Vercel deployment protection or secret
+validation on the document routes), and the same HMAC envelope on the
+postponed blob specified for the resume endpoint above.
+
+The honest scoping note: if nothing pins the app to Vercel, this pattern
+answers a question you do not have — a pure single-worker Cloudflare
+deployment (the shipped in-worker mode) already is the edge-served endgame.
+The mix earns its complexity exactly when the origin must stay on Vercel
+(Node/Fluid requirements, Next coexistence, existing infrastructure) but the
+edge cache and TTFB should come from Cloudflare's footprint. When that
+constraint holds, prefer this over the chain path unless single-vendor
+operation is itself the requirement.
+
 ## Open questions for Vercel
 
 1. **Will the PoP honour `chain` / `experimentalStreamingLambdaPath` on a
