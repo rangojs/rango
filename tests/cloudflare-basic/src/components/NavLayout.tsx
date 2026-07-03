@@ -55,6 +55,21 @@ export function NavLayout() {
         <Link to={href("/docs")} data-testid="nav-docs">
           Docs
         </Link>
+        {/* PPR shell-cache routes — clickable for manual testing. Soft-nav is a
+            partial navigation (bypasses the shell middleware by design);
+            hard-refresh to observe MISS/HIT. */}
+        <Link to={href("/ppr-shell")} data-testid="nav-ppr-shell">
+          PPR shell
+        </Link>
+        <Link to={href("/ppr-shell/stream")} data-testid="nav-ppr-stream">
+          PPR stream (live/nested)
+        </Link>
+        <Link to={href("/ppr-shell/no-hole")} data-testid="nav-ppr-no-hole">
+          PPR no-hole (negative)
+        </Link>
+        <Link to={href("/ppr-shell-dsl")} data-testid="nav-ppr-dsl">
+          PPR DSL (middleware())
+        </Link>
       </nav>
       <BreadcrumbNav />
       <Outlet />

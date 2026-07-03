@@ -397,7 +397,8 @@ optimization, tracked in the design doc's out-of-scope list.
 | `keyGenerator` | `${host}${pathname}${sortedSearch}` | custom keys own the FULL identity — include the host unless the store is provably single-host (multi-tenant shells must never collide) |
 | `isEnabled`    | —                                   | per-request opt-out predicate (e.g. disable for authed sessions)                                                                       |
 | `skipPaths`    | `[]`                                | path-prefix opt-out                                                                                                                    |
-| `debug`        | `false`                             | HIT/MISS/CAPTURED logging                                                                                                              |
+| `tags`         | —                                   | operational tags (`string[]` or `(ctx) => string[]`) UNIONED with the auto-collected shell tags — see "Invalidation" below             |
+| `debug`        | `false`                             | HIT/MISS/CAPTURED + per-attempt capture-retry logging                                                                                  |
 
 ## Pitfalls
 
@@ -415,8 +416,79 @@ optimization, tracked in the design doc's out-of-scope list.
   would cache the composite — correct output, but it makes shell caching
   redundant there.
 - **Dev + HMR**: works, but edits produce stale shells until TTL/recapture.
-- A cold-worker capture can occasionally abort mid-render; it is logged as
-  retryable and the next request recaptures — self-healing, not an error.
+- **Dev cold-start cadence** — expect `MISS -> (in-place retry) -> HIT`, not a
+  console dump. The first capture on a cold route can freeze an unfinished shell
+  (dev module transform / cold worker outlasts the capture quiesce); the capture
+  now retries ONCE in place after warming the modules, so the route usually HITs
+  within a request or two. Under `debug` you see one concise
+  `[ShellCache] capture attempt 1/2 … retrying` breadcrumb per attempt instead of a
+  `DOMException [AbortError]` stack. If a route NEVER flips to HIT you get the
+  once-per-key `no usable shell` warning (after the retry), which names both causes
+  — cold-start (self-heals) vs a missing `loading()` boundary (structural).
+- **Mounting broadly is cheap**: an ineligible route (no `loading()`, or a
+  cookie-reading handler) is negatively cached after the retry also fails, so it
+  probes once per window per isolate — not on every request. The window is
+  EXPONENTIAL in the failure count (1 s, 2 s, 4 s, … capped at 60 s), so a cold-but-
+  eligible route that trips it recovers on the next request or two while a truly
+  doomed route ramps to the 60 s cap. A successful capture clears it. Eligible
+  routes capture once and HIT.
+
+## Attaching via `middleware()` in `urls()`
+
+`createShellCacheMiddleware` works attached as ROUTE middleware inside `urls()`,
+not only via `router.use()`. Route middleware wraps the RENDER PASS with a
+`Response`-returning `next()`, which is exactly the onion the shell middleware
+needs: on a GET it arms the capture descriptor before its single `next()` (the
+render pass), and the render layer schedules the same background capture. So
+`MISS -> HIT` and HIT composition are identical to the global attachment — the only
+difference is scope: `middleware()` is a colocated, per-subtree opt-in.
+
+```typescript
+export const productPatterns = urls(({ path, layout, loader, loading, middleware }) => [
+  layout(ProductShellLayout, () => [
+    middleware(createShellCacheMiddleware({ ttlSeconds: 600, swrSeconds: 120 })),
+    path("/products/:id", PricePage, { name: "product" }, () => [
+      loader(LivePriceLoader),
+      loading(<PriceSkeleton />),
+    ]),
+  ]),
+]);
+```
+
+Actions bypass it for free: a POST is non-GET, and route middleware runs the render
+pass AFTER the action, so the shell middleware's non-GET bypass short-circuits it —
+the action response is never composed with a shell. The background capture never
+re-enters it either: `router.match()` only COLLECTS route middleware (the RSC
+handler executes it), so the capture's re-match does not run it, and a
+`_shellCaptureRun` guard makes that a hard invariant.
+
+## Invalidation: tags vs `revalidate()`
+
+Two different levers reach a PPR route, and mixing them up is the common trap.
+`invalidateTags`/`updateTag` is the ONLY lever that changes the frozen shell HTML;
+`revalidate()` is a DATA lever that never touches it.
+
+A captured shell auto-carries the UNION of the non-loader tags recorded during the
+capture render — every `cacheTag(...)` from a `"use cache"` function or `cache()`
+segment that ran as shell material. Loaders are masked at capture, so **loader**
+tags never attach to a shell — which is correct: the holes are always fresh, so
+they need no shell invalidation. The `tags` option adds operational tags the render
+can't know (a tenant id, a deploy marker); they union with the collected set, which
+stays authoritative.
+
+| Lever                                          | Reaches the frozen shell?                                                   | Reaches the holes (loader data)?                    |
+| ---------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------- |
+| `invalidateTags` / `updateTag` on a SHELL tag  | YES — drops the shell (and any segments sharing the tag) → MISS → recapture | n/a (holes are already live)                        |
+| `invalidateTags` / `updateTag` on a LOADER tag | no — loader tags never attach to a shell                                    | drops that loader's cached value (if it `cache()`s) |
+| `revalidate()` (named revalidation contract)   | **no** — it re-runs segments/loaders for the PAYLOAD, never the cached HTML | yes — the hole re-renders with fresh data           |
+
+So: content that must change in the shell HTML **immediately** needs
+`invalidateTags` on a tag the shell carries — put the value behind a `cacheTag`ed
+`"use cache"` read in shell material (or add a `tags` option), then invalidate it.
+`revalidate()` refreshes the data/hydration payload and the holes; the frozen
+prelude only changes on its own recapture (TTL/SWR) or a tag drop. If in doubt: is
+it HTML in the shell, or data in a hole? Shell → `invalidateTags`. Hole → it is
+already live; `revalidate()` only matters for cached loader data.
 
 ## Related
 

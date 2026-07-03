@@ -19,7 +19,9 @@ import {
   PprShellLayout,
   PprShellPricePage,
   PprShellStreamPage,
+  PprShellDslLayout,
 } from "./pages/ppr-shell.js";
+import { createShellCacheMiddleware } from "@rangojs/router/cache";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
@@ -400,6 +402,26 @@ export const urlpatterns = urls(
             PprShellStreamPage,
             { name: "pprShellNoHole" },
             () => [loader(PprShellStreamLoader)],
+          ),
+        ]),
+        // DSL-attached PPR shell caching (Deliverable 4c) — the shell-cache
+        // middleware attached via the urls() middleware() primitive, NOT
+        // router.tsx. Covers only /ppr-shell-dsl; proves DSL attachment works
+        // identically to the global router.use() attachment above.
+        layout(PprShellDslLayout, () => [
+          middleware(createShellCacheMiddleware({ debug: true })),
+          path(
+            "/ppr-shell-dsl",
+            PprShellPricePage,
+            { name: "pprShellDsl" },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-dsl-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
           ),
         ]),
         // Orphan fetchable loader: loader reachable only via a client import,

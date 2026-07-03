@@ -23,7 +23,11 @@ import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
-import { shellCachePatterns } from "./urls/shell-cache.js";
+import {
+  shellCachePatterns,
+  shellCacheDslPatterns,
+} from "./urls/shell-cache.js";
+import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
@@ -858,6 +862,14 @@ export const urlpatterns = urls(
       // middleware is wired path-scoped in router.tsx; the loader is the live
       // hole that resumes into the frozen prelude on a HIT.
       include("/", shellCachePatterns, { name: "" }),
+
+      // PPR shell caching attached via the urls() middleware() DSL (Deliverable
+      // 4c) — the middleware lives in shellCacheDslPatterns, NOT router.tsx, and
+      // covers only /shell-cache-dsl. Proves DSL attachment works identically.
+      include("/", shellCacheDslPatterns, { name: "" }),
+
+      // PPR action-correctness fixtures (Deliverable 10) — /shell-cache-action.
+      include("/", shellCacheActionPatterns, { name: "" }),
 
       // Theme patterns
       include("/theme", themePatterns, { name: "theme" }),

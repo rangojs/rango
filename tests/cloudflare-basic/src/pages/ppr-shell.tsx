@@ -76,6 +76,25 @@ export function PprShellPricePage() {
   return <PprShellPrice loader={PprShellPriceLoader} />;
 }
 
+// DSL-attached PPR shell caching (Deliverable 4c): the SAME middleware attached via
+// the urls() middleware() primitive (route middleware) instead of router.use()
+// (global). Route middleware wraps the render pass, so on a GET it arms the capture
+// descriptor exactly like the global attachment — MISS -> HIT and HIT composition
+// are identical. NEW path (/ppr-shell-dsl); the /ppr-shell/* routes are untouched.
+export function PprShellDslLayout(ctx: HandlerContext) {
+  ctx.use(Meta)({ title: "PPR Shell DSL - RSC Router Cloudflare" });
+  return (
+    <main data-testid="ppr-dsl-page">
+      <h1 data-testid="ppr-dsl-header">PPR Shell DSL Demo</h1>
+      <p data-testid="ppr-dsl-static">
+        Static DSL shell content frozen into the cached prelude.
+      </p>
+      <PprShellCounter />
+      <Outlet />
+    </main>
+  );
+}
+
 // Loader-carried-promise page, reused by BOTH /ppr-shell/stream (WITH loading(),
 // so the loader is a PPR hole) and /ppr-shell/no-hole (NO loading(), so capture
 // refuses and the route stays MISS forever while the inner promise still

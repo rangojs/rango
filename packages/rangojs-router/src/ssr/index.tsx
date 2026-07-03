@@ -398,6 +398,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
 ) {
   const { createFromReadableStream, loadBootstrapScriptContent, prerender } =
     deps;
+  const onError = deps.onError;
 
   if (!prerender) {
     throw new Error(
@@ -437,6 +438,25 @@ export function createShellCaptureHandler<TEnv = unknown>(
     const prerenderPromise = prerender(<SsrRoot />, {
       signal: controller.signal,
       bootstrapScriptContent,
+      // Abort is how capture WORKS: once the shell is quiet we abort() to freeze
+      // the prelude and let the still-pending holes postpone. React reports the
+      // abort reason for each pending boundary through onError. Without an onError
+      // here React falls back to console.error, so every capture that still has a
+      // live hole at abort time (the normal case, and every cold-module capture
+      // where the shell is not yet done) dumps a DOMException [AbortError] stack —
+      // once per pending boundary. That is EXPECTED degradation, not a failure, so
+      // swallow the abort here. Genuine shell render errors (a component throwing)
+      // are NOT the abort and still surface through the deps.onError channel, the
+      // same one renderHTML uses. See docs/design/ppr-shell-resume.md.
+      onError: (error: unknown) => {
+        if (
+          controller.signal.aborted &&
+          (error as { name?: string } | null)?.name === "AbortError"
+        ) {
+          return;
+        }
+        reportRenderError(onError, error);
+      },
     });
 
     // Wait for the caller's quiesce signal. By the time it resolves the Flight

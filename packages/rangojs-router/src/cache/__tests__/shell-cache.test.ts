@@ -59,8 +59,10 @@ function makeRequestCtx(store: unknown, pending: Promise<unknown>[]) {
           swr?: number;
           tags?: string[];
           store?: unknown;
+          debug?: boolean;
         }
       | undefined,
+    _shellCaptureRun: undefined as boolean | undefined,
     waitUntil: (fn: () => Promise<void>) => {
       pending.push(fn());
     },
@@ -206,6 +208,31 @@ describe("createShellCacheMiddleware", () => {
       expect(next).toHaveBeenCalledTimes(1);
       expect(res.headers.has("x-rango-shell")).toBe(false);
     });
+
+    // Deliverable 4(b): the middleware must be INERT inside any capture render. The
+    // background capture derives a context with _shellCaptureRun: true and re-runs
+    // router.match(); if this middleware ever executes inside that render (DSL
+    // middleware() attachment, or a future change to where route middleware runs),
+    // it must NOT getShell, arm _shellResume, or set the _shellCapture descriptor
+    // (which would recursively schedule a capture-within-a-capture). It falls
+    // straight through to next(). See docs/design/ppr-shell-resume.md.
+    it("bypasses when inside a capture render (_shellCaptureRun set): passthrough, no getShell, no flags armed", async () => {
+      const getShell = vi.spyOn(store, "getShell");
+      currentCtx._shellCaptureRun = true;
+      const mw = createShellCacheMiddleware({ debug: true });
+      const ctx = makeMiddlewareCtx("http://localhost/p");
+      const next = vi.fn(async () => html200("x"));
+
+      const res = await invoke(mw, ctx, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(getShell).not.toHaveBeenCalled();
+      // No PPR flags were armed for the render layer.
+      expect(currentCtx._shellResume).toBeUndefined();
+      expect(currentCtx._shellCapture).toBeUndefined();
+      // Plain passthrough — no shell status header.
+      expect(res.headers.has("x-rango-shell")).toBe(false);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -239,13 +266,16 @@ describe("createShellCacheMiddleware", () => {
       // second pipeline pass.
       expect(next).toHaveBeenCalledTimes(1);
 
-      // The descriptor was armed for the render layer: key/ttl/swr/store, and NO
-      // tags (the background capture collects the shell's own non-loader tags).
+      // The descriptor was armed for the render layer: key/ttl/swr/store/debug, and
+      // NO tags (the background capture collects the shell's own non-loader tags).
+      // `debug` is threaded so the capture layer can gate its per-attempt retry
+      // breadcrumbs on the same switch as this middleware's HIT/MISS lines.
       expect(seenDescriptor).toEqual({
         key: "localhost/miss:shell",
         ttl: 300,
         swr: 30,
         store,
+        debug: false,
       });
       // Cleared after next() so it never leaks into a reused ctx.
       expect(currentCtx._shellCapture).toBeUndefined();

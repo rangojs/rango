@@ -320,6 +320,11 @@ export const router = createRouter<AppEnv>({
   // /shell-cache/stream (loader-carried promise), and /shell-cache/no-hole
   // (negative: no loading(), eternal MISS). Store defaults to the app cache store.
   .use("/shell-cache/*", createShellCacheMiddleware({ debug: true }))
+  // PPR action-correctness fixtures (Deliverable 10): a PPR route whose shell
+  // carries a cached+tagged banner and whose hole is a live loader, plus JS/PE
+  // action surfaces. Separate subtree so the action write-paths don't disturb the
+  // read-only /shell-cache routes above.
+  .use("/shell-cache-action/*", createShellCacheMiddleware({ debug: true }))
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

@@ -39,13 +39,21 @@ const STREAM_INNER_DELAY_MS = 300;
 // the way a browser navigation does.
 const HTML_HEADERS = { Accept: "text/html" };
 
-/** Poll a URL until the shell cache reports HIT (the background capture landed). */
+/**
+ * Poll a URL until the shell cache reports HIT (the background capture landed).
+ *
+ * Timeout is generous (20s) because in the DEV worker (miniflare + cold vite module
+ * transforms) under this suite's parallel load, the first capture can race an
+ * unfinished shell and take a full retry+backoff cycle before it sticks — the very
+ * cold-start path the retry-in-place exists to smooth. The built preview worker
+ * captures on the first attempt (pre-built modules), so it HITs well inside this.
+ */
 async function warmToHit(request: Page["request"], url: string): Promise<void> {
   await expect(async () => {
     const res = await request.get(url, { headers: HTML_HEADERS });
     expect(res.status()).toBe(200);
     expect(res.headers()["x-rango-shell"]).toBe("HIT");
-  }).toPass({ timeout: 10000 });
+  }).toPass({ timeout: 20000 });
 }
 
 /** Native fetch + incremental reader: first-chunk latency and the full HTML body. */
@@ -366,5 +374,47 @@ function describePprShell(mode: "dev" | "build") {
   });
 }
 
+// Deliverable 4c: PPR shell caching attached via the urls() middleware() DSL (route
+// middleware) instead of router.use() (global). The middleware covers only the NEW
+// /ppr-shell-dsl route; the /ppr-shell/* routes are untouched. Pins MISS -> HIT and
+// HIT composition are identical under DSL attachment. See docs/design/ppr-shell-resume.md.
+function describeDslShell(mode: "dev" | "build") {
+  const label = mode === "build" ? "production" : "dev";
+
+  test.describe(`ppr-shell DSL attachment (${label})`, () => {
+    const f = useFixture({ root: ".", mode });
+
+    test("DSL-attached route flips MISS -> HIT identically to router.use()", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell-dsl?probe=hit");
+      const res1 = await request.get(url, { headers: HTML_HEADERS });
+      expect(res1.headers()["x-rango-shell"]).toBe("MISS");
+      await warmToHit(request, url);
+    });
+
+    test("DSL-attached HIT composes the cached shell before the live hole", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell-dsl?probe=compose");
+      await warmToHit(request, url);
+
+      const { ttfb, firstChunk, html } = await measureFirstChunk(url);
+      expect(firstChunk).toContain("PPR Shell DSL Demo");
+      expect(firstChunk).toContain("Loading price...");
+      expect(firstChunk).not.toContain("Live price:");
+      expect(html).toContain("Live price:");
+      expect(html).toContain("$RC");
+      expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
+    });
+    // Browser hydration under DSL attachment is covered comprehensively by the
+    // test-app DSL suite (e2e/shell-cache-dsl.test.ts) and cloudflare-basic's own
+    // /ppr-shell hydration test; the two API-level cases above pin the cloudflare
+    // DSL contract (MISS -> HIT + composition) without a redundant browser test.
+  });
+}
+
 describePprShell("dev");
 describePprShell("build");
+describeDslShell("dev");
+describeDslShell("build");
