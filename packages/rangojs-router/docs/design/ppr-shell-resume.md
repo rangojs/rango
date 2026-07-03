@@ -103,6 +103,47 @@ headers are committed at the flush — a failing hole cannot become a
 Suspense/error boundaries), and a near-unreachable redirecting match on a HIT
 degrades to a client-side `location.replace` script.
 
+### Theme fidelity on resume (scar tissue)
+
+This started as a user-reported bug: PPR'd blog routes rendered LIGHT for a
+dark-theme visitor and the theme toggle went dead. Root cause: `initialTheme`
+is per-request METADATA (`reqCtx.theme`, from the visitor's cookie) feeding
+`ThemeProvider` in `SsrRoot` — it is not part of the cached segments, so the
+"shell identity holds by construction" argument did not cover it. A capture
+made by a light/default request froze a light-rendered prelude; a dark
+visitor's resume tail then rendered a DIVERGENT tree above the holes (React
+resume requires them to match), breaking stitching/hydration — wrong theme AND
+dead interactivity.
+
+The fix has four coordinated parts:
+
+1. `ShellCacheEntry.initialTheme` records the theme the CAPTURE's payload was
+   built with (`captureAndStoreShell`).
+2. The serve tail (`serveShellHit`) overrides `payload.metadata.initialTheme`
+   with the stored value, so the resume tree AND client hydration both match
+   the frozen prelude by construction.
+3. `ThemeProvider`'s state initializer NEVER reads cookie/localStorage — the
+   initializer is both the server render and the client's hydration render,
+   and the two must produce the same first render. Before this, the client
+   initializer fell back to the visitor's stored theme whenever `initialTheme`
+   was absent (exactly the replayed-capture shape), so any raw-theme text in
+   the shell (a toggle label) mismatched, hydration failed, and React's client
+   regeneration wiped the FOUC-applied class from `<html>`. Parts 1-2 alone
+   did NOT fix the reported bug — this was the part detonating on the blog.
+4. The visitor still gets THEIR theme: the FOUC script in the captured head
+   applies the cookie theme pre-paint, and `ThemeProvider` re-syncs its state
+   from an EXPLICITLY stored cookie/localStorage value post-mount (an explicit
+   VALID value only — the defaultTheme fallback must not override a
+   server-provided initialTheme for a visitor who never chose one, and an
+   empty/garbage cookie value must not shadow a valid localStorage value).
+
+Pinned by unit tests (capture stores it, tail replays it, the initializer
+ignores storage — first-render parity — and the provider re-syncs) and a
+dev+prod e2e whose fixture deliberately renders RAW theme text inside the
+cached shell (the detonating shape): warm with no cookie, visit with a dark
+cookie — dark class sticks, zero hydration errors, toggle text converges to
+the visitor's theme, counter interactive.
+
 `x-rango-shell: HIT | MISS` is the only header; the old
 `x-rango-shell-resumed` marker handshake is gone — one layer now decides AND
 composes, so there is nothing to hand off.

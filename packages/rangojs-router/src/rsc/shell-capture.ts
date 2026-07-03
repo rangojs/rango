@@ -699,6 +699,11 @@ async function captureAndStoreShell(
           prelude: bufferToBase64(result.prelude.slice().buffer as ArrayBuffer),
           postponed: result.postponed,
           reactVersion: React.version,
+          // The theme this capture's payload was built with (buildFullPayload
+          // reads reqCtx.theme off the derived context). The serve tail replays
+          // it so the resume tree matches the frozen prelude — see
+          // ShellCacheEntry.initialTheme.
+          initialTheme: reqCtx.theme,
           createdAt: Date.now(),
         };
         await store.putShell(

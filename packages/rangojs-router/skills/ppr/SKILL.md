@@ -253,6 +253,12 @@ know (a tenant id, a deploy marker).
   deterministically, not by race (handler promises deep-settle at the ring-3
   write on cached chains; awaited/resolved values bake everywhere). Put
   per-user data in a loader.
+- **Theme on a HIT is capture-then-corrected**: the resume tree replays the
+  CAPTURE's `initialTheme` (resume requires it to match the frozen prelude);
+  the visitor's cookie theme is applied pre-paint by the FOUC script and
+  re-synced post-mount by ThemeProvider. Nothing to configure — but a themed
+  component in the shell may briefly render the captured theme's markup before
+  the post-mount re-sync.
 - **Stacking with `/document-cache`**: pick one per route — the document cache
   would cache the composite.
 - **Dev + HMR**: works, but edits produce stale shells until TTL/recapture.

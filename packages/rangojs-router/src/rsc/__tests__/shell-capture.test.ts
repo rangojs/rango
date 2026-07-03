@@ -211,6 +211,7 @@ function makePutShell() {
         prelude: string;
         postponed: string | null;
         reactVersion: string;
+        initialTheme?: string;
         createdAt: number;
       },
       _ttl?: number,
@@ -275,6 +276,35 @@ describe("captureAndStoreShell", () => {
     expect(
       new TextDecoder().decode(new Uint8Array(base64ToBytes(entry.prelude))),
     ).toBe("<html><body>shell</body></html>");
+  });
+
+  it("stores the capture context's theme as entry.initialTheme (resume theme fidelity)", async () => {
+    const putShell = makePutShell();
+    const ssrModule = {
+      renderHTML: vi.fn(),
+      captureShellHTML: vi.fn(async () => ({
+        prelude: enc("<html><body>shell</body></html>"),
+        postponed: null,
+      })),
+    } as unknown as SSRModule;
+    const reqCtx = makeReqCtx();
+    // The derived capture context's theme — buildFullPayload rendered with it,
+    // so the serve tail must replay it (ShellCacheEntry.initialTheme).
+    (reqCtx as any).theme = "light";
+
+    await captureAndStoreShell(
+      ssrModule,
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      {
+        key: "/p:shell",
+        store: { putShell } as any,
+      },
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    expect(putShell.mock.calls[0]![1].initialTheme).toBe("light");
   });
 
   it("prefers the flag's store over reqCtx._cacheStore", async () => {

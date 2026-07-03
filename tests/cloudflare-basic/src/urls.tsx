@@ -457,7 +457,13 @@ export const urlpatterns = urls(
           () => [loading(<FeatureLoading />)],
         ),
 
-        // Blog routes with sidebar
+        // Blog routes with sidebar. Deliberately NOT ppr'd: the blog's ring-3
+        // cache() (ttl 60) refreshes with a new rendered timestamp, and a PPR
+        // shell whose baked content drifts from the fresh hydration payload
+        // detonates hydration (React regenerates the tree client-side). Keeping
+        // /blog on axis 1 keeps the classic blog-cache suite deterministic; PPR
+        // over the blog shape is covered by dedicated fixtures on the snapshot
+        // branch. See docs/design/ppr-shell-resume.md.
         layout(BlogLayout, () => [
           parallel({ "@sidebar": BlogSidebarHandler }, () => [
             loader(BlogSidebarLoader, () => [cache()]),
@@ -466,14 +472,18 @@ export const urlpatterns = urls(
 
           cache({ ttl: 60, swr: 300 }, () => [
             middleware((ctx, next) => {
-              ctx.header(
-                "Cache-Control",
-                "s-maxage=60, stale-while-revalidate=300",
-              );
+              // ctx.header(
+              //   "Cache-Control",
+              //   "s-maxage=60, stale-while-revalidate=300",
+              // );
               return next();
             }),
-            path("/blog", BlogIndexPage, { name: "blog" }),
-            path("/blog/:slug", BlogPostPage, { name: "blogPost" }),
+            path("/blog", BlogIndexPage, {
+              name: "blog",
+            }),
+            path("/blog/:slug", BlogPostPage, {
+              name: "blogPost",
+            }),
           ]),
         ]),
 

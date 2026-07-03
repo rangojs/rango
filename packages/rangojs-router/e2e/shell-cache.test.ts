@@ -249,6 +249,65 @@ function runShellCacheSpec(f: Fixture): void {
     expect(resumed).toContain("NESTED-HANDLE-STREAMED");
   });
 
+  // THEME fidelity on a HIT (regression: PPR'd blog routes rendered light for
+  // dark-theme visitors and the toggle went dead). initialTheme is per-request
+  // metadata; the resume tail must replay the CAPTURE's initialTheme so the
+  // resume tree matches the frozen prelude, while the visitor's real theme is
+  // applied pre-paint by the FOUC script and re-synced post-mount by
+  // ThemeProvider. Warm with NO cookie (capture bakes the default light), then
+  // visit with a dark cookie: the page must be dark, hydrated, and interactive.
+  test("HIT with a different visitor theme: dark cookie wins visually, zero hydration errors, interactive", async ({
+    page,
+    context,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/shell-cache?probe=themefid");
+    await warmToHit(page.request, url);
+
+    await context.addCookies([
+      {
+        name: "theme",
+        value: "dark",
+        url: f.url("/"),
+      },
+    ]);
+    await page.goto(url);
+    await waitForHydration(page);
+
+    // FOUC script applied the visitor's theme pre-paint; ThemeProvider's
+    // post-mount re-sync keeps state in line — the class must be dark and STAY
+    // dark (no hydration clobber back to the captured light).
+    await expect
+      .poll(async () =>
+        page.evaluate(() =>
+          document.documentElement.classList.contains("dark"),
+        ),
+      )
+      .toBe(true);
+    await page.waitForTimeout(200);
+    expect(
+      await page.evaluate(() =>
+        document.documentElement.classList.contains("dark"),
+      ),
+    ).toBe(true);
+
+    // The layout renders RAW theme text (ThemeToggle) inside the cached shell —
+    // the exact shape that detonated the original bug. The prelude bakes the
+    // capture's "light"; hydration must succeed against it (the provider
+    // initializer renders the replayed initialTheme, never storage), then the
+    // post-mount re-sync converges the provider state to the visitor's cookie.
+    await expect(testId(page, "shell-theme-current-theme")).toHaveText(
+      "Current theme: dark",
+    );
+
+    // Interactivity survived the themed resume (the original bug killed it).
+    const counter = testId(page, "shell-counter");
+    await counter.click();
+    await expect(counter).toHaveText("count: 1");
+  });
+
   test("HIT page hydrates with zero errors (cached prelude / fresh payload consistency)", async ({
     page,
   }) => {

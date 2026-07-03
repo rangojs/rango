@@ -109,27 +109,6 @@ function applyThemeToDocument(theme: Theme, config: ResolvedThemeConfig): void {
   }
 }
 
-function getStoredTheme(config: ResolvedThemeConfig): Theme {
-  const { storageKey, themes, defaultTheme, enableSystem } = config;
-
-  let stored = readThemeFromCookie(storageKey);
-
-  if (!stored) {
-    stored = readThemeFromStorage(storageKey);
-  }
-
-  if (stored) {
-    if (stored === "system" && enableSystem) {
-      return "system";
-    }
-    if (themes.includes(stored)) {
-      return stored as Theme;
-    }
-  }
-
-  return defaultTheme;
-}
-
 export function ThemeProvider({
   config,
   initialTheme,
@@ -137,17 +116,48 @@ export function ThemeProvider({
 }: ThemeProviderProps): React.ReactNode {
   const [mounted, setMounted] = useState(false);
 
-  const [theme, setThemeState] = useState<Theme>(() => {
-    if (initialTheme) return initialTheme;
-    if (typeof window === "undefined") return config.defaultTheme;
-    return getStoredTheme(config);
-  });
+  // HYDRATION PARITY: this initializer is the server (SSR/resume) render AND
+  // the client's hydration render — both must produce the same value. It must
+  // NEVER read cookie/localStorage: whenever the payload's initialTheme
+  // differs from the visitor's stored theme (a PPR shell HIT deliberately
+  // replays the CAPTURE's initialTheme), a storage-reading initializer makes
+  // the client's first render diverge from the server tree. Any raw-theme text
+  // (a toggle label) then fails hydration, React regenerates the tree, and the
+  // FOUC-applied class is wiped from <html>. The visitor's stored theme is
+  // applied by the post-mount re-sync effect below instead.
+  const [theme, setThemeState] = useState<Theme>(
+    () => initialTheme ?? config.defaultTheme,
+  );
 
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
 
   useEffect(() => {
     setMounted(true);
     setSystemTheme(getSystemTheme());
+    // Re-sync state from an EXPLICITLY stored theme after mount. initialTheme
+    // comes from the payload and can legitimately differ from the visitor's
+    // stored theme — on a PPR shell HIT it is deliberately the CAPTURE's theme
+    // (the resume tree must match the frozen prelude; see
+    // ShellCacheEntry.initialTheme). The FOUC script already applied the stored
+    // theme to the document pre-paint; this brings the provider state (toggles,
+    // useTheme readers) in line with it, and is the ONLY place the provider
+    // reads storage (the initializer must not — see the parity note above).
+    // Only an explicit cookie/localStorage value re-syncs — a defaultTheme
+    // fallback must not override a server-provided initialTheme when the
+    // visitor never chose a theme.
+    // First VALID candidate wins — an empty/garbage cookie value (e.g. a
+    // deleted cookie leaving "theme=") must not shadow a valid localStorage
+    // value behind a bare null-coalesce.
+    const explicit =
+      [
+        readThemeFromCookie(config.storageKey),
+        readThemeFromStorage(config.storageKey),
+      ].find((v) => v !== null && isValidTheme(v, config)) ?? null;
+    if (explicit !== null && explicit !== theme) {
+      setThemeState(explicit as Theme);
+      applyThemeToDocument(explicit as Theme, config);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setTheme = useCallback(
