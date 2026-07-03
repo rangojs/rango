@@ -38,6 +38,7 @@ import type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
+  ShellCacheEntry,
 } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
 import { isPerClientSignalHeader } from "../../browser/cookie-name.js";
@@ -113,10 +114,10 @@ const VERCEL_UNSAFE_TAG_CHARS = /[,&#%?]/;
  */
 const REVALIDATION_LOCK_MS = 30_000;
 
-/** Family prefixes that keep the three value tiers from colliding in the single
- *  Vercel keyspace. The router's own semantic prefixes (doc:/partial:/use-cache:)
- *  become the suffix; `rg:` namespaces every Rango entry. */
-type CacheFamily = "s" | "i" | "r";
+/** Family prefixes that keep the value tiers from colliding in the single Vercel
+ *  keyspace. The router's own semantic prefixes (doc:/partial:/use-cache:) become
+ *  the suffix; `rg:` namespaces every Rango entry. `h` is the PPR shell tier. */
+type CacheFamily = "s" | "i" | "r" | "h";
 
 /** Stored envelope for a segment-tree entry (get/set). */
 interface VercelSegmentEnvelope {
@@ -158,6 +159,24 @@ interface VercelResponseEnvelope {
   t?: string[];
 }
 
+/** Stored envelope for a PPR shell entry (getShell/putShell). */
+interface VercelShellEnvelope {
+  /** base64-encoded prelude bytes. */
+  p: string;
+  /** postponed state JSON, or null (DATA variant). */
+  po: string | null;
+  /** React.version at capture. */
+  rv: string;
+  /** createdAt (ms since epoch). */
+  c: number;
+  /** staleAt (ms since epoch). */
+  s: number;
+  /** expiresAt (ms since epoch). */
+  e: number;
+  /** Tags, preserved so a stale re-stamp keeps them. */
+  t?: string[];
+}
+
 /** Read-path outcome for the debug sink. */
 export type VercelCacheReadOutcome =
   | "miss"
@@ -169,7 +188,7 @@ export type VercelCacheReadOutcome =
 
 /** Diagnostic event emitted on every read when `debug` is set. */
 export interface VercelCacheReadDebugEvent {
-  op: "get" | "getItem" | "getResponse";
+  op: "get" | "getItem" | "getResponse" | "getShell";
   key: string;
   outcome: VercelCacheReadOutcome;
   staleAt?: number;
@@ -707,6 +726,123 @@ export class VercelCacheStore<
     }
   }
 
+  // --- Shell family (PPR shell resume - getShell/putShell) ---
+
+  async getShell(
+    key: string,
+  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    const storeKey = this.toStoreKey(key, "h");
+    const started = Date.now();
+    let raw: unknown;
+    try {
+      raw = await this.cache.get(storeKey);
+    } catch (error) {
+      reportCacheError(error, "cache-read", "[VercelCacheStore] getShell");
+      this.emitDebug({ op: "getShell", key, outcome: "error" });
+      return null;
+    }
+    const readMs = Date.now() - started;
+
+    if (raw == null) {
+      this.emitDebug({ op: "getShell", key, outcome: "miss", readMs });
+      return null;
+    }
+    const env = this.asShellEnvelope(raw);
+    if (!env) {
+      reportCacheError(
+        new Error("malformed shell envelope"),
+        "cache-corrupt",
+        "[VercelCacheStore] getShell",
+      );
+      void this.safeDelete(storeKey);
+      this.emitDebug({ op: "getShell", key, outcome: "corrupt", readMs });
+      return null;
+    }
+
+    const now = Date.now();
+    if (now > env.e) {
+      void this.safeDelete(storeKey);
+      this.emitDebug({
+        op: "getShell",
+        key,
+        outcome: "expired",
+        staleAt: env.s,
+        expiresAt: env.e,
+        readMs,
+      });
+      return null;
+    }
+
+    const isStale = env.s > 0 && now > env.s;
+    if (isStale) {
+      this.markRevalidating(
+        storeKey,
+        env,
+        env.t,
+        "[VercelCacheStore] getShell",
+      );
+    }
+    this.emitDebug({
+      op: "getShell",
+      key,
+      outcome: isStale ? "stale-revalidate" : "fresh",
+      shouldRevalidate: isStale,
+      staleAt: env.s,
+      expiresAt: env.e,
+      readMs,
+    });
+    return {
+      entry: {
+        prelude: env.p,
+        postponed: env.po,
+        reactVersion: env.rv,
+        createdAt: env.c,
+      },
+      shouldRevalidate: isStale,
+    };
+  }
+
+  async putShell(
+    key: string,
+    entry: ShellCacheEntry,
+    ttlSeconds?: number,
+    swrSeconds?: number,
+    tags?: string[],
+  ): Promise<void> {
+    try {
+      const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
+      const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
+      const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
+      // Store the CLAMPED tags (see putResponse/setItem) so dropped tags don't
+      // resurface on a hit; write() re-clamps idempotently.
+      const safeTags = this.clampTagsForWrite(
+        tags,
+        "[VercelCacheStore] putShell",
+      );
+      const env: VercelShellEnvelope = {
+        p: entry.prelude,
+        po: entry.postponed,
+        rv: entry.reactVersion,
+        c: entry.createdAt,
+        s: staleAt,
+        e: expiresAt,
+        t: safeTags.length > 0 ? safeTags : undefined,
+      };
+      // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
+      // oversized shell prelude is reported and skipped (fail-open to a full
+      // render), never silently no-op'd on the platform.
+      await this.write(
+        this.toStoreKey(key, "h"),
+        env,
+        ttl + swrWindow,
+        safeTags,
+        "[VercelCacheStore] putShell",
+      );
+    } catch (error) {
+      reportCacheError(error, "cache-write", "[VercelCacheStore] putShell");
+    }
+  }
+
   // --- Tags ---
 
   async invalidateTags(tags: string[]): Promise<void> {
@@ -924,6 +1060,24 @@ export class VercelCacheStore<
     return {
       v,
       h: typeof h === "string" ? h : undefined,
+      s,
+      e,
+      t: Array.isArray(t) ? (t as string[]) : undefined,
+    };
+  }
+
+  private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
+    if (!isRecord(raw)) return null;
+    const { p, po, rv, c, s, e, t } = raw;
+    if (typeof p !== "string" || typeof rv !== "string") return null;
+    if (po !== null && typeof po !== "string") return null;
+    if (typeof c !== "number") return null;
+    if (typeof s !== "number" || typeof e !== "number") return null;
+    return {
+      p,
+      po: po as string | null,
+      rv,
+      c,
       s,
       e,
       t: Array.isArray(t) ? (t as string[]) : undefined,

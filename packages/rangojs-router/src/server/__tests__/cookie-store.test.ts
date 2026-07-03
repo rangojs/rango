@@ -471,6 +471,85 @@ describe('"use cache" guards', () => {
   });
 });
 
+describe("shell-capture guards", () => {
+  /**
+   * Run `fn` inside a request context with the shell-capture flag armed,
+   * mirroring what the shell-cache middleware sets on the background capture
+   * re-run. The captured shell is shared per URL, so request-scoped reads
+   * must throw here (see assertNotInsideShellCapture in cookie-store.ts).
+   */
+  function withShellCaptureContext(fn: () => void) {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "session=abc", "X-User": "u1" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // The ACTIVE capture marker (only the background derived context sets it),
+    // not the foreground descriptor _shellCapture.
+    (ctx as any)._shellCaptureRun = true;
+
+    runWithRequestContext(ctx, fn);
+  }
+
+  it("cookies() throws during a shell-capture render", () => {
+    withShellCaptureContext(() => {
+      expect(() => cookies()).toThrow(/capturing a shared shell/i);
+    });
+  });
+
+  it("headers() throws during a shell-capture render", () => {
+    withShellCaptureContext(() => {
+      expect(() => headers()).toThrow(/capturing a shared shell/i);
+    });
+  });
+
+  it("the error points to loaders as the per-request lane", () => {
+    withShellCaptureContext(() => {
+      expect(() => cookies()).toThrow(/inside a loader/i);
+    });
+  });
+
+  it("cookies()/headers() work normally when the flag is unset", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "ok=yes", "X-Test": "val" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    runWithRequestContext(ctx, () => {
+      expect(cookies().get("ok")?.value).toBe("yes");
+      expect(headers().get("x-test")).toBe("val");
+    });
+  });
+
+  it("cookies()/headers() work on the FOREGROUND render even when a capture is wanted", () => {
+    // The _shellCapture descriptor means "a capture is wanted" and is present
+    // during the foreground render, which must serve the real user — so it must
+    // NOT trip the guard. Only the background _shellCaptureRun does.
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "ok=yes", "X-Test": "val" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+    (ctx as any)._shellCapture = { key: "example.com/:shell", ttl: 300 };
+
+    runWithRequestContext(ctx, () => {
+      expect(cookies().get("ok")?.value).toBe("yes");
+      expect(headers().get("x-test")).toBe("val");
+    });
+  });
+});
+
 describe("cache() DSL scope guards", () => {
   /**
    * Run `fn` inside a request context AND a cache() DSL boundary — i.e. with

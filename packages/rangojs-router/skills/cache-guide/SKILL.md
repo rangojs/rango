@@ -484,3 +484,4 @@ overrides — see `/loader` for the full reference.
 - `/caching` — cache() DSL setup, stores, nested boundaries
 - `/use-cache` — "use cache" directive details, profiles, transforms, guards
 - `/document-cache` — Edge caching with Cache-Control headers (different layer)
+- `/ppr` — PPR shell caching: cached HTML shell + live loader holes (different layer)

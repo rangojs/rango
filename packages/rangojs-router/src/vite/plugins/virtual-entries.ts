@@ -38,14 +38,39 @@ initializeApp().catch(console.error);
 
 export const VIRTUAL_ENTRY_SSR: string = `
 import { createFromReadableStream } from "@rangojs/router/internal/deps/ssr";
-import { renderToReadableStream } from "react-dom/server.edge";
+import { renderToReadableStream, resume } from "react-dom/server.edge";
+import { prerender } from "react-dom/static.edge";
 import { injectRSCPayload } from "@rangojs/router/internal/deps/html-stream-server";
-import { createSSRHandler } from "@rangojs/router/ssr";
+import {
+  createSSRHandler,
+  createShellCaptureHandler,
+  createShellResumeHandler,
+} from "@rangojs/router/ssr";
 
 export const renderHTML = createSSRHandler({
   createFromReadableStream,
   renderToReadableStream,
   injectRSCPayload,
+  loadBootstrapScriptContent: () =>
+    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+});
+
+export const captureShellHTML = createShellCaptureHandler({
+  createFromReadableStream,
+  renderToReadableStream,
+  injectRSCPayload,
+  prerender,
+  resume,
+  loadBootstrapScriptContent: () =>
+    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+});
+
+export const resumeShellHTML = createShellResumeHandler({
+  createFromReadableStream,
+  renderToReadableStream,
+  injectRSCPayload,
+  prerender,
+  resume,
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });

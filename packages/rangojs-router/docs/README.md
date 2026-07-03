@@ -85,6 +85,22 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 
 - [SSR streaming policy](./design/ssr-streaming-policy.md) - controlling
   stream vs allReady mode per request
+- [PPR shell caching and resume](./design/ppr-shell-resume.md) - the opt-in
+  second render axis: caches the rendered HTML shell (React `prerender` prelude
+  bytes + `postponed` state) and, on a hit, serves the shell bytes immediately
+  and resumes fizz for just the live loader holes. Covers
+  `createShellCacheMiddleware` (`@rangojs/router/cache`), the
+  `createShellCaptureHandler`/`createShellResumeHandler` SSR factories, the
+  `getShell`/`putShell` store family, and the loader-masking / capture / resume
+  contracts
+- [Vercel chain PPR adapter spec](./design/vercel-chain-ppr.md) - serving
+  build-time PPR shells via Vercel's CDN-stitched `chain` protocol (shell from
+  the PoP cache + `next-resume: 1` POST to the resume function). Source-derived
+  from the Vercel/Next builder internals: the `.prerender-config.json` `chain`
+  shape, the `application/x-nextjs-pre-render; state-length=N` fallback split,
+  the resume request contract, what is public vs undocumented vs Next-only, and
+  the Rango adapter spec (build-time capture prerequisite, the signed-blob resume
+  endpoint, and in-function fallback as the universal path)
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)
 - [`ctx.isAction()` API design](./design/is-action-api-design.md) - typed,
   rename-safe action matching for `revalidate()` (implemented)

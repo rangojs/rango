@@ -6,7 +6,7 @@ import {
   type VercelRuntimeCache,
   type VercelCacheReadDebugEvent,
 } from "../vercel-cache-store.js";
-import type { CachedEntryData } from "../../types.js";
+import type { CachedEntryData, ShellCacheEntry } from "../../types.js";
 
 /**
  * In-memory fake of Vercel's RuntimeCache. JSON round-trips every stored value
@@ -417,5 +417,99 @@ describe("VercelCacheStore", () => {
       expect((await s.getItem("same"))?.value).toBe("item-value");
       expect(await (await s.getResponse("same"))?.response.text()).toBe("resp");
     });
+
+    it("keeps the shell family (h) isolated from the other families", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.set("same", segment(), 60, 300);
+      await s.putShell("same", shellEntry(), 60, 300);
+      expect((await s.get("same"))?.data.segments).toEqual([]);
+      expect((await s.getShell("same"))?.entry.prelude).toBe(
+        shellEntry().prelude,
+      );
+    });
+  });
+
+  describe("shell family (getShell/putShell)", () => {
+    it("round-trips a shell entry", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const entry = shellEntry();
+      await s.putShell("k", entry, 60, 300);
+      const hit = await s.getShell("k");
+      expect(hit).not.toBeNull();
+      expect(hit?.entry).toEqual(entry);
+      expect(hit?.shouldRevalidate).toBe(false);
+    });
+
+    it("round-trips a DATA-variant entry (postponed === null)", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const entry = shellEntry({ postponed: null });
+      await s.putShell("k", entry, 60, 300);
+      expect((await s.getShell("k"))?.entry.postponed).toBeNull();
+    });
+
+    it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300);
+
+      vi.setSystemTime(new Date(T0 + 30_000));
+      expect((await s.getShell("k"))?.shouldRevalidate).toBe(false);
+
+      vi.setSystemTime(new Date(T0 + 120_000));
+      expect((await s.getShell("k"))?.shouldRevalidate).toBe(true);
+
+      vi.setSystemTime(new Date(T0 + 400_000));
+      expect(await s.getShell("k")).toBeNull();
+    });
+
+    it("is invalidated by tag", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      expect(await s.getShell("k")).not.toBeNull();
+      await s.invalidateTags(["home"]);
+      expect(await s.getShell("k")).toBeNull();
+    });
+
+    it("skips a shell write above maxItemBytes (fail-open) and misses", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache, maxItemBytes: 100 });
+      await s.putShell(
+        "k",
+        shellEntry({ prelude: btoa("x".repeat(500)) }),
+        60,
+        300,
+      );
+      expect(store.has("rg:h:k")).toBe(false);
+      expect(consoleError).toHaveBeenCalled();
+      expect(await s.getShell("k")).toBeNull();
+    });
+
+    it("evicts and misses on a corrupt (non-envelope) stored value", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      store.set("rg:h:k", {
+        value: { not: "an envelope" },
+        expiresAt: null,
+        tags: [],
+      });
+      expect(await s.getShell("k")).toBeNull();
+      expect(store.has("rg:h:k")).toBe(false); // self-healed
+      expect(consoleError).toHaveBeenCalled();
+    });
   });
 });
+
+/** A minimal shell entry for the shell-family tests. */
+function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
+  return {
+    prelude: btoa("<html><body>SHELL</body></html>"),
+    postponed: JSON.stringify({ hole: 1 }),
+    reactVersion: "19.2.6",
+    createdAt: T0,
+    ...overrides,
+  };
+}

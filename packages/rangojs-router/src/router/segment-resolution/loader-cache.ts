@@ -36,6 +36,10 @@ import {
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
 import { recordRequestTags } from "../../cache/cache-tag.js";
+import {
+  isShellCaptureActive,
+  createMaskedLoaderPromise,
+} from "./loader-mask.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -127,6 +131,16 @@ export function resolveLoaderData<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   pathname: string,
 ): Promise<any> {
+  // PPR shell capture: never execute the loader. Its slot gets a never-resolving
+  // promise so the Suspense subtree postpones (a hole). Gate here — the single
+  // funnel every loader segment path routes through (fresh resolveLoaders,
+  // cache-hit resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation)
+  // — so no loader fn runs and no loader-cache getItem/setItem round-trip happens
+  // during capture. See loader-mask.ts and docs/design/ppr-shell-resume.md.
+  if (isShellCaptureActive()) {
+    return createMaskedLoaderPromise();
+  }
+
   const cacheConfig = loaderEntry.cache;
 
   // No cache config or disabled — run fresh (zero overhead path)

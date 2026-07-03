@@ -1,7 +1,7 @@
 ---
 name: breadcrumbs
 description: Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments
-argument-hint: [setup]
+argument-hint: "[setup]"
 ---
 
 # Breadcrumbs

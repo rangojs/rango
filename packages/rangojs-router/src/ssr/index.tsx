@@ -1,21 +1,6 @@
 import React from "react";
-import { renderSegments } from "../segment-system.js";
-import {
-  filterSegmentOrder,
-  filterRouteSegmentIds,
-} from "../browser/react/filter-segment-order.js";
-import { ThemeProvider } from "../theme/ThemeProvider.js";
-import { NonceContext } from "../browser/react/nonce-context.js";
-import { NavigationStoreContext } from "../browser/react/context.js";
-import type { NavigationStoreContextValue } from "../browser/react/context.js";
-import type { HandleData } from "../browser/types.js";
+import { createSsrRootComponent } from "./ssr-root.js";
 import type { ErrorPhase } from "../types.js";
-import type { ResolvedSegment } from "../types.js";
-import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
-import type {
-  EventController,
-  DerivedNavigationState,
-} from "../browser/event-controller.js";
 
 /**
  * Options for injectRSCPayload
@@ -42,6 +27,51 @@ interface RenderToReadableStreamOptions {
 interface ReactDOMReadableStream extends ReadableStream<Uint8Array> {
   allReady: Promise<void>;
 }
+
+/**
+ * Options for prerender from react-dom/static.edge
+ */
+interface PrerenderOptions {
+  signal?: AbortSignal;
+  bootstrapScriptContent?: string;
+  onError?: (error: unknown) => void;
+}
+
+/**
+ * Result of prerender from react-dom/static.edge. `postponed` is React's
+ * opaque resume state — non-null when the render was aborted with pending
+ * holes, null when the shell completed with nothing left to stream.
+ */
+interface PrerenderResult {
+  prelude: ReadableStream<Uint8Array>;
+  postponed: unknown;
+}
+
+/**
+ * prerender from react-dom/static.edge
+ */
+type PrerenderFn = (
+  element: React.ReactNode,
+  options?: PrerenderOptions,
+) => Promise<PrerenderResult>;
+
+/**
+ * Options for resume from react-dom/server.edge
+ */
+interface ResumeOptions {
+  onError?: (error: unknown) => void;
+  nonce?: string;
+}
+
+/**
+ * resume from react-dom/server.edge — continues a prerendered render, emitting
+ * only the postponed holes.
+ */
+type ResumeFn = (
+  element: React.ReactNode,
+  postponedState: unknown,
+  options?: ResumeOptions,
+) => Promise<ReactDOMReadableStream>;
 
 /**
  * Options for the renderHTML function
@@ -103,6 +133,18 @@ export interface SSRDependencies<TEnv = unknown> {
   loadBootstrapScriptContent: () => Promise<string>;
 
   /**
+   * prerender from react-dom/static.edge. Optional; required only by
+   * {@link createShellCaptureHandler} for PPR shell capture.
+   */
+  prerender?: PrerenderFn;
+
+  /**
+   * resume from react-dom/server.edge. Optional; required only by
+   * {@link createShellResumeHandler} for resuming a postponed shell.
+   */
+  resume?: ResumeFn;
+
+  /**
    * Optional callback invoked when an error occurs during SSR rendering.
    *
    * This callback is for notification/logging purposes.
@@ -122,97 +164,142 @@ export interface SSRDependencies<TEnv = unknown> {
 }
 
 /**
- * RSC payload type (minimal interface for SSR)
+ * Default guard for how long capture waits on the caller's `quiesce` signal
+ * before forcing the abort that freezes the shell. This is the ONLY wall-clock
+ * on the capture path and it is a pathological guard — it should never fire once
+ * the caller's `quiesce` is a task-quantized, frozen-byte signal (the capture
+ * gate in shell-capture.ts). See docs/design/ppr-shell-resume.md.
  */
-interface RscPayload {
-  metadata?: {
-    segments?: ResolvedSegment[];
-    rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
-    handles?: AsyncGenerator<HandleData, void, unknown>;
-    matched?: string[];
-    pathname?: string;
-    params?: Record<string, string>;
-    basename?: string;
-    themeConfig?: ResolvedThemeConfig | null;
-    initialTheme?: Theme;
-    version?: string;
-  };
-}
+const DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS = 5000;
 
 /**
- * Consume an async generator and return a Promise that resolves with the final value.
- * Used for SSR where we need to await all handle data before rendering.
+ * Fixed number of macrotask hops between `quiesce` resolving and the abort. By
+ * the time `quiesce` resolves the Flight input is byte-quiet and frozen, so
+ * these hops are deterministic: they only give React's fizz worker turns to
+ * flush the settled shell and mark still-pending boundaries as POSTPONED (rather
+ * than errored) before controller.abort() lands. Not a wall-clock wait.
  */
-async function consumeAsyncGenerator(
-  generator: AsyncGenerator<HandleData, void, unknown>,
-): Promise<HandleData> {
-  let lastData: HandleData = {};
-  for await (const data of generator) {
-    lastData = data;
+const POST_QUIESCE_TASK_HOPS = 2;
+
+/**
+ * Route an SSR error through the deps.onError notification callback with the
+ * "rendering" phase. Swallows callback failures so a broken reporter never
+ * masks the original error. Shared by renderHTML, capture, and resume so the
+ * onError contract is identical across all three handlers.
+ */
+function reportRenderError(
+  onError: SSRDependencies["onError"],
+  error: unknown,
+): void {
+  if (onError) {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    try {
+      onError(errorObj, { phase: "rendering" });
+    } catch (callbackError) {
+      console.error("[SSRHandler.onError] Callback error:", callbackError);
+    }
   }
-  return lastData;
 }
 
 /**
- * Create a minimal event controller for SSR.
- * This provides the correct pathname so useNavigation returns the right value during SSR.
+ * Yield one macrotask. Used by capture to let React's fizz worker flush the
+ * shell and mark still-pending boundaries as postponed before the abort.
  */
-function createSsrEventController(opts: {
-  pathname: string;
-  params?: Record<string, string>;
-  handleData?: HandleData;
-  matched?: string[];
-}): EventController {
-  const location = new URL(opts.pathname, "http://localhost");
-  let params = opts.params ?? {};
-  const rawMatched = opts.matched ?? [];
-  const handleState = {
-    data: opts.handleData ?? {},
-    segmentOrder: filterSegmentOrder(rawMatched),
-    routeSegmentIds: filterRouteSegmentIds(rawMatched),
-  };
-  const state: DerivedNavigationState = {
-    state: "idle",
-    isStreaming: false,
-    isNavigating: false,
-    location,
-    pendingUrl: null,
-    inflightActions: [],
-  };
+function macrotask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
-  return {
-    getState: () => state,
-    getLocation: () => location,
-    subscribe: () => () => {},
-    getActionState: () => ({
-      state: "idle",
-      actionId: null,
-      payload: null,
-      error: null,
-      result: null,
-    }),
-    subscribeToAction: () => () => {},
-    subscribeToHandles: () => () => {},
-    setHandleData: () => {},
-    getHandleState: () => handleState,
-    setRouteSegmentIds: () => {},
-    setParams: (nextParams) => {
-      params = nextParams;
+/**
+ * A timeout promise paired with a cancel() so the pending timer is cleared once
+ * the race is decided — otherwise the maxWait timer keeps the event loop alive
+ * for the full duration even after `quiesce` won.
+ */
+function createCancelableTimeout(ms: number): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
+  let id: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<void>((resolve) => {
+    id = setTimeout(resolve, ms);
+  });
+  return { promise, cancel: () => clearTimeout(id) };
+}
+
+/**
+ * Drain a ReadableStream fully into a single Uint8Array. Capture buffers the
+ * whole prelude so it can be stored and later prepended byte-for-byte.
+ */
+async function readStreamToUint8Array(
+  stream: ReadableStream<Uint8Array>,
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+/**
+ * A minimal HTML stream for the resume DATA variant: one empty chunk, then
+ * close.
+ *
+ * injectRSCPayload only resolves its internal flight-data promise (and thus
+ * only writes the Flight payload <script> pushes) from inside transform()'s
+ * scheduled callback. A stream that closes without ever emitting a chunk never
+ * runs transform, so its flush() awaits a promise that is never resolved and
+ * the output deadlocks. Emitting a single empty chunk runs transform once,
+ * which is enough for the payload to be written and the trailer appended.
+ */
+function createDataVariantHtmlStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(0));
+      controller.close();
     },
-    getParams: () => params,
-    setLocation: () => {},
-    startNavigation: () => {
-      throw new Error("Navigation not supported during SSR");
-    },
-    abortNavigation: () => {},
-    startAction: () => {
-      throw new Error("Actions not supported during SSR");
-    },
-    abortAllActions: () => {},
-    getCurrentNavigation: () => null,
-    getInflightActions: () => new Map(),
-    hadAnyConcurrentActions: () => false,
-  };
+  });
+}
+
+/**
+ * Options for the captureShellHTML function returned by
+ * {@link createShellCaptureHandler}.
+ */
+interface ShellCaptureOptions {
+  /** Caller-provided promise that resolves once the cached content settled. */
+  quiesce: Promise<void>;
+  /** Upper bound on how long to wait for `quiesce`. Default 5000ms. */
+  maxWaitMs?: number;
+}
+
+/**
+ * Result of a successful shell capture. `prelude` is the raw prelude bytes;
+ * `postponed` is React's resume state serialized to JSON, or null when the
+ * shell completed with no holes (the DATA variant).
+ */
+interface ShellCaptureResult {
+  prelude: Uint8Array;
+  postponed: string | null;
+}
+
+/**
+ * Options for the resumeShellHTML function returned by
+ * {@link createShellResumeHandler}.
+ */
+interface ShellResumeOptions {
+  /** JSON from capture; null selects the DATA variant (no fizz). */
+  postponed: string | null;
+  /** Nonce for CSP. */
+  nonce?: string;
 }
 
 /**
@@ -261,81 +348,11 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
       const [rscStream1, rscStream2] = rscStream.tee();
 
-      // Deserialize RSC stream to React tree
-      let payload: Promise<RscPayload> | undefined;
-      let handlesPromise: Promise<HandleData> | undefined;
-      let ssrContextValue: NavigationStoreContextValue | undefined;
-      let rootPromise: Promise<React.ReactNode> | undefined;
-      function SsrRoot() {
-        payload ??= createFromReadableStream<RscPayload>(rscStream1);
-        const resolved = React.use(payload);
-
-        const themeConfig = resolved.metadata?.themeConfig ?? null;
-        const pathname = resolved.metadata?.pathname ?? "/";
-
-        // Await handles before creating SSR event controller so hooks can
-        // read request-local handle data via NavigationStoreContext.
-        // The handles property is an async generator that yields on each push
-        // Memoize the promise since async generators can only be iterated once
-        let handleData: HandleData = {};
-        if (resolved.metadata?.handles) {
-          handlesPromise ??= consumeAsyncGenerator(resolved.metadata.handles);
-          handleData = React.use(handlesPromise);
-        }
-
-        // Create SSR context with request-local pathname/params/handles.
-        ssrContextValue ??= {
-          store: null as any,
-          eventController: createSsrEventController({
-            pathname,
-            params: resolved.metadata?.params,
-            handleData,
-            matched: resolved.metadata?.matched,
-          }),
-          navigate: async () => {},
-          refresh: async () => {},
-          version: resolved.metadata?.version,
-          basename: resolved.metadata?.basename,
-        };
-
-        // Build content tree from segments.
-        // Order must match NavigationProvider: NavigationStoreContext > NonceContext > ThemeProvider > content
-        // Memoize like payload/handles above: renderSegments is async, so
-        // React.use() on a fresh promise suspends and replays SsrRoot, which
-        // would re-run the entire segment-tree build on every initial render.
-        rootPromise ??= Promise.resolve(
-          renderSegments(resolved.metadata?.segments ?? [], {
-            rootLayout: resolved.metadata?.rootLayout,
-          }),
-        );
-        let content: React.ReactNode = React.use(rootPromise);
-
-        // Wrap content with ThemeProvider if theme is enabled
-        if (themeConfig) {
-          content = (
-            <ThemeProvider
-              config={themeConfig}
-              initialTheme={resolved.metadata?.initialTheme}
-            >
-              {content}
-            </ThemeProvider>
-          );
-        }
-
-        // Wrap with NonceContext so client components (e.g. MetaTags) can
-        // apply CSP nonces to inline scripts during SSR. Always present to
-        // match the browser-side NavigationProvider tree shape for hydration.
-        content = (
-          <NonceContext.Provider value={nonce}>{content}</NonceContext.Provider>
-        );
-
-        // Wrap with NavigationStoreContext for useNavigation hook
-        return (
-          <NavigationStoreContext.Provider value={ssrContextValue!}>
-            {content}
-          </NavigationStoreContext.Provider>
-        );
-      }
+      const SsrRoot = createSsrRootComponent({
+        createFromReadableStream,
+        rscStream: rscStream1,
+        nonce,
+      });
 
       // Get bootstrap script content
       const bootstrapScriptContent = await loadBootstrapScriptContent();
@@ -359,16 +376,196 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
       return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
     } catch (error) {
-      // Invoke onError callback if provided
-      if (onError) {
-        const errorObj =
-          error instanceof Error ? error : new Error(String(error));
-        try {
-          onError(errorObj, { phase: "rendering" });
-        } catch (callbackError) {
-          console.error("[SSRHandler.onError] Callback error:", callbackError);
-        }
+      reportRenderError(onError, error);
+      throw error;
+    }
+  };
+}
+
+/**
+ * Create the PPR shell capture handler.
+ *
+ * captureShellHTML prerenders the shell over the (cached, loader-masked) Flight
+ * stream, aborts once the shell settles, and returns the prelude bytes plus the
+ * postponed resume state for storage. The stored pair is later served by
+ * {@link createShellResumeHandler}. See docs/design/ppr-shell-resume.md.
+ *
+ * Throws at creation if `deps.prerender` is missing — capture cannot run
+ * without react-dom/static.edge's prerender.
+ */
+export function createShellCaptureHandler<TEnv = unknown>(
+  deps: SSRDependencies<TEnv>,
+) {
+  const { createFromReadableStream, loadBootstrapScriptContent, prerender } =
+    deps;
+
+  if (!prerender) {
+    throw new Error(
+      "[createShellCaptureHandler] Missing `prerender` dependency (react-dom/static.edge). " +
+        "PPR shell capture requires the prerender export; wire it in the SSR virtual entry.",
+    );
+  }
+
+  /**
+   * Prerender the shell and return the stored artifacts, or null when the
+   * shell degraded (root postpone / hung handles) and must not be cached.
+   *
+   * @param rscStream - Flight stream to render the shell over. Not teed and not
+   *   piped through injectRSCPayload: the hydration payload is produced fresh
+   *   per request by the resume/serve pass.
+   * @param opts - quiesce signal and maxWait guard.
+   */
+  return async function captureShellHTML(
+    rscStream: ReadableStream<Uint8Array>,
+    opts: ShellCaptureOptions,
+  ): Promise<ShellCaptureResult | null> {
+    const maxWaitMs = opts.maxWaitMs ?? DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS;
+
+    // No nonce (nonce'd requests never reach capture); no formState.
+    const SsrRoot = createSsrRootComponent({
+      createFromReadableStream,
+      rscStream,
+    });
+
+    const bootstrapScriptContent = await loadBootstrapScriptContent();
+
+    // Start prerender first, then run the abort schedule concurrently. When
+    // holes are pending, prerender's promise settles only after abort(); when
+    // the shell completes with no holes it settles on its own and the later
+    // abort() is a harmless no-op (the DATA variant).
+    const controller = new AbortController();
+    const prerenderPromise = prerender(<SsrRoot />, {
+      signal: controller.signal,
+      bootstrapScriptContent,
+    });
+
+    // Wait for the caller's quiesce signal. By the time it resolves the Flight
+    // input is byte-quiet and FROZEN by the capture gate (shell-capture.ts
+    // gateFlightForCapture), so there is no wall-clock debounce here — maxWaitMs
+    // is only the pathological guard for a shell that never goes quiet (a root
+    // postpone / hung handle), and should never fire in tests.
+    const timer = createCancelableTimeout(maxWaitMs);
+    try {
+      await Promise.race([opts.quiesce, timer.promise]);
+    } finally {
+      timer.cancel();
+    }
+    // Fixed task hops before the abort: give React's fizz worker turns to flush
+    // the now-complete shell and mark the still-pending boundaries as POSTPONED
+    // rather than errored. Deterministic (the byte set is already frozen), so a
+    // fixed count of turns suffices — no wall-clock.
+    for (let i = 0; i < POST_QUIESCE_TASK_HOPS; i++) {
+      await macrotask();
+    }
+    controller.abort();
+
+    // A hard prerender rejection (fatal shell error) propagates. Expected
+    // degradation surfaces three ways and all return null: a trivial prelude
+    // (sanity gate below), the prerender REJECTING with an AbortError, or the
+    // prelude STREAM erroring with the abort reason mid-read — both abort
+    // shapes happen when our own abort lands before the shell completed (seen
+    // on dev cold paths, where module transform / first-render latency
+    // outlasts flight quiesce; a later request re-captures against warm
+    // modules and succeeds).
+    let prelude: Uint8Array;
+    let postponed: unknown;
+    try {
+      const result = await prerenderPromise;
+      prelude = await readStreamToUint8Array(result.prelude);
+      postponed = result.postponed;
+    } catch (error) {
+      // Name-based match: the rejection is a DOMException on workerd/Node,
+      // which is not an Error subclass there, so instanceof Error would let
+      // the abort escape as a spurious reported error.
+      if (
+        controller.signal.aborted &&
+        (error as { name?: string } | null)?.name === "AbortError"
+      ) {
+        return null;
       }
+      throw error;
+    }
+
+    // Sanity gate: a prelude with no `<body` is the no-shell failure mode.
+    // Return null and store nothing; the request falls back to axis 1 and a
+    // later request re-captures. The dominant real-world cause is a loader
+    // route WITHOUT a route-level loading() boundary: renderSegments' loading-
+    // less branch awaits loader data at TREE-BUILD, so the masked loader pins
+    // the whole tree above <body> (root postpone). Root-postponing layouts and
+    // hung handles degrade the same way. shell-capture.ts logs a once-per-key
+    // warning so the eternal-MISS shape is diagnosable.
+    if (!new TextDecoder().decode(prelude).includes("<body")) {
+      return null;
+    }
+
+    return {
+      prelude,
+      postponed: postponed == null ? null : JSON.stringify(postponed),
+    };
+  };
+}
+
+/**
+ * Create the PPR shell resume handler.
+ *
+ * resumeShellHTML produces the per-request live portion of the document: for a
+ * postponed shell it resumes fizz over a fresh SsrRoot to emit only the holes;
+ * for the DATA variant it emits only the fresh Flight payload scripts. The
+ * caller (shell-cache middleware) prepends the stored prelude bytes to form the
+ * composite response. See docs/design/ppr-shell-resume.md.
+ */
+export function createShellResumeHandler<TEnv = unknown>(
+  deps: SSRDependencies<TEnv>,
+) {
+  const { createFromReadableStream, injectRSCPayload, resume, onError } = deps;
+
+  /**
+   * @param rscStream - Fresh full Flight stream for this request.
+   * @param opts - postponed state (null = DATA variant) and optional nonce.
+   */
+  return async function resumeShellHTML(
+    rscStream: ReadableStream<Uint8Array>,
+    opts: ShellResumeOptions,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const { postponed, nonce } = opts;
+
+    try {
+      if (postponed === null) {
+        // DATA variant: the stored prelude is the complete shell. No fizz runs;
+        // feed injectRSCPayload a minimal HTML stream so its flush appends the
+        // fresh Flight payload scripts after the shell. The stream must emit at
+        // least one chunk — see createDataVariantHtmlStream.
+        return createDataVariantHtmlStream().pipeThrough(
+          injectRSCPayload(rscStream, { nonce }),
+        );
+      }
+
+      if (!resume) {
+        throw new Error(
+          "[createShellResumeHandler] Missing `resume` dependency (react-dom/server.edge). " +
+            "Resuming a postponed shell requires the resume export; wire it in the SSR virtual entry.",
+        );
+      }
+
+      // Tee: one branch deserializes into the SsrRoot VDOM that resume() replays
+      // (a fresh instance is fine — replay matches structure, not identity), the
+      // other feeds the fresh hydration payload to injectRSCPayload.
+      const [rscStream1, rscStream2] = rscStream.tee();
+
+      const SsrRoot = createSsrRootComponent({
+        createFromReadableStream,
+        rscStream: rscStream1,
+        nonce,
+      });
+
+      const resumed = await resume(<SsrRoot />, JSON.parse(postponed), {
+        onError: (error) => reportRenderError(onError, error),
+        nonce,
+      });
+
+      return resumed.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
+    } catch (error) {
+      reportRenderError(onError, error);
       throw error;
     }
   };

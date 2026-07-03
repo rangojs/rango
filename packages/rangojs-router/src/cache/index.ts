@@ -4,6 +4,7 @@ export type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
+  ShellCacheEntry,
   SerializedSegmentData,
   SegmentHandleData,
 } from "./types.js";
@@ -42,5 +43,10 @@ export {
   createDocumentCacheMiddleware,
   type DocumentCacheOptions,
 } from "./document-cache.js";
+
+export {
+  createShellCacheMiddleware,
+  type ShellCacheOptions,
+} from "./shell-cache.js";
 
 export type { CacheErrorCategory } from "./cache-error.js";
