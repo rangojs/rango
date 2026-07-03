@@ -179,6 +179,11 @@ export const router = createRouter<AppEnv>({
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },
+    // PPR capture-data-snapshot drift fixture (urls/shell-cache.tsx): a cached
+    // shell value that expires FAST (ttl 1, swr 0 so it is fully gone after 1s,
+    // not merely stale) — the underlying entry drifts between capture and a later
+    // HIT, exercising the snapshot's parity guarantee. See ppr-shell-resume.md.
+    drift: { ttl: 1, swr: 0 },
     // Opt-in: a stale entry re-executes in the foreground during an action's
     // revalidation render (fresh action response), instead of SWR. ttl=2 so the
     // stale window opens fast.

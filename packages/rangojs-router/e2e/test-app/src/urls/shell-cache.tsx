@@ -8,6 +8,7 @@ import {
   makeBakedHandlePush,
   makeNestedHandlePush,
   makePhysicsPromise,
+  getDriftStamp,
 } from "./shell-cache.defs.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
@@ -85,6 +86,34 @@ function ShellCacheStreamPage() {
   return <ShellCacheStream loader={ShellStreamLoader} />;
 }
 
+// Async server component that awaits the drifting cached stamp. Rendered directly
+// in the shell layout (above loading()), so its value is BAKED into the captured
+// prelude. On a HIT after the "drift" profile's 1s ttl expired, the capture data
+// snapshot replays the capture-time value, so the fresh hydration payload matches
+// the frozen prelude — no mismatch, no content flash.
+async function DriftStamp({ stamp }: { stamp: Promise<string> }) {
+  return <p data-testid="drift-stamp">{await stamp}</p>;
+}
+
+// Drift fixture layout: baked (shell) drift stamp + the live price hole via the
+// page's Outlet. The stamp drifts once its short-ttl cache entry expires; the
+// price loader stays a live hole (seq advances every request). See
+// docs/design/ppr-shell-resume.md ("the capture data snapshot").
+function ShellDriftLayout(ctx: HandlerContext) {
+  const stamp = getDriftStamp(ctx);
+  return (
+    <main data-testid="shell-drift-page">
+      <h1 data-testid="shell-drift-header">Shell Drift Demo</h1>
+      <DriftStamp stamp={stamp} />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellDriftPricePage() {
+  return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
 export const shellCachePatterns = urls(({ path, layout, loader, loading }) => [
   layout(ShellCacheLayout, () => [
     // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
@@ -122,6 +151,22 @@ export const shellCachePatterns = urls(({ path, layout, loader, loading }) => [
       ShellCacheStreamPage,
       { name: "shellCacheNoHole", ppr: true },
       () => [loader(ShellStreamLoader)],
+    ),
+  ]),
+  // Capture-data-snapshot DRIFT route: the shell bakes a value from a short-ttl
+  // cache() (getDriftStamp, "drift" profile, ttl 1s); the shell's own ttl is 300.
+  // After the inner ttl expires, a HIT must still show the CAPTURE-time stamp
+  // (seeded from the snapshot) — byte parity with the frozen prelude — while the
+  // price loader hole stays live. See docs/design/ppr-shell-resume.md.
+  layout(ShellDriftLayout, () => [
+    path(
+      "/shell-cache/drift",
+      ShellDriftPricePage,
+      { name: "shellCacheDrift", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        loader(ShellPriceLoader),
+        loading(<div data-testid="drift-price-fallback">Loading price...</div>),
+      ],
     ),
   ]),
 ]);

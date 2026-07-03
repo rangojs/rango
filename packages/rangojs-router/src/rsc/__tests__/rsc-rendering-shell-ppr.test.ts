@@ -23,8 +23,10 @@ import type { ShellCacheEntry } from "../../cache/types.js";
 import {
   createRequestContext,
   runWithRequestContext,
+  getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import type { ShellSnapshotRecord } from "../../cache/types.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
@@ -309,6 +311,125 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     // The payload (SSR resume tree AND client hydration) carries the CAPTURED
     // theme, not the visitor's — trees agree with the frozen prelude.
     expect((seen[0] as any).metadata.initialTheme).toBe("light");
+  });
+
+  // Capture data snapshot: on a HIT the tail render (a FULL fresh render for
+  // hydration) reads through a SeededShellStore overlay so every cache-store key
+  // the capture pinned returns its capture-time value AS FRESH — the fresh
+  // payload matches the frozen prelude even after the underlying entries drifted.
+  // Everything not pinned falls through to the real store and stays live. See
+  // cache/shell-snapshot.ts and docs/design/ppr-shell-resume.md.
+  it("seeds the tail render's cache reads from the snapshot (pinned value served fresh, real store untouched)", async () => {
+    const store = new MemorySegmentCacheStore();
+    // The real store has NO "it1" entry — proving the SEED serves it (the capture
+    // pinned it), not a live read. This is exactly the drift case: at HIT time the
+    // underlying cache has expired/changed, but the shell must stay byte-identical.
+    const snapshot: ShellSnapshotRecord[] = [
+      { family: "item", key: "it1", value: { value: "PINNED-AT-CAPTURE" } },
+    ];
+    await store.putShell(KEY, shellEntry({ snapshot }), 300, 30);
+    const getItemSpy = vi.spyOn(store, "getItem");
+
+    const ssrModule = fullSsrModule();
+    const { ctx } = makeCtx(ssrModule, "stream");
+    const reads: Promise<unknown>[] = [];
+    const seen: (string | undefined)[] = [];
+    (ctx as any).renderToReadableStream = () => {
+      // Model a shell "use cache" read during the tail render — it must resolve
+      // to the pinned value, and must NOT reach the real store.
+      const p = getRequestContext()._cacheStore!.getItem!("it1").then((r) =>
+        seen.push(r?.value),
+      );
+      reads.push(p);
+      return new ReadableStream();
+    };
+
+    const request = new Request("http://localhost/p", {
+      headers: { accept: "text/html" },
+    });
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    }) as RequestContext<unknown>;
+    reqCtx._cacheStore = store as any;
+    (reqCtx as any)._classifiedRoute = {
+      manifestEntry: { type: "route", ppr: true },
+    };
+
+    const response = await runWithRequestContext(reqCtx, () =>
+      handleRscRendering(
+        ctx,
+        request,
+        {},
+        url,
+        false,
+        reqCtx._handleStore,
+        undefined,
+      ),
+    );
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    await readAll(response.body!); // drive the tail render
+    await Promise.all(reads);
+
+    expect(seen).toEqual(["PINNED-AT-CAPTURE"]);
+    // The pinned key never reached the real store (served fresh from the seed).
+    expect(getItemSpy).not.toHaveBeenCalledWith("it1");
+    // The shared foreground store is untouched: the seed lives on a derived ctx.
+    expect(reqCtx._cacheStore).toBe(store);
+  });
+
+  it("a HIT without a snapshot reads the real store (pre-snapshot behavior preserved)", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.setItem("it1", "LIVE", { ttl: 60 });
+    await store.putShell(KEY, shellEntry(), 300, 30); // no snapshot
+    const getItemSpy = vi.spyOn(store, "getItem");
+
+    const ssrModule = fullSsrModule();
+    const { ctx } = makeCtx(ssrModule, "stream");
+    const reads: Promise<unknown>[] = [];
+    const seen: (string | undefined)[] = [];
+    (ctx as any).renderToReadableStream = () => {
+      const p = getRequestContext()._cacheStore!.getItem!("it1").then((r) =>
+        seen.push(r?.value),
+      );
+      reads.push(p);
+      return new ReadableStream();
+    };
+
+    const request = new Request("http://localhost/p", {
+      headers: { accept: "text/html" },
+    });
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    }) as RequestContext<unknown>;
+    reqCtx._cacheStore = store as any;
+    (reqCtx as any)._classifiedRoute = {
+      manifestEntry: { type: "route", ppr: true },
+    };
+
+    await runWithRequestContext(reqCtx, () =>
+      handleRscRendering(
+        ctx,
+        request,
+        {},
+        url,
+        false,
+        reqCtx._handleStore,
+        undefined,
+      ),
+    ).then((r) => readAll(r.body!));
+    await Promise.all(reads);
+
+    // No overlay: the tail read the live store.
+    expect(seen).toEqual(["LIVE"]);
+    expect(getItemSpy).toHaveBeenCalledWith("it1");
   });
 
   it("a stale (SWR) hit serves the stale shell AND schedules a background recapture", async () => {

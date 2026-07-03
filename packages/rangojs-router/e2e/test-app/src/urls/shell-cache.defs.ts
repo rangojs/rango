@@ -1,4 +1,23 @@
 import { createLoader, createHandle } from "@rangojs/router";
+import type { HandlerContext } from "@rangojs/router";
+
+// Capture-data-snapshot DRIFT fixture (docs/design/ppr-shell-resume.md). A cached
+// value baked into the PPR shell (above loading(), so it is prelude material) via
+// the "drift" profile — ttl 1s, swr 0, so the underlying entry is fully GONE one
+// second after capture. Every fresh execution returns a DISTINCT stamp, so a HIT
+// after expiry would recompute a different value and drift from the frozen
+// prelude — the exact hydration hazard the capture data snapshot pins. ctx is
+// tainted, so the cache key is scoped per-URL (probe isolation like the shells).
+let driftExecutions = 0;
+
+export async function getDriftStamp(ctx: HandlerContext): Promise<string> {
+  "use cache: drift";
+  // ctx is a tainted key arg (excluded from the value, scopes the key by
+  // pathname+search); reference it so the transform keeps it.
+  void ctx.pathname;
+  driftExecutions += 1;
+  return `drift-${driftExecutions}`;
+}
 
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to

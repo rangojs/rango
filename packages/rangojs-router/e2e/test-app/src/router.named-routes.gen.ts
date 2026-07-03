@@ -322,6 +322,7 @@ export const NamedRoutes = {
   shellCache: "/shell-cache",
   shellCacheAction: "/shell-cache-action",
   shellCacheActionPe: "/shell-cache-action/pe",
+  shellCacheDrift: "/shell-cache/drift",
   shellCacheNoHole: "/shell-cache/no-hole",
   shellCacheStream: "/shell-cache/stream",
   shellSecure: "/shell-secure",

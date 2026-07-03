@@ -211,6 +211,10 @@ interface KVShellEnvelope {
   t?: string[];
   /** Timestamp when tags were attached (ms epoch) */
   ta?: number;
+  /** initialTheme the capture render was built with (resume theme fidelity) */
+  i?: string;
+  /** Capture data snapshot: recorded cache-store hits/writes for HIT parity */
+  sn?: import("../types.js").ShellSnapshotRecord[];
 }
 
 /**
@@ -1651,6 +1655,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           prelude: envelope.p,
           postponed: envelope.po,
           reactVersion: envelope.rv,
+          initialTheme: envelope.i,
+          snapshot: envelope.sn,
           createdAt: envelope.c,
         },
         shouldRevalidate,
@@ -1715,6 +1721,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               e: staleAt + swrWindow * 1000,
               t: tags,
               ta: taggedAt,
+              i: entry.initialTheme,
+              sn: entry.snapshot,
             };
             return this.kv!.put(kvKey, JSON.stringify(envelope), {
               expirationTtl: totalTtl,

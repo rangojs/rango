@@ -12,6 +12,7 @@ import {
   getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
 
@@ -1007,6 +1008,174 @@ describe("runShellCapture", () => {
     const tags = putShell.mock.calls[0]![4];
     // Both the operational option tag and the render-collected tag are present.
     expect(new Set(tags)).toEqual(new Set(["op:x", "collected:y"]));
+  });
+
+  // Capture data snapshot: a cache read-HIT the capture render performs through
+  // the ambient (recording) store is recorded onto entry.snapshot, so a HIT can
+  // replay it and match the frozen prelude. See cache/shell-snapshot.ts.
+  it("records a cache read-HIT performed during the capture render into entry.snapshot", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.setItem("use-cache:x", "CAPVAL", { ttl: 60, tags: ["t1"] });
+    const putShell = vi.spyOn(store, "putShell");
+
+    // Model the shell "use cache" read: the render reads the item through the
+    // ambient store (which, under capture, is the recording wrapper). The shell
+    // only quiesces once that read resolves, so captureShellHTML awaits it.
+    let readDone: Promise<unknown> = Promise.resolve();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => {
+        await readDone;
+        return { prelude: enc("<html><body>x</body></html>"), postponed: null };
+      }),
+    );
+    (ctx as any).renderToReadableStream = () => {
+      readDone = getRequestContext()._cacheStore!.getItem!("use-cache:x");
+      return emptyStream();
+    };
+    const reqCtx = makeReqCtx();
+    (reqCtx as any)._cacheStore = store;
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      reqCtx,
+      ssrModule,
+      { key: "/p:shell", ttl: 300, store },
+      0,
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const entry = putShell.mock.calls[0]![1];
+    expect(entry.snapshot).toBeDefined();
+    const rec = entry.snapshot!.find((r) => r.key === "use-cache:x")!;
+    expect(rec.family).toBe("item");
+    expect((rec.value as any).value).toBe("CAPVAL");
+    expect((rec.value as any).tags).toEqual(["t1"]);
+    // The shared foreground store is untouched by the recording wrapper.
+    expect((reqCtx as any)._cacheStore).toBe(store);
+  });
+
+  it("leaves entry.snapshot undefined when the capture render touches no cache store", async () => {
+    const store = new MemorySegmentCacheStore();
+    const putShell = vi.spyOn(store, "putShell");
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({
+        prelude: enc("<html><body>x</body></html>"),
+        postponed: null,
+      })),
+    );
+    const reqCtx = makeReqCtx();
+    (reqCtx as any)._cacheStore = store;
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      reqCtx,
+      ssrModule,
+      { key: "/p:shell", store },
+      0,
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    expect(putShell.mock.calls[0]![1].snapshot).toBeUndefined();
+  });
+
+  // WRITE BARRIER (the mini shell-manifest clobber regression): the capture must
+  // settle the foreground's already-scheduled background tasks — its deferred
+  // ring-3/ring-1 cache writes — BEFORE matching, so its cache reads observe the
+  // foreground's generation deterministically instead of racing the write. A
+  // capture that raced and MISSed would re-execute the route handler (bumping
+  // module-level state) and, via the synthetic onResponse fire, overwrite the
+  // foreground's ring-3 entry with its own re-render (last-write-wins clobber).
+  it("write barrier: settles foreground waitUntil tasks (incl. nested) before the capture match", async () => {
+    const putShell = makePutShell();
+    const order: string[] = [];
+    const reqCtx = makeReqCtx();
+
+    // Foreground deferred cache write, scheduled BEFORE the capture (the real
+    // shape: onResponse -> waitUntil(cacheRoute) -> nested waitUntil(store.set)).
+    reqCtx.waitUntil(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      order.push("outer-write");
+      // Nested write scheduled from inside the settling task (cacheRoute's
+      // actual store.set) — the drain must pick it up iteratively.
+      reqCtx.waitUntil(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        order.push("nested-write");
+      });
+    });
+
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({
+        prelude: enc("<html><body>x</body></html>"),
+        postponed: null,
+      })),
+    );
+    const originalMatch = ctx.router.match;
+    (ctx.router as any).match = vi.fn(async (request: Request, opts: any) => {
+      order.push("capture-match");
+      return originalMatch(request, opts);
+    });
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      reqCtx,
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any },
+      0,
+    );
+
+    // Both foreground writes settled BEFORE the capture's match — the ordering
+    // edge, not a narrower get-before-set race.
+    expect(order).toEqual(["outer-write", "nested-write", "capture-match"]);
+    expect(putShell).toHaveBeenCalledTimes(1);
+  });
+
+  it("write barrier is bounded: a hung foreground task does not stall the capture past the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const putShell = makePutShell();
+      const reqCtx = makeReqCtx();
+      // A tracked task that never settles (pathological consumer waitUntil).
+      reqCtx.waitUntil(() => new Promise<void>(() => {}));
+
+      const { ctx, ssrModule } = makeCtx(
+        okMatch,
+        vi.fn(async () => ({
+          prelude: enc("<html><body>x</body></html>"),
+          postponed: null,
+        })),
+      );
+
+      const run = runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        reqCtx,
+        ssrModule,
+        { key: "/p:shell", store: { putShell } as any },
+        0,
+      );
+      await vi.runAllTimersAsync(); // fires the barrier's deadline guard
+      await run;
+
+      // The capture proceeded (degraded to the pre-barrier behavior) instead of
+      // hanging on the stuck task.
+      expect(putShell).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not mask via _shellCaptureRun on the caller's foreground context", async () => {

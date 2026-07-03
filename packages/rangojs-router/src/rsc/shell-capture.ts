@@ -24,10 +24,19 @@ import { observePhase, PHASES } from "../router/instrument.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
+  UNTRACKED_BACKGROUND_TASK,
   type RequestContext,
 } from "../server/request-context.js";
 import { createHandleStore, type HandleStore } from "../server/handle-store.js";
-import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
+import type {
+  ShellCacheEntry,
+  SegmentCacheStore,
+  ShellSnapshotRecord,
+} from "../cache/types.js";
+import {
+  RecordingShellStore,
+  getRecordingStore,
+} from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { RscPayload, SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
@@ -58,6 +67,71 @@ const FLIGHT_QUIET_HOPS = 2;
 
 /** Default upper bound on the capture prerender wait before forcing the abort. */
 const SHELL_CAPTURE_MAX_WAIT_MS = 5000;
+
+/**
+ * Upper bound on waiting for the capture's DEFERRED cache writes to settle before
+ * draining the snapshot. Cache writes run under waitUntil (fire-and-forget on
+ * Node, executionContext on workerd), so a MISS-at-capture value's setItem/set —
+ * hence its snapshot record — can land after the shell has quiesced. We collect
+ * those write promises and await them here so the written value is pinned. Kept
+ * short: a pathological slow write must never stall the background capture; a key
+ * that does not settle in time is simply left unpinned (it drifts, the
+ * pre-snapshot behavior) rather than hanging. Reads that HIT are recorded
+ * synchronously during the render and do not depend on this.
+ */
+const SHELL_SNAPSHOT_WRITE_SETTLE_MS = 1000;
+
+/**
+ * Upper bound on the pre-render WRITE BARRIER: before the capture's match/render,
+ * settle the background tasks the FOREGROUND request already scheduled — its
+ * deferred ring-3 cacheRoute and ring-1 setItem writes all go through
+ * reqCtx.waitUntil, and every one of them is scheduled BEFORE scheduleShellCapture
+ * runs (the response, and its onResponse callbacks, are committed first). Draining
+ * them turns the capture's cache reads from a RACE into an ORDERING EDGE: the
+ * capture deterministically observes the foreground's cache generation, replays it
+ * (handler skipped, module-level side effects untouched), and records THAT
+ * generation into the snapshot — so prelude, snapshot, and ring-3 all agree on the
+ * foreground's generation and the capture can never clobber a foreground-produced
+ * entry with a re-render of its own. Scar tissue: without this, the capture's
+ * ring-3 lookup could land between the foreground write chain's serialization and
+ * its store.set, MISS, re-execute the route handler (bumping module-level
+ * counters), and — via the synthetic onResponse fire below — overwrite the
+ * foreground's entry (the mini shell-manifest regression). Bounded: a slow
+ * consumer waitUntil task must never stall the background capture; on timeout the
+ * capture proceeds with the pre-barrier (racy) behavior.
+ */
+const SHELL_CAPTURE_WRITE_BARRIER_MS = 1500;
+
+/**
+ * Settle the tracked background tasks on `reqCtx._pendingBackgroundTasks`,
+ * ITERATIVELY: a settled task can have scheduled a nested one (cache-store's
+ * cacheRoute outer task schedules the actual store.set in a second waitUntil), so
+ * each awaited batch may append more. Loop until no new tasks appear or the
+ * deadline passes. The capture's own task never enters the list
+ * (UNTRACKED_BACKGROUND_TASK), so the loop terminates.
+ */
+async function settleTrackedBackgroundTasks(
+  reqCtx: RequestContext<any>,
+  timeoutMs: number,
+): Promise<void> {
+  const tasks = reqCtx._pendingBackgroundTasks;
+  if (!tasks) return;
+  const deadline = Date.now() + timeoutMs;
+  let seen = 0;
+  while (tasks.length > seen) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return;
+    const batch = tasks.slice(seen);
+    seen = tasks.length;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const guard = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, remaining);
+      (timer as { unref?: () => void }).unref?.();
+    });
+    await Promise.race([Promise.allSettled(batch).then(() => {}), guard]);
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /**
  * Delay before the in-place retry of a capture that produced no usable shell.
@@ -384,7 +458,7 @@ export function scheduleShellCapture(
   // key per window per isolate). Expired entries self-evict inside the check.
   if (isCaptureBackedOff(key)) return;
   inFlightCaptures.add(key);
-  runBackground(reqCtx, async () => {
+  const captureTask = async () => {
     try {
       const outcome = await runShellCapture(
         ctx,
@@ -410,7 +484,15 @@ export function scheduleShellCapture(
     } finally {
       inFlightCaptures.delete(key);
     }
-  });
+  };
+  // The capture's own task must NOT enter reqCtx._pendingBackgroundTasks: the
+  // capture drains that list before rendering (the write-barrier ordering edge),
+  // and awaiting its own still-running promise would burn the whole barrier
+  // deadline on every capture.
+  (captureTask as { [UNTRACKED_BACKGROUND_TASK]?: boolean })[
+    UNTRACKED_BACKGROUND_TASK
+  ] = true;
+  runBackground(reqCtx, captureTask);
 }
 
 /**
@@ -539,6 +621,17 @@ async function attemptCapture(
   ssrModule: SSRModule,
   descriptor: ShellCaptureDescriptor,
 ): Promise<CaptureAttemptOutcome> {
+  // WRITE BARRIER (ordering edge, not a narrower race): settle the foreground's
+  // already-scheduled background tasks — its deferred ring-3/ring-1 cache writes —
+  // BEFORE this attempt's match/render, so the capture's cache reads observe the
+  // foreground's generation deterministically. Contract: a capture must never
+  // clobber a ring-3 entry the foreground produced; with the barrier, the
+  // capture's ring-3 lookup HITs the foreground's entry and REPLAYS it (handler
+  // skipped, cache-store middleware's write path gated off by state.cacheHit), so
+  // prelude, snapshot, and ring-3 agree on the foreground's generation. Runs per
+  // attempt (the retry re-checks; already-settled promises are free).
+  await settleTrackedBackgroundTasks(reqCtx, SHELL_CAPTURE_WRITE_BARRIER_MS);
+
   const freshHandleStore = createHandleStore();
   freshHandleStore.onError = reqCtx._handleStore.onError;
 
@@ -548,6 +641,35 @@ async function attemptCapture(
   derivedCtx._transitionWhen = [];
   derivedCtx._shellCaptureRun = true;
   derivedCtx._metricsStore = undefined;
+  // Own onResponse list so the capture's match-middleware callbacks (the ring-3
+  // segment cache write registers here) are ISOLATED from the foreground's shared
+  // array AND can be fired by captureAndStoreShell. The segment write is gated
+  // behind onResponse, which the capture never triggers (it builds no Response) —
+  // without firing it, a ring-3 cache() MISS at capture renders fresh into the
+  // prelude but is never written, so it is never recorded and drifts on a HIT.
+  derivedCtx._onResponseCallbacks = [];
+
+  // Capture data snapshot: read every cache-store hit/write through a recording
+  // wrapper on the DERIVED context's store (own property, so the shared
+  // reqCtx._cacheStore is untouched — the snapshot is per-capture). Its records
+  // ride inside the ShellCacheEntry so a HIT can reproduce the shell's cached
+  // content byte-identically. See cache/shell-snapshot.ts and the design doc.
+  //
+  // Cache writes are deferred (waitUntil): a MISS-at-capture value's setItem/set
+  // — hence its record — would otherwise land after the shell quiesces. Override
+  // the derived context's waitUntil to COLLECT those write promises (still
+  // forwarding to the parent so the write persists and the worker stays alive),
+  // then captureAndStoreShell awaits them before draining. Reads that HIT are
+  // recorded synchronously during the render and need none of this.
+  if (reqCtx._cacheStore) {
+    const recordingStore = new RecordingShellStore(reqCtx._cacheStore);
+    derivedCtx._cacheStore = recordingStore;
+    derivedCtx.waitUntil = (fn: () => Promise<void>): void => {
+      const p = Promise.resolve().then(fn);
+      recordingStore.trackWrite(p);
+      reqCtx.waitUntil(() => p);
+    };
+  }
 
   return runWithRequestContext(derivedCtx, async () => {
     const match = await ctx.router.match(request, { env });
@@ -689,6 +811,42 @@ async function captureAndStoreShell(
     // them. The _cacheStore fallback covers a flag armed without a store (tests).
     // reactVersion is read from the same React.version import the middleware
     // validates reads against, so capture and serve always agree.
+    // Fire the capture's isolated onResponse callbacks with a synthetic 200 so
+    // the ring-3 segment cache write (cacheScope.cacheRoute, registered via
+    // onResponse by the cache-store match-middleware and gated on a 200) runs
+    // DURING capture, routed through the recording store. The foreground path
+    // never fires for the capture — it builds no Response — so without this a
+    // cache() SEGMENT that MISSED at capture would be rendered fresh into the
+    // prelude yet never written, hence never recorded, and would drift on a HIT
+    // (an item-family "use cache" write already runs inline during the render, so
+    // it needs none of this; only segment writes are onResponse-gated). The
+    // derived context's own _onResponseCallbacks holds only capture match-
+    // middleware callbacks (HTTP middleware never runs for a capture), so firing
+    // them is safe. Best-effort: a throwing callback must not fail the capture.
+    const responseCallbacks = reqCtx._onResponseCallbacks;
+    if (responseCallbacks && responseCallbacks.length > 0) {
+      const synthetic = new Response(null, { status: 200 });
+      for (const cb of responseCallbacks) {
+        try {
+          cb(synthetic);
+        } catch {
+          // A capture-time cache write that throws is degradation, not failure.
+        }
+      }
+    }
+
+    // Drain the capture data snapshot from the recording store on the derived
+    // context. Await the deferred cache writes first so a MISS-at-capture value
+    // (setItem/set scheduled under waitUntil, including the segment write just
+    // fired) is pinned, not just read-hits. When no recording store is installed
+    // (unit tests that call this directly), there is simply no snapshot.
+    const recording = getRecordingStore(reqCtx._cacheStore);
+    let snapshot: ShellSnapshotRecord[] | undefined;
+    if (recording) {
+      await recording.settleWrites(SHELL_SNAPSHOT_WRITE_SETTLE_MS);
+      snapshot = recording.drainSnapshot();
+    }
+
     const store = capture.store ?? reqCtx._cacheStore;
     if (store?.putShell) {
       try {
@@ -704,6 +862,7 @@ async function captureAndStoreShell(
           // it so the resume tree matches the frozen prelude — see
           // ShellCacheEntry.initialTheme.
           initialTheme: reqCtx.theme,
+          snapshot,
           createdAt: Date.now(),
         };
         await store.putShell(

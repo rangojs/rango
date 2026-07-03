@@ -9,7 +9,9 @@
 import {
   getRequestContext,
   setRequestContextParams,
+  runWithRequestContext,
 } from "../server/request-context.js";
+import { SeededShellStore } from "../cache/shell-snapshot.js";
 import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
@@ -419,13 +421,13 @@ function serveShellHit(
 ): Response {
   const preludeBytes = base64ToBytes(entry.prelude);
 
-  const tailPromise: Promise<
-    ReadableStream<Uint8Array> | { redirect: string }
-  > = (async () => {
+  const renderTail = async (
+    activeCtx: RequestContext<any>,
+  ): Promise<ReadableStream<Uint8Array> | { redirect: string }> => {
     const match = await ctx.router.match(request, { env });
     if (match.redirect) return { redirect: match.redirect };
     setRequestContextParams(match.params, match.routeName);
-    const payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
+    const payload = buildFullPayload(match, ctx, url, activeCtx, handleStore);
     // Theme fidelity for resume: initialTheme is per-request METADATA (the
     // visitor's cookie), but React resume requires the tree above the holes to
     // match the frozen prelude, which was rendered with the CAPTURE's
@@ -452,6 +454,30 @@ function serveShellHit(
         nonce: undefined,
       }),
     );
+  };
+
+  const tailPromise: Promise<
+    ReadableStream<Uint8Array> | { redirect: string }
+  > = (async () => {
+    // Capture data snapshot seeding (docs/design/ppr-shell-resume.md): the tail
+    // is a FULL FRESH render whose payload must match the frozen prelude. If the
+    // capture recorded a snapshot, run the tail through a SeededShellStore
+    // overlay so every cache-store read the capture pinned returns its
+    // capture-time value AS FRESH — the shell region reproduces byte-identically
+    // even after the underlying cache entries drifted (expired/recomputed/
+    // tag-invalidated). Everything not pinned (the holes — masked loaders were
+    // never recorded) falls through to the real store and stays LIVE. The
+    // overlay lives on a DERIVED context (own _cacheStore), so the shared reqCtx
+    // is untouched; an entry without a snapshot keeps the pre-snapshot behavior.
+    if (entry.snapshot && entry.snapshot.length > 0 && reqCtx._cacheStore) {
+      const seededCtx: RequestContext<any> = Object.create(reqCtx);
+      seededCtx._cacheStore = new SeededShellStore(
+        reqCtx._cacheStore,
+        entry.snapshot,
+      );
+      return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
+    }
+    return renderTail(reqCtx);
   })();
   // The stream below is the only consumer; pre-attach a no-op catch so a tail
   // failure before the stream is pulled never surfaces as an unhandled rejection.
