@@ -9,7 +9,7 @@
  * @testing-library/react, calling setTheme via the context the same way a
  * consumer component would.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import React, { useContext } from "react";
 import { render, act, cleanup } from "@testing-library/react";
 import { ThemeProvider } from "../ThemeProvider.js";
@@ -142,5 +142,95 @@ describe("cross-tab storage handler validity (enableSystem:false)", () => {
     dispatchStorage("purple");
     expect(document.documentElement.classList.contains("purple")).toBe(false);
     expect(document.documentElement.classList.contains("light")).toBe(true);
+  });
+});
+
+describe("post-mount cookie re-sync (PPR shell HIT theme fidelity)", () => {
+  beforeEach(() => {
+    // The G2 suite's setTheme calls persist to localStorage and afterEach only
+    // clears the cookie; the mount re-sync would read that leak.
+    localStorage.clear();
+    document.documentElement.className = "";
+  });
+
+  it("re-syncs state and document from the stored cookie when initialTheme differs", () => {
+    // A PPR shell HIT deliberately hydrates with the CAPTURE's initialTheme
+    // (the resume tree must match the frozen prelude). The visitor's real
+    // theme lives in the cookie; the provider must converge to it after mount.
+    document.cookie = "theme=dark; Path=/";
+    const { ctx } = renderProvider();
+    expect(ctx.theme).toBe("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("keeps initialTheme when no stored theme exists", () => {
+    const { ctx } = renderProvider();
+    expect(ctx.theme).toBe("light");
+  });
+});
+
+// HYDRATION PARITY: the initializer is both the server (SSR/resume) render and
+// the client's hydration render — it must NEVER read cookie/localStorage. The
+// server renders with the payload's initialTheme (on a PPR shell HIT that is
+// the CAPTURE's theme, possibly undefined); if the client initializer read the
+// visitor's stored theme instead, any raw-theme text (a toggle label) would
+// mismatch, hydration would fail, and React's client regeneration would wipe
+// the FOUC-applied class from <html>. This suite pins the first-render value.
+describe("initializer hydration parity (never reads storage)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.className = "";
+  });
+
+  function renderRecordingFirstTheme(initialTheme?: Theme): {
+    first: Theme;
+    ctx: ThemeContextValue;
+  } {
+    const config = resolveThemeConfig({
+      themes: ["light", "dark"],
+      defaultTheme: "light",
+    });
+    const seen: Theme[] = [];
+    const captured: { ctx?: ThemeContextValue } = {};
+
+    function Capture() {
+      const ctx = useContext(ThemeContext)!;
+      seen.push(ctx.theme);
+      captured.ctx = ctx;
+      return null;
+    }
+
+    render(
+      <ThemeProvider config={config} initialTheme={initialTheme}>
+        <Capture />
+      </ThemeProvider>,
+    );
+
+    return { first: seen[0], ctx: captured.ctx! };
+  }
+
+  it("first render is defaultTheme when initialTheme is absent, even with a stored dark cookie (PPR HIT shape)", () => {
+    document.cookie = "theme=dark; Path=/";
+    const { first, ctx } = renderRecordingFirstTheme(undefined);
+    // Server parity: the resume tree rendered defaultTheme; the client's first
+    // render must match it, NOT the cookie.
+    expect(first).toBe("light");
+    // The post-mount re-sync then converges to the visitor's stored theme.
+    expect(ctx.theme).toBe("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("first render is initialTheme when provided, even with a conflicting stored cookie", () => {
+    document.cookie = "theme=dark; Path=/";
+    const { first, ctx } = renderRecordingFirstTheme("light");
+    expect(first).toBe("light");
+    expect(ctx.theme).toBe("dark");
+  });
+
+  it("first render ignores localStorage too", () => {
+    localStorage.setItem("theme", "dark");
+    const { first, ctx } = renderRecordingFirstTheme(undefined);
+    expect(first).toBe("light");
+    expect(ctx.theme).toBe("dark");
   });
 });

@@ -14,6 +14,7 @@ import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
 import { ShellHandleView } from "../components/ShellHandleView.js";
+import { ThemeToggle } from "../components/ThemeToggle.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -53,6 +54,12 @@ function ShellCacheLayout(ctx: HandlerContext) {
         Static shell content frozen into the cached prelude.
       </p>
       <ShellCacheCounter />
+      {/* Raw-theme TEXT in the shell is the regression trigger for the theme
+          fidelity test: the server resume renders the replayed capture
+          initialTheme, so a storage-reading client initializer would produce
+          different text, fail hydration, and wipe the FOUC class (the blog
+          ThemeToggle bug). Do not remove. */}
+      <ThemeToggle testId="shell-theme" />
       <ShellPhysicsValue promise={makePhysicsPromise()} />
       <ShellHandleView />
       <Outlet />

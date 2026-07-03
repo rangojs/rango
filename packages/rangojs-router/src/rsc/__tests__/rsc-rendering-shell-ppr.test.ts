@@ -258,6 +258,59 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
+  it("replays the CAPTURE's initialTheme into the resume payload (theme fidelity)", async () => {
+    // initialTheme is per-request metadata, but React resume requires the tail
+    // tree to match the frozen prelude, which was rendered with the CAPTURE's
+    // theme. The tail must override the visitor's initialTheme with the stored
+    // one; the FOUC script + ThemeProvider's post-mount cookie re-sync give the
+    // visitor their real theme.
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ initialTheme: "light" }), 300, 30);
+    const ssrModule = fullSsrModule();
+    const { ctx } = makeCtx(ssrModule, "stream");
+    const seen: any[] = [];
+    (ctx as any).renderToReadableStream = (payload: unknown) => {
+      seen.push(payload);
+      return new ReadableStream();
+    };
+
+    const request = new Request("http://localhost/p", {
+      headers: { accept: "text/html" },
+    });
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    }) as RequestContext<unknown>;
+    reqCtx._cacheStore = store as any;
+    // The VISITOR's theme differs from the capture's (theme is a getter on the
+    // real context — override it).
+    Object.defineProperty(reqCtx, "theme", { value: "dark" });
+    (reqCtx as any)._classifiedRoute = {
+      manifestEntry: { type: "route", ppr: true },
+    };
+
+    const response = await runWithRequestContext(reqCtx, () =>
+      handleRscRendering(
+        ctx,
+        request,
+        {},
+        url,
+        false,
+        reqCtx._handleStore,
+        undefined,
+      ),
+    );
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    await readAll(response.body!); // drive the tail
+    expect(seen).toHaveLength(1);
+    // The payload (SSR resume tree AND client hydration) carries the CAPTURED
+    // theme, not the visitor's — trees agree with the frozen prelude.
+    expect((seen[0] as any).metadata.initialTheme).toBe("light");
+  });
+
   it("a stale (SWR) hit serves the stale shell AND schedules a background recapture", async () => {
     const store = new MemorySegmentCacheStore();
     // ttl 0 => stale as soon as the clock advances; swr 300 keeps it servable.

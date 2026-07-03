@@ -426,6 +426,19 @@ function serveShellHit(
     if (match.redirect) return { redirect: match.redirect };
     setRequestContextParams(match.params, match.routeName);
     const payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
+    // Theme fidelity for resume: initialTheme is per-request METADATA (the
+    // visitor's cookie), but React resume requires the tree above the holes to
+    // match the frozen prelude, which was rendered with the CAPTURE's
+    // initialTheme. Replay the captured value into the payload (the SSR resume
+    // tree AND client hydration both read it) so the trees agree by
+    // construction. The visitor still sees THEIR theme: the FOUC script in the
+    // prelude applies it pre-paint from the cookie, and ThemeProvider re-syncs
+    // its state from the cookie post-mount.
+    if (payload.metadata) {
+      payload.metadata.initialTheme = entry.initialTheme as
+        | import("../theme/types.js").Theme
+        | undefined;
+    }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
     const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
