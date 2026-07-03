@@ -24,6 +24,7 @@ import {
   PprShellPriceLoader,
   PprShellStreamLoader,
 } from "./loaders/ppr-shell.js";
+import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
@@ -411,6 +412,27 @@ export const urlpatterns = urls(
             () => [loader(PprShellStreamLoader)],
           ),
         ]),
+        // Capture-data-snapshot DRIFT route: the shell bakes a value from a
+        // short-ttl cache() (getPprDriftStamp, "drift" profile, ttl 2s); the
+        // shell's own ttl is 300. After the inner ttl expires, a HIT must still
+        // show the CAPTURE-time stamp (seeded from the snapshot) — byte parity
+        // with the frozen prelude — while the price loader hole stays live. See
+        // docs/design/ppr-shell-resume.md ("the capture data snapshot").
+        layout(PprDriftLayout, () => [
+          path(
+            "/ppr-drift",
+            PprDriftPricePage,
+            { name: "pprDrift", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-drift-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+        ]),
         // Orphan fetchable loader: loader reachable only via a client import,
         // never registered with loader(), never imported by the worker entry.
         path("/orphan-fetch", () => <OrphanFetchTest />, {
@@ -457,13 +479,10 @@ export const urlpatterns = urls(
           () => [loading(<FeatureLoading />)],
         ),
 
-        // Blog routes with sidebar. Deliberately NOT ppr'd: the blog's ring-3
-        // cache() (ttl 60) refreshes with a new rendered timestamp, and a PPR
-        // shell whose baked content drifts from the fresh hydration payload
-        // detonates hydration (React regenerates the tree client-side). Keeping
-        // /blog on axis 1 keeps the classic blog-cache suite deterministic; PPR
-        // over the blog shape is covered by dedicated fixtures on the snapshot
-        // branch. See docs/design/ppr-shell-resume.md.
+        // Blog routes with sidebar. Deliberately NOT ppr'd: keeping /blog on
+        // axis 1 keeps the classic blog-cache suite (sidebar-preserve, index
+        // render, document-cache interplay) isolated from any PPR capture
+        // interference. The PPR'd twin of this exact shape is /ppr-blog below.
         layout(BlogLayout, () => [
           parallel({ "@sidebar": BlogSidebarHandler }, () => [
             loader(BlogSidebarLoader, () => [cache()]),
@@ -483,6 +502,31 @@ export const urlpatterns = urls(
             }),
             path("/blog/:slug", BlogPostPage, {
               name: "blogPost",
+            }),
+          ]),
+        ]),
+
+        // PPR'd DUPLICATE of the blog: the realistic PPR shape (sidebar
+        // parallel, ring-3 cache() segment with a rendered timestamp) under the
+        // SAME components/loaders as /blog, but with the `ppr` path option. The
+        // capture data snapshot pins the ring-3 content so a HIT hydrates
+        // cleanly even after the ttl-60 refresh; /blog itself stays non-ppr so
+        // the classic blog-cache suite is isolated from capture interference.
+        // See docs/design/ppr-shell-resume.md ("the capture data snapshot").
+        layout(BlogLayout, () => [
+          parallel({ "@sidebar": BlogSidebarHandler }, () => [
+            loader(BlogSidebarLoader, () => [cache()]),
+            loading(<SidebarSkeleton />),
+          ]),
+
+          cache({ ttl: 60, swr: 300 }, () => [
+            path("/ppr-blog", BlogIndexPage, {
+              name: "pprBlog",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+            path("/ppr-blog/:slug", BlogPostPage, {
+              name: "pprBlogPost",
+              ppr: { ttl: 300, swr: 120 },
             }),
           ]),
         ]),

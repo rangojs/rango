@@ -330,6 +330,82 @@ function runShellCacheSpec(f: Fixture): void {
     await expect(counter).toHaveText("count: 1");
   });
 
+  // --- Capture data snapshot: shell content drift parity. ---
+  //
+  // /shell-cache/drift bakes a value from a SHORT-ttl cache() (the "drift"
+  // profile, ttl 1s / swr 0) into the shell, above the live price-loader hole.
+  // After the inner ttl expires the underlying entry is GONE, so a HIT tail
+  // WITHOUT the snapshot would recompute a DIFFERENT stamp and drift from the
+  // frozen prelude — a hydration text mismatch. The capture data snapshot pins
+  // the capture-time value: the shell region reproduces byte-identically while
+  // the price hole stays live. See docs/design/ppr-shell-resume.md.
+  test("drift: a short-ttl shell value survives its ttl on a HIT (snapshot parity in raw HTML)", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/drift?probe=drift");
+    await warmToHit(request, url);
+
+    // The stamp baked into the captured prelude.
+    const first = await measureFirstChunk(url);
+    const captureStamp = /drift-\d+/.exec(first.html)?.[0];
+    expect(captureStamp, "a drift stamp is baked into the shell").toBeTruthy();
+
+    // Wait past the drift ttl (1s, no swr) so the underlying entry fully expires
+    // (not merely goes stale). A recompute now would yield a NEW stamp.
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const second = await measureFirstChunk(url);
+    const preludeEnd = second.html.indexOf("</html>");
+    expect(preludeEnd).toBeGreaterThan(-1);
+    const prelude = second.html.slice(0, preludeEnd);
+    const resumed = second.html.slice(preludeEnd);
+
+    // The frozen prelude still carries the capture-time stamp (shell ttl 300).
+    expect(prelude).toContain(captureStamp!);
+    // The freshly rendered hydration payload (resumed portion, inlined Flight
+    // data) carries the SAME stamp — seeded from the snapshot, not a recompute.
+    expect(resumed).toContain(captureStamp!);
+    // Nowhere did a NEW drift stamp appear: the drifted region is pinned.
+    const stamps = new Set(
+      [...second.html.matchAll(/drift-\d+/g)].map((m) => m[0]),
+    );
+    expect(stamps).toEqual(new Set([captureStamp!]));
+  });
+
+  test("drift HIT hydrates with zero errors while the price hole stays live", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/shell-cache/drift?probe=drifthit");
+    await warmToHit(page.request, url);
+
+    // Baseline seq from a HIT before the wait (the live price hole advances every
+    // request even while the shell is served from the cached prelude).
+    const firstHtml = await (
+      await request.get(url, { headers: HTML_HEADERS })
+    ).text();
+    const firstSeq = Number(/data-seq="(\d+)"/.exec(firstHtml)?.[1] ?? "0");
+
+    // Past the drift ttl: without the snapshot the baked stamp would drift and
+    // detonate hydration.
+    await new Promise((r) => setTimeout(r, 1500));
+
+    await page.goto(url);
+    await waitForHydration(page);
+
+    // The baked shell stamp is present and hydration succeeded (guard = zero
+    // hydration errors; the whole point of the snapshot).
+    await expect(testId(page, "drift-stamp")).toHaveText(/drift-\d+/);
+    // The price hole filled with LIVE data whose seq advanced past the baseline.
+    const price = testId(page, "shell-price");
+    await expect(price).toContainText("Live price:");
+    const liveSeq = Number(await price.getAttribute("data-seq"));
+    expect(liveSeq).toBeGreaterThan(firstSeq);
+  });
+
   // --- Loader-carried promise: the deterministic streaming lane in a hole. ---
 
   // /shell-cache/stream's loader resolves an outer value fast but carries a nested

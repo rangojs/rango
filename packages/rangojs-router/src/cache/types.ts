@@ -252,8 +252,62 @@ export interface ShellCacheEntry {
    * ThemeProvider.
    */
   initialTheme?: string;
+  /**
+   * The CAPTURE DATA SNAPSHOT: every cache-store read-hit and write the capture
+   * render performed, in stored/serialized form. Replaying these on a HIT (via
+   * the SeededShellStore overlay, for the tail render only) reproduces the
+   * shell's cached content byte-identically, so the freshly rendered hydration
+   * payload matches the frozen prelude even after the underlying cache entries
+   * have drifted (expired, been recomputed, or been tag-invalidated).
+   *
+   * Optional: an entry captured before this field existed simply has no
+   * snapshot and keeps the pre-snapshot behavior (the tail reads live, so any
+   * shell-baked cached value that drifted mismatches the prelude). Recapture
+   * heals it. See docs/design/ppr-shell-resume.md ("the capture data snapshot").
+   */
+  snapshot?: ShellSnapshotRecord[];
   /** Epoch ms when the shell was captured. */
   createdAt: number;
+}
+
+/**
+ * The cache-store families a shell snapshot pins. Excludes the shell family
+ * itself (getShell/putShell) — the snapshot rides INSIDE a shell entry, so
+ * recording it would be self-referential.
+ */
+export type ShellSnapshotFamily = "item" | "segment" | "response";
+
+/** A serialized cached Response for the response family of a shell snapshot. */
+export interface ShellSnapshotResponseValue {
+  status: number;
+  /** Client-facing header pairs (per-client signal headers excluded at record). */
+  headers: [string, string][];
+  /** base64-encoded response body (binary-safe, JSON-serializable). */
+  body: string;
+}
+
+/** The stored form of an item-family (use cache / loader cache) snapshot value. */
+export interface ShellSnapshotItemValue {
+  /** RSC-serialized return value. */
+  value: string;
+  /** RSC-encoded handle data, if any. */
+  handles?: string;
+  /** The entry's cache tags. */
+  tags?: string[];
+}
+
+/**
+ * One recorded cache-store read-hit or write from the capture render. `value`
+ * carries the entry in its stored/serialized shape so it round-trips through a
+ * JSON-serializing store (KV, CF, Vercel) with the rest of the ShellCacheEntry:
+ * - `item`    -> {@link ShellSnapshotItemValue}
+ * - `segment` -> {@link CachedEntryData} (already JSON-able)
+ * - `response`-> {@link ShellSnapshotResponseValue}
+ */
+export interface ShellSnapshotRecord {
+  family: ShellSnapshotFamily;
+  key: string;
+  value: ShellSnapshotItemValue | CachedEntryData | ShellSnapshotResponseValue;
 }
 
 /**

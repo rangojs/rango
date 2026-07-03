@@ -98,6 +98,34 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(await store.getShell("absent")).toBeNull();
   });
 
+  // The KV envelope cherry-picks fields, so initialTheme (theme fidelity) and the
+  // capture data snapshot (HIT parity) must be explicitly carried — otherwise the
+  // feature silently no-ops on the real CFCacheStore that cloudflare-basic uses.
+  it("round-trips initialTheme and the capture data snapshot through KV", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const entry = shellEntry({
+      initialTheme: "dark",
+      snapshot: [
+        {
+          family: "item",
+          key: "use-cache:x",
+          value: { value: "CAPVAL", tags: ["t1"] },
+        },
+        {
+          family: "response",
+          key: "res:y",
+          value: { status: 200, headers: [["x-a", "1"]], body: btoa("BODY") },
+        },
+      ],
+    });
+    await store.putShell("k", entry, 300, 30);
+    await drain(mockCtx);
+
+    const hit = await store.getShell("k");
+    expect(hit?.entry.initialTheme).toBe("dark");
+    expect(hit?.entry.snapshot).toEqual(entry.snapshot);
+  });
+
   it("no-ops getShell/putShell when no KV namespace is configured", async () => {
     const store = new CFCacheStore({ ctx: mockCtx }); // no kv
     await store.putShell("k", shellEntry(), 300, 30);

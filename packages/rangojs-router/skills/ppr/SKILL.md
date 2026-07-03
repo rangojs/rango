@@ -259,6 +259,20 @@ know (a tenant id, a deploy marker).
   re-synced post-mount by ThemeProvider. Nothing to configure — but a themed
   component in the shell may briefly render the captured theme's markup before
   the post-mount re-sync.
+- **Shell shows CAPTURE-time data for the shell's lifetime**: a `cache()`/`"use
+cache"` value baked into the shell is PINNED at capture (the capture data
+  snapshot) and replayed on every HIT, so the shell stays byte-identical to the
+  frozen prelude even after that cache entry expires, gets recomputed, or is
+  tag-invalidated. This is deliberate — parity beats freshness inside the shell.
+  If a shell region needs to be fresh, put it under a `loading()` hole (holes are
+  never pinned) or make the SHELL itself invalidatable by adding the tag to
+  `ppr.tags`. Ring-1/ring-3 tag invalidation does NOT drop the shell.
+- **Uncached nondeterminism in the shell is a hydration hazard**: a raw
+  `Date.now()` / `Math.random()` / uncached `fetch` rendered directly in shell
+  material (outside any cache ring) drifts between capture and hit and the
+  snapshot CANNOT pin it — it was never a cache read. It will mismatch the frozen
+  prelude and detonate hydration. Wrap it in `cache()`/`"use cache"` (then it is
+  pinned) or move it under a `loading()` hole.
 - **Stacking with `/document-cache`**: pick one per route — the document cache
   would cache the composite.
 - **Dev + HMR**: works, but edits produce stale shells until TTL/recapture.

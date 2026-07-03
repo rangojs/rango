@@ -50,7 +50,6 @@ import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
 import type { TransitionWhenFn } from "../types/segments.js";
 import type { ResolvedTracing } from "../router/tracing.js";
-import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import {
   THEME_COOKIE,
   isValidTheme,
@@ -234,6 +233,19 @@ export interface RequestContext<
 
   /** @internal Registered onResponse callbacks */
   _onResponseCallbacks: Array<(response: Response) => Response>;
+
+  /**
+   * @internal Promises of the background tasks scheduled via this context's
+   * waitUntil (deferred cache writes, revalidations, consumer tasks). The PPR
+   * shell capture drains this list BEFORE its match/render as an ORDERING EDGE:
+   * every foreground deferred cache write is scheduled here before the capture
+   * task is, so settling the list first guarantees the capture's cache reads
+   * observe the foreground's generation instead of racing it (see
+   * shell-capture.ts). Tasks whose scheduling fn carries
+   * UNTRACKED_BACKGROUND_TASK are not tracked (the capture task itself —
+   * tracking it would make that drain await its own promise).
+   */
+  _pendingBackgroundTasks?: Array<Promise<unknown>>;
 
   /**
    * Current theme setting (only available when theme is enabled in router config)
@@ -500,6 +512,17 @@ export type PublicRequestContext<
   | "_cacheSignal"
   | "res"
 >;
+
+/**
+ * Marker for a waitUntil-scheduled fn whose task promise must NOT enter
+ * _pendingBackgroundTasks. Used by the PPR shell capture for its own task:
+ * the capture's pre-render write barrier settles that list, so tracking the
+ * capture itself would make the drain wait on its own (still-running) promise.
+ * @internal
+ */
+export const UNTRACKED_BACKGROUND_TASK: unique symbol = Symbol.for(
+  "rango.untrackedBackgroundTask",
+);
 
 // AsyncLocalStorage instance for request context
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
@@ -912,20 +935,37 @@ export function createRequestContext<TEnv>(
     _cacheProfiles: cacheProfiles,
 
     waitUntil(fn: () => Promise<void>): void {
+      // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
+      // non-async callback becomes a rejected promise handed to the host's
+      // waitUntil (logged as a background failure), instead of escaping into
+      // the request flow. Mirrors fireAndForgetWaitUntil's deferral.
+      const task = Promise.resolve().then(fn);
+      // Track the task promise so the PPR shell capture can settle the
+      // foreground's deferred cache writes before its own match/render (the
+      // ordering edge; see _pendingBackgroundTasks). The capture task itself
+      // opts out via the marker — the drain must never await its own promise.
+      if (
+        !(fn as { [UNTRACKED_BACKGROUND_TASK]?: boolean })[
+          UNTRACKED_BACKGROUND_TASK
+        ]
+      ) {
+        ctx._pendingBackgroundTasks?.push(task);
+      }
       if (executionContext?.waitUntil) {
-        // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
-        // non-async callback becomes a rejected promise handed to the host's
-        // waitUntil (logged as a background failure), instead of escaping into
-        // the request flow. Mirrors fireAndForgetWaitUntil's deferral.
-        executionContext.waitUntil(Promise.resolve().then(fn));
+        executionContext.waitUntil(task);
       } else {
-        fireAndForgetWaitUntil(fn);
+        // Node/dev fallback: fire-and-forget with error logging (the same
+        // policy fireAndForgetWaitUntil applies).
+        task.catch((err) =>
+          console.error("[waitUntil] Background task failed:", err),
+        );
       }
     },
 
     executionContext,
 
     _onResponseCallbacks: [],
+    _pendingBackgroundTasks: [],
 
     onResponse(callback: (response: Response) => Response): void {
       assertNotInsideCacheExec(ctx, "onResponse");

@@ -148,13 +148,148 @@ the visitor's theme, counter interactive.
 `x-rango-shell-resumed` marker handshake is gone — one layer now decides AND
 composes, so there is nothing to hand off.
 
+### Shell/payload parity: the capture data snapshot (scar tissue)
+
+If you're about to touch capture or serve, start here — this is the subtlest
+invariant in the whole feature.
+
+A HIT does two things: it flushes the frozen prelude bytes, then it runs a FULL
+FRESH Flight render for hydration (`serveShellHit` -> `buildFullPayload` ->
+`renderToReadableStream`, then `resumeShellHTML`). React hydrates the frozen
+prelude against that fresh payload. So the two MUST agree on every shell-baked
+(non-hole) byte. They don't, automatically: anything in the shell whose value
+DRIFTS between capture time and hit time — a `cache()` segment with a shorter
+ttl than the shell, a tag-invalidated `"use cache"` item — makes the fresh
+payload disagree with the prelude, and React throws "server rendered text didn't
+match the client" and REGENERATES the tree on the client, wiping the FOUC theme
+class and flashing content.
+
+The live proof (theme-independent, fails with NO cookie): `tests/cloudflare-basic`
+`/blog` renders a cache-info timestamp from a `cache({ ttl: 60, swr: 300 })`
+ring-3 segment; the shell's own ttl is 300. After ~60s the ring-3 segment goes
+stale and a background revalidation re-executes it with a new timestamp, so every
+subsequent HIT's fresh payload timestamp differs from the prelude's baked one →
+hydration mismatch pointing at `<p data-testid="cache-info">`. This is why the
+classic `/blog` stays NON-ppr (its blog-cache suite must never depend on capture
+behavior) and the PPR'd twin of the same shape lives at `/ppr-blog` — same
+components, same sidebar parallel, same ring-3 `cache()` wrapping, plus the
+`ppr` option.
+
+The fix is the **capture data snapshot** — Next.js's resume-data-cache, adapted
+to Rango's rings. The core invariant, which you should be able to recite:
+
+> The snapshot is exactly the set of cache-store reads the CAPTURE render
+> performed; replaying them on a HIT reproduces the shell content
+> byte-identically; everything not recorded stays live.
+
+This self-aligns with the hole doctrine. Loaders behind `loading()` are MASKED at
+capture (never executed), so their reads are never recorded and stay fresh on
+hits. Content that baked into the shell is, by definition, content whose reads
+happened at capture. So "record what the capture read" and "everything under a
+hole stays live" are the same rule seen from two sides.
+
+Mechanics (`src/cache/shell-snapshot.ts`):
+
+0. **The write barrier (ordering edge, and its own scar tissue).** Before the
+   capture's match/render, `attemptCapture` settles the background tasks the
+   FOREGROUND request already scheduled (`settleTrackedBackgroundTasks`, over
+   `reqCtx._pendingBackgroundTasks` — every `waitUntil` task is tracked there;
+   the capture's own task opts out via `UNTRACKED_BACKGROUND_TASK` so the drain
+   never awaits itself). Why this must be an ORDERING EDGE and not a narrower
+   check: the foreground's ring-3 `cacheRoute` write is deferred, and without
+   the barrier the capture's ring-3 lookup could land between the foreground
+   write chain's serialization and its `store.set`, MISS, re-execute the route
+   handler (bumping module-level state a consumer's shell may render — the mini
+   shell-manifest seq), and then, via the synthetic `onResponse` fire below,
+   OVERWRITE the foreground's entry with the capture's re-render. A
+   get-before-set guard would just shrink that window. The contract the barrier
+   enforces: a capture never clobbers a ring-3 entry the foreground produced —
+   all foreground cache writes are scheduled before `scheduleShellCapture` runs
+   (the response and its `onResponse` callbacks commit first), so settling them
+   makes the capture's lookup HIT, replay the foreground's generation (handler
+   skipped; the cache-store middleware's write path is gated off by
+   `state.cacheHit`), and record THAT generation. Prelude, snapshot, and ring-3
+   then agree by construction. The drain is iterative (a settled task can have
+   scheduled a nested one — `cacheRoute` schedules its actual `store.set` in a
+   second `waitUntil`) and deadline-bounded (a hung consumer `waitUntil` task
+   degrades to the pre-barrier race instead of stalling the capture).
+1. **Recording.** The capture render reads through a `RecordingShellStore` wrapping
+   the derived context's `_cacheStore` (own property, so the shared foreground
+   store is untouched). It passes every call through and RECORDS, last-write-wins
+   per `(family, key)`: read-HITS (`get`/`getItem`/`getResponse` returning
+   non-null — the value that fed the shell) and WRITES (`set`/`setItem`/
+   `putResponse` — the value a MISS computed and baked). The shell family
+   (`getShell`/`putShell`) is never recorded (the snapshot rides inside a shell
+   entry — recording it would be self-referential). Reads that MISS are not
+   recorded.
+2. **Two write asymmetries you must know about.** An item-family `"use cache"`
+   write runs INLINE during the render (cache-runtime schedules it on
+   `requestCtx.waitUntil`), so it flows through the recording store naturally. A
+   ring-3 SEGMENT write (`cacheScope.cacheRoute`) is registered via
+   `requestCtx.onResponse(...)` and gated on a 200 — and the capture builds no
+   Response, so it never fires on its own. `captureAndStoreShell` therefore FIRES
+   the capture's ISOLATED `_onResponseCallbacks` with a synthetic 200 after the
+   shell quiesces, so the segment write runs and is recorded. (Only capture
+   match-middleware callbacks live in that array — HTTP middleware never runs for
+   a capture — so firing them is safe.) Both write kinds are DEFERRED under
+   `waitUntil`, so the derived context's `waitUntil` is overridden to COLLECT the
+   write promises, and `settleWrites` drains them ITERATIVELY (a write can
+   schedule a nested write — `cacheRoute` schedules its actual `store.set` in a
+   second `waitUntil`) before the snapshot is drained. Miss this and a
+   MISS-at-capture value silently drifts.
+3. **Storage.** The snapshot is an optional `ShellCacheEntry.snapshot` array of
+   `{ family, key, value }`, kept JSON-serializable (responses carry base64
+   body + headers + status; items/segments are already JSON-able stored forms).
+   It rides with the rest of the entry. NOTE: the CF and Vercel stores cherry-pick
+   entry fields into a custom KV/Blob envelope, so `snapshot` (and `initialTheme`)
+   are explicitly carried there (`KVShellEnvelope.sn`/`.i`,
+   `VercelShellEnvelope.sn`/`.i`) — a new field on `ShellCacheEntry` that those
+   envelopes forget silently no-ops on the real stores.
+4. **Seeding.** `serveShellHit`'s tail runs through a `SeededShellStore` overlay
+   (on a derived context, for the tail render ONLY — the shared `reqCtx` is
+   untouched). A read for a snapshotted key returns the recorded value AS FRESH
+   (`shouldRevalidate: false` — a pinned key must NOT kick SWR revalidation);
+   every other read falls through to the real store (the holes stay live); all
+   writes pass through (a live hole's loader may legitimately write); the shell
+   family always passes through.
+
+The freshness DOCTRINE, and it is deliberate: **within a shell's lifetime, shell
+regions intentionally show CAPTURE-time data.** Parity beats freshness INSIDE the
+shell; freshness comes from the holes, from the shell's own ttl/swr, and from tag
+invalidation of the SHELL (`ppr.tags`). Ring-1/ring-3 tag invalidation does NOT
+invalidate a shell — if you need that coupling, put the same tag in `ppr.tags`.
+
+Two edges worth stating out loud:
+
+- A key read BOTH above and below a `loading()` boundary is seeded everywhere, so
+  the hole shows capture-time data for that one key. Consistent by design.
+- The snapshot pins CACHED reads. UNCACHED nondeterminism in shell content — a raw
+  `Date.now()`/`Math.random()`/uncached `fetch` rendered directly in a handler
+  outside any cache ring — still drifts and must live under a hole. Same residual
+  consumer responsibility as Next; the snapshot cannot pin what was never a cache
+  read.
+
+Pinned by unit tests (the write barrier settles foreground + nested tasks before
+the capture match and is deadline-bounded; recording records hits+writes per
+family and excludes the shell family; seeding serves fresh with no revalidation
+kick, falls through, and passes writes through; JSON + `putShell`/`getShell`
+round-trips including the CF and Vercel envelopes) and dev+prod e2e: a drift
+fixture (`/shell-cache/drift`, `/ppr-drift`) whose short-ttl cached shell value
+survives its ttl on a HIT with byte parity and zero hydration errors while a
+live hole still updates; the `/ppr-blog` twin (realistic sidebar + ring-3 shape)
+hydrating cleanly on the real KV-backed `CFCacheStore`; and the mini
+shell-manifest e2e, which pins the no-clobber contract (a reload replays the
+FOREGROUND's shell generation — handler seq stable — while prices stay live).
+
 ## The hole doctrine (encode verbatim)
 
 Holes are RENDER-DEFINED. The capture is MIXED-CHAIN: it renders the page under
 a derived context — `cache()`d segments replay per normal ring-3 semantics,
-UNCACHED segments execute their handlers fresh, and no special-casing of
-ring-3 writes happens during capture (a capture render behaves like a normal
-render with respect to the segment cache). Middleware is NOT re-run: it
+UNCACHED segments execute their handlers fresh. A capture render behaves like a
+normal render with respect to the segment cache, with ONE addition the capture
+data snapshot needs: it fires its own `onResponse` callbacks with a synthetic 200
+so the ring-3 segment write runs during capture and is recorded (see "the capture
+data snapshot" above). Middleware is NOT re-run: it
 already ran for the triggering request, and the derived context inherits its
 post-middleware state; guarding is serve-time (the commit point above).
 

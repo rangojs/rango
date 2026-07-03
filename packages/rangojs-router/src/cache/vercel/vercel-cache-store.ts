@@ -39,6 +39,7 @@ import type {
   CacheItemResult,
   CacheItemOptions,
   ShellCacheEntry,
+  ShellSnapshotRecord,
 } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
 import { isPerClientSignalHeader } from "../../browser/cookie-name.js";
@@ -175,6 +176,10 @@ interface VercelShellEnvelope {
   e: number;
   /** Tags, preserved so a stale re-stamp keeps them. */
   t?: string[];
+  /** initialTheme the capture render was built with (resume theme fidelity). */
+  i?: string;
+  /** Capture data snapshot: recorded cache-store hits/writes for HIT parity. */
+  sn?: ShellSnapshotRecord[];
 }
 
 /** Read-path outcome for the debug sink. */
@@ -796,6 +801,8 @@ export class VercelCacheStore<
         prelude: env.p,
         postponed: env.po,
         reactVersion: env.rv,
+        initialTheme: env.i,
+        snapshot: env.sn,
         createdAt: env.c,
       },
       shouldRevalidate: isStale,
@@ -827,6 +834,8 @@ export class VercelCacheStore<
         s: staleAt,
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
+        i: entry.initialTheme,
+        sn: entry.snapshot,
       };
       // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
       // oversized shell prelude is reported and skipped (fail-open to a full
@@ -1068,7 +1077,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, c, s, e, t } = raw;
+    const { p, po, rv, c, s, e, t, i, sn } = raw;
     if (typeof p !== "string" || typeof rv !== "string") return null;
     if (po !== null && typeof po !== "string") return null;
     if (typeof c !== "number") return null;
@@ -1081,6 +1090,8 @@ export class VercelCacheStore<
       s,
       e,
       t: Array.isArray(t) ? (t as string[]) : undefined,
+      i: typeof i === "string" ? i : undefined,
+      sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
     };
   }
 

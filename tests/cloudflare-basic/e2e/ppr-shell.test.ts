@@ -325,6 +325,128 @@ function describePprShell(mode: "dev" | "build") {
       );
     });
 
+    // --- Capture data snapshot: shell content drift parity. ---
+    //
+    // /ppr-drift bakes a value from a SHORT-ttl cache() (the "drift" profile,
+    // ttl 2s) into the shell, above the live price-loader hole, on the REAL
+    // KV-backed CFCacheStore. After the inner ttl expires the underlying entry is
+    // gone, so a HIT tail WITHOUT the snapshot would recompute a DIFFERENT stamp
+    // and drift from the frozen prelude — a hydration mismatch. The capture data
+    // snapshot pins the capture-time value while the price hole stays live. See
+    // docs/design/ppr-shell-resume.md.
+    test("drift: a short-ttl shell value survives its ttl on a HIT (snapshot parity in raw HTML)", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-drift?probe=drift");
+      await warmToHit(request, url);
+
+      const first = await measureFirstChunk(url);
+      const captureStamp = /ppr-drift-\d+/.exec(first.html)?.[0];
+      expect(
+        captureStamp,
+        "a drift stamp is baked into the shell",
+      ).toBeTruthy();
+
+      // Wait past the drift ttl (2s, no swr) so the underlying entry is fully
+      // gone. A recompute now would yield a NEW stamp.
+      await new Promise((r) => setTimeout(r, 2500));
+
+      const second = await measureFirstChunk(url);
+      const preludeEnd = second.html.indexOf("</html>");
+      expect(preludeEnd).toBeGreaterThan(-1);
+      const prelude = second.html.slice(0, preludeEnd);
+      const resumed = second.html.slice(preludeEnd);
+
+      // Frozen prelude still carries the capture-time stamp (shell ttl 300).
+      expect(prelude).toContain(captureStamp!);
+      // The freshly rendered hydration payload carries the SAME stamp — seeded
+      // from the snapshot, not a recompute.
+      expect(resumed).toContain(captureStamp!);
+      const stamps = new Set(
+        [...second.html.matchAll(/ppr-drift-\d+/g)].map((m) => m[0]),
+      );
+      expect(stamps).toEqual(new Set([captureStamp!]));
+    });
+
+    test("drift HIT hydrates with zero errors while the price hole stays live", async ({
+      page,
+      request,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+
+      const url = f.url("/ppr-drift?probe=drifthit");
+      await warmToHit(page.request, url);
+
+      const firstHtml = await (
+        await request.get(url, { headers: HTML_HEADERS })
+      ).text();
+      const firstSeq = Number(/data-seq="(\d+)"/.exec(firstHtml)?.[1] ?? "0");
+
+      await new Promise((r) => setTimeout(r, 2500));
+
+      await page.goto(url);
+      await waitForHydration(page);
+
+      await expect(testId(page, "ppr-drift-stamp")).toHaveText(/ppr-drift-\d+/);
+      const price = testId(page, "ppr-price");
+      await expect(price).toContainText("Live price:");
+      const liveSeq = Number(await price.getAttribute("data-seq"));
+      expect(liveSeq).toBeGreaterThan(firstSeq);
+    });
+
+    // /ppr-blog is the realistic fixture: the SAME components/loaders/cache()
+    // wrapping as the classic /blog (sidebar parallel + ring-3 cache() ttl 60
+    // whose rendered content includes a per-render timestamp), duplicated under
+    // the `ppr` path option. A plain HIT (no ttl wait) must hydrate cleanly —
+    // the capture data snapshot pins the cached segment and the captured theme
+    // is replayed — where before the fix a HIT after the ring-3 refresh drifted
+    // and detonated hydration (React regenerated the tree, wiping the FOUC theme
+    // class). /blog itself stays non-ppr so the classic blog-cache suite is
+    // isolated from capture interference; this twin pins the theme + snapshot
+    // combination end-to-end on the real KV-backed CFCacheStore.
+    test("ppr-blog HIT hydrates cleanly (theme + snapshot end-to-end)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+
+      const url = f.url("/ppr-blog");
+      await warmToHit(page.request, url);
+
+      await page.goto(url);
+      await waitForHydration(page);
+
+      await expect(testId(page, "blog-title")).toHaveText("Blog");
+      // The ring-3-cached cache-info segment (per-render timestamp) is present
+      // and did not detonate hydration.
+      await expect(testId(page, "cache-info")).toContainText(
+        "cached at the edge",
+      );
+      // The sidebar parallel slot rendered (its loader is a cached parallel).
+      await expect(testId(page, "blog-sidebar")).toBeVisible();
+    });
+
+    test("ppr-blog post HIT hydrates cleanly (slug route, same realistic shape)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+
+      const url = f.url("/ppr-blog/getting-started-with-rsc");
+      await warmToHit(page.request, url);
+
+      await page.goto(url);
+      await waitForHydration(page);
+
+      await expect(testId(page, "post-title")).toHaveText(
+        "Getting Started with React Server Components",
+      );
+      await expect(testId(page, "cache-info")).toContainText(
+        "cached at the edge",
+      );
+    });
+
     // --- Negative contract: a loader WITHOUT loading() is not a hole. ---
 
     // /ppr-shell/no-hole has a loader but NO route-level loading(). The
