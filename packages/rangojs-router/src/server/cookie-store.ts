@@ -62,6 +62,7 @@ export interface CookieStore {
 export function cookies(): CookieStore {
   const ctx = getRequestContext();
   assertNotInsideCacheContext(ctx, "cookies");
+  assertNotInsideShellCapture(ctx, "cookies");
   return createCookieStore(ctx);
 }
 
@@ -132,6 +133,49 @@ function assertNotInsideCacheContext(ctx: unknown, fnName: string): void {
   }
 }
 
+/**
+ * Throw if called during the ACTIVE background shell-capture render
+ * (`_shellCaptureRun` true on the derived request context built by
+ * shell-capture.ts). The captured shell prelude is shared across every user
+ * hitting the URL, so a request-scoped read here would bake one user's
+ * cookies/headers into markup served to others — same hazard as the cache
+ * scopes above, at the document tier. Loaders need no exemption: they are
+ * masked (never executed) during capture and remain the per-request holes of
+ * the shell.
+ *
+ * Keys off `_shellCaptureRun`, NOT the `_shellCapture` descriptor: the descriptor
+ * is also present during the FOREGROUND render (it means "a capture is wanted"),
+ * and the foreground must read cookies/headers normally to serve the real user.
+ * Only the derived capture context sets `_shellCaptureRun`.
+ *
+ * Applies only to the READ surfaces (cookies(), headers()) whose values
+ * become markup. Response directives (invalidateClientCache(),
+ * keepClientCache()) stay callable: during capture they are header effects on
+ * a discarded response, and on the live HIT path the full pipeline runs so their
+ * headers flow to the client normally.
+ *
+ * The throw makes such a route PPR-ineligible by construction: the capture
+ * render errors, nothing is stored, and every request keeps getting the
+ * normal axis-1 render.
+ */
+function assertNotInsideShellCapture(ctx: unknown, fnName: string): void {
+  if (
+    ctx !== null &&
+    typeof ctx === "object" &&
+    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun === true
+  ) {
+    throw new Error(
+      `${fnName}() cannot be called while capturing a shared shell ` +
+        `(shell-cache middleware). The captured shell is served to every user ` +
+        `of this URL, so request-scoped data read here would leak one user's ` +
+        `${fnName === "cookies" ? "cookies" : "headers"} to others. Read it ` +
+        `inside a loader instead — loaders are never captured and always run ` +
+        `fresh per request:\n\n` +
+        `  loader("user", () => getUser(cookies().get("session")?.value));`,
+    );
+  }
+}
+
 const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);
 
 /**
@@ -152,6 +196,7 @@ const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);
 export function headers(): ReadonlyHeaders {
   const ctx = getRequestContext();
   assertNotInsideCacheContext(ctx, "headers");
+  assertNotInsideShellCapture(ctx, "headers");
   return new Proxy(ctx.request.headers, {
     get(target, prop, receiver) {
       if (typeof prop === "string" && HEADERS_MUTATION_METHODS.has(prop)) {

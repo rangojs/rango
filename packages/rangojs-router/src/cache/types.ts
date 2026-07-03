@@ -137,6 +137,39 @@ export interface SegmentCacheStore<TEnv = unknown> {
   ): Promise<void>;
 
   /**
+   * Get a cached PPR shell entry by key.
+   * Returns the stored prelude/postponed pair (see ShellCacheEntry) and whether
+   * it should be revalidated (SWR). Used by the shell-cache middleware to serve
+   * a cached HTML shell and resume fizz for just the live holes.
+   *
+   * Optional: a store that does not implement the shell family disables the
+   * shell-cache middleware (it fails open to the normal HTML render path).
+   */
+  getShell?(
+    key: string,
+  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
+
+  /**
+   * Store a PPR shell entry with TTL and optional SWR window.
+   * The prelude bytes and postponed state are version- and generation-coupled
+   * and travel together in a single entry (they must never mix across a React
+   * upgrade — the reactVersion field on the entry gates that at read time).
+   * @param key - Cache key
+   * @param entry - The shell prelude/postponed/version/createdAt bundle
+   * @param ttlSeconds - Time-to-live in seconds
+   * @param swrSeconds - Optional stale-while-revalidate window in seconds
+   * @param tags - Optional cache tags for invalidation (participates in
+   *   invalidateTags via the same tag machinery as the item family)
+   */
+  putShell?(
+    key: string,
+    entry: ShellCacheEntry,
+    ttlSeconds?: number,
+    swrSeconds?: number,
+    tags?: string[],
+  ): Promise<void>;
+
+  /**
    * Get a cached function result by key.
    * Returns the serialized value, optional handle data, and staleness flag.
    */
@@ -184,6 +217,31 @@ export interface CacheItemResult {
    * re-run, so its runtime tags are only available here, not from re-execution.
    */
   tags?: string[];
+}
+
+/**
+ * A cached PPR (Partial Pre-rendering) shell entry.
+ *
+ * One entry carries BOTH artifacts a resume needs — the rendered HTML prelude
+ * and React's postponed state — because the pair is version- and
+ * generation-coupled and must never be mixed across a React upgrade or a build
+ * change. The reactVersion field is the read-time gate that enforces that: the
+ * shell-cache middleware treats an entry whose reactVersion differs from the
+ * running React as a miss (the postponed blob is build-coupled and cannot be
+ * resumed by a different React).
+ */
+export interface ShellCacheEntry {
+  /** Rendered HTML prelude bytes, base64-encoded (stores are JSON-serializing). */
+  prelude: string;
+  /**
+   * JSON.stringify of React's postponed state, or null when the shell settled
+   * with no holes (the DATA variant — served without a fizz resume).
+   */
+  postponed: string | null;
+  /** React.version captured at prerender time; the read-time invalidation gate. */
+  reactVersion: string;
+  /** Epoch ms when the shell was captured. */
+  createdAt: number;
 }
 
 /**

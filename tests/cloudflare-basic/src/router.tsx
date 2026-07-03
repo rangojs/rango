@@ -1,6 +1,7 @@
 import { createRouter } from "@rangojs/router";
 import {
   createDocumentCacheMiddleware,
+  createShellCacheMiddleware,
   CFCacheStore,
 } from "@rangojs/router/cache";
 import { createCloudflareTracing } from "@rangojs/router/cloudflare";
@@ -68,6 +69,14 @@ export const router = createRouter<AppBindings>({
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
+  // PPR shell caching (docs/design/ppr-shell-resume.md), path-scoped to the
+  // /ppr-shell subtree (the `/*` also covers /ppr-shell itself). Caches the
+  // rendered HTML shell (prelude + postponed) in the CFCacheStore (KV-backed
+  // getShell/putShell) and, on a later GET, flushes those bytes immediately while
+  // the live loader hole resumes into them. Covers /ppr-shell (price hole),
+  // /ppr-shell/stream (loader-carried promise), and /ppr-shell/no-hole (negative:
+  // no loading(), eternal MISS). Store defaults to the app CFCacheStore.
+  .use("/ppr-shell/*", createShellCacheMiddleware({ debug: true }))
   // Regression repro: top-level middleware throwing a Response must short-circuit
   // under miniflare the same way it does on Node — before the fix, the throw
   // leaked past executeMiddleware and miniflare stringified it as 500.

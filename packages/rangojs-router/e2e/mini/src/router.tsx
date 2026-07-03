@@ -30,7 +30,10 @@ import {
   DataNotFoundError,
   type Middleware,
 } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import {
+  MemorySegmentCacheStore,
+  createShellCacheMiddleware,
+} from "@rangojs/router/cache";
 import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
 
 import {
@@ -223,6 +226,17 @@ export const router = createRouter({
 })
   // Global middleware: tags every request with an id (header + ctx var).
   .use(requestIdMiddleware)
+  // PPR shell caching (docs/design/ppr-shell-resume.md), path-scoped to the
+  // shell-manifest route: cache the rendered HTML shell (prelude + postponed) and,
+  // on a later GET, flush those bytes immediately while the live ManifestPricesLoader
+  // holes resume into them. An app-level middleware (like createDocumentCacheMiddleware)
+  // so it wraps the whole document render. The /manifest segment cache below keeps
+  // the shell deterministic, so the frozen prelude and the fresh hydration payload
+  // agree. Store passed explicitly to mirror the app cache store above.
+  .use(
+    "/manifest",
+    createShellCacheMiddleware({ store: cacheStore, debug: true }),
+  )
   .routes(
     ({
       path,

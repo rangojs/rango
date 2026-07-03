@@ -23,6 +23,7 @@ import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
+import { shellCachePatterns } from "./urls/shell-cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
@@ -852,6 +853,11 @@ export const urlpatterns = urls(
 
       // Cache test patterns (includes intercepts with layouts)
       include("/", cachePatterns, { name: "" }),
+
+      // PPR shell caching (docs/design/ppr-shell-resume.md). The shell-cache
+      // middleware is wired path-scoped in router.tsx; the loader is the live
+      // hole that resumes into the frozen prelude on a HIT.
+      include("/", shellCachePatterns, { name: "" }),
 
       // Theme patterns
       include("/theme", themePatterns, { name: "theme" }),

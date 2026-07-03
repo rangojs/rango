@@ -14,7 +14,8 @@ import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
-import type { MatchResult } from "../types.js";
+import type { SSRModule } from "./types.js";
+import type { RequestContext } from "../server/request-context.js";
 import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
@@ -22,7 +23,8 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
-import { resolvedHandleStream } from "../handles/deferred-resolution.js";
+import { buildFullPayload } from "./full-payload.js";
+import { scheduleShellCapture } from "./shell-capture.js";
 
 export function handleRscRendering<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -65,43 +67,6 @@ async function handleRscRenderingInner<TEnv>(
   let payload: RscPayload;
   let hasInterceptSlots = false;
 
-  // Shared by the partial-fallback and full-render paths. The partial-success
-  // payload below is intentionally different (omits rootLayout/theme, adds slots).
-  const buildFullPayload = (m: MatchResult): RscPayload => ({
-    metadata: {
-      pathname: url.pathname,
-      routerId: ctx.router.id,
-      basename: ctx.router.basename,
-      segments: gateTransitions(m.segments, reqCtx, ctx.router.onError),
-      matched: m.matched,
-      diff: m.diff,
-      resolvedIds: m.resolvedIds,
-      params: m.params,
-      isPartial: false,
-      rootLayout: ctx.router.rootLayout,
-      // Full render: resolve deferred handle values server-side so SSR markup and
-      // the first sync useHandle read see resolved values. Partial payloads below
-      // keep streaming (handleStore.stream()).
-      handles: resolvedHandleStream(handleStore),
-      version: ctx.version,
-      prefetchCacheTTL: ctx.router.prefetchCacheTTL,
-      prefetchCacheSize: ctx.router.prefetchCacheSize,
-      prefetchConcurrency: ctx.router.prefetchConcurrency,
-      stateCookieName: ctx.router.resolvedStateCookieName,
-      themeConfig: ctx.router.themeConfig,
-      // Carry warmupEnabled on the initial full-render payload so the client
-      // respects warmup:false from first load. The 404 and PE payloads already
-      // include it; without it here warmup could never be disabled on the
-      // normal full-load path (partial payloads omit it by design).
-      warmupEnabled: ctx.router.warmupEnabled,
-      // Carry strictMode on the initial full-render payload so the browser
-      // entry knows whether to wrap hydration in React.StrictMode. Partial
-      // (navigation) payloads omit it by design; StrictMode is decided once.
-      strictMode: ctx.router.strictMode,
-      initialTheme: reqCtx.theme,
-    },
-  });
-
   if (isPartial) {
     // Partial render (navigation)
     const result = await ctx.router.matchPartial(request, { env });
@@ -118,7 +83,7 @@ async function handleRscRenderingInner<TEnv>(
         return createSimpleRedirectResponse(match.redirect);
       }
 
-      payload = buildFullPayload(match);
+      payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
     } else {
       setRequestContextParams(result.params, result.routeName);
 
@@ -196,7 +161,7 @@ async function handleRscRenderingInner<TEnv>(
         { headers: { "Content-Type": "application/json" } },
       );
     } else {
-      payload = buildFullPayload(match);
+      payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
     }
   }
 
@@ -268,16 +233,105 @@ async function handleRscRenderingInner<TEnv>(
     metricsStore,
   );
 
-  // ssr-render-html metric + rango.ssr span from one boundary. render:total is
-  // recorded by the observePhase wrapper around this function.
-  const htmlStream = await observePhase(PHASES.ssr, () =>
-    ssrModule.renderHTML(rscStream, {
-      nonce,
-      streamMode,
-    }),
+  // --- Axis 2: PPR shell RESUME (see docs/design/ppr-shell-resume.md) ---
+  // The shell-cache middleware armed reqCtx._shellResume optimistically on a
+  // validated shell HIT. The render layer is the FINAL AUTHORITY: resume only on
+  // the main 200 HTML document path (we are past the isRscRequest early return, so
+  // !isPartial holds), with no per-request nonce (a frozen prelude cannot carry a
+  // fresh nonce), not under allReady buffering (which defeats streaming), and only
+  // when the SSR module actually exports the resume strategy. When we resume we
+  // MUST mark the response with x-rango-shell-resumed so the middleware prepends
+  // the cached prelude; if any guard fails we fall through to a normal renderHTML
+  // with no marker and the middleware fails open to axis 1.
+  const shellResume = reqCtx._shellResume;
+  let response: Response;
+  if (
+    shellResume &&
+    !isPartial &&
+    nonce === undefined &&
+    streamMode !== "allReady" &&
+    ssrModule.resumeShellHTML
+  ) {
+    const resumedStream = await observePhase(PHASES.ssr, () =>
+      ssrModule.resumeShellHTML!(rscStream, {
+        postponed: shellResume.postponed,
+        nonce,
+      }),
+    );
+    response = createResponseWithMergedHeaders(resumedStream, {
+      headers: {
+        "content-type": "text/html;charset=utf-8",
+        "x-rango-shell-resumed": "1",
+      },
+    });
+  } else {
+    // ssr-render-html metric + rango.ssr span from one boundary. render:total is
+    // recorded by the observePhase wrapper around this function.
+    const htmlStream = await observePhase(PHASES.ssr, () =>
+      ssrModule.renderHTML(rscStream, {
+        nonce,
+        streamMode,
+      }),
+    );
+    response = createResponseWithMergedHeaders(htmlStream, {
+      headers: { "content-type": "text/html;charset=utf-8" },
+    });
+  }
+
+  // --- Axis 2: PPR shell CAPTURE (background task; see design doc) ---
+  // The middleware set reqCtx._shellCapture (the "capture wanted" descriptor)
+  // before its single next(). Capture does NOT flow through the HTTP pipeline: we
+  // schedule a background task that re-derives the shell via router.match() under
+  // its own derived context (fresh handle store, _shellCaptureRun: true), so the
+  // middleware chain never re-runs. Eligibility mirrors resume plus a servable
+  // 200-HTML gate; the descriptor is read now (still set — the middleware clears
+  // it in a finally after next() returns, which is after this synchronous point).
+  maybeScheduleShellCapture(
+    ctx,
+    request,
+    env,
+    url,
+    reqCtx,
+    ssrModule,
+    nonce,
+    streamMode,
+    isPartial,
+    response,
   );
 
-  return createResponseWithMergedHeaders(htmlStream, {
-    headers: { "content-type": "text/html;charset=utf-8" },
-  });
+  return response;
+}
+
+/**
+ * Schedule a background PPR shell capture when the middleware requested one
+ * (`reqCtx._shellCapture` descriptor present) and this render is eligible: no
+ * per-request nonce (a frozen prelude cannot carry a fresh nonce), not under
+ * allReady buffering (which defeats streaming), the document path (never a
+ * partial), the SSR module exports the capture strategy, and the served response
+ * is a 200 HTML document (a 404/redirect/JSON is not a cacheable shell). All
+ * gating lives here so the middleware stays a thin descriptor-setter.
+ */
+function maybeScheduleShellCapture(
+  ctx: HandlerContext<any>,
+  request: Request,
+  env: any,
+  url: URL,
+  reqCtx: RequestContext<any>,
+  ssrModule: SSRModule,
+  nonce: string | undefined,
+  streamMode: import("../router/router-options.js").SSRStreamMode,
+  isPartial: boolean,
+  response: Response,
+): void {
+  const descriptor = reqCtx._shellCapture;
+  if (!descriptor) return;
+  if (nonce !== undefined) return;
+  if (streamMode === "allReady") return;
+  if (isPartial) return;
+  if (!ssrModule.captureShellHTML) return;
+  if (response.status !== 200) return;
+  if (!(response.headers.get("content-type") ?? "").includes("text/html")) {
+    return;
+  }
+  scheduleShellCapture(ctx, request, env, url, reqCtx, ssrModule, descriptor);
 }

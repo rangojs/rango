@@ -5,7 +5,10 @@ import {
   redirect,
   type Middleware,
 } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import {
+  MemorySegmentCacheStore,
+  createShellCacheMiddleware,
+} from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { onErrorLog } from "./error-log.js";
 
@@ -309,6 +312,14 @@ export const router = createRouter<AppEnv>({
     });
     await next();
   })
+  // PPR shell caching (docs/design/ppr-shell-resume.md), path-scoped to the
+  // /shell-cache subtree (the `/*` also covers /shell-cache itself). Caches the
+  // rendered HTML shell (prelude + postponed) in the app MemorySegmentCacheStore
+  // (getShell/putShell) and, on a later GET, flushes those bytes immediately while
+  // the live loader hole resumes into them. Covers /shell-cache (price hole),
+  // /shell-cache/stream (loader-carried promise), and /shell-cache/no-hole
+  // (negative: no loading(), eternal MISS). Store defaults to the app cache store.
+  .use("/shell-cache/*", createShellCacheMiddleware({ debug: true }))
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

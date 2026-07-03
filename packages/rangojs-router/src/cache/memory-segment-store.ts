@@ -12,6 +12,7 @@ import type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
+  ShellCacheEntry,
 } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 import { isPerClientSignalHeader } from "../browser/cookie-name.js";
@@ -26,6 +27,7 @@ import { reportCacheError } from "./cache-error.js";
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
 const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
+const SHELL_CACHE_REGISTRY_KEY = "__rsc_router_shell_cache_registry__";
 const TAG_INDEX_REGISTRY_KEY = "__rsc_router_tag_index_registry__";
 const KEY_TAGS_REGISTRY_KEY = "__rsc_router_key_tags_registry__";
 
@@ -60,6 +62,13 @@ interface CachedResponseEntry {
 interface CachedItemEntry {
   value: string;
   handles?: string;
+  expiresAt: number;
+  staleAt: number;
+  tags?: string[];
+}
+
+interface CachedShellEntry {
+  entry: ShellCacheEntry;
   expiresAt: number;
   staleAt: number;
   tags?: string[];
@@ -157,7 +166,8 @@ export class MemorySegmentCacheStore<
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
   private itemCache: Map<string, CachedItemEntry>;
-  /** tag -> set of prefixed cache keys (seg:key, res:key, item:key) */
+  private shellCache: Map<string, CachedShellEntry>;
+  /** tag -> set of prefixed cache keys (seg:key, res:key, item:key, shell:key) */
   private tagIndex: Map<string, Set<string>>;
   /** prefixed cache key -> set of tags (reverse index for O(tags) unregister) */
   private keyTags: Map<string, Set<string>>;
@@ -181,6 +191,10 @@ export class MemorySegmentCacheStore<
         ITEM_CACHE_REGISTRY_KEY,
         options.name,
       );
+      this.shellCache = getNamedMap<CachedShellEntry>(
+        SHELL_CACHE_REGISTRY_KEY,
+        options.name,
+      );
       this.tagIndex = getNamedMap<Set<string>>(
         TAG_INDEX_REGISTRY_KEY,
         options.name,
@@ -193,6 +207,7 @@ export class MemorySegmentCacheStore<
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
       this.itemCache = new Map<string, CachedItemEntry>();
+      this.shellCache = new Map<string, CachedShellEntry>();
       this.tagIndex = new Map<string, Set<string>>();
       this.keyTags = new Map<string, Set<string>>();
     }
@@ -245,6 +260,7 @@ export class MemorySegmentCacheStore<
     this.cache.clear();
     this.responseCache.clear();
     this.itemCache.clear();
+    this.shellCache.clear();
     this.tagIndex.clear();
     this.keyTags.clear();
   }
@@ -353,6 +369,43 @@ export class MemorySegmentCacheStore<
     }
   }
 
+  async getShell(
+    key: string,
+  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    const cached = this.shellCache.get(key);
+    if (!cached) return null;
+
+    const now = Date.now();
+    if (now > cached.expiresAt) {
+      this.unregisterTags(`shell:${key}`);
+      this.shellCache.delete(key);
+      return null;
+    }
+
+    // SWR mirrors the item family: stale within the swr window still serves, and
+    // signals shouldRevalidate so the middleware schedules a background recapture.
+    const shouldRevalidate = cached.staleAt > 0 && now > cached.staleAt;
+    return { entry: cached.entry, shouldRevalidate };
+  }
+
+  async putShell(
+    key: string,
+    entry: ShellCacheEntry,
+    ttlSeconds?: number,
+    swrSeconds?: number,
+    tags?: string[],
+  ): Promise<void> {
+    const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
+    const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
+    const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
+    const prefixedKey = `shell:${key}`;
+    this.unregisterTags(prefixedKey);
+    this.shellCache.set(key, { entry, expiresAt, staleAt, tags });
+    if (tags && tags.length > 0) {
+      this.registerTags(tags, prefixedKey);
+    }
+  }
+
   async invalidateTags(tags: string[]): Promise<void> {
     for (const tag of tags) {
       const keys = this.tagIndex.get(tag);
@@ -371,6 +424,8 @@ export class MemorySegmentCacheStore<
           this.responseCache.delete(rawKey);
         } else if (prefix === "item") {
           this.itemCache.delete(rawKey);
+        } else if (prefix === "shell") {
+          this.shellCache.delete(rawKey);
         }
 
         this.unregisterTags(prefixedKey);
@@ -421,6 +476,7 @@ export class MemorySegmentCacheStore<
     delete (globalThis as any)[CACHE_REGISTRY_KEY];
     delete (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY];
     delete (globalThis as any)[ITEM_CACHE_REGISTRY_KEY];
+    delete (globalThis as any)[SHELL_CACHE_REGISTRY_KEY];
     delete (globalThis as any)[TAG_INDEX_REGISTRY_KEY];
     delete (globalThis as any)[KEY_TAGS_REGISTRY_KEY];
   }

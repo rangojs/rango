@@ -19,6 +19,7 @@ import type {
 } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import { isShellCaptureActive } from "./loader-mask.js";
 import {
   handleHandlerResult,
   tryStaticHandler,
@@ -60,6 +61,16 @@ export async function resolveLoaders<TEnv>(
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 
+  // Emit the streaming (non-awaiting) loader shape when loading is enabled OR
+  // during a PPR shell capture. In capture, loaders are masked with
+  // never-resolving promises (loader-mask.ts); the loading-disabled branch below
+  // AWAITS the loader promises, which would hang the capture render's match()
+  // forever on those masked promises. Forcing the streaming shape lets match()
+  // complete so the prerender can postpone the loader subtrees as holes. The
+  // `!loadingDisabled` short-circuit keeps the ALS check off the hot path (only
+  // loading-disabled entries consult it), so normal requests are unchanged.
+  const emitStreaming = !loadingDisabled || isShellCaptureActive();
+
   // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
   // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
   // telemetry event — wrapLoaderPromise only builds the onError/telemetry path
@@ -67,7 +78,7 @@ export async function resolveLoaders<TEnv>(
   // loader failures the same way handlers/actions/routing/fetchable-loaders do.
   const errorContext = buildLoaderErrorContext(ctx);
 
-  if (!loadingDisabled) {
+  if (emitStreaming) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
     const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;

@@ -1,7 +1,7 @@
 ---
 name: caching
 description: Configure segment caching with memory or Cloudflare KV stores in @rangojs/router
-argument-hint: [setup]
+argument-hint: "[setup]"
 ---
 
 # Caching
