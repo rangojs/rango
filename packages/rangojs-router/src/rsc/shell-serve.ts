@@ -122,3 +122,29 @@ export function warnShellStoreMissingOnce(key: string): void {
       "via createRouter({ cache }).",
   );
 }
+
+/** Keys already warned about an active per-request nonce (once per key). */
+const warnedNonceActive = new Set<string>();
+
+/**
+ * Warn once per key that a route declared `ppr` but a per-request CSP nonce is
+ * active for the request, so the route stays on axis 1 (a shared shell would
+ * freeze one request's nonce for every visitor — useNonce() renders it into every
+ * nonced script/style/meta and the browser's CSP would then reject the frozen
+ * nonce for all but the capture request). The nonce blocks capture whether it came
+ * from the `createRouter({ nonce })` provider or from a direct `ctx.set(nonce, …)`
+ * token write in middleware. Same declared-intent-cannot-be-honored doctrine as
+ * the missing-store warning above (an undeclared route stays silent).
+ */
+export function warnPprNonceActiveOnce(key: string): void {
+  if (warnedNonceActive.has(key)) return;
+  warnedNonceActive.add(key);
+  console.warn(
+    `[rango] Route for "${key}" declares the ppr path option, but a per-request ` +
+      "CSP nonce is active for this request (from createRouter({ nonce }) or a " +
+      "ctx.set(nonce, …) token write in middleware), so the route is served on " +
+      "axis 1 without a shell. A shell is shared per host+URL; baking one " +
+      "request's nonce into it would break CSP for every other visitor. Drop the " +
+      "ppr option on this route, or stop setting a per-request nonce for it.",
+  );
+}

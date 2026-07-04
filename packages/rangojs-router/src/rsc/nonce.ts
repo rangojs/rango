@@ -8,11 +8,20 @@ import { createVar } from "../context-var.js";
 /**
  * Typed ContextVar token for CSP nonce.
  *
- * Use this to access the nonce in middleware or handlers:
+ * Use this to READ the nonce in middleware or handlers:
  * ```ts
  * import { nonce } from "@rangojs/router";
  * const value = ctx.get(nonce); // string | undefined
  * ```
+ *
+ * Supply the nonce via the `createRouter({ nonce })` provider, not by writing
+ * this token yourself. The provider value is threaded into the router's SSR
+ * machinery (NonceContext/useNonce, Scripts/MetaTags attributes, the inlined
+ * Flight payload scripts) AND sets this token. A direct `ctx.set(nonce, value)`
+ * in middleware runs AFTER the SSR nonce is resolved: the value is readable via
+ * `ctx.get(nonce)` and gates PPR shell capture (a per-request nonce must never
+ * bake into a shared shell), but the router will not apply it to its own
+ * scripts — useNonce() stays undefined for that request.
  */
 export const nonce: ContextVar<string> = createVar<string>();
 

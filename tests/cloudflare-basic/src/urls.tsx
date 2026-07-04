@@ -1,6 +1,6 @@
-import { urls, updateTag, revalidateTag, Meta } from "@rangojs/router";
+import { urls, updateTag, revalidateTag, Meta, nonce } from "@rangojs/router";
 import { Suspense } from "react";
-import { Link } from "@rangojs/router/client";
+import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
@@ -433,6 +433,56 @@ export const urlpatterns = urls(
             ],
           ),
         ]),
+        // Per-request nonce via the `nonce` ContextVar TOKEN in route middleware
+        // (issue #656). A shell is shared per host+URL, so baking one request's
+        // nonce into it would break CSP for every other visitor. A ppr route with
+        // an active per-request nonce — provider OR token — must stay on axis 1
+        // (no PPR participation, no x-rango-shell header) with a once-per-key
+        // worker warning. The commit-point gate reads the token AFTER the route
+        // middleware runs; before the fix it saw only the provider-threaded nonce
+        // and this route wrongly entered capture, freezing one nonce for all. The
+        // layout reads ctx.get(nonce) into the SHELL region (above the loading()
+        // hole) so each MISS carries a DISTINCT nonce. Middleware is scoped to THIS
+        // subtree, not global, so it gates only this route and leaves the other
+        // ppr fixtures capturable.
+        middleware(
+          async (ctx, next) => {
+            ctx.set(nonce, crypto.randomUUID());
+            return next();
+          },
+          () => [
+            layout(
+              (ctx) => {
+                const requestNonce = ctx.get(nonce);
+                return (
+                  <main data-testid="ppr-nonce-page">
+                    <h1 data-testid="ppr-nonce-header">PPR Nonce Demo</h1>
+                    <span
+                      data-testid="ppr-nonce-value"
+                      data-nonce={requestNonce ?? "(none)"}
+                    />
+                    <Outlet />
+                  </main>
+                );
+              },
+              () => [
+                path(
+                  "/ppr-nonce",
+                  PprShellPricePage,
+                  { name: "pprNonce", ppr: { ttl: 300, swr: 120 } },
+                  () => [
+                    loader(PprShellPriceLoader),
+                    loading(
+                      <div data-testid="ppr-nonce-price-fallback">
+                        Loading price...
+                      </div>,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
         // Orphan fetchable loader: loader reachable only via a client import,
         // never registered with loader(), never imported by the worker entry.
         path("/orphan-fetch", () => <OrphanFetchTest />, {
