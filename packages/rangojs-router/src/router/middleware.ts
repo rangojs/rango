@@ -312,7 +312,10 @@ export function createMiddlewareContext<TEnv>(
       const reqCtx = _getRequestContext();
       if (reqCtx) {
         reqCtx._debugPerformance = true;
-        reqCtx._metricsStore ??= createMetricsStore(true);
+        // Anchor to the true request entry (reqCtx._handlerStart) so phases that
+        // began before this opt-in report non-negative offsets; undefined falls
+        // back to performance.now() in createMetricsStore.
+        reqCtx._metricsStore ??= createMetricsStore(true, reqCtx._handlerStart);
       }
     },
   };

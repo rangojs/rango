@@ -107,6 +107,8 @@ describe("thrown-Response telemetry (request.end, not request.error)", () => {
       cacheHit: false,
       method: "GET",
       pathname: "/protected",
+      // The short-circuit request.end carries the thrown Response's status.
+      status: 302,
     });
 
     // callOnError must NOT fire for a control-flow Response.
@@ -160,6 +162,8 @@ describe("thrown-Response telemetry (request.end, not request.error)", () => {
       transaction: "matchPartial",
       segmentCount: 0,
       cacheHit: false,
+      // The short-circuit request.end carries the thrown Response's status.
+      status: 302,
     });
     expect(deps.callOnError).not.toHaveBeenCalled();
   });

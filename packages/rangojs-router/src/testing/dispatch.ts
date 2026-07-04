@@ -757,6 +757,10 @@ export async function dispatch<TEnv = any>(
           durationMs: performance.now() - telemetryStart,
           segmentCount: 0,
           cacheHit: false,
+          // dispatch's final response IS built before request.end (unlike
+          // match()/matchPartial(), whose Response is built after), so stamp its
+          // status — the same field a thrown-Response short-circuit carries.
+          status: finalResponse.status,
         });
       }
 
@@ -785,6 +789,9 @@ export async function dispatch<TEnv = any>(
             durationMs: performance.now() - telemetryStart,
             segmentCount: 0,
             cacheHit: false,
+            // Carry the short-circuit Response's status (parity with
+            // match-handlers.ts's thrown-Response request.end).
+            status: error.status,
           });
         } else {
           safeEmit(resolveSink(sink), {

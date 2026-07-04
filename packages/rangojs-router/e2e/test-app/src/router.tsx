@@ -217,6 +217,16 @@ export const router = createRouter<AppEnv>({
     });
   },
 })
+  // Per-request perf-debug opt-in (docs/telemetry.md "Per-request opt-in"):
+  // ?__perf_debug=1 turns on the metrics store for THIS request only, so the
+  // suite is not spammed with [RSC Perf] logs. Must run before next() so
+  // downstream phases record into the store.
+  .use(async (ctx, next) => {
+    if (ctx.url.searchParams.has("__perf_debug")) {
+      ctx.debugPerformance();
+    }
+    await next();
+  })
   // Bug-repro: cookies set AFTER await next() in the outermost middleware.
   // Registered before globalMiddleware so no outer early-return merge can mask the bug.
   .use("/middleware-test/cookies-after-next", async (_ctx, next) => {

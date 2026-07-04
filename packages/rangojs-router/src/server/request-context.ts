@@ -478,6 +478,15 @@ export interface RequestContext<
   /** @internal Request-scoped performance metrics store */
   _metricsStore?: MetricsStore;
 
+  /**
+   * @internal True request entry timestamp (performance.now() at handler entry).
+   * Set once at request-context creation (rsc/handler.ts) so a metrics store
+   * created MID-request — ctx.debugPerformance() or the getMetricsStore wrapper —
+   * anchors its timeline to the real request start instead of the opt-in moment,
+   * keeping phases that began before the opt-in at their true (non-negative) offset.
+   */
+  _handlerStart?: number;
+
   /** @internal Resolved platform phase-span tracing for this request (Cloudflare or OTel) */
   _tracing?: ResolvedTracing;
 
@@ -547,6 +556,7 @@ export type PublicRequestContext<
   | "_reportBackgroundError"
   | "_debugPerformance"
   | "_metricsStore"
+  | "_handlerStart"
   | "_basename"
   | "_setStatus"
   | "_rotateStateCookie"
@@ -1039,6 +1049,7 @@ export function createRequestContext<TEnv>(
 
     _reportedErrors: new WeakSet<object>(),
     _metricsStore: undefined,
+    _handlerStart: undefined,
 
     _renderBarrier: null as any,
     _resolveRenderBarrier: null as any,

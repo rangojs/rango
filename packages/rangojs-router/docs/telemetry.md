@@ -116,15 +116,15 @@ store must exist when downstream phases (route matching, rendering, SSR)
 run so they can record their spans. Calling it after `next()` returns
 still emits `handler:total` but misses all upstream metrics.
 
-One offset caveat: a store created mid-request this way anchors its timeline at
-the moment you opt in, not at the true request entry (that entry timestamp is
-handler-local and isn't threaded onto the middleware context). Any phase that
-began before the opt-in — the `handler-*` bootstrap entries, an earlier
-middleware's `:pre` — records a negative start offset that the display clamps to
-`0ms`, so those phases pile up at the timeline origin and their relative ordering
-there is not meaningful. Enable `debugPerformance: true` globally when you need
-faithful offsets for the whole request; the store is then created at handler
-entry with the real start.
+Offsets anchor to the true request entry. The handler-entry timestamp is threaded
+onto the request context, so a store created mid-request this way uses it — not
+the opt-in moment — as the timeline origin. A phase whose start predates the
+opt-in but is recorded once the store exists (for example a middleware `:pre`
+whose clock started before its handler called `ctx.debugPerformance()`) then
+reports its real, non-negative offset instead of clamping to `0ms`. A phase that
+ran to completion entirely before you opted in is still not captured at all — the
+store did not exist to record it (see the before-`next()` note above); the
+anchoring fixes offsets, not the missing upstream metrics.
 
 ### Server-Timing header
 
@@ -355,6 +355,9 @@ All events include a `timestamp` (from `performance.now()`) and an optional
   durationMs: 15.2,
   segmentCount: 3,
   cacheHit: false,
+  status: 302,  // optional — present only when a Response ended the transaction
+                // (a thrown-Response short-circuit, or dispatch()'s final
+                // response); absent for a normal render completion
 }
 
 // request.error
@@ -372,8 +375,11 @@ All events include a `timestamp` (from `performance.now()`) and an optional
 A thrown `Response` from middleware — a redirect or auth gate short-circuit —
 is completed control flow, not a failure. It emits `request.end` with
 `segmentCount: 0` (the same completed-request event the non-thrown redirect
-path emits), never `request.error`, so auth redirects do not inflate error
-counts. `request.error` fires only for a genuine unhandled error.
+path emits) and `status` set to the thrown Response's status (e.g. `302`), never
+`request.error`, so auth redirects do not inflate error counts. `request.error`
+fires only for a genuine unhandled error. A normal render completion omits
+`status` (the Response is built after `match()`), so a sink can split 3xx
+short-circuits from 2xx completions on the field's presence.
 
 ### Loader Events
 
