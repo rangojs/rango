@@ -1,4 +1,4 @@
-import { Meta, notFound } from "@rangojs/router";
+import { Meta, notFound, cacheTag } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -10,6 +10,20 @@ import {
 } from "../loaders/blog.js";
 
 export function BlogLayout(ctx: HandlerContext) {
+  // #648 render-callable cacheTag: this baked server component tags the PPR shell
+  // it renders into — NO cache()/"use cache" anywhere in its tree — so
+  // updateTag()/revalidateTag() of that tag drops the shell. Gated on a probe
+  // param, with the tag derived from the probe value, so the eviction e2e evicts
+  // only its OWN shell key and never a sibling /ppr-blog shell. Test-fixture
+  // pattern (mirrors /test/invalidate-tag): never derive invalidation tags from
+  // untrusted input in production.
+  const shellProbe = ctx.searchParams.get("shelltag");
+  if (shellProbe) {
+    // Colon-free tag: it round-trips through the /test/invalidate-tag/:tag URL
+    // param, and a ":" there would URL-encode and mismatch the recorded tag.
+    cacheTag(`pprblog-shell-${shellProbe}`);
+  }
+
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({ label: "Home", href: ctx.reverse("home") });
   breadcrumb({ label: "Blog", href: ctx.reverse("blog") });
