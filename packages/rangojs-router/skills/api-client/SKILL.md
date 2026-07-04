@@ -1,6 +1,6 @@
 ---
 name: api-client
-description: Build a typed client for consuming your own response-route JSON APIs (no codegen)
+description: Build a typed client for consuming your own response-route JSON APIs (no codegen). Use when calling your own JSON endpoints from another service or script, or you want typed fetch calls without a codegen step.
 ---
 
 # Typed API Client

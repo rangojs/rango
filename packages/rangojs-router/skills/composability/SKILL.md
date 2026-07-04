@@ -1,6 +1,6 @@
 ---
 name: composability
-description: Reusable composition patterns with globally importable route helpers in @rangojs/router
+description: Reusable composition patterns with globally importable route helpers in @rangojs/router. Use when sharing loaders, middleware, or handler logic across multiple route files, or avoiding copy-pasting the same route setup everywhere.
 argument-hint: "pattern-name"
 ---
 

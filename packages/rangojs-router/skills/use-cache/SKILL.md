@@ -1,6 +1,6 @@
 ---
 name: use-cache
-description: Function-level caching with "use cache" directive for RSC data functions and components
+description: Function-level caching with the "use cache" directive for RSC data functions and components in @rangojs/router. Use when a single function or component should memoize its own output, not a whole route/segment subtree or HTTP response.
 argument-hint: [profile-name]
 ---
 

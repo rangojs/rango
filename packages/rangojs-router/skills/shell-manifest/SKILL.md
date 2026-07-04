@@ -1,6 +1,6 @@
 ---
 name: shell-manifest
-description: Shell manifest pattern — replayed handles as cache metadata that live loaders read, e.g. a prerendered product list with batched live prices
+description: Shell manifest pattern — replayed handles as cache metadata that live loaders read, e.g. a prerendered product list with batched live prices. Use when a cached/prerendered shell needs to feed IDs or metadata to a live loader for freshly-fetched data.
 argument-hint:
 ---
 

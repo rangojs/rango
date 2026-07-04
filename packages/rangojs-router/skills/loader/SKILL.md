@@ -1,6 +1,6 @@
 ---
 name: loader
-description: Define data loaders for fetching data in routes with createLoader
+description: Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, or client components need reactive server data.
 argument-hint: [loader]
 ---
 

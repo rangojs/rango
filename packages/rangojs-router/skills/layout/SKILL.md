@@ -1,6 +1,6 @@
 ---
 name: layout
-description: Define layout routes that wrap child routes in @rangojs/router
+description: Define layout routes that wrap child routes in @rangojs/router. Use when sharing a persistent UI shell (nav, sidebar) across nested routes, or asking how to wrap child pages with a common layout.
 argument-hint: [component]
 ---
 

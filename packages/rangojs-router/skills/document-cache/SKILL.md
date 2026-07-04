@@ -1,6 +1,6 @@
 ---
 name: document-cache
-description: Cache full HTTP responses at the edge with Cache-Control headers
+description: Cache the whole HTTP response at the edge with Cache-Control headers. Use when caching an entire page or response at a CDN edge, setting Cache-Control headers, or cutting origin hits for public pages — not for caching a single segment or function.
 argument-hint: [setup]
 ---
 

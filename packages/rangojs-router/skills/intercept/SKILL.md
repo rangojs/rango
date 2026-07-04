@@ -1,6 +1,6 @@
 ---
 name: intercept
-description: Define intercept routes for modals, slide-overs, and soft navigation patterns in @rangojs/router
+description: Define intercept routes for modals, slide-overs, and soft navigation patterns in @rangojs/router. Use when opening a route as a modal/overlay on top of the current page while keeping the URL shareable, or asking "how do I show this page in a modal".
 argument-hint: [@slot-name] [route-to-intercept]
 ---
 

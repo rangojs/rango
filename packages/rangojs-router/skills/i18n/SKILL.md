@@ -1,6 +1,6 @@
 ---
 name: i18n
-description: Locale-aware routing with `include("/:locale?", ...)`, locale resolution chains, and react-intl integration
+description: Locale-aware routing with `include("/:locale?", ...)`, locale resolution chains, and react-intl integration. Use when building a multi-language app, routes need a locale segment, or wiring up react-intl translations.
 argument-hint: "[topic]"
 ---
 

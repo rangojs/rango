@@ -1,6 +1,6 @@
 ---
 name: debug-manifest
-description: Debug and inspect route manifest structure
+description: Debug and inspect route manifest structure. Use when routes aren't matching as expected, you need to see the generated route tree, or a path resolves to the wrong handler.
 argument-hint:
 ---
 

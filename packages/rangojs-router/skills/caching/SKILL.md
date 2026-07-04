@@ -1,6 +1,6 @@
 ---
 name: caching
-description: Configure segment caching with memory or Cloudflare KV stores in @rangojs/router
+description: Configure route/segment-subtree caching with memory, Cloudflare KV, or Vercel cache stores in @rangojs/router. Use when responses should be cached or revalidated, data is stale or not updating after code changes, or you are wiring up a cache store.
 argument-hint: "[setup]"
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: server-actions
-description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, revalidation
+description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, revalidation. Use when handling a form submission on the server, calling a server function from a client component, or needing optimistic UI after a mutation.
 argument-hint: "[action]"
 ---
 

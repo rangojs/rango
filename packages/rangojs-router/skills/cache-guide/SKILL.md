@@ -1,6 +1,6 @@
 ---
 name: cache-guide
-description: When to use cache() DSL vs "use cache" directive — key differences and decision guide
+description: When to use cache() DSL vs "use cache" directive — key differences and decision guide. Use when unsure which caching mechanism fits a given problem, comparing route/segment caching, function-level caching, and document-level caching, or asking "which cache API should I use".
 argument-hint:
 ---
 

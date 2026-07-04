@@ -1,6 +1,6 @@
 ---
 name: parallel
-description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router
+description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router. Use when a layout needs multiple independently-loading regions (e.g. a sidebar and main panel), or rendering more than one route segment at the same URL.
 argument-hint: [@slot-name]
 ---
 

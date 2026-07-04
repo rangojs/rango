@@ -1,6 +1,6 @@
 ---
 name: ppr
-description: PPR shell caching — opt a page route in with the `ppr` path option; the router serves the cached HTML shell instantly and resumes the live holes
+description: PPR shell caching — opt a page route in with the `ppr` path option; the router serves the cached HTML shell instantly and resumes the live holes. Use when a page should render instantly from a cached shell while specific parts stay live, or asking about partial prerendering in Rango.
 argument-hint: "[setup]"
 ---
 
