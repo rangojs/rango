@@ -16,6 +16,9 @@ pre-commit:
     - name: doc-links
       run: node tools/check-doc-links.mjs
       glob: "packages/rangojs-router/docs/internal/feature-*map.md"
+    - name: skills-catalog
+      run: node tools/generate-skills-catalog.mjs --check
+      glob: "packages/rangojs-router/skills/**"
 
 post-merge:
   jobs:
