@@ -290,6 +290,12 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - `buildEnv` Vite plugin option for build-time `ctx.env` access (KV, D1, etc.)
 - `"auto"` mode calls `wrangler.getPlatformProxy()` for Cloudflare presets
 - Applies to both production build and dev `/__rsc_prerender` evaluation
+- Dev `/__rsc_prerender` memoizes rendered payloads between HMR edits, keyed by
+  router-instance identity (`vite/discovery/dev-prerender-cache.ts`, issue
+  #654): per-request entry re-import makes instance identity the HMR
+  generation (on cloudflare the temp-runner re-import also fixes
+  handler-only-edit staleness); one render warms main + intercept variant
+  keys; `x-rango-prerender-cache: HIT | MISS` response header
 - Build-time render errors surface to the build instead of baking an error page
   (issue #587): `ResolveSegmentOptions.throwOnError` (set only by the prerender
   path) re-throws through `matchForPrerender`. `prerender.onError` Vite plugin
