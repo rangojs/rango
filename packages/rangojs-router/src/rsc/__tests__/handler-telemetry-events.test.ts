@@ -77,6 +77,7 @@ vi.mock("../response-route-handler.js", () => ({
 }));
 
 import { createRSCHandler } from "../handler.js";
+import { getRequestContext } from "../../server/request-context.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";
 import type { TelemetryEvent } from "../../router/telemetry.js";
 
@@ -185,5 +186,59 @@ describe("handler telemetry events reach the sink outside the match ALS", () => 
     expect(e.phase).toBe("loader");
     expect(e.method).toBe("GET");
     expect(e.pathname).toBe("/data");
+  });
+
+  it("case C: late-handle handler.error reaches the configured sink", async () => {
+    const events: TelemetryEvent[] = [];
+    const spySink = { emit: (e: TelemetryEvent) => events.push(e) };
+
+    // A response-route handler that forces a LATE handle push: it drives the
+    // request's real _handleStore to completion (seal -> drain stream() so
+    // `completed` flips true), then push()es. push() on a completed store throws
+    // LateHandlePushError AND fires store.onError — the leg wired inside
+    // executeRequest (handler.ts ~794). That onError runs at the HANDLER level,
+    // OUTSIDE the match() RouterContext ALS, so an observeEvent() call there would
+    // silently swallow the event (getRouterContext() throws outside match); only
+    // safeEmit(resolveSink(router.telemetry), ...) reaches the configured sink.
+    const { handleResponseRoute } =
+      await import("../response-route-handler.js");
+    vi.mocked(handleResponseRoute).mockImplementationOnce(async () => {
+      const store = getRequestContext()._handleStore;
+      store.seal();
+      const it = store.stream();
+      // Drain the stream so `completed` flips true (see handle-store.ts stream()).
+      while (!(await it.next()).done) {
+        /* drain */
+      }
+      try {
+        store.push("late", "seg-1", { v: 1 });
+      } catch {
+        // LateHandlePushError is expected — push() rethrows after firing onError.
+      }
+      return new Response("ok", { status: 200 });
+    });
+
+    // Generous timeouts so the setTimeout(0) drain never trips the render-start
+    // deadline on a slow CI runner.
+    const router = createMockRouter({
+      telemetry: spySink,
+      timeouts: { renderStartMs: 5000, actionMs: 5000 },
+    } as any);
+    const handler = createRSCHandler({ router });
+    const request = new Request("https://example.com/api/data");
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const response = await handler(request, { env: {} });
+    expect(response.status).toBe(200);
+
+    const handlerErrors = events.filter((e) => e.type === "handler.error");
+    expect(handlerErrors.length).toBeGreaterThan(0);
+    const e = handlerErrors[0] as Extract<
+      TelemetryEvent,
+      { type: "handler.error" }
+    >;
+    expect(e.handledByBoundary).toBe(true);
+    expect(typeof e.requestId).toBe("string");
   });
 });
