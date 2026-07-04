@@ -17,6 +17,7 @@
     "check:e2e-parity": "node tools/check-e2e-parity.mjs",
     "check:doc-links": "node tools/check-doc-links.mjs",
     "check:docs-api": "node tools/check-docs-api.mjs",
+    "check:skills": "node tools/check-skills.mjs",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
     "tsc": "turbo run typecheck",
