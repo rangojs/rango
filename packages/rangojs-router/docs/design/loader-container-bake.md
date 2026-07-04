@@ -32,6 +32,17 @@ Implementation notes (deltas from the sketch below, all deliberate):
   recorded pre-wrap (the wrapper is deterministic), serialized with
   `serializeResult` (null-preserving), and seeded via `_shellLoaderSeed` on
   the HIT tail's derived context.
+- **Settled nested promises pin behind a SETTLED marker, not as raw values**
+  (`$rangoLoaderSettled`, added post-ship). The first cut inlined a settled
+  nested promise's value directly, so the HIT overlay handed consumers a plain
+  value where their code says `use(data.x)` — React #438, root error boundary,
+  whole page down (found live on a storefront PDP whose 165ms price fetch won
+  the quiet window because a concurrent loader kept the Flight stream
+  byte-active past it). The overlay rehydrates the marker as
+  `Promise.resolve(pinned)`; a fully-pinned container resolves immediately,
+  one with deeper holes chains on the fresh promise to fill them
+  (`loader-snapshot.ts`, pinned by the `/shell-cache/settled` +
+  `/ppr-shell/settled` e2e twins and the #438 unit regressions).
 
 ## The asymmetry this closes
 

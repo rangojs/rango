@@ -7,6 +7,7 @@ import {
   ShellChromeLoader,
   ShellBadgeLoader,
   ShellIdentityLoader,
+  ShellSettledLoader,
   ShellHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
@@ -14,6 +15,7 @@ import {
   getDriftStamp,
 } from "./shell-cache.defs.js";
 import { ShellBadge } from "../components/ShellBadge.js";
+import { ShellSettledValue } from "../components/ShellSettledValue.js";
 import { ShellGuardValue } from "../components/ShellGuardValue.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
@@ -197,6 +199,11 @@ function ShellGuardPage() {
   return <ShellGuardValue loader={ShellIdentityLoader} />;
 }
 
+// Settled-marker regression page (storefront PDP #438): see ShellSettledLoader.
+function ShellSettledPage() {
+  return <ShellSettledValue loader={ShellSettledLoader} />;
+}
+
 export const shellCachePatterns = urls(
   ({ path, layout, loader, loading, middleware, parallel }) => [
     layout(ShellCacheLayout, () => [
@@ -307,6 +314,15 @@ export const shellCachePatterns = urls(
         ppr: true,
       }),
     ]),
+    // Settled-marker regression (storefront PDP #438): bake-lane loader whose
+    // nested promise is already resolved at container return — the snapshot
+    // pins its value; the HIT overlay must rehydrate a Promise for use().
+    path(
+      "/shell-cache/settled",
+      ShellSettledPage,
+      { name: "shellCacheSettled", ppr: true },
+      () => [loader(ShellSettledLoader)],
+    ),
     // Identity-guard negative: a bake-lane loader (no loading()) that reads
     // cookies(). Capture refuses deterministically (guard flag) — MISS forever
     // — while axis 1 serves the per-user value normally.

@@ -169,6 +169,31 @@ On a document GET to a ppr route the router runs:
 point is after the chain, an unauthorized request NEVER sees shell bytes — put
 auth middleware anywhere (global or route DSL) and it guards PPR for free.
 
+## Verifying it works
+
+The header exists on DOCUMENT responses only. A bare `curl` (no `Accept`)
+content-negotiates a Flight payload (`text/x-component`) with NO
+`x-rango-shell` header at all — which reads as "PPR is off" but is only the
+wrong request shape:
+
+```
+curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/products/1 | grep -i x-rango-shell
+```
+
+- First document GET: `MISS`, plus a background capture.
+- Production (workerd/node): the SECOND request is a `HIT`.
+- Dev: expect a few extra MISSes — cold module transforms abort the capture
+  window (per-attempt breadcrumbs: start the server with
+  `INTERNAL_RANGO_DEBUG=1`). This self-heals; only a route that NEVER flips
+  has a real hole/eligibility problem (the once-per-key warning tells the two
+  apart).
+- A HIT is one ordinary document: the frozen prelude first (view-source shows
+  your baked shell, with hole fallbacks in place), then
+  `<div hidden id="S:0">…` segments as the holes resume, per request.
+- A ppr-declared route that CANNOT be honored (missing shell store family,
+  per-request nonce) serves plain axis 1 with NO header and warns once per
+  key — no header + a declared `ppr` means look for that warning.
+
 ## The hole doctrine (encode this in your head)
 
 Holes are **render-defined**, decided by the shape of the tree, on three rules:
@@ -230,7 +255,14 @@ The physics caveat in one line: promise holes are holes because the I/O is
 genuinely pending at capture. If the value can resolve near-instantly (memory
 read, warmed cache), it may bake into the shell — when liveness must be
 guaranteed rather than probable, use the live lane (`loading()`). The same
-physics governs bake-lane nested promises.
+physics governs bake-lane nested promises, with one shape guarantee: a nested
+promise that settles inside the window pins its VALUE, but the container key
+KEEPS its promise shape on HITs (the snapshot rehydrates a
+`Promise.resolve(pinned)`), so an unconditional `use(data.x)` consumer never
+breaks — it just reads the pinned value. Note the timing consequence: whether
+such a value is pinned or live can vary per capture (concurrent loader traffic
+extends the quiet window), so treat "fast-resolving promise on the bake lane"
+as PINNED for correctness purposes.
 
 ### Handles: "nesting = liveness"
 
@@ -278,7 +310,10 @@ Three hard edges (each e2e/unit-pinned):
   throws during capture and the capture REFUSES (deterministic, once-per-key
   warned) — identity can never bake into the shared shell. Give that loader's
   entry `loading()` (the live lane is exempt) or move the identity-dependent
-  part into a nested promise.
+  part into a nested promise. The guard's scope is EXACTLY those two calls:
+  per-user state read from a middleware-provided object (`ctx.get("session")`)
+  does NOT refuse — it bakes silently as the capturing user's data (see
+  Pitfalls: the session-object bake trap).
 - **A rejecting bake-lane loader refuses.** Error UI never bakes.
 - **Baked containers show CAPTURE-time data** for the shell's lifetime on
   document GETs (client navigations stay fresh — axis 1). That IS the bake
@@ -316,10 +351,16 @@ stay live. Your levers, in order of preference:
        loader(BasketLoader),
        loading(<BadgeSkeleton />), // hole the size of a badge, not a page
      ]),
-     parallel({ "@wishlist": WishlistBadge }, () => [
-       loader(WishlistLoader),
-       loading(<BadgeSkeleton />),
-     ]),
+     // Descriptor form when the slot handler needs ctx (annotate it —
+     // StaticHandlerDefinition in the union blocks inference there):
+     parallel({
+       "@wishlist": {
+         handler: (ctx: HandlerContext) => (
+           <WishlistBadge listUrl={ctx.reverse("wishlist")} />
+         ),
+         use: () => [loader(WishlistLoader), loading(<BadgeSkeleton />)],
+       },
+     }),
      path("/", HomePage, { name: "home", ppr: true }),
    ]),
    ```
@@ -387,9 +428,14 @@ PPR-ineligible by construction; the live lane (`loading()`) stays exempt.
 **(c) Residual hazard — middleware-derived per-user state.** A `ctx` variable
 set by an upstream auth middleware and rendered by shell material is
 photographed into the SHARED shell (the capture inherits post-middleware
-state). That is scope fidelity working as designed — for shared values. If the
-value is per-user: shell-cache only public/shared pages, put per-user content
-in loaders, or key per variant at the CDN tier.
+state). That is scope fidelity working as designed — for shared values. The
+same hazard reaches BAKE-LANE LOADERS: a loader reading a middleware-provided
+session object (`ctx.get("session")`) never calls `cookies()` itself, so the
+guard cannot see it — whatever it returns as settled container data is
+photographed as the CAPTURING user's state. If the
+value is per-user: shell-cache only public/shared pages, keep per-user content
+in nested pending promises or live-lane (`loading()`) loaders — NOT in a
+bake-lane container — or key per variant at the CDN tier.
 
 ## What always stays on axis 1
 
@@ -483,7 +529,27 @@ know (a tenant id, a deploy marker).
 - **Per-user value in shell material**: baked into the shared shell —
   deterministically, not by race (handler promises deep-settle at the ring-3
   write on cached chains; awaited/resolved values bake everywhere). Put
-  per-user data in a loader.
+  per-user data in a nested pending promise or a live-lane (`loading()`)
+  loader — a BAKE-lane loader container bakes just like handler material.
+- **The session-object bake trap (the guard cannot save you here)**: the
+  capture guard sees `cookies()`/`headers()` calls ONLY. A bake-lane loader
+  reading a middleware-provided session object (`ctx.get("session")`) refuses
+  nothing — and its FAST-RESOLVE branch is the killer:
+
+  ```typescript
+  const CartLoader = createLoader(async (ctx) => {
+    const basketId = ctx.get("session")!.get("basketId");
+    if (!basketId) return { cart: Promise.resolve(null) }; // SETTLED → BAKES
+    return { cart: fetchBasket(basketId) }; // pending → hole
+  });
+  ```
+
+  If the capturing request is anonymous (it usually is), `cart: null` bakes
+  and is snapshot-pinned: every logged-in user gets the anonymous badge on
+  every HIT. The branch asymmetry makes it nondeterministic per capture. Any
+  loader whose data is per-user belongs on the live lane — for a header
+  widget, a parallel slot with its own `loading()` (playbook lever 3).
+
 - **Theme on a HIT is capture-then-corrected**: the resume tree replays the
   CAPTURE's `initialTheme` (resume requires it to match the frozen prelude);
   the visitor's cookie theme is applied pre-paint by the FOUC script and

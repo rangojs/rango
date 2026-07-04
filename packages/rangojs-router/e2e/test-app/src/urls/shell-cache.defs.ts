@@ -136,6 +136,30 @@ export function makePhysicsPromise(): Promise<string> {
   );
 }
 
+// Settled-marker regression fixture (the storefront PDP React #438): a
+// bake-lane loader whose nested promise is ALREADY RESOLVED when the container
+// returns. It always wins the capture window, so the snapshot pins its VALUE —
+// wrapped in the settled marker, which the HIT overlay must rehydrate into
+// Promise.resolve(value). The client consumer calls use(data.fast)
+// unconditionally; handing it the raw value threw #438 and the root error
+// boundary replaced the whole page.
+export interface ShellSettledData {
+  label: string;
+  fast: Promise<string>;
+}
+
+let shellSettledSeq = 0;
+
+export const ShellSettledLoader = createLoader(
+  async (): Promise<ShellSettledData> => {
+    shellSettledSeq += 1;
+    return {
+      label: `Settled outer ${shellSettledSeq}`,
+      fast: Promise.resolve(`Settled fast ${shellSettledSeq}`),
+    };
+  },
+);
+
 // Layout-loader bake-lane fixture (the storefront shape: an app-wide layout
 // registering session/basket-style loaders, no loading() on the layout).
 // Executes at capture (the gate holds for the 100ms), bakes, and is

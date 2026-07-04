@@ -19,6 +19,7 @@ import {
   PprShellLayout,
   PprShellPricePage,
   PprShellStreamPage,
+  PprShellSettledPage,
   PprTrapChromeLayout,
   PprBareHomePage,
   PprSlotChromeLayout,
@@ -28,6 +29,7 @@ import { PprShellBadge } from "./components/PprShellBadge.js";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
+  PprShellSettledLoader,
   PprChromeLoader,
   PprBadgeLoader,
 } from "./loaders/ppr-shell.js";
@@ -417,6 +419,16 @@ export const urlpatterns = urls(
             PprShellStreamPage,
             { name: "pprShellNoHole", ppr: true },
             () => [loader(PprShellStreamLoader)],
+          ),
+          // Settled-marker regression (storefront PDP #438): bake-lane loader
+          // whose nested promise is already resolved at container return —
+          // the snapshot pins its value; the HIT overlay must rehydrate a
+          // Promise for use().
+          path(
+            "/ppr-shell/settled",
+            PprShellSettledPage,
+            { name: "pprShellSettled", ppr: true },
+            () => [loader(PprShellSettledLoader)],
           ),
         ]),
         // LAYOUT-LOADER shapes (the storefront): the layout registers a
