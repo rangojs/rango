@@ -116,15 +116,15 @@ store must exist when downstream phases (route matching, rendering, SSR)
 run so they can record their spans. Calling it after `next()` returns
 still emits `handler:total` but misses all upstream metrics.
 
-One offset caveat: a store created mid-request this way anchors its timeline at
-the moment you opt in, not at the true request entry (that entry timestamp is
-handler-local and isn't threaded onto the middleware context). Any phase that
-began before the opt-in — the `handler-*` bootstrap entries, an earlier
-middleware's `:pre` — records a negative start offset that the display clamps to
-`0ms`, so those phases pile up at the timeline origin and their relative ordering
-there is not meaningful. Enable `debugPerformance: true` globally when you need
-faithful offsets for the whole request; the store is then created at handler
-entry with the real start.
+Offsets anchor to the true request entry. The handler-entry timestamp is threaded
+onto the request context, so a store created mid-request this way uses it — not
+the opt-in moment — as the timeline origin. A phase whose start predates the
+opt-in but is recorded once the store exists (for example a middleware `:pre`
+whose clock started before its handler called `ctx.debugPerformance()`) then
+reports its real, non-negative offset instead of clamping to `0ms`. A phase that
+ran to completion entirely before you opted in is still not captured at all — the
+store did not exist to record it (see the before-`next()` note above); the
+anchoring fixes offsets, not the missing upstream metrics.
 
 ### Server-Timing header
 

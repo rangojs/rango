@@ -466,6 +466,11 @@ export function createRSCHandler<
       stateCookieName: router.resolvedStateCookieName,
       version,
     });
+    // Thread the true request entry timestamp onto the context so a metrics
+    // store created MID-request (ctx.debugPerformance() / getMetricsStore) anchors
+    // to the real start, not the opt-in moment — phases that began earlier then
+    // report non-negative offsets. Set unconditionally: debug may be enabled later.
+    requestContext._handlerStart = handlerStart;
     if (earlyMetricsStore) {
       requestContext._debugPerformance = true;
       requestContext._metricsStore = earlyMetricsStore;
@@ -573,8 +578,10 @@ export function createRSCHandler<
         if (metricsStore) {
           // When the store was created at handler start (earlyMetricsStore),
           // handler:total covers the full request. When ctx.debugPerformance()
-          // created the store mid-request, use its requestStart to avoid a
-          // negative startTime offset.
+          // created the store mid-request its requestStart is now the threaded
+          // _handlerStart (== handlerStart), so both branches yield the true
+          // request entry; reading the store's own anchor keeps this correct even
+          // if a store ever lands without the threading (falls back to its start).
           const totalStart = earlyMetricsStore
             ? handlerStart
             : metricsStore.requestStart;

@@ -427,7 +427,10 @@ export function createRouter<TEnv = any>(
     const reqCtx = _getRequestContext();
     const enabled = debugPerformance || !!reqCtx?._debugPerformance;
     if (!enabled || !reqCtx) return undefined;
-    reqCtx._metricsStore ??= createMetricsStore(true);
+    // Anchor a mid-request store to the true request entry (reqCtx._handlerStart),
+    // not this call's performance.now(); undefined falls back to now() inside
+    // createMetricsStore (metrics.ts).
+    reqCtx._metricsStore ??= createMetricsStore(true, reqCtx._handlerStart);
     return reqCtx._metricsStore;
   };
 
