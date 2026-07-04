@@ -1,6 +1,6 @@
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
@@ -67,4 +67,43 @@ export function PprShellPricePage() {
 // whether the route carries loading() (see urls.tsx).
 export function PprShellStreamPage() {
   return <PprShellStream loader={PprShellStreamLoader} />;
+}
+
+// LAYOUT-LOADER TRAP (the storefront shape): this layout registers
+// PprChromeLoader with NO loading() on the LAYOUT (see urls.tsx). The
+// tree-build await lives at the entry that REGISTERS the loaders, so the
+// capture's masked loader pins the tree above <body> and the sanity gate
+// refuses — x-rango-shell stays MISS forever for BOTH children (one with its
+// own loader+loading(), one bare), while axis 1 stays healthy. Registration
+// alone pins — nothing consumes PprChromeLoader.
+export function PprTrapChromeLayout() {
+  return (
+    <main data-testid="ppr-trap-page">
+      <p data-testid="ppr-trap-chrome">Trap chrome static text</p>
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprBareHomePage() {
+  return <p data-testid="ppr-bare-home">Bare home static content</p>;
+}
+
+// THE ESCAPE (skills/ppr "layout-with-loaders playbook"): the same chrome data
+// owned by a @badge parallel slot with its OWN loading(). Slot-owned loaders
+// get a per-slot LoaderBoundary, so the layout node has no loaders to await:
+// chrome and the static page bake into the shell, the badge is a badge-sized
+// hole, and the route flips to HIT with no loader or loading() of its own.
+export function PprSlotChromeLayout() {
+  return (
+    <main data-testid="ppr-slot-page">
+      <p data-testid="ppr-slot-chrome">Slot chrome static text</p>
+      <ParallelOutlet name="@badge" />
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprSlotHomePage() {
+  return <p data-testid="ppr-slot-home">Slot home static content</p>;
 }

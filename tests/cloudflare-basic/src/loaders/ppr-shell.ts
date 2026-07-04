@@ -76,3 +76,32 @@ export const PprShellStreamLoader = createLoader(
     return { label: "Streamed outer", pendingData };
   },
 );
+
+// Layout-loader trap fixture (the storefront shape: an app-wide layout
+// registering session/basket-style loaders). Registered on the LAYOUT entry
+// with no loading() there and consumed by NOTHING — registration alone pins
+// the capture: the layout node has loaders and no loading(), so renderSegments
+// awaits them at tree-build and the capture's masked loader never resolves.
+const PPR_CHROME_DELAY_MS = 100;
+
+let pprChromeSeq = 0;
+
+export const PprChromeLoader = createLoader(async (): Promise<string> => {
+  await new Promise((resolve) => setTimeout(resolve, PPR_CHROME_DELAY_MS));
+  pprChromeSeq += 1;
+  return `chrome-${pprChromeSeq}`;
+});
+
+// Slot-hole escape fixture: the SAME chrome-data shape as PprChromeLoader, but
+// owned by a @badge parallel slot with its own loading(), so it gets a per-slot
+// LoaderBoundary instead of pinning the layout. seq advances on every execution
+// to prove the badge stays live across shell HITs.
+const PPR_BADGE_DELAY_MS = 150;
+
+let pprBadgeSeq = 0;
+
+export const PprBadgeLoader = createLoader(async (): Promise<string> => {
+  await new Promise((resolve) => setTimeout(resolve, PPR_BADGE_DELAY_MS));
+  pprBadgeSeq += 1;
+  return `badge-${pprBadgeSeq}`;
+});
