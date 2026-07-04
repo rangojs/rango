@@ -155,9 +155,20 @@ export function createMatchHandlers<TEnv = any>(
   }
 
   async function match(request: Request, env: TEnv): Promise<MatchResult> {
-    const requestId = hasTelemetry ? getRequestId(request) : undefined;
+    // Silence telemetry for the PPR background shell capture: it re-runs match()
+    // under a derived request context flagged _shellCaptureRun (shell-capture.ts
+    // attemptCapture), re-using the foreground Request — a second request.start/
+    // cache.decision/request.end stamped with the same WeakMap-keyed requestId
+    // would double-count dashboards. Derived here (inside the capture's active
+    // request-context ALS) so the read sees the derived context, not module state.
+    const emitTelemetry =
+      hasTelemetry && !_getRequestContext()?._shellCaptureRun;
+    const requestId = emitTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext({ request, transaction: "match" }, () => {
       const routerCtx = buildRouterContext();
+      // Also mute in-pipeline observeEvent emitters (revalidation.decision,
+      // cache-lookup's cache.decision) which read routerCtx.telemetry.
+      if (!emitTelemetry) routerCtx.telemetry = undefined;
       routerCtx.requestId = requestId;
       return runWithRouterContext(routerCtx, async () =>
         withRouterLogScope("match", async () => {
@@ -165,7 +176,7 @@ export function createMatchHandlers<TEnv = any>(
           const pathname =
             _getRequestContext()?.url?.pathname ??
             new URL(request.url).pathname;
-          if (hasTelemetry) {
+          if (emitTelemetry) {
             safeEmit(telemetry, {
               type: "request.start",
               timestamp: matchStart,
@@ -180,7 +191,7 @@ export function createMatchHandlers<TEnv = any>(
           const result = await createMatchContextForFull(request, env);
 
           if ("type" in result && result.type === "redirect") {
-            if (hasTelemetry) {
+            if (emitTelemetry) {
               safeEmit(telemetry, {
                 type: "request.end",
                 timestamp: performance.now(),
@@ -212,7 +223,7 @@ export function createMatchHandlers<TEnv = any>(
             if (hasTelemetry || cacheSignalEnabled) {
               const signalSegments = buildSignal(ctx.routeKey, state);
               recordSignalIfEnabled(signalSegments);
-              if (hasTelemetry) {
+              if (emitTelemetry) {
                 safeEmit(telemetry, {
                   type: "cache.decision",
                   timestamp: performance.now(),
@@ -226,7 +237,7 @@ export function createMatchHandlers<TEnv = any>(
                 });
               }
             }
-            if (hasTelemetry) {
+            if (emitTelemetry) {
               safeEmit(telemetry, {
                 type: "request.end",
                 timestamp: performance.now(),
@@ -248,7 +259,7 @@ export function createMatchHandlers<TEnv = any>(
               // result above already emits), never request.error with a
               // synthetic "[object Response]" error. Rethrow so the caller
               // drives the redirect.
-              if (hasTelemetry) {
+              if (emitTelemetry) {
                 safeEmit(telemetry, {
                   type: "request.end",
                   timestamp: performance.now(),
@@ -263,7 +274,7 @@ export function createMatchHandlers<TEnv = any>(
               }
               throw error;
             }
-            if (hasTelemetry) {
+            if (emitTelemetry) {
               safeEmit(telemetry, {
                 type: "request.error",
                 timestamp: performance.now(),
@@ -316,11 +327,16 @@ export function createMatchHandlers<TEnv = any>(
     context: TEnv,
     actionContext?: ActionContext,
   ): Promise<MatchResult | null> {
-    const partialRequestId = hasTelemetry ? getRequestId(request) : undefined;
+    // See match() above: the PPR shell capture re-runs matchPartial() under a
+    // _shellCaptureRun context and must stay invisible to the sink.
+    const emitTelemetry =
+      hasTelemetry && !_getRequestContext()?._shellCaptureRun;
+    const partialRequestId = emitTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext(
       { request, transaction: "matchPartial" },
       () => {
         const routerCtx = buildRouterContext();
+        if (!emitTelemetry) routerCtx.telemetry = undefined;
         routerCtx.requestId = partialRequestId;
         return runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("matchPartial", async () => {
@@ -328,7 +344,7 @@ export function createMatchHandlers<TEnv = any>(
             const pathname =
               _getRequestContext()?.url?.pathname ??
               new URL(request.url).pathname;
-            if (hasTelemetry) {
+            if (emitTelemetry) {
               safeEmit(telemetry, {
                 type: "request.start",
                 timestamp: matchStart,
@@ -346,7 +362,7 @@ export function createMatchHandlers<TEnv = any>(
               actionContext,
             );
             if (!ctx) {
-              if (hasTelemetry) {
+              if (emitTelemetry) {
                 safeEmit(telemetry, {
                   type: "request.end",
                   timestamp: performance.now(),
@@ -385,7 +401,7 @@ export function createMatchHandlers<TEnv = any>(
               if (hasTelemetry || cacheSignalEnabled) {
                 const signalSegments = buildSignal(ctx.routeKey, state);
                 recordSignalIfEnabled(signalSegments);
-                if (hasTelemetry) {
+                if (emitTelemetry) {
                   safeEmit(telemetry, {
                     type: "cache.decision",
                     timestamp: performance.now(),
@@ -399,7 +415,7 @@ export function createMatchHandlers<TEnv = any>(
                   });
                 }
               }
-              if (hasTelemetry) {
+              if (emitTelemetry) {
                 safeEmit(telemetry, {
                   type: "request.end",
                   timestamp: performance.now(),
@@ -420,7 +436,7 @@ export function createMatchHandlers<TEnv = any>(
                 // gate) is a COMPLETED request, not an error: emit request.end
                 // (parity with match()), never request.error. Rethrow so the
                 // caller drives the redirect.
-                if (hasTelemetry) {
+                if (emitTelemetry) {
                   safeEmit(telemetry, {
                     type: "request.end",
                     timestamp: performance.now(),
@@ -435,7 +451,7 @@ export function createMatchHandlers<TEnv = any>(
                 }
                 throw error;
               }
-              if (hasTelemetry) {
+              if (emitTelemetry) {
                 safeEmit(telemetry, {
                   type: "request.error",
                   timestamp: performance.now(),
