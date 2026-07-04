@@ -210,6 +210,38 @@ in the group — including nested `include()`s inside the split module. Only the
 module's runtime evaluation defers. `rango generate` resolves the `() => import()`
 the same way, so a code-split group is still fully typed.
 
+### Sizing async include groups (measured)
+
+The first request into an async group pays that group's chunk import; every
+request after that is flat. Measured on a deployed Cloudflare worker with
+26k routes (2026-07, warm RTT floor ~23 ms):
+
+| Group size                 | First-hit latency                    |
+| -------------------------- | ------------------------------------ |
+| ~240 routes                | ~75 ms (≈ RTT + eval)                |
+| ~5,000 routes              | ~137 ms                              |
+| ~9,000 routes              | ~188 ms                              |
+| 3-level nested async chain | ~464 ms (levels import sequentially) |
+
+Three rules fall out of those numbers:
+
+1. **Prefer more, smaller groups over few giant ones.** First-hit cost scales
+   with routes-per-chunk; fifty 250-route groups each cost a fraction of one
+   9k-route group, and only the group actually visited pays anything.
+2. **Keep async-include chains shallow on latency-sensitive paths.** Each
+   nested `() => import()` level awaits in sequence, so depth multiplies the
+   first hit. Nesting eager includes inside one async module costs one chunk;
+   nesting async inside async costs one chunk per level.
+3. **Give sibling groups distinct static prefixes.** Siblings that share a
+   static prefix (`include("/x/:a", …)` next to `include("/x/:b", …)`) all
+   import on the first hit to that prefix — the router cannot tell which one
+   matches before loading them.
+
+Warm-path matching is O(path segments) via the precomputed trie regardless of
+group layout — this sizing only shapes cold/first-hit behavior. For
+latency-critical prefixes, a post-deploy warmup ping (one request per prefix)
+erases first-hit cost for the isolate entirely.
+
 ## Composition Types
 
 For typed factories, import the composition types:

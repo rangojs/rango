@@ -58,6 +58,14 @@ Read the timeline as intervals:
 - Cache, route matching, middleware pre/post, RSC serialization, and SSR phases
   appear as separate spans, so the slow phase is visible without guessing.
 
+**Deployed Cloudflare caveat**: on production Workers, timers are frozen
+during request execution (Spectre mitigation), so `Server-Timing` durations
+read as ~0 on the deployed edge — they only advance across genuine awaited
+I/O. The waterfall is a LOCAL diagnostic (dev, `vite preview`,
+`wrangler dev`); for deployed workers, measure from the client
+(`PerformanceResourceTiming`, TTFB) and use structured telemetry below for
+server-side events.
+
 ## Structured telemetry
 
 Use telemetry when you want durable production events rather than a one-request

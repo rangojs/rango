@@ -91,6 +91,24 @@ cache(
 );
 ```
 
+## When cache() does not pay
+
+A cache hit is not free: it still runs middleware, the store read, and the
+document render AROUND the cached segment. The win is proportional to what
+the cached render itself costs — measured on a deployed Cloudflare worker
+(2026-07), a trivial page inside `cache()` served hits at p50 36 ms while
+misses (render + store) served at 35 ms: indistinguishable. The same
+boundary around an expensive render (slow data, big trees) is where the TTL
+pays for itself.
+
+Rule of thumb: reach for `cache()` when the segment's own render cost is
+meaningfully above your latency floor — expensive render-embedded data work,
+large component trees, third-party calls captured in the render. Do not wrap cheap
+pages "just in case": you add store traffic and invalidation surface for no
+latency win. If the data is what's expensive and it changes per-request,
+prefer a loader with `cache()` on the loader DATA (see "Loader-Level
+Caching") over caching the rendered segment.
+
 ## Tag-Based Invalidation
 
 Tag cached entries, then invalidate them on demand. Tags can be attached three ways:
