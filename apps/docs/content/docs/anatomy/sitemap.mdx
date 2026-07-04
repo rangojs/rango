@@ -1,0 +1,42 @@
+---
+title: Sitemap
+description: A sitemap index plus paged child sitemaps backed by Shopify's Storefront sitemap query — the same model Hydrogen uses.
+type: guide
+---
+
+The storefront exposes a sitemap index at `/sitemap.xml` and paged children at `/sitemap/{shard}.xml`. Each child holds up to 250 entries — Shopify's Storefront `sitemap(type:)` query computes the pagination, so the storefront just iterates.
+
+The `/robots.txt` route points crawlers at `/sitemap.xml`; that URL alone is enough to discover every product and collection.
+
+## URLs
+
+| URL                            | Contents                                |
+| ------------------------------ | --------------------------------------- |
+| `/sitemap.xml`                 | Sitemap index listing every child shard |
+| `/sitemap/static.xml`          | Home page                               |
+| `/sitemap/products-{n}.xml`    | Up to 250 products per shard            |
+| `/sitemap/collections-{n}.xml` | Up to 250 collections per shard         |
+
+`{n}` is 1-indexed and runs to the `pagesCount` Shopify returns for each type.
+
+## Cache behavior
+
+Both the page count and each page of resources are cached via the `"use cache: remote"` directive — resolved against the `remote` cache profile in `src/router.tsx` — and tagged `products` (for product shards) or `collections` plus `collections-index` (for collection shards). The data layer still calls `cacheLife("max")`, but `@/lib/cache` makes that a no-op; the long-lived intent lives in the `remote` profile instead. The [`/api/webhooks/shopify`](/docs/anatomy/webhooks) handler purges the `collections-index` tag on collection create/delete, so the collection sitemap reflects added or removed collections. Otherwise sitemap freshness comes from the `remote` profile's stale-while-revalidate window rather than per-mutation invalidation — product mutations purge granular `product-<handle>` tags, not the base `products` tag the shards carry.
+
+## Adding more resource types
+
+The template scopes sitemaps to products and collections. Shopify's `SitemapType` enum also covers `PAGE`, `BLOG`, `ARTICLE`, and `METAOBJECT`. Both handlers name those two types explicitly, so adding one touches three places:
+
+1. **`lib/shopify/operations/sitemap.ts`** — extend the `ShopifySitemapType` union.
+2. **`sitemapIndex` in `src/routes/machine.tsx`** — fetch the new type's `getShopifySitemapPagesCount(...)` and spread its `{type}-{n}` ids into the index alongside the product and collection shards. The index lists only what you add here — it does not discover new types on its own.
+3. **`sitemapShard` in `src/routes/machine.tsx`** — widen the shard regex and the type mapping so the new `{type}-{n}` segments resolve, then map each item to its URL path.
+
+## Key files
+
+| File                                      | Purpose                                                      |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| `src/routes/machine.tsx` (`sitemapIndex`) | Sitemap index — lists every shard                            |
+| `src/routes/machine.tsx` (`sitemapShard`) | Child sitemaps — `static`, `products-{n}`, `collections-{n}` |
+| `src/routes/machine.tsx` (`robots`)       | Declares the sitemap index as the crawler entry point        |
+| `lib/shopify/operations/sitemap.ts`       | `getShopifySitemapPagesCount`, `getShopifySitemapPage`       |
+| `src/urls.tsx`                            | Wires the `path.any`/`path.text` response routes above       |

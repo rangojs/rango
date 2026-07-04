@@ -1,0 +1,119 @@
+---
+title: Build with Vercel Shop
+description: Build or adapt Shopify storefronts with source-backed Vercel Shop patterns.
+type: guide
+---
+
+## How to use
+
+```bash
+/vercel-shop:build-shop
+```
+
+The skill includes source-backed references for the shared rendering architecture, home pages, collection and search pages, product pages, cart-provider bootstrap and reconciliation, and account pages.
+
+<div className="pb-6" />
+
+{/* BEGIN SKILL CONTENT: build-shop */}
+
+# Build with Vercel Shop
+
+Build the shop around commerce truth first: what product or collection is being shown, what the customer has selected, what can be bought now, what price is authoritative, and what state belongs in the URL, Shopify, the server cache, or the browser. Use Vercel Shop's template as the reference implementation, but adapt the behavior to the current storefront instead of copying files blindly.
+
+## Ground the work in source
+
+1. Read the project's `AGENTS.md`, the target route, its view contract, and every operation it calls.
+2. If the Vercel Shop template source is available, inspect it before relying on this prose:
+   - Template rules: `apps/template/AGENTS.md`
+   - Route table and shell: `apps/template/src/urls.tsx` (the `urls()`/`path()` route table), `apps/template/src/router.tsx` (`createRouter`, cache profiles, middleware), `apps/template/src/document.tsx` (HTML document), `apps/template/src/routes/root-layout.tsx` (root chrome layout with `<Outlet />`), `apps/template/src/routes/home.tsx` (home page handler)
+   - Shopify boundary: `apps/template/lib/shopify/storefront.ts`, `apps/template/lib/shopify/operations/`, `apps/template/lib/shopify/transforms/`, `apps/template/lib/types.ts`
+   - Shared UI layout primitives: `apps/template/components/ui/container.tsx`, `apps/template/components/ui/page.tsx`, `apps/template/components/ui/sections.tsx`
+   - Public source fallback: [apps/template source](https://github.com/vercel/shop/tree/main/apps/template)
+3. Use the docs to orient before editing unfamiliar areas:
+   - [Architecture docs](https://vercel.shop/docs/anatomy)
+   - [Route reference](https://vercel.shop/docs/reference/routes)
+   - [Shopify integration docs](https://vercel.shop/docs/shopify)
+   - [API boundary docs](https://vercel.shop/docs/reference/storefront-api)
+4. Read the `@rangojs/router` guides under `node_modules/@rangojs/router/skills/` for any API being changed (e.g. `skills/route` for the route table and handlers, `skills/caching` and `skills/use-cache` for `"use cache"` profiles, `skills/middleware`, `skills/handler-use` for the `Meta` handle, `skills/links` for prefetch). This template may use newer routing, caching, and prefetch behavior than model knowledge.
+5. Preserve existing cache directives, promises, invalidation tags, auth gates, redirects, metadata, and `notFound()` behavior unless the task explicitly changes the domain behavior.
+
+## Route the work
+
+Read `references/rendering-architecture.md` for every route. Then read only the route references that apply:
+
+- Commerce behavior and end-to-end flows: `references/commerce-flows.md`
+- Home and marketing routes: `references/home.md`
+- Collection and search routes: `references/plp-search.md`
+- Product routes: `references/pdp.md`
+- Cart and authenticated account routes: `references/cart-account.md`
+- Cart provider, bootstrap, optimistic state, and mutations: `references/cart-provider.md`
+
+## Model the route
+
+Write down the route as five layers before editing, using commerce nouns instead of generic component names:
+
+1. **Route orchestration** — resolve handles, locale, selected options, filters, pagination, redirects, metadata, auth, and real 404s.
+2. **Data operation** — fetch Shopify data, transform provider types into shop domain types, and own cache scope, tags, and invalidation names.
+3. **Server composition** — render the stable catalog shell first and place independent sections like recommendations, facets, reviews, and account/cart details behind granular boundaries.
+4. **Client island** — own only selection, optimistic intent, browser APIs, effects, and event handlers: variant pickers, galleries, filter controls, carts, and forms.
+5. **Server action** — perform server mutations, return canonical Shopify state and warnings, invalidate the right domain cache, and reconcile optimistic state without double-applying it.
+
+For each layer's full ownership boundary, see the responsibility table in `references/rendering-architecture.md`. For every dependency, classify it as cacheable shell content, request-time shared content, request-time personalized content, or client-only state. Draw an edge only when one result genuinely requires another. Start all other work concurrently.
+
+## Storefront gotchas
+
+- Product selection must round-trip through direct visits, links, refreshes, and client navigation, then drive media, price, availability, add-to-cart payloads, and canonical links.
+- Collection/search URLs are the source of truth for browsing. Empty results, unavailable facets, and back/forward navigation are not optional states.
+- Cart UI must keep confirmed Shopify state separate from pending optimistic intent so concurrent mutations, bootstrap, errors, and warnings cannot double-apply or disappear.
+- Customer, account, cart identity, and authorization state must never leak into shared product, collection, menu, page, or recommendation caches.
+- Missing images, deleted products, sold-out variants, empty collections, partial Shopify failures, and disabled auth are normal storefront cases. Represent them deliberately.
+
+## Keep the Shopify boundary explicit
+
+Use the installed Shopify AI Toolkit for Shopify API documentation, schema facts, operation design, and validation. Invoke its API-specific skill before adding or changing Storefront or Customer Account GraphQL. For metafields or metaobjects, use its custom-data skill first.
+
+Use `/vercel-shop:shopify-graphql-reference` only after Shopify validation to apply Vercel Shop conventions: operation placement, domain transforms, cache role, locale flow, invalidation, and route integration. Never treat this architecture skill as a substitute for authoritative Shopify validation.
+
+## Prevent blocking
+
+1. Keep route identity, stable headings, primary media, selected price/availability, and likely LCP content in the earliest shell the data contract permits.
+2. Resolve route identity early only when it is required for correctness or shell coherence.
+3. Pass request-dependent promises downward unawaited. Resolve them in the smallest component that needs them and place Suspense there.
+4. Use sibling boundaries for independent work. Do not put the whole page behind the slowest Shopify request.
+5. Give every visible fallback the same outer geometry as its resolved content.
+6. Keep components server-rendered by default. Do not move reads into client effects or internal HTTP endpoints.
+7. Keep cache policy in the data layer and personalized data out of shared caches.
+8. Treat prefetching as a traffic-versus-latency decision, not a default fix for blocking architecture.
+
+## Use a browser feedback loop
+
+For visible storefront changes, close the loop in a real browser before calling the work done. Use the agent's built-in browser when available; otherwise use the standalone `agent-browser` CLI.
+
+1. Start the local storefront and open each affected route: `agent-browser open http://localhost:3000/...`.
+2. Capture the current state: `agent-browser wait --load networkidle`, `agent-browser snapshot`, and `agent-browser screenshot --full`.
+3. Exercise the commerce interaction through the UI: variant selection, filtering, pagination, add/update/remove cart, auth redirects, or the changed control.
+4. Re-snapshot after every navigation or DOM change before reusing element refs.
+5. Repeat on mobile and desktop viewports when layout, media, overlays, filters, cart, or primary actions changed.
+6. Iterate on the implementation until the browser outcome matches the intended commerce behavior. If `agent-browser` is unavailable, say so and report the fallback checks used.
+
+## Verify the architecture
+
+Run the static hotspot scan from the skill directory:
+
+```bash
+node scripts/audit-storefront.mjs <storefront-root>
+```
+
+Treat its output as review prompts, not measurements. Then:
+
+1. Run targeted lint, typecheck, tests, and affected flows available in the current environment.
+2. Test direct visits, client navigations, back/forward navigation, and URL round-trips for the routes changed.
+3. Verify that non-critical Shopify work does not delay the shell, primary media, selected price/availability, or primary interaction.
+4. Run every affected flow in `references/commerce-flows.md`, including failure, empty, sold-out, and missing-media states.
+5. Inspect failed requests, layout shifts, LCP discovery, hydration, and interaction behavior when relevant.
+6. Require a production build only when build, prerendering, caching, bundling, deployment behavior, or release readiness is in scope.
+7. Use bundle analysis or deployed field data only for an explicit performance investigation when those tools and data are available. Do not request them as routine completion work or claim measured improvement from code inspection.
+
+Report the final layer boundaries, blocking dependencies, cache ownership, and remaining risks.
+
+{/* END SKILL CONTENT: build-shop */}

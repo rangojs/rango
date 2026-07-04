@@ -1,0 +1,124 @@
+---
+title: Product Detail Page (PDP)
+description: Individual product pages with variants, media, and add-to-cart.
+type: guide
+---
+
+<PDPBrowser />
+
+The Product Detail Page renders a single product with variant selection, an image gallery, buy actions, and recommendations. It is entirely server-rendered - variant selection happens through navigation, not client-side state.
+
+## Rendering strategy
+
+The PDP runs under Rango's function-level caching, with a deliberate split between what gets baked into the static shell and what streams per request. Product data is fetched with `getProduct` — a `"use cache"` data function tagged `products` and `product-{handle}` — and **awaited at the top of the handler**, so the product body (title, description, gallery, JSON-LD) is rendered into the **static shell** as a single, coherent copy. (`getProduct` also calls `cacheLife("max")`, but that helper is a no-op under Rango — the entry's lifetime comes from the `default` cache profile declared in `src/router.tsx`.)
+
+One structural choice keeps that copy coherent, and it is load-bearing: the awaited product is rendered directly and is **not** threaded into a `<Suspense>` boundary. Wrapping it would re-render the body at request time into a separate RSC flight that can drift from the frozen shell when the cached value changes — the symptom is a React hydration mismatch and product copy that appears to change on its own. The shell refreshes when the cached `getProduct` entry rolls over on the `default` profile's window (`src/router.tsx`) or when a Shopify [webhook](/docs/anatomy/webhooks) calls `revalidateTag` to purge `product-{handle}` — that governs freshness (how quickly edits surface), not coherence.
+
+The only dynamic input is the selected-options query (`?color=Blue&size=XS`). Rather than block the whole handler on that lookup, it reads `ctx.url.searchParams` and threads two promises down into `ProductDetailSection` — an already-resolved `selectedOptionsPromise` and an unawaited `variantPromise`. Anything that doesn't depend on the chosen variant (title, shared gallery images, uniformly-priced variants, the description) renders from the product resolved at the top of the handler, baked into the static shell. Anything that does (the color-specific gallery slot, variant-specific price, option highlight, buy buttons) sits inside its own Suspense boundary so an option change streams the affected slot without skeletonizing the rest of the page. The chosen variant itself is resolved by a second, per-selection Shopify query (`getProductVariant`) rather than from an inline variant list — so the cached shell stays small and the price/availability reflect the exact selection.
+
+## Variant selection
+
+Variants are selected via URL query parameters. Each option (color, size, etc.) renders as a `<Link>` pointing to the same product with one query parameter per option, keyed by the lowercased option name:
+
+```
+/products/classic-tee?color=Blue&size=XS
+```
+
+The handler reads the option params from `ctx.url.searchParams` and derives two things. `parseSelectedOptions()` reads the option params (merged with the default variant's options for anything unset) into a `selectedOptions` record wrapped in an already-resolved **fast promise** (`Promise.resolve`) — it depends only on the URL, and drives the picker highlight and the color image so they resolve at URL speed. The **variant** (for price + add-to-cart) rides a separate promise: `getProductVariant({ handle, locale, selectedOptions })` resolves it via Shopify's `selectedOrFirstAvailableVariant(selectedOptions:)` field. Keeping the picker off the network promise stops the selected option from snapping in late. Everything is threaded down as props with no client-side variant context or `useState`. This means:
+
+- Every variant selection is a navigation, giving you browser back/forward for free
+- URLs are shareable and human-readable - opening a link loads the exact variant
+- The page is fully server-rendered with zero layout shift
+- Option links use `scroll={false}` to prevent the page from jumping to the top on selection
+
+The `buildOptionUrl()` helper in `lib/product.ts` computes the target URL for each option — a pure merge of the current selection with the changed option, no variant lookup required. When no option params are present, the handler skips the variant query and renders the cached default variant.
+
+Swatch availability comes from Shopify's `encodedVariantAvailability` field, decoded in `lib/shopify/encoded-variants.ts` into the set of in-stock values per option. Unavailable options render as inert `<span>` elements instead of links.
+
+Options with a single value render as a plain `Name: Value` label without a picker — there is no choice to surface, but the attribute is still useful information to the shopper (e.g. `Finish: Natural White Oak` on a one-variant product). Shopify's synthetic `Title: Default Title` option (emitted for products with no variant axes) is the only single-value option that is hidden entirely.
+
+## Image gallery
+
+The gallery is handled by a single `ProductMedia` component that adapts to screen size:
+
+**Desktop** - A two-column grid of images with a lightbox for full-screen viewing. Videos are supported inline with autoplay.
+
+**Mobile** - A horizontal snap-scroll carousel with dot indicators below. Swiping or tapping a dot navigates between images.
+
+Both layouts receive pre-filtered images as props from the server.
+
+When a product has no images or videos at all, `ProductMedia` renders a single `ImagePlaceholder` (`components/ui/image-placeholder.tsx`) as if it were the gallery's only image — flowing through the same grid/carousel path as a real media item: one `aspect-square` cell in the desktop grid, a single full-bleed item in the mobile carousel. The placeholder has no lightbox trigger (there is nothing to enlarge), so the desktop grid skips the `Lightbox` wrapper entirely in this case. This keeps the gallery consistent with a one-image product instead of special-casing a full-width block.
+
+### Color-based image filtering
+
+When the **color** option has multiple values with distinct representative images (each value's `firstSelectableVariant` image, exposed as `OptionValue.image`), the gallery leads with the selected color's image. The shared media — product images that aren't a specific color's representative image, via `getSharedImages()` in `lib/product.ts` — renders immediately in the static shell, while the leading color slot streams behind a small Suspense fallback so changing the selection does not skeletonize the whole gallery. The slot resolves from the fast options promise via `getSelectedColorImage()` (no variant query), so it streams at URL speed. Non-color axes like size or finish never trigger a streamed slot — those products keep a fully static gallery.
+
+If no option has representative images (one color, or no color option), all product images are shown.
+
+Because selection is option-driven, the gallery no longer filters out _every_ image belonging to other colors — that required the full inline variant list, which the PDP no longer fetches. It leads with the selected variant's image followed by the shared media instead.
+
+## Buy section
+
+The buy section includes stock status and two action buttons:
+
+- **Buy with Shop** - creates a Shopify checkout and redirects to it, styled per [Shopify's brand guidelines](https://help.shopify.com/en/manual/payments/shop-pay/assets)
+- **Add to Cart** - adds the item optimistically to the cart drawer
+
+A single `BuyButtons` component renders identically on both mobile and desktop. It receives the `selectedVariant` as a prop and is a client component for cart interactivity.
+
+### Bundles
+
+`bundle-components.tsx` renders Shopify's [bundle relationships](/docs/shopify/pdp#bundles) below the buy buttons:
+
+- **Bundle Includes** — a fixed bundle's component products, from `components` (`BundleComponents`).
+- **Available in Bundles** — bundles containing the current product, collapsed to one link per bundle, from `groupedBy` (`BundleParents`).
+
+These are product-level facts (which products a bundle contains / which bundles a product belongs to), so they render **eagerly from the cached default variant in the static shell** rather than streaming in behind the variant query — no layout shift on load.
+
+A customized bundle parent (`requiresComponents` with no fixed `components`) disables the buy buttons with a "Choose bundle items" label, since the generic storefront can't configure it. The bundle relationship arrays stay server-side; `BuyButtons` receives only a `requiresBundleConfiguration` boolean.
+
+### Complementary products
+
+`complementary-products.tsx` renders the merchant-curated "Pairs Well With" set below the bundle relationships — Shopify's [complementary products](/docs/shopify/pdp#complementary-products) from `productRecommendations(intent: COMPLEMENTARY)`. These are distinct from the algorithmic related products below the fold (`intent: RELATED`): complementary products are deliberately chosen add-ons, so they sit beside the buy section like bundle relationships rather than in the footer grid.
+
+Like bundle relationships, the section renders **eagerly into the static shell** rather than streaming. Both recommendation surfaces — this set and the [related grid](#related-products) below the fold — come from a single cached (`use cache: remote`) `getProductRecommendationSets()` operation that fetches both intents in one aliased `productRecommendations` request and is tagged with both `complementary-{handle}` and `recommendations-{handle}`. Because both surfaces call it with the same arguments, they dedupe to **one** Shopify request; this section reads the `complementary` slice, baked into the static shell — there's no skeleton fallback and no layout shift on cached hits (a `Suspense` boundary would instead make it a streamed hole). It shows up to four products as thumbnail + title + price rows and renders nothing when none are configured.
+
+### Specifications
+
+`product-specs.tsx` renders configured product [metafields](/docs/shopify/pdp#metafields) as a label/value "Specifications" list below the description. The set is **opt-in**: `productMetafieldIdentifiers` in `lib/config.ts` is empty by default, so the product query is unchanged and the section renders nothing until a storefront lists the namespaces and keys it populates. Like bundle relationships, it renders eagerly from the cached product in the static shell. Values are formatted by metafield type (measurements, ratings, lists, booleans); reference (product/metaobject) types are skipped pending GID resolution.
+
+## Related Products
+
+Below the product details, a `RelatedProductsSection` component renders Shopify's algorithmic "you might also like" set. It reads the `related` slice of the same cached `getProductRecommendationSets()` operation the [complementary set](#complementary-products) consumes — so the two surfaces share one Shopify request — and renders inside a `Suspense` boundary with a skeleton grid fallback.
+
+Related products display as a fixed grid of up to four product cards — two columns on mobile, four on `lg:` and up — matching the homepage's featured-products grid. The Shopify recommendation API typically returns more, but only the first four are rendered so the section reads as a small "you might also like" footer rather than a second browse surface.
+
+## Layout
+
+The page uses a single responsive layout wrapped in a `Container`:
+
+- Below the `lg:` breakpoint, content stacks vertically: carousel, buy buttons, product info
+- At `lg:` and up, a 12-column grid places the image gallery in 7 columns on the left and product info (title/price, option pickers, buy buttons, description) in 5 columns on the right
+- The product info column is sticky on desktop, staying visible while the gallery scrolls
+
+## Structured data
+
+The page emits two JSON-LD schemas:
+
+- **Product schema** - name, description, images, brand, price range, availability, and variant count
+- **Breadcrumb schema** - Home → Product Title (JSON-LD only, no visible breadcrumb UI)
+
+## Key files
+
+| File                                                   | Purpose                                                                                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/routes/product.tsx`                               | Route handler: sets metadata via the `Meta` handle, awaits the product at the top (baked into the shell), streams the per-selection variant query |
+| `components/product-detail/product-detail-section.tsx` | Orchestrates media, options, pricing, and buy buttons with per-section Suspense; emits JSON-LD                                                    |
+| `components/product-detail/product-media.tsx`          | Responsive image gallery (mobile carousel, desktop grid + lightbox)                                                                               |
+| `components/product-detail/buy-buttons.tsx`            | Buy with Shop + add-to-cart client component                                                                                                      |
+| `components/product-detail/bundle-components.tsx`      | Renders a bundle's contents and the bundles a product is part of                                                                                  |
+| `components/product-detail/product-specs.tsx`          | Renders configured product metafields as a "Specifications" label/value list                                                                      |
+| `lib/product.ts`                                       | `parseSelectedOptions`, `buildOptionUrl`, default selection, color-image helpers                                                                  |
+| `lib/shopify/encoded-variants.ts`                      | Decodes `encodedVariantAvailability`/`Existence` into per-option availability                                                                     |
+
+The rest of the PDP — option pickers, price display, lightbox, schema, and so on — lives in `components/product-detail/`. Browse the directory when you need them.

@@ -1,0 +1,6 @@
+.wrangler
+.vercel
+.env*.local
+.source
+dist
+tsconfig.tsbuildinfo
