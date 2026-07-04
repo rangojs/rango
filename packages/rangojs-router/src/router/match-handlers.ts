@@ -52,7 +52,7 @@ import { _getRequestContext } from "../server/request-context.js";
  */
 interface LifecycleEmitter {
   start(): void;
-  end(segmentCount: number, cacheHit: boolean): void;
+  end(segmentCount: number, cacheHit: boolean, status?: number): void;
   cacheDecision(
     routeKey: string,
     state: {
@@ -88,7 +88,7 @@ function createLifecycleEmitter(args: {
         isPartial: args.isPartial,
       });
     },
-    end(segmentCount: number, cacheHit: boolean): void {
+    end(segmentCount: number, cacheHit: boolean, status?: number): void {
       if (!args.enabled) return;
       safeEmit(args.sink, {
         type: "request.end",
@@ -100,6 +100,9 @@ function createLifecycleEmitter(args: {
         durationMs: performance.now() - args.matchStart,
         segmentCount,
         cacheHit,
+        // Only a thrown-Response short-circuit passes a status; a normal render
+        // completion omits it (the Response is built after match()).
+        ...(status !== undefined && { status }),
       });
     },
     cacheDecision(
@@ -322,8 +325,9 @@ export function createMatchHandlers<TEnv = any>(
               // error: emit request.end (the same shape the non-thrown redirect
               // result above already emits), never request.error with a
               // synthetic "[object Response]" error. Rethrow so the caller
-              // drives the redirect.
-              emitter.end(0, false);
+              // drives the redirect. Carry the Response's status so a sink can
+              // tell a 3xx short-circuit from a 2xx completion.
+              emitter.end(0, false, error.status);
               throw error;
             }
             emitter.error(
@@ -441,8 +445,9 @@ export function createMatchHandlers<TEnv = any>(
                 // A thrown Response (middleware short-circuit — redirect / auth
                 // gate) is a COMPLETED request, not an error: emit request.end
                 // (parity with match()), never request.error. Rethrow so the
-                // caller drives the redirect.
-                emitter.end(0, false);
+                // caller drives the redirect. Carry the Response's status so a
+                // sink can tell a 3xx short-circuit from a 2xx completion.
+                emitter.end(0, false, error.status);
                 throw error;
               }
               emitter.error(

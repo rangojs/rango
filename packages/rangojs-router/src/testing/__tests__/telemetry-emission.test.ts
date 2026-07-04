@@ -93,6 +93,9 @@ describe("dispatch telemetry emission", () => {
     // dispatch renders no RSC segments and holds no match-cache state.
     expect(end.segmentCount).toBe(0);
     expect(end.cacheHit).toBe(false);
+    // dispatch builds the final response before request.end, so it stamps the
+    // response status (200 for this json route).
+    expect(end.status).toBe(200);
   });
 
   it("carries isPartial=true on a partial (?_rsc_partial) request", async () => {

@@ -355,6 +355,9 @@ All events include a `timestamp` (from `performance.now()`) and an optional
   durationMs: 15.2,
   segmentCount: 3,
   cacheHit: false,
+  status: 302,  // optional — present only when a Response ended the transaction
+                // (a thrown-Response short-circuit, or dispatch()'s final
+                // response); absent for a normal render completion
 }
 
 // request.error
@@ -372,8 +375,11 @@ All events include a `timestamp` (from `performance.now()`) and an optional
 A thrown `Response` from middleware — a redirect or auth gate short-circuit —
 is completed control flow, not a failure. It emits `request.end` with
 `segmentCount: 0` (the same completed-request event the non-thrown redirect
-path emits), never `request.error`, so auth redirects do not inflate error
-counts. `request.error` fires only for a genuine unhandled error.
+path emits) and `status` set to the thrown Response's status (e.g. `302`), never
+`request.error`, so auth redirects do not inflate error counts. `request.error`
+fires only for a genuine unhandled error. A normal render completion omits
+`status` (the Response is built after `match()`), so a sink can split 3xx
+short-circuits from 2xx completions on the field's presence.
 
 ### Loader Events
 
