@@ -866,7 +866,13 @@ are not revived.
   already-resolved data with zero capture cost. Removed entirely. The guards'
   reasoning stays instructive: deep-settle at the ring-3 write is why nothing
   inside `cache()` can stay live, so a "keep this live" primitive inside cached
-  content was never coherent anyway.
+  content was never coherent anyway. A revival (per-loader `live()` opt-in, for
+  bake-lane values consumed INLINE where entry-level `loading()` is
+  structurally unacceptable — e.g. per-user prices across a product grid) was
+  proposed and dropped again 2026-07-04: pin-on-fast-settle is the accepted
+  contract (skills/ppr: treat bake-lane fast-resolvers as PINNED), and the
+  settled-marker snapshot (#669) makes the pin shape-safe for `use()`
+  consumers. Do not rebuild without a concrete adopter.
 - **Response-header opt-in** (a route sets a header the serve layer reads).
   Headers are not replayed on a cache hit, so the signal cannot survive the
   serve path PPR is built around. Opt-in belongs in route config, which the
