@@ -487,9 +487,12 @@ export function gateFlightForCapture(
  * store, and passed to scheduleShellCapture directly — it is NOT threaded through
  * the request context. `tags` carries the route's OPERATIONAL `ppr.tags`; the
  * capture UNIONS them with the shell's own auto-collected (non-loader) request
- * tags from its derived render (the collected set stays authoritative). `store`
- * is the same store the serve path resolved for its getShell read
- * (requestCtx._cacheStore), so the capture writes where the serve reads.
+ * tags from its derived render (the collected set stays authoritative). That
+ * union happens at the putShell WRITE BARRIER in captureAndStoreShell — after the
+ * capture quiesces — not at stream construction, so a tag recorded after an await
+ * in async shell content is still collected (issue #676). `store` is the same
+ * store the serve path resolved for its getShell read (requestCtx._cacheStore),
+ * so the capture writes where the serve reads.
  */
 export interface ShellCaptureDescriptor {
   key: string;
@@ -776,24 +779,18 @@ async function attemptCapture(
       },
     });
 
-    // Shell tags = the non-loader request tags the capture render recorded on its
-    // own fresh _requestTags (loaders are masked, so loader cache tags — which
-    // belong to the holes, not the shell — are correctly excluded), UNIONED with
-    // the middleware's operational `tags` option (descriptor.tags). The collected
-    // set is authoritative; the option only adds tags the render cannot know.
-    const collected = [...derivedCtx._requestTags];
-    const union = new Set<string>([...(descriptor.tags ?? []), ...collected]);
-    const tags = union.size > 0 ? [...union] : undefined;
-
+    // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
+    // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
+    // captureAndStoreShell, not here: a tag recorded AFTER an await in async shell
+    // content (and tags propagated by async cache()/"use cache" reads) lands after
+    // this synchronous construction point, so snapshotting here dropped it — the
+    // shell-tag snapshot must sit behind the quiesce gate (issue #676).
     return captureAndStoreShell(
       ssrModule,
       rscStream,
       freshHandleStore,
       derivedCtx,
-      {
-        ...descriptor,
-        tags,
-      },
+      descriptor,
     );
   });
 }
@@ -1035,6 +1032,19 @@ async function captureAndStoreShell(
       }
     }
 
+    // Shell tags snapshot at the WRITE BARRIER, not at stream construction: by
+    // here the capture has quiesced and the deferred cache writes were awaited, so
+    // tags recorded AFTER an await in async shell content (and by async
+    // cache()/"use cache" reads propagating through recordRequestTags) are
+    // included — issue #676. Loaders are masked, so loader cache tags — which
+    // belong to the holes, not the shell — never execute during capture and cannot
+    // contribute. Union with the route's static ppr.tags (capture.tags); the
+    // collected set is authoritative, the option only adds what the render cannot
+    // know.
+    const collected = [...reqCtx._requestTags];
+    const union = new Set<string>([...(capture.tags ?? []), ...collected]);
+    const shellTags = union.size > 0 ? [...union] : undefined;
+
     const store = capture.store ?? reqCtx._cacheStore;
     if (store?.putShell) {
       try {
@@ -1058,7 +1068,7 @@ async function captureAndStoreShell(
           entry,
           capture.ttl,
           capture.swr,
-          capture.tags,
+          shellTags,
         );
       } catch (error) {
         // Best-effort: a failed put must never throw out of the background task.

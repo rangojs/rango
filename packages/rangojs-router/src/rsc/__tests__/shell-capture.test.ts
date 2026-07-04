@@ -17,7 +17,7 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
-import { cacheTag } from "../../cache/cache-tag.js";
+import { cacheTag, recordRequestTags } from "../../cache/cache-tag.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
 
@@ -241,6 +241,10 @@ describe("captureAndStoreShell", () => {
     return {
       _cacheStore: putShell ? { putShell } : undefined,
       _reportBackgroundError: vi.fn(),
+      // The real derived context always seeds a fresh _requestTags (shell-capture
+      // attemptCapture); the putShell write barrier snapshots it (issue #676), so
+      // the direct-call stub must model the same required RequestContext field.
+      _requestTags: new Set<string>(),
     };
   }
 
@@ -1256,6 +1260,93 @@ describe("runShellCapture", () => {
     // The render-recorded tag drops it.
     await store.invalidateTags(["evictable-shell"]);
     expect(await store.getShell("/p:shell")).toBeNull();
+  });
+
+  // #676: a cacheTag() recorded AFTER an await inside an async shell server
+  // component. React renders the synchronous tree during RSC-stream construction,
+  // so a sync cacheTag lands; a tag recorded on a later microtask/macrotask (past
+  // the await) lands after construction. The shell tag snapshot now sits at the
+  // putShell WRITE BARRIER — after the capture quiesces — so the late tag is
+  // collected, unioned with the static ppr.tags, and revalidateTag() evicts the
+  // shell. captureShellHTML gates on the same promise the component awaits, so the
+  // tag records within the capture's quiesce window (the real async component the
+  // shell waits for).
+  it("collects a cacheTag() recorded after an await in async shell content (#676)", async () => {
+    const putShell = makePutShell();
+    let recorded: Promise<void> = Promise.resolve();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => {
+        await recorded;
+        return { prelude: enc("<body>x</body>"), postponed: null };
+      }),
+    );
+    (ctx as any).renderToReadableStream = vi.fn(() => {
+      recorded = (async () => {
+        await new Promise((r) => setTimeout(r, 0));
+        cacheTag("async-shell-tag");
+      })();
+      return emptyStream();
+    });
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any, tags: ["ppr:static"] },
+      0,
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const tags = new Set(putShell.mock.calls[0]![4]);
+    expect(tags).toEqual(new Set(["ppr:static", "async-shell-tag"]));
+  });
+
+  // #676 (async "use cache" propagation): a "use cache" read that HITs during the
+  // capture render propagates its entry tags to the document artifact via the
+  // cache runtime's recordRequestTags(entry.tags) — and an async cached function
+  // records them AFTER its await resolves. Simulate that timing: the render kicks
+  // off a delayed continuation that recordRequestTags() after an await, gated the
+  // same way the cache read-HIT test gates on the read. The late tag must reach
+  // the stored entry, same as the render-callable cacheTag form above.
+  it("collects an async use-cache read's tags recorded after an await (#676)", async () => {
+    const putShell = makePutShell();
+    let recorded: Promise<void> = Promise.resolve();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => {
+        await recorded;
+        return { prelude: enc("<body>x</body>"), postponed: null };
+      }),
+    );
+    (ctx as any).renderToReadableStream = vi.fn(() => {
+      const reqCtx = getRequestContext();
+      recorded = (async () => {
+        await new Promise((r) => setTimeout(r, 0));
+        // What cache-runtime.ts does on a "use cache" read-HIT: propagate the
+        // resolved entry's tags to the request's document artifact.
+        recordRequestTags(["async-use-cache-tag"], reqCtx);
+      })();
+      return emptyStream();
+    });
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any },
+      0,
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const tags = new Set(putShell.mock.calls[0]![4]);
+    expect(tags.has("async-use-cache-tag")).toBe(true);
   });
 
   // Capture data snapshot: a cache read-HIT the capture render performs through
