@@ -318,10 +318,10 @@ export function observeHandler<C, R>(
  * sink is configured.
  *
  * This is the canonical emitter for SYNCHRONOUS facts that fire inside the
- * request's ALS scope (handler errors, timeouts, origin rejections, revalidation
- * decisions). A few emitters deliberately stay on the lower-level
- * resolveSink + safeEmit because observeEvent's lazy, per-call
- * getRouterContext() read does not fit them — keep this the complete list:
+ * request's ALS scope (revalidation decisions, cache-lookup decisions). A few
+ * emitters deliberately stay on the lower-level resolveSink + safeEmit because
+ * observeEvent's lazy, per-call getRouterContext() read does not fit them — keep
+ * this the complete list:
  *   - router.ts wrapLoaderPromise (loader.start/end/error) and
  *     segment-resolution/streamed-handler-telemetry.ts (streamed handler.error)
  *     capture the sink + request id EAGERLY and emit from a fire-and-forget
@@ -330,6 +330,11 @@ export function observeHandler<C, R>(
  *     loop (request.start/end/error, cache.decision, ...).
  *   - segment-resolution/helpers.ts emits via a caller-provided report.telemetry
  *     sink rather than the ALS router context.
+ *   - rsc/handler.ts handleTimeoutResponse (request.timeout), the origin guard
+ *     (request.origin-rejected), and handleStore.onError (late-handle
+ *     handler.error) emit via router.telemetry directly — they run outside the
+ *     RouterContext ALS (only match()/matchPartial() enter it), so a
+ *     getRouterContext() read there throws and the event would vanish.
  */
 export function observeEvent(event: TelemetryEvent): void {
   // getRouterContext() either throws (real impl, outside a router context — e.g.

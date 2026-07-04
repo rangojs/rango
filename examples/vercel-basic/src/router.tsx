@@ -8,7 +8,7 @@ import { Document } from "./components/Document.js";
 import { HomePage } from "./components/pages/HomePage.js";
 import { AboutPage } from "./components/pages/AboutPage.js";
 import { CachedTimePage } from "./components/pages/CachedTimePage.js";
-import { buildTracing } from "./instrumentation.js";
+import { buildTracing, buildTelemetry } from "./instrumentation.js";
 import { getLastTrace } from "./trace-debug.js";
 
 // Read the gate as a direct `process.env` expression (not the imported
@@ -54,6 +54,10 @@ const base = createRouter({
   // instrumentation.ts wires @vercel/otel in the real path and an in-memory
   // recorder in the e2e (RANGO_TRACE_DEBUG=1).
   tracing: buildTracing(),
+  // Discrete-fact telemetry via createOTelSink (cache.decision, timeout, ...).
+  // Only wired in the debug build so the e2e can read the sink's instant spans
+  // back through /__debug/trace; undefined in the real path.
+  telemetry: buildTelemetry(),
 });
 
 // Test-only: only in the debug build (RANGO_TRACE_DEBUG=1) register a

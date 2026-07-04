@@ -20,6 +20,11 @@ import {
 } from "../server/request-context.js";
 import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
 import { resolveTracing } from "./tracing.js";
+import {
+  createOTelTracing,
+  type OTelActiveSpanTracer,
+  type OTelSpan,
+} from "./telemetry-otel.js";
 import type { MetricsStore } from "../server/context.js";
 
 function recordingTracing() {
@@ -33,6 +38,42 @@ function recordingTracing() {
       },
     }),
   };
+}
+
+/**
+ * A tracing config built on the real OTel adapter (createOTelTracing), whose
+ * runner routes through runThenSettle and thus applies the SAME error-marking
+ * logic production uses: a settle-error sets ERROR status on the span. Records
+ * each span's name + status so a test can assert whether a phase was marked
+ * ERROR. Distinct from recordingTracing (name-only, never settles status).
+ */
+function statusRecordingTracing() {
+  const spans: Array<{
+    name: string;
+    status?: { code: number; message?: string };
+  }> = [];
+  const tracer: OTelActiveSpanTracer = {
+    startActiveSpan<T>(name: string, fn: (span: OTelSpan) => T): T {
+      const record: {
+        name: string;
+        status?: { code: number; message?: string };
+      } = { name };
+      spans.push(record);
+      const handle: OTelSpan = {
+        setAttribute() {
+          return handle;
+        },
+        setStatus(status) {
+          record.status = status;
+          return handle;
+        },
+        recordException() {},
+        end() {},
+      };
+      return fn(handle);
+    },
+  };
+  return { spans, tracing: resolveTracing(createOTelTracing(tracer)) };
 }
 
 function createMetrics(): MetricsStore {
@@ -1265,6 +1306,81 @@ describe("middleware", () => {
         ).resolves.toBe(upgrade);
       });
     });
+
+    // A thrown Response is documented short-circuit control flow (auth gates,
+    // redirects), not an error. The rango.middleware span must therefore settle
+    // as success, never STATUS_ERROR — otherwise every auth redirect inflates
+    // trace error rates. The catch that absorbs the thrown Response lives INSIDE
+    // observePhase so the tracing runner never sees the throw.
+    it("does not mark the rango.middleware span as ERROR when middleware throws a Response (short-circuit)", async () => {
+      const { spans, tracing } = statusRecordingTracing();
+      const request = new Request("http://localhost/protected");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+
+      const guard: MiddlewareFn<unknown> = async () => {
+        throw new Response(null, {
+          status: 302,
+          headers: { Location: "/login" },
+        });
+      };
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(guard)],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      // The chain still resolves to the 302 (control flow preserved).
+      expect(result.status).toBe(302);
+      expect(result.headers.get("Location")).toBe("/login");
+
+      // And the span is NOT marked ERROR (code 2).
+      const mwSpan = spans.find((s) => s.name === "rango.middleware");
+      expect(mwSpan).toBeDefined();
+      expect(mwSpan!.status).toBeUndefined();
+    });
+
+    it("still marks the rango.middleware span as ERROR when middleware throws a real Error", async () => {
+      const { spans, tracing } = statusRecordingTracing();
+      const request = new Request("http://localhost/boom");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+
+      const exploder: MiddlewareFn<unknown> = async () => {
+        throw new Error("kaboom");
+      };
+
+      await expect(
+        runWithRequestContext(reqCtx, () =>
+          executeMiddleware(
+            [createMockEntry(exploder)],
+            request,
+            {},
+            {},
+            async () => new Response("OK"),
+          ),
+        ),
+      ).rejects.toThrow("kaboom");
+
+      const mwSpan = spans.find((s) => s.name === "rango.middleware");
+      expect(mwSpan).toBeDefined();
+      expect(mwSpan!.status).toEqual({ code: 2, message: "kaboom" });
+    });
   });
 
   describe("collectRouteMiddleware", () => {
@@ -1490,6 +1606,36 @@ describe("middleware", () => {
       );
 
       expect(spans).toContain("rango.middleware");
+    });
+
+    it("does not mark the intercept rango.middleware span as ERROR when it throws a Response", async () => {
+      const { spans, tracing } = statusRecordingTracing();
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+      const stubResponse = reqCtx.res;
+
+      const guard: MiddlewareFn<unknown> = async () => {
+        throw new Response(null, {
+          status: 302,
+          headers: { Location: "/login" },
+        });
+      };
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware([guard], request, {}, {}, {}, stubResponse),
+      );
+
+      expect(result).toBeInstanceOf(Response);
+      expect(result!.status).toBe(302);
+      const mwSpan = spans.find((s) => s.name === "rango.middleware");
+      expect(mwSpan).toBeDefined();
+      expect(mwSpan!.status).toBeUndefined();
     });
 
     it("should apply cookies to short-circuit Response", async () => {

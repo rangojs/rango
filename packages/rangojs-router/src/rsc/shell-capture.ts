@@ -715,6 +715,11 @@ async function attemptCapture(
   derivedCtx._transitionWhen = [];
   derivedCtx._shellCaptureRun = true;
   derivedCtx._metricsStore = undefined;
+  // Spans, like perf metrics above, are a FOREGROUND surface: the capture
+  // re-render must not emit a second rango.render/loader/ssr set after the
+  // foreground rango.request span ended (orphan spans in the trace).
+  // _tracing is otherwise inherited through Object.create(reqCtx).
+  derivedCtx._tracing = undefined;
   // Bake-lane loader containers (loaders on entries with no renderable
   // loading() execute during capture — docs/design/loader-container-bake.md).
   // resolveLoaderData registers each container promise here; the drain in

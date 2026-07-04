@@ -16,6 +16,7 @@ import type { RangoOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
 import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
 import type { ResolvedTracing } from "./tracing.js";
+import type { TelemetrySink } from "./telemetry.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -349,6 +350,14 @@ export interface RangoInternal<
    * traced phase.
    */
   readonly tracing?: ResolvedTracing;
+
+  /**
+   * Raw telemetry sink from RangoOptions, exposed so handler-level emitters
+   * (rsc/handler.ts timeout/origin/late-handle) can emit WITHOUT the
+   * RouterContext ALS, which only match()/matchPartial() enter. See
+   * observeEvent's emitter list in router/instrument.ts.
+   */
+  readonly telemetry?: TelemetrySink;
 
   /**
    * Whether ?__debug_manifest is allowed in production.

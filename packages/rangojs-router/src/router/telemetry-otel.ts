@@ -41,7 +41,7 @@ import { runThenSettle } from "./tracing.js";
 import type {
   RouterTracingConfig,
   SpanRunner,
-  TracePhaseToggles,
+  TracingToggleOptions,
 } from "./tracing.js";
 
 // ---------------------------------------------------------------------------
@@ -92,13 +92,11 @@ const STATUS_ERROR = 2;
 // Tracing adapter: phase spans via startActiveSpan (the `tracing` slot)
 // ---------------------------------------------------------------------------
 
-/** Options for createOTelTracing. */
-export interface OTelTracingOptions {
-  /** Master switch. Defaults to true. */
-  enabled?: boolean;
-  /** Per-phase span toggles. Omitted phases default to enabled. */
-  spans?: TracePhaseToggles;
-}
+/**
+ * Options for createOTelTracing. Alias of the shared {@link TracingToggleOptions}
+ * (`enabled` master switch + per-phase `spans` toggles); the name is public API.
+ */
+export type OTelTracingOptions = TracingToggleOptions;
 
 /**
  * Create the tracing config that maps the router's phases onto OTel spans via

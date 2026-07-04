@@ -89,6 +89,32 @@ function runSpec(f: Fixture): void {
     expect(handler, "expected a rango.handler span").toBeTruthy();
     expect(typeof handler!.attributes["rango.handler_id"]).toBe("string");
   });
+
+  test("emits rango.cache.decision instant spans via createOTelSink", async ({
+    page,
+  }) => {
+    // The telemetry slot (createOTelSink) turns each discrete cache decision
+    // into an instant span; cache.decision fires on every foreground match with
+    // a sink configured, so the uncached "/" route is enough. Fetch the document
+    // to drive a match, then read the recorded tree back through /__debug/trace.
+    const pageRes = await page.request.get(f.url("/"), {
+      headers: { accept: "text/html" },
+    });
+    expect(pageRes.status()).toBe(200);
+    await pageRes.text();
+
+    const traceRes = await page.request.get(f.url("/__debug/trace"));
+    expect(traceRes.status()).toBe(200);
+    const root = (await traceRes.json()) as SpanNode | null;
+
+    const decision = find(root, "rango.cache.decision");
+    expect(
+      decision,
+      "expected a rango.cache.decision instant span from the telemetry sink",
+    ).toBeTruthy();
+    expect(typeof decision!.attributes["rango.cache.hit"]).toBe("boolean");
+    expect(decision!.attributes["http.route"]).toBe("/");
+  });
 }
 
 devSpec("vercel-basic", runSpec);

@@ -16,6 +16,13 @@
  * does NOT model span end/duration: the tree is read after the response is
  * constructed, so a streaming phase span may still be "open" — the e2e asserts
  * tree SHAPE only, not lifecycle.
+ *
+ * It also implements `startSpan` (the OTel `Tracer` surface `createOTelSink`
+ * bridges onto) so the same recorder can back the `telemetry` slot in the debug
+ * build. An instant sink span lands as a leaf of the currently active phase node
+ * (request/render). A sink span emitted with NO active phase has nowhere to hang
+ * and is dropped — acceptable for the tree-shape e2e, which only reads spans
+ * emitted during the match pipeline.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -78,5 +85,34 @@ export const recordingTracer = {
       lastTrace = node;
     }
     return out;
+  },
+
+  // Instant-span surface for the telemetry slot (createOTelSink). Records the
+  // span's name/attributes as a leaf under the active phase node; end/status/
+  // exception are no-ops since the tree captures shape, not lifecycle.
+  startSpan(
+    name: string,
+    options?: { attributes?: Record<string, string | number | boolean> },
+  ): RecordingSpan {
+    const node: SpanNode = {
+      name,
+      attributes: { ...options?.attributes },
+      children: [],
+    };
+    const parent = als.getStore();
+    if (parent) parent.children.push(node);
+
+    const span: RecordingSpan = {
+      setAttribute(key, value) {
+        node.attributes[key] = value;
+        return span;
+      },
+      setStatus() {
+        return span;
+      },
+      recordException() {},
+      end() {},
+    };
+    return span;
   },
 };

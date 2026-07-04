@@ -74,6 +74,16 @@ export const router = createRouter<AppBindings>({
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
+  // Per-request perf-debug opt-in (docs/telemetry.md "Per-request opt-in"):
+  // ?__perf_debug=1 turns on the metrics store for THIS request only, so the
+  // suite is not spammed with [RSC Perf] logs. Must run before next() so
+  // downstream phases record into the store.
+  .use(async (ctx, next) => {
+    if (ctx.url.searchParams.has("__perf_debug")) {
+      ctx.debugPerformance();
+    }
+    await next();
+  })
   // Regression repro: top-level middleware throwing a Response must short-circuit
   // under miniflare the same way it does on Node — before the fix, the throw
   // leaked past executeMiddleware and miniflare stringified it as 500.

@@ -343,14 +343,17 @@ export {
 // Path and response types are ambient on the `Rango` namespace (`Rango.Path`,
 // `Rango.PathResponse`, declared in href-client.ts) — no import needed.
 
-// Telemetry types only — the createConsoleSink/createOTelSink values are
-// server-only and live in index.rsc.ts (the `react-server` condition of the
-// bare `@rangojs/router` import). Re-exporting them as values from this
-// (default/client) entry would pull telemetry.ts and telemetry-otel.ts into
-// the client module graph; both tree-shake to zero bytes but still appear in
-// bundle analysis output and slow build-time module resolution. Consumers
-// who need the values in non-RSC contexts can import from
-// `@rangojs/router/server`.
+// Telemetry types only — the createConsoleSink / createOTelSink /
+// createOTelTracing VALUES are server-only and live in index.rsc.ts (the
+// `react-server` condition of the bare `@rangojs/router` import). Re-exporting
+// them as values from this (default/client) entry would pull telemetry.ts and
+// telemetry-otel.ts into the client module graph; both tree-shake to zero bytes
+// but still appear in bundle analysis output and slow build-time module
+// resolution. The factory values are NOT re-exported from `@rangojs/router/server`
+// either — that subpath is internal, not user-facing (see server.ts header).
+// Non-RSC server code imports these TYPES from the root and obtains the factory
+// VALUES from its own router definition module, which resolves to index.rsc.ts
+// under the `react-server` condition.
 export type {
   OTelTracer,
   OTelActiveSpanTracer,
@@ -386,6 +389,7 @@ export type {
   RouterTracingConfig,
   TracePhase,
   TracePhaseToggles,
+  TracingToggleOptions,
 } from "./router/tracing.js";
 
 // Timeout types and error class

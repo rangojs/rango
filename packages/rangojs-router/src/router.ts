@@ -420,13 +420,13 @@ export function createRouter<TEnv = any>(
 
   // Wrapper to pass debugPerformance to external createMetricsStore.
   // Also checks per-request flag set by ctx.debugPerformance() in middleware.
+  // With no active request context there is nowhere to hang the store, so return
+  // undefined: an orphan store would collect metrics no reader can reach (nothing
+  // holds it, and appendMetric(undefined, ...) is already a no-op).
   const getMetricsStore = () => {
     const reqCtx = _getRequestContext();
     const enabled = debugPerformance || !!reqCtx?._debugPerformance;
-    if (!enabled) return undefined;
-    if (!reqCtx) {
-      return createMetricsStore(true);
-    }
+    if (!enabled || !reqCtx) return undefined;
     reqCtx._metricsStore ??= createMetricsStore(true);
     return reqCtx._metricsStore;
   };
@@ -501,8 +501,12 @@ export function createRouter<TEnv = any>(
         ? getRequestId(errorContext.request)
         : undefined
       : undefined;
+    // Derived once here for both the loader.start and loader.end emits (the
+    // loader.error emit uses ctx.loaderName from wrapLoaderWithErrorHandling).
+    const loaderName = telemetrySink
+      ? segmentId.split(".").pop() || "unknown"
+      : "";
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       safeEmit(telemetry, {
         type: "loader.start",
         timestamp: loaderStart,
@@ -556,7 +560,6 @@ export function createRouter<TEnv = any>(
 
     // Emit loader.end after the promise settles (fire-and-forget)
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       result.then((r) => {
         safeEmit(telemetry, {
           type: "loader.end",
@@ -1007,6 +1010,12 @@ export function createRouter<TEnv = any>(
 
     // Expose resolved span tracing for the handler (Cloudflare custom spans)
     tracing: resolvedTracing,
+
+    // Expose the raw telemetry sink so handler-level emitters (timeout, origin
+    // rejection, late-handle handler.error) can emit outside the match ALS.
+    // Raw (not the resolveSink no-op wrapper) so router.telemetry stays
+    // undefined when unconfigured and call sites gate on truthiness.
+    telemetry: telemetrySink,
 
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,
