@@ -82,10 +82,14 @@ export async function loadManifest(
     Store.mountIndex = mountIndex;
     Store.isSSR = isSSR;
     if (metricsStore) Store.metrics = metricsStore;
-    // Restore cached manifest into Store
-    for (const [k, v] of cached) {
-      Store.manifest.set(k, v);
-    }
+    // Alias the request-scoped Store to the cached Map instead of copying it
+    // entry-by-entry. At request time this Store is throwaway (no ambient
+    // RangoContext store spans classify->match->render, so getOrCreateStore
+    // returns a fresh detached store here), so nothing mutates it in place after
+    // loadManifest returns. The fresh path below REASSIGNS Store.manifest rather
+    // than clearing it in place, so a later fresh load sharing this Store cannot
+    // poison the cached Map.
+    Store.manifest = cached;
     pushMetric?.("manifest:cache-hit", cacheStart);
     return cached.get(routeKey)!;
   }
@@ -103,7 +107,11 @@ export async function loadManifest(
   pushMetric?.("manifest:store-setup", storeSetupStart);
 
   const clearStart = performance.now();
-  Store.manifest.clear();
+  // Reassign rather than clear() in place: a prior cache-hit may have aliased
+  // Store.manifest to a shared module-cache Map (see cache-hit branch above),
+  // and clearing it in place would poison that cache. A fresh Map isolates this
+  // build; the cache still receives an independent copy at the end.
+  Store.manifest = new Map();
   pushMetric?.("manifest:clear", clearStart);
 
   try {

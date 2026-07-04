@@ -364,15 +364,21 @@ describe("VercelCacheStore", () => {
         debug: (e) => corrupt.push(e),
       });
       await s.putResponse("doc:k", new Response("hello"), 60, 300);
-      // Corrupt the stored base64 body in place; decoding it would otherwise
-      // throw InvalidCharacterError out of getResponse (a fail-open violation).
-      const entry = [...store.values()].find(
-        (e) =>
-          e.value != null &&
-          typeof e.value === "object" &&
-          "b" in (e.value as object),
-      );
-      (entry!.value as { b: string }).b = "%%%not-base64%%%";
+      // Corrupt the stored base64 body; decoding it would otherwise throw
+      // InvalidCharacterError out of getResponse (a fail-open violation). Entries
+      // are stored as pre-serialized JSON strings (write() serializes once), so
+      // parse, mutate `b`, and re-stringify — tolerating the legacy object shape.
+      const entry = [...store.values()].find((e) => {
+        const v = typeof e.value === "string" ? JSON.parse(e.value) : e.value;
+        return v != null && typeof v === "object" && "b" in v;
+      });
+      if (typeof entry!.value === "string") {
+        const env = JSON.parse(entry!.value);
+        env.b = "%%%not-base64%%%";
+        entry!.value = JSON.stringify(env);
+      } else {
+        (entry!.value as { b: string }).b = "%%%not-base64%%%";
+      }
 
       await expect(s.getResponse("doc:k")).resolves.toBeNull();
       expect(corrupt.at(-1)).toMatchObject({
@@ -520,6 +526,107 @@ describe("VercelCacheStore", () => {
       expect(await s.getShell("k")).toBeNull();
       expect(store.has("rg:h:k")).toBe(false); // self-healed
       expect(consoleError).toHaveBeenCalled();
+    });
+  });
+
+  describe("serialize-once + companion-lock dampening (C6)", () => {
+    it("stores new entries as pre-serialized strings (single serialization)", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn", "v", { ttl: 60 });
+      const entry = store.get("rg:i:fn")!;
+      // write() serializes once and hands the platform a string.
+      expect(typeof entry.value).toBe("string");
+      // ...which still round-trips back to a value on read (decodeRaw parses it).
+      expect((await s.getItem("fn"))?.value).toBe("v");
+    });
+
+    it("reads a legacy OBJECT-shaped item envelope (pre-serialization-change)", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      // Plant a raw object envelope, how entries looked before write() serialized.
+      store.set("rg:i:legacy", {
+        value: { v: "LEGACY", s: T0 + 60_000, e: T0 + 360_000, t: ["x"] },
+        expiresAt: null,
+        tags: [],
+      });
+      const hit = await s.getItem("legacy");
+      expect(hit?.value).toBe("LEGACY");
+      expect(hit?.tags).toEqual(["x"]);
+    });
+
+    it("reads a legacy OBJECT-shaped segment envelope too", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      store.set("rg:s:legacy", {
+        value: {
+          d: { segments: [], handles: "", expiresAt: 0 },
+          s: T0 + 60_000,
+          e: T0 + 360_000,
+        },
+        expiresAt: null,
+        tags: [],
+      });
+      const hit = await s.get("legacy");
+      expect(hit).not.toBeNull();
+      expect(hit?.data.segments).toEqual([]);
+    });
+
+    it("a fresh hit reads only the main key (no lock round trip)", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn", "v", { ttl: 60, swr: 300 });
+      const getSpy = vi.spyOn(cache, "get");
+      vi.setSystemTime(new Date(T0 + 10_000)); // still fresh
+      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(false);
+      // Exactly one read (the main key), no companion-lock read.
+      expect(getSpy).toHaveBeenCalledTimes(1);
+      expect(getSpy).toHaveBeenCalledWith("rg:i:fn");
+    });
+
+    it("a stale read adds exactly one lock read and writes ONLY the tiny lock", async () => {
+      const { cache, store } = makeFakeCache();
+      const pending: Promise<unknown>[] = [];
+      const s = new VercelCacheStore({
+        cache,
+        waitUntil: (p) => {
+          pending.push(p);
+        },
+      });
+      await s.setItem("fn", "PAYLOAD", { ttl: 60, swr: 300 });
+      const storeKey = "rg:i:fn";
+      const payloadBefore = store.get(storeKey)!.value;
+
+      const getSpy = vi.spyOn(cache, "get");
+      vi.setSystemTime(new Date(T0 + 120_000));
+      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(true);
+      await Promise.all(pending); // settle the lock write
+
+      // Main key + companion lock = two reads.
+      expect(getSpy).toHaveBeenCalledTimes(2);
+      // Only the tiny lock was written; the payload envelope is untouched.
+      expect(store.has(`${storeKey}:lock`)).toBe(true);
+      expect(store.get(storeKey)!.value).toBe(payloadBefore);
+    });
+
+    it("the lock dampens the herd: a second stale reader does not re-trigger revalidation", async () => {
+      const { cache } = makeFakeCache();
+      const pending: Promise<unknown>[] = [];
+      const s = new VercelCacheStore({
+        cache,
+        waitUntil: (p) => {
+          pending.push(p);
+        },
+      });
+      await s.setItem("fn", "v", { ttl: 60, swr: 300 });
+
+      vi.setSystemTime(new Date(T0 + 120_000));
+      // First stale reader claims the lock -> triggers revalidation.
+      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(true);
+      await Promise.all(pending);
+
+      // Same instant, still stale, but the lock is held -> served as fresh.
+      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(false);
     });
   });
 });

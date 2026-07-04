@@ -494,6 +494,18 @@ export interface NavigationStore {
     stale?: boolean,
     handlesPending?: boolean,
   ): void;
+  /**
+   * Owner-guarded variant of updateCacheHandleData: writes only when the entry
+   * is still owned by `ownerInstance`. Folds the caller's separate ownership
+   * probe and write into one historyCache scan for the per-yield streaming path.
+   */
+  updateCacheHandleDataIfOwned(
+    historyKey: string,
+    handleData: HandleData,
+    ownerInstance: number,
+    stale?: boolean,
+    handlesPending?: boolean,
+  ): void;
   markCacheAsStale(): void;
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;

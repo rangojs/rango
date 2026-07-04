@@ -127,6 +127,86 @@ export async function replyToCacheKey(
 // the test-ergonomics warning fires once per fn rather than once per call.
 const warnedUncachedUnderTest = new Set<string>();
 
+/**
+ * Fast-path cache-key builder for JSON-safe key args. Returns a deterministic
+ * string (object keys recursively sorted so insertion order can't change the
+ * key) when EVERY part is a primitive or a plain object/array of the same, and
+ * `undefined` otherwise so the caller falls back to the Flight reply encoder.
+ *
+ * Strings are always quoted via JSON.stringify, so they can never collide with
+ * the bareword encodings of null/true/false/undefined/numbers. Anything the
+ * reply encoder must handle instead — functions, symbols, bigint, non-finite
+ * numbers, Dates, Maps, class instances, promises, and React elements (whose
+ * `$$typeof` symbol value trips the symbol reject) — yields `undefined`.
+ */
+function jsonSafeKeyPart(value: unknown): string | undefined {
+  if (value === null) return "null";
+  switch (typeof value) {
+    case "string":
+      return JSON.stringify(value);
+    case "boolean":
+      return value ? "true" : "false";
+    case "number":
+      return Number.isFinite(value) ? String(value) : undefined;
+    case "undefined":
+      return "undefined";
+    case "object": {
+      if (Array.isArray(value)) {
+        const parts: string[] = [];
+        for (const item of value) {
+          const encoded = jsonSafeKeyPart(item);
+          if (encoded === undefined) return undefined;
+          parts.push(encoded);
+        }
+        return `[${parts.join(",")}]`;
+      }
+      // Only plain objects (Object.prototype or null proto) are fast-path safe.
+      // Dates, Maps, class instances, promises, etc. carry a different prototype
+      // and fall back to the encoder.
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) return undefined;
+      const obj = value as Record<string, unknown>;
+      const parts: string[] = [];
+      for (const key of Object.keys(obj).sort()) {
+        const encoded = jsonSafeKeyPart(obj[key]);
+        if (encoded === undefined) return undefined;
+        parts.push(`${JSON.stringify(key)}:${encoded}`);
+      }
+      return `{${parts.join(",")}}`;
+    }
+    default:
+      // bigint, symbol, function
+      return undefined;
+  }
+}
+
+/**
+ * The serialized product of one "use cache" execution: exactly what the store
+ * write persists. Followers that dedup onto an in-flight execution (see
+ * inFlightExecutions) await this and serve it as a synthetic cache hit — each
+ * deserializing its OWN copy of `serialized` and replaying `handles`/`tags`
+ * against its OWN request. A deserialized result object is never shared.
+ */
+interface CacheEnvelope {
+  /** RSC-serialized return value (never null — a null serialize rejects). */
+  serialized: string;
+  /** Merged profile/DSL + runtime cacheTag() tags. */
+  tags: string[];
+  /** RSC-encoded handle blob captured during execution, if any. */
+  handles?: string;
+}
+
+/**
+ * In-flight "use cache" executions keyed by cache key. When N concurrent calls
+ * miss on the same key, only the first (the leader) runs the function; the rest
+ * await its {@link CacheEnvelope} and serve it as a synthetic hit rather than
+ * re-running the function and re-writing the store. Isolate-scoped (module
+ * singleton), and cleared for a key as soon as the leader settles: a rejected
+ * leader (function threw, or the result was not serializable) propagates to
+ * current waiters, which then retry fresh.
+ */
+const inFlightExecutions = new Map<string, Promise<CacheEnvelope>>();
+
 // ============================================================================
 // Core: registerCachedFunction
 // ============================================================================
@@ -253,12 +333,23 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     let cacheKey: string;
     try {
       if (keyArgs.length > 0) {
-        const tempRefs = createClientTemporaryReferenceSet();
-        const encoded = await encodeReply(keyArgs as unknown[], {
-          temporaryReferences: tempRefs,
-        });
-        const argsKey = await replyToCacheKey(encoded);
-        cacheKey = `use-cache:${id}:${argsKey}`;
+        // Fast path: when every key arg is JSON-safe, build the key with a
+        // deterministic stable-stringify and skip encodeReply (the Flight reply
+        // encoder runs on EVERY call, including hits). The `:j:` namespace keeps
+        // these keys disjoint from the encoder path so the two can never collide
+        // for one fn id. Entries cached under the old encoder key for JSON-safe
+        // args cold-start once after this upgrade.
+        const fastKey = jsonSafeKeyPart(keyArgs);
+        if (fastKey !== undefined) {
+          cacheKey = `use-cache:${id}:j:${fastKey}`;
+        } else {
+          const tempRefs = createClientTemporaryReferenceSet();
+          const encoded = await encodeReply(keyArgs as unknown[], {
+            temporaryReferences: tempRefs,
+          });
+          const argsKey = await replyToCacheKey(encoded);
+          cacheKey = `use-cache:${id}:${argsKey}`;
+        }
       } else {
         cacheKey = `use-cache:${id}`;
       }
@@ -438,7 +529,65 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
     }
 
-    // Cache miss: execute, serialize, store
+    // Cache miss.
+    //
+    // In-flight dedup: if a concurrent call for this key is already executing,
+    // await its envelope and serve it as a synthetic hit rather than re-running
+    // the function. Each follower deserializes its OWN copy, replays handles
+    // against its OWN handle store (gated on ITS hasTaintedArgs), and records
+    // tags into its OWN request — no deserialized result is shared across
+    // requests. The store write stays exactly once (the leader's).
+    const existing = inFlightExecutions.get(cacheKey);
+    if (existing) {
+      let envelope: CacheEnvelope | undefined;
+      try {
+        envelope = await existing;
+      } catch {
+        // Leader rejected (function threw or its result was not serializable);
+        // its map entry is already cleared, so fall through to a fresh run.
+        envelope = undefined;
+      }
+      if (envelope) {
+        try {
+          return await serveCached({
+            value: envelope.serialized,
+            handles: envelope.handles,
+            tags: envelope.tags,
+            shouldRevalidate: false,
+          });
+        } catch (error) {
+          reportCacheError(
+            error,
+            "cache-corrupt",
+            `[use cache] "${id}" inflight-hit`,
+          );
+          // Fall through to a fresh execution below.
+        }
+      }
+    }
+
+    // This call becomes the leader. Register a deferred envelope so concurrent
+    // callers dedup onto it; it is resolved/rejected exactly once below (or on a
+    // function throw). clearSelf only deletes the map slot if it still holds
+    // THIS promise, so a fall-through retry (rare rejected-leader path) can't
+    // evict a newer leader's entry.
+    let resolveEnvelope!: (env: CacheEnvelope) => void;
+    let rejectEnvelope!: (err: unknown) => void;
+    const envelopePromise = new Promise<CacheEnvelope>((res, rej) => {
+      resolveEnvelope = res;
+      rejectEnvelope = rej;
+    });
+    // Followers attach their own catch; guard the map's own reference so a
+    // rejected envelope with no waiter is not an unhandled rejection.
+    envelopePromise.catch(() => {});
+    inFlightExecutions.set(cacheKey, envelopePromise);
+    const clearSelf = (): void => {
+      if (inFlightExecutions.get(cacheKey) === envelopePromise) {
+        inFlightExecutions.delete(cacheKey);
+      }
+    };
+
+    // execute, serialize, store
     const handleStore = hasTaintedArgs ? requestCtx?._handleStore : undefined;
     let capture: HandleCapture | undefined;
     let stopCapture: (() => void) | undefined;
@@ -471,6 +620,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     try {
       scoped = runWithCacheTagScope(() => fn.apply(this, args));
       result = await scoped.result;
+    } catch (execError) {
+      // The function threw: drop the in-flight entry and reject any waiters so
+      // they retry fresh, then propagate to this caller.
+      clearSelf();
+      rejectEnvelope(execError);
+      throw execError;
     } finally {
       // Decrement ref count; symbol is deleted when it reaches zero
       for (const arg of taintedArgs) {
@@ -491,28 +646,53 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     ];
     recordRequestTags(allTags, requestCtx);
 
-    // Serialize and store — fully non-blocking when waitUntil is available.
-    // The response does not need to wait for serialization or the store write.
-    const cacheWrite = async () => {
+    // Serialize + encode handles ONCE, resolve the in-flight envelope so any
+    // concurrent followers can serve a synthetic hit, then persist to the store.
+    // Fully non-blocking when waitUntil is available — the leader's response
+    // waits on neither serialization nor the store write.
+    const finalizeAndWrite = async (): Promise<void> => {
+      let serialized: string | null;
+      let encodedHandles: string | undefined;
       try {
-        const serialized = await serializeResult(result);
-        if (serialized !== null) {
-          const encodedHandles = capture?.data
-            ? await encodeHandles(capture.data)
-            : undefined;
-          await store.setItem!(cacheKey, serialized, {
-            handles: encodedHandles,
-            ttl: profile.ttl,
-            swr: profile.swr,
-            tags: allTags.length > 0 ? allTags : undefined,
-          });
-        }
+        serialized = await serializeResult(result);
+        encodedHandles = capture?.data
+          ? await encodeHandles(capture.data)
+          : undefined;
+      } catch (buildError) {
+        // Serialize/handle-encode failed: no envelope for followers (they run
+        // fresh) and nothing to write.
+        clearSelf();
+        rejectEnvelope(buildError);
+        requestCtx?._reportBackgroundError?.(buildError, "cache-write");
+        return;
+      }
+      clearSelf();
+      if (serialized === null) {
+        // Non-serializable result: no store write (matches the prior silent
+        // skip); reject so any waiter falls through to a fresh execution.
+        rejectEnvelope(
+          new Error(
+            `[use cache] "${id}" result is not serializable; not cached`,
+          ),
+        );
+        return;
+      }
+      // Hand followers the envelope before the store write so a slow/failed
+      // write never stalls them.
+      resolveEnvelope({ serialized, tags: allTags, handles: encodedHandles });
+      try {
+        await store.setItem!(cacheKey, serialized, {
+          handles: encodedHandles,
+          ttl: profile.ttl,
+          swr: profile.swr,
+          tags: allTags.length > 0 ? allTags : undefined,
+        });
       } catch (writeError) {
         requestCtx?._reportBackgroundError?.(writeError, "cache-write");
       }
     };
 
-    await runBackground(requestCtx, cacheWrite, true);
+    await runBackground(requestCtx, finalizeAndWrite, true);
 
     return result;
   };

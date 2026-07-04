@@ -223,7 +223,11 @@ export function createNavigationClient(
           ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
           headers: {
             "X-RSC-Router-Client-Path": previousUrl,
-            "X-Rango-State": getRangoState(),
+            // Reuse the single per-operation read (see rangoState above): the
+            // cache-key lookup and this header must agree on one value, and the
+            // cookie read has side effects (external-rotation notify) we do not
+            // want to fire twice per navigation.
+            "X-Rango-State": rangoState,
             ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
             ...(interceptSourceUrl && {
               "X-RSC-Router-Intercept-Source": interceptSourceUrl,
