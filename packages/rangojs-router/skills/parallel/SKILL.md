@@ -8,6 +8,13 @@ argument-hint: [@slot-name]
 
 Parallel routes render multiple components simultaneously in named slots.
 
+## Not this skill if…
+
+- You want a modal or slide-over that appears only on soft navigation and shows
+  the full page on hard navigation — that is `intercept()`: see `/intercept`.
+- You want a slot rendered conditionally on HOW the user navigated — parallel
+  slots ALWAYS render alongside the page; see `/intercept`.
+
 ## Basic Parallel Routes
 
 ```typescript

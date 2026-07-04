@@ -24,7 +24,8 @@ with no framework wrapper. All standard React hooks (`useActionState`,
 Use loaders and route handlers for reads. Use actions for writes. After an
 action runs, the matched route tree can partially re-render so handlers and
 loaders that opt into revalidation see the new state — see "Revalidation"
-below.
+below. For the read-side APIs (`createLoader`, `useLoader`, `useFetchLoader`),
+see `/loader`.
 
 ## Revalidation Model
 

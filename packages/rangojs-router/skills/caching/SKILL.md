@@ -14,6 +14,16 @@ argument-hint: "[setup]"
 > route-segment entries expire at TTL with no background revalidation — use
 > `CFCacheStore` for real segment SWR. See `/cache-guide`.
 
+## Not this skill if…
+
+- You want to cache ONE function or component's return value — that is
+  `"use cache"`: see `/use-cache`.
+- You want the whole HTTP response frozen at the edge, loader output included —
+  see `/document-cache`.
+- You want the HTML shell cached while loaders stay live per request — see
+  `/ppr`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
+
 ## cache() is Partial Prerendering (PPR)
 
 `cache()` caches **everything except loaders**. On a cache hit, the cached

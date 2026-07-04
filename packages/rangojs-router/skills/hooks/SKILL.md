@@ -9,6 +9,14 @@ argument-hint: [hook-name]
 Import the hooks and components in this skill from `@rangojs/router/client`.
 The root `@rangojs/router` entrypoint is for server/RSC APIs and shared types.
 
+## Not this skill if…
+
+- You want to fetch data — data fetching happens in server-side loaders: see
+  `/loader`. Client hooks like `useLoader()` only consume what a loader
+  resolved.
+- You want to control when a loader re-runs after an action — that is
+  `revalidate()` in the server DSL: see `/loader`.
+
 ## Navigation Hooks
 
 ### useNavigation()

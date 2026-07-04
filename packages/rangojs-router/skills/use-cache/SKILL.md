@@ -10,6 +10,12 @@ Function-level caching for async server functions and RSC components. Caches
 return values with TTL + stale-while-revalidate. Complementary to the route-level
 `cache()` DSL and build-time `Static()`/`Prerender()`.
 
+## Not this skill if…
+
+- You want to cache a whole route or a rendered subtree of segments — that is
+  the segment-level `cache()` DSL: see `/caching`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
+
 ## Basic Usage
 
 ### File-level (all exports cached with default profile)
