@@ -1,15 +1,18 @@
 import { urls, Meta, Breadcrumbs, nonce } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
   ShellPriceLoader,
   ShellStreamLoader,
+  ShellChromeLoader,
+  ShellBadgeLoader,
   ShellHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
   makePhysicsPromise,
   getDriftStamp,
 } from "./shell-cache.defs.js";
+import { ShellBadge } from "../components/ShellBadge.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
@@ -145,8 +148,44 @@ function ShellNoncePricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
 }
 
+// LAYOUT-LOADER TRAP (the storefront shape): the layout registers a loader with
+// NO loading() on the LAYOUT while the ppr child below carries its own loader +
+// loading(). The child boundary does NOT unpin the parent — the tree-build await
+// lives at the entry that REGISTERS the loaders (segment-system.tsx), so the
+// capture's masked ShellChromeLoader pins the tree above <body>, the prelude
+// comes back trivial, and the sanity gate refuses: x-rango-shell stays MISS
+// forever while axis 1 stays healthy. Registration alone pins — nothing
+// consumes ShellChromeLoader.
+function ShellTrapChromeLayout() {
+  return (
+    <main data-testid="shell-trap-page">
+      <p data-testid="shell-trap-chrome">Trap chrome static text</p>
+      <Outlet />
+    </main>
+  );
+}
+
+// THE ESCAPE (skills/ppr "layout-with-loaders playbook"): the same chrome data
+// owned by a @badge parallel slot with its OWN loading(). Slot-owned loaders get
+// a per-slot LoaderBoundary, so the layout node has no loaders to await: chrome
+// and the static page bake into the shell, the badge is a badge-sized hole, and
+// the route flips to HIT with no loader or loading() of its own.
+function ShellSlotChromeLayout() {
+  return (
+    <main data-testid="shell-slot-page">
+      <p data-testid="shell-slot-chrome">Slot chrome static text</p>
+      <ParallelOutlet name="@badge" />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellSlotHomePage() {
+  return <p data-testid="shell-slot-home">Slot home static content</p>;
+}
+
 export const shellCachePatterns = urls(
-  ({ path, layout, loader, loading, middleware }) => [
+  ({ path, layout, loader, loading, middleware, parallel }) => [
     layout(ShellCacheLayout, () => [
       // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
       path(
@@ -232,5 +271,38 @@ export const shellCachePatterns = urls(
         ]),
       ],
     ),
+    // Layout-loader trap: see ShellTrapChromeLayout above.
+    layout(ShellTrapChromeLayout, () => [
+      loader(ShellChromeLoader),
+      path(
+        "/shell-cache/layout-loader",
+        ShellCachePricePage,
+        { name: "shellCacheLayoutLoader", ppr: true },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="trap-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+    ]),
+    // Slot-hole escape: see ShellSlotChromeLayout above.
+    layout(ShellSlotChromeLayout, () => [
+      parallel({
+        "@badge": {
+          handler: () => <ShellBadge loader={ShellBadgeLoader} />,
+          use: () => [
+            loader(ShellBadgeLoader),
+            loading(
+              <span data-testid="shell-badge-fallback">badge pending...</span>,
+            ),
+          ],
+        },
+      }),
+      path("/shell-cache/slot-hole", ShellSlotHomePage, {
+        name: "shellCacheSlotHole",
+        ppr: true,
+      }),
+    ]),
   ],
 );

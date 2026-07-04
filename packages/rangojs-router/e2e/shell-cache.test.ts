@@ -561,6 +561,70 @@ function runShellCacheSpec(f: Fixture): void {
       if (i < 5) await new Promise((r) => setTimeout(r, 350));
     }
   });
+
+  // --- The layout-loader trap (storefront shape) and its escape. ---
+
+  // /shell-cache/layout-loader: the LAYOUT registers ShellChromeLoader with no
+  // loading() on the layout; the ppr child route carries its own loader +
+  // loading(). The child boundary does NOT unpin the parent — the tree-build
+  // await lives at the entry that REGISTERS the loaders — so every capture
+  // refuses and the header never flips. Registration alone pins: nothing
+  // consumes ShellChromeLoader. Axis 1 stays healthy throughout.
+  test("layout loader without loading() on the layout: stays MISS even though the ppr child route has loading()", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/layout-loader?probe=trap");
+
+    for (let i = 0; i < 6; i++) {
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.status()).toBe(200);
+      expect(
+        res.headers()["x-rango-shell"],
+        `request #${i} must stay MISS`,
+      ).toBe("MISS");
+
+      const html = await res.text();
+      expect(html).toContain("Trap chrome static text");
+      expect(html).toContain("Live price:");
+
+      if (i < 5) await new Promise((r) => setTimeout(r, 350));
+    }
+  });
+
+  // /shell-cache/slot-hole: the escape from the trap above (skills/ppr
+  // "layout-with-loaders playbook"). The same chrome data is owned by a @badge
+  // parallel slot with its OWN loading(), so the layout node has no loaders to
+  // await: the shell captures with chrome + the static page + the badge
+  // FALLBACK frozen in the prelude, the badge value streams in the resumed
+  // tail, and it stays live (seq advances) across HITs. Neither the layout nor
+  // the route carries loading().
+  test("layout data in a parallel slot with its own loading(): flips to HIT, badge fallback frozen, badge value live per request", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/slot-hole?probe=slot");
+    await warmToHit(request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const preludeEnd = html.indexOf("</html>");
+    expect(preludeEnd).toBeGreaterThan(-1);
+    const prelude = html.slice(0, preludeEnd);
+    const resumed = html.slice(preludeEnd);
+
+    expect(prelude).toContain("Slot chrome static text");
+    expect(prelude).toContain("Slot home static content");
+    expect(prelude).toContain("badge pending...");
+    expect(prelude).not.toMatch(/badge-\d/);
+    expect(resumed).toMatch(/badge-\d+/);
+
+    // Liveness: a second HIT re-runs the slot loader (seq advances) while the
+    // prelude still freezes the fallback.
+    const second = await measureFirstChunk(url);
+    const secondPrelude = second.html.slice(0, second.html.indexOf("</html>"));
+    expect(secondPrelude).toContain("badge pending...");
+    const firstSeq = Number(html.match(/badge-(\d+)/)?.[1]);
+    const secondSeq = Number(second.html.match(/badge-(\d+)/)?.[1]);
+    expect(secondSeq).toBeGreaterThan(firstSeq);
+  });
 }
 
 test.describe("shell-cache (dev)", () => {

@@ -132,3 +132,33 @@ export function makePhysicsPromise(): Promise<string> {
     setTimeout(() => resolve("PHYSICS-HOLE-VALUE"), SHELL_PHYSICS_DELAY_MS),
   );
 }
+
+// Layout-loader trap fixture (the storefront shape: an app-wide layout
+// registering session/basket-style loaders). Registered on the LAYOUT entry
+// with no loading() there and consumed by NOTHING — registration alone pins
+// the capture: the layout node has loaders and no loading(), so renderSegments
+// awaits them at tree-build and the capture's masked loader never resolves.
+// The delay only keeps axis 1 visibly async; the trap is delay-independent.
+const SHELL_CHROME_DELAY_MS = 100;
+
+let shellChromeSeq = 0;
+
+export const ShellChromeLoader = createLoader(async (): Promise<string> => {
+  await new Promise((resolve) => setTimeout(resolve, SHELL_CHROME_DELAY_MS));
+  shellChromeSeq += 1;
+  return `chrome-${shellChromeSeq}`;
+});
+
+// Slot-hole escape fixture: the SAME chrome-data shape as ShellChromeLoader,
+// but owned by a @badge parallel slot with its own loading(), so it gets a
+// per-slot LoaderBoundary instead of pinning the layout. seq advances on every
+// execution to prove the badge stays live across shell HITs.
+const SHELL_BADGE_DELAY_MS = 150;
+
+let shellBadgeSeq = 0;
+
+export const ShellBadgeLoader = createLoader(async (): Promise<string> => {
+  await new Promise((resolve) => setTimeout(resolve, SHELL_BADGE_DELAY_MS));
+  shellBadgeSeq += 1;
+  return `badge-${shellBadgeSeq}`;
+});
