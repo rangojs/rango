@@ -55,6 +55,14 @@
  *   metadata.category, while the request still degrades-to-miss exactly as before.
  *   (A thrown response-route HANDLER error is the one onError path NOT covered —
  *   see "DOES NOT support" below.)
+ * - createRouter({ telemetry }) match-transaction lifecycle: request.start opens
+ *   the transaction before the global middleware chain, request.end closes it
+ *   after finalizeResponse (segmentCount 0 / cacheHit false — dispatch renders no
+ *   RSC segments and holds no match-cache state), and a thrown non-Response error
+ *   emits request.error with phase "routing". All three carry the same requestId
+ *   (getRequestId). Emission is gated entirely on a configured sink; with none,
+ *   dispatch does zero new work and stays byte-identical for existing callers.
+ *   Lets a consumer unit-test their sink wiring in-process instead of only at e2e.
  *
  * What dispatch DOES NOT support (and why):
  * - RSC component routes — rendering requires the Flight serializer + React
@@ -76,6 +84,13 @@
  *   merged cookies/headers all match production; only the Flight-embedded
  *   location-state entries are absent. Cover location-state restoration across a
  *   partial redirect with an e2e test.
+ * - Telemetry cache.decision / loader.* / handler.error events: these fire from
+ *   the real match()/matchPartial() + RSC render + loader pipeline (match-
+ *   handlers.ts, loader-resolution.ts, segment-resolution), none of which
+ *   dispatch runs. Synthesizing them here would be faking (the events would not
+ *   reflect a real cache lookup or loader run), so dispatch emits only the
+ *   request.start/end/error lifecycle above; cover cache/loader telemetry with an
+ *   e2e test driving a real RSC request.
  *
  * dispatch reuses router.previewMatch(), which itself runs content negotiation
  * and resolves route middleware from the matched entry tree, so dispatch's
@@ -127,6 +142,8 @@ import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import { invokeOnError } from "../router/error-handling.js";
 import type { OnErrorCallback } from "../types/error-types.js";
 import type { Rango } from "../router/router-interfaces.js";
+import { getRequestId, resolveSink, safeEmit } from "../router/telemetry.js";
+import type { TelemetrySink } from "../router/telemetry.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -140,6 +157,13 @@ interface DispatchableRouter<TEnv> {
   routeMap: Record<string, unknown>;
   middleware: MiddlewareEntry<TEnv>[];
   onError?: OnErrorCallback<TEnv>;
+  /**
+   * Optional telemetry sink from createRouter({ telemetry }) (RangoInternal
+   * field). dispatch emits the match-transaction lifecycle events onto it so a
+   * consumer can unit-test their sink wiring in-process; undefined keeps dispatch
+   * byte-identical for every existing caller.
+   */
+  telemetry?: TelemetrySink;
   findMatch(pathname: string): Promise<{
     redirectTo?: string;
     routeKey?: string;
@@ -444,6 +468,19 @@ export async function dispatch<TEnv = any>(
   const isPartial = url.searchParams.has("_rsc_partial");
   const isAction = url.searchParams.has("_rsc_action");
 
+  // Telemetry: mirror the router's match-transaction lifecycle onto the
+  // configured sink so a consumer can unit-test createRouter({ telemetry })
+  // wiring in-process (the dogfood gap the RSC-free dispatch left — see
+  // tests/cloudflare-basic/test/cache-status.test.ts). Every emit is gated on
+  // `sink` truthiness: with no sink configured dispatch does zero new work and
+  // stays byte-identical for existing callers. Only request.start/end/error are
+  // reachable here — cache.decision and loader.* originate in the real match()/
+  // matchPartial() + RSC render pipeline dispatch deliberately does not run
+  // (module header), so fabricating them would violate the no-fake rule.
+  const sink = router.telemetry;
+  const telemetryRequestId = sink ? getRequestId(req) : undefined;
+  const telemetryStart = sink ? performance.now() : 0;
+
   return runWithRequestContext(requestContext, async () => {
     // Set params before middleware/handler run, so global middleware sees
     // ctx.params (production sets them during matching, before middleware).
@@ -658,44 +695,112 @@ export async function dispatch<TEnv = any>(
       return callResponseRoute();
     };
 
-    // Global (pattern-matched) middleware wraps coreHandler, exactly as
-    // production wraps coreHandler with executeMiddleware (handler.ts).
-    const globalMatches = matchMiddleware(url.pathname, router.middleware);
-    const mwResponse =
-      globalMatches.length === 0
-        ? await coreHandler()
-        : await executeMiddleware<TEnv>(
-            globalMatches,
-            req,
-            env,
-            variables,
-            coreHandler,
-            reverse,
-          );
-
-    // Match production's global-chain exit (handler.ts): on a partial/action
-    // request a middleware 3xx redirect is converted to a Flight-safe response
-    // so fetch() does not auto-follow it; every path then drains onResponse
-    // callbacks via finalizeResponse. dispatch is RSC-free, so the
-    // createRedirectFlightResponse stand-in falls back to the no-state
-    // 204 + X-RSC-Redirect (see the location-state divergence in the header).
-    let finalResponse: Response;
-    if (isPartial || isAction) {
-      const intercepted = interceptRedirectForPartial(
-        mwResponse,
-        (redirectUrl) => createSimpleRedirectResponse(redirectUrl),
-      );
-      finalResponse = finalizeResponse(intercepted ?? mwResponse);
-    } else {
-      finalResponse = finalizeResponse(mwResponse);
+    // request.start opens the match transaction, mirroring match-handlers.ts.
+    // transaction is always "match" (dispatch has no matchPartial split);
+    // isPartial carries the ?_rsc_partial signal the same way production does.
+    if (sink) {
+      safeEmit(resolveSink(sink), {
+        type: "request.start",
+        timestamp: telemetryStart,
+        requestId: telemetryRequestId,
+        method: req.method,
+        pathname: url.pathname,
+        transaction: "match",
+        isPartial,
+      });
     }
 
-    // Mirror production's single open-redirect chokepoint (handler.ts): every
-    // browser-followed (3xx + Location) redirect is same-origin guarded before
-    // it leaves -- a cross-origin Location is rewritten to the basename root
-    // unless redirect(url, { external: true }) opted out. Soft partial/action
-    // redirects are 204 + X-RSC-Redirect and pass through untouched (the client
-    // validates them), so this is a no-op for them.
-    return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
+    try {
+      // Global (pattern-matched) middleware wraps coreHandler, exactly as
+      // production wraps coreHandler with executeMiddleware (handler.ts).
+      const globalMatches = matchMiddleware(url.pathname, router.middleware);
+      const mwResponse =
+        globalMatches.length === 0
+          ? await coreHandler()
+          : await executeMiddleware<TEnv>(
+              globalMatches,
+              req,
+              env,
+              variables,
+              coreHandler,
+              reverse,
+            );
+
+      // Match production's global-chain exit (handler.ts): on a partial/action
+      // request a middleware 3xx redirect is converted to a Flight-safe response
+      // so fetch() does not auto-follow it; every path then drains onResponse
+      // callbacks via finalizeResponse. dispatch is RSC-free, so the
+      // createRedirectFlightResponse stand-in falls back to the no-state
+      // 204 + X-RSC-Redirect (see the location-state divergence in the header).
+      let finalResponse: Response;
+      if (isPartial || isAction) {
+        const intercepted = interceptRedirectForPartial(
+          mwResponse,
+          (redirectUrl) => createSimpleRedirectResponse(redirectUrl),
+        );
+        finalResponse = finalizeResponse(intercepted ?? mwResponse);
+      } else {
+        finalResponse = finalizeResponse(mwResponse);
+      }
+
+      // request.end closes the transaction. dispatch produces no RSC segments and
+      // holds no match-cache state, so segmentCount/cacheHit are 0/false — the
+      // same shape production emits for its own redirect (segment-less) result.
+      if (sink) {
+        safeEmit(resolveSink(sink), {
+          type: "request.end",
+          timestamp: performance.now(),
+          requestId: telemetryRequestId,
+          method: req.method,
+          pathname: url.pathname,
+          transaction: "match",
+          durationMs: performance.now() - telemetryStart,
+          segmentCount: 0,
+          cacheHit: false,
+        });
+      }
+
+      // Mirror production's single open-redirect chokepoint (handler.ts): every
+      // browser-followed (3xx + Location) redirect is same-origin guarded before
+      // it leaves -- a cross-origin Location is rewritten to the basename root
+      // unless redirect(url, { external: true }) opted out. Soft partial/action
+      // redirects are 204 + X-RSC-Redirect and pass through untouched (the client
+      // validates them), so this is a no-op for them.
+      return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
+    } catch (error) {
+      if (sink) {
+        if (error instanceof Response) {
+          // executeMiddleware absorbs a middleware-thrown Response and returns it
+          // (middleware.ts:566), so a thrown Response never actually reaches this
+          // level in dispatch. Defensive: if one ever does it is a completed
+          // request from the consumer's seat (a short-circuit redirect), so mirror
+          // plan 002 / match-handlers.ts and emit request.end, not request.error.
+          safeEmit(resolveSink(sink), {
+            type: "request.end",
+            timestamp: performance.now(),
+            requestId: telemetryRequestId,
+            method: req.method,
+            pathname: url.pathname,
+            transaction: "match",
+            durationMs: performance.now() - telemetryStart,
+            segmentCount: 0,
+            cacheHit: false,
+          });
+        } else {
+          safeEmit(resolveSink(sink), {
+            type: "request.error",
+            timestamp: performance.now(),
+            requestId: telemetryRequestId,
+            method: req.method,
+            pathname: url.pathname,
+            transaction: "match",
+            error: error instanceof Error ? error : new Error(String(error)),
+            phase: "routing",
+            durationMs: performance.now() - telemetryStart,
+          });
+        }
+      }
+      throw error;
+    }
   });
 }
