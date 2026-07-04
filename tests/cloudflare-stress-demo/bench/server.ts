@@ -1,93 +1,125 @@
 import { execSync, spawn } from "node:child_process";
+import net from "node:net";
+import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { x } from "tinyexec";
 
 export interface Server {
   port: number;
   pid: number;
+  command: string;
   kill: () => Promise<void>;
 }
 
+interface GroupRss {
+  totalKb: number;
+  workerdKb: number;
+}
+
 /**
- * Get total RSS in KB for a process group.
- * On macOS, sums RSS for all processes sharing the PGID.
- * On Linux, uses pgrep -g to find group members.
+ * Total RSS in KB for a process group, plus the workerd-only subset.
+ * This is toolchain RSS (node/vite/wrangler + workerd), NOT isolate heap —
+ * label it accordingly wherever it is reported.
  */
-export function getGroupRssKb(pid: number): number {
+export function getGroupRss(pid: number): GroupRss {
   try {
     if (process.platform === "darwin") {
-      const out = execSync("ps -axo pid=,pgid=,rss=", {
+      const out = execSync("ps -axo pid=,pgid=,rss=,comm=", {
         encoding: "utf-8",
       });
       const pgid = String(pid);
-      return out
-        .trim()
-        .split("\n")
-        .reduce((sum, line) => {
-          const parts = line.trim().split(/\s+/);
-          if (parts.length >= 3 && parts[1] === pgid) {
-            return sum + (parseInt(parts[2], 10) || 0);
-          }
-          return sum;
-        }, 0);
+      let totalKb = 0;
+      let workerdKb = 0;
+      for (const line of out.trim().split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 4 || parts[1] !== pgid) continue;
+        const rss = parseInt(parts[2]!, 10) || 0;
+        totalKb += rss;
+        if (parts.slice(3).join(" ").includes("workerd")) workerdKb += rss;
+      }
+      return { totalKb, workerdKb };
     } else {
       const pidsRaw = execSync(`pgrep -g ${pid}`, {
         encoding: "utf-8",
       }).trim();
-      if (!pidsRaw) return 0;
+      if (!pidsRaw) return { totalKb: 0, workerdKb: 0 };
       const pidList = pidsRaw.split("\n").join(",");
-      const out = execSync(`ps -o rss= -p ${pidList}`, {
+      const out = execSync(`ps -o rss=,comm= -p ${pidList}`, {
         encoding: "utf-8",
       });
-      return out
-        .trim()
-        .split("\n")
-        .reduce((sum, line) => sum + (parseInt(line.trim(), 10) || 0), 0);
+      let totalKb = 0;
+      let workerdKb = 0;
+      for (const line of out.trim().split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        const rss = parseInt(parts[0]!, 10) || 0;
+        totalKb += rss;
+        if (parts.slice(1).join(" ").includes("workerd")) workerdKb += rss;
+      }
+      return { totalKb, workerdKb };
     }
   } catch {
-    return 0;
+    return { totalKb: 0, workerdKb: 0 };
   }
 }
 
+export function getGroupRssKb(pid: number): number {
+  return getGroupRss(pid).totalKb;
+}
+
 /**
- * Start polling RSS for a process group. Returns a handle to stop and read results.
+ * Poll RSS for a process group. Returns a handle to stop and read results.
+ * The default interval is deliberately coarse: each poll execSyncs a full
+ * `ps -axo` scan on the same host that runs the load generator, so tight
+ * polling would contend with the measurement it serves.
  */
 export function startRssPolling(
   pid: number,
-  intervalMs = 500,
-): { stop: () => { peakRssKb: number; finalRssKb: number } } {
+  intervalMs = 1500,
+): {
+  stop: () => { peakRssKb: number; finalRssKb: number; peakWorkerdKb: number };
+} {
   let peakRssKb = 0;
   let finalRssKb = 0;
+  let peakWorkerdKb = 0;
 
   const interval = setInterval(() => {
-    const rss = getGroupRssKb(pid);
-    if (rss > peakRssKb) peakRssKb = rss;
-    finalRssKb = rss;
+    const rss = getGroupRss(pid);
+    if (rss.totalKb > peakRssKb) peakRssKb = rss.totalKb;
+    if (rss.workerdKb > peakWorkerdKb) peakWorkerdKb = rss.workerdKb;
+    finalRssKb = rss.totalKb;
   }, intervalMs);
 
   return {
     stop() {
       clearInterval(interval);
-      // One final sample
-      const rss = getGroupRssKb(pid);
-      if (rss > peakRssKb) peakRssKb = rss;
-      finalRssKb = rss;
-      return { peakRssKb, finalRssKb };
+      const rss = getGroupRss(pid);
+      if (rss.totalKb > peakRssKb) peakRssKb = rss.totalKb;
+      if (rss.workerdKb > peakWorkerdKb) peakWorkerdKb = rss.workerdKb;
+      finalRssKb = rss.totalKb;
+      return { peakRssKb, finalRssKb, peakWorkerdKb };
     },
   };
 }
 
-function spawnServer(command: string, cwd: string, label: string) {
-  const [name, ...args] = command.split(" ");
+/**
+ * Resolve a command to the app's local binary so the harness does not depend
+ * on the pnpm wrapper (verifyDepsBeforeRun breaks `pnpm <script>` locally).
+ */
+export function binPath(cwd: string, name: string): string {
+  return path.join(cwd, "node_modules", ".bin", name);
+}
+
+function spawnServer(command: string[], cwd: string, label: string) {
+  const [name, ...args] = command;
   const child = x(name!, args, {
     nodeOptions: { cwd, detached: true },
   }).process!;
 
-  let stdout = "";
+  // Only stderr is accumulated (for error reporting): wrangler logs every
+  // request to stdout, so an unbounded stdout accumulator grows toward tens
+  // of MB across a long bench and is read by nothing — findPort keeps its
+  // own bounded buffer until the port appears.
   let stderr = "";
-  child.stdout!.on("data", (data) => {
-    stdout += stripVTControlCharacters(String(data));
-  });
   child.stderr!.on("data", (data) => {
     stderr += stripVTControlCharacters(String(data));
   });
@@ -154,6 +186,38 @@ function spawnServer(command: string, cwd: string, label: string) {
   return { pid: child.pid!, findPort, kill };
 }
 
+/**
+ * Wait for the TCP port to accept connections WITHOUT sending an HTTP request
+ * — cold-start measurement must not warm the worker before the first
+ * measured request.
+ */
+export async function waitForPortOpen(
+  port: number,
+  timeoutMs = 30000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const socket = net.connect({ port, host: "127.0.0.1" });
+      const fail = () => {
+        socket.destroy();
+        resolve(false);
+      };
+      socket.once("connect", () => {
+        socket.end();
+        resolve(true);
+      });
+      socket.once("error", fail);
+      socket.setTimeout(500, fail);
+    });
+    if (ok) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(
+    `Port ${port} not accepting connections after ${timeoutMs}ms`,
+  );
+}
+
 async function waitForReady(url: string, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -167,15 +231,32 @@ async function waitForReady(url: string, timeoutMs = 30000) {
 }
 
 export async function startDevServer(cwd: string): Promise<Server> {
-  const srv = spawnServer("pnpm dev", cwd, "dev");
+  const command = [binPath(cwd, "vite"), "dev"];
+  const srv = spawnServer(command, cwd, "dev");
   const port = await srv.findPort();
   await waitForReady(`http://localhost:${port}/json-api/health`);
-  return { port, pid: srv.pid, kill: srv.kill };
+  return { port, pid: srv.pid, command: command.join(" "), kill: srv.kill };
 }
 
-export async function startProdServer(cwd: string): Promise<Server> {
-  const srv = spawnServer("pnpm wrangler dev --port 0", cwd, "prod");
+export interface ProdServerOptions {
+  /**
+   * When true, readiness is TCP-level only: no HTTP request is sent, so the
+   * caller's first fetch is the worker's genuine first request (cold start).
+   */
+  cold?: boolean;
+}
+
+export async function startProdServer(
+  cwd: string,
+  options: ProdServerOptions = {},
+): Promise<Server> {
+  const command = [binPath(cwd, "wrangler"), "dev", "--port", "0"];
+  const srv = spawnServer(command, cwd, "prod");
   const port = await srv.findPort();
-  await waitForReady(`http://localhost:${port}/json-api/health`);
-  return { port, pid: srv.pid, kill: srv.kill };
+  if (options.cold) {
+    await waitForPortOpen(port);
+  } else {
+    await waitForReady(`http://localhost:${port}/json-api/health`);
+  }
+  return { port, pid: srv.pid, command: command.join(" "), kill: srv.kill };
 }

@@ -14,11 +14,25 @@ import { x } from "tinyexec";
 // WORKER_DIR is dist/rsc (wrangler's "main" resolves to dist/rsc/index.js;
 // dist/client only holds static client assets and is excluded from the walk).
 
+// Static groups plus every generated group module (derived from src/groups so
+// scaling via scripts/gen-groups.mjs can't silently drop chunk coverage).
 const GROUP_BASENAMES = [
   "localized-patterns",
   "included-patterns",
   "shop-patterns",
   "json-api-patterns",
+  "app-like-patterns",
+  "site-admin-patterns",
+  "dup-cat-patterns",
+  "dup-brand-patterns",
+  "hub",
+  "l1",
+  "l2",
+  "l3",
+  ...fs
+    .readdirSync(path.resolve("./src/groups"))
+    .filter((f) => /^group-\d{3}\.ts$/.test(f))
+    .map((f) => f.replace(/\.ts$/, "")),
 ];
 
 function collectJsChunks(dir: string): string[] {
