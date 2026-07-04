@@ -17,6 +17,7 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { cacheTag } from "../../cache/cache-tag.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
 
@@ -1118,6 +1119,143 @@ describe("runShellCapture", () => {
     const tags = putShell.mock.calls[0]![4];
     // Both the operational option tag and the render-collected tag are present.
     expect(new Set(tags)).toEqual(new Set(["op:x", "collected:y"]));
+  });
+
+  // #648: the render-callable cacheTag() form. A server component in the shell
+  // tree calls cacheTag("shell-op") (no cache()/"use cache" wrapping it). Under
+  // capture it records onto the derived context's fresh _requestTags, which the
+  // capture unions into the shell entry — so revalidateTag("shell-op") drops the
+  // shell. Unions with the static ppr.tags (descriptor.tags) the same way.
+  it("records a render-called cacheTag() into the shell entry tags, unioned with ppr.tags (#648)", async () => {
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({ prelude: enc("<body>x</body>"), postponed: null })),
+    );
+    // The shell render calls the REAL render-callable cacheTag (before #648 this
+    // threw outside a "use cache" scope — the gap the issue closes).
+    (ctx as any).renderToReadableStream = vi.fn(() => {
+      cacheTag("shell-op");
+      return emptyStream();
+    });
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any, tags: ["ppr:static"] },
+      0,
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const tags = new Set(putShell.mock.calls[0]![4]);
+    expect(tags).toEqual(new Set(["ppr:static", "shell-op"]));
+  });
+
+  // #648 invariant, by construction: baked ⇒ evicts, hole ⇒ fresh. A bake-lane
+  // server component EXECUTES during capture and tags the shell; a subtree behind
+  // a renderable loading() is MASKED (its loaders never run at capture), so its
+  // cacheTag never fires and nothing under a hole can tag the shell. The harness
+  // pins the bake-lane side directly (the executed cacheTag lands) and the hole
+  // side by construction (the masked loader's cacheTag is simply never invoked,
+  // so its tag is absent) — there is no filtering logic to test, only execution.
+  it("shell entry tags carry only what the capture render executed — hole tags never reach it (#648)", async () => {
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({ prelude: enc("<body>x</body>"), postponed: null })),
+    );
+    (ctx as any).renderToReadableStream = vi.fn(() => {
+      // Bake lane: executes during capture, records onto the shell's tag set.
+      cacheTag("baked-shell");
+      // A masked hole loader would cacheTag("hole-tag"), but masking means it is
+      // never called during capture — so the call below is intentionally absent.
+      return emptyStream();
+    });
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any },
+      0,
+    );
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const tags = new Set(putShell.mock.calls[0]![4]);
+    expect(tags.has("baked-shell")).toBe(true);
+    expect(tags.has("hole-tag")).toBe(false);
+  });
+
+  // #648: a tag present BOTH as a static ppr.tags entry (descriptor.tags) AND
+  // recorded by the render collapses to ONE stored tag (Set union), never a
+  // duplicate on the entry.
+  it("dedupes a tag present both statically and via render-record into a single stored tag (#648)", async () => {
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({ prelude: enc("<body>x</body>"), postponed: null })),
+    );
+    (ctx as any).renderToReadableStream = vi.fn(() => {
+      cacheTag("dup");
+      return emptyStream();
+    });
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      { key: "/p:shell", store: { putShell } as any, tags: ["dup"] },
+      0,
+    );
+
+    expect(putShell.mock.calls[0]![4]).toEqual(["dup"]);
+  });
+
+  // #648 full round-trip: a render-recorded tag on the captured shell makes the
+  // entry evictable through the store's tag invalidation — proving the collected
+  // tag reaches the stored entry AND wires up to revalidateTag/updateTag.
+  it("a render-recorded tag makes the captured shell evictable via the store (#648)", async () => {
+    const store = new MemorySegmentCacheStore();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({
+        prelude: enc("<html><body>x</body></html>"),
+        postponed: null,
+      })),
+    );
+    (ctx as any).renderToReadableStream = vi.fn(() => {
+      cacheTag("evictable-shell");
+      return emptyStream();
+    });
+    const reqCtx = makeReqCtx();
+    (reqCtx as any)._cacheStore = store;
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      reqCtx,
+      ssrModule,
+      { key: "/p:shell", ttl: 300, store },
+      0,
+    );
+
+    // Captured and reachable.
+    expect(await store.getShell("/p:shell")).not.toBeNull();
+    // The render-recorded tag drops it.
+    await store.invalidateTags(["evictable-shell"]);
+    expect(await store.getShell("/p:shell")).toBeNull();
   });
 
   // Capture data snapshot: a cache read-HIT the capture render performs through
