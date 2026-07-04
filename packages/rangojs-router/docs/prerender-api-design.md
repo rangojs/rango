@@ -207,8 +207,28 @@ a pathname) and adds `passthrough=1` for `Passthrough()` routes so unknown
 params defer to the live handler in dev, mirroring production. `intercept=1`
 requests the intercept (modal slot) variant.
 
-In Node.js dev mode, `__PRERENDER_DEV_URL` is undefined and handlers run
-in-process.
+The Node preset sets `__PRERENDER_DEV_URL` too — both presets round-trip
+through the endpoint (a loopback fetch in the Node preset), so prerender
+rendering always happens Node-side with the build env available.
+
+The endpoint memoizes rendered payloads between HMR edits (#654), keyed by
+router-instance identity (`vite/discovery/dev-prerender-cache.ts`). It
+re-imports the user's entry through a module runner on every request — the
+Node preset on the main RSC environment, the Cloudflare preset on the shared
+temp Node server — so an edit anywhere in the entry → router → urls → handler
+chain re-runs `createRouter()`, registers a NEW router instance, and thereby
+strands the old instance's cache bucket (a WeakMap: stale generations are
+garbage-collected). A warm request is a module-cache hit plus a Map lookup;
+one render warms both the main and `intercept=1` variant keys.
+`x-rango-prerender-cache: HIT | MISS` reports the outcome per response.
+Between edits the endpoint serves frozen results — matching production, where
+artifacts freeze at build time — so `getParams()`/handler side effects (fs,
+DB via buildEnv) run once per edit generation, not once per request. The
+per-request re-import on the Cloudflare temp server is also the freshness
+fix for handler-only edits (files without `urls()`/`createRouter()` that the
+main watcher's route-file sniff ignores): the temp server's own watcher
+invalidates its graph, and the re-import re-evaluates exactly the dirty
+subgraph.
 
 ---
 

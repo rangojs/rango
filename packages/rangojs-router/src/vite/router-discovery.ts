@@ -45,6 +45,11 @@ import {
 import { discoverRouters } from "./discovery/discover-routers.js";
 import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
 import {
+  createDevPrerenderCache,
+  devPrerenderCacheKey,
+  payloadBodiesFromResult,
+} from "./discovery/dev-prerender-cache.js";
+import {
   writeCombinedRouteTypesWithTracking,
   writeRouteTypesFiles,
   supplementGenFilesWithRuntimeRoutes,
@@ -828,6 +833,15 @@ export function createRouterDiscoveryPlugin(
       // Registry from the main server's RSC environment (populated by discoverRouters)
       let mainRegistry: Map<string, any> | null = null;
 
+      // Memoized /__rsc_prerender render results, keyed by router-instance
+      // identity (#654). The per-request entry re-import below is what makes
+      // identity a valid freshness key: an HMR-invalidated chain re-runs
+      // createRouter() and replaces the registry instance, so cached bodies
+      // for the old instance become unreachable; an untouched chain returns
+      // the same instance and the cached body is byte-identical to a fresh
+      // render. See dev-prerender-cache.ts for the full invariant.
+      const devPrerenderCache = createDevPrerenderCache();
+
       // Push discovery state (manifest, trie, precomputed entries) to the
       // server module so runtime request handling uses the current routes.
       // Shared by initial discovery and HMR-triggered re-discovery.
@@ -918,9 +932,28 @@ export function createRouterDiscoveryPlugin(
 
         if (!registry) {
           // No main registry: the RSC env has no module runner (Cloudflare dev).
-          // Lazily create a Node.js temp server for prerender evaluation.
-          if (!prerenderNodeRegistry) {
-            await getOrCreateTempServer();
+          // Lazily create a Node.js temp server for prerender evaluation, and
+          // re-import the entry through it on EVERY request — the temp server
+          // has its own file watcher, so a handler-only edit (a file without
+          // urls()/createRouter() that the main watcher's route-file sniff
+          // ignores) invalidates its module graph; the re-import re-evaluates
+          // exactly the dirty subgraph and re-registers fresh router
+          // instances. Before #654 the cached registry was only refreshed on
+          // route-file edits, so handler-only edits served stale prerender
+          // content on this path. Warm-cache re-imports are module-cache hits.
+          const tempRscEnv = await getOrCreateTempServer();
+          if (tempRscEnv) {
+            try {
+              await importEntryAndRegistry(tempRscEnv);
+            } catch (err: any) {
+              console.warn(
+                `[rango] Dev prerender module refresh failed: ${err.message}`,
+              );
+              res.statusCode = 500;
+              res.end(`Prerender handler error: ${err.message}`);
+              logResult(500, "temp module refresh failed");
+              return;
+            }
           }
           registry = prerenderNodeRegistry;
         }
@@ -936,8 +969,38 @@ export function createRouterDiscoveryPlugin(
         const wantRouteName = url.searchParams.get("routeName");
         const wantPassthrough = url.searchParams.get("passthrough") === "1";
 
+        // One render warms BOTH variant keys (matchForPrerender computes the
+        // intercept segments unconditionally), so a route's main and modal
+        // variants cost a single render per HMR generation.
+        const variantDims = {
+          passthrough: wantPassthrough,
+          routeName: wantRouteName,
+        };
+        const keyMain = devPrerenderCacheKey(pathname, {
+          intercept: false,
+          ...variantDims,
+        });
+        const keyIntercept = devPrerenderCacheKey(pathname, {
+          intercept: true,
+          ...variantDims,
+        });
+        const requestedKey = wantIntercept ? keyIntercept : keyMain;
+
         for (const [, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
+          // Cache is consulted per router IN LOOP ORDER so multi-router
+          // fall-through semantics are identical to the uncached path: a
+          // router that never produced a payload for this key still runs
+          // its matchForPrerender (cheap trie miss / intentionally-uncached
+          // error retry) before the next router is considered.
+          const cached = devPrerenderCache.get(routerInstance, requestedKey);
+          if (cached !== undefined) {
+            res.setHeader("content-type", "application/json");
+            res.setHeader("x-rango-prerender-cache", "HIT");
+            res.end(cached);
+            logResult(200, "cache hit");
+            return;
+          }
           try {
             const result = await routerInstance.matchForPrerender(
               pathname,
@@ -953,19 +1016,19 @@ export function createRouterDiscoveryPlugin(
             // This prevents returning the wrong entry when multiple routers
             // have prerenderable routes sharing the same pathname.
             if (wantRouteName && result.routeName !== wantRouteName) continue;
+            // Pre-encoded MERGED handle string in the intercept body comes
+            // from the producer (handles are Flight-encoded so
+            // Promise/ReactNode values survive the wire).
+            const bodies = payloadBodiesFromResult(result);
+            devPrerenderCache.set(routerInstance, keyMain, bodies.main);
+            devPrerenderCache.set(
+              routerInstance,
+              keyIntercept,
+              bodies.intercept,
+            );
             res.setHeader("content-type", "application/json");
-            let payload: Record<string, unknown>;
-            if (wantIntercept && result.interceptSegments?.length) {
-              payload = {
-                segments: [...result.segments, ...result.interceptSegments],
-                // Pre-encoded MERGED handle string from the producer (handles are
-                // Flight-encoded so Promise/ReactNode values survive the wire).
-                handles: result.interceptHandles ?? "",
-              };
-            } else {
-              payload = { segments: result.segments, handles: result.handles };
-            }
-            res.end(JSON.stringify(payload));
+            res.setHeader("x-rango-prerender-cache", "MISS");
+            res.end(wantIntercept ? bodies.intercept : bodies.main);
             logResult(200, `match ${result.routeName}`);
             return;
           } catch (err: any) {

@@ -127,4 +127,67 @@ test.describe.serial("prerender-hmr", () => {
       { timeout: 15000 },
     );
   });
+
+  // -- Endpoint-level cache invalidation (#654) ---------------------------
+  // The identity-keyed dev prerender cache must drop on an HMR edit: the
+  // entry chain re-evaluates, createRouter() registers a NEW instance, and
+  // the next endpoint request is a MISS carrying the fresh content. This is
+  // the precise wire-level counterpart of the page-level tests above.
+
+  test("endpoint cache: warm HIT, edit handler, next request is MISS with fresh content", async ({
+    request,
+  }) => {
+    // No routeName: the runtime dev store always sends one, so the r=""
+    // cache key belongs to direct endpoint tests only. warm1 makes no
+    // MISS/HIT assumption in case a sibling direct test already warmed it.
+    const url = f.url("/__rsc_prerender?pathname=/docs");
+
+    const warm1 = await request.get(url);
+    expect(warm1.status()).toBe(200);
+    const warm2 = await request.get(url);
+    expect(warm2.headers()["x-rango-prerender-cache"]).toBe("HIT");
+    expect(await warm2.text()).toContain(
+      "This is pre-rendered documentation content.",
+    );
+
+    const modified = prerenderOriginal.replace(
+      "This is pre-rendered documentation content.",
+      "Cache-invalidated pre-rendered content.",
+    );
+    fs.writeFileSync(prerenderPath, modified);
+
+    // Poll: the watcher must invalidate the chain, the re-import must
+    // re-register the router, and the endpoint must re-render fresh.
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(url);
+          const body = await res.text();
+          return body.includes("Cache-invalidated pre-rendered content.")
+            ? res.headers()["x-rango-prerender-cache"]
+            : "stale";
+        },
+        { timeout: 15000 },
+      )
+      .toBe("MISS");
+
+    // And the fresh body re-memoizes under the new identity. Poll rather
+    // than asserting the very next request: the edited file contains urls(),
+    // so the route-file watcher's DEBOUNCED rediscovery re-evaluates the
+    // chain once more shortly after the immediate HMR invalidation — that
+    // trailing cycle produces one more legitimate MISS before the identity
+    // stabilizes and requests converge to HIT.
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(url);
+          const body = await res.text();
+          return body.includes("Cache-invalidated pre-rendered content.")
+            ? res.headers()["x-rango-prerender-cache"]
+            : "stale";
+        },
+        { timeout: 15000 },
+      )
+      .toBe("HIT");
+  });
 });
