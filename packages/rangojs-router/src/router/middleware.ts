@@ -186,7 +186,15 @@ export function createMiddlewareContext<TEnv>(
     search?: Record<string, unknown>,
   ) => string,
 ): MiddlewareContext<TEnv> {
-  const url = stripInternalParams(new URL(request.url));
+  // Reuse the request context's clean URL when available. Each middleware still
+  // gets its OWN URL clone (a middleware may mutate ctx.url / ctx.searchParams),
+  // but cloning the already-clean URL is cheaper than re-parsing + re-stripping
+  // request.url per middleware. Fall back to parsing when no ALS context.
+  const reqCtx = _getRequestContext();
+  const ctxUrl = reqCtx?.url;
+  const url = ctxUrl
+    ? new URL(ctxUrl)
+    : stripInternalParams(new URL(request.url));
 
   // Track the initial response to detect pre/post-next() phase.
   // Before next(): responseHolder.response === initialResponse (the stub).
@@ -217,12 +225,11 @@ export function createMiddlewareContext<TEnv>(
     return responseHolder.response;
   };
 
-  // Capture reqCtx once: the request-scoped platform fields
+  // reqCtx captured once above: the request-scoped platform fields
   // (originalUrl, executionContext, waitUntil) are immutable per request,
   // so snapshotting beats re-reading ALS on every access. The lazy getters
   // below (routeName, theme, setTheme) stay lazy because those can change
   // during `await next()`.
-  const reqCtx = _getRequestContext();
   return {
     request,
     url,

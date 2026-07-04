@@ -201,17 +201,23 @@ export function buildMatchResult<TEnv>(
 
   let allIds: string[];
   let segmentsToRender: ResolvedSegment[];
+  let resolvedIds: string[];
 
   if (ctx.isFullMatch) {
+    // One pass over allSegments: dedup by id (segmentsToRender + allIds) while
+    // collecting every id for resolvedIds, which keeps duplicates unlike allIds.
     const seen = new Set<string>();
     segmentsToRender = [];
+    allIds = [];
+    resolvedIds = [];
     for (const s of allSegments) {
+      resolvedIds.push(s.id);
       if (!seen.has(s.id)) {
         seen.add(s.id);
         segmentsToRender.push(s);
+        allIds.push(s.id);
       }
     }
-    allIds = segmentsToRender.map((s) => s.id);
   } else {
     allIds = ctx.interceptResult
       ? ctx.clientSegmentIds.length > 0
@@ -221,11 +227,21 @@ export function buildMatchResult<TEnv>(
 
     allIds = [...new Set(allIds)];
 
+    // One pass over allSegments: keep renderable segments and collect the
+    // handler-ran ids (resolvedIds) together.
     const clientIdSet = new Set(ctx.clientSegmentIds);
-    segmentsToRender = allSegments.filter(
-      (s) =>
-        s.component !== null || s.type === "loader" || !clientIdSet.has(s.id),
-    );
+    segmentsToRender = [];
+    resolvedIds = [];
+    for (const s of allSegments) {
+      if (s._handlerRan) resolvedIds.push(s.id);
+      if (
+        s.component !== null ||
+        s.type === "loader" ||
+        !clientIdSet.has(s.id)
+      ) {
+        segmentsToRender.push(s);
+      }
+    }
   }
 
   const { segments: dedupedSegments, removedIds } = deduplicateLoaderSegments(
@@ -236,20 +252,24 @@ export function buildMatchResult<TEnv>(
   const matchedIds =
     removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
 
-  const resolvedIds = ctx.isFullMatch
-    ? allSegments.map((s) => s.id)
-    : allSegments.filter((s) => s._handlerRan).map((s) => s.id);
-
-  const cleanedSegments = dedupedSegments.map((s) => {
-    if (s._handlerRan === undefined) return s;
-    const { _handlerRan: _drop, ...rest } = s;
-    return rest as ResolvedSegment;
-  });
+  // One pass over dedupedSegments: strip the internal _handlerRan marker and
+  // collect the diff ids (id is unchanged by the strip) together.
+  const cleanedSegments: ResolvedSegment[] = [];
+  const diff: string[] = [];
+  for (const s of dedupedSegments) {
+    if (s._handlerRan === undefined) {
+      cleanedSegments.push(s);
+    } else {
+      const { _handlerRan: _drop, ...rest } = s;
+      cleanedSegments.push(rest as ResolvedSegment);
+    }
+    diff.push(s.id);
+  }
 
   return {
     segments: cleanedSegments,
     matched: matchedIds,
-    diff: cleanedSegments.map((s) => s.id),
+    diff,
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,

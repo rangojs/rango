@@ -23,6 +23,7 @@ import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import {
   getRequestContext,
+  _getRequestContext,
   runWithRequestContext,
 } from "../../server/request-context.js";
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
@@ -35,6 +36,7 @@ import {
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
+import { overlayLoaderContainer } from "./loader-snapshot.js";
 import { recordRequestTags } from "../../cache/cache-tag.js";
 import {
   isShellCaptureActive,
@@ -130,17 +132,64 @@ export function resolveLoaderData<TEnv>(
   loaderEntry: LoaderEntry,
   ctx: HandlerContext<any, TEnv>,
   pathname: string,
+  bakeSegmentKey?: string | null,
 ): Promise<any> {
-  // PPR shell capture: never execute the loader. Its slot gets a never-resolving
-  // promise so the Suspense subtree postpones (a hole). Gate here — the single
-  // funnel every loader segment path routes through (fresh resolveLoaders,
-  // cache-hit resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation)
-  // — so no loader fn runs and no loader-cache getItem/setItem round-trip happens
-  // during capture. See loader-mask.ts and docs/design/ppr-shell-resume.md.
-  if (isShellCaptureActive()) {
-    return createMaskedLoaderPromise();
+  // One ALS read serves the capture check, the record registration, and the
+  // seed lookup — this runs for every loader on every request.
+  const reqCtx = _getRequestContext();
+  // PPR shell capture policy — gated here, the single funnel every loader
+  // segment path routes through (fresh resolveLoaders, cache-hit
+  // resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation).
+  //
+  // Two lanes (docs/design/loader-container-bake.md):
+  // - LIVE lane (entry has renderable loading(); no `bakeSegmentKey`): never
+  //   execute during capture. The slot gets a never-resolving promise so the
+  //   LoaderBoundary postpones (a hole). See loader-mask.ts.
+  // - BAKE lane (no renderable loading(); callers pass `bakeSegmentKey`):
+  //   execute during capture exactly like axis 1 — the settled container bakes
+  //   into the prelude, nested pending promises postpone at the consumer's own
+  //   Suspense. The container promise is registered on the derived context so
+  //   captureAndStoreShell pins it into the snapshot's loader family; on a
+  //   shell HIT the recorded container is overlaid onto the fresh run so the
+  //   payload matches the frozen prelude byte-for-byte.
+  if (isShellCaptureActive(reqCtx)) {
+    if (!bakeSegmentKey) {
+      return createMaskedLoaderPromise();
+    }
+    const containerPromise = executeLoaderData(loaderEntry, ctx, pathname);
+    // Pre-attach a no-op catch: a bake-lane rejection during capture must
+    // surface through the drain's refusal (and the wrapper's error boundary),
+    // never as an unhandled rejection that can kill the worker before the
+    // drain probes this record.
+    containerPromise.catch(() => {});
+    reqCtx?._shellCaptureLoaderRecords?.set(bakeSegmentKey, containerPromise);
+    return containerPromise;
   }
 
+  if (bakeSegmentKey) {
+    const seed = reqCtx?._shellLoaderSeed;
+    if (seed && seed.has(bakeSegmentKey)) {
+      const recorded = seed.get(bakeSegmentKey);
+      // HIT tail: run fresh (only the loader body can mint the live nested
+      // promises), then pin the recorded paths over it. A fresh REJECTION here
+      // skips the overlay and flows to the per-loader error boundary — the
+      // payload then diverges from the prelude (same residual class as uncached
+      // nondeterminism in shell material).
+      return executeLoaderData(loaderEntry, ctx, pathname).then(
+        (fresh: unknown) => overlayLoaderContainer(fresh, recorded),
+      );
+    }
+  }
+
+  return executeLoaderData(loaderEntry, ctx, pathname);
+}
+
+/** The pre-policy loader execution: cache read-through or plain ctx.use. */
+function executeLoaderData<TEnv>(
+  loaderEntry: LoaderEntry,
+  ctx: HandlerContext<any, TEnv>,
+  pathname: string,
+): Promise<any> {
   const cacheConfig = loaderEntry.cache;
 
   // No cache config or disabled — run fresh (zero overhead path)

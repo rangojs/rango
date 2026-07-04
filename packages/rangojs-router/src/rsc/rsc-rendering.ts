@@ -11,7 +11,10 @@ import {
   setRequestContextParams,
   runWithRequestContext,
 } from "../server/request-context.js";
-import { SeededShellStore } from "../cache/shell-snapshot.js";
+import {
+  SeededShellStore,
+  buildShellLoaderSeed,
+} from "../cache/shell-snapshot.js";
 import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
@@ -38,7 +41,10 @@ import {
   base64ToBytes,
   hasShellFamily,
   warnShellStoreMissingOnce,
+  warnPprNonceActiveOnce,
 } from "./shell-serve.js";
+import { contextGet } from "../context-var.js";
+import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type { ShellCacheEntry } from "../cache/types.js";
@@ -107,16 +113,33 @@ async function handleRscRenderingInner<TEnv>(
   } | null = null;
   if (
     !isPartial &&
-    nonce === undefined &&
     request.method === "GET" &&
     !url.searchParams.has("__prerender_collect") &&
     !isRscRequest(request, url, false)
   ) {
     const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
     if (pprConfig) {
+      // A per-request CSP nonce pins the route to axis 1: useNonce() (and any app
+      // code reading the nonce) renders it into every nonced script/style/meta, so
+      // a shell shared per host+URL would freeze one request's nonce for every
+      // visitor and the browser's CSP would reject the frozen nonce for all but the
+      // capture request. The nonce arrives two ways and BOTH must gate: the
+      // createRouter({ nonce }) provider (threaded here as `nonce`), and a direct
+      // token write in middleware (ctx.set(nonce, value)). The token is only
+      // visible in the post-middleware request variables — and this commit point
+      // runs AFTER the whole middleware chain (see the block header), so it is
+      // present here. Reading it closes the gap the provider-only check left open
+      // (issue #656). The threaded-param check stays first: the provider path is
+      // resolved before any variable read and short-circuits cheaply.
+      const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
       const store = reqCtx._cacheStore;
       const key = buildShellKey(url);
-      if (!hasShellFamily(store)) {
+      if (activeNonce !== undefined) {
+        // Declared intent that cannot be honored deserves a diagnostic (unlike an
+        // undeclared route, which is silent): a ppr route gated off by an active
+        // per-request nonce warns once per key. Axis 1 after the warning.
+        warnPprNonceActiveOnce(key);
+      } else if (!hasShellFamily(store)) {
         // Declared intent that cannot be honored deserves a diagnostic (unlike an
         // undeclared route, which is silent). Axis 1 after the warning.
         warnShellStoreMissingOnce(key);
@@ -469,12 +492,20 @@ function serveShellHit(
     // never recorded) falls through to the real store and stays LIVE. The
     // overlay lives on a DERIVED context (own _cacheStore), so the shared reqCtx
     // is untouched; an entry without a snapshot keeps the pre-snapshot behavior.
-    if (entry.snapshot && entry.snapshot.length > 0 && reqCtx._cacheStore) {
+    if (entry.snapshot && entry.snapshot.length > 0) {
       const seededCtx: RequestContext<any> = Object.create(reqCtx);
-      seededCtx._cacheStore = new SeededShellStore(
-        reqCtx._cacheStore,
-        entry.snapshot,
-      );
+      if (reqCtx._cacheStore) {
+        seededCtx._cacheStore = new SeededShellStore(
+          reqCtx._cacheStore,
+          entry.snapshot,
+        );
+      }
+      // Loader-family records (bake-lane containers, loader-container-bake):
+      // decode into a seed Map for the resolveLoaderData overlay, so the
+      // payload's baked container bytes match the frozen prelude while the
+      // hole-marker paths keep the fresh run's live nested promises.
+      const loaderSeed = await buildShellLoaderSeed(entry.snapshot);
+      if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
       return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
     }
     return renderTail(reqCtx);

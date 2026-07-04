@@ -249,17 +249,17 @@ Grouped by concern — read when you need to…
 
 **Data & caching** — fetch, mutate, and cache:
 
-| Skill             | Description                                                                                  |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| `/loader`         | Data loaders with `createLoader()` and `revalidate()`                                        |
-| `/server-actions` | Mutations with `"use server"`, useActionState, validation, revalidation                      |
-| `/caching`        | Segment caching with memory or KV stores                                                     |
-| `/use-cache`      | Function-level caching with `"use cache"` directive                                          |
-| `/cache-guide`    | When to use `cache()` vs `"use cache"` — differences and decision guide                      |
-| `/document-cache` | Edge caching with Cache-Control headers                                                      |
-| `/ppr`            | PPR shell caching: cached HTML shell served instantly, live loader holes resumed per request |
-| `/prerender`      | Pre-render route segments at build time (Passthrough live fallback)                          |
-| `/shell-manifest` | Replayed handles as cache metadata read by live loaders (frozen shell, batched live holes)   |
+| Skill             | Description                                                                                                                                                       |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/loader`         | Data loaders with `createLoader()` and `revalidate()`                                                                                                             |
+| `/server-actions` | Mutations with `"use server"`, useActionState, validation, revalidation                                                                                           |
+| `/caching`        | Segment caching with memory or KV stores                                                                                                                          |
+| `/use-cache`      | Function-level caching with `"use cache"` directive                                                                                                               |
+| `/cache-guide`    | When to use `cache()` vs `"use cache"` — differences and decision guide                                                                                           |
+| `/document-cache` | Edge caching with Cache-Control headers                                                                                                                           |
+| `/ppr`            | PPR shell caching: cached shell served instantly, live holes resumed — a hole is a `loading()` subtree OR a pending promise under `<Suspense>` (no loader needed) |
+| `/prerender`      | Pre-render route segments at build time (Passthrough live fallback)                                                                                               |
+| `/shell-manifest` | Replayed handles as cache metadata read by live loaders (frozen shell, batched live holes)                                                                        |
 
 **Client & presentation** — build the client-side UX:
 

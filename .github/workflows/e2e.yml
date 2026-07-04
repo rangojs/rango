@@ -505,7 +505,12 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20 (was 15): the suite's playwright globalTimeout was raised to 14m
+    # (playwright.config.ts — the PPR shell stack grew the sequential
+    # dev -> production -> hmr run past the old 10m budget), so the job cap
+    # must contain ~3-4m of setup (install, router build, browser deps) plus
+    # the full 14m playwright budget.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v5

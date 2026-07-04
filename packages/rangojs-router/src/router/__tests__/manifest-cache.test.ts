@@ -191,6 +191,56 @@ describe("manifest module-level cache", () => {
     );
   });
 
+  it("cache-hit alias survives a subsequent fresh load (no cache poisoning)", async () => {
+    // Regression: on a cache-hit loadManifest aliases the request-scoped
+    // Store.manifest to the shared module-cache Map. A later fresh load of a
+    // DIFFERENT route on the same ambient Store must not mutate that aliased
+    // Map (the fresh path reassigns Store.manifest instead of clearing it).
+    const spyA = vi.fn();
+    const spyB = vi.fn();
+    const entryA = createTestEntry("routeA", spyA);
+    const entryB = createTestEntry("routeB", spyB);
+
+    await RangoContext.run(
+      {
+        manifest: new Map(),
+        namespace: "",
+        parent: null,
+        counters: {},
+        patterns: new Map(),
+        patternsByPrefix: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+      },
+      async () => {
+        // Fresh load caches routeA's pruned manifest.
+        await loadManifest(entryA, "routeA", "/a", undefined, false);
+        // Cache-hit aliases Store.manifest to routeA's cached Map.
+        await loadManifest(entryA, "routeA", "/a", undefined, false);
+        expect(spyA).toHaveBeenCalledTimes(1);
+
+        // Fresh load of a different route on the SAME ambient Store.
+        await loadManifest(entryB, "routeB", "/b", undefined, false);
+        expect(spyB).toHaveBeenCalledTimes(1);
+
+        // routeA is still cached and uncorrupted: no handler re-run, and its
+        // cached Map never picked up routeB's entry.
+        const again = await loadManifest(
+          entryA,
+          "routeA",
+          "/a",
+          undefined,
+          false,
+        );
+        expect(spyA).toHaveBeenCalledTimes(1);
+        expect(again.id).toBe("routeA");
+        const store = getContext().getStore();
+        expect(store.manifest.has("routeA")).toBe(true);
+        expect(store.manifest.has("routeB")).toBe(false);
+      },
+    );
+  });
+
   it("invalidates cache when clearManifestCache is called", async () => {
     const handlerSpy = vi.fn();
     const routeKey = "clearTest";

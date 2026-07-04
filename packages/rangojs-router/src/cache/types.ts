@@ -271,11 +271,27 @@ export interface ShellCacheEntry {
 }
 
 /**
- * The cache-store families a shell snapshot pins. Excludes the shell family
- * itself (getShell/putShell) — the snapshot rides INSIDE a shell entry, so
- * recording it would be self-referential.
+ * The families a shell snapshot pins. The item/segment/response families are
+ * cache-store reads/writes (recorded by RecordingShellStore); the loader family
+ * pins the settled CONTAINER of a bake-lane loader (a loader on an entry with
+ * no renderable loading(), executed during capture — see
+ * docs/design/loader-container-bake.md). Excludes the shell family itself
+ * (getShell/putShell) — the snapshot rides INSIDE a shell entry, so recording
+ * it would be self-referential.
  */
-export type ShellSnapshotFamily = "item" | "segment" | "response";
+export type ShellSnapshotFamily = "item" | "segment" | "response" | "loader";
+
+/**
+ * The stored form of a loader-family snapshot value: the bake-lane loader's
+ * settled container, Flight-serialized AFTER eliding every still-pending nested
+ * promise to a hole marker (the marker paths are holes, not shell material; on
+ * a HIT the overlay re-slots the fresh run's promises there). Flight (not JSON)
+ * so typed values (Date/Map) survive the round trip.
+ */
+export interface ShellSnapshotLoaderValue {
+  /** RSC-serialized elided container (see loader-snapshot.ts). */
+  value: string;
+}
 
 /** A serialized cached Response for the response family of a shell snapshot. */
 export interface ShellSnapshotResponseValue {
@@ -307,7 +323,11 @@ export interface ShellSnapshotItemValue {
 export interface ShellSnapshotRecord {
   family: ShellSnapshotFamily;
   key: string;
-  value: ShellSnapshotItemValue | CachedEntryData | ShellSnapshotResponseValue;
+  value:
+    | ShellSnapshotItemValue
+    | CachedEntryData
+    | ShellSnapshotResponseValue
+    | ShellSnapshotLoaderValue;
 }
 
 /**

@@ -156,7 +156,7 @@ interface VercelResponseEnvelope {
   s: number;
   /** expiresAt (ms since epoch). */
   e: number;
-  /** Tags, preserved so a stale re-stamp keeps them. */
+  /** Tags, preserved so a background revalidation re-write keeps them. */
   t?: string[];
 }
 
@@ -174,7 +174,7 @@ interface VercelShellEnvelope {
   s: number;
   /** expiresAt (ms since epoch). */
   e: number;
-  /** Tags, preserved so a stale re-stamp keeps them. */
+  /** Tags, preserved so a background revalidation re-write keeps them. */
   t?: string[];
   /** initialTheme the capture render was built with (resume theme fidelity). */
   i?: string;
@@ -226,9 +226,9 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
   cache: VercelRuntimeCache;
 
   /**
-   * `waitUntil` from `@vercel/functions`. Used only to run the stale-read
-   * re-stamp (herd dampening) off the response path - the router already
-   * backgrounds the actual writes. When omitted, the re-stamp runs detached
+   * `waitUntil` from `@vercel/functions`. Used only to run the stale-read lock
+   * write (herd dampening) off the response path - the router already
+   * backgrounds the actual writes. When omitted, the lock write runs detached
    * (fire-and-forget) instead.
    */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -393,7 +393,7 @@ export class VercelCacheStore<
       this.emitDebug({ op: "get", key, outcome: "miss", readMs });
       return null;
     }
-    const env = this.asSegmentEnvelope(raw);
+    const env = this.asSegmentEnvelope(this.decodeRaw(raw));
     if (!env) {
       reportCacheError(
         new Error("malformed segment envelope"),
@@ -420,35 +420,19 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    if (isStale) {
-      this.markRevalidating(
-        storeKey,
-        env,
-        env.d.tags,
-        "[VercelCacheStore] get",
-      );
-      this.emitDebug({
-        op: "get",
-        key,
-        outcome: "stale-revalidate",
-        shouldRevalidate: true,
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return { data: env.d, shouldRevalidate: true };
-    }
-
+    const shouldRevalidate = isStale
+      ? await this.claimRevalidation(storeKey, env.e, "[VercelCacheStore] get")
+      : false;
     this.emitDebug({
       op: "get",
       key,
-      outcome: "fresh",
-      shouldRevalidate: false,
+      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
+      shouldRevalidate,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
     });
-    return { data: env.d, shouldRevalidate: false };
+    return { data: env.d, shouldRevalidate };
   }
 
   async set(
@@ -462,8 +446,7 @@ export class VercelCacheStore<
       const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
       // Embed the CLAMPED tags, like putResponse/setItem: the segment family
       // carries its tags inside `d`, and a raw list would resurface dropped
-      // tags into recordRequestTags on every hit AND get re-clamped (with a
-      // spurious cache-write report) by markRevalidating on every stale read.
+      // tags into recordRequestTags on every hit.
       const safeTags = this.clampTagsForWrite(
         data.tags,
         "[VercelCacheStore] set",
@@ -517,7 +500,7 @@ export class VercelCacheStore<
       this.emitDebug({ op: "getResponse", key, outcome: "miss", readMs });
       return null;
     }
-    const env = this.asResponseEnvelope(raw);
+    const env = this.asResponseEnvelope(this.decodeRaw(raw));
     if (!env) {
       reportCacheError(
         new Error("malformed response envelope"),
@@ -543,11 +526,11 @@ export class VercelCacheStore<
       return null;
     }
 
-    // Reconstruct the Response BEFORE marking revalidating. A corrupt body (e.g.
-    // invalid base64 from base64ToBuffer, or bad header entries) would otherwise
-    // throw out of getResponse — breaking the fail-open contract — and a stale
-    // re-stamp would re-persist the bad value. Treat a reconstruction failure as
-    // a corrupt entry: report, evict, and miss.
+    // Reconstruct the Response BEFORE claiming revalidation. A corrupt body
+    // (e.g. invalid base64 from base64ToBuffer, or bad header entries) would
+    // otherwise throw out of getResponse — breaking the fail-open contract — and
+    // a stale read would have written a lock for an entry it then evicts. Treat a
+    // reconstruction failure as a corrupt entry: report, evict, and miss.
     let response: Response;
     try {
       response = new Response(base64ToBuffer(env.b), {
@@ -566,24 +549,23 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    if (isStale) {
-      this.markRevalidating(
-        storeKey,
-        env,
-        env.t,
-        "[VercelCacheStore] getResponse",
-      );
-    }
+    const shouldRevalidate = isStale
+      ? await this.claimRevalidation(
+          storeKey,
+          env.e,
+          "[VercelCacheStore] getResponse",
+        )
+      : false;
     this.emitDebug({
       op: "getResponse",
       key,
-      outcome: isStale ? "stale-revalidate" : "fresh",
-      shouldRevalidate: isStale,
+      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
+      shouldRevalidate,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
     });
-    return { response, shouldRevalidate: isStale };
+    return { response, shouldRevalidate };
   }
 
   async putResponse(
@@ -650,7 +632,7 @@ export class VercelCacheStore<
       this.emitDebug({ op: "getItem", key, outcome: "miss", readMs });
       return null;
     }
-    const env = this.asItemEnvelope(raw);
+    const env = this.asItemEnvelope(this.decodeRaw(raw));
     if (!env) {
       reportCacheError(
         new Error("malformed item envelope"),
@@ -677,14 +659,18 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    if (isStale) {
-      this.markRevalidating(storeKey, env, env.t, "[VercelCacheStore] getItem");
-    }
+    const shouldRevalidate = isStale
+      ? await this.claimRevalidation(
+          storeKey,
+          env.e,
+          "[VercelCacheStore] getItem",
+        )
+      : false;
     this.emitDebug({
       op: "getItem",
       key,
-      outcome: isStale ? "stale-revalidate" : "fresh",
-      shouldRevalidate: isStale,
+      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
+      shouldRevalidate,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
@@ -692,7 +678,7 @@ export class VercelCacheStore<
     return {
       value: env.v,
       handles: env.h,
-      shouldRevalidate: isStale,
+      shouldRevalidate,
       tags: env.t,
     };
   }
@@ -752,7 +738,7 @@ export class VercelCacheStore<
       this.emitDebug({ op: "getShell", key, outcome: "miss", readMs });
       return null;
     }
-    const env = this.asShellEnvelope(raw);
+    const env = this.asShellEnvelope(this.decodeRaw(raw));
     if (!env) {
       reportCacheError(
         new Error("malformed shell envelope"),
@@ -779,19 +765,18 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    if (isStale) {
-      this.markRevalidating(
-        storeKey,
-        env,
-        env.t,
-        "[VercelCacheStore] getShell",
-      );
-    }
+    const shouldRevalidate = isStale
+      ? await this.claimRevalidation(
+          storeKey,
+          env.e,
+          "[VercelCacheStore] getShell",
+        )
+      : false;
     this.emitDebug({
       op: "getShell",
       key,
-      outcome: isStale ? "stale-revalidate" : "fresh",
-      shouldRevalidate: isStale,
+      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
+      shouldRevalidate,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
@@ -805,7 +790,7 @@ export class VercelCacheStore<
         snapshot: env.sn,
         createdAt: env.c,
       },
-      shouldRevalidate: isStale,
+      shouldRevalidate,
     };
   }
 
@@ -901,68 +886,107 @@ export class VercelCacheStore<
     tags: string[] | undefined,
     label: string,
   ): Promise<void> {
-    if (!this.withinSizeLimit(value, label)) return;
+    // Serialize the envelope exactly ONCE: the same string measures the entry
+    // against the size cap AND is what we hand the platform. The Vercel client
+    // JSON-serializes whatever value it is given, so passing the raw object here
+    // would walk and stringify the (potentially large) envelope a SECOND time.
+    // Entries written this way are JSON strings; the read path (decodeRaw)
+    // parses them back, and still accepts the legacy object shape written before
+    // this change.
+    let serialized: string | undefined;
+    try {
+      serialized = JSON.stringify(value);
+    } catch {
+      // Unserializable value: fall back to letting the platform serialize it
+      // (best-effort — matches the prior "cannot measure -> allow the write").
+      serialized = undefined;
+    }
+    if (serialized !== undefined && !this.withinSizeLimit(serialized, label)) {
+      return;
+    }
     const safeTags = this.clampTagsForWrite(tags, label);
     const options: { ttl: number; tags?: string[]; name?: string } = {
       ttl: Math.max(1, Math.ceil(totalTtlSeconds)),
     };
     if (safeTags.length > 0) options.tags = safeTags;
     if (this.name) options.name = this.name;
-    await this.cache.set(storeKey, value, options);
+    await this.cache.set(storeKey, serialized ?? value, options);
   }
 
   /**
-   * Stale-read herd dampening: push staleAt forward by REVALIDATION_LOCK_MS
-   * (clamped to the hard expiry) and re-write the same envelope under the
-   * remaining lifetime, so concurrent same-region readers see it as fresh while
-   * one revalidates. Best-effort and non-blocking; never throws.
-   *
-   * Two races are accepted here because `getCache` offers no compare-and-set: a
-   * fast background revalidation that lands between this stale read and the
-   * re-stamp write can be overwritten by the (staler) locked envelope, and an
-   * `expireTag` that deletes the entry in the same window can be resurrected by
-   * the re-stamp. Both self-heal within REVALIDATION_LOCK_MS (the re-stamped
-   * copy is then re-read as stale and revalidated again, or re-deleted). The
-   * window is narrow and the cost is at most one extra revalidation / one brief
-   * stale serve; a read-compare would not close it atomically without CAS.
+   * Normalize a value read back from the cache. Entries written by this store
+   * are pre-serialized JSON strings (see write()); legacy entries (written
+   * before that change, or by a client that deserializes for us) come back as
+   * objects. Parse strings, pass objects through, and treat a non-JSON string
+   * as corrupt (returns undefined, so the caller reports + evicts).
    */
-  private markRevalidating<E extends { s: number; e: number }>(
+  private decodeRaw(raw: unknown): unknown {
+    if (typeof raw !== "string") return raw;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Stale-read herd dampening via a tiny companion lock key. On a stale read,
+   * check `{storeKey}:lock`; if absent, claim it (write a short-TTL marker) and
+   * return true so THIS reader triggers revalidation. If present, another
+   * same-region reader already claimed it, so return false and serve the stale
+   * entry as fresh without piling on. Best-effort and non-blocking; never throws.
+   *
+   * Only the STALE path pays the extra lock read; the fresh-hit path takes no
+   * lock round trip. Unlike the prior whole-envelope re-stamp, a stale read now
+   * writes only the tiny lock, never the (potentially large) payload.
+   *
+   * Non-atomic (getCache has no compare-and-set): two readers can both find no
+   * lock and both revalidate. The window is REVALIDATION_LOCK_MS wide, after
+   * which the lock expires and the entry is re-claimed (or a fresh write has
+   * superseded it). A read-compare would not close the race without CAS.
+   */
+  private async claimRevalidation(
     storeKey: string,
-    env: E,
-    tags: string[] | undefined,
+    expiresAt: number,
     label: string,
-  ): void {
-    const now = Date.now();
-    const remainingSeconds = Math.ceil((env.e - now) / 1000);
-    if (remainingSeconds <= 0) return;
-    const locked: E = {
-      ...env,
-      s: Math.min(now + REVALIDATION_LOCK_MS, env.e),
-    };
+  ): Promise<boolean> {
+    const lockKey = `${storeKey}:lock`;
+    let lock: unknown;
+    try {
+      lock = await this.cache.get(lockKey);
+    } catch {
+      // A lock-read failure must not break the read path: treat as unlocked.
+      lock = null;
+    }
+    if (lock != null) return false;
+
+    const remainingSeconds = Math.ceil((expiresAt - Date.now()) / 1000);
+    const lockTtl = Math.max(
+      1,
+      Math.min(Math.ceil(REVALIDATION_LOCK_MS / 1000), remainingSeconds),
+    );
     const task = (): Promise<void> =>
-      this.write(storeKey, locked, remainingSeconds, tags, label);
+      this.cache.set(lockKey, 1, { ttl: lockTtl });
     if (this.waitUntil) {
       this.waitUntil(reportingAsync(task, "cache-write", label));
     } else {
       void reportingAsync(task, "cache-write", label);
     }
+    return true;
   }
 
-  private withinSizeLimit(value: unknown, label: string): boolean {
-    try {
-      const bytes = new TextEncoder().encode(JSON.stringify(value)).length;
-      if (bytes >= this.maxItemBytes) {
-        reportCacheError(
-          new Error(
-            `entry is ${bytes}B, at/above the ${this.maxItemBytes}B cap; not cached`,
-          ),
-          "cache-write",
-          label,
-        );
-        return false;
-      }
-    } catch {
-      // If the value cannot be measured, allow the write (best-effort).
+  /** Measure a pre-serialized entry against the per-item size cap (see write). */
+  private withinSizeLimit(serialized: string, label: string): boolean {
+    const bytes = new TextEncoder().encode(serialized).length;
+    if (bytes >= this.maxItemBytes) {
+      reportCacheError(
+        new Error(
+          `entry is ${bytes}B, at/above the ${this.maxItemBytes}B cap; not cached`,
+        ),
+        "cache-write",
+        label,
+      );
+      return false;
     }
     return true;
   }

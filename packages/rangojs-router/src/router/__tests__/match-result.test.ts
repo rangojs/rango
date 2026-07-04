@@ -328,6 +328,44 @@ describe("match-result", () => {
     });
   });
 
+  describe("buildMatchResult() - resolvedIds and _handlerRan strip", () => {
+    it("full match resolvedIds keeps every id (with duplicates) while matched dedups", () => {
+      const ctx = createMockContext({ isFullMatch: true });
+      const state = createPipelineState();
+      const segments = [
+        createSegment("a"),
+        createSegment("a"),
+        createSegment("b"),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.resolvedIds).toEqual(["a", "a", "b"]);
+      expect(result.matched).toEqual(["a", "b"]);
+      expect(result.segments.map((s) => s.id)).toEqual(["a", "b"]);
+    });
+
+    it("partial match resolvedIds keeps only handler-ran ids and strips _handlerRan", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: [],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["a", "b"];
+      const segments = [
+        createSegment("a", { _handlerRan: true } as Partial<ResolvedSegment>),
+        createSegment("b"),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.resolvedIds).toEqual(["a"]);
+      expect(result.diff).toEqual(["a", "b"]);
+      // The internal _handlerRan marker must not leak into the emitted segments.
+      expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
+    });
+  });
+
   describe("collectMatchResult()", () => {
     it("should collect segments and build result", async () => {
       const ctx = createMockContext({ isFullMatch: true });

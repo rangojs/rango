@@ -75,6 +75,13 @@ global middleware
 - Loaders are live by default unless explicitly cached via `cache()` in their
   use params: `loader(Fn, () => [cache({ ttl })])`. Pinned by the `[C1]`/`[C2]`
   semantic matrix rows.
+- Under PPR shell capture, `loading()` selects the loader lane
+  (docs/design/loader-container-bake.md): present = live lane (masked at
+  capture, fresh on every serve); absent = bake lane (the loader EXECUTES at
+  capture, its settled container bakes into the shell and is snapshot-pinned
+  on HITs, promises nested in the container stay live at the consumer's own
+  Suspense). Identity reads inside a bake-lane loader refuse the capture.
+  Axis 1 is unchanged in both lanes.
 - Route-level `cache()` does not cache loader segments; loaders remain live.
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request

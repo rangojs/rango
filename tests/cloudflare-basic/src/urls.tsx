@@ -1,6 +1,6 @@
-import { urls, updateTag, revalidateTag, Meta } from "@rangojs/router";
+import { urls, updateTag, revalidateTag, Meta, nonce } from "@rangojs/router";
 import { Suspense } from "react";
-import { Link } from "@rangojs/router/client";
+import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
@@ -19,10 +19,17 @@ import {
   PprShellLayout,
   PprShellPricePage,
   PprShellStreamPage,
+  PprTrapChromeLayout,
+  PprBareHomePage,
+  PprSlotChromeLayout,
+  PprSlotHomePage,
 } from "./pages/ppr-shell.js";
+import { PprShellBadge } from "./components/PprShellBadge.js";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
+  PprChromeLoader,
+  PprBadgeLoader,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
@@ -412,6 +419,59 @@ export const urlpatterns = urls(
             () => [loader(PprShellStreamLoader)],
           ),
         ]),
+        // LAYOUT-LOADER shapes (the storefront): the layout registers a
+        // loader with NO loading() on the LAYOUT — the BAKE lane
+        // (docs/design/loader-container-bake.md). PprChromeLoader executes at
+        // capture, its container bakes (snapshot-pinned on HITs), and both
+        // children HIT; the loader child keeps its price hole on the LIVE
+        // lane behind loading(). See pages/ppr-shell.tsx.
+        layout(PprTrapChromeLayout, () => [
+          loader(PprChromeLoader),
+          path(
+            "/ppr-shell/layout-loader",
+            PprShellPricePage,
+            { name: "pprShellLayoutLoader", ppr: true },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-trap-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+          // The literal storefront-homepage shape: a BARE ppr route (no
+          // loader, no loading(), no use list at all) under the
+          // loader-registering layout.
+          path("/ppr-shell/layout-loader-bare", PprBareHomePage, {
+            name: "pprShellLayoutLoaderBare",
+            ppr: true,
+          }),
+        ]),
+        // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"):
+        // the same chrome data owned by a @badge parallel slot with its OWN
+        // loading() — a badge-sized GUARANTEED-fresh hole (the bake lane
+        // would pin the value for the shell's lifetime). Chrome + static page
+        // bake; the route needs no loader or loading() of its own.
+        layout(PprSlotChromeLayout, () => [
+          parallel({
+            "@badge": {
+              handler: () => <PprShellBadge loader={PprBadgeLoader} />,
+              use: () => [
+                loader(PprBadgeLoader),
+                loading(
+                  <span data-testid="ppr-badge-fallback">
+                    badge pending...
+                  </span>,
+                ),
+              ],
+            },
+          }),
+          path("/ppr-shell/slot-hole", PprSlotHomePage, {
+            name: "pprShellSlotHole",
+            ppr: true,
+          }),
+        ]),
         // Capture-data-snapshot DRIFT route: the shell bakes a value from a
         // short-ttl cache() (getPprDriftStamp, "drift" profile, ttl 2s); the
         // shell's own ttl is 300. After the inner ttl expires, a HIT must still
@@ -433,6 +493,56 @@ export const urlpatterns = urls(
             ],
           ),
         ]),
+        // Per-request nonce via the `nonce` ContextVar TOKEN in route middleware
+        // (issue #656). A shell is shared per host+URL, so baking one request's
+        // nonce into it would break CSP for every other visitor. A ppr route with
+        // an active per-request nonce — provider OR token — must stay on axis 1
+        // (no PPR participation, no x-rango-shell header) with a once-per-key
+        // worker warning. The commit-point gate reads the token AFTER the route
+        // middleware runs; before the fix it saw only the provider-threaded nonce
+        // and this route wrongly entered capture, freezing one nonce for all. The
+        // layout reads ctx.get(nonce) into the SHELL region (above the loading()
+        // hole) so each MISS carries a DISTINCT nonce. Middleware is scoped to THIS
+        // subtree, not global, so it gates only this route and leaves the other
+        // ppr fixtures capturable.
+        middleware(
+          async (ctx, next) => {
+            ctx.set(nonce, crypto.randomUUID());
+            return next();
+          },
+          () => [
+            layout(
+              (ctx) => {
+                const requestNonce = ctx.get(nonce);
+                return (
+                  <main data-testid="ppr-nonce-page">
+                    <h1 data-testid="ppr-nonce-header">PPR Nonce Demo</h1>
+                    <span
+                      data-testid="ppr-nonce-value"
+                      data-nonce={requestNonce ?? "(none)"}
+                    />
+                    <Outlet />
+                  </main>
+                );
+              },
+              () => [
+                path(
+                  "/ppr-nonce",
+                  PprShellPricePage,
+                  { name: "pprNonce", ppr: { ttl: 300, swr: 120 } },
+                  () => [
+                    loader(PprShellPriceLoader),
+                    loading(
+                      <div data-testid="ppr-nonce-price-fallback">
+                        Loading price...
+                      </div>,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
         // Orphan fetchable loader: loader reachable only via a client import,
         // never registered with loader(), never imported by the worker entry.
         path("/orphan-fetch", () => <OrphanFetchTest />, {

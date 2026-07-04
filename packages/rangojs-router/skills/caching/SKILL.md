@@ -245,8 +245,14 @@ import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
+  maxEntries: 1000, // per-family FIFO cap (default 1000)
 });
 ```
+
+Each internal family (segments, responses, `"use cache"` items, PPR shells) is
+capped at `maxEntries`; on insert past the cap the oldest entry is evicted FIFO
+and its tag-index entries are cleaned up, so a long-lived process cannot grow
+without bound. TTL expiry stays lazy on top of the cap.
 
 ### Cloudflare Edge Cache Store
 

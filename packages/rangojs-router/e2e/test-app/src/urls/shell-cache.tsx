@@ -1,15 +1,20 @@
-import { urls, Meta, Breadcrumbs } from "@rangojs/router";
+import { urls, Meta, Breadcrumbs, nonce } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
   ShellPriceLoader,
   ShellStreamLoader,
+  ShellChromeLoader,
+  ShellBadgeLoader,
+  ShellIdentityLoader,
   ShellHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
   makePhysicsPromise,
   getDriftStamp,
 } from "./shell-cache.defs.js";
+import { ShellBadge } from "../components/ShellBadge.js";
+import { ShellGuardValue } from "../components/ShellGuardValue.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
@@ -26,8 +31,11 @@ import { ThemeToggle } from "../components/ThemeToggle.js";
 // The hole doctrine this fixture exercises:
 //   STRUCTURAL — the route loader behind loading(): masked at capture, the
 //     LoaderBoundary postpones, the fallback bakes into the shell as route
-//     structure. /shell-cache/no-hole is the negative (no loading(), capture
-//     refuses, eternal MISS).
+//     structure (the LIVE lane).
+//   BAKE LANE — a loader WITHOUT loading() executes at capture: its settled
+//     container bakes (snapshot-pinned on HITs), nested pending promises hole
+//     at the consumer's own Suspense. /shell-cache/no-hole and the
+//     layout-loader routes exercise it (docs/design/loader-container-bake.md).
 //   PHYSICS — ShellPhysicsValue: a handler-created pending promise (~250ms)
 //     under the consumer's own Suspense. Real I/O cannot win the capture's
 //     task-quantized quiet window, so the boundary postpones — a hole.
@@ -78,10 +86,11 @@ function ShellCachePricePage() {
 }
 
 // Loader-carried-promise page, reused by BOTH /shell-cache/stream (WITH
-// loading(), so the loader is a PPR hole) and /shell-cache/no-hole (NO loading(),
-// so capture refuses and the route stays MISS forever while the inner promise
-// still streams under axis 1). Identical component both times — the ONLY
-// difference is whether the route carries loading().
+// loading(): the LIVE lane — the whole loader value is the hole) and
+// /shell-cache/no-hole (NO loading(): the BAKE lane — the outer label bakes
+// and is snapshot-pinned on HITs; the nested promise holes at the inner
+// Suspense). Identical component both times — the ONLY difference is the lane
+// the loading() presence selects.
 function ShellCacheStreamPage() {
   return <ShellCacheStream loader={ShellStreamLoader} />;
 }
@@ -114,59 +123,219 @@ function ShellDriftPricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
 }
 
-export const shellCachePatterns = urls(({ path, layout, loader, loading }) => [
-  layout(ShellCacheLayout, () => [
-    // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
-    path(
-      "/shell-cache",
-      ShellCachePricePage,
-      { name: "shellCache", ppr: { ttl: 300, swr: 120 } },
+// Per-request CSP nonce set via the `nonce` ContextVar token in ROUTE middleware
+// (issue #656). A shell is shared per host+URL, so baking one request's nonce into
+// it would serve a frozen nonce to every visitor and break CSP for all but the
+// capture request. A ppr route with an active per-request nonce — from the
+// createRouter({ nonce }) provider OR a ctx.set(nonce, …) token write — must stay
+// on axis 1 (x-rango-shell: MISS) with a once-per-key worker warning.
+//
+// The layout reads ctx.get(nonce) and renders it into the SHELL region (above the
+// loading() hole), the exact material that would be frozen into a captured
+// prelude. With the gate reading the token at the commit point (which runs AFTER
+// the route middleware), capture never runs: every GET stays MISS and carries a
+// DISTINCT nonce. This also pins the commit-point ordering — the DSL middleware's
+// token write is visible to the gate.
+function ShellNonceLayout(ctx: HandlerContext) {
+  const requestNonce = ctx.get(nonce);
+  return (
+    <main data-testid="shell-nonce-page">
+      <h1 data-testid="shell-nonce-header">Shell Nonce Demo</h1>
+      <span
+        data-testid="shell-nonce-value"
+        data-nonce={requestNonce ?? "(none)"}
+      />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellNoncePricePage() {
+  return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// LAYOUT-LOADER shapes (the storefront): the layout registers a loader with NO
+// loading() on the LAYOUT — the BAKE lane. At capture ShellChromeLoader
+// executes (the gate holds for its 100ms), its container bakes, and the page
+// HITs; the ppr child's own loader stays on the LIVE lane behind loading().
+// Before the bake lane this was the eternal-MISS trap (the child's loading()
+// could not unpin the layout's boundary-less await).
+function ShellTrapChromeLayout() {
+  return (
+    <main data-testid="shell-trap-page">
+      <p data-testid="shell-trap-chrome">Trap chrome static text</p>
+      <Outlet />
+    </main>
+  );
+}
+
+// LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"): the same
+// chrome data owned by a @badge parallel slot with its OWN loading(). Slot-owned
+// loaders get a per-slot LoaderBoundary — a badge-sized GUARANTEED-fresh hole —
+// where the bake lane would pin the value for the shell's lifetime. Chrome and
+// the static page bake; the route needs no loader or loading() of its own.
+function ShellSlotChromeLayout() {
+  return (
+    <main data-testid="shell-slot-page">
+      <p data-testid="shell-slot-chrome">Slot chrome static text</p>
+      <ParallelOutlet name="@badge" />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellSlotHomePage() {
+  return <p data-testid="shell-slot-home">Slot home static content</p>;
+}
+
+function ShellBareHomePage() {
+  return <p data-testid="shell-bare-home">Bare home static content</p>;
+}
+
+// Identity-guard negative page: renders the bake-lane identity loader's value.
+function ShellGuardPage() {
+  return <ShellGuardValue loader={ShellIdentityLoader} />;
+}
+
+export const shellCachePatterns = urls(
+  ({ path, layout, loader, loading, middleware, parallel }) => [
+    layout(ShellCacheLayout, () => [
+      // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
+      path(
+        "/shell-cache",
+        ShellCachePricePage,
+        { name: "shellCache", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="shell-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+      // Loader-carried promise WITH loading(): the loading() boundary is the hole.
+      // On a HIT the resume streams three layers in one body — cached shell, then
+      // the outer loader value + the inner Suspense fallback, then the
+      // nested-promise inner value + $RC.
+      path(
+        "/shell-cache/stream",
+        ShellCacheStreamPage,
+        { name: "shellCacheStream", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellStreamLoader),
+          loading(
+            <div data-testid="shell-stream-fallback">Loading stream...</div>,
+          ),
+        ],
+      ),
+      // Same loader/component, ppr DECLARED, but NO loading(): the loading-less
+      // branch awaits loader data at tree-build, so capture's masked loader pins
+      // the tree and the sanity gate refuses — x-rango-shell stays MISS forever
+      // (plus the once-per-key warning). The nested inner promise still streams
+      // under axis 1 (no loading() degrades only the caching, never the route).
+      path(
+        "/shell-cache/no-hole",
+        ShellCacheStreamPage,
+        { name: "shellCacheNoHole", ppr: true },
+        () => [loader(ShellStreamLoader)],
+      ),
+    ]),
+    // Capture-data-snapshot DRIFT route: the shell bakes a value from a short-ttl
+    // cache() (getDriftStamp, "drift" profile, ttl 1s); the shell's own ttl is 300.
+    // After the inner ttl expires, a HIT must still show the CAPTURE-time stamp
+    // (seeded from the snapshot) — byte parity with the frozen prelude — while the
+    // price loader hole stays live. See docs/design/ppr-shell-resume.md.
+    layout(ShellDriftLayout, () => [
+      path(
+        "/shell-cache/drift",
+        ShellDriftPricePage,
+        { name: "shellCacheDrift", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="drift-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+    ]),
+    // Per-request nonce via the ContextVar TOKEN in route middleware (issue #656).
+    // Scoped to THIS subtree (not global) so it gates only this ppr route and
+    // leaves the rest of the shell-cache suite capturable — a global token nonce
+    // would gate every other ppr fixture and kill their HIT coverage.
+    middleware(
+      async (ctx, next) => {
+        ctx.set(nonce, crypto.randomUUID());
+        return next();
+      },
       () => [
-        loader(ShellPriceLoader),
-        loading(<div data-testid="shell-price-fallback">Loading price...</div>),
+        layout(ShellNonceLayout, () => [
+          path(
+            "/shell-cache/nonce-token",
+            ShellNoncePricePage,
+            { name: "shellCacheNonceToken", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(ShellPriceLoader),
+              loading(
+                <div data-testid="shell-nonce-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+        ]),
       ],
     ),
-    // Loader-carried promise WITH loading(): the loading() boundary is the hole.
-    // On a HIT the resume streams three layers in one body — cached shell, then
-    // the outer loader value + the inner Suspense fallback, then the
-    // nested-promise inner value + $RC.
+    // Layout-loader trap: see ShellTrapChromeLayout above.
+    layout(ShellTrapChromeLayout, () => [
+      loader(ShellChromeLoader),
+      path(
+        "/shell-cache/layout-loader",
+        ShellCachePricePage,
+        { name: "shellCacheLayoutLoader", ppr: true },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="trap-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+      // The literal storefront-homepage shape: a BARE ppr route (no loader, no
+      // loading(), no use list at all) under the loader-registering layout. The
+      // route itself is fully shell-eligible; the LAYOUT's boundary-less loader
+      // alone keeps the capture refusing.
+      path("/shell-cache/layout-loader-bare", ShellBareHomePage, {
+        name: "shellCacheLayoutLoaderBare",
+        ppr: true,
+      }),
+    ]),
+    // Identity-guard negative: a bake-lane loader (no loading()) that reads
+    // cookies(). Capture refuses deterministically (guard flag) — MISS forever
+    // — while axis 1 serves the per-user value normally.
     path(
-      "/shell-cache/stream",
-      ShellCacheStreamPage,
-      { name: "shellCacheStream", ppr: { ttl: 300, swr: 120 } },
-      () => [
-        loader(ShellStreamLoader),
-        loading(
-          <div data-testid="shell-stream-fallback">Loading stream...</div>,
-        ),
-      ],
+      "/shell-cache/guard",
+      ShellGuardPage,
+      {
+        name: "shellCacheGuard",
+        ppr: true,
+      },
+      () => [loader(ShellIdentityLoader)],
     ),
-    // Same loader/component, ppr DECLARED, but NO loading(): the loading-less
-    // branch awaits loader data at tree-build, so capture's masked loader pins
-    // the tree and the sanity gate refuses — x-rango-shell stays MISS forever
-    // (plus the once-per-key warning). The nested inner promise still streams
-    // under axis 1 (no loading() degrades only the caching, never the route).
-    path(
-      "/shell-cache/no-hole",
-      ShellCacheStreamPage,
-      { name: "shellCacheNoHole", ppr: true },
-      () => [loader(ShellStreamLoader)],
-    ),
-  ]),
-  // Capture-data-snapshot DRIFT route: the shell bakes a value from a short-ttl
-  // cache() (getDriftStamp, "drift" profile, ttl 1s); the shell's own ttl is 300.
-  // After the inner ttl expires, a HIT must still show the CAPTURE-time stamp
-  // (seeded from the snapshot) — byte parity with the frozen prelude — while the
-  // price loader hole stays live. See docs/design/ppr-shell-resume.md.
-  layout(ShellDriftLayout, () => [
-    path(
-      "/shell-cache/drift",
-      ShellDriftPricePage,
-      { name: "shellCacheDrift", ppr: { ttl: 300, swr: 120 } },
-      () => [
-        loader(ShellPriceLoader),
-        loading(<div data-testid="drift-price-fallback">Loading price...</div>),
-      ],
-    ),
-  ]),
-]);
+    // Slot-hole escape: see ShellSlotChromeLayout above.
+    layout(ShellSlotChromeLayout, () => [
+      parallel({
+        "@badge": {
+          handler: () => <ShellBadge loader={ShellBadgeLoader} />,
+          use: () => [
+            loader(ShellBadgeLoader),
+            loading(
+              <span data-testid="shell-badge-fallback">badge pending...</span>,
+            ),
+          ],
+        },
+      }),
+      path("/shell-cache/slot-hole", ShellSlotHomePage, {
+        name: "shellCacheSlotHole",
+        ppr: true,
+      }),
+    ]),
+  ],
+);

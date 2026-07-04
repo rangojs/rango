@@ -5,6 +5,10 @@ import {
   captureAndStoreShell,
   runShellCapture,
   scheduleShellCapture,
+  isCaptureBackedOff,
+  markCaptureBackoff,
+  clearCaptureBackoff,
+  REFUSED_CAPTURE_DEV_MAX_MS,
 } from "../shell-capture.js";
 import { createHandleStore } from "../../server/handle-store.js";
 import {
@@ -238,6 +242,109 @@ describe("captureAndStoreShell", () => {
       _reportBackgroundError: vi.fn(),
     };
   }
+
+  function makeShellSsrModule(): SSRModule {
+    return {
+      renderHTML: vi.fn(),
+      captureShellHTML: vi.fn(async () => ({
+        prelude: enc("<html><body>shell</body></html>"),
+        postponed: null,
+      })),
+    } as unknown as SSRModule;
+  }
+
+  // Identity guard (loader-container-bake): the cookies()/headers() capture
+  // guard flags the capture context before throwing, because a throw inside an
+  // executing bake-lane loader is swallowed into per-loader error UI. The
+  // capture must REFUSE (deterministic — no retry, no store write) instead of
+  // baking the failure into a shared shell.
+  it("refuses (no store write, once-per-key warning) when the identity guard tripped", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const reqCtx = makeReqCtx(putShell);
+      reqCtx._shellCaptureGuardTripped = "cookies";
+
+      const outcome = await captureAndStoreShell(
+        makeShellSsrModule(),
+        emptyStream(),
+        createHandleStore(),
+        reqCtx,
+        { key: "/guard-trip:shell", ttl: 300 },
+      );
+
+      expect(outcome).toBe("refused");
+      expect(putShell).not.toHaveBeenCalled();
+      const warnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes("/guard-trip:shell"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("cookies()");
+      expect(warnings[0][0]).toContain("refused");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // A REJECTED bake-lane loader container must refuse the capture: its
+  // per-loader error boundary UI already rendered into the shell bytes, and a
+  // shared shell must never freeze error UI.
+  it("refuses when a bake-lane loader container rejected during capture", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const reqCtx = makeReqCtx(putShell);
+      const rejected = Promise.reject(new Error("loader boom"));
+      rejected.catch(() => {});
+      reqCtx._shellCaptureLoaderRecords = new Map([["M0D0.app/x#L", rejected]]);
+
+      const outcome = await captureAndStoreShell(
+        makeShellSsrModule(),
+        emptyStream(),
+        createHandleStore(),
+        reqCtx,
+        { key: "/bake-reject:shell", ttl: 300 },
+      );
+
+      expect(outcome).toBe("refused");
+      expect(putShell).not.toHaveBeenCalled();
+      const warnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes("/bake-reject:shell"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("M0D0.app/x#L");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // A container still PENDING at drain is a hole (or already hit the
+  // trivial-prelude gate): it is omitted from the snapshot, never a refusal.
+  it("omits a still-pending bake-lane container without refusing", async () => {
+    const putShell = makePutShell();
+    const reqCtx = makeReqCtx(putShell);
+    reqCtx._shellCaptureLoaderRecords = new Map([
+      ["M0D0.app/x#L", new Promise(() => {})],
+    ]);
+
+    const outcome = await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/bake-pending:shell", ttl: 300 },
+    );
+
+    expect(outcome).toBe("stored");
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const entry = putShell.mock.calls[0]![1] as {
+      snapshot?: { family: string }[];
+    };
+    const loaderRecords = (entry.snapshot ?? []).filter(
+      (r) => r.family === "loader",
+    );
+    expect(loaderRecords).toHaveLength(0);
+  });
 
   it("stores the base64 prelude + postponed + reactVersion into the flag's store", async () => {
     const putShell = makePutShell();
@@ -738,8 +845,11 @@ describe("runShellCapture", () => {
       );
       // Deduped to once per key across all three runs.
       expect(keyWarnings).toHaveLength(1);
-      // The message names BOTH causes with the distinguishing signal.
-      expect(keyWarnings[0][0]).toContain("loading() boundary");
+      // The message names BOTH causes with the distinguishing signal, and the
+      // boundary-ownership rule (a child route's loading() does not unpin a
+      // parent layout's loaders).
+      expect(keyWarnings[0][0]).toContain("Suspense boundary");
+      expect(keyWarnings[0][0]).toContain("does not unpin");
       expect(keyWarnings[0][0]).toContain("Cold-start");
       expect(keyWarnings[0][0]).toContain("SELF-HEALS");
     } finally {
@@ -1199,5 +1309,157 @@ describe("runShellCapture", () => {
     );
 
     expect((reqCtx as any)._shellCaptureRun).toBeUndefined();
+  });
+});
+
+// Refused-capture backoff policy (#652 item 3). markCaptureBackoff escalates the
+// window exponentially per consecutive failure, clamped to the mode's ceiling: 60s
+// in production (a genuinely ineligible route should be re-probed rarely), but only
+// REFUSED_CAPTURE_DEV_MAX_MS (~2s) in dev, where the dominant no-shell cause is a
+// COLD module graph that WARMS on the very attempt that failed. The dev cap is the
+// fix for the cloudflare-basic-e2e cold-CI failure: the 60s exponential outlasts
+// the e2e warm window, freezing every subsequent request as backed-off (eternal
+// MISS) even though the modules are warm by then. These tests drive the exported
+// backoff functions directly so the exact window arithmetic is pinned.
+//
+// NODE_ENV under the unit vitest config defaults to "test" (dev mode) — so the
+// dev-cap tests need no override; the production-growth test sets it explicitly.
+describe("refused-capture backoff policy", () => {
+  it("dev cap: the window never exceeds REFUSED_CAPTURE_DEV_MAX_MS however high the failure count climbs", () => {
+    vi.useFakeTimers();
+    try {
+      const key = "/dev-cap-window:shell";
+      clearCaptureBackoff(key);
+      const t0 = Date.now();
+      // Five consecutive failures at the same instant: the exponential term
+      // (1000*2^4 = 16000) would blow past the cap, so the window clamps to the
+      // dev ceiling (2000).
+      for (let i = 0; i < 5; i++) markCaptureBackoff(key);
+
+      // Just before the cap elapses: still backed off.
+      vi.setSystemTime(t0 + REFUSED_CAPTURE_DEV_MAX_MS - 1);
+      expect(isCaptureBackedOff(key)).toBe(true);
+      // At the cap: the window has elapsed — a re-probe is allowed. This is the
+      // whole point: the dev window is bounded at ~2s, not the 16s the raw
+      // exponential (or the 60s prod cap) would give.
+      vi.setSystemTime(t0 + REFUSED_CAPTURE_DEV_MAX_MS);
+      expect(isCaptureBackedOff(key)).toBe(false);
+    } finally {
+      clearCaptureBackoff("/dev-cap-window:shell");
+      vi.useRealTimers();
+    }
+  });
+
+  it("production: exponential growth is intact (window exceeds the dev cap and climbs to 60s)", () => {
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    vi.useFakeTimers();
+    try {
+      const key = "/prod-grow-window:shell";
+      clearCaptureBackoff(key);
+      const t0 = Date.now();
+      // Five failures → min(1000*2^4, 60000) = 16000ms, far past the 2s dev cap.
+      for (let i = 0; i < 5; i++) markCaptureBackoff(key);
+      // Still backed off well past where dev would have cleared (2s) — proof the
+      // dev cap does NOT leak into production.
+      vi.setSystemTime(t0 + REFUSED_CAPTURE_DEV_MAX_MS + 1);
+      expect(isCaptureBackedOff(key)).toBe(true);
+      vi.setSystemTime(t0 + 15_999);
+      expect(isCaptureBackedOff(key)).toBe(true);
+      vi.setSystemTime(t0 + 16_000);
+      expect(isCaptureBackedOff(key)).toBe(false);
+
+      // Many more failures ramp to — and clamp at — the 60s production ceiling.
+      clearCaptureBackoff(key);
+      const t1 = Date.now();
+      for (let i = 0; i < 12; i++) markCaptureBackoff(key); // 1000*2^11 >> 60000
+      vi.setSystemTime(t1 + 59_999);
+      expect(isCaptureBackedOff(key)).toBe(true);
+      vi.setSystemTime(t1 + 60_000);
+      expect(isCaptureBackedOff(key)).toBe(false);
+    } finally {
+      clearCaptureBackoff("/prod-grow-window:shell");
+      process.env.NODE_ENV = original;
+      vi.useRealTimers();
+    }
+  });
+
+  it("a stored capture clears the backoff (failure count resets)", () => {
+    vi.useFakeTimers();
+    try {
+      const key = "/stored-clears:shell";
+      clearCaptureBackoff(key);
+      const t0 = Date.now();
+      markCaptureBackoff(key);
+      expect(isCaptureBackedOff(key)).toBe(true);
+      // A subsequent capture that STORES clears the entry outright — the next
+      // request probes immediately, and any later failure starts the exponential
+      // over from BASE (not from the escalated count).
+      clearCaptureBackoff(key);
+      expect(isCaptureBackedOff(key)).toBe(false);
+      markCaptureBackoff(key); // failure count reset to 1 → BASE window (1000)
+      vi.setSystemTime(t0 + 1_000);
+      expect(isCaptureBackedOff(key)).toBe(false);
+    } finally {
+      clearCaptureBackoff("/stored-clears:shell");
+      vi.useRealTimers();
+    }
+  });
+
+  // Regression pin for the cold-CI failure (#652 item 3; main run 2586ea9c and the
+  // PR #657 runs). Walk the EXACT e2e cadence: a first capture fails at t0, then
+  // warmToHit polls once per second for 20s. On a persistently-cold CI runner every
+  // probe ALSO fails, climbing the failure count. Under the dev cap the window stays
+  // ≤2s, so the LATE part of the 20s window still admits probes — the route is never
+  // frozen out. Non-vacuous: without the dev cap (production exponential, asserted in
+  // the sibling test below) the window blows past 20s after a handful of failures and
+  // the tail of the poll admits ZERO probes — the eternal MISS the test hit.
+  function walkColdCiWindow(): { probes: number; tailProbes: number } {
+    const key = "/cold-ci-sequence:shell";
+    clearCaptureBackoff(key);
+    const t0 = Date.now();
+    markCaptureBackoff(key); // t0: first capture attempt failed (post-retry)
+    let probes = 0;
+    let tailProbes = 0; // probes in the last 4s of the 20s window (s = 17..20)
+    for (let s = 1; s <= 20; s++) {
+      vi.setSystemTime(t0 + s * 1_000);
+      if (!isCaptureBackedOff(key)) {
+        probes += 1;
+        if (s >= 17) tailProbes += 1;
+        markCaptureBackoff(key); // this probe was also cold → re-marks (climbs)
+      }
+    }
+    clearCaptureBackoff(key);
+    return { probes, tailProbes };
+  }
+
+  it("simulated cold start: the dev cap keeps re-probing across the full 20s warm window", () => {
+    vi.useFakeTimers();
+    try {
+      const { probes, tailProbes } = walkColdCiWindow();
+      // ~10 probes across 20s (one roughly every 2s), and crucially the tail of
+      // the window is NOT frozen out — the CI test would see a HIT the moment one
+      // of these warm re-probes captures.
+      expect(probes).toBeGreaterThanOrEqual(8);
+      expect(tailProbes).toBeGreaterThanOrEqual(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("without the dev cap (production) the same cold sequence freezes the tail of the warm window — the bug being fixed", () => {
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    vi.useFakeTimers();
+    try {
+      const { tailProbes } = walkColdCiWindow();
+      // The 60s exponential escalates past 20s after ~4 failures, so the last 4s
+      // of the poll admit no probe — every request is skipped as backed-off. This
+      // is exactly the eternal MISS the dev cap removes.
+      expect(tailProbes).toBe(0);
+    } finally {
+      process.env.NODE_ENV = original;
+      vi.useRealTimers();
+    }
   });
 });
