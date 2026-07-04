@@ -8,6 +8,14 @@ argument-hint: [setup]
 
 Caches complete HTTP responses (HTML/RSC) at the edge based on Cache-Control headers. Routes opt-in by setting `s-maxage`.
 
+## Not this skill if…
+
+- You want loaders to stay live while rendered segments are reused — document
+  caching freezes the WHOLE response, loader output included; segment caching
+  is `cache()`: see `/caching`.
+- You want a cached HTML shell with per-request live holes — see `/ppr`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
+
 ## Setup
 
 Document caching is a middleware. Add `createDocumentCacheMiddleware()` to the

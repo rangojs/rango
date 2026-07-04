@@ -8,6 +8,13 @@ argument-hint: [@slot-name] [route-to-intercept]
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
 
+## Not this skill if…
+
+- You want a slot that ALWAYS renders alongside the page (sidebar, multi-column
+  layout) — that is a permanent `parallel()` slot: see `/parallel`.
+- You want the same component regardless of soft vs hard navigation —
+  intercepts only swap on soft navigation; see `/parallel`.
+
 ## Basic Intercept
 
 ```typescript

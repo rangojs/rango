@@ -11,6 +11,13 @@ Loaders fetch data on the server and stream it to the client. For mutations
 `/server-actions`. Loaders re-resolve after an action runs, so the typical
 flow is _action mutates → loader re-reads → UI updates_.
 
+## Not this skill if…
+
+- You want to mutate state — mutations are `"use server"` actions: see
+  `/server-actions`. Loaders read per-request live data.
+- You want to cache a function's return value — loaders are fresh every request
+  by default; caching one function is `"use cache"`: see `/use-cache`.
+
 ## Creating a Loader
 
 ```typescript
