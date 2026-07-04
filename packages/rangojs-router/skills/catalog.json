@@ -58,6 +58,12 @@
       "path": "skills/debug-manifest/SKILL.md"
     },
     {
+      "name": "defer-hydration",
+      "description": "Keep the full body HTML in a PPR shell's first paint while moving a heavy subtree's hydration off the initial main-thread task — a gated Suspense boundary with the content as its own fallback, released on first idle. Use when a shell HIT paints fast but one long hydration task blocks the main thread, TTI/INP is poor despite instant paint, or a plain Suspense boundary left an empty hole in the frozen prelude.",
+      "argumentHint": "",
+      "path": "skills/defer-hydration/SKILL.md"
+    },
+    {
       "name": "document-cache",
       "description": "Cache the whole HTTP response at the edge with Cache-Control headers. Use when caching an entire page or response at a CDN edge, setting Cache-Control headers, or cutting origin hits for public pages — not for caching a single segment or function.",
       "argumentHint": "[setup]",

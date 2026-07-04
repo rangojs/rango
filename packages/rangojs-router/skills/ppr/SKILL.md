@@ -597,6 +597,9 @@ cache"` value baked into the shell is PINNED at capture (the capture data
 
 ## Related
 
+- `/defer-hydration` — keep the full body HTML in the shell while moving a
+  heavy subtree's hydration off the initial main-thread task (gated boundary,
+  content-as-fallback)
 - `/document-cache` — whole-response edge caching (no live holes)
 - `/caching` and `/cache-guide` — segment/function caching (axis 1 data)
 - `/shell-manifest` — replayed handles as cache metadata read by live loaders

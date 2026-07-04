@@ -282,6 +282,7 @@ Grouped by concern — read when you need to…
 | `/scripts`          | Inject third-party scripts (GTM/analytics) into head/body via the `Script` handle; nonce auto-applied to document-rendered scripts |
 | `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                                                                         |
 | `/view-transitions` | React View Transitions on layouts, routes, and parallel slots                                                                      |
+| `/defer-hydration`  | Full body HTML in the PPR shell + hydration off the critical path (gated Suspense boundary, content-as-fallback)                   |
 | `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                                                                              |
 | `/react-compiler`   | Enable React Compiler (opt-in) the vite-rsc way; client-only scope                                                                 |
 
