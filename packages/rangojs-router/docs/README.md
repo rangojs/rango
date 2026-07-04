@@ -2,7 +2,8 @@
 
 This package has a small core and a larger advanced model.
 
-If you are new to Rango, start with named routes, `urls()`, `path()`,
+If you are new to Rango, start with
+[named routes](../../../docs/named-routes.md), `urls()`, `path()`,
 `layout()`, `include()`, and `reverse()`. Everything else builds on top of
 that route tree.
 
@@ -41,6 +42,18 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 - [Matching & lazy-discovery](./internal/matching-and-lazy-discovery.md) -
   architecture & accepted tradeoffs: dev/prod matching parity, the trie-vs-regex
   contract, the matching invariants, and the measured lazy include() cost tradeoffs
+- [Semantic change checklist](./internal/semantic-change-checklist.md) - the
+  pre-merge checklist for PRs that touch routing, rendering, middleware,
+  actions, revalidation, intercepts, prerender, or request-context propagation
+- [Security checklist](./internal/security-checklist.md) - the checklist for
+  changes that add or alter execution paths, transport behavior, or
+  request/response ownership
+- [Rendered barrier](./internal/rendered-barrier.md) - the experimental
+  `await ctx.rendered()` loader barrier: lets a loader wait for the handler
+  tree to settle so it can read accumulated handle data
+- [Runtime guardrails design](./internal/runtime-guardrails-design.md) -
+  dev-mode misuse warnings (warn, never silently fix): which guardrails
+  shipped, which were removed, and why
 
 ## Caching And Prerender
 
@@ -48,6 +61,13 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   runtime cache lookup model
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching and cache profiles
+- [Segment caching design](../../../docs/design/caching.md) - the canonical
+  runtime segment-cache design; read before changing caching
+- [Cache tags flow](../../../docs/design/cache-tags-flow.md) - tag
+  invalidation end to end: `updateTag()`/`revalidateTag()`, tag markers, and
+  the read-latency budgets
+- [Vercel cache store](../../../docs/design/vercel-cache-store.md) -
+  `VercelCacheStore` and the `vercel` preset design
 
 ## Build Integrations
 
@@ -115,6 +135,9 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 - [Rango state cookie storage & single invalidation API](../../../docs/design/rango-state-cookie.md) -
   moving the rango state from localStorage to a session cookie and collapsing
   cache invalidation to `invalidateClientCache()` / `keepClientCache()`
+- [Shallow navigation](./design/shallow-navigation.md) - client-only URL
+  updates that skip server RSC revalidation, via `revalidate: false` on
+  `<Link>` / `navigate()` (implemented)
 
 ## Internal Reference
 
@@ -135,6 +158,8 @@ They are useful when changing router semantics, tests, or implementation
 details, but they are not the first stop for learning the public API.
 Completed, superseded, and point-in-time plan/handoff docs are moved to
 [`internal/archive`](./internal/archive) — kept for history, not maintained.
+[`internal/reviews`](./internal/reviews) holds point-in-time review
+snapshots — also kept for history, not maintained.
 
 - [Prerender passthrough action plan](./internal/archive/prerender-passthrough-action-plan.md) (archived)
   - superseded — documents the migration from `{ passthrough: true }` to `Passthrough()` wrapper
