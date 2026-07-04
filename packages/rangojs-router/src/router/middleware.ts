@@ -562,16 +562,16 @@ export async function executeMiddleware<TEnv>(
           // so stub headers and request-context cookies merge identically to an
           // explicit `return new Response(...)`. Segment handlers already follow
           // this convention (segment-resolution/helpers.ts keeps result handling
-          // outside the span). Real errors propagate to the outer catch.
+          // outside the span). Real errors propagate past the span.
           if (error instanceof Response) return error;
           throw error;
         }
       });
-    } catch (error) {
+    } finally {
+      // Settle the middleware own-time metric once on both the success and
+      // error paths (idempotent guard in finishMiddleware).
       finishMiddleware();
-      throw error;
     }
-    finishMiddleware();
 
     // Record post-next() processing time when middleware did work after
     // the downstream chain resolved (e.g. adding headers, logging).
