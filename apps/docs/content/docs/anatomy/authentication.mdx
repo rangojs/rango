@@ -1,0 +1,151 @@
+---
+title: Authentication
+description: Built-in customer authentication with better-auth and Shopify Customer Account API OIDC.
+---
+
+The template includes built-in customer authentication using [better-auth](https://www.better-auth.com/) with the Shopify Customer Account API. When configured, customers can sign in via Shopify OIDC, view their profile, order history, and address book.
+
+Authentication is **opt-in via environment variables**. Without them, the storefront works as a guest-only experience and no auth UI is rendered.
+
+## Configuration
+
+Set the feature flag and three server-only secrets:
+
+```bash
+VITE_ENABLE_AUTH="1"
+BETTER_AUTH_SECRET="generate-with-openssl-rand-base64-32"
+SHOPIFY_CUSTOMER_CLIENT_ID="your-customer-client-id"
+SHOPIFY_CUSTOMER_CLIENT_SECRET="your-customer-client-secret"
+```
+
+`VITE_ENABLE_AUTH` gates all auth code — `lib/config.ts` reads it as `import.meta.env.VITE_ENABLE_AUTH === "1"`. The three secrets are server-only and read from `process.env` in `lib/auth/server.ts`; without them better-auth logs a default-secret warning at module load and the Shopify OAuth flow fails at runtime. The flag must use the `VITE_` prefix so Vite exposes its value identically on server and client — probing the server-only secrets directly inside a component causes hydration mismatches once the RSC output is cached.
+
+Generate the auth secret with `openssl rand -base64 32`. The client ID and secret come from Shopify's Customer Account API.
+
+### Shopify Admin setup
+
+1. Enable customer accounts: **Shopify Admin → Settings → Customer accounts → Edit**, choose **Customer accounts**, and Save
+2. Install the **Headless** sales channel from the Shopify App Store — Customer Account API credentials live there, not under Settings
+3. Go to **Sales channels → Headless → (your storefront) → Customer Account API**
+4. Set the client type to **Confidential** — the template authenticates with a client secret, so a public (PKCE-only) client will not work. The toggle is at the top of the Customer Account API settings
+5. Set the redirect URI to `{YOUR_DOMAIN}/api/auth/oauth2/callback/shopify`
+6. Copy the client ID and client secret to `SHOPIFY_CUSTOMER_CLIENT_ID` and `SHOPIFY_CUSTOMER_CLIENT_SECRET`
+7. Ensure the store domain matches `SHOPIFY_STORE_DOMAIN`
+
+See [Environment Variables](/docs/reference/env-vars) for the full variable reference.
+
+## How it works
+
+Authentication is built on these modules:
+
+| Module               | Purpose                                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lib/auth/index.ts`  | Universal `isAuthEnabled` flag. Safe to import from server and client code.                                                                                                                                                                                              |
+| `lib/auth/server.ts` | Core better-auth configuration with Shopify OIDC via the `genericOAuth` plugin, plus server-side session helpers: `getCustomerSession()`, `getSession()`, `requireCustomerSession()`, `requireSession()`. Uses React `cache()` for per-request memoization. Server-only. |
+| `lib/auth/client.ts` | Client-side hooks and actions: `useSession()`, `signIn()`, `signOut()`.                                                                                                                                                                                                  |
+
+A response route at `/api/auth/*` (registered in `src/urls.tsx` as `path.any("/api/auth/*", authHandler)` and implemented by `authHandler` in `src/routes/api.tsx`) handles all OAuth callbacks, session management, and token operations by delegating to better-auth's Web-standard `auth.handler(request)`.
+
+### Feature gating
+
+The `isAuthEnabled` flag (from `lib/auth`) reads `auth.enabled` from `lib/config`, which is `import.meta.env.VITE_ENABLE_AUTH === "1"`. When `false`:
+
+- The account icon does not appear in the nav
+- `/account/login` and `/account/*` return 404
+- No auth-related code runs at request time
+
+This means auth infrastructure has zero runtime cost when disabled.
+
+## Routes
+
+Authentication uses Shopify-native URL paths:
+
+| Route                 | Description                                                                 |
+| --------------------- | --------------------------------------------------------------------------- |
+| `/account/login`      | Auto-redirects to Shopify OIDC. Not indexed by search engines.              |
+| `/account`            | Redirects to `/account/profile`.                                            |
+| `/account/profile`    | View and edit the customer's name; email shown read-only.                   |
+| `/account/orders`     | Paginated order history (cursor-based, newest first).                       |
+| `/account/orders/:id` | Order detail: line items, totals, shipping address, and a status-page link. |
+| `/account/addresses`  | Address book with create, edit, delete, and default selection.              |
+
+In `src/urls.tsx` the protected account routes are nested under `layout(AccountLayout, …)` (session-gated in the layout's `AccountGate`), while `/account/login` sits under a separate `layout(LoginLayout, …)` outside the gate — so the auth-gated layout applies to protected pages without blocking login.
+
+## Architecture
+
+### Session flow
+
+1. Customer visits `/account/login` → auto-redirected to Shopify OIDC
+2. After Shopify consent → redirected to `/api/auth/oauth2/callback/shopify`
+3. better-auth exchanges the code for tokens, decodes the ID token, and creates a session
+4. Session stored in an `httpOnly` cookie with PKCE verification
+
+### Logout
+
+Logout is **local-only**. `signOut()` (`lib/auth/client.ts`) calls better-auth's sign-out endpoint to clear the session cookie, then redirects to `/`. The template does **not** call Shopify's OIDC `end_session_endpoint`, so the customer's session at Shopify's identity provider is not terminated — better-auth's `genericOAuth` plugin has no RP-initiated logout support to do this automatically.
+
+The practical consequence: the storefront session ends, but a later **Sign in** can silently re-authenticate via SSO with no credential prompt. This is fine for most storefronts but surprising on a shared device. It also means the **Logout URI** configured in the Customer Account API settings is unused.
+
+To fully end the Shopify session, implement RP-initiated logout: redirect the customer to the provider's `end_session_endpoint` (from the OIDC discovery document) with `id_token_hint` and a `post_logout_redirect_uri`. That redirect URI must be registered exactly in the Customer Account API **Logout URI** setting — Shopify does not support wildcard logout URIs, so each one (including any preview domains) must be added explicitly.
+
+### Nav account icon
+
+The nav uses a fixed-size container (`size-5`) with the fallback icon rendered inline and the async `NavAccount` component positioned absolutely on top via Suspense. This ensures the icon space is always reserved and there is no layout shift when the Suspense boundary resolves.
+
+### Server-side usage
+
+```ts
+import { getCustomerSession, requireSession } from "@/lib/auth/server";
+
+// In a server component — returns null if not authenticated
+const session = await getCustomerSession();
+
+// In a protected page — redirects to /account/login if not authenticated
+const session = await requireSession();
+// session.accessToken is available for Customer Account API calls
+```
+
+### Client-side usage
+
+```ts
+"use client";
+import { useSession, signIn, signOut } from "@/lib/auth/client";
+
+function AccountMenu() {
+  const { loading, authenticated, customer } = useSession();
+
+  if (loading) return null;
+  if (!authenticated) return <button onClick={() => signIn()}>Sign in</button>;
+  return <button onClick={() => signOut()}>Sign out</button>;
+}
+```
+
+### Account data
+
+The account pages read and write customer data through the Shopify Customer Account API — a separate GraphQL endpoint and schema from the Storefront API.
+
+| Module                               | Purpose                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/shopify/customer-account.ts`    | `customerAccountFetch()` — POSTs to `https://shopify.com/{shopId}/account/customer/api/{version}/graphql` (the `shopId` is derived from the OIDC discovery document's `issuer` and cached) with the customer's access token as the raw `Authorization` header (no `Bearer` prefix). The endpoint is **not** on the storefront domain. |
+| `lib/shopify/operations/customer.ts` | Queries (profile, orders, order detail, addresses) and mutations (address create/update/delete, profile update). Each call resolves the token via `requireSession()`.                                                                                                                                                                 |
+| `lib/shopify/transforms/customer.ts` | Maps Customer Account API responses to the provider-agnostic domain types in `lib/types.ts`.                                                                                                                                                                                                                                          |
+| `lib/customer/action.ts`             | `"use server"` actions for the address and profile forms. They validate input, surface Shopify `userErrors`, and call `revalidatePath` (from `@/lib/cache`) on success — a no-op here, since per-session account data is served live and its loaders re-run after the mutating action.                                                |
+
+Order and profile pages are read-only server components wrapped in Suspense. Addresses and profile editing use client forms that call the server actions. Order requests are per-customer `POST`s, so responses are never shared across customers.
+
+Status values (`fulfillmentStatus`, `financialStatus`) are raw Shopify enums (e.g. `FULFILLED`, `PAID`); they're humanized at the display layer rather than stored in locale catalogs.
+
+> The address form collects ISO codes for country (`territoryCode`) and region (`zoneCode`) as plain text inputs. Storefronts that want country/region dropdowns can layer a picker on top — the underlying `CustomerAddressInput` is unchanged.
+
+## Guardrails
+
+- Never expose access tokens to the client — `getSession()` and `requireSession()` are server-only
+- Always call `requireSession()` before any Customer Account API operation
+- The Customer Account API uses a separate GraphQL endpoint from the Storefront API — validate fields with the Shopify schema
+- Session cookies use `httpOnly` and `secure` flags automatically via better-auth
+- PKCE is enabled for the OAuth flow — never disable it
+- `isAuthEnabled` must read a `VITE_` variable — server-only env vars cause hydration mismatches with cached rendering. Don't replace it with an inline `process.env.BETTER_AUTH_SECRET` check
+
+## Extending
+
+To add more account data — store credit, subscriptions, draft orders, or richer order fields — add an operation in `lib/shopify/operations/customer.ts`, a transform in `lib/shopify/transforms/customer.ts`, and a matching domain type in `lib/types.ts`. Validate any new fields against the live Customer Account API schema before adding them. Mutations should run through a `"use server"` action in `lib/customer/action.ts` so input validation and `revalidatePath` stay in one place.

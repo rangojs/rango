@@ -1,0 +1,319 @@
+---
+title: i18n
+description: Locale-prefixed URLs and per-locale message catalogs via use-intl, without Shopify Markets.
+type: guide
+---
+
+## How to use
+
+```bash
+/vercel-shop:enable-i18n
+```
+
+<div className="pb-6" />
+
+{/* BEGIN SKILL CONTENT: enable-i18n */}
+
+# Enable i18n (use-intl, no Markets)
+
+Wire locale-prefixed routing into the template so the storefront serves locale-prefixed URLs (`/en-US/products/foo`), loads per-locale message catalogs, and exposes a locale switcher. The template ships single-locale by default with clean URLs (`/products/foo`) — this skill restores the i18n machinery. Translations run on [`use-intl`](https://www.npmjs.com/package/use-intl) (the framework-agnostic core behind next-intl): server code reads a request-scoped locale context, client components read the same catalog through `LocaleProvider`.
+
+> **Use `enable-shopify-markets` instead** if you want region-aware pricing/inventory/payments. That skill builds on the same routing layer plus Markets-specific operations. If you only want URL prefixing and translated copy, this skill is the right one.
+
+## Source of truth: `lib/i18n/index.ts`
+
+The locale list lives in `lib/i18n/index.ts` as `locales` and `enabledLocales`. **Always read those at the start of the skill** — don't hardcode a list. Adding new locales means editing that file plus the `localeCurrency` map; everything downstream (`localeMiddleware`, sitemap, alternates, switcher) reads from it.
+
+```ts
+// lib/i18n/index.ts — ships single-locale; add locales here to turn on i18n
+export const locales = ["en-US", "en-GB", "de-DE", "fr-FR"] as const;
+
+export type Locale = (typeof locales)[number];
+
+export const defaultLocale: Locale = "en-US";
+export const enabledLocales: readonly Locale[] = locales;
+export const localeSwitchingEnabled = enabledLocales.length > 1;
+```
+
+`isEnabledLocale(value)`, `resolveLocale(value)`, and `getEnabledLocaleOptions()` in the same file are the guards/helpers the middleware and switcher rely on — use them instead of re-deriving the list.
+
+## What this skill turns on
+
+1. Per-locale message loaders in `lib/i18n/runtime.ts` (use-intl catalogs), surfaced to client components by `LocaleProvider` in `lib/i18n/client.tsx`
+2. A `:lang` URL prefix wrapping every page route, mounted with `include("/:lang", …)` in `src/urls.tsx`
+3. `localeMiddleware` (in `src/middleware.ts`, chained via `.use()` in `src/router.tsx`) resolving the locale from the path and redirecting unprefixed requests to the default locale
+4. `lib/params.ts` `getLocale()` returning the request-scoped resolved locale instead of the constant default
+5. Locale-prefixed canonicals + hreflang alternates emitted through the `Meta` handle
+6. Per-locale sitemap entries in `src/routes/machine.tsx`
+7. Locale-aware `text/markdown` content negotiation in `src/middleware.ts`
+8. (If `enable-shopify-menus` already ran) a locale/currency selector in the megamenu
+
+## Caching & routing gotchas — read this first
+
+Rango caches with the `"use cache: <profile>"` directive (profiles defined in `createRouter`, see `src/router.tsx`) and matches routes from the explicit table in `src/urls.tsx`. A few things this skill needs to get right, or you'll cache the wrong locale / 404 clean URLs:
+
+### A. Locale is a cache key via function arguments
+
+The data layer's cached functions (`getProduct({ handle, locale })`, `getCollection({ handle, locale })`, `getCollectionProducts({ …, locale })`, …) already take `locale` as an argument, so each locale variant caches under a distinct key. **Keep passing `locale` in.** Do **not** call `getLocale()` from inside a `"use cache"` function to read the request-scoped context — a cached function must be a pure function of its arguments, so thread the locale as a parameter (the operations already do this).
+
+### B. Resolve the locale once, in middleware
+
+`localeMiddleware` establishes the request-scoped i18n context (locale + messages) in the `AsyncLocalStorage` in `lib/i18n/runtime.ts`. Server code reads it through `getLocale()` / `getTranslations()` / `getMessages()` from `@/lib/i18n/server`. Don't re-derive the locale ad hoc inside components — read it from the context so a single resolution point stays authoritative.
+
+### C. Keep `@/components/link` with unprefixed hrefs
+
+The instinct is to rewrite every `href="/products/foo"` to include the active locale. **Don't.** Internal links use plain, unprefixed hrefs; `localeMiddleware` redirects an unprefixed path (`/products/foo` → `/en-US/products/foo`) to the active locale on navigation. Trade one middleware redirect on cross-locale entry for clean links everywhere.
+
+If you must locale-prefix a URL yourself (canonicals, programmatic redirects), build the path explicitly: `/${await getLocale()}/account/login`.
+
+### D. `redirect()` already narrows
+
+`@/lib/navigation`'s `redirect()` **throws** and is typed `never` (it throws the `Response` returned by Rango's `redirect()`, which the handler pipeline catches and turns into a real HTTP redirect). So control-flow narrowing works:
+
+```ts
+import { redirect } from "@/lib/navigation";
+import { getLocale } from "@/lib/params";
+
+if (!session) redirect(`/${await getLocale()}/account/login`);
+return session; // OK — narrowed to CustomerSession
+```
+
+There is no static-params enumeration to maintain (no `generateStaticParams`): each `/:lang/...` request is matched dynamically and cached per-locale by its `"use cache: <profile>"` result. Adding a locale to `enabledLocales` is all it takes to serve a new prefix.
+
+## Step-by-step
+
+### Step 1: Per-locale message loaders
+
+`lib/i18n/runtime.ts` already backs `getLocale()` / `getTranslations()` / `getMessages()` with an `AsyncLocalStorage` context and a `messageLoaders` map. Add a loader per enabled locale (ship a `messages/<locale>.json` catalog alongside it):
+
+```ts
+// lib/i18n/runtime.ts
+import enMessages from "./messages/en.json";
+
+const messageLoaders: Record<Locale, () => Promise<Messages>> = {
+  "en-US": async () => enMessages,
+  // Add per-locale loaders as you ship catalogs. Missing locales fall back to
+  // the default in loadI18n().
+  // "de-DE": async () => (await import("./messages/de.json")).default as Messages,
+};
+```
+
+The client side (`lib/i18n/client.tsx`) already exposes `useTranslations()` / `useLocale()` and a `LocaleProvider` (backed by `use-intl`'s `IntlProvider`); `RootLayout` passes the resolved `locale` + `messages` into it, so no change is needed there.
+
+### Step 2: Mount every page route under `/:lang`
+
+In `src/urls.tsx`, wrap the localized page tree (the `layout(RootLayout, …)` block) in a `:lang` prefix with `include()`. Machine/SEO and API response routes stay at the root — they read their locale from `?locale=`, not the path.
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+
+// The existing RootLayout + page routes, extracted into their own patterns.
+const localizedPatterns = urls(
+  ({ errorBoundary, layout, notFoundBoundary, path }) => [
+    layout(RootLayout, () => [
+      errorBoundary(() => <ErrorBoundaryContent />),
+      notFoundBoundary(() => <NotFoundContent />),
+      path("/", HomePage, { name: "home" }),
+      path("/products/:handle", ProductPage, { name: "product" }),
+      // …the rest of the page routes, unchanged
+    ]),
+  ],
+);
+
+export const urlpatterns = urls(({ include, path }) => [
+  // `include()` mounts the tree under the prefix. Handlers keep their own
+  // patterns (Handler<"/products/:handle">) and gain `ctx.params.lang` at
+  // runtime from the parent prefix.
+  include("/:lang", localizedPatterns),
+
+  // Machine / SEO + API routes are NOT wrapped — they resolve locale from
+  // `?locale=` and must stay reachable at fixed paths.
+  path.text("/robots.txt", robots, { name: "robots" }),
+  path.any("/sitemap.xml", sitemapIndex, { name: "sitemap" }),
+  path.any("/sitemap/:shard", sitemapShard, { name: "sitemapShard" }),
+  path.any("/llms.txt", llms, { name: "llms" }),
+  path.any("/md/products/:handle", productMarkdown, { name: "mdProduct" }),
+  // …md/*, api/* unchanged
+]);
+```
+
+Handlers don't need their `Handler<"/pattern">` generics changed — the prefix contributes `lang` as an extra runtime param, and pages read the locale via `getLocale()` (Step 4) rather than `ctx.params.lang`.
+
+### Step 3: Resolve the locale from the path in `localeMiddleware`
+
+`src/middleware.ts` ships a single-locale `localeMiddleware` that always loads `defaultLocale`. Change it to read the first path segment, redirect unprefixed/invalid requests to the default locale, and populate the i18n context with the resolved locale. `redirect()` from `@rangojs/router` returns a `Response`, so returning it from middleware performs the redirect.
+
+```ts
+// src/middleware.ts
+import type { Middleware } from "@rangojs/router";
+import { redirect } from "@rangojs/router";
+
+import { defaultLocale, isEnabledLocale } from "@/lib/i18n";
+import { loadI18n, runWithI18n } from "@/lib/i18n/runtime";
+
+// Paths that are NOT under the `:lang` prefix and must pass through untouched.
+const UNPREFIXED = /^\/(?:api|md|robots\.txt|sitemap|llms\.txt)(?:\/|$|\.)/;
+
+export const localeMiddleware: Middleware = async (ctx, next) => {
+  const { pathname, search } = ctx.url;
+  if (UNPREFIXED.test(pathname)) return next();
+
+  const [first] = pathname.split("/").filter(Boolean);
+  if (!first || !isEnabledLocale(first)) {
+    // No/invalid locale prefix → send to the default locale (bare `/` too).
+    return redirect(
+      `/${defaultLocale}${pathname === "/" ? "" : pathname}${search}`,
+    );
+  }
+
+  const i18n = await loadI18n(first);
+  return runWithI18n(i18n, () => next());
+};
+```
+
+This folds in the former "bare `/` → default locale" fallback: there's no separate unlocalized-root route; the middleware redirect covers it.
+
+### Step 4: `lib/params.ts` returns the resolved locale
+
+`lib/params.ts` `getLocale()` currently returns the constant `defaultLocale`. Point it at the request-scoped context that `localeMiddleware` now populates:
+
+```ts
+// lib/params.ts
+export { getLocale } from "./i18n/server"; // reads the AsyncLocalStorage locale
+```
+
+Every route already imports `getLocale` from `@/lib/params`, so this single change flows the real locale to all pages.
+
+### Step 5: Canonicals + hreflang alternates via the `Meta` handle
+
+There's no `generateMetadata`; routes push metadata through the `Meta` handle (`const meta = ctx.use(Meta)`). Emit a locale-aware canonical plus one `hreflang` alternate per enabled locale using `link` descriptors. A small shared helper keeps it DRY:
+
+```ts
+// lib/seo.ts (new) — call from route handlers after `const meta = ctx.use(Meta)`
+import type { MetaDescriptor } from "@rangojs/router";
+import { siteConfig } from "@/lib/config";
+import { defaultLocale, enabledLocales } from "@/lib/i18n";
+
+// The push function returned by `ctx.use(Meta)`.
+type PushMeta = (descriptor: MetaDescriptor) => void;
+
+// `pathname` is the locale-prefixed request path, e.g. "/en-US/products/foo".
+function stripLocale(pathname: string): string {
+  const [first, ...rest] = pathname.split("/").filter(Boolean);
+  const bare = `/${rest.join("/")}`;
+  return enabledLocales.includes(first as never) ? bare : pathname;
+}
+
+export function applyAlternates(meta: PushMeta, pathname: string): void {
+  const bare = stripLocale(pathname);
+  const href = (locale: string) =>
+    `${siteConfig.url}/${locale}${bare === "/" ? "" : bare}`;
+
+  meta({
+    tagName: "link",
+    rel: "canonical",
+    href: `${siteConfig.url}${pathname}`,
+  });
+  for (const locale of enabledLocales) {
+    meta({
+      tagName: "link",
+      rel: "alternate",
+      hrefLang: locale,
+      href: href(locale),
+    });
+  }
+  meta({
+    tagName: "link",
+    rel: "alternate",
+    hrefLang: "x-default",
+    href: href(defaultLocale),
+  });
+}
+```
+
+Call `applyAlternates(meta, ctx.url.pathname)` in each page handler alongside the existing `meta({ title })` / `meta({ name: "description", content })` calls. (The `Meta` handle dedupes `link:canonical` by key, so a page can safely refine it.)
+
+### Step 6: Internal hrefs — keep `@/components/link`
+
+Per gotcha C, **leave existing `@/components/link` (and `Link` from `@rangojs/router/client`) imports with unprefixed hrefs alone**. `localeMiddleware` redirects unprefixed URLs to the active locale on navigation. The only place to build a locale-prefixed URL by hand is a locale switcher (Step 8) or a programmatic redirect in server code:
+
+```ts
+import { redirect } from "@/lib/navigation";
+import { getLocale } from "@/lib/params";
+
+redirect(`/${await getLocale()}/account/login`);
+```
+
+### Step 7: Sitemap per-locale entries
+
+Edit `src/routes/machine.tsx`. In `renderShard()`, emit one `<url>` per enabled locale and add `<xhtml:link rel="alternate" hreflang="…" href="…" />` siblings inside each `<url>` pointing at the other locale variants. Add `xmlns:xhtml="http://www.w3.org/1999/xhtml"` to the `<urlset>` opening tag in `urlsetWrap()`.
+
+```ts
+// src/routes/machine.tsx
+import { enabledLocales } from "@/lib/i18n";
+
+function localizePath(locale: string, pathname: string): string {
+  return pathname === "/" ? `/${locale}` : `/${locale}${pathname}`;
+}
+
+// Inside renderShard(): for each item, for each locale, emit a <url> whose <loc>
+// is the localized path plus an <xhtml:link> alternate per locale.
+```
+
+`sitemapIndex` (the index) doesn't need locale handling — it only lists shard URLs, which stay locale-agnostic.
+
+### Step 8: Locale-aware markdown content negotiation
+
+`markdownNegotiationMiddleware` in `src/middleware.ts` matches `text/markdown` requests against `/products/:handle`, `/collections/:handle`, `/search` and serves the corresponding `/md/*` handler. Now that page paths carry a `:lang` prefix, allow an optional leading locale segment and pass it through as `?locale=` (the `/md/*` handlers read locale from the query, via `localeFrom(url)`):
+
+```ts
+// src/middleware.ts — allow an optional leading locale in the negotiation regexes
+const MARKDOWN_ROUTES = [
+  {
+    handler: productMarkdown,
+    re: /^(?:\/[a-z]{2}-[A-Z]{2})?\/products\/([^/]+)\/?$/,
+  },
+  {
+    handler: collectionMarkdown,
+    re: /^(?:\/[a-z]{2}-[A-Z]{2})?\/collections\/([^/]+)\/?$/,
+  },
+  { handler: searchMarkdown, re: /^(?:\/[a-z]{2}-[A-Z]{2})?\/search\/?$/ },
+];
+```
+
+When a locale is present in the path, forward it on the synthesized request's URL (`?locale=<lang>`) so the markdown builder's `getTranslations()` resolve the right catalog.
+
+### Step 9: `<html lang>` in `src/document.tsx`
+
+The document shell (`src/document.tsx`) hardcodes `<html lang="en">`. This is a `"use client"` shell rendered above the locale providers, so making the attribute reflect the URL locale is optional and cosmetic — it does **not** affect translations or metadata (those flow through the request-scoped context and the `Meta` handle). If you want the attribute to match, thread the resolved locale into the shell where it is rendered on the server; otherwise leave it as the default.
+
+### Step 10: (Conditional) Locale/currency selector in the megamenu
+
+Only if the `enable-shopify-menus` skill has already run and a megamenu exists. Build the selector from `getEnabledLocaleOptions()` (server) in `@/lib/i18n` and the client `useLocale()` / `usePathname()` hooks (from `@/lib/i18n/client` and `@/lib/navigation`); to switch locale, swap the first path segment and navigate with `useRouter()`. Wire it into both the desktop and mobile megamenu. It only renders when `localeSwitchingEnabled` is true (more than one enabled locale).
+
+## Verifying
+
+After applying:
+
+```bash
+pnpm build         # vite build → .vercel/output; routes serve under /en-US, /en-GB, etc.
+pnpm dev           # then, against the dev server:
+curl -I /          # → redirect to /en-US
+curl -I /products  # → redirect to /en-US/products
+curl /sitemap.xml             # → sitemapindex listing shards
+curl /sitemap/products-1.xml  # → entries with /en-US/... URLs + xhtml:link alternates
+curl /en-US        # → 200 storefront HTML
+```
+
+Smoke-test checklist:
+
+- [ ] Build passes
+- [ ] Bare `/` redirects to the default locale
+- [ ] Each enabled locale serves 200 at its prefix
+- [ ] `getLocale()` returns the URL's locale (translations + metadata follow it)
+- [ ] Sitemap emits one entry per locale per page, with hreflang alternates
+- [ ] Canonical + hreflang alternates appear in page `<head>`
+- [ ] Unprefixed internal links from existing `@/components/link` calls redirect (one extra hop, but correct)
+
+{/* END SKILL CONTENT: enable-i18n */}

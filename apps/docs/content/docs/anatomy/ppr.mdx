@@ -1,0 +1,48 @@
+---
+title: Partial prerendering
+description: Public pages serve instantly from a cached HTML shell while per-user widgets stay live - the ppr route option, live-lane loaders, and shell invalidation.
+type: guide
+---
+
+Public storefront pages are served from a cached HTML **shell**: the router flushes the prerendered page bytes before any render work happens, then resumes rendering for just the live regions ("holes"). The browser sees one ordinary streamed document; per-user data stays fresh on every request.
+
+The response header `x-rango-shell: HIT | MISS` shows whether a request was served from a shell. A `MISS` renders normally and schedules a background capture, so the second visit to a page is typically a `HIT`.
+
+## Which routes opt in
+
+The `ppr` route option in `src/urls.tsx` is the whole opt-in:
+
+```tsx
+path("/", HomePage, { name: "home", ppr: true }),
+path("/products/:handle", ProductPage, { name: "product", ppr: true }),
+```
+
+Home, about, the collection pages, and the product page serve from shells. Cart, search, and the account pages render per-request content and stay on the default render path — a route without `ppr` is completely untouched.
+
+## What bakes, what stays live
+
+Everything the page renders from shared data — layout chrome, product data fetched through the cached Shopify data layer, static copy — is baked into the shell. Two kinds of regions stay live:
+
+**The nav widgets (cart, account).** Both read request identity (the cart cookie, session headers), which must never end up in a shell shared by every visitor. They live on parallel slots whose loaders are registered behind `loading()` — the "live lane": masked during shell capture, run fresh on every request, and streamed into a widget-sized hole. See [Navigation](/docs/anatomy/navigation).
+
+**Suspense regions over pending data.** A promise that is still pending at capture time postpones its boundary and becomes a hole — the product page's variant stream works this way with no extra configuration.
+
+The router enforces the identity rule: `cookies()` or `headers()` read anywhere that would bake refuses the capture, and the route simply stays on the normal render path (with a one-time console warning naming the offender).
+
+## Invalidation
+
+Captured shells automatically carry the cache tags recorded while shell material rendered — the same `collection-<handle>`, `products`, and `menus` tags the Shopify data layer sets in its `"use cache"` functions. The [Shopify webhook](/docs/anatomy/webhooks) calls `revalidateTag()` on catalog changes, which drops the affected shells along with the data entries; the next request recaptures.
+
+In production the cache store is namespaced by deployment (`VERCEL_DEPLOYMENT_ID`), so every deploy starts from a clean slate. In dev, the in-memory store is replaced whenever an edit re-executes the module graph, so HMR edits never serve stale shells.
+
+## Cache store
+
+Shells live in the app-level cache store configured in `src/router.tsx`: the Vercel Runtime Cache in production, an in-memory store in dev. The store factory runs per request, so the dev store is created once at module scope — a store created inside the factory would start empty on every request and could never serve a shell.
+
+## Key files
+
+| File                        | Purpose                                        |
+| --------------------------- | ---------------------------------------------- |
+| `src/urls.tsx`              | `ppr` route options and the nav parallel slots |
+| `src/router.tsx`            | Cache store configuration (shell storage)      |
+| `components/nav/loaders.ts` | Live-lane loaders for the per-user nav widgets |
