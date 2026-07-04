@@ -169,7 +169,8 @@ const inFlightCaptures = new Set<string>();
 
 /**
  * Refused-capture backoff bounds. The window is EXPONENTIAL in the consecutive
- * failure count: `min(BASE * 2^(failures-1), MAX)` — 1s, 2s, 4s, … capped at 60s.
+ * failure count: `min(BASE * 2^(failures-1), ceiling)` — 1s, 2s, 4s, … up to the
+ * mode's ceiling (60s in production, {@link REFUSED_CAPTURE_DEV_MAX_MS} in dev).
  *
  * Why exponential and not a flat 60s: a flat long window conflates two very
  * different failures. A STRUCTURALLY ineligible route (no loading(), a cookie
@@ -179,11 +180,43 @@ const inFlightCaptures = new Set<string>();
  * request or two, not be frozen for 60s (that would re-break the very cold-start DX
  * the retry fixes; it bit the cloudflare dev e2e). Escalating from 1s means the
  * eligible route re-probes almost immediately (warm now → HIT and clear), while the
- * doomed route ramps to the 60s cap within a handful of failures. Either way an
+ * doomed route ramps to the ceiling within a handful of failures. Either way an
  * app-wide mount never re-renders a doomed route on EVERY request.
  */
 const REFUSED_CAPTURE_BASE_MS = 1_000;
 const REFUSED_CAPTURE_MAX_MS = 60_000;
+
+/**
+ * DEV-only backoff ceiling. In dev the 60s production cap is pure harm: the
+ * dominant no-shell cause is a COLD module graph (route modules, SSR/Flight
+ * transforms built lazily), and the very attempt that failed WARMS that graph, so
+ * the next attempt a beat later usually completes the shell. Capping the dev window
+ * low keeps a cold-but-eligible route re-probing every ~2s instead of freezing for
+ * up to 60s once the exponential climbs (1s→2s→4s→…→60s). A 60s freeze outlasts the
+ * e2e warm windows on cold CI runners: the capture races an unfinished shell,
+ * escalates the backoff past the poll window, and every subsequent request inside
+ * that window is skipped as backed-off — an eternal MISS for the test even though
+ * the modules are warm by then. Production keeps the full 60s cap: there the
+ * no-shell cause is far more likely to be a genuinely ineligible route (no
+ * loading()), which SHOULD be re-probed rarely. See #652 (item 3) and
+ * docs/design/ppr-shell-resume.md ("Refused-capture backoff").
+ */
+const REFUSED_CAPTURE_DEV_MAX_MS = 2_000;
+
+/**
+ * Dev signal, matching the rest of the RSC runtime (handler.ts, server-action.ts,
+ * progressive-enhancement.ts): treat anything but an explicit production build as
+ * dev. The build folds `process.env.NODE_ENV` to a literal, so this is a compile-
+ * time constant in the shipped worker — no runtime probe.
+ */
+function isDevMode(): boolean {
+  return process.env.NODE_ENV !== "production";
+}
+
+/** The active backoff ceiling for the current mode (dev capped low, prod at 60s). */
+function refusedCaptureCeilingMs(): number {
+  return isDevMode() ? REFUSED_CAPTURE_DEV_MAX_MS : REFUSED_CAPTURE_MAX_MS;
+}
 
 /**
  * Refused-capture backoff: key -> { consecutive failure count, epoch ms until which
@@ -203,12 +236,19 @@ function isCaptureBackedOff(key: string): boolean {
   return Date.now() < entry.until;
 }
 
-/** Record a refused/failed capture, escalating the backoff window exponentially. */
+/**
+ * Record a refused/failed capture, escalating the backoff window exponentially up
+ * to the current mode's ceiling. The failure count keeps climbing across attempts
+ * (so a genuinely doomed route still ramps toward its cap), but the WINDOW is
+ * clamped: 60s in production, {@link REFUSED_CAPTURE_DEV_MAX_MS} in dev so a
+ * cold-but-eligible route re-probes fast instead of freezing out the e2e warm
+ * window on a cold CI runner (#652 item 3).
+ */
 function markCaptureBackoff(key: string): void {
   const failures = (refusedCaptures.get(key)?.failures ?? 0) + 1;
   const window = Math.min(
     REFUSED_CAPTURE_BASE_MS * 2 ** (failures - 1),
-    REFUSED_CAPTURE_MAX_MS,
+    refusedCaptureCeilingMs(),
   );
   refusedCaptures.set(key, { failures, until: Date.now() + window });
 }
@@ -895,3 +935,17 @@ async function captureAndStoreShell(
 
 // Exported for unit tests that drive the capture core directly.
 export { runShellCapture, captureAndStoreShell };
+
+// Exported for unit tests that pin the refused-capture backoff policy directly
+// (dev cap vs production exponential growth, stored-clears, cold-start re-probe).
+// These are the same module-level functions the schedule path uses; a test that
+// drove them through a real capture round-trip could not assert the exact window
+// arithmetic without a full cold render.
+export {
+  isCaptureBackedOff,
+  markCaptureBackoff,
+  clearCaptureBackoff,
+  REFUSED_CAPTURE_BASE_MS,
+  REFUSED_CAPTURE_MAX_MS,
+  REFUSED_CAPTURE_DEV_MAX_MS,
+};
