@@ -1,6 +1,6 @@
 ---
 name: vercel
-description: Deploy a Rango app to Vercel Functions (Build Output API v3)
+description: Deploy a Rango app to Vercel Functions (Build Output API v3). Use when deploying a Rango app to Vercel, or asking how the router works with Vercel Functions and the Build Output API.
 argument-hint:
 ---
 

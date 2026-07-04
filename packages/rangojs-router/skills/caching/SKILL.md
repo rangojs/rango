@@ -1,6 +1,6 @@
 ---
 name: caching
-description: Configure segment caching with memory or Cloudflare KV stores in @rangojs/router
+description: Configure route/segment-subtree caching with memory, Cloudflare KV, or Vercel cache stores in @rangojs/router. Use when responses should be cached or revalidated, data is stale or not updating after code changes, or you are wiring up a cache store.
 argument-hint: "[setup]"
 ---
 
@@ -13,6 +13,16 @@ argument-hint: "[setup]"
 > supports SWR for response and `"use cache"` item entries, but its
 > route-segment entries expire at TTL with no background revalidation — use
 > `CFCacheStore` for real segment SWR. See `/cache-guide`.
+
+## Not this skill if…
+
+- You want to cache ONE function or component's return value — that is
+  `"use cache"`: see `/use-cache`.
+- You want the whole HTTP response frozen at the edge, loader output included —
+  see `/document-cache`.
+- You want the HTML shell cached while loaders stay live per request — see
+  `/ppr`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## cache() is Partial Prerendering (PPR)
 

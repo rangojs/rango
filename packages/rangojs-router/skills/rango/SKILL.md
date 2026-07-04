@@ -1,6 +1,6 @@
 ---
 name: rango
-description: Overview of @rangojs/router and available skills
+description: Overview of @rangojs/router and available skills. Use when unsure which skill to reach for, starting a new task in a Rango app, or asking "what can this router do".
 argument-hint:
 ---
 

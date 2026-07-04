@@ -55,6 +55,12 @@ jobs:
       - name: Check positioning-doc API references
         run: pnpm check:docs-api
 
+      - name: Check skills frontmatter and cross-references
+        run: pnpm check:skills
+
+      - name: Check skills catalog is current
+        run: pnpm check:skills-catalog
+
   format:
     needs: [debounce]
     runs-on: ubuntu-latest

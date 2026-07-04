@@ -1,6 +1,6 @@
 ---
 name: ppr
-description: PPR shell caching — opt a page route in with the `ppr` path option; the router serves the cached HTML shell instantly and resumes the live holes
+description: PPR shell caching — opt a page route in with the `ppr` path option; the router serves the cached HTML shell instantly and resumes the live holes. Use when a page should render instantly from a cached shell while specific parts stay live, or asking about partial prerendering in Rango.
 argument-hint: "[setup]"
 ---
 
@@ -16,6 +16,14 @@ and every ineligible request falls open to it.
 Compare `/document-cache`, which freezes the WHOLE response including loader
 output. Shell caching is for pages that mix a stable shell with live data: the
 shell is shared per host+URL, the holes are per request.
+
+## Not this skill if…
+
+- You want the WHOLE response frozen, loader output included — see
+  `/document-cache`.
+- You want routes rendered at build time with `Static()`/`Prerender()` — the
+  `ppr` path option captures at runtime; see `/prerender`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## Setup: one path option, no middleware
 
