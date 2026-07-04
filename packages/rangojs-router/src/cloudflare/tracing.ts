@@ -39,7 +39,7 @@ import { _getRequestContext } from "../server/request-context.js";
 import {
   type RouterTracingConfig,
   type SpanRunner,
-  type TracePhaseToggles,
+  type TracingToggleOptions,
   NOOP_TRACE_SPAN,
 } from "../router/tracing.js";
 
@@ -57,13 +57,12 @@ interface CloudflareTracing {
   enterSpan<T>(name: string, callback: (span: CloudflareSpan) => T): T;
 }
 
-/** Options for createCloudflareTracing. */
-export interface CloudflareTracingOptions {
-  /** Master switch. Defaults to true. */
-  enabled?: boolean;
-  /** Per-phase span toggles. Omitted phases default to enabled. */
-  spans?: TracePhaseToggles;
-}
+/**
+ * Options for createCloudflareTracing. Alias of the shared
+ * {@link TracingToggleOptions} (`enabled` master switch + per-phase `spans`
+ * toggles); the name is public API.
+ */
+export type CloudflareTracingOptions = TracingToggleOptions;
 
 /**
  * Resolve the per-request Cloudflare tracer from the active execution context.

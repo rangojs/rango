@@ -308,6 +308,7 @@ export type {
   RouterTracingConfig,
   TracePhase,
   TracePhaseToggles,
+  TracingToggleOptions,
 } from "./router/tracing.js";
 
 // Timeout types and error class

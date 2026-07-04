@@ -41,6 +41,106 @@ import {
 } from "./telemetry.js";
 import { _getRequestContext } from "../server/request-context.js";
 
+/**
+ * Per-call telemetry lifecycle emitter for match()/matchPartial(). Each method
+ * reproduces the exact event object the two functions used to emit inline and is
+ * gated on the same per-call flag (`enabled` = the request's `emitTelemetry`), so
+ * a PPR shell-capture run (enabled=false) emits nothing while a foreground run
+ * emits byte-identical events. Extracted so the two transactions can't drift;
+ * pinned by thrown-response-telemetry.test.ts and
+ * shell-capture-telemetry-suppression.test.ts.
+ */
+interface LifecycleEmitter {
+  start(): void;
+  end(segmentCount: number, cacheHit: boolean): void;
+  cacheDecision(
+    routeKey: string,
+    state: {
+      cacheHit: boolean;
+      cacheSource?: "runtime" | "prerender";
+      shouldRevalidate?: boolean;
+    },
+    segments: CacheSegmentSignal[],
+  ): void;
+  error(error: Error, phase: string): void;
+}
+
+function createLifecycleEmitter(args: {
+  enabled: boolean;
+  sink: TelemetrySink;
+  requestId: string | undefined;
+  method: string;
+  pathname: string;
+  transaction: "match" | "matchPartial";
+  isPartial: boolean;
+  matchStart: number;
+}): LifecycleEmitter {
+  return {
+    start(): void {
+      if (!args.enabled) return;
+      safeEmit(args.sink, {
+        type: "request.start",
+        timestamp: args.matchStart,
+        requestId: args.requestId,
+        method: args.method,
+        pathname: args.pathname,
+        transaction: args.transaction,
+        isPartial: args.isPartial,
+      });
+    },
+    end(segmentCount: number, cacheHit: boolean): void {
+      if (!args.enabled) return;
+      safeEmit(args.sink, {
+        type: "request.end",
+        timestamp: performance.now(),
+        requestId: args.requestId,
+        method: args.method,
+        pathname: args.pathname,
+        transaction: args.transaction,
+        durationMs: performance.now() - args.matchStart,
+        segmentCount,
+        cacheHit,
+      });
+    },
+    cacheDecision(
+      routeKey: string,
+      state: {
+        cacheHit: boolean;
+        cacheSource?: "runtime" | "prerender";
+        shouldRevalidate?: boolean;
+      },
+      segments: CacheSegmentSignal[],
+    ): void {
+      if (!args.enabled) return;
+      safeEmit(args.sink, {
+        type: "cache.decision",
+        timestamp: performance.now(),
+        requestId: args.requestId,
+        pathname: args.pathname,
+        routeKey,
+        hit: state.cacheHit,
+        shouldRevalidate: !!state.shouldRevalidate,
+        source: state.cacheSource,
+        segments,
+      });
+    },
+    error(error: Error, phase: string): void {
+      if (!args.enabled) return;
+      safeEmit(args.sink, {
+        type: "request.error",
+        timestamp: performance.now(),
+        requestId: args.requestId,
+        method: args.method,
+        pathname: args.pathname,
+        transaction: args.transaction,
+        error,
+        phase,
+        durationMs: performance.now() - args.matchStart,
+      });
+    },
+  };
+}
+
 export interface MatchHandlerDeps<TEnv = any> {
   buildRouterContext: () => RouterContext<TEnv>;
   callOnError: (error: unknown, phase: ErrorPhase, context: any) => void;
@@ -176,34 +276,22 @@ export function createMatchHandlers<TEnv = any>(
           const pathname =
             _getRequestContext()?.url?.pathname ??
             new URL(request.url).pathname;
-          if (emitTelemetry) {
-            safeEmit(telemetry, {
-              type: "request.start",
-              timestamp: matchStart,
-              requestId,
-              method: request.method,
-              pathname,
-              transaction: "match",
-              isPartial: false,
-            });
-          }
+          const emitter = createLifecycleEmitter({
+            enabled: emitTelemetry,
+            sink: telemetry,
+            requestId,
+            method: request.method,
+            pathname,
+            transaction: "match",
+            isPartial: false,
+            matchStart,
+          });
+          emitter.start();
 
           const result = await createMatchContextForFull(request, env);
 
           if ("type" in result && result.type === "redirect") {
-            if (emitTelemetry) {
-              safeEmit(telemetry, {
-                type: "request.end",
-                timestamp: performance.now(),
-                requestId,
-                method: request.method,
-                pathname,
-                transaction: "match",
-                durationMs: performance.now() - matchStart,
-                segmentCount: 0,
-                cacheHit: false,
-              });
-            }
+            emitter.end(0, false);
             return {
               segments: [],
               matched: [],
@@ -223,33 +311,9 @@ export function createMatchHandlers<TEnv = any>(
             if (hasTelemetry || cacheSignalEnabled) {
               const signalSegments = buildSignal(ctx.routeKey, state);
               recordSignalIfEnabled(signalSegments);
-              if (emitTelemetry) {
-                safeEmit(telemetry, {
-                  type: "cache.decision",
-                  timestamp: performance.now(),
-                  requestId,
-                  pathname,
-                  routeKey: ctx.routeKey,
-                  hit: state.cacheHit,
-                  shouldRevalidate: !!state.shouldRevalidate,
-                  source: state.cacheSource,
-                  segments: signalSegments,
-                });
-              }
+              emitter.cacheDecision(ctx.routeKey, state, signalSegments);
             }
-            if (emitTelemetry) {
-              safeEmit(telemetry, {
-                type: "request.end",
-                timestamp: performance.now(),
-                requestId,
-                method: request.method,
-                pathname,
-                transaction: "match",
-                durationMs: performance.now() - matchStart,
-                segmentCount: matchResult.segments.length,
-                cacheHit: state.cacheHit,
-              });
-            }
+            emitter.end(matchResult.segments.length, state.cacheHit);
             return matchResult;
           } catch (error) {
             if (error instanceof Response) {
@@ -259,35 +323,13 @@ export function createMatchHandlers<TEnv = any>(
               // result above already emits), never request.error with a
               // synthetic "[object Response]" error. Rethrow so the caller
               // drives the redirect.
-              if (emitTelemetry) {
-                safeEmit(telemetry, {
-                  type: "request.end",
-                  timestamp: performance.now(),
-                  requestId,
-                  method: request.method,
-                  pathname,
-                  transaction: "match",
-                  durationMs: performance.now() - matchStart,
-                  segmentCount: 0,
-                  cacheHit: false,
-                });
-              }
+              emitter.end(0, false);
               throw error;
             }
-            if (emitTelemetry) {
-              safeEmit(telemetry, {
-                type: "request.error",
-                timestamp: performance.now(),
-                requestId,
-                method: request.method,
-                pathname,
-                transaction: "match",
-                error:
-                  error instanceof Error ? error : new Error(String(error)),
-                phase: "routing",
-                durationMs: performance.now() - matchStart,
-              });
-            }
+            emitter.error(
+              error instanceof Error ? error : new Error(String(error)),
+              "routing",
+            );
             callOnError(error, "routing", {
               request,
               url: ctx.url,
@@ -344,17 +386,17 @@ export function createMatchHandlers<TEnv = any>(
             const pathname =
               _getRequestContext()?.url?.pathname ??
               new URL(request.url).pathname;
-            if (emitTelemetry) {
-              safeEmit(telemetry, {
-                type: "request.start",
-                timestamp: matchStart,
-                requestId: partialRequestId,
-                method: request.method,
-                pathname,
-                transaction: "matchPartial",
-                isPartial: true,
-              });
-            }
+            const emitter = createLifecycleEmitter({
+              enabled: emitTelemetry,
+              sink: telemetry,
+              requestId: partialRequestId,
+              method: request.method,
+              pathname,
+              transaction: "matchPartial",
+              isPartial: true,
+              matchStart,
+            });
+            emitter.start();
 
             const ctx = await createMatchContextForPartial(
               request,
@@ -362,19 +404,7 @@ export function createMatchHandlers<TEnv = any>(
               actionContext,
             );
             if (!ctx) {
-              if (emitTelemetry) {
-                safeEmit(telemetry, {
-                  type: "request.end",
-                  timestamp: performance.now(),
-                  requestId: partialRequestId,
-                  method: request.method,
-                  pathname,
-                  transaction: "matchPartial",
-                  durationMs: performance.now() - matchStart,
-                  segmentCount: 0,
-                  cacheHit: false,
-                });
-              }
+              emitter.end(0, false);
               return null;
             }
 
@@ -401,33 +431,9 @@ export function createMatchHandlers<TEnv = any>(
               if (hasTelemetry || cacheSignalEnabled) {
                 const signalSegments = buildSignal(ctx.routeKey, state);
                 recordSignalIfEnabled(signalSegments);
-                if (emitTelemetry) {
-                  safeEmit(telemetry, {
-                    type: "cache.decision",
-                    timestamp: performance.now(),
-                    requestId: partialRequestId,
-                    pathname,
-                    routeKey: ctx.routeKey,
-                    hit: state.cacheHit,
-                    shouldRevalidate: !!state.shouldRevalidate,
-                    source: state.cacheSource,
-                    segments: signalSegments,
-                  });
-                }
+                emitter.cacheDecision(ctx.routeKey, state, signalSegments);
               }
-              if (emitTelemetry) {
-                safeEmit(telemetry, {
-                  type: "request.end",
-                  timestamp: performance.now(),
-                  requestId: partialRequestId,
-                  method: request.method,
-                  pathname,
-                  transaction: "matchPartial",
-                  durationMs: performance.now() - matchStart,
-                  segmentCount: matchResult.segments.length,
-                  cacheHit: state.cacheHit,
-                });
-              }
+              emitter.end(matchResult.segments.length, state.cacheHit);
               return matchResult;
             } catch (error) {
               flushRevalidationTrace();
@@ -436,35 +442,13 @@ export function createMatchHandlers<TEnv = any>(
                 // gate) is a COMPLETED request, not an error: emit request.end
                 // (parity with match()), never request.error. Rethrow so the
                 // caller drives the redirect.
-                if (emitTelemetry) {
-                  safeEmit(telemetry, {
-                    type: "request.end",
-                    timestamp: performance.now(),
-                    requestId: partialRequestId,
-                    method: request.method,
-                    pathname,
-                    transaction: "matchPartial",
-                    durationMs: performance.now() - matchStart,
-                    segmentCount: 0,
-                    cacheHit: false,
-                  });
-                }
+                emitter.end(0, false);
                 throw error;
               }
-              if (emitTelemetry) {
-                safeEmit(telemetry, {
-                  type: "request.error",
-                  timestamp: performance.now(),
-                  requestId: partialRequestId,
-                  method: request.method,
-                  pathname,
-                  transaction: "matchPartial",
-                  error:
-                    error instanceof Error ? error : new Error(String(error)),
-                  phase: actionContext ? "action" : "revalidation",
-                  durationMs: performance.now() - matchStart,
-                });
-              }
+              emitter.error(
+                error instanceof Error ? error : new Error(String(error)),
+                actionContext ? "action" : "revalidation",
+              );
               callOnError(error, actionContext ? "action" : "revalidation", {
                 request,
                 url: ctx.url,

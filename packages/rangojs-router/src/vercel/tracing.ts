@@ -44,15 +44,15 @@ import {
 } from "../router/telemetry-otel.js";
 import type {
   RouterTracingConfig,
-  TracePhaseToggles,
+  TracingToggleOptions,
 } from "../router/tracing.js";
 
-/** Options for createVercelTracing. */
-export interface VercelTracingOptions {
-  /** Master switch. Defaults to true. */
-  enabled?: boolean;
-  /** Per-phase span toggles. Omitted phases default to enabled. */
-  spans?: TracePhaseToggles;
+/**
+ * Options for createVercelTracing. Extends the shared
+ * {@link TracingToggleOptions} (`enabled` + per-phase `spans`) with the
+ * Vercel-specific tracer selectors.
+ */
+export interface VercelTracingOptions extends TracingToggleOptions {
   /**
    * OTel instrumentation-scope name passed to `trace.getTracer()`. Defaults to
    * `"rango"`. Ignored when `tracer` is provided.

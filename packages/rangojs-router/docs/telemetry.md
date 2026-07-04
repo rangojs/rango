@@ -116,6 +116,16 @@ store must exist when downstream phases (route matching, rendering, SSR)
 run so they can record their spans. Calling it after `next()` returns
 still emits `handler:total` but misses all upstream metrics.
 
+One offset caveat: a store created mid-request this way anchors its timeline at
+the moment you opt in, not at the true request entry (that entry timestamp is
+handler-local and isn't threaded onto the middleware context). Any phase that
+began before the opt-in — the `handler-*` bootstrap entries, an earlier
+middleware's `:pre` — records a negative start offset that the display clamps to
+`0ms`, so those phases pile up at the timeline origin and their relative ordering
+there is not meaningful. Enable `debugPerformance: true` globally when you need
+faithful offsets for the whole request; the store is then created at handler
+entry with the real start.
+
 ### Server-Timing header
 
 When metrics are enabled, the response includes a `Server-Timing` header
@@ -124,6 +134,7 @@ with every phase encoded as a standard timing entry:
 ```
 Server-Timing: handler-nonce;dur=0.01,
   handler-mw-match;dur=0.03,
+  handler-manifest-cache;dur=0.02,
   handler-ctx-create;dur=0.12,
   handler-classify;dur=0.45,
   d1-middleware-auth-pre;dur=0.02,
@@ -141,9 +152,9 @@ Open Chrome DevTools > Network > click a request > Timing tab to see these
 as a waterfall. Nested metrics (like middleware) use a `d{depth}-` prefix.
 
 Bootstrap handler phases (`handler-nonce`, `handler-mw-match`,
-`handler-ctx-create`, `handler-classify`) are always emitted in the
-`Server-Timing` header, even without `debugPerformance`, to give a baseline
-view of handler overhead on every request.
+`handler-manifest-cache`, `handler-ctx-create`, `handler-classify`) are always
+emitted in the `Server-Timing` header, even without `debugPerformance`, to give
+a baseline view of handler overhead on every request.
 
 ### Early SSR setup
 
@@ -309,17 +320,19 @@ All events include a `timestamp` (from `performance.now()`) and an optional
 `requestId` extracted from request headers. The router checks
 `x-rsc-router-request-id`, `x-request-id`, and `cf-ray` (in that order).
 
-| Event                   | Lifecycle                                            |
-| ----------------------- | ---------------------------------------------------- |
-| `request.start`         | Emitted when a request enters the router             |
-| `request.end`           | Emitted when a request completes successfully        |
-| `request.error`         | Emitted when a request fails with an unhandled error |
-| `loader.start`          | Emitted when a loader begins execution               |
-| `loader.end`            | Emitted when a loader completes (success or failure) |
-| `loader.error`          | Emitted when a loader throws an error                |
-| `handler.error`         | Emitted on handler or segment render failure         |
-| `cache.decision`        | Emitted when a cache lookup result is determined     |
-| `revalidation.decision` | Emitted when a segment revalidation decision is made |
+| Event                     | Lifecycle                                             |
+| ------------------------- | ----------------------------------------------------- |
+| `request.start`           | Emitted when a request enters the router              |
+| `request.end`             | Emitted when a request completes successfully         |
+| `request.error`           | Emitted when a request fails with an unhandled error  |
+| `loader.start`            | Emitted when a loader begins execution                |
+| `loader.end`              | Emitted when a loader completes (success or failure)  |
+| `loader.error`            | Emitted when a loader throws an error                 |
+| `handler.error`           | Emitted on handler or segment render failure          |
+| `cache.decision`          | Emitted when a cache lookup result is determined      |
+| `revalidation.decision`   | Emitted when a segment revalidation decision is made  |
+| `request.timeout`         | Emitted when a configured phase deadline elapses      |
+| `request.origin-rejected` | Emitted when the cross-origin guard rejects a request |
 
 ### Request Events
 
@@ -355,6 +368,12 @@ All events include a `timestamp` (from `performance.now()`) and an optional
   durationMs: 2.1,
 }
 ```
+
+A thrown `Response` from middleware — a redirect or auth gate short-circuit —
+is completed control flow, not a failure. It emits `request.end` with
+`segmentCount: 0` (the same completed-request event the non-thrown redirect
+path emits), never `request.error`, so auth redirects do not inflate error
+counts. `request.error` fires only for a genuine unhandled error.
 
 ### Loader Events
 
@@ -417,8 +436,19 @@ during segment resolution.
   hit: true,
   shouldRevalidate: false,
   source: "runtime" | "prerender",  // optional
+  segments: [                       // optional (CacheSegmentSignal[])
+    { id: "blog:post", type: "route", cacheStatus: "hit", shouldRevalidate: false },
+  ],
 }
 ```
+
+`segments` is present only when telemetry (or the dev-only `X-Rango-Cache`
+debug header) is enabled. In v1 the pipeline tracks cache decisions at the
+route/entry level, not per individual segment, so the array carries a single
+coarse route-level entry keyed by the route key — a `CacheSegmentSignal` whose
+`cacheStatus` (`CacheSegmentStatus`) is one of `"hit"`, `"miss"`, `"stale"`,
+`"prerendered"`, or `"passthrough"`. The shape is forward-compatible with
+genuine per-segment status if the pipeline later exposes it.
 
 ### Revalidation Decision Events
 
@@ -429,6 +459,44 @@ during segment resolution.
   pathname: "/blog/hello",
   routeKey: "blog:post",
   shouldRevalidate: true,
+}
+```
+
+### Request Timeout Events
+
+Emitted when a configured phase deadline elapses (see `RouterTimeouts`). The
+`phase` is the `TimeoutPhase` whose budget was exceeded (`"action"`,
+`"render-start"`, or `"stream-idle"`). `customHandler` reflects whether an
+`onTimeout` handler was configured — `false` means the router served the
+default timeout response.
+
+```typescript
+{
+  type: "request.timeout",
+  phase: "stream-idle",   // TimeoutPhase: "action" | "render-start" | "stream-idle"
+  pathname: "/blog/hello",
+  routeKey: "blog:post",  // optional
+  actionId: "submit",     // optional (present for action-phase timeouts)
+  durationMs: 5000,
+  customHandler: false,   // whether onTimeout was configured
+}
+```
+
+### Origin-Rejected Events
+
+Emitted when the cross-origin guard rejects a state-changing request before it
+runs. The `phase` is the `OriginCheckPhase` the request was classified as
+(`"action"`, `"loader"`, or `"pe-form"`). `origin` and `host` are the compared
+header values (either may be `null` when the header is absent).
+
+```typescript
+{
+  type: "request.origin-rejected",
+  method: "POST",
+  pathname: "/api/submit",
+  phase: "action",        // OriginCheckPhase: "action" | "loader" | "pe-form"
+  origin: "https://evil.example",  // or null when absent
+  host: "myapp.example",           // or null when absent
 }
 ```
 
@@ -711,6 +779,8 @@ import type {
   LoaderEndEvent,
   LoaderErrorEvent,
   HandlerErrorEvent,
+  CacheSegmentStatus,
+  CacheSegmentSignal,
   CacheDecisionEvent,
   RevalidationDecisionEvent,
   RequestTimeoutEvent,

@@ -326,6 +326,7 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - `createCloudflareTracing()` (`@rangojs/router/cloudflare`) — emits Cloudflare custom spans (`rango.*`) by wrapping each phase with `executionContext.tracing.enterSpan`, so they nest by async context and appear next to the platform's automatic KV/D1/fetch spans; import-free (no `cloudflare:workers` import, no `@cloudflare/workers-types` dependency)
 - `createOTelTracing(tracer)` — OpenTelemetry **phase-span** adapter for the `tracing` slot: bridges the phases onto `tracer.startActiveSpan` (callback-bound, faithful async-context nesting). `OTelTracingOptions` (`enabled`, per-phase `spans`)
 - `createVercelTracing()` (`@rangojs/router/vercel`) — thin wrapper over `createOTelTracing` that reads the global OTel tracer `@vercel/otel`'s `registerOTel()` installs (Node runtime only; Vercel custom spans are unsupported on Edge). `VercelTracingOptions` (`enabled`, per-phase `spans`, `tracerName` default `"rango"`, `tracer` override)
+- `TracingToggleOptions` — the shared `{ enabled?, spans? }` option pair (exported from the root). `OTelTracingOptions` and `CloudflareTracingOptions` are aliases of it; `VercelTracingOptions` and `RouterTracingConfig` extend it — so a phase added to `TracePhaseToggles` propagates to every factory from one declaration
 
 ### Dev and HMR
 
