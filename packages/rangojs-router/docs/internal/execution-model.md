@@ -5,6 +5,10 @@ This is the canonical runtime contract for `@rangojs/router`.
 Use this document as the source of truth for request flow, middleware scope,
 segment recomputation, and context visibility.
 
+Guarantees are tagged with the `e2e/semantic-matrix.test.ts` row id that
+pins them (`[S1]`...`[W1]`). A semantic change must update the guarantee,
+its row, and this pairing together.
+
 ## Terminology
 
 - Full render pass: a complete render of the active tree (initial request,
@@ -45,6 +49,9 @@ global middleware
     -> HTML response
 ```
 
+A progressive-enhancement action returns a full HTML document response, not a
+Flight stream. Pinned by the `[P1]` semantic matrix row.
+
 ### 4) Intercept request
 
 ```text
@@ -66,9 +73,17 @@ global middleware
   route handler runs before its child/orphan layouts and parallel children.
 - `ctx.set()` values flow downward through structural scope boundaries only.
 - Loaders are live by default unless explicitly cached via `cache()` in their
-  use params: `loader(Fn, () => [cache({ ttl })])`.
+  use params: `loader(Fn, () => [cache({ ttl })])`. Pinned by the `[C1]`/`[C2]`
+  semantic matrix rows.
 - Route-level `cache()` does not cache loader segments; loaders remain live.
-- Prerendered handlers can be frozen while loaders remain live.
+- A response route wrapped in `cache()` returns the same payload on a
+  follow-up request; an uncached response route re-executes on every request
+  and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.
+- After a cached entry's SWR TTL expires, a request is served the stale value
+  while a background refresh recomputes the entry; a later request sees the
+  fresh value. Pinned by the `[SWR1]` semantic matrix row.
+- Prerendered handlers can be frozen while loaders remain live. Pinned by the
+  `[PR1]` semantic matrix row.
 - Parallel slots with `loading()` are independent streaming units. Their
   loaders run concurrently without blocking the parent layout or sibling
   routes — on SSR (skeleton renders immediately, data streams), on SPA
@@ -233,8 +248,14 @@ Bindings set by route middleware are render-scoped. They are visible to:
 - route handlers, layouts, orphan layouts, and parallel slots
 - loaders (via `getRequestContext()`)
 - async server components during the render pass
-- post-action revalidation renders (route middleware wraps revalidation)
-- PE full rerenders (route middleware wraps the rerender)
+- post-action revalidation renders (route middleware wraps revalidation) —
+  pinned by the `[A1]` semantic matrix row
+- PE full rerenders (route middleware wraps the rerender) — pinned by the
+  `[A2]` semantic matrix row
+
+Initial-render visibility of middleware context vars and cookies to layouts
+and loaders — request scope and render scope alike — is pinned by the `[MW1]`
+semantic matrix row.
 
 Route middleware does **not** wrap action execution. Actions see only
 request-scoped bindings from `router.use(...)`. This is a hard contract
@@ -255,7 +276,12 @@ The variadic form `middleware(fn1, fn2, fn3)` is not supported. Use
 
 Bindings set by intercept middleware are visible only to the intercept
 render path. Direct navigation to the same target route does not execute
-intercept middleware.
+intercept middleware. Pinned by the `[I2]` semantic matrix row.
+
+Soft navigation triggers the intercept only when the route's `when()`
+predicate returns true for the navigation origin; when it returns false, the
+soft navigation renders the full target page with no intercept. Pinned by the
+`[I1]`/`[W1]` semantic matrix rows.
 
 ### Async and streaming limits
 
@@ -384,8 +410,11 @@ layout
 Expected visibility pattern:
 
 - `@sub-panel` can see path-local handler data and outer layout data.
+  Pinned by the `[S1]`/`[S4]` semantic matrix rows.
 - `@orphan-panel` can see outer layout data, not path-local handler data.
+  Pinned by the `[S2]`/`[S5]` semantic matrix rows.
 - layout-level `@panel` can see layout data (handler-first), not path-local handler data.
+  Pinned by the `[S3]`/`[S6]` semantic matrix rows.
 
 ### Cache-safety contract for context variables
 
@@ -488,7 +517,7 @@ should not be treated as equivalent.
   - non-revalidated ancestors do not rerun just to rebuild `ctx.set()` state
   - downstream `ctx.get()` calls therefore see missing/`undefined` upstream
     values unless the producer reruns; the router does not preserve a prior-pass
-    ancestor snapshot for you
+    ancestor snapshot for you — pinned by the `[R1]` semantic matrix row
 - If a child depends on data set by an outer segment:
   - revalidate that outer segment too, or
   - load/guard the data in the child independently.
@@ -566,9 +595,9 @@ urls(({ path, layout }) => [
 
 - Prerender build passes are full render passes.
 - Child layouts/parallels inside the prerendered path can read handler-set data
-  in that same build render pass.
+  in that same build render pass. Pinned by the `[PR1]` semantic matrix row.
 - Runtime passthrough and action revalidation still follow partial revalidation
-  rules.
+  rules. Pinned by the `[PT1]` semantic matrix row.
 
 ## Middleware Placement Guidance
 
