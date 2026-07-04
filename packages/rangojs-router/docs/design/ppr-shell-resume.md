@@ -777,6 +777,57 @@ Serve runs them fresh through the unchanged execution path; `resume` streams
 their output into the frozen shell's holes. Fetchable loaders and refresh
 groups are `_rsc_loader` requests and never touch the PPR serve path.
 
+### Handler-side consumption: the consumption-lane rule
+
+For every shared-artifact capture — `cache()`, `"use cache"`, and the PPR
+shell — HOW a loader is consumed decides its lane:
+
+- **Server-side handler consumption** (`await ctx.use(loader)`) is the BAKED
+  lane. During capture the loader EXECUTES, and its identity reads
+  (`cookies()`/`headers()`) are PERMITTED: the shell guard exempts
+  handler-invoked loader bodies (`assertNotInsideShellCapture` consults
+  `isInsideHandlerInvokedLoaderBody()`, the `handlerInvoked` flag riding the
+  loader-body ALS — set by `useLoader` when the invoking ctx.use ran outside
+  the DSL loader scope, the same discriminator the deadlock guard uses). The
+  value freezes as a capture-time copy wherever it renders as unshielded
+  shell material — a documented footgun, identical to cache()'s existing
+  purity allowance for handler-consumed loader values.
+- **Client-side consumption** (`useLoader` in a `"use client"` component) is
+  the LIVE lane: fresh per request, per visitor.
+- **DSL `loader()` segments** keep their lane machinery unchanged: renderable
+  `loading()` = live (masked at the `resolveLoaderData` funnel), otherwise
+  bake (executes at capture WITH the identity guard active). Corollary worth
+  stating: when a handler consumes a loader that is ALSO registered live-lane
+  on the same subtree (the parallel-slot shape: `loader()+loading()` plus
+  `await ctx.use(...)` in the slot handler), the segment's masked
+  `loaderDataPromise` still pins the slot's LoaderBoundary (segment-system),
+  so the slot stays a LIVE hole — the handler's baked copy is discarded with
+  the postponed subtree; the executed body's only capture-time observable is
+  its side effects.
+
+Pinned by semantic-matrix row `[PPR3]`, `e2e/shell-cache.test.ts` (slot-use
+cases: the unshielded chip BAKES frozen across HITs and visitors; the
+registered live-lane slot stays a fresh hole), and the cache()-tier twin in
+`e2e/cache.test.ts` ("handler ctx.use value is a baked copy"). Stated once in
+`docs/internal/execution-model.md` ("The consumption-lane rule").
+
+History (scar tissue): issue #672 was first fixed by MASKING handler
+consumption (priming the ctx.use memo map with never-settling promises plus a
+handle-store release race). That contradicted the cache() precedent and broke
+cache()-composed fixtures: masking cloudflare-basic's ring-1-cached /ppr-blog
+sidebar left its slot handler pending forever, the capture's ring-3
+cacheRoute write hung Flight-serializing the never-settling component, the
+snapshot drained empty (settleWrites timeout), and every HIT
+hydration-mismatched against the prelude (React #418). The rule replaced the
+machinery outright: handler-consumed loaders settle normally, so captures
+quiesce, ring-3 writes serialize, and snapshots record — no masking special
+cases, no release deferreds.
+
+The identity footgun is the accepted trade: an identity read in a
+handler-consumed loader bakes the CAPTURE request's value into the shared
+shell. Keep identity in client-consumed loaders (live holes) when it must
+stay per-visitor.
+
 Handles are shell material. `SsrRoot` consumes the handles generator to
 completion before rendering anything (`consumeAsyncGenerator` sits above every
 Suspense boundary), so handle data cannot be a hole. Three classes:

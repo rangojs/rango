@@ -32,6 +32,21 @@ Implementation notes (deltas from the sketch below, all deliberate):
   recorded pre-wrap (the wrapper is deterministic), serialized with
   `serializeResult` (null-preserving), and seeded via `_shellLoaderSeed` on
   the HIT tail's derived context.
+- **Handler-side consumption follows the CONSUMPTION-LANE RULE** (issue
+  #672 / #674, post-ship): `await ctx.use(loader)` in a HANDLER executes
+  during capture with identity reads permitted (the shell guard exempts
+  handler-invoked loader bodies — the cache() purity precedent), and the
+  value bakes as a capture-time copy wherever it renders as unshielded shell
+  material. The lane machinery in THIS doc is untouched: it applies to DSL
+  `loader()` SEGMENTS only (renderable loading() = masked live lane; no
+  loading() = bake lane WITH the guard active), and a registered live-lane
+  segment's mask still keeps its boundary a live hole even when a handler
+  also consumes the same loader. An earlier fix MASKED handler consumption
+  instead; it hung the capture's ring-3 cacheRoute serialization on the
+  never-settling slot component (cloudflare-basic /ppr-blog, React #418 on
+  every HIT) and was replaced by the rule. Pinned by semantic-matrix row
+  PPR3. See ppr-shell-resume.md ("Handler-side consumption") and
+  docs/internal/execution-model.md ("The consumption-lane rule").
 - **Settled nested promises pin behind a SETTLED marker, not as raw values**
   (`$rangoLoaderSettled`, added post-ship). The first cut inlined a settled
   nested promise's value directly, so the HIT overlay handed consumers a plain

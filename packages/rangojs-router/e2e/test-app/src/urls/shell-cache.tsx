@@ -6,6 +6,8 @@ import {
   ShellStreamLoader,
   ShellChromeLoader,
   ShellBadgeLoader,
+  ShellSrvBadgeLoader,
+  ShellSrvChipLoader,
   ShellIdentityLoader,
   ShellSettledLoader,
   ShellHandles,
@@ -190,6 +192,49 @@ function ShellSlotHomePage() {
   return <p data-testid="shell-slot-home">Slot home static content</p>;
 }
 
+// Consumption-lane rule (issue #672 / #674): server-side ctx.use consumption
+// during capture — the loader EXECUTES and its cookies() read is exempt from
+// the identity guard (the cache() precedent); no refusal, the routes flip
+// MISS->HIT. Two consumption shapes under one layout pin where the value
+// lands:
+// - @srvBadge: the slot HANDLER consumes a loader that is ALSO registered as
+//   a live-lane segment (loader()+loading()). The segment lane is unchanged
+//   by the rule — its masked loaderData pins the slot's boundary, so the
+//   slot stays a LIVE hole (fallback frozen, value fresh per serve).
+// - the chip: the LAYOUT handler consumes an UNREGISTERED loader and renders
+//   it straight into shell material — the capture-time value (seq + cookie
+//   identity) BAKES into the shared prelude, frozen across HITs and visitors
+//   (the rule's documented footgun; client-side useLoader is the live lane,
+//   see ShellSlotChromeLayout above).
+// Before the rule, the guard tripped on either shape and every route under
+// this layout stuck on x-rango-shell: MISS forever.
+async function ShellSrvSlotLayout(ctx: HandlerContext) {
+  const chip = await ctx.use(ShellSrvChipLoader);
+  return (
+    <main data-testid="shell-srv-slot-page">
+      <p data-testid="shell-srv-slot-chrome">Srv slot chrome static text</p>
+      <span data-testid="shell-srv-chip">{chip}</span>
+      <ParallelOutlet name="@srvBadge" />
+      <Outlet />
+    </main>
+  );
+}
+
+async function ShellSrvBadgeSlot(ctx: HandlerContext) {
+  const value = await ctx.use(ShellSrvBadgeLoader);
+  return <span data-testid="shell-srv-badge">{value}</span>;
+}
+
+function ShellSrvSlotHomePage() {
+  return <p data-testid="shell-srv-slot-home">Srv slot home static content</p>;
+}
+
+function ShellSrvSlotOtherPage() {
+  return (
+    <p data-testid="shell-srv-slot-other">Srv slot other static content</p>
+  );
+}
+
 function ShellBareHomePage() {
   return <p data-testid="shell-bare-home">Bare home static content</p>;
 }
@@ -350,6 +395,32 @@ export const shellCachePatterns = urls(
       }),
       path("/shell-cache/slot-hole", ShellSlotHomePage, {
         name: "shellCacheSlotHole",
+        ppr: true,
+      }),
+    ]),
+    // Server-side slot consumption (issue #672): see ShellSrvSlotLayout above.
+    // TWO sibling ppr routes under ONE slot-owning layout pin that the mask
+    // does not depend on which route is captured.
+    layout(ShellSrvSlotLayout, () => [
+      parallel({
+        "@srvBadge": {
+          handler: ShellSrvBadgeSlot,
+          use: () => [
+            loader(ShellSrvBadgeLoader),
+            loading(
+              <span data-testid="shell-srv-badge-fallback">
+                srv badge pending...
+              </span>,
+            ),
+          ],
+        },
+      }),
+      path("/shell-cache/slot-use", ShellSrvSlotHomePage, {
+        name: "shellCacheSlotUse",
+        ppr: true,
+      }),
+      path("/shell-cache/slot-use/other", ShellSrvSlotOtherPage, {
+        name: "shellCacheSlotUseOther",
         ppr: true,
       }),
     ]),

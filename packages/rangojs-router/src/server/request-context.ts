@@ -221,6 +221,16 @@ export interface RequestContext<
   _shellCaptureGuardTripped?: string;
 
   /**
+   * @internal The loader $$id whose BODY was executing when the capture guard
+   * tripped (read off the loader-body ALS scope at trip time), or undefined
+   * when the read came from handler/render code. Only used to make the
+   * once-per-key refusal warning name the real source — the old text
+   * hardcoded "a bake-lane loader", which misattributed handler-land reads
+   * and sent users debugging the wrong lane (issue #672, secondary).
+   */
+  _shellCaptureGuardTrippedLoaderId?: string;
+
+  /**
    * @internal Handler-owned registry of explicit per-scope stores from
    * cache({ store }). Created once per createRSCHandler() and threaded into
    * every request context, so it accumulates every explicit store the handler
@@ -509,6 +519,7 @@ export type PublicRequestContext<
   | "_transitionWhen"
   | "_cacheStore"
   | "_shellCaptureRun"
+  | "_shellCaptureGuardTrippedLoaderId"
   | "_explicitTaggedStores"
   | "_requestTags"
   | "_cacheProfiles"
