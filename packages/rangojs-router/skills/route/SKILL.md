@@ -479,6 +479,14 @@ urls(({ path, layout }) => [
 ])
 ```
 
+For composing whole route MODULES, reach for `include()` — and prefer the
+code-split form `include("/shop", () => import("./shop-patterns"))` for any
+group that is a natural unit: it keeps the group off the cold-start path, and
+measured first-hit cost scales with routes-per-chunk, so many small groups
+beat one giant one. Sizing rules and the numbers behind them:
+[skills/composability](../composability/SKILL.md) → "Sizing async include
+groups (measured)".
+
 ## View Transitions
 
 A route can configure its own `transition()` — the wrap goes around the route's component itself (routes are leaves; they have no separate default outlet channel). If the route component renders a `<ParallelOutlet />` directly, that slot remains inside the route's VT subtree, so prefer mounting parallel slots in a layout when combining intercept modals with route-level transitions. See [skills/view-transitions](../view-transitions/SKILL.md) for examples and the wrap-location rules across layouts, routes, and slots.

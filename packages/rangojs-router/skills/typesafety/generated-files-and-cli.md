@@ -120,6 +120,36 @@ Do not document or use a public `router.routeNames` API unless one is
 intentionally added. Today, the public extraction surface is `router.routeMap`;
 the generated file and `$$routeNames` are build machinery.
 
+### Typecheck cost when composing many include modules
+
+`urls()` infers a route registry from everything in its array — including the
+module types behind every `include()` thunk, recursively. In an app composing
+MANY include modules (dozens of groups, or factory-produced groups), that
+inference chain can explode: measured on a 26k-route app with 50 nested
+include modules, root inference hit 4.05M type instantiations / 20 s check
+time; the same app checks at ~140k / 3.6 s after widening.
+
+The fix is to annotate the intermediate modules' exports with the wide
+`UrlPatterns` type, which stops per-route literal types from propagating
+upward:
+
+```typescript
+import { urls, type UrlPatterns } from "@rangojs/router";
+
+export const shopPatterns: UrlPatterns<any> = urls(({ path }) => [
+  // ...hundreds of routes
+]);
+export default shopPatterns;
+```
+
+Nothing is lost: named-route typing (`Handler<"name">`, `ctx.reverse`,
+`href`) comes from the generated `router.named-routes.gen.ts`, not from the
+inferred `urls()` type. Keep full inference on modules whose
+`Rango.PathResponse` payloads you assert (e.g. `path.json` response routes);
+widen the big mechanical groups. Use `UrlPatterns<any>` (not
+`UrlPatterns<unknown>` — `unknown` env breaks handler assignability).
+Diagnose with `tsc --extendedDiagnostics` and watch the Instantiations count.
+
 ## Multi-Project tsconfig Setup
 
 For monorepos or multi-app setups, each app should have its own TypeScript

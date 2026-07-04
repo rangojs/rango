@@ -25,6 +25,7 @@ below. Read the one for your case.
 | Typed `search` schemas, `RouteSearchParams`/`RouteParams`, loader return types                                       | Search params & loader typing          | [`./params-and-search.md`](./params-and-search.md)             |
 | Typed `env`/bindings, `Rango.Vars`, `createVar()`, handle typing, loader/handle ref props, location state typing     | Environment, context, and state typing | [`./env-and-bindings.md`](./env-and-bindings.md)               |
 | Multi-app / multi-router tsconfig setup, avoiding `GeneratedRouteMap` collisions                                     | Multi-project setup & full walkthrough | [`./generated-files-and-cli.md`](./generated-files-and-cli.md) |
+| Slow typecheck with many `include()` modules (instantiation blowup), wide `UrlPatterns<any>` annotations             | Typecheck cost at route scale          | [`./generated-files-and-cli.md`](./generated-files-and-cli.md) |
 
 ## Companion files
 
