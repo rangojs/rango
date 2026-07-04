@@ -414,22 +414,22 @@ Differences that matter during migration:
 - **The Suspense/promise model carries over.** As in Next, a still-pending
   promise handed to a component that suspends under its own `<Suspense>`
   postpones at capture and becomes a hole — existing Next PPR trees keep
-  working as-is, no `loading()` required. Two Rango rules on top: data the
-  handler AWAITS (or a promise already resolved at capture) bakes into the
-  shell, and loaders are ALWAYS the live lane — masked at capture, fresh on
-  every serve — with `loading()` as their guaranteed hole. For per-request
-  data prefer loader + `loading()`: it stays live even when the value resolves
-  instantly, where a raw promise would get baked. One requirement: a route
-  that registers a `loader()` MUST also have `loading()` or the shell can
-  never be captured (eternal MISS) — loaderless routes have no such condition.
+  working as-is, no `loading()` required. One container rule everywhere
+  (handlers, handles, loaders): awaited/settled data bakes into the shell; a
+  promise nested inside your data stays a live hole. For loaders, `loading()`
+  selects the lane: present = guaranteed live (masked at capture, fresh every
+  serve, immune to fast resolution — prefer it for per-request data); absent =
+  the bake lane (the settled container bakes and is snapshot-pinned per shell,
+  nested promises stay live). Identity reads (`cookies()`/`headers()`) where
+  the value would bake refuse the capture by construction.
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next
   build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` /
   `revalidateTag()` drop the shell (`revalidate()` does not — it is a data
   lever and never touches shell HTML).
 - **`cookies()`/`headers()` in shell material THROW during capture** (in Next
-  they silently force dynamic rendering). Per-user reads must move into
-  loaders or under a `loading()` hole — the error surfaces at migration time,
-  which is the point.
+  they silently force dynamic rendering). Per-user reads must move behind a
+  `loading()` boundary (the live loader lane) or into a nested promise — the
+  refusal surfaces at migration time, which is the point.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })`
   store to implement the shell family (`MemorySegmentCacheStore`,
   `CFCacheStore`, `VercelCacheStore`). Without one the route quietly stays

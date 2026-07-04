@@ -73,15 +73,18 @@ export const PprShellStreamLoader = createLoader(
         PPR_STREAM_INNER_DELAY_MS,
       ),
     );
-    return { label: "Streamed outer", pendingData };
+    // seq in the label makes the CONTAINER per-execution distinguishable, so
+    // the bake-lane e2e can pin the snapshot overlay (outer seq frozen across
+    // HITs) against the live nested lane (inner seq advancing).
+    return { label: `Streamed outer ${seq}`, pendingData };
   },
 );
 
-// Layout-loader trap fixture (the storefront shape: an app-wide layout
-// registering session/basket-style loaders). Registered on the LAYOUT entry
-// with no loading() there and consumed by NOTHING — registration alone pins
-// the capture: the layout node has loaders and no loading(), so renderSegments
-// awaits them at tree-build and the capture's masked loader never resolves.
+// Layout-loader bake-lane fixture (the storefront shape: an app-wide layout
+// registering session/basket-style loaders, no loading() on the layout).
+// Executes at capture (the gate holds for the 100ms), bakes, and is
+// snapshot-pinned on HITs. Consumed by nothing — the lane decision is
+// registration-level, not consumption-level.
 const PPR_CHROME_DELAY_MS = 100;
 
 let pprChromeSeq = 0;
@@ -92,10 +95,10 @@ export const PprChromeLoader = createLoader(async (): Promise<string> => {
   return `chrome-${pprChromeSeq}`;
 });
 
-// Slot-hole escape fixture: the SAME chrome-data shape as PprChromeLoader, but
-// owned by a @badge parallel slot with its own loading(), so it gets a per-slot
-// LoaderBoundary instead of pinning the layout. seq advances on every execution
-// to prove the badge stays live across shell HITs.
+// Slot live-lane fixture: the SAME chrome-data shape as PprChromeLoader, but
+// owned by a @badge parallel slot with its own loading() — masked at capture,
+// GUARANTEED fresh per serve (where the bake lane would pin it). seq advances
+// on every execution to prove the badge stays live across shell HITs.
 const PPR_BADGE_DELAY_MS = 150;
 
 let pprBadgeSeq = 0;

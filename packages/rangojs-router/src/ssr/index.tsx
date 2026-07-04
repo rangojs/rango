@@ -470,6 +470,13 @@ export function createShellCaptureHandler<TEnv = unknown>(
         reportRenderError(onError, error);
       },
     });
+    // Pre-attach a no-op catch: the real await sits AFTER quiesce + the
+    // post-quiesce hops, so an early prerender rejection (e.g. a bake-lane
+    // loader tripping the identity guard within milliseconds) would otherwise
+    // spend several turns handler-less and crash the worker as an unhandled
+    // rejection. The actual rejection handling still happens at the await
+    // below; this parallel handler only keeps the gap crash-free.
+    prerenderPromise.catch(() => {});
 
     // Wait for the caller's quiesce signal. By the time it resolves the Flight
     // input is byte-quiet and FROZEN by the capture gate (shell-capture.ts

@@ -188,6 +188,39 @@ export interface RequestContext<
   _shellCaptureRun?: boolean;
 
   /**
+   * @internal Bake-lane loader containers collected DURING a shell capture:
+   * segment-key -> the loader's (pre-wrap) result promise. Populated by
+   * resolveLoaderData for loaders on entries with no renderable loading() (the
+   * bake lane — they execute at capture instead of being masked; see
+   * docs/design/loader-container-bake.md). Drained by captureAndStoreShell
+   * after the shell quiesces: settled containers are promise-elided,
+   * Flight-serialized, and pinned into the snapshot's loader family; a
+   * REJECTED container refuses the capture (error UI must never bake into the
+   * shared shell). Own property of the capture's derived context only.
+   */
+  _shellCaptureLoaderRecords?: Map<string, Promise<unknown>>;
+
+  /**
+   * @internal Loader-family snapshot seed for a shell HIT's tail render:
+   * segment-key -> the capture's elided container (already Flight-deserialized
+   * by serveShellHit). resolveLoaderData overlays it onto the fresh run's
+   * container (recorded paths pinned, hole-marker paths keep the fresh nested
+   * promises) so the payload's baked bytes match the frozen prelude. Own
+   * property of the HIT tail's derived context only.
+   */
+  _shellLoaderSeed?: Map<string, unknown>;
+
+  /**
+   * @internal Set (to the offending fn name) by the cookies()/headers()
+   * capture guard when it throws DURING a capture render. Load-bearing for the
+   * bake lane: a guard throw inside an executing loader is swallowed by
+   * wrapLoaderPromise into per-loader error UI, which would otherwise bake
+   * silently into the shared shell — the capture checks this flag after the
+   * render and refuses instead. Deterministic, so the capture does not retry.
+   */
+  _shellCaptureGuardTripped?: string;
+
+  /**
    * @internal Handler-owned registry of explicit per-scope stores from
    * cache({ store }). Created once per createRSCHandler() and threaded into
    * every request context, so it accumulates every explicit store the handler

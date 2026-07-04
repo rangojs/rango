@@ -419,12 +419,12 @@ export const urlpatterns = urls(
             () => [loader(PprShellStreamLoader)],
           ),
         ]),
-        // LAYOUT-LOADER TRAP (the storefront shape): the layout registers a
-        // loader with NO loading() on the LAYOUT. Neither child can ever
-        // capture — the tree-build await lives at the entry that REGISTERS the
-        // loaders, so a loading() on the child route does not unpin it. Both
-        // stay x-rango-shell: MISS forever; axis 1 stays healthy. See
-        // pages/ppr-shell.tsx (PprTrapChromeLayout).
+        // LAYOUT-LOADER shapes (the storefront): the layout registers a
+        // loader with NO loading() on the LAYOUT — the BAKE lane
+        // (docs/design/loader-container-bake.md). PprChromeLoader executes at
+        // capture, its container bakes (snapshot-pinned on HITs), and both
+        // children HIT; the loader child keeps its price hole on the LIVE
+        // lane behind loading(). See pages/ppr-shell.tsx.
         layout(PprTrapChromeLayout, () => [
           loader(PprChromeLoader),
           path(
@@ -448,11 +448,11 @@ export const urlpatterns = urls(
             ppr: true,
           }),
         ]),
-        // THE ESCAPE (skills/ppr "layout-with-loaders playbook"): the same
-        // chrome data owned by a @badge parallel slot with its OWN loading().
-        // The layout has no loaders to await, so the shell captures: chrome +
-        // static page bake, the badge is the sole (badge-sized) hole, and the
-        // route needs no loader or loading() of its own to flip to HIT.
+        // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"):
+        // the same chrome data owned by a @badge parallel slot with its OWN
+        // loading() — a badge-sized GUARANTEED-fresh hole (the bake lane
+        // would pin the value for the shell's lifetime). Chrome + static page
+        // bake; the route needs no loader or loading() of its own.
         layout(PprSlotChromeLayout, () => [
           parallel({
             "@badge": {

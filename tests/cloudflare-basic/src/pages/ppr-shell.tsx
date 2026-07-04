@@ -69,13 +69,10 @@ export function PprShellStreamPage() {
   return <PprShellStream loader={PprShellStreamLoader} />;
 }
 
-// LAYOUT-LOADER TRAP (the storefront shape): this layout registers
-// PprChromeLoader with NO loading() on the LAYOUT (see urls.tsx). The
-// tree-build await lives at the entry that REGISTERS the loaders, so the
-// capture's masked loader pins the tree above <body> and the sanity gate
-// refuses — x-rango-shell stays MISS forever for BOTH children (one with its
-// own loader+loading(), one bare), while axis 1 stays healthy. Registration
-// alone pins — nothing consumes PprChromeLoader.
+// LAYOUT-LOADER bake-lane layout (the storefront shape): registers
+// PprChromeLoader with NO loading() on the LAYOUT (see urls.tsx) — the BAKE
+// lane. The loader executes at capture, its container bakes, and both
+// children HIT. Consumed by nothing — the lane decision is registration-level.
 export function PprTrapChromeLayout() {
   return (
     <main data-testid="ppr-trap-page">
@@ -89,11 +86,11 @@ export function PprBareHomePage() {
   return <p data-testid="ppr-bare-home">Bare home static content</p>;
 }
 
-// THE ESCAPE (skills/ppr "layout-with-loaders playbook"): the same chrome data
-// owned by a @badge parallel slot with its OWN loading(). Slot-owned loaders
-// get a per-slot LoaderBoundary, so the layout node has no loaders to await:
-// chrome and the static page bake into the shell, the badge is a badge-sized
-// hole, and the route flips to HIT with no loader or loading() of its own.
+// LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"): the same
+// chrome data owned by a @badge parallel slot with its OWN loading() — a
+// badge-sized GUARANTEED-fresh hole (the bake lane would pin the value for the
+// shell's lifetime). Chrome and the static page bake; the route needs no
+// loader or loading() of its own.
 export function PprSlotChromeLayout() {
   return (
     <main data-testid="ppr-slot-page">

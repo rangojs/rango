@@ -67,6 +67,13 @@ global middleware
 - `ctx.set()` values flow downward through structural scope boundaries only.
 - Loaders are live by default unless explicitly cached via `cache()` in their
   use params: `loader(Fn, () => [cache({ ttl })])`.
+- Under PPR shell capture, `loading()` selects the loader lane
+  (docs/design/loader-container-bake.md): present = live lane (masked at
+  capture, fresh on every serve); absent = bake lane (the loader EXECUTES at
+  capture, its settled container bakes into the shell and is snapshot-pinned
+  on HITs, promises nested in the container stay live at the consumer's own
+  Suspense). Identity reads inside a bake-lane loader refuse the capture.
+  Axis 1 is unchanged in both lanes.
 - Route-level `cache()` does not cache loader segments; loaders remain live.
 - Prerendered handlers can be frozen while loaders remain live.
 - Parallel slots with `loading()` are independent streaming units. Their

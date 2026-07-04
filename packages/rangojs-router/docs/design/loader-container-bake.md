@@ -1,9 +1,37 @@
 # Loader container bake: one promise doctrine for handlers, handles, AND loaders
 
-Status: DESIGN — not implemented. Red test already in the tree:
-`e2e/shell-cache.test.ts` "layout loader without loading() on the layout: stays
-MISS…" pins today's dead-end behavior and flips to the new contract when this
-ships.
+Status: IMPLEMENTED (same branch). The former trap tests flipped red->green as
+planned; the bake-lane contract is e2e-pinned in both the test-app suite and
+the cloudflare-basic twin (real KV envelope round-trip), dev + production.
+
+Implementation notes (deltas from the sketch below, all deliberate):
+
+- **The capture gate holds for bake-lane containers.** `FLIGHT_QUIET_HOPS` is
+  a ~2-macrotask byte-quiet window, so a 100ms layout loader would lose the
+  race and pin. `captureAndStoreShell` extends the gate's `holdUntil` with
+  `Promise.allSettled` over the recorded container promises — same mechanism
+  that already held for top-level handle pushes, bounded by the 5s guard.
+- **`loading(false)` (and `loading(x, { ssr: false })` under the SSR
+  manifest) = BAKE lane** — the mask decision is "renderable loading only"
+  (`entryLoadingMasksLoaders`, mirroring segment-system's
+  isRenderableLoading), resolving open question 1 toward "absent".
+- **Guard refusal is flag-based**: `assertNotInsideShellCapture` stamps
+  `_shellCaptureGuardTripped` on the capture context BEFORE throwing, because
+  the throw is swallowed by wrapLoaderPromise (boundary UI) or rejects the
+  prerender promise itself (boundary-less segment) — both paths check the
+  flag and return the new deterministic `"refused"` outcome (no retry,
+  once-per-key warning naming the read).
+- **`prerender()`'s promise gets a pre-attached no-op catch** in
+  captureShellHTML: an early bake-lane rejection otherwise sits handler-less
+  until the post-quiesce await and crashes the worker as an unhandled
+  rejection (found live; the real handling is unchanged).
+- **A container still pending at drain is OMITTED, not refused** — it either
+  already hit the trivial-prelude gate or postponed under an ancestor
+  boundary (a hole; omitting keeps it live).
+- **Records are keyed by loader segment id** (`<shortCode>D<i>.<loaderId>`),
+  recorded pre-wrap (the wrapper is deterministic), serialized with
+  `serializeResult` (null-preserving), and seeded via `_shellLoaderSeed` on
+  the HIT tail's derived context.
 
 ## The asymmetry this closes
 
