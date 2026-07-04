@@ -4,13 +4,13 @@ import { href, useHref, useMount, Link } from "@rangojs/router/client";
 
 /**
  * Client component demonstrating href(), useHref(), and useMount()
- * with 14k+ routes for typecheck coverage.
+ * with 26k+ routes for typecheck coverage.
  */
 export function LinksDemo() {
   const mount = useMount();
   const localHref = useHref();
 
-  // href() - absolute path validation against all 14k+ routes
+  // href() - absolute path validation against all 26k+ routes
   const homePath = href("/");
   const benchFirst = href("/bench/first");
   const benchLast = href("/bench/last");

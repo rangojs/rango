@@ -2,6 +2,11 @@ import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
+import {
+  requestIdMiddleware,
+  securityHeadersMiddleware,
+  sessionMiddleware,
+} from "./middleware.js";
 import type { AppBindings } from "./env.js";
 
 export const router = createRouter<AppBindings>({
@@ -15,7 +20,12 @@ export const router = createRouter<AppBindings>({
     // Log errors to console (can be extended to use external logging services)
     console.error("Router error:", error);
   },
-}).routes(urlpatterns);
+})
+  // Global middleware chain: wraps every request including server actions.
+  .use(requestIdMiddleware)
+  .use(sessionMiddleware)
+  .use(securityHeadersMiddleware)
+  .routes(urlpatterns);
 
 // Module-level reverse() calls — resolved via static NamedRoutes fallback
 console.log(

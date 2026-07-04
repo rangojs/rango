@@ -1,13 +1,23 @@
 /// <reference types="@cloudflare/workers-types" />
+import { enableMatchDebug } from "@rangojs/router/__internal";
 import { router } from "./router.js";
+import { parseServerTiming } from "./server-timing.js";
 import type { AppBindings } from "./env.js";
 
 // Pre-generated route manifest: eliminates ~98ms first-request cost of
 // evaluating lazy includes. Generated at build time by the discovery plugin.
 import "virtual:rsc-router/routes-manifest";
 
+// enableMatchDebug is a module-global toggle but env bindings are only
+// visible inside fetch, so it is configured once on the first request.
+let matchDebugConfigured = false;
+
 export default {
   async fetch(request, env, ctx) {
+    if (!matchDebugConfigured) {
+      matchDebugConfigured = true;
+      enableMatchDebug(env.MATCH_DEBUG === "1");
+    }
     const requestStart = performance.now();
     const dateStart = Date.now();
     const url = new URL(request.url);
@@ -26,13 +36,17 @@ export default {
     }
 
     // Handle /timing/* convenience route: makes internal sub-request,
-    // returns Server-Timing as structured JSON
+    // returns Server-Timing as structured JSON. The caller's accept header is
+    // forwarded (default text/html) so the profiled code path matches what a
+    // real client would trigger, and the body is fully consumed BEFORE the
+    // clock stops — otherwise streamed render time after first byte would be
+    // silently excluded from totalMs.
     if (url.pathname.startsWith("/timing/")) {
       const targetPath = "/" + url.pathname.slice("/timing/".length);
       const targetUrl = new URL(targetPath + url.search, url.origin);
       const subRequest = new Request(targetUrl.toString(), {
         method: "GET",
-        headers: { accept: "text/html" },
+        headers: { accept: request.headers.get("accept") || "text/html" },
       });
 
       const subStart = performance.now();
@@ -41,28 +55,19 @@ export default {
         vars: { requestStart: subStart, dateStart: Date.now() },
         ctx,
       });
+      const subBody = await subResponse.arrayBuffer();
       const subDur = performance.now() - subStart;
 
       const serverTiming = subResponse.headers.get("Server-Timing") || "";
-
-      // Parse Server-Timing into structured data
-      const entries: Record<string, number> = {};
-      if (serverTiming) {
-        for (const part of serverTiming.split(",")) {
-          const trimmed = part.trim();
-          const nameMatch = trimmed.match(/^([^;]+)/);
-          const durMatch = trimmed.match(/dur=([0-9.]+)/);
-          if (nameMatch && durMatch) {
-            entries[nameMatch[1].trim()] = parseFloat(durMatch[1]);
-          }
-        }
-      }
+      const entries = parseServerTiming(serverTiming);
 
       return new Response(
         JSON.stringify(
           {
             path: targetPath,
+            status: subResponse.status,
             totalMs: parseFloat(subDur.toFixed(2)),
+            bodyBytes: subBody.byteLength,
             serverTimingRaw: serverTiming,
             timings: entries,
           },
