@@ -32,6 +32,10 @@ Common reasons to migrate:
 - **Build-time rendering** — `Static()` and `Prerender()` provide explicit
   build-time rendering instead of mixing rendering and caching behind conventions.
   See: `/prerender`
+- **Partial prerendering, shipped** — the `ppr` path option caches a page's
+  HTML shell and resumes only the live holes on each request; loaders stay
+  fresh. The equivalent of Next's `experimental_ppr`, stable and per-route.
+  See: `/ppr`
 - **Composable route tree** — layouts, includes, middleware, parallels, and
   intercepts compose directly in the route definition.
   See: `/composability`, `/parallel`, `/intercept`
@@ -42,6 +46,34 @@ Common reasons to migrate:
 ## Migration Strategy
 
 Work route-by-route, bottom-up. Start with leaf pages, then layouts, then middleware. Verify each route works before moving to the next.
+
+## Replace imports, never shim Next
+
+Do NOT create mock `next/*` modules, Vite aliases for `next/*`, or compatibility
+wrapper components (a local `Link` that forwards `href` to `to`, a fake
+`useRouter`, a stubbed `next/headers`). Shims freeze Next semantics into the
+app, hide unsupported behavior until runtime, and keep `next` in the dependency
+graph — the migration looks done but isn't. Replace every `next/*` import at
+its call site with the real Rango API:
+
+| Next import                                                                  | Replace with                                                                                   |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `next/link` `Link`                                                           | `Link` from `@rangojs/router/client` — rename `href` to `to` (see §6)                          |
+| `next/navigation` `useRouter`, `usePathname`, `useSearchParams`, `useParams` | same names from `@rangojs/router/client`                                                       |
+| `next/navigation` `redirect`, `notFound`                                     | `redirect`, `notFound` from `@rangojs/router`                                                  |
+| `next/headers` `cookies`, `headers`                                          | `cookies()`, `headers()` from `@rangojs/router` (server-only)                                  |
+| `next/cache` `revalidateTag`, `unstable_cache`                               | `updateTag`/`revalidateTag` from `@rangojs/router`; `"use cache"` (see §3 and `/use-cache`)    |
+| `next/server` `NextResponse`, `NextRequest`                                  | web-standard `Response`/`Request`; middleware via `router.use()` (see §4)                      |
+| `next/image` `Image`                                                         | plain `<img>` (keep explicit `width`/`height`) or your CDN's image URL — no built-in optimizer |
+| `next/font`                                                                  | see `/fonts`                                                                                   |
+| `next/script` `Script`                                                       | see `/scripts`                                                                                 |
+| `next-themes`                                                                | `theme: true` in `createRouter` (see §10)                                                      |
+
+If an import has no row here and no obvious Rango equivalent, stop and surface
+it to the user — do not mock it to keep the build green.
+
+Done means: `grep -rn "from ['\"]next" src/ app/` returns nothing, and `next`
+is gone from `package.json`.
 
 ## 1. Project Setup
 
@@ -314,6 +346,79 @@ export const Product = Passthrough(ProductDef, async (ctx) => {
 
 Use `Passthrough()` whenever the Next.js route has `dynamicParams: true` (the
 default) or serves an open-ended param space. See `/prerender` for full API.
+
+### Rendering-mode segment config
+
+Next.js route segment config maps onto Rango's explicit primitives:
+
+| Next.js segment config                              | Rango                                                        |
+| --------------------------------------------------- | ------------------------------------------------------------ |
+| `dynamic = "force-static"` + `generateStaticParams` | `Static()` / `Prerender()` (see `/prerender`)                |
+| `revalidate = 60` (ISR)                             | `cache({ ttl: 60, swr: ... })` on the route (see `/caching`) |
+| `dynamic = "force-dynamic"`                         | the default — routes are dynamic unless you cache them       |
+| `dynamicParams = true`                              | `Passthrough()` (above)                                      |
+| `experimental_ppr = true`                           | the `ppr` path option (below, and `/ppr`)                    |
+
+### Partial prerendering → the `ppr` path option
+
+Next.js PPR statically prerenders a shell at build time and streams the parts
+inside `<Suspense>` at request time. Rango ships the same model as a path
+option — the shell is captured at runtime into the app cache store and resumed
+on later requests, with the holes rendered fresh per request:
+
+```typescript
+// Next.js: app/products/[id]/page.tsx
+export const experimental_ppr = true;
+export default async function Page({ params }) {
+  return (
+    <ProductShell>
+      <Suspense fallback={<PriceSkeleton />}>
+        <LivePrice id={params.id} />
+      </Suspense>
+    </ProductShell>
+  );
+}
+
+// Rango: the loading() boundary is the hole; the loader is always live
+path(
+  "/products/:id",
+  ProductPage,
+  { name: "product", ppr: { ttl: 600, swr: 120 } }, // or ppr: true (default ttl 300s)
+  () => [loader(LivePriceLoader), loading(<PriceSkeleton />)],
+),
+```
+
+Differences that matter during migration:
+
+- **The Suspense/promise model carries over.** As in Next, a still-pending
+  promise handed to a component that suspends under its own `<Suspense>`
+  postpones at capture and becomes a hole — existing Next PPR trees keep
+  working as-is, no `loading()` required. Two Rango rules on top: data the
+  handler AWAITS (or a promise already resolved at capture) bakes into the
+  shell, and loaders are ALWAYS the live lane — masked at capture, fresh on
+  every serve — with `loading()` as their guaranteed hole. For per-request
+  data prefer loader + `loading()`: it stays live even when the value resolves
+  instantly, where a raw promise would get baked. One requirement: a route
+  that registers a `loader()` MUST also have `loading()` or the shell can
+  never be captured (eternal MISS) — loaderless routes have no such condition.
+- **Shell freshness is explicit.** Next's PPR shell is fixed until the next
+  build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` /
+  `revalidateTag()` drop the shell (`revalidate()` does not — it is a data
+  lever and never touches shell HTML).
+- **`cookies()`/`headers()` in shell material THROW during capture** (in Next
+  they silently force dynamic rendering). Per-user reads must move into
+  loaders or under a `loading()` hole — the error surfaces at migration time,
+  which is the point.
+- **A store is required.** PPR needs the app-level `createRouter({ cache })`
+  store to implement the shell family (`MemorySegmentCacheStore`,
+  `CFCacheStore`, `VercelCacheStore`). Without one the route quietly stays
+  fully dynamic with a once-per-key warning.
+- **Middleware still guards every serve.** Auth middleware (global or route
+  DSL) runs before any shell byte on HIT and MISS alike — no Next-style "PPR
+  bypasses middleware" caveats to migrate around.
+
+A route without `ppr` pays zero cost. See `/ppr` for the full execution matrix,
+hole rules, and pitfalls.
 
 ### Revalidation: two distinct axes
 
@@ -608,4 +713,10 @@ See `/theme` for full API including system detection and cookie persistence.
 10. [ ] Migrate API routes to `path.json()` / `path.text()`
 11. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
 12. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
-13. [ ] Run `npx rango generate src/` to generate route types
+13. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
+        `force-static` → `Static()`/`Prerender()`, `experimental_ppr` → the
+        `ppr` path option (loader + `loading()` as the hole)
+14. [ ] Run `npx rango generate src/` to generate route types
+15. [ ] Verify no shims: `grep -rn "from ['\"]next" src/ app/` returns nothing,
+        no mock `next/*` modules or aliases exist, and `next` is out of
+        `package.json`

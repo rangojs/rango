@@ -123,6 +123,15 @@ LOADER container is a hole via `loading()` (the whole loader value is live),
 while a HANDLE container is shell via root consumption (the handles generator
 is drained before SSR) — only the promises nested inside it stay live.
 
+**`loading()` is NOT the gate for holes.** A pending promise under any plain
+`<Suspense>` postpones and is a hole at whatever level it suspends — the
+PHYSICS row needs no `loading()` anywhere (the e2e fixture's physics and
+nested-handle holes sit in a layout with none). A route without a loader PPRs
+on pure promise/Suspense holes. `loading()` does two other jobs: it is the
+GUARANTEED hole for loader data (live even when the value resolves instantly,
+where a raw promise would bake), and on a route that registers a loader it is
+the capture prerequisite (see the structural negative below).
+
 ### Handles: "nesting = liveness"
 
 - `ctx.use(H)(promise)` — a TOP-LEVEL pushed promise is awaited server-side

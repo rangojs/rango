@@ -64,6 +64,35 @@ framework mode respectively.
 Work route-by-route, bottom-up. Start with leaf routes, then layouts, then
 loaders/actions. Verify each route works before moving to the next.
 
+## Replace imports, never shim React Router
+
+Do NOT create mock `react-router` modules, Vite aliases, or compatibility
+wrappers (a local `useLoaderData` backed by context, a `Form` that wraps
+`<form>`, a fake `useFetcher`). Shims freeze RR semantics into the app, hide
+unsupported behavior until runtime, and keep the old packages in the dependency
+graph. Replace every `react-router` / `react-router-dom` / `@remix-run/*`
+import at its call site:
+
+| React Router import                           | Replace with                                                                              |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`, see §6) |
+| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                                    |
+| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client` (see §6)                                      |
+| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()`, `useParams()` from `@rangojs/router/client`         |
+| `useLoaderData`                               | merge the loader into the handler; `useLoader()` only for live client data (see §3)       |
+| `useActionData`                               | `useActionState` (standard React, see §3)                                                 |
+| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function (see §3)                    |
+| `useFetcher`                                  | submits → server actions + `useActionState`/`useOptimistic`; reads → `useLoader()`        |
+| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>` (see §5)                                             |
+| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                                    |
+| `useRouteError`                               | the `error` prop of `errorBoundary()` (see §5)                                            |
+
+If an import has no row here and no obvious Rango equivalent, stop and surface
+it to the user — do not mock it to keep the build green.
+
+Done means: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/` returns
+nothing, and the packages are out of `package.json`.
+
 ## 1. Project Setup
 
 Replace React Router tooling with Vite + Rango:
@@ -910,6 +939,9 @@ fully bundled by `react-router build`.
 11. [ ] Update metadata to use `Meta` handle + `<MetaTags />`
 12. [ ] Replace custom theme provider with `theme: true` in createRouter (see `/theme`)
 13. [ ] Run `npx rango generate src/` to generate route types
+14. [ ] Verify no shims: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/`
+        returns nothing, no mock modules or aliases exist, and the packages are
+        out of `package.json`
 
 **Cloudflare Workers (if migrating an RR7-on-Workers app):**
 
