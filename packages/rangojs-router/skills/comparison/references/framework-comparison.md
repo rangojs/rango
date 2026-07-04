@@ -526,7 +526,7 @@ There are two distinct things named "revalidate", and the split is deliberate:
    the pathname is unchanged (a search or hash change), it updates the URL and all
    location hooks but skips the server fetch and re-render entirely. For filters,
    tabs, and pagination. See
-   [shallow-navigation.md](../../../docs/shallow-navigation.md).
+   [shallow-navigation.md](../../../docs/design/shallow-navigation.md).
 
 Both are separate from `revalidateTag()`/`updateTag()`, which hard-purge tagged
 cache entries. `updateTag()` is awaitable for read-your-own-writes;

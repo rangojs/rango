@@ -1,5 +1,9 @@
 # Shallow Navigation
 
+Status: implemented — shipped as `revalidate: false` on `<Link>` /
+`navigate()` (`src/browser/navigation-bridge.ts`, `src/browser/react/Link.tsx`).
+Kept as the design record.
+
 RFC for client-only URL updates that skip server RSC revalidation.
 
 ## Problem

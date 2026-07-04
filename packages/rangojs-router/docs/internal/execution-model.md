@@ -267,7 +267,7 @@ However, late streaming may hit separate feature-specific mutation limits.
 Handle data (`ctx.use(handle)`) is accumulated into a `HandleStore` that
 settles independently. Read probes (reading context variables) are safe
 throughout streaming; mutation APIs (like handle pushes) have their own
-deadlines documented in `handle-store.ts`.
+deadlines documented in `server/handle-store.ts`.
 
 ## Fetchable Loader Middleware
 

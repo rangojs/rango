@@ -1,5 +1,9 @@
 # Testing primitives review — 2026-06-13 (PR #533)
 
+> Point-in-time review snapshot — not maintained. Findings may be fixed,
+> stale, or reference paths from the checkout the review ran in. Do not
+> action items from this document without re-verifying against current src.
+
 > Internal review record. Multi-agent review of the `@rangojs/router/testing`
 > surface: 9 section deep-reviews (correctness/tests/docs/simplify) + 5 cross-cutting
 > sweeps (API overview, test-suite coverage, docs/skills accuracy, production-safety of
