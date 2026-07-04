@@ -34,6 +34,10 @@ import type {
   ShellSnapshotRecord,
 } from "../cache/types.js";
 import {
+  elideLoaderContainer,
+  isLoaderHoleMarker,
+} from "../router/segment-resolution/loader-snapshot.js";
+import {
   RecordingShellStore,
   getRecordingStore,
 } from "../cache/shell-snapshot.js";
@@ -283,18 +287,43 @@ function warnNullCaptureOnce(key: string): void {
   warnedNullCaptures.add(key);
   console.warn(
     `[rango] Shell capture for "${key}" produced no usable shell after an in-place ` +
-      "retry; nothing was stored, so this request stays on MISS. Two things cause this, " +
-      "told apart by whether the route ever flips to HIT:\n" +
+      "retry; nothing was stored, so this request stays on MISS. Causes, told apart " +
+      "by whether the route ever flips to HIT:\n" +
       "  1. Cold-start warmup (dev module transform, or a cold worker): the capture raced " +
       "an unfinished shell render. This SELF-HEALS — the route flips to HIT once a later " +
       "request warms the modules. Usually nothing to do.\n" +
-      "  2. A loader route WITHOUT a route-level loading() boundary: its loader data is " +
-      "awaited at tree-build, so under capture's masked loaders no shell exists above " +
-      "<body>, and the route NEVER flips to HIT. Add loading() to the loader route (and " +
-      "keep shell material in a layout) to make it PPR-capturable.\n" +
+      "  2. Something suspends above <body> with no Suspense boundary and never settles " +
+      "within the capture window: a slower-than-the-capture-guard bake-lane loader " +
+      "(loaders on entries WITHOUT loading() execute at capture and their containers " +
+      "bake — the boundary-less await must settle for a shell to exist), or a pending " +
+      "promise consumed without a <Suspense> above it. The boundary belongs on the " +
+      "entry/component that OWNS the data: loading() on the entry that registers the " +
+      "loader (a child route's loading() does not unpin a parent layout's loaders), or " +
+      "a <Suspense> above the consuming component.\n" +
       'See the /ppr skill (node_modules/@rangojs/router/skills/ppr/SKILL.md), "The hole ' +
-      'contract", or the design doc: ' +
+      'doctrine" and "The layout-with-loaders playbook", or the design docs: ' +
       "https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/design/ppr-shell-resume.md",
+  );
+}
+
+/** Keys already warned about a deterministic capture refusal (once per key). */
+const warnedRefusedCaptures = new Set<string>();
+
+/**
+ * Warn once per key that the capture was REFUSED for a deterministic reason
+ * (identity-guard trip or a rejected bake-lane loader). Distinct from
+ * warnNullCaptureOnce: these are not cold-start shapes, the retry is skipped,
+ * and the message carries the concrete cause instead of a differential.
+ */
+function warnCaptureRefusedOnce(key: string, reason: string): void {
+  if (warnedRefusedCaptures.has(key)) return;
+  warnedRefusedCaptures.add(key);
+  console.warn(
+    `[rango] Shell capture for "${key}" was refused: ${reason}\n` +
+      "The route stays on MISS (axis 1) — the page keeps working, only the shell " +
+      "cache is off. See the /ppr skill " +
+      "(node_modules/@rangojs/router/skills/ppr/SKILL.md) and " +
+      "docs/design/loader-container-bake.md.",
   );
 }
 
@@ -544,7 +573,7 @@ export function scheduleShellCapture(
  * - `no-shell`: the prelude came back trivial (no <body>) OR captureShellHTML
  *   rejected with our own abort. This is the only RETRYABLE outcome.
  */
-type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell";
+type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
 
 /**
  * Run the shell capture with a single in-place retry, then store the result.
@@ -587,6 +616,10 @@ async function runShellCapture(
     ssrModule,
     descriptor,
   );
+  // "refused" is deterministic (identity guard / rejected bake-lane loader —
+  // its own warning already fired): no retry, and the caller backs the key off
+  // exactly like a structural no-shell.
+  if (first === "refused") return "no-shell";
   // "stored" (success) or "redirect" (no shell exists): nothing to retry.
   if (first !== "no-shell") return first;
 
@@ -608,6 +641,7 @@ async function runShellCapture(
     ssrModule,
     descriptor,
   );
+  if (second === "refused") return "no-shell";
   if (second !== "no-shell") return second;
 
   // Both attempts came back with no usable shell. Cold-start would have healed by
@@ -681,6 +715,11 @@ async function attemptCapture(
   derivedCtx._transitionWhen = [];
   derivedCtx._shellCaptureRun = true;
   derivedCtx._metricsStore = undefined;
+  // Bake-lane loader containers (loaders on entries with no renderable
+  // loading() execute during capture — docs/design/loader-container-bake.md).
+  // resolveLoaderData registers each container promise here; the drain in
+  // captureAndStoreShell elides + pins them into the snapshot's loader family.
+  derivedCtx._shellCaptureLoaderRecords = new Map();
   // Own onResponse list so the capture's match-middleware callbacks (the ring-3
   // segment cache write registers here) are ISOLATED from the foreground's shared
   // array AND can be fired by captureAndStoreShell. The segment write is gated
@@ -805,12 +844,43 @@ async function captureAndStoreShell(
   // Bounded by maxWaitMs like every quiesce input (a defer hanging on a masked
   // loader still ends in the sanity-gate refusal).
   const handlesBaked = handleStore.getData().then(resolveDeferredHandleValues);
-  const gate = gateFlightForCapture(rscStream, undefined, handlesBaked);
+  // Bake-lane loader containers hold the gate the same way (loader-container-
+  // bake): a boundary-less container with real latency (a 100ms layout loader)
+  // would otherwise lose the 2-hop byte-quiet race — the pending loaderData row
+  // emits no bytes, the gate freezes, and the awaiting tree pins above <body>.
+  // The records map is fully populated before this point (loader promises are
+  // created during the capture's match()), so the hold covers every bake-lane
+  // container. allSettled: a REJECTED container releases the hold (the drain
+  // below refuses the capture); nested promises INSIDE a container never hold
+  // the gate — they stay holes. Bounded by maxWaitMs like every quiesce input.
+  const loaderRecordsForHold = reqCtx._shellCaptureLoaderRecords;
+  const holdUntil =
+    loaderRecordsForHold && loaderRecordsForHold.size > 0
+      ? Promise.allSettled([handlesBaked, ...loaderRecordsForHold.values()])
+      : handlesBaked;
+  const gate = gateFlightForCapture(rscStream, undefined, holdUntil);
   // Quiesce = handles settled AND the Flight shell rows went task-quiet. Either
   // half stalling is bounded by captureShellHTML's maxWaitMs.
   const quiesce = Promise.all([handleStore.settled, gate.quiesce]).then(
     () => {},
   );
+
+  // Deterministic identity-guard refusal, checked at BOTH exits below: the
+  // guard error either rejects the prerender itself (boundary-less segment —
+  // lands in the catch) or is swallowed into per-loader error UI (the render
+  // completes — caught after the try). One helper so the message and the
+  // "refused" mapping cannot drift between the two sites.
+  const refuseOnGuardTrip = (): "refused" | undefined => {
+    const fnName = reqCtx._shellCaptureGuardTripped;
+    if (!fnName) return undefined;
+    warnCaptureRefusedOnce(
+      capture.key,
+      `a bake-lane loader (a loader on an entry with no loading()) called ${fnName}() during capture. ` +
+        "Identity must not bake into a shared shell. Give that loader's entry a loading() boundary " +
+        "(the live lane, exempt from the guard) or move the identity-dependent part into a nested promise.",
+    );
+    return "refused";
+  };
 
   try {
     // captureShellHTML CONSUMES the (gated) stream — it is not also SSR'd.
@@ -823,6 +893,10 @@ async function captureAndStoreShell(
         }),
       );
     } catch (error) {
+      // Guard-tripped rejection arrives here (not at the drain) — refuse
+      // BEFORE the AbortError-vs-rethrow decision below.
+      const refused = refuseOnGuardTrip();
+      if (refused) return refused;
       // captureShellHTML normally converts its OWN deliberate abort to a null
       // return (index.tsx). This catch is defensive: if an AbortError still escapes
       // (a runtime where the abort surfaces as a stream rejection outside its
@@ -841,6 +915,13 @@ async function captureAndStoreShell(
     // yet finished; on a loader route WITHOUT a route-level loading() boundary it is
     // the structural eternal-MISS shape (the masked loader pins the tree above
     // <body> at tree-build). The caller's warning names both.
+    // Guard check first — BEFORE the trivial-prelude retry path. A guard trip
+    // is deterministic (retrying re-trips it), and when the tripping loader's
+    // error UI still completed a shell, storing it would bake the failure into
+    // a shared page.
+    const refused = refuseOnGuardTrip();
+    if (refused) return refused;
+
     if (result === null) {
       return "no-shell";
     }
@@ -885,6 +966,54 @@ async function captureAndStoreShell(
     if (recording) {
       await recording.settleWrites(SHELL_SNAPSHOT_WRITE_SETTLE_MS);
       snapshot = recording.drainSnapshot();
+    }
+
+    // Pin the bake-lane loader containers (loader family). Settled containers
+    // are promise-elided (a still-pending nested promise is a hole marker, not
+    // shell material) and Flight-serialized; a REJECTED container refuses the
+    // capture — per-loader error UI must never bake into the shared shell. A
+    // container still pending here either pinned the tree (the trivial-prelude
+    // gate above already returned no-shell) or postponed under an ANCESTOR
+    // boundary (it is a hole; omitting the record keeps it live).
+    const loaderRecords = reqCtx._shellCaptureLoaderRecords;
+    if (loaderRecords && loaderRecords.size > 0) {
+      // The codec import is deferred past the elide probes: a rejected record
+      // refuses and a never-settled record is omitted WITHOUT touching Flight
+      // (also keeps the virtual @vitejs/plugin-rsc import out of unit configs).
+      let serializeContainer:
+        | typeof import("../cache/segment-codec.js").serializeResult
+        | undefined;
+      for (const [segmentKey, containerPromise] of loaderRecords) {
+        const elided = await elideLoaderContainer(containerPromise);
+        if (elided.state === "rejected") {
+          warnCaptureRefusedOnce(
+            capture.key,
+            `the loader for segment "${segmentKey}" rejected during capture; its error UI must not bake into the shared shell. ` +
+              "Fix the loader, or give its entry a loading() boundary so it stays on the live lane.",
+          );
+          return "refused";
+        }
+        // The container itself never settled: it is a hole (under an ancestor
+        // boundary) or the trivial-prelude gate already fired. Omit — no pin.
+        if (isLoaderHoleMarker(elided.value)) continue;
+        try {
+          // serializeResult (not rscSerialize): null is a valid container and
+          // must round-trip; serializeResult preserves it through Flight.
+          serializeContainer ??= (await import("../cache/segment-codec.js"))
+            .serializeResult;
+          const serialized = await serializeContainer(elided.value);
+          if (serialized !== null) {
+            (snapshot ??= []).push({
+              family: "loader",
+              key: segmentKey,
+              value: { value: serialized },
+            });
+          }
+        } catch {
+          // Non-serializable container: leave it unpinned (it drifts on a HIT,
+          // the pre-snapshot behavior) rather than failing the capture.
+        }
+      }
     }
 
     const store = capture.store ?? reqCtx._cacheStore;

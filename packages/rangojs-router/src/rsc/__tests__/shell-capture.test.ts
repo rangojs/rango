@@ -243,6 +243,109 @@ describe("captureAndStoreShell", () => {
     };
   }
 
+  function makeShellSsrModule(): SSRModule {
+    return {
+      renderHTML: vi.fn(),
+      captureShellHTML: vi.fn(async () => ({
+        prelude: enc("<html><body>shell</body></html>"),
+        postponed: null,
+      })),
+    } as unknown as SSRModule;
+  }
+
+  // Identity guard (loader-container-bake): the cookies()/headers() capture
+  // guard flags the capture context before throwing, because a throw inside an
+  // executing bake-lane loader is swallowed into per-loader error UI. The
+  // capture must REFUSE (deterministic — no retry, no store write) instead of
+  // baking the failure into a shared shell.
+  it("refuses (no store write, once-per-key warning) when the identity guard tripped", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const reqCtx = makeReqCtx(putShell);
+      reqCtx._shellCaptureGuardTripped = "cookies";
+
+      const outcome = await captureAndStoreShell(
+        makeShellSsrModule(),
+        emptyStream(),
+        createHandleStore(),
+        reqCtx,
+        { key: "/guard-trip:shell", ttl: 300 },
+      );
+
+      expect(outcome).toBe("refused");
+      expect(putShell).not.toHaveBeenCalled();
+      const warnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes("/guard-trip:shell"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("cookies()");
+      expect(warnings[0][0]).toContain("refused");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // A REJECTED bake-lane loader container must refuse the capture: its
+  // per-loader error boundary UI already rendered into the shell bytes, and a
+  // shared shell must never freeze error UI.
+  it("refuses when a bake-lane loader container rejected during capture", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const reqCtx = makeReqCtx(putShell);
+      const rejected = Promise.reject(new Error("loader boom"));
+      rejected.catch(() => {});
+      reqCtx._shellCaptureLoaderRecords = new Map([["M0D0.app/x#L", rejected]]);
+
+      const outcome = await captureAndStoreShell(
+        makeShellSsrModule(),
+        emptyStream(),
+        createHandleStore(),
+        reqCtx,
+        { key: "/bake-reject:shell", ttl: 300 },
+      );
+
+      expect(outcome).toBe("refused");
+      expect(putShell).not.toHaveBeenCalled();
+      const warnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes("/bake-reject:shell"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("M0D0.app/x#L");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // A container still PENDING at drain is a hole (or already hit the
+  // trivial-prelude gate): it is omitted from the snapshot, never a refusal.
+  it("omits a still-pending bake-lane container without refusing", async () => {
+    const putShell = makePutShell();
+    const reqCtx = makeReqCtx(putShell);
+    reqCtx._shellCaptureLoaderRecords = new Map([
+      ["M0D0.app/x#L", new Promise(() => {})],
+    ]);
+
+    const outcome = await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/bake-pending:shell", ttl: 300 },
+    );
+
+    expect(outcome).toBe("stored");
+    expect(putShell).toHaveBeenCalledTimes(1);
+    const entry = putShell.mock.calls[0]![1] as {
+      snapshot?: { family: string }[];
+    };
+    const loaderRecords = (entry.snapshot ?? []).filter(
+      (r) => r.family === "loader",
+    );
+    expect(loaderRecords).toHaveLength(0);
+  });
+
   it("stores the base64 prelude + postponed + reactVersion into the flag's store", async () => {
     const putShell = makePutShell();
     const preludeBytes = enc("<html><body>shell</body></html>");
@@ -742,8 +845,11 @@ describe("runShellCapture", () => {
       );
       // Deduped to once per key across all three runs.
       expect(keyWarnings).toHaveLength(1);
-      // The message names BOTH causes with the distinguishing signal.
-      expect(keyWarnings[0][0]).toContain("loading() boundary");
+      // The message names BOTH causes with the distinguishing signal, and the
+      // boundary-ownership rule (a child route's loading() does not unpin a
+      // parent layout's loaders).
+      expect(keyWarnings[0][0]).toContain("Suspense boundary");
+      expect(keyWarnings[0][0]).toContain("does not unpin");
       expect(keyWarnings[0][0]).toContain("Cold-start");
       expect(keyWarnings[0][0]).toContain("SELF-HEALS");
     } finally {

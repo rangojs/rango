@@ -1,15 +1,20 @@
 import { urls, Meta, Breadcrumbs, nonce } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
   ShellPriceLoader,
   ShellStreamLoader,
+  ShellChromeLoader,
+  ShellBadgeLoader,
+  ShellIdentityLoader,
   ShellHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
   makePhysicsPromise,
   getDriftStamp,
 } from "./shell-cache.defs.js";
+import { ShellBadge } from "../components/ShellBadge.js";
+import { ShellGuardValue } from "../components/ShellGuardValue.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
@@ -26,8 +31,11 @@ import { ThemeToggle } from "../components/ThemeToggle.js";
 // The hole doctrine this fixture exercises:
 //   STRUCTURAL — the route loader behind loading(): masked at capture, the
 //     LoaderBoundary postpones, the fallback bakes into the shell as route
-//     structure. /shell-cache/no-hole is the negative (no loading(), capture
-//     refuses, eternal MISS).
+//     structure (the LIVE lane).
+//   BAKE LANE — a loader WITHOUT loading() executes at capture: its settled
+//     container bakes (snapshot-pinned on HITs), nested pending promises hole
+//     at the consumer's own Suspense. /shell-cache/no-hole and the
+//     layout-loader routes exercise it (docs/design/loader-container-bake.md).
 //   PHYSICS — ShellPhysicsValue: a handler-created pending promise (~250ms)
 //     under the consumer's own Suspense. Real I/O cannot win the capture's
 //     task-quantized quiet window, so the boundary postpones — a hole.
@@ -78,10 +86,11 @@ function ShellCachePricePage() {
 }
 
 // Loader-carried-promise page, reused by BOTH /shell-cache/stream (WITH
-// loading(), so the loader is a PPR hole) and /shell-cache/no-hole (NO loading(),
-// so capture refuses and the route stays MISS forever while the inner promise
-// still streams under axis 1). Identical component both times — the ONLY
-// difference is whether the route carries loading().
+// loading(): the LIVE lane — the whole loader value is the hole) and
+// /shell-cache/no-hole (NO loading(): the BAKE lane — the outer label bakes
+// and is snapshot-pinned on HITs; the nested promise holes at the inner
+// Suspense). Identical component both times — the ONLY difference is the lane
+// the loading() presence selects.
 function ShellCacheStreamPage() {
   return <ShellCacheStream loader={ShellStreamLoader} />;
 }
@@ -145,8 +154,51 @@ function ShellNoncePricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
 }
 
+// LAYOUT-LOADER shapes (the storefront): the layout registers a loader with NO
+// loading() on the LAYOUT — the BAKE lane. At capture ShellChromeLoader
+// executes (the gate holds for its 100ms), its container bakes, and the page
+// HITs; the ppr child's own loader stays on the LIVE lane behind loading().
+// Before the bake lane this was the eternal-MISS trap (the child's loading()
+// could not unpin the layout's boundary-less await).
+function ShellTrapChromeLayout() {
+  return (
+    <main data-testid="shell-trap-page">
+      <p data-testid="shell-trap-chrome">Trap chrome static text</p>
+      <Outlet />
+    </main>
+  );
+}
+
+// LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"): the same
+// chrome data owned by a @badge parallel slot with its OWN loading(). Slot-owned
+// loaders get a per-slot LoaderBoundary — a badge-sized GUARANTEED-fresh hole —
+// where the bake lane would pin the value for the shell's lifetime. Chrome and
+// the static page bake; the route needs no loader or loading() of its own.
+function ShellSlotChromeLayout() {
+  return (
+    <main data-testid="shell-slot-page">
+      <p data-testid="shell-slot-chrome">Slot chrome static text</p>
+      <ParallelOutlet name="@badge" />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellSlotHomePage() {
+  return <p data-testid="shell-slot-home">Slot home static content</p>;
+}
+
+function ShellBareHomePage() {
+  return <p data-testid="shell-bare-home">Bare home static content</p>;
+}
+
+// Identity-guard negative page: renders the bake-lane identity loader's value.
+function ShellGuardPage() {
+  return <ShellGuardValue loader={ShellIdentityLoader} />;
+}
+
 export const shellCachePatterns = urls(
-  ({ path, layout, loader, loading, middleware }) => [
+  ({ path, layout, loader, loading, middleware, parallel }) => [
     layout(ShellCacheLayout, () => [
       // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
       path(
@@ -232,5 +284,58 @@ export const shellCachePatterns = urls(
         ]),
       ],
     ),
+    // Layout-loader trap: see ShellTrapChromeLayout above.
+    layout(ShellTrapChromeLayout, () => [
+      loader(ShellChromeLoader),
+      path(
+        "/shell-cache/layout-loader",
+        ShellCachePricePage,
+        { name: "shellCacheLayoutLoader", ppr: true },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="trap-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+      // The literal storefront-homepage shape: a BARE ppr route (no loader, no
+      // loading(), no use list at all) under the loader-registering layout. The
+      // route itself is fully shell-eligible; the LAYOUT's boundary-less loader
+      // alone keeps the capture refusing.
+      path("/shell-cache/layout-loader-bare", ShellBareHomePage, {
+        name: "shellCacheLayoutLoaderBare",
+        ppr: true,
+      }),
+    ]),
+    // Identity-guard negative: a bake-lane loader (no loading()) that reads
+    // cookies(). Capture refuses deterministically (guard flag) — MISS forever
+    // — while axis 1 serves the per-user value normally.
+    path(
+      "/shell-cache/guard",
+      ShellGuardPage,
+      {
+        name: "shellCacheGuard",
+        ppr: true,
+      },
+      () => [loader(ShellIdentityLoader)],
+    ),
+    // Slot-hole escape: see ShellSlotChromeLayout above.
+    layout(ShellSlotChromeLayout, () => [
+      parallel({
+        "@badge": {
+          handler: () => <ShellBadge loader={ShellBadgeLoader} />,
+          use: () => [
+            loader(ShellBadgeLoader),
+            loading(
+              <span data-testid="shell-badge-fallback">badge pending...</span>,
+            ),
+          ],
+        },
+      }),
+      path("/shell-cache/slot-hole", ShellSlotHomePage, {
+        name: "shellCacheSlotHole",
+        ppr: true,
+      }),
+    ]),
   ],
 );

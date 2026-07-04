@@ -69,7 +69,10 @@ export const ShellStreamLoader = createLoader(
         SHELL_STREAM_INNER_DELAY_MS,
       ),
     );
-    return { label: "Streamed outer", pendingData };
+    // seq in the label makes the CONTAINER per-execution distinguishable, so
+    // the bake-lane e2e can pin the snapshot overlay (outer seq frozen across
+    // HITs) against the live nested lane (inner seq advancing).
+    return { label: `Streamed outer ${seq}`, pendingData };
   },
 );
 
@@ -132,3 +135,44 @@ export function makePhysicsPromise(): Promise<string> {
     setTimeout(() => resolve("PHYSICS-HOLE-VALUE"), SHELL_PHYSICS_DELAY_MS),
   );
 }
+
+// Layout-loader bake-lane fixture (the storefront shape: an app-wide layout
+// registering session/basket-style loaders, no loading() on the layout).
+// Executes at capture (the gate holds for the 100ms), bakes, and is
+// snapshot-pinned on HITs. Consumed by nothing — the lane decision is
+// registration-level, not consumption-level.
+const SHELL_CHROME_DELAY_MS = 100;
+
+let shellChromeSeq = 0;
+
+export const ShellChromeLoader = createLoader(async (): Promise<string> => {
+  await new Promise((resolve) => setTimeout(resolve, SHELL_CHROME_DELAY_MS));
+  shellChromeSeq += 1;
+  return `chrome-${shellChromeSeq}`;
+});
+
+// Slot live-lane fixture: the SAME chrome-data shape as ShellChromeLoader, but
+// owned by a @badge parallel slot with its own loading(), so it gets a
+// per-slot LoaderBoundary — masked at capture, GUARANTEED fresh per serve
+// (where the bake lane would pin it). seq advances on every execution to prove
+// the badge stays live across shell HITs.
+const SHELL_BADGE_DELAY_MS = 150;
+
+let shellBadgeSeq = 0;
+
+export const ShellBadgeLoader = createLoader(async (): Promise<string> => {
+  await new Promise((resolve) => setTimeout(resolve, SHELL_BADGE_DELAY_MS));
+  shellBadgeSeq += 1;
+  return `badge-${shellBadgeSeq}`;
+});
+
+// Identity-guard negative (loader-container-bake): a BAKE-lane loader (no
+// loading() on its entry) that reads cookies(). During capture the identity
+// guard throws inside the loader, wrapLoaderPromise swallows it into error UI,
+// and the guard's context flag makes the capture REFUSE — deterministically,
+// once-per-key warned, MISS forever. On axis 1 (and every serve) the same read
+// is legal and the loader works normally.
+export const ShellIdentityLoader = createLoader(async (): Promise<string> => {
+  const { cookies } = await import("@rangojs/router");
+  return cookies().get("session")?.value ?? "anon-visitor";
+});

@@ -1,6 +1,6 @@
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
@@ -67,4 +67,40 @@ export function PprShellPricePage() {
 // whether the route carries loading() (see urls.tsx).
 export function PprShellStreamPage() {
   return <PprShellStream loader={PprShellStreamLoader} />;
+}
+
+// LAYOUT-LOADER bake-lane layout (the storefront shape): registers
+// PprChromeLoader with NO loading() on the LAYOUT (see urls.tsx) — the BAKE
+// lane. The loader executes at capture, its container bakes, and both
+// children HIT. Consumed by nothing — the lane decision is registration-level.
+export function PprTrapChromeLayout() {
+  return (
+    <main data-testid="ppr-trap-page">
+      <p data-testid="ppr-trap-chrome">Trap chrome static text</p>
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprBareHomePage() {
+  return <p data-testid="ppr-bare-home">Bare home static content</p>;
+}
+
+// LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"): the same
+// chrome data owned by a @badge parallel slot with its OWN loading() — a
+// badge-sized GUARANTEED-fresh hole (the bake lane would pin the value for the
+// shell's lifetime). Chrome and the static page bake; the route needs no
+// loader or loading() of its own.
+export function PprSlotChromeLayout() {
+  return (
+    <main data-testid="ppr-slot-page">
+      <p data-testid="ppr-slot-chrome">Slot chrome static text</p>
+      <ParallelOutlet name="@badge" />
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprSlotHomePage() {
+  return <p data-testid="ppr-slot-home">Slot home static content</p>;
 }

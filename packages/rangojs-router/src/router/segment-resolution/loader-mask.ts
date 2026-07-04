@@ -18,7 +18,10 @@
  * `resolveLoaderData`, fresh.ts `resolveLoaders`).
  */
 
-import { _getRequestContext } from "../../server/request-context.js";
+import {
+  _getRequestContext,
+  type RequestContext,
+} from "../../server/request-context.js";
 
 /**
  * True when the current render is the active PPR shell capture and route loaders
@@ -27,8 +30,10 @@ import { _getRequestContext } from "../../server/request-context.js";
  * runWithRequestContext), so it is accurate at the loader resolution sites, which
  * run synchronously inside the pipeline's context frame.
  */
-export function isShellCaptureActive(): boolean {
-  return _getRequestContext()?._shellCaptureRun === true;
+export function isShellCaptureActive(
+  reqCtx: RequestContext<any> | undefined = _getRequestContext(),
+): boolean {
+  return reqCtx?._shellCaptureRun === true;
 }
 
 /**
@@ -41,4 +46,22 @@ export function isShellCaptureActive(): boolean {
  */
 export function createMaskedLoaderPromise<T = unknown>(): Promise<T> {
   return new Promise<T>(() => {});
+}
+
+/**
+ * Lane decision for an entry's loaders under PPR (the loading() value decides;
+ * docs/design/loader-container-bake.md):
+ *
+ * - RENDERABLE loading() (the LoaderBoundary Suspense fallback) — the LIVE
+ *   lane: masked at capture, guaranteed fresh on every serve. Returns true.
+ * - No loading() (absent, or explicitly `false`, incl. `loading(x, { ssr:
+ *   false })` under the SSR manifest) — the BAKE lane: the loader executes
+ *   during capture, its settled container bakes, nested pending promises hole
+ *   at the consumer's own Suspense. Returns false.
+ *
+ * Mirrors segment-system's isRenderableLoading so the mask decision and the
+ * tree's boundary placement can never disagree.
+ */
+export function entryLoadingMasksLoaders(loading: unknown): boolean {
+  return loading !== undefined && loading !== null && loading !== false;
 }

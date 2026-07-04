@@ -19,10 +19,17 @@ import {
   PprShellLayout,
   PprShellPricePage,
   PprShellStreamPage,
+  PprTrapChromeLayout,
+  PprBareHomePage,
+  PprSlotChromeLayout,
+  PprSlotHomePage,
 } from "./pages/ppr-shell.js";
+import { PprShellBadge } from "./components/PprShellBadge.js";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
+  PprChromeLoader,
+  PprBadgeLoader,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
@@ -411,6 +418,59 @@ export const urlpatterns = urls(
             { name: "pprShellNoHole", ppr: true },
             () => [loader(PprShellStreamLoader)],
           ),
+        ]),
+        // LAYOUT-LOADER shapes (the storefront): the layout registers a
+        // loader with NO loading() on the LAYOUT — the BAKE lane
+        // (docs/design/loader-container-bake.md). PprChromeLoader executes at
+        // capture, its container bakes (snapshot-pinned on HITs), and both
+        // children HIT; the loader child keeps its price hole on the LIVE
+        // lane behind loading(). See pages/ppr-shell.tsx.
+        layout(PprTrapChromeLayout, () => [
+          loader(PprChromeLoader),
+          path(
+            "/ppr-shell/layout-loader",
+            PprShellPricePage,
+            { name: "pprShellLayoutLoader", ppr: true },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-trap-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+          // The literal storefront-homepage shape: a BARE ppr route (no
+          // loader, no loading(), no use list at all) under the
+          // loader-registering layout.
+          path("/ppr-shell/layout-loader-bare", PprBareHomePage, {
+            name: "pprShellLayoutLoaderBare",
+            ppr: true,
+          }),
+        ]),
+        // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"):
+        // the same chrome data owned by a @badge parallel slot with its OWN
+        // loading() — a badge-sized GUARANTEED-fresh hole (the bake lane
+        // would pin the value for the shell's lifetime). Chrome + static page
+        // bake; the route needs no loader or loading() of its own.
+        layout(PprSlotChromeLayout, () => [
+          parallel({
+            "@badge": {
+              handler: () => <PprShellBadge loader={PprBadgeLoader} />,
+              use: () => [
+                loader(PprBadgeLoader),
+                loading(
+                  <span data-testid="ppr-badge-fallback">
+                    badge pending...
+                  </span>,
+                ),
+              ],
+            },
+          }),
+          path("/ppr-shell/slot-hole", PprSlotHomePage, {
+            name: "pprShellSlotHole",
+            ppr: true,
+          }),
         ]),
         // Capture-data-snapshot DRIFT route: the shell bakes a value from a
         // short-ttl cache() (getPprDriftStamp, "drift" profile, ttl 2s); the

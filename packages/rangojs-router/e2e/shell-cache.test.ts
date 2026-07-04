@@ -26,10 +26,11 @@ import {
 // follows the PPR hole doctrine —
 // shell material in a layout segment, the loader route behind route-level
 // loading() (LoaderBoundary is the Suspense boundary capture postpones at). A
-// loader route WITHOUT loading() awaits its loader at tree-build, so capture's
-// masked loader pins the whole tree and the sanity gate refuses to store (eternal
-// MISS — the shape this suite was first written in). See
-// docs/design/ppr-shell-resume.md ("The hole contract").
+// loader WITHOUT loading() is the BAKE lane (loader-container-bake): it executes
+// at capture, its settled container bakes into the shell (snapshot-pinned on
+// HITs), and promises nested in the container hole at the consumer's own
+// Suspense. See docs/design/ppr-shell-resume.md and
+// docs/design/loader-container-bake.md.
 
 const LOADER_DELAY_MS = 400;
 
@@ -71,6 +72,21 @@ async function measureFirstChunk(
   }
   html += decoder.decode();
   return { ttfb, firstChunk, html };
+}
+
+/**
+ * Split a document body at the frozen-prelude boundary. The prelude a capture
+ * stores ends at </html>; everything after is the resumed tail (holes + $RC).
+ * One helper so the boundary heuristic and its presence assert live in one
+ * place across every HIT-composition test.
+ */
+function splitPrelude(html: string): { prelude: string; resumed: string } {
+  const preludeEnd = html.indexOf("</html>");
+  expect(preludeEnd).toBeGreaterThan(-1);
+  return {
+    prelude: html.slice(0, preludeEnd),
+    resumed: html.slice(preludeEnd),
+  };
 }
 
 /**
@@ -210,10 +226,7 @@ function runShellCacheSpec(f: Fixture): void {
     await warmToHit(request, url);
 
     const { html } = await measureFirstChunk(url);
-    const preludeEnd = html.indexOf("</html>");
-    expect(preludeEnd).toBeGreaterThan(-1);
-    const prelude = html.slice(0, preludeEnd);
-    const resumed = html.slice(preludeEnd);
+    const { prelude, resumed } = splitPrelude(html);
 
     expect(prelude).toContain("physics pending...");
     expect(prelude).not.toContain("PHYSICS-HOLE-VALUE");
@@ -234,10 +247,7 @@ function runShellCacheSpec(f: Fixture): void {
     await warmToHit(request, url);
 
     const { html } = await measureFirstChunk(url);
-    const preludeEnd = html.indexOf("</html>");
-    expect(preludeEnd).toBeGreaterThan(-1);
-    const prelude = html.slice(0, preludeEnd);
-    const resumed = html.slice(preludeEnd);
+    const { prelude, resumed } = splitPrelude(html);
 
     // Top-level promise push (~150ms real latency): resolved BEFORE the shell
     // froze — its value is shell material, in the prelude.
@@ -355,10 +365,7 @@ function runShellCacheSpec(f: Fixture): void {
     await new Promise((r) => setTimeout(r, 1500));
 
     const second = await measureFirstChunk(url);
-    const preludeEnd = second.html.indexOf("</html>");
-    expect(preludeEnd).toBeGreaterThan(-1);
-    const prelude = second.html.slice(0, preludeEnd);
-    const resumed = second.html.slice(preludeEnd);
+    const { prelude, resumed } = splitPrelude(second.html);
 
     // The frozen prelude still carries the capture-time stamp (shell ttl 300).
     expect(prelude).toContain(captureStamp!);
@@ -464,7 +471,7 @@ function runShellCacheSpec(f: Fixture): void {
     await page.goto(url);
     await waitForHydration(page);
 
-    await expect(testId(page, "shell-stream-outer")).toHaveText(
+    await expect(testId(page, "shell-stream-outer")).toContainText(
       "Streamed outer",
     );
     await expect(testId(page, "shell-stream-inner")).toContainText(
@@ -472,17 +479,6 @@ function runShellCacheSpec(f: Fixture): void {
     );
   });
 
-  // --- Negative contract: a loader WITHOUT loading() is not a hole. ---
-
-  // /shell-cache/no-hole has a loader but NO route-level loading(). The
-  // loading-less branch (renderSegments) awaits loader data at tree-build, so
-  // capture's masked loader pins the whole tree above <body>, the prelude comes
-  // back trivial, and the sanity gate refuses to store. The route stays
-  // x-rango-shell: MISS forever. Crucially, axis 1 stays healthy: the outer value
-  // AND the nested inner promise both stream in. No loading() degrades only the
-  // caching, never the route. (The once-per-key capture warning is a worker-side
-  // console.warn — not observable through this Playwright harness; it is pinned by
-  // the unit test in src/rsc/__tests__/shell-capture.test.ts.)
   // --- Per-request nonce via the ContextVar token: ppr stays on axis 1 (#656) ---
   //
   // /shell-cache/nonce-token sets a fresh per-request nonce via the `nonce` token
@@ -538,15 +534,90 @@ function runShellCacheSpec(f: Fixture): void {
     expect(seen.size).toBe(4);
   });
 
-  test("no loading(): stays MISS across repeated GETs while the inner promise still streams", async ({
+  // --- The bake lane: loaders WITHOUT loading() follow the container rule. ---
+  // (docs/design/loader-container-bake.md — one promise doctrine for handlers,
+  // handles, AND loaders: the settled container bakes, a promise nested inside
+  // it holes at the consumer's own Suspense.)
+
+  // /shell-cache/no-hole has a loader but NO route-level loading(): the BAKE
+  // lane. The loader executes during capture; its settled container (the outer
+  // label) bakes into the prelude; the nested pendingData promise postpones at
+  // the consumer's own inner Suspense — a hole. On every HIT the capture
+  // snapshot's loader family overlays the recorded container onto the fresh
+  // run (the outer label is PINNED at its capture-time seq, byte-parity with
+  // the frozen prelude) while the nested promise stays live (inner seq
+  // advances per request).
+  test("no loading() (bake lane): HITs with the container baked+pinned and the nested promise live", async ({
     request,
   }) => {
     const url = f.url("/shell-cache/no-hole?probe=nohole");
+    await warmToHit(request, url);
 
-    // Six GETs spaced past the background capture window: every capture attempt
-    // deterministically refuses, so the header never flips to HIT.
-    for (let i = 0; i < 6; i++) {
-      const res = await request.get(url, { headers: HTML_HEADERS });
+    const { html } = await measureFirstChunk(url);
+    const { prelude, resumed } = splitPrelude(html);
+
+    // Container baked into the frozen prelude; nested promise is a hole (its
+    // fallback froze, its value resumes).
+    expect(prelude).toMatch(/Streamed outer \d+/);
+    expect(prelude).toContain("Loading inner...");
+    expect(prelude).not.toMatch(/Streamed inner \d+/);
+    expect(resumed).toMatch(/Streamed inner \d+/);
+
+    // Pinning vs liveness across HITs: the baked container replays the
+    // CAPTURE-time value (snapshot overlay — no drift, no hydration mismatch)
+    // while the nested hole re-runs fresh (loader seq advances).
+    const second = await measureFirstChunk(url);
+    const outerSeq = (h: string) =>
+      Number(h.match(/Streamed outer (\d+)/)?.[1]);
+    const innerSeq = (h: string) =>
+      Number(h.match(/Streamed inner (\d+)/)?.[1]);
+    expect(outerSeq(second.html)).toBe(outerSeq(html));
+    expect(innerSeq(second.html)).toBeGreaterThan(innerSeq(html)!);
+  });
+
+  // --- The layout-loader shapes (storefront) on the bake lane. ---
+
+  // /shell-cache/layout-loader: the LAYOUT registers ShellChromeLoader (100ms,
+  // no loading() on the layout — bake lane) and the ppr child route keeps its
+  // own loader behind loading() (live lane). The layout container bakes (the
+  // capture gate holds for its real latency); the price hole stays live and
+  // fresh per request. This WAS the eternal-MISS trap before the bake lane —
+  // the child's loading() could not unpin the layout's boundary-less await.
+  test("layout loader without loading() (bake lane): HITs — layout container bakes, child loading() hole stays live", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/layout-loader?probe=trap");
+    await warmToHit(request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const { prelude, resumed } = splitPrelude(html);
+
+    expect(prelude).toContain("Trap chrome static text");
+    // Live-lane price hole: fallback frozen, value resumed fresh.
+    expect(prelude).toContain("Loading price...");
+    expect(resumed).toContain("Live price:");
+
+    // The hole is live: price seq advances across HITs.
+    const second = await measureFirstChunk(url);
+    const seqOf = (h: string) => Number(h.match(/data-seq="(\d+)"/)?.[1]);
+    expect(seqOf(second.html)).toBeGreaterThan(seqOf(html)!);
+  });
+
+  // /shell-cache/guard: the identity wall. A bake-lane loader (no loading())
+  // reads cookies() — during capture the guard throws inside the loader, the
+  // context flag makes the capture REFUSE deterministically, and the route
+  // stays MISS forever. Axis 1 keeps serving the per-user value normally.
+  // (The once-per-key refusal warning is a worker-side console.warn — pinned
+  // by the unit tests in src/rsc/__tests__/shell-capture.test.ts.)
+  test("bake-lane loader reading cookies(): capture refused, stays MISS, axis 1 keeps the per-user value", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/guard?probe=guard");
+
+    for (let i = 0; i < 4; i++) {
+      const res = await request.get(url, {
+        headers: { ...HTML_HEADERS, Cookie: "session=user-a" },
+      });
       expect(res.status()).toBe(200);
       expect(
         res.headers()["x-rango-shell"],
@@ -554,12 +625,59 @@ function runShellCacheSpec(f: Fixture): void {
       ).toBe("MISS");
 
       const html = await res.text();
-      // Axis 1 is healthy: outer value AND the nested inner promise stream in.
-      expect(html).toContain("Streamed outer");
-      expect(html).toContain("Streamed inner");
+      expect(html).toContain("user-a");
 
-      if (i < 5) await new Promise((r) => setTimeout(r, 350));
+      if (i < 3) await new Promise((r) => setTimeout(r, 350));
     }
+  });
+
+  // /shell-cache/layout-loader-bare: the LITERAL storefront-homepage shape —
+  // a bare ppr route (no loader, no loading(), no use list) under the
+  // loader-registering layout. Formerly the canonical dead-end; now the layout
+  // container bakes and the fully-static page HITs with no loading() anywhere.
+  test("bare ppr route under a loader layout (the storefront homepage shape): HITs with no loading() anywhere", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/layout-loader-bare?probe=bare");
+    await warmToHit(request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const { prelude } = splitPrelude(html);
+
+    expect(prelude).toContain("Trap chrome static text");
+    expect(prelude).toContain("Bare home static content");
+  });
+
+  // /shell-cache/slot-hole: the escape from the trap above (skills/ppr
+  // "layout-with-loaders playbook"). The same chrome data is owned by a @badge
+  // parallel slot with its OWN loading(), so the layout node has no loaders to
+  // await: the shell captures with chrome + the static page + the badge
+  // FALLBACK frozen in the prelude, the badge value streams in the resumed
+  // tail, and it stays live (seq advances) across HITs. Neither the layout nor
+  // the route carries loading().
+  test("layout data in a parallel slot with its own loading(): flips to HIT, badge fallback frozen, badge value live per request", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/slot-hole?probe=slot");
+    await warmToHit(request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const { prelude, resumed } = splitPrelude(html);
+
+    expect(prelude).toContain("Slot chrome static text");
+    expect(prelude).toContain("Slot home static content");
+    expect(prelude).toContain("badge pending...");
+    expect(prelude).not.toMatch(/badge-\d/);
+    expect(resumed).toMatch(/badge-\d+/);
+
+    // Liveness: a second HIT re-runs the slot loader (seq advances) while the
+    // prelude still freezes the fallback.
+    const second = await measureFirstChunk(url);
+    const secondPrelude = splitPrelude(second.html).prelude;
+    expect(secondPrelude).toContain("badge pending...");
+    const firstSeq = Number(html.match(/badge-(\d+)/)?.[1]);
+    const secondSeq = Number(second.html.match(/badge-(\d+)/)?.[1]);
+    expect(secondSeq).toBeGreaterThan(firstSeq);
   });
 }
 

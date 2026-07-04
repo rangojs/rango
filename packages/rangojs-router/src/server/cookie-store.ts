@@ -164,6 +164,12 @@ function assertNotInsideShellCapture(ctx: unknown, fnName: string): void {
     typeof ctx === "object" &&
     (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun === true
   ) {
+    // Flag the capture context BEFORE throwing: inside an executing bake-lane
+    // loader this throw is swallowed by wrapLoaderPromise into per-loader error
+    // UI, which would bake silently into the shared shell. The capture checks
+    // the flag after the render and refuses (shell-capture.ts).
+    (ctx as { _shellCaptureGuardTripped?: string })._shellCaptureGuardTripped =
+      fnName;
     throw new Error(
       `${fnName}() cannot be called while capturing a shared shell ` +
         `(shell-cache middleware). The captured shell is served to every user ` +

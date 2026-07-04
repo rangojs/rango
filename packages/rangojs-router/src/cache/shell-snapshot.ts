@@ -33,6 +33,7 @@ import type {
   ShellSnapshotRecord,
   ShellSnapshotItemValue,
   ShellSnapshotResponseValue,
+  ShellSnapshotLoaderValue,
 } from "./types.js";
 import { bufferToBase64, base64ToBuffer } from "./cf/cf-base64.js";
 import { isPerClientSignalHeader } from "../browser/cookie-name.js";
@@ -245,6 +246,51 @@ export function getRecordingStore<TEnv>(
 }
 
 /**
+ * Materialize the loader-family seed from a shell snapshot for a HIT's tail
+ * render: Flight-deserialize each recorded (promise-elided) bake-lane
+ * container into a segment-key -> container Map, which serveShellHit assigns
+ * to the tail context's `_shellLoaderSeed` for the resolveLoaderData overlay.
+ * Lives here so every snapshot family is decoded in this module (the
+ * item/segment/response families via {@link SeededShellStore}); the loader
+ * family is not a store read, so it seeds the context instead of a store.
+ *
+ * Deserializations run in parallel; a record that fails to decode is skipped
+ * (that loader drifts — the pre-snapshot behavior — instead of failing the
+ * HIT). Returns undefined when the snapshot carries no loader records, without
+ * touching the Flight codec (kept lazy for cold paths and non-RSC configs).
+ */
+export async function buildShellLoaderSeed(
+  snapshot: ShellSnapshotRecord[],
+): Promise<Map<string, unknown> | undefined> {
+  const loaderRecords: ShellSnapshotRecord[] = [];
+  for (const rec of snapshot) {
+    if (rec.family === "loader") loaderRecords.push(rec);
+  }
+  if (loaderRecords.length === 0) return undefined;
+
+  const { deserializeResult } = await import("./segment-codec.js");
+  const entries = await Promise.all(
+    loaderRecords.map(async (rec): Promise<[string, unknown] | null> => {
+      try {
+        return [
+          rec.key,
+          await deserializeResult(
+            (rec.value as ShellSnapshotLoaderValue).value,
+          ),
+        ];
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const seed = new Map<string, unknown>();
+  for (const entry of entries) {
+    if (entry) seed.set(entry[0], entry[1]);
+  }
+  return seed.size > 0 ? seed : undefined;
+}
+
+/**
  * A read-through overlay the HIT tail render reads through. For a key present in
  * the snapshot it serves the recorded value AS FRESH (shouldRevalidate: false —
  * a pinned key must NOT kick SWR background revalidation) so the tail's payload
@@ -269,9 +315,12 @@ export class SeededShellStore<
         this.items.set(rec.key, rec.value as ShellSnapshotItemValue);
       } else if (rec.family === "segment") {
         this.segments.set(rec.key, rec.value as CachedEntryData);
-      } else {
+      } else if (rec.family === "response") {
         this.responses.set(rec.key, rec.value as ShellSnapshotResponseValue);
       }
+      // "loader" family records are not store reads — serveShellHit seeds them
+      // onto the tail context (_shellLoaderSeed) for the resolveLoaderData
+      // overlay instead.
     }
   }
 

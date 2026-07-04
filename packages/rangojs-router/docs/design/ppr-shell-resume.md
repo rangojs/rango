@@ -201,11 +201,23 @@ to Rango's rings. The core invariant, which you should be able to recite:
 > performed; replaying them on a HIT reproduces the shell content
 > byte-identically; everything not recorded stays live.
 
-This self-aligns with the hole doctrine. Loaders behind `loading()` are MASKED at
-capture (never executed), so their reads are never recorded and stay fresh on
-hits. Content that baked into the shell is, by definition, content whose reads
-happened at capture. So "record what the capture read" and "everything under a
-hole stays live" are the same rule seen from two sides.
+This self-aligns with the hole doctrine. LIVE-lane loaders (behind `loading()`)
+are MASKED at capture (never executed), so their reads are never recorded and
+stay fresh on hits. Content that baked into the shell is, by definition,
+content whose reads happened at capture. So "record what the capture read" and
+"everything under a hole stays live" are the same rule seen from two sides.
+
+The LOADER family (docs/design/loader-container-bake.md) extends the same
+invariant to BAKE-lane loaders (no `loading()` on their entry): they EXECUTE
+during capture (the flight gate's holdUntil covers their real latency), their
+settled containers are promise-elided and recorded as
+`{ family: "loader", key: <loader segment id>, value: <Flight string> }`, and
+on a HIT `serveShellHit` deserializes them into `_shellLoaderSeed` so
+`resolveLoaderData` overlays the recorded container onto the fresh run —
+recorded paths pinned, hole-marker paths keeping the fresh run's live nested
+promises. A rejected container REFUSES the capture (error UI never bakes), and
+an identity read inside a bake-lane loader refuses via the guard's context
+flag (`_shellCaptureGuardTripped`).
 
 Mechanics (`src/cache/shell-snapshot.ts`):
 

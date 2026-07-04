@@ -11,7 +11,10 @@ import {
   setRequestContextParams,
   runWithRequestContext,
 } from "../server/request-context.js";
-import { SeededShellStore } from "../cache/shell-snapshot.js";
+import {
+  SeededShellStore,
+  buildShellLoaderSeed,
+} from "../cache/shell-snapshot.js";
 import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
@@ -489,12 +492,20 @@ function serveShellHit(
     // never recorded) falls through to the real store and stays LIVE. The
     // overlay lives on a DERIVED context (own _cacheStore), so the shared reqCtx
     // is untouched; an entry without a snapshot keeps the pre-snapshot behavior.
-    if (entry.snapshot && entry.snapshot.length > 0 && reqCtx._cacheStore) {
+    if (entry.snapshot && entry.snapshot.length > 0) {
       const seededCtx: RequestContext<any> = Object.create(reqCtx);
-      seededCtx._cacheStore = new SeededShellStore(
-        reqCtx._cacheStore,
-        entry.snapshot,
-      );
+      if (reqCtx._cacheStore) {
+        seededCtx._cacheStore = new SeededShellStore(
+          reqCtx._cacheStore,
+          entry.snapshot,
+        );
+      }
+      // Loader-family records (bake-lane containers, loader-container-bake):
+      // decode into a seed Map for the resolveLoaderData overlay, so the
+      // payload's baked container bytes match the frozen prelude while the
+      // hole-marker paths keep the fresh run's live nested promises.
+      const loaderSeed = await buildShellLoaderSeed(entry.snapshot);
+      if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
       return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
     }
     return renderTail(reqCtx);
