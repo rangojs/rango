@@ -19,6 +19,9 @@ pre-commit:
     - name: skills
       run: node tools/check-skills.mjs
       glob: "packages/rangojs-router/skills/**"
+    - name: skills-catalog
+      run: node tools/generate-skills-catalog.mjs --check
+      glob: "packages/rangojs-router/skills/**"
     - name: docs-api
       run: node tools/check-docs-api.mjs
       glob:

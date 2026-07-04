@@ -56,7 +56,10 @@ jobs:
         run: pnpm check:docs-api
 
       - name: Check skills frontmatter and cross-references
-        run: node tools/check-skills.mjs
+        run: pnpm check:skills
+
+      - name: Check skills catalog is current
+        run: pnpm check:skills-catalog
 
   format:
     needs: [debounce]

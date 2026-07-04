@@ -36,6 +36,23 @@ The `cloudflare` preset targets Cloudflare Workers (add
 [`/vercel` skill](./skills/vercel/SKILL.md); omit `preset` for the default
 Node setup.
 
+## Using the skills with your coding agent
+
+This package ships 43 agent skills in `node_modules/@rangojs/router/skills/` —
+task-focused guides written for LLM coding agents. Start at
+`skills/rango/SKILL.md` (the mental model + catalog); a machine-readable index
+is at `skills/catalog.json`.
+
+- **Claude Code**: point it at the skills (e.g. "read
+  node_modules/@rangojs/router/skills/rango/SKILL.md before routing work"), or
+  copy/symlink the directories you use into your project's `.claude/skills/`.
+- **Other agents (Cursor, Codex CLI, Gemini CLI, ...)**: these harnesses
+  auto-discover skills from `.agents/skills/` in your project (or
+  `~/.agents/skills/`) — copy or symlink the skill directories you use from
+  `node_modules/@rangojs/router/skills/<name>` into `.agents/skills/<name>`.
+  The files are plain markdown; cross-references like `/loader` name sibling
+  skill directories.
+
 ## 1. Pages
 
 A router is a tree. `path()` places a page, `layout()` wraps children,
