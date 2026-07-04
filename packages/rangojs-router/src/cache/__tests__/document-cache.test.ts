@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { createDocumentCacheMiddleware } from "../document-cache.js";
 import type { MiddlewareContext } from "../../router/middleware.js";
+// The REAL cacheTag + runWithRequestContext (statically bound before the
+// per-test vi.doMock of request-context, so they use the real ALS). Lets a
+// render call the render-callable cacheTag() and land the tag on the same
+// _requestTags the middleware collects (#648).
+import { cacheTag } from "../cache-tag.js";
+import { runWithRequestContext } from "../../server/request-context.js";
 
 // ============================================================================
 // Mock Cache Store
@@ -206,6 +212,39 @@ describe("createDocumentCacheMiddleware", () => {
         "products",
         "nav",
       ]);
+    });
+
+    it("collects a render-called cacheTag() onto the document entry (#648)", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // The render (next()) calls the REAL render-callable cacheTag with the same
+      // request context active on the ALS — before #648 this threw outside a "use
+      // cache" scope. The tag lands on mockRequestCtx._requestTags, which the
+      // middleware then snapshots into the document entry.
+      const next = vi.fn(async () => {
+        runWithRequestContext(mockRequestCtx as any, () =>
+          cacheTag("render-tag"),
+        );
+        return new Response("Tagged by render", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        });
+      });
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+      await vi.runAllTimersAsync();
+
+      expect(mockStore.putResponseTags).toHaveLength(1);
+      expect(mockStore.putResponseTags[0]).toEqual(["render-tag"]);
+      expect(mockStore.cache.get("/page:html")?.tags).toEqual(["render-tag"]);
     });
 
     it("passes undefined tags for an untagged document (header-free)", async () => {

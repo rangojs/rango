@@ -337,6 +337,44 @@ post-middleware state; guarding is serve-time (the commit point above).
 > stays), TOP-LEVEL `push(promise)` — awaited before SSR, baked — resolved
 > promises, replayed cached segments.**
 
+### Shell invalidation is DERIVATIVE (render-recorded tags, #648)
+
+PPR has no first-class key or tag API of its own, and it should not grow one. The
+reason is the composition doctrine: PPR is execution-PRESERVING — a HIT still runs
+everything underneath (middleware, holes, the worker handles every request); only
+the document bytes are shortcut. That is unlike `cache()`/`"use cache"`, which are
+execution-PREVENTING (a hit means the wrapped work does not run). Because the two
+layers compose rather than substitute, PPR's invalidation is DERIVATIVE: the shell
+is invalidated by the tags of whatever rendered into it.
+
+The instrument is the render-callable `cacheTag()` (see `use-cache-api-design.md`).
+A server component that renders into the shell calls `cacheTag("campaign:spring")`
+with no `cache()`/`"use cache"` in its tree; the tag records onto the capture
+context's `_requestTags`, which the capture unions with the route's static
+`ppr.tags` and stores on the shell entry. `revalidateTag("campaign:spring")` then
+drops that shell. The document cache reads the same set, so every document-level
+artifact shares the contract.
+
+The expiry invariant holds BY CONSTRUCTION, no filtering logic:
+
+- **baked ⇒ evicts** — a component/loader that bakes into the shell executes
+  during capture, so its `cacheTag()` records and the tag rides onto the entry.
+- **hole ⇒ fresh** — a subtree behind a renderable `loading()` is masked during
+  capture (its loaders never run), so nothing under a hole can tag the shell; it
+  stays live and re-renders per request regardless of tag invalidation.
+
+Timing: the capture snapshots the tag union (`attemptCapture`) right after it
+kicks off the shell render. React renders a SYNCHRONOUS server component before
+`renderToReadableStream` returns, so a `cacheTag()` in a synchronous component —
+the #648 case, verified by the cloudflare-basic eviction e2e — is on
+`_requestTags` in time. A tag recorded only AFTER an `await` inside an async
+component lands after that snapshot and is not collected into the shell (a known
+edge, shared with async `cache()`/`"use cache"` reads at capture; the document
+cache does not share it — it buffers the full response body before
+`collectRequestTags`). Deferring the shell's tag snapshot to a render-complete
+barrier is a viable follow-up if async render-recorded shell tags become load-
+bearing.
+
 ### The handles contract: "nesting = liveness"
 
 Verified against the shipped semantics (`src/handles/deferred-resolution.ts`):

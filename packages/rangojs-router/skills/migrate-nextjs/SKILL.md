@@ -447,8 +447,10 @@ Next.js conflates two things under "revalidation." Rango separates them — and
 tag-based cache invalidation now maps directly.
 
 **1. Cache invalidation (bust cached values) — direct equivalent.** Tag entries
-with `cache({ tags })` or, inside a `"use cache"` function, runtime
-`cacheTag(...tags)`. Then invalidate by tag:
+with `cache({ tags })` or runtime `cacheTag(...tags)`. `cacheTag()` works inside a
+`"use cache"` function (tags that entry) AND render-callable in a plain server
+component (no `"use cache"` needed — it tags the document / PPR shell the component
+renders into). Then invalidate by tag:
 
 ```typescript
 // Next.js                    Rango
