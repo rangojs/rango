@@ -379,11 +379,32 @@ export default async function Page({ params }) {
   );
 }
 
-// Rango: the loading() boundary is the hole; the loader is always live
+// Rango, step 1 — direct carry-over. Your Suspense tree IS the hole model:
+// hand the un-awaited promise down, keep the boundary, add the ppr option.
+// No loader, no loading(), no restructuring.
+function ProductPage(ctx: HandlerContext) {
+  const price = fetchPrice(ctx.params.id); // pending promise — NOT awaited
+  return (
+    <ProductShell>
+      <Suspense fallback={<PriceSkeleton />}>
+        <LivePrice price={price} /> {/* use(price) inside */}
+      </Suspense>
+    </ProductShell>
+  );
+}
+path("/products/:id", ProductPage, {
+  name: "product",
+  ppr: { ttl: 600, swr: 120 }, // or ppr: true (default ttl 300s)
+});
+
+// Rango, step 2 (optional refinement) — promote the fetch to a loader for a
+// GUARANTEED hole: loaders are masked at capture and fresh on every serve,
+// even when the value resolves instantly (a raw promise that settles fast
+// would bake into the shell). loading() is the loader's hole boundary.
 path(
   "/products/:id",
   ProductPage,
-  { name: "product", ppr: { ttl: 600, swr: 120 } }, // or ppr: true (default ttl 300s)
+  { name: "product", ppr: { ttl: 600, swr: 120 } },
   () => [loader(LivePriceLoader), loading(<PriceSkeleton />)],
 ),
 ```

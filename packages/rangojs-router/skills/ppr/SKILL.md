@@ -41,7 +41,7 @@ export const urlpatterns = urls(({ path, layout, loader, loading }) => [
       { name: "product", ppr: { ttl: 600, swr: 120 } },
       () => [
         loader(LivePriceLoader),
-        loading(<PriceSkeleton />), // the structural hole boundary
+        loading(<PriceSkeleton />), // structural hole: the loader subtree stays live
       ],
     ),
   ]),
@@ -56,6 +56,60 @@ const router = createRouter<AppBindings>({
 });
 export default router;
 ```
+
+That is ONE of two hole mechanisms — the loader one. Do not conclude PPR
+requires a loader:
+
+### The same opt-in with NO loader and NO loading() — promise holes
+
+A route (or its layouts) whose live regions are pending promises under
+`<Suspense>` PPRs with no `loader()` and no `loading()` anywhere. Hand the
+un-awaited promise over as a prop; the consumer suspends under its OWN
+boundary; the boundary postpones at capture and becomes the hole:
+
+```typescript
+// Handler: kick off the fetch, do NOT await it.
+function ProductPage(ctx: HandlerContext) {
+  const reviews = fetchReviews(ctx.params.id); // Promise<Review[]> — pending
+  return (
+    <main>
+      <h1>Product {ctx.params.id}</h1> {/* shell — baked into the prelude */}
+      <ReviewsSection promise={reviews} /> {/* hole — resumes per request */}
+    </main>
+  );
+}
+```
+
+```tsx
+// ReviewsSection.tsx — the consumer owns its Suspense boundary.
+"use client";
+
+import { Suspense, use } from "react";
+
+function Inner({ promise }: { promise: Promise<Review[]> }) {
+  return <ReviewList reviews={use(promise)} />;
+}
+export function ReviewsSection({ promise }: { promise: Promise<Review[]> }) {
+  return (
+    <Suspense fallback={<ReviewsSkeleton />}>
+      <Inner promise={promise} />
+    </Suspense>
+  );
+}
+```
+
+```typescript
+path("/products/:id", ProductPage, { name: "product", ppr: true });
+// No use() list at all: no loader, no loading, still a shell + live hole.
+```
+
+At capture the pending fetch cannot win the task-quantized quiet window, so
+the boundary postpones — fallback in the frozen prelude, value resumed fresh
+on every HIT. This is the PHYSICS class from the hole doctrine below, and it
+is exactly how an existing Suspense-shaped tree (e.g. migrated from Next.js
+PPR) works with zero restructuring. The e2e proof is
+`e2e/test-app/src/components/ShellPhysicsValue.tsx` — a promise hole living in
+a LAYOUT with no loader registration at all.
 
 A route WITHOUT the `ppr` option is pure axis 1: no store read, no capture, no
 logs, zero cost. `ppr` is per page route — declaring it on a layout is not
@@ -132,6 +186,45 @@ GUARANTEED hole for loader data (live even when the value resolves instantly,
 where a raw promise would bake), and on a route that registers a loader it is
 the capture prerequisite (see the structural negative below).
 
+The three promise positions, side by side:
+
+```typescript
+async function Handler(ctx: HandlerContext) {
+  const push = ctx.use(MyHandle);
+
+  push(fetchBadge());                    // TOP-LEVEL push: awaited pre-SSR → BAKED
+  push({ label: "x", stat: fetchStat() }); // NESTED in container → container baked,
+                                           //   stat streams → HOLE (consumer Suspends it)
+
+  const data = await fetchHeader(ctx);   // awaited by the handler → BAKED
+
+  return (
+    <section>
+      <Header data={data} />                       {/* shell */}
+      <StatsPanel promise={fetchStats(ctx)} />     {/* un-awaited prop + own
+                                                       <Suspense> + use() → HOLE */}
+    </section>
+  );
+}
+```
+
+### Choosing the hole mechanism
+
+| Your live region is…                            | Use                                                            | Why                                                                                              |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| loader data                                     | `loader()` + `loading()`                                       | the guaranteed structural hole — masked at capture, fresh every serve, immune to fast resolution |
+| handler-fetched real I/O (db, fetch)            | un-awaited promise prop + consumer `<Suspense>` + `use()`      | no loader needed; real latency postpones by physics                                              |
+| per-segment metadata consumed elsewhere         | handle container with a NESTED promise + consumer `<Suspense>` | container is shell, nested value streams — "nesting = liveness"                                  |
+| already-resolved / instant / synchronous values | `loader(() => Promise.resolve(x))` + `loading()`               | a raw promise that settles inside the quiet window BAKES; only the loader lane guarantees live   |
+| none of the above                               | nothing                                                        | it bakes — that is what the shell is for                                                         |
+
+The physics caveat in one line: promise holes are holes because the I/O is
+genuinely pending at capture. If the value can resolve near-instantly (memory
+read, warmed cache), it may bake into the shell — when liveness must be
+guaranteed rather than probable, use the loader lane. And independent of any
+promise holes: a route that registers `loader()` without `loading()` still
+hits the structural negative (capture refuses, eternal MISS).
+
 ### Handles: "nesting = liveness"
 
 - `ctx.use(H)(promise)` — a TOP-LEVEL pushed promise is awaited server-side
@@ -148,13 +241,69 @@ Put it in a loader: `loader(() => Promise.resolve(x))` + `loading()`. Loaders
 are always the live lane — masked at capture, fresh on every serve — no matter
 how fast the value settles.
 
-### The structural negative: a loader route without loading()
+### The structural negative: loaders without loading() on THEIR entry
 
 The loading-less branch awaits loader data at TREE-BUILD, above every Suspense
 boundary, so under capture's masked loaders the whole tree pins above `<body>`,
 the prelude comes back trivial, and the sanity gate refuses to store. Observable
-symptom: `x-rango-shell: MISS` forever plus a once-per-key worker warning. Add
-`loading()` to the loader route and keep shell material in a layout.
+symptom: `x-rango-shell: MISS` forever plus a once-per-key worker warning.
+
+The await is decided PER TREE NODE, at the node that REGISTERS the loaders
+(`segment-system.tsx`: a node with `loading` wraps its loaders in a
+LoaderBoundary; a node with loaders and no `loading` awaits them at
+tree-build). Consequences worth spelling out:
+
+- `loading()` on a CHILD route does NOT unpin loaders registered on a parent
+  layout — the boundary must live on the entry that owns the loaders.
+- `loading()` IS valid on layout and parallel entries, not just routes.
+
+### The layout-with-loaders playbook (the storefront case)
+
+The most common way real apps hit the negative: an app-wide layout registers
+per-user loaders (session context, basket, wishlist) and the page under it
+declares `ppr`. Capture refuses — the layout awaits its loaders with no
+boundary. Your options, in order of preference:
+
+1. **Do NOT put `loading()` on the layout itself** — it unpins the capture,
+   but the LoaderBoundary fallback wraps the layout's ENTIRE subtree, so all
+   of your chrome (header, nav, footer) falls out of the shell into the
+   skeleton. You get a HIT with a near-empty shell: technically PPR,
+   practically pointless.
+2. **Move each loader into a parallel slot with its OWN `loading()`.**
+   Parallel-owned loaders get their own per-slot boundary (`fresh.ts` tags
+   them with the slot's loading; `segment-system.tsx` builds a per-slot
+   LoaderBoundary), so the chrome bakes into the shell and each widget is an
+   independent, widget-sized hole:
+
+   ```typescript
+   layout(StoreChrome, () => [
+     // chrome renders NO loader data itself — it bakes into the shell
+     parallel({ "@basket": BasketBadge }, () => [
+       loader(BasketLoader),
+       loading(<BadgeSkeleton />), // hole the size of a badge, not a page
+     ]),
+     parallel({ "@wishlist": WishlistBadge }, () => [
+       loader(WishlistLoader),
+       loading(<BadgeSkeleton />),
+     ]),
+     path("/", HomePage, { name: "home", ppr: true }),
+   ]),
+   ```
+
+   "No loading()" usually means "no page-level skeleton flash" — this gives
+   exactly that: the page never skeletons; three small widgets stream in.
+
+3. **Shared (non-per-user) layout data can leave the loader lane entirely**:
+   an un-awaited handler promise under the consumer's `<Suspense>` (a physics
+   hole, no `loading()` anywhere) or `cache()`/`"use cache"` to bake it into
+   the shell.
+
+The one thing you cannot do: keep PER-USER data out of the loader lane.
+Handlers execute during capture and `cookies()`/`headers()` THROW there — the
+loader lane (masked at capture, fresh every serve) is the only identity-safe
+lane, and `loading()` is its boundary. A per-user region on a PPR page needs a
+`loading()` boundary SOMEWHERE — the playbook above just makes it widget-sized
+instead of page-sized.
 
 ## Execution matrix
 
@@ -256,8 +405,10 @@ know (a tenant id, a deploy marker).
 
 ## Pitfalls
 
-- **Loader route without `loading()`**: eternal MISS plus a once-per-key
-  console warning (see "The structural negative").
+- **Loaders without `loading()` on their OWN entry** (route or layout —
+  loading() on a child route does not unpin a parent layout's loaders):
+  eternal MISS plus a once-per-key console warning (see "The structural
+  negative" and the layout-with-loaders playbook).
 - **Per-user value in shell material**: baked into the shared shell —
   deterministically, not by race (handler promises deep-settle at the ring-3
   write on cached chains; awaited/resolved values bake everywhere). Put
@@ -273,15 +424,17 @@ cache"` value baked into the shell is PINNED at capture (the capture data
   snapshot) and replayed on every HIT, so the shell stays byte-identical to the
   frozen prelude even after that cache entry expires, gets recomputed, or is
   tag-invalidated. This is deliberate — parity beats freshness inside the shell.
-  If a shell region needs to be fresh, put it under a `loading()` hole (holes are
-  never pinned) or make the SHELL itself invalidatable by adding the tag to
-  `ppr.tags`. Ring-1/ring-3 tag invalidation does NOT drop the shell.
+  If a shell region needs to be fresh, put it under a hole — `loading()` for
+  loader data, or an un-awaited promise under the consumer's `<Suspense>`
+  (holes are never pinned) — or make the SHELL itself invalidatable by adding
+  the tag to `ppr.tags`. Ring-1/ring-3 tag invalidation does NOT drop the shell.
 - **Uncached nondeterminism in the shell is a hydration hazard**: a raw
   `Date.now()` / `Math.random()` / uncached `fetch` rendered directly in shell
   material (outside any cache ring) drifts between capture and hit and the
   snapshot CANNOT pin it — it was never a cache read. It will mismatch the frozen
   prelude and detonate hydration. Wrap it in `cache()`/`"use cache"` (then it is
-  pinned) or move it under a `loading()` hole.
+  pinned) or move it under a hole (`loading()`, or a pending-promise
+  `<Suspense>` region).
 - **Stacking with `/document-cache`**: pick one per route — the document cache
   would cache the composite.
 - **Dev + HMR**: works, but edits produce stale shells until TTL/recapture.
