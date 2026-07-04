@@ -23,7 +23,8 @@
 
 import { registerOTel } from "@vercel/otel";
 import { createVercelTracing } from "@rangojs/router/vercel";
-import type { RouterTracingConfig } from "@rangojs/router";
+import { createOTelSink } from "@rangojs/router";
+import type { RouterTracingConfig, TelemetrySink } from "@rangojs/router";
 import { recordingTracer } from "./trace-debug.js";
 
 const DEBUG = process.env.RANGO_TRACE_DEBUG === "1";
@@ -34,4 +35,15 @@ export function buildTracing(): RouterTracingConfig {
   }
   registerOTel({ serviceName: "rango-vercel-basic" });
   return createVercelTracing();
+}
+
+/**
+ * Telemetry sink for the discrete-fact events (cache.decision, timeout, ...).
+ * Same hybrid switch as buildTracing: in the e2e debug build the in-memory
+ * recorder backs the sink so createOTelSink's instant spans land in the
+ * /__debug/trace tree; in the real path the slot stays unset (the tracing slot
+ * already emits the phase spans this example demonstrates).
+ */
+export function buildTelemetry(): TelemetrySink | undefined {
+  return DEBUG ? createOTelSink(recordingTracer) : undefined;
 }
