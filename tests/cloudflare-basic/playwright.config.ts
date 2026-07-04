@@ -15,7 +15,15 @@ export default defineConfig({
     ["list"],
     ...(process.env.CI ? [["github"], ["html", { open: "never" }]] : []),
   ] as import("@playwright/test").ReporterDescription[],
-  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
+  // 14m (was 10m): the merged PPR shell stack grew the sequential
+  // dev -> production -> hmr run past the old 10m on CI (and the ppr
+  // dev-warmup adds dev-time work), so healthy runs brushed the cap and any
+  // flake retry tipped it over — Playwright then killed the run mid-flight,
+  // failing whichever test was executing ("Timed out waiting 600s for the
+  // test suite to run"). 14m playwright budget + ~3-4m of job setup (install,
+  // router build, browser deps) fits inside the workflow job's
+  // timeout-minutes: 20 cap (.github/workflows/e2e.yml).
+  globalTimeout: process.env.CI ? 14 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000,
   use: {
     trace: "on-first-retry",

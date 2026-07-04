@@ -81,6 +81,7 @@ request ──> global middleware chain (router.use(), onion)
               └─> route DSL middleware() (executeRender onion)
                     └─> handleRscRenderingInner        <-- THE COMMIT POINT
                           ppr config off the classified route snapshot
+                          nonce check (provider OR token; warn-once + axis 1 if set)
                           store family check (warn-once + axis 1 if absent)
                           getSSRSetup (allReady => bypass, axis 1)
                           getShell(key)
@@ -102,6 +103,24 @@ headers are committed at the flush — a failing hole cannot become a
 500/redirect after the first shell byte (error UI renders inline via
 Suspense/error boundaries), and a near-unreachable redirecting match on a HIT
 degrades to a client-side `location.replace` script.
+
+### The per-request nonce gate reads the token, not just the provider (scar tissue)
+
+A per-request CSP nonce pins the route to axis 1: `useNonce()` renders it into
+every nonced script/style/meta, so a shell shared per host+URL cannot bake it
+without freezing one request's nonce for every visitor. The gate originally
+checked ONLY the `createRouter({ nonce })` provider value (threaded into
+`handleRscRendering` as the `nonce` param). But a nonce can also arrive via the
+`nonce` ContextVar TOKEN written in middleware (`ctx.set(nonce, value)`), and
+that path left the threaded param `undefined` — so a token-set nonce sailed
+through the gate, entered capture, and baked the capture request's nonce into
+the shared shell (issue #656). The fix reads the token off the post-middleware
+request variables AT the commit point: `nonce ?? contextGet(reqCtx._variables,
+nonceToken)`. This is only sound because the commit point runs after the whole
+middleware chain — the token write is already present. A declared-but-gated
+route logs a once-per-key warning (`warnPprNonceActiveOnce`, mirroring
+`warnShellStoreMissingOnce`) and serves pure axis 1 with no `x-rango-shell`
+header; an undeclared route stays silent.
 
 ### Theme fidelity on resume (scar tissue)
 
@@ -499,8 +518,10 @@ once-per-key warning, since the declared intent cannot be honored).
 commit point: `resolvePprConfig` (normalizes the route's `ppr` option;
 `DEFAULT_PPR_TTL_SECONDS` = 300), `buildShellKey`
 (`${host}${pathname}${sortedSearch}:shell` — host-scoped so multi-tenant shells
-never collide), `isValidShellHit` (reactVersion gate), `hasShellFamily`, and
-the once-per-key missing-store-family warning. The route's ppr config is read
+never collide), `isValidShellHit` (reactVersion gate), `hasShellFamily`, the
+once-per-key missing-store-family warning, and `warnPprNonceActiveOnce` (the
+once-per-key active-per-request-nonce warning; see the nonce-gate scar tissue
+above). The route's ppr config is read
 off the CLASSIFIED route snapshot (`reqCtx._classifiedRoute.manifestEntry`),
 which the RSC handler stores before dispatching the render — available before
 `match()` runs, which is what makes the eager HIT flush possible.
@@ -596,19 +617,34 @@ after the in-place retry ALSO failed (or a genuine error), and within the window
 the key is not re-probed.
 
 The window is EXPONENTIAL in the consecutive-failure count —
-`min(BASE * 2^(failures-1), MAX)`, so 1 s, 2 s, 4 s, … capped at 60 s
-(`REFUSED_CAPTURE_BASE_MS` / `REFUSED_CAPTURE_MAX_MS`). A flat 60 s conflated two
-very different failures. A structurally ineligible route fails forever and wants
-the long cap. But a cold-but-ELIGIBLE route can also fail the retry under a truly
-cold graph (dev module transform, or a cold worker under parallel load), and it
-must recover on the next request or two — freezing it for 60 s would re-break the
-cold-start DX the retry exists to fix (this is not hypothetical: a flat 60 s
-backoff made the cloudflare dev PPR e2e time out, because `warmToHit`'s
-multi-request recovery was blocked). Escalating from 1 s lets the eligible route
-re-probe almost immediately (warm now → HIT, which clears the entry), while the
-doomed route ramps to the 60 s cap within a handful of failures. Either way an
-app-wide mount never re-renders a doomed route on every request. A successful
-capture clears the entry outright.
+`min(BASE * 2^(failures-1), ceiling)`, so 1 s, 2 s, 4 s, … up to the mode's ceiling
+(`REFUSED_CAPTURE_BASE_MS`, and the ceiling below). A flat window conflated two
+very different failures. A structurally ineligible route fails forever and wants a
+long cap. But a cold-but-ELIGIBLE route can also fail the retry under a truly cold
+graph (dev module transform, or a cold worker under parallel load), and it must
+recover on the next request or two — freezing it would re-break the cold-start DX
+the retry exists to fix (this is not hypothetical: a flat 60 s backoff made the
+cloudflare dev PPR e2e time out, because `warmToHit`'s multi-request recovery was
+blocked). Escalating from 1 s lets the eligible route re-probe almost immediately
+(warm now → HIT, which clears the entry), while the doomed route ramps to the cap
+within a handful of failures. Either way an app-wide mount never re-renders a
+doomed route on every request. A successful capture clears the entry outright.
+
+The ceiling is MODE-DEPENDENT (`refusedCaptureCeilingMs`): 60 s in production
+(`REFUSED_CAPTURE_MAX_MS`), but only ~2 s in dev (`REFUSED_CAPTURE_DEV_MAX_MS`).
+The reason is that in dev the DOMINANT no-shell cause is a cold module graph that
+warms on the very attempt that failed, so a long window is pure harm — and even the
+escalating window eventually climbs past ~16 s, which OUTLASTS the e2e warm window.
+That was the residual cold-CI failure (#652 item 3): on a slow CI runner the first
+capture races an unfinished shell, each re-probe is also cold and climbs the count,
+and once the window exceeds `warmToHit`'s 20 s poll every subsequent request is
+skipped as backed-off — an eternal MISS even though the modules are warm by then.
+Capping the dev window at ~2 s keeps a cold-but-eligible route re-probing roughly
+every 2 s across the whole warm window, so one of those warm re-probes always lands
+inside it. Production keeps the full 60 s cap because there the no-shell cause is
+far more likely to be a genuinely ineligible route, which should be re-probed
+rarely. (This is item 3 of #652; items 1–2 — barrier narrowing and drain
+unification — remain open.)
 
 ### Capture quiesce: task-based, not wall-clock
 

@@ -51,6 +51,7 @@ export const NamedRoutes = {
   pprBlog: "/ppr-blog",
   pprBlogPost: "/ppr-blog/:slug",
   pprDrift: "/ppr-drift",
+  pprNonce: "/ppr-nonce",
   pprShell: "/ppr-shell",
   pprShellNoHole: "/ppr-shell/no-hole",
   pprShellStream: "/ppr-shell/stream",
