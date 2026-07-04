@@ -1,5 +1,8 @@
 import { tryTrieMatch } from "./trie-matching.js";
-import { getRouterTrie } from "../route-map-builder.js";
+import {
+  getRouterTrie,
+  isRouterTrieAuthoritative,
+} from "../route-map-builder.js";
 import {
   findMatch as findRouteMatch,
   isLazyEvaluationNeeded,
@@ -166,6 +169,17 @@ export function createFindMatch<TEnv = any>(
           };
           return cloneMatchResult(lastFindMatchResult);
         }
+      } else if (isRouterTrieAuthoritative(deps.routerId)) {
+        // Authoritative miss (#664): this trie was deserialized from the
+        // COMPLETE build manifest, so trailing-slash redirects are already
+        // trie-native hits and a miss means no route exists. Skip the regex
+        // fallback — the only route-count-proportional match path — and do
+        // not evaluate lazy includes for unmatched (bot-probe) traffic.
+        // Trie hits that need lazy splicing keep the fallback loop below
+        // (trieMatched === true never reaches this branch).
+        lastFindMatchPathname = pathname;
+        lastFindMatchResult = null;
+        return null;
       }
     }
 

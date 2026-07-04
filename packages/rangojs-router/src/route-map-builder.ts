@@ -139,6 +139,7 @@ export function clearAllRouterData(): void {
   perRouterManifestMap.clear();
   perRouterTrieMap.clear();
   perRouterPrecomputedEntriesMap.clear();
+  authoritativeTrieRouters.clear();
 }
 
 export function setRouterManifest(
@@ -160,6 +161,23 @@ export function setRouterTrie(
   trie: import("./build/route-trie.js").TrieNode,
 ): void {
   perRouterTrieMap.set(routerId, trie);
+}
+
+// Routers whose trie came from the COMPLETE build manifest (deserialized via
+// ensureRouterManifest). For these, a trie miss is a real 404 and findMatch
+// skips the regex fallback scan — the only remaining route-count-proportional
+// match path (#664). Dev rebuilds (manifest-init.ts, router-discovery HMR
+// pushes) deliberately never mark authoritative: the dev-only trie-gap warning
+// in find-match.ts depends on the fallback running on misses, and dev route
+// churn (HMR, dev-time routes) makes a stale-trie 404 unacceptable there.
+const authoritativeTrieRouters: Set<string> = new Set();
+
+export function markRouterTrieAuthoritative(routerId: string): void {
+  authoritativeTrieRouters.add(routerId);
+}
+
+export function isRouterTrieAuthoritative(routerId: string): boolean {
+  return authoritativeTrieRouters.has(routerId);
 }
 
 export function getRouterTrie(
@@ -204,7 +222,12 @@ export async function ensureRouterManifest(routerId: string): Promise<void> {
   if (loader) {
     const mod = await loader();
     if (mod.manifest) perRouterManifestMap.set(routerId, mod.manifest);
-    if (mod.trie) perRouterTrieMap.set(routerId, mod.trie);
+    if (mod.trie) {
+      perRouterTrieMap.set(routerId, mod.trie);
+      // A trie serialized into the build manifest comes from complete
+      // discovery — misses are authoritative 404s (see find-match.ts).
+      markRouterTrieAuthoritative(routerId);
+    }
     if (mod.precomputedEntries)
       perRouterPrecomputedEntriesMap.set(routerId, mod.precomputedEntries);
     routerManifestLoaders.delete(routerId);

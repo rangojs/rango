@@ -39,6 +39,24 @@ hit.
   (It stays quiet when the trie matched fine but a lazy entry simply hadn't been spliced
   in yet — that's the normal lazy flow, not a gap.)
 
+**Authoritative misses (#664): in production, a trie miss IS the 404.** When the trie
+was deserialized from the build manifest, `ensureRouterManifest` marks the router
+authoritative (`markRouterTrieAuthoritative`, `src/route-map-builder.ts`), and
+`createFindMatch` returns `null` on a trie miss without running the Phase-2 scan at all
+— no regex work proportional to route count, and no lazy-include evaluation for
+bot-probe traffic (a 404 under `/site` used to import the `/site` chunk just to prove
+nothing matched). This is safe because the build trie comes from complete discovery and
+trailing-slash handling is trie-native: a slash-mismatched request is a trie HIT
+carrying `redirectTo`, never a miss. Two deliberate boundaries: (1) trie hits that
+still need lazy splicing (2+-level nested includes) keep using the Phase-2 retry loop —
+the gate only fires when the trie found nothing; (2) dev never marks authoritative —
+the trie-gap warning above depends on the fallback running on misses, and dev churn
+(HMR, dev-time routes) makes a stale-trie 404 unacceptable there. `clearAllRouterData`
+resets the mark. Measured motivation: at 26k routes on deployed CF, a 404 under a big
+prefix cost ~10-12 ms extra CPU per request vs floor (stress-demo
+BENCHMARK-2026-07-04-edge-26k.md). Pinned by the `authoritative trie miss` describe in
+`src/router/__tests__/find-match.test.ts`.
+
 **Why there's one trie builder, not two.** Production and dev get their tries from
 completely different places — production deserializes a JSON blob baked at build time,
 dev rebuilds from live `urlpatterns` on each request. That's two code paths that have to
