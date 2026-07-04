@@ -241,9 +241,29 @@ export function createMatchHandlers<TEnv = any>(
             }
             return matchResult;
           } catch (error) {
+            if (error instanceof Response) {
+              // A thrown Response (middleware short-circuit — redirect / auth
+              // gate) is a COMPLETED request from the consumer's seat, not an
+              // error: emit request.end (the same shape the non-thrown redirect
+              // result above already emits), never request.error with a
+              // synthetic "[object Response]" error. Rethrow so the caller
+              // drives the redirect.
+              if (hasTelemetry) {
+                safeEmit(telemetry, {
+                  type: "request.end",
+                  timestamp: performance.now(),
+                  requestId,
+                  method: request.method,
+                  pathname,
+                  transaction: "match",
+                  durationMs: performance.now() - matchStart,
+                  segmentCount: 0,
+                  cacheHit: false,
+                });
+              }
+              throw error;
+            }
             if (hasTelemetry) {
-              const errorObj =
-                error instanceof Error ? error : new Error(String(error));
               safeEmit(telemetry, {
                 type: "request.error",
                 timestamp: performance.now(),
@@ -251,12 +271,12 @@ export function createMatchHandlers<TEnv = any>(
                 method: request.method,
                 pathname,
                 transaction: "match",
-                error: errorObj,
-                phase: error instanceof Response ? "redirect" : "routing",
+                error:
+                  error instanceof Error ? error : new Error(String(error)),
+                phase: "routing",
                 durationMs: performance.now() - matchStart,
               });
             }
-            if (error instanceof Response) throw error;
             callOnError(error, "routing", {
               request,
               url: ctx.url,
@@ -395,10 +415,27 @@ export function createMatchHandlers<TEnv = any>(
               return matchResult;
             } catch (error) {
               flushRevalidationTrace();
+              if (error instanceof Response) {
+                // A thrown Response (middleware short-circuit — redirect / auth
+                // gate) is a COMPLETED request, not an error: emit request.end
+                // (parity with match()), never request.error. Rethrow so the
+                // caller drives the redirect.
+                if (hasTelemetry) {
+                  safeEmit(telemetry, {
+                    type: "request.end",
+                    timestamp: performance.now(),
+                    requestId: partialRequestId,
+                    method: request.method,
+                    pathname,
+                    transaction: "matchPartial",
+                    durationMs: performance.now() - matchStart,
+                    segmentCount: 0,
+                    cacheHit: false,
+                  });
+                }
+                throw error;
+              }
               if (hasTelemetry) {
-                const errorObj =
-                  error instanceof Error ? error : new Error(String(error));
-                const phase = actionContext ? "action" : "revalidation";
                 safeEmit(telemetry, {
                   type: "request.error",
                   timestamp: performance.now(),
@@ -406,12 +443,12 @@ export function createMatchHandlers<TEnv = any>(
                   method: request.method,
                   pathname,
                   transaction: "matchPartial",
-                  error: errorObj,
-                  phase: error instanceof Response ? "redirect" : phase,
+                  error:
+                    error instanceof Error ? error : new Error(String(error)),
+                  phase: actionContext ? "action" : "revalidation",
                   durationMs: performance.now() - matchStart,
                 });
               }
-              if (error instanceof Response) throw error;
               callOnError(error, actionContext ? "action" : "revalidation", {
                 request,
                 url: ctx.url,

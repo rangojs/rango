@@ -550,20 +550,26 @@ export async function executeMiddleware<TEnv>(
     // when neither surface is active.
     let result: Response | void;
     try {
-      result = await observePhase(PHASES.middleware(metricLabel), () =>
-        entry.handler(ctx, wrappedNext),
-      );
+      result = await observePhase(PHASES.middleware(metricLabel), async () => {
+        try {
+          return await entry.handler(ctx, wrappedNext);
+        } catch (error) {
+          // Thrown Response is short-circuit control flow, not an error —
+          // absorb it INSIDE the span so the tracing runner settles the
+          // rango.middleware span as success, not STATUS_ERROR (every auth
+          // redirect would otherwise inflate trace error rates). Returning it
+          // routes through the `if (result instanceof Response)` branch below,
+          // so stub headers and request-context cookies merge identically to an
+          // explicit `return new Response(...)`. Segment handlers already follow
+          // this convention (segment-resolution/helpers.ts keeps result handling
+          // outside the span). Real errors propagate to the outer catch.
+          if (error instanceof Response) return error;
+          throw error;
+        }
+      });
     } catch (error) {
-      // Thrown Response is short-circuit control flow, not an error.
-      // Fall through to the `if (result instanceof Response)` branch below
-      // so stub headers and request-context cookies merge as they do for
-      // an explicit `return new Response(...)`. Real errors propagate.
-      if (error instanceof Response) {
-        result = error;
-      } else {
-        finishMiddleware();
-        throw error;
-      }
+      finishMiddleware();
+      throw error;
     }
     finishMiddleware();
 
@@ -725,20 +731,21 @@ export async function executeInterceptMiddleware<TEnv>(
       ordinal,
     );
 
-    let result: Response | void;
-    try {
-      result = await observePhase(PHASES.middleware(label), () =>
-        middleware(ctx, guardedNext),
-      );
-    } catch (error) {
-      // Thrown Response is short-circuit control flow, parity with the
-      // explicit-return path below. Real errors propagate.
-      if (error instanceof Response) {
-        result = error;
-      } else {
-        throw error;
-      }
-    }
+    const result: Response | void = await observePhase(
+      PHASES.middleware(label),
+      async () => {
+        try {
+          return await middleware(ctx, guardedNext);
+        } catch (error) {
+          // Thrown Response is short-circuit control flow, parity with the
+          // explicit-return path below. Absorb it INSIDE the span so the tracing
+          // runner settles rango.middleware as success, not STATUS_ERROR (same
+          // reasoning as executeMiddleware's main chain). Real errors propagate.
+          if (error instanceof Response) return error;
+          throw error;
+        }
+      },
+    );
 
     if (result instanceof Response) {
       earlyResponse = result;
