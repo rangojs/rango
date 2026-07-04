@@ -1008,6 +1008,12 @@ export function createRouter<TEnv = any>(
     // Expose resolved span tracing for the handler (Cloudflare custom spans)
     tracing: resolvedTracing,
 
+    // Expose the raw telemetry sink so handler-level emitters (timeout, origin
+    // rejection, late-handle handler.error) can emit outside the match ALS.
+    // Raw (not the resolveSink no-op wrapper) so router.telemetry stays
+    // undefined when unconfigured and call sites gate on truthiness.
+    telemetry: telemetrySink,
+
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,
 

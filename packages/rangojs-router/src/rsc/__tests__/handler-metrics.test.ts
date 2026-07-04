@@ -71,6 +71,7 @@ vi.mock("../response-route-handler.js", () => ({
 vi.mock("../../router/telemetry.js", () => ({
   resolveSink: () => null,
   safeEmit: vi.fn(),
+  getRequestId: () => "test-req-id",
 }));
 
 vi.mock("../../router/router-context.js", () => ({
