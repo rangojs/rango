@@ -185,33 +185,44 @@ describe("SeededShellStore", () => {
   }
 
   it("serves snapshot values AS FRESH (shouldRevalidate: false) without touching the real store", async () => {
-    const inner = new MemorySegmentCacheStore();
-    // The real store is EMPTY / different — the seed must win and not fall through.
-    const getItemSpy = vi.spyOn(inner, "getItem");
-    const getSpy = vi.spyOn(inner, "get");
-    const seeded = new SeededShellStore(inner, snapshotOf());
+    // Pin the clock: snapshotOf() -> segData() embeds `Date.now() + 60_000` as
+    // expiresAt, and this test builds the seed and the expected value from two
+    // SEPARATE snapshotOf() calls. On real timers a millisecond tick between them
+    // makes the deep-equal below flake by 1ms (seen on CI). Same pattern as
+    // src/cache/__tests__/shell-cache.test.ts.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    try {
+      const inner = new MemorySegmentCacheStore();
+      // The real store is EMPTY / different — the seed must win and not fall through.
+      const getItemSpy = vi.spyOn(inner, "getItem");
+      const getSpy = vi.spyOn(inner, "get");
+      const seeded = new SeededShellStore(inner, snapshotOf());
 
-    const seg = await seeded.get("seg1");
-    expect(seg).toEqual({
-      data: (snapshotOf()[0] as any).value,
-      shouldRevalidate: false,
-    });
-    expect(getSpy).not.toHaveBeenCalled(); // pinned key never hits the real store
+      const seg = await seeded.get("seg1");
+      expect(seg).toEqual({
+        data: (snapshotOf()[0] as any).value,
+        shouldRevalidate: false,
+      });
+      expect(getSpy).not.toHaveBeenCalled(); // pinned key never hits the real store
 
-    const item = await seeded.getItem("item1");
-    expect(item).toMatchObject({
-      value: "PINNED-ITEM",
-      handles: "PH",
-      tags: ["pt"],
-      shouldRevalidate: false, // MUST NOT kick SWR revalidation for a pinned key
-    });
-    expect(getItemSpy).not.toHaveBeenCalled();
+      const item = await seeded.getItem("item1");
+      expect(item).toMatchObject({
+        value: "PINNED-ITEM",
+        handles: "PH",
+        tags: ["pt"],
+        shouldRevalidate: false, // MUST NOT kick SWR revalidation for a pinned key
+      });
+      expect(getItemSpy).not.toHaveBeenCalled();
 
-    const resp = await seeded.getResponse("res1");
-    expect(resp!.shouldRevalidate).toBe(false);
-    expect(resp!.response.status).toBe(203);
-    expect(resp!.response.headers.get("x-h")).toBe("v");
-    expect(await resp!.response.text()).toBe("PINNED");
+      const resp = await seeded.getResponse("res1");
+      expect(resp!.shouldRevalidate).toBe(false);
+      expect(resp!.response.status).toBe(203);
+      expect(resp!.response.headers.get("x-h")).toBe("v");
+      expect(await resp!.response.text()).toBe("PINNED");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("falls through to the real store for non-pinned keys", async () => {
