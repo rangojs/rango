@@ -483,6 +483,61 @@ function runShellCacheSpec(f: Fixture): void {
   // caching, never the route. (The once-per-key capture warning is a worker-side
   // console.warn — not observable through this Playwright harness; it is pinned by
   // the unit test in src/rsc/__tests__/shell-capture.test.ts.)
+  // --- Per-request nonce via the ContextVar token: ppr stays on axis 1 (#656) ---
+  //
+  // /shell-cache/nonce-token sets a fresh per-request nonce via the `nonce` token
+  // in ROUTE middleware (ctx.set(nonce, crypto.randomUUID())). A shell is shared
+  // per host+URL, so capturing it would freeze one request's nonce for every
+  // visitor and break CSP. The commit-point gate reads the token AFTER the route
+  // middleware runs, so a token nonce gates PPR exactly like a provider nonce:
+  // pure axis 1, NO capture. Like the missing-store diagnostic, a nonce-gated ppr
+  // route emits NO x-rango-shell header (it never participates in PPR) — so it can
+  // never flip to HIT, and every GET carries a DISTINCT nonce. That also pins the
+  // commit-point ordering: the DSL middleware's token write is visible to the
+  // gate. Before the fix the gate only saw the provider-threaded nonce, so this
+  // route entered capture (tagged MISS) and would have frozen one nonce for all.
+  //
+  // (The once-per-key worker warning is a server-side console.warn — not
+  // observable through this Playwright harness; it is pinned by the unit test in
+  // src/rsc/__tests__/rsc-rendering-shell-ppr.test.ts.)
+  test("token nonce (route middleware) keeps a ppr route on axis 1: repeated GETs never HIT and carry a distinct nonce each", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/nonce-token?probe=noncetoken");
+    const seen = new Set<string>();
+
+    // Space GETs past the background-capture window so, if the gate wrongly
+    // allowed capture, a later GET would flip to HIT and freeze one nonce.
+    for (let i = 0; i < 4; i++) {
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.status()).toBe(200);
+      // Nonce-gated: pure axis 1, no PPR participation — never a HIT, no header
+      // (mirrors the missing-store diagnostic; the warn-once explains why).
+      expect(
+        res.headers()["x-rango-shell"],
+        `request #${i} must never HIT (token nonce forces axis 1)`,
+      ).not.toBe("HIT");
+
+      const html = await res.text();
+      const value = /data-nonce="([^"]+)"/.exec(html)?.[1];
+      expect(
+        value,
+        "the per-request nonce is rendered into the shell",
+      ).toBeTruthy();
+      expect(value).not.toBe("(none)");
+      seen.add(value!);
+
+      // The live price hole still renders fresh under axis 1.
+      expect(html).toContain("Live price:");
+
+      if (i < 3) await new Promise((r) => setTimeout(r, 350));
+    }
+
+    // Per-request freshness: a distinct nonce every request. A frozen shared shell
+    // (the bug) would have served ONE nonce across all four.
+    expect(seen.size).toBe(4);
+  });
+
   test("no loading(): stays MISS across repeated GETs while the inner promise still streams", async ({
     request,
   }) => {

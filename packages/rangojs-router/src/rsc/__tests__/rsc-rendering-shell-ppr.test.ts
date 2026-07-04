@@ -27,6 +27,8 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import type { ShellSnapshotRecord } from "../../cache/types.js";
+import { contextSet } from "../../context-var.js";
+import { nonce as nonceToken } from "../nonce.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
@@ -482,20 +484,133 @@ describe("handleRscRendering — integrated PPR serve: bypasses", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
-  it("a per-request nonce bypasses PPR entirely (axis 1, no header, no schedule)", async () => {
-    const store = new MemorySegmentCacheStore();
-    await store.putShell(KEY, shellEntry(), 300, 30);
-    const ssrModule = fullSsrModule();
-    const { response } = await run({
-      ssrModule,
-      ppr: true,
-      store,
-      nonce: "abc123",
-    });
-    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
-    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
-    expect(response.headers.has("x-rango-shell")).toBe(false);
-    expect(scheduleMock).not.toHaveBeenCalled();
+  // A per-request CSP nonce keeps the route on axis 1: useNonce() renders it into
+  // the document, so a shell shared per host+URL would freeze one request's nonce
+  // for every visitor. The nonce blocks capture whether it came from the provider
+  // (createRouter({ nonce }), threaded as the `nonce` param) or from a direct
+  // ctx.set(nonce, …) token write in middleware (issue #656). BOTH now warn once
+  // per key: a declared route that cannot be honored is a diagnostic-worthy
+  // "declared intent cannot be honored", mirroring the missing-store warning.
+  it("provider nonce (threaded param) bypasses PPR, warns once per key, no store read, no schedule", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const store = new MemorySegmentCacheStore();
+      await store.putShell(
+        "localhost/nonce-provider:shell",
+        shellEntry(),
+        300,
+        30,
+      );
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+      const { response } = await run({
+        ssrModule,
+        ppr: true,
+        store,
+        nonce: "abc123",
+        url: "http://localhost/nonce-provider",
+      });
+      // Axis 1: full fizz, no resume, no header, no capture, no store read.
+      expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+      expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+      expect(response.headers.has("x-rango-shell")).toBe(false);
+      expect(scheduleMock).not.toHaveBeenCalled();
+      expect(getShell).not.toHaveBeenCalled();
+      // Warns once, naming the route/key and the nonce cause.
+      const warnings = warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === "string" && c[0].includes("localhost/nonce-provider"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("per-request");
+      expect(warnings[0][0]).toContain("nonce");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("token nonce (ctx.set(nonce, …) in middleware) bypasses PPR: no store read, no schedule, no header, warns once per key", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const store = new MemorySegmentCacheStore();
+      // Even with a stored, valid shell for this key, the token nonce forces axis 1.
+      await store.putShell(
+        "localhost/nonce-token:shell",
+        shellEntry(),
+        300,
+        30,
+      );
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+
+      const armNonce = (reqCtx: RequestContext<unknown>) =>
+        contextSet(reqCtx._variables, nonceToken, "tok-nonce-1");
+
+      // First request: warns.
+      const first = await run({
+        ssrModule,
+        ppr: true,
+        store,
+        url: "http://localhost/nonce-token",
+        arm: armNonce,
+      });
+      expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+      expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+      // The threaded `nonce` param is undefined — the gate saw ONLY the token.
+      expect(first.response.headers.has("x-rango-shell")).toBe(false);
+      // The token nonce was never passed through to renderHTML's nonce option
+      // (that path is the provider's); the token only gates PPR here.
+      expect(scheduleMock).not.toHaveBeenCalled();
+      // The store's shell family was never consulted: axis 1, not a HIT.
+      expect(getShell).not.toHaveBeenCalled();
+
+      // Second request, same key: warn-once holds.
+      await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store,
+        url: "http://localhost/nonce-token",
+        arm: armNonce,
+      });
+      const warnings = warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === "string" && c[0].includes("localhost/nonce-token"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("ppr");
+      expect(warnings[0][0]).toContain("nonce");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("token nonce on a NON-ppr route: pure axis 1, no header, no schedule, NO warning", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const store = new MemorySegmentCacheStore();
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+      const { response } = await run({
+        ssrModule,
+        store, // ppr undefined
+        url: "http://localhost/nonce-token-undeclared",
+        arm: (reqCtx) =>
+          contextSet(reqCtx._variables, nonceToken, "tok-nonce-2"),
+      });
+      // Undeclared route stays silent: the nonce gate only fires for ppr routes.
+      expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+      expect(response.headers.has("x-rango-shell")).toBe(false);
+      expect(scheduleMock).not.toHaveBeenCalled();
+      expect(getShell).not.toHaveBeenCalled();
+      const warnings = warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === "string" &&
+          c[0].includes("localhost/nonce-token-undeclared"),
+      );
+      expect(warnings).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("allReady buffering (ssr.resolveStreaming) bypasses PPR: one complete axis-1 document", async () => {

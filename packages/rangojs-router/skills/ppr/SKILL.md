@@ -364,6 +364,38 @@ and any store without the shell family. A stored shell is invalidated when
 `React.version` changes (postponed state is build-coupled), so deploys
 self-heal via recapture.
 
+The per-request CSP nonce guarantee covers BOTH ways a nonce arrives — the
+`createRouter({ nonce })` provider AND a direct `ctx.set(nonce, value)` token
+write in middleware (the `nonce` token from `@rangojs/router`). Either way the
+nonce ends up rendered into the document (`useNonce()` puts the provider nonce
+on every nonced script/style/meta; a token nonce is rendered by whatever app
+code reads `ctx.get(nonce)`), so a shell shared per host+URL cannot bake it
+without freezing one request's nonce for every visitor (the browser's CSP
+would then reject the frozen nonce for all but the capture request). The serve
+gate reads the token off the post-middleware request variables at the commit
+point (which runs after the whole middleware chain), so a middleware-set nonce
+blocks capture the same as a provider one. Because the route DECLARED `ppr`
+but cannot be honored, it logs a once-per-key worker warning (same
+declared-intent-cannot-be-honored doctrine as the missing-store warning) and
+serves pure axis 1 with no `x-rango-shell` header. An undeclared route stays
+silent.
+
+### The proper way to supply a nonce
+
+`createRouter({ nonce })` is the canonical path — supply the nonce THERE, not
+via a token write. The provider value is threaded into the router's own SSR
+machinery: `NonceContext`/`useNonce()`, automatic nonce attributes on
+`<Scripts />` and `<MetaTags />` output, and the inlined Flight payload
+scripts. It ALSO sets the `nonce` token, so `ctx.get(nonce)` works in
+middleware and handlers for the CSP response header. A direct
+`ctx.set(nonce, value)` write in middleware is app-managed only: the router
+resolves its SSR nonce BEFORE middleware runs, so a token-set value is
+readable via `ctx.get(nonce)` and gates PPR (this section), but the router
+will NOT apply it to its own scripts — `useNonce()` stays undefined and the
+Flight payload scripts carry no nonce, which a nonce-only `script-src` policy
+would then block. If you need a per-request nonce, use the provider; reserve
+the token for READING the value.
+
 ## Options: PartialPrerenderProps
 
 ```typescript
