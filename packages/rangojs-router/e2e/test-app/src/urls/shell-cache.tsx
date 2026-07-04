@@ -184,6 +184,10 @@ function ShellSlotHomePage() {
   return <p data-testid="shell-slot-home">Slot home static content</p>;
 }
 
+function ShellBareHomePage() {
+  return <p data-testid="shell-bare-home">Bare home static content</p>;
+}
+
 export const shellCachePatterns = urls(
   ({ path, layout, loader, loading, middleware, parallel }) => [
     layout(ShellCacheLayout, () => [
@@ -285,6 +289,14 @@ export const shellCachePatterns = urls(
           ),
         ],
       ),
+      // The literal storefront-homepage shape: a BARE ppr route (no loader, no
+      // loading(), no use list at all) under the loader-registering layout. The
+      // route itself is fully shell-eligible; the LAYOUT's boundary-less loader
+      // alone keeps the capture refusing.
+      path("/shell-cache/layout-loader-bare", ShellBareHomePage, {
+        name: "shellCacheLayoutLoaderBare",
+        ppr: true,
+      }),
     ]),
     // Slot-hole escape: see ShellSlotChromeLayout above.
     layout(ShellSlotChromeLayout, () => [

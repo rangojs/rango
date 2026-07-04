@@ -591,6 +591,31 @@ function runShellCacheSpec(f: Fixture): void {
     }
   });
 
+  // /shell-cache/layout-loader-bare: the LITERAL storefront-homepage shape —
+  // a bare ppr route (no loader, no loading(), no use list) under the same
+  // loader-registering layout. The route itself is fully shell-eligible; the
+  // layout's boundary-less loader alone keeps every capture refusing.
+  test("bare ppr route under a loader layout (the storefront homepage shape): stays MISS with no loading() anywhere", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/layout-loader-bare?probe=bare");
+
+    for (let i = 0; i < 6; i++) {
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.status()).toBe(200);
+      expect(
+        res.headers()["x-rango-shell"],
+        `request #${i} must stay MISS`,
+      ).toBe("MISS");
+
+      const html = await res.text();
+      expect(html).toContain("Trap chrome static text");
+      expect(html).toContain("Bare home static content");
+
+      if (i < 5) await new Promise((r) => setTimeout(r, 350));
+    }
+  });
+
   // /shell-cache/slot-hole: the escape from the trap above (skills/ppr
   // "layout-with-loaders playbook"). The same chrome data is owned by a @badge
   // parallel slot with its OWN loading(), so the layout node has no loaders to
