@@ -1,5 +1,5 @@
 import type { ResolvedSegment } from "./types.js";
-import { debugLog } from "./logging.js";
+import { debugLog, IS_BROWSER_DEBUG } from "./logging.js";
 
 /**
  * Merge partial loader data from server with cached loader data.
@@ -19,9 +19,11 @@ export function mergeSegmentLoaders(
   const serverLoaderIds = fromServer.loaderIds || [];
   const cachedLoaderIds = fromCache.loaderIds || [];
 
-  debugLog(
-    `[Browser] Merging partial loaders: server has ${serverLoaderIds.join(", ")}, cache has ${cachedLoaderIds.join(", ")}`,
-  );
+  if (IS_BROWSER_DEBUG) {
+    debugLog(
+      `[Browser] Merging partial loaders: server has ${serverLoaderIds.join(", ")}, cache has ${cachedLoaderIds.join(", ")}`,
+    );
+  }
 
   return {
     ...fromCache,

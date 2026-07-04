@@ -162,7 +162,9 @@ export function createMatchHandlers<TEnv = any>(
       return runWithRouterContext(routerCtx, async () =>
         withRouterLogScope("match", async () => {
           const matchStart = performance.now();
-          const pathname = new URL(request.url).pathname;
+          const pathname =
+            _getRequestContext()?.url?.pathname ??
+            new URL(request.url).pathname;
           if (hasTelemetry) {
             safeEmit(telemetry, {
               type: "request.start",
@@ -303,7 +305,9 @@ export function createMatchHandlers<TEnv = any>(
         return runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("matchPartial", async () => {
             const matchStart = performance.now();
-            const pathname = new URL(request.url).pathname;
+            const pathname =
+              _getRequestContext()?.url?.pathname ??
+              new URL(request.url).pathname;
             if (hasTelemetry) {
               safeEmit(telemetry, {
                 type: "request.start",

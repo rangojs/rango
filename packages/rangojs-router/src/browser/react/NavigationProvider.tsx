@@ -113,14 +113,13 @@ async function processHandles(
         resolvedIds,
       );
       // Keep the cache fresh. The token guard stops a stale same-URL nav writing
-      // a newer entry.
-      if (store.getCacheEntryInstance(historyKey) === myInstance) {
-        store.updateCacheHandleData(
-          historyKey,
-          eventController.getHandleState().data,
-          false,
-        );
-      }
+      // a newer entry; the owned-write folds probe + write into one scan.
+      store.updateCacheHandleDataIfOwned(
+        historyKey,
+        eventController.getHandleState().data,
+        myInstance,
+        false,
+      );
       continue;
     }
 
@@ -146,9 +145,13 @@ async function processHandles(
     // re-streams the handles — a diff-only revalidation would omit the unchanged
     // segments' handles and the deferred value would never land (see the
     // segmentIds branch in navigation-bridge.ts).
-    if (store.getCacheEntryInstance(historyKey) === myInstance) {
-      store.updateCacheHandleData(historyKey, previousSnapshot, true, true);
-    }
+    store.updateCacheHandleDataIfOwned(
+      historyKey,
+      previousSnapshot,
+      myInstance,
+      true,
+      true,
+    );
 
     // Resolve every deferred value (allSettled; rejected + nullish dropped, sync
     // values pass through). Each stream yield is a full cumulative snapshot.
@@ -172,14 +175,13 @@ async function processHandles(
 
     // Still live: apply the fully-resolved snapshot and refresh the cache fresh.
     eventController.setHandleData(resolved, matched, isPartial, resolvedIds);
-    if (store.getCacheEntryInstance(historyKey) === myInstance) {
-      store.updateCacheHandleData(
-        historyKey,
-        eventController.getHandleState().data,
-        false,
-        false,
-      );
-    }
+    store.updateCacheHandleDataIfOwned(
+      historyKey,
+      eventController.getHandleState().data,
+      myInstance,
+      false,
+      false,
+    );
   }
 
   // Check again before final updates

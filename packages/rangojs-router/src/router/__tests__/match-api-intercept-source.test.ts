@@ -56,6 +56,7 @@ vi.mock("../../server/context", () => ({
 
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: vi.fn(),
+  _getRequestContext: vi.fn(),
   setRequestContextPrevRouteKey: vi.fn(),
 }));
 

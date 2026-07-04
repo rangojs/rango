@@ -484,6 +484,44 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.get("x-document-cache-status")).toBe("HIT");
       expect(await response.text()).toBe("Cached content");
     });
+
+    it("adds the status header without corrupting the body across repeat hits", async () => {
+      // addCacheStatusHeader mutates the response headers in place (the store
+      // hands back a fresh Response per get), so two sequential hits must each
+      // carry the HIT header AND the intact body — the first mutation must not
+      // poison the stored entry for the second.
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const cachedResponse = new Response("Repeat body", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const middleware = createDocumentCacheMiddleware();
+      const next = vi.fn();
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const first = (await middleware(
+        createMockMiddlewareContext("http://localhost/page"),
+        next,
+      )) as Response;
+      const second = (await middleware(
+        createMockMiddlewareContext("http://localhost/page"),
+        next,
+      )) as Response;
+
+      expect(first.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(second.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(await first.text()).toBe("Repeat body");
+      expect(await second.text()).toBe("Repeat body");
+    });
   });
 
   describe("stale-while-revalidate", () => {

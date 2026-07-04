@@ -53,18 +53,24 @@ type HistoryCacheEntry = [
 ];
 
 /**
- * Shallow clone handleData to avoid reference sharing between cache entries.
- * Only clones the structure (objects and arrays), not the data items themselves,
- * since mutations happen at the array level, not on individual data objects.
- * This preserves any non-serializable types (React elements, functions, etc.)
+ * Clone the handleData CONTAINERS (the handle-name map and each segment map) so
+ * a cache entry is decoupled from the live map that eventController mutates — it
+ * adds/deletes segment keys and REPLACES bucket arrays in place. The bucket
+ * arrays themselves are shared by reference, NOT copied: a bucket array is only
+ * ever replaced wholesale (eventController.setHandleData reassigns it,
+ * resolveDeferredHandleValues builds a fresh one) and collect functions read it
+ * without mutating, so sharing is safe and skips an O(elements) copy on every
+ * cache write — the per-yield streaming hot path. This also preserves any
+ * non-serializable bucket contents (React elements, functions, etc.).
  */
 export function cloneHandleData(handleData: HandleData): HandleData {
   const cloned: HandleData = {};
   for (const [handleKey, segmentMap] of Object.entries(handleData)) {
-    cloned[handleKey] = {};
+    const clonedMap: Record<string, unknown[]> = {};
     for (const [segmentId, dataArray] of Object.entries(segmentMap)) {
-      cloned[handleKey][segmentId] = [...dataArray];
+      clonedMap[segmentId] = dataArray;
     }
+    cloned[handleKey] = clonedMap;
   }
   return cloned;
 }
@@ -735,6 +741,40 @@ export function createNavigationStore(
           handlesPending ?? entry[6], // set when provided, else preserve current
         ];
       }
+    },
+
+    /**
+     * Owner-guarded handle-data write: locate the entry, and write ONLY when it
+     * is still owned by `ownerInstance` (the nav-instance token that seeded it).
+     * Folds the streaming hot path's separate getCacheEntryInstance() ownership
+     * probe and updateCacheHandleData() write into a SINGLE historyCache scan
+     * (processHandles calls this per yield). Semantics otherwise match
+     * updateCacheHandleData: no-op on a missing entry, clone the handleData
+     * containers, and preserve stale / handlesPending when the flag is omitted.
+     */
+    updateCacheHandleDataIfOwned(
+      historyKey: string,
+      handleData: HandleData,
+      ownerInstance: number,
+      stale?: boolean,
+      handlesPending?: boolean,
+    ): void {
+      const existingIndex = historyCache.findIndex(
+        ([key]) => key === historyKey,
+      );
+      if (existingIndex === -1) return;
+      const entry = historyCache[existingIndex];
+      if (entry[5] !== ownerInstance) return;
+      const clonedHandleData = cloneHandleData(handleData);
+      historyCache[existingIndex] = [
+        entry[0],
+        entry[1],
+        stale ?? entry[2],
+        clonedHandleData,
+        entry[4],
+        entry[5],
+        handlesPending ?? entry[6],
+      ];
     },
 
     /**

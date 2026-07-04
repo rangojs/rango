@@ -127,20 +127,31 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
 // ============================================================================
 
 /**
- * Add cache status header to response for debugging
+ * Add the cache-status header (HIT/STALE/MISS) to a response.
+ *
+ * The response we get here is always a fresh instance — the store rebuilds a
+ * new Response per getResponse(), and the miss path wraps a fresh Response
+ * around the tee'd body — so mutating its headers in place is safe and avoids
+ * cloning every header + allocating a new Response on every cache hit. Only when
+ * the headers are immutable (a guarded Response rejects set() with a TypeError)
+ * do we fall back to rebuilding the Response with a mutable Headers.
  */
 function addCacheStatusHeader(
   response: Response,
   status: "HIT" | "STALE" | "MISS",
 ): Response {
-  const headers = new Headers(response.headers);
-  headers.set(CACHE_STATUS_HEADER, status);
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  try {
+    response.headers.set(CACHE_STATUS_HEADER, status);
+    return response;
+  } catch {
+    const headers = new Headers(response.headers);
+    headers.set(CACHE_STATUS_HEADER, status);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
 }
 
 /**
