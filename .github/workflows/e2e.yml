@@ -505,12 +505,52 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    # 20 (was 15): the suite's playwright globalTimeout was raised to 14m
-    # (playwright.config.ts — the PPR shell stack grew the sequential
-    # dev -> production -> hmr run past the old 10m budget), so the job cap
-    # must contain ~3-4m of setup (install, router build, browser deps) plus
-    # the full 14m playwright budget.
+    # 20 (unchanged, was a single un-sharded job): the suite grew from ~7.1m
+    # (Jun 20) to ~11.6m (Jul 4) running the ENTIRE dev -> production -> hmr
+    # chain sequentially in one runner at workers=1, making it the pipeline's
+    # critical path. It is now sharded (dev x2 / production x2 / hmr) so each
+    # job runs only a fraction of the 14m playwright globalTimeout
+    # (playwright.config.ts), leaving ample headroom under this cap for the
+    # ~3-4m of setup (install, router build, browser deps). Tightening the cap
+    # is a data-driven follow-up once the sharded run times are measured — do
+    # NOT pre-optimize.
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Dev tests sharded across 2 jobs, WITHOUT --no-deps: the dev project
+          # depends on the dev-warmup setup project (the #659 cold-miniflare
+          # warmup), and Playwright runs a project's dependencies fully in every
+          # shard — so keeping deps preserves the warmup on each runner.
+          - project: dev
+            shard: 1
+            shardTotal: 2
+          - project: dev
+            shard: 2
+            shardTotal: 2
+          # Production tests sharded across 2 jobs WITH --no-deps: the production
+          # project depends on the FULL dev project (~284 tests), so without
+          # --no-deps every production shard would also drag the entire dev suite
+          # (the 208-vs-1 blowup documented in AGENTS.md). --no-deps severs that;
+          # the production webServer still builds dist/ and serves preview.
+          - project: production
+            shard: 1
+            shardTotal: 2
+            noDeps: true
+          - project: production
+            shard: 2
+            shardTotal: 2
+            noDeps: true
+          # HMR runs in its own job: --no-deps (its deps are the full dev +
+          # production suites) and workers=1. workers=1 is load-bearing, not
+          # cosmetic: hmr.test.ts and hmr-route-mutations.test.ts both git-checkout
+          # and rewrite src/ files, so two parallel workers corrupt each other's
+          # fixtures. (On CI hmr-route-mutations is test.skip(isCI)'d, but the cap
+          # matches the local test:e2e:hmr-local script and guards the invariant.)
+          - project: hmr
+            workers: 1
+            noDeps: true
 
     steps:
       - uses: actions/checkout@v5
@@ -541,16 +581,32 @@ jobs:
       - name: Install Playwright system deps
         run: pnpm --filter cloudflare-basic exec playwright install-deps chromium
 
-      - name: Run cloudflare-basic e2e tests
-        run: pnpm --filter cloudflare-basic test:e2e
+      - name: Run cloudflare-basic e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         env:
           TEST_DEBUG: "1"
+        run: |
+          SHARD_FLAG=""
+          if [ -n "${{ matrix.shard }}" ]; then
+            SHARD_FLAG="--shard=${{ matrix.shard }}/${{ matrix.shardTotal }}"
+          fi
+          WORKERS_FLAG=""
+          if [ -n "${{ matrix.workers }}" ]; then
+            WORKERS_FLAG="--workers=${{ matrix.workers }}"
+          fi
+          # production depends on the full dev project and hmr depends on
+          # dev+production; --no-deps severs those so a shard runs only its own
+          # tests. The webServer still builds/serves regardless of --no-deps.
+          NO_DEPS_FLAG=""
+          if [ -n "${{ matrix.noDeps }}" ]; then
+            NO_DEPS_FLAG="--no-deps"
+          fi
+          pnpm --filter cloudflare-basic test:e2e --project=${{ matrix.project }} $SHARD_FLAG $WORKERS_FLAG $NO_DEPS_FLAG
 
       - name: Upload test results
         uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: playwright-report-cloudflare-basic
+          name: playwright-report-cloudflare-basic-${{ matrix.project }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
           path: tests/cloudflare-basic/playwright-report/
           retention-days: 7
 
