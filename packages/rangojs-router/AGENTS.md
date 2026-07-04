@@ -1,17 +1,13 @@
-# @rangojs/router
+# @rangojs/router — agent guide
 
-A file-system based React Server Components router.
+Django-inspired React Server Components router: routes are an explicit `urls()` tree (`path()`, `layout()`, `include()`) — not a file-system convention — with type-safe named routes and `href`/`reverse`.
 
-Run `/rango` to understand the API. Detailed guides for each feature are in the `skills/` directory (e.g. `node_modules/@rangojs/router/skills/loader`, `skills/caching`, `skills/middleware`, etc.).
+Start with the mental model at `node_modules/@rangojs/router/skills/rango/SKILL.md`, then the per-feature guides in the sibling directories (`skills/loader`, `skills/caching`, `skills/middleware`, etc.). If your harness supports slash-command skills, `/rango` is the same document.
 
 ## Development rules
 
-- Always commit generated files (e.g. `*.gen.ts`) alongside the source changes that produced them.
+- After adding, removing, or renaming routes, run `npx rango generate src/` and commit the regenerated `*.gen.ts` files alongside the source change.
 
-## Repo-wide rules (read before pushing)
+## Contributing
 
-This package inherits the repo-wide conventions in the root [`AGENTS.md`](../../AGENTS.md) and [`CLAUDE.md`](../../CLAUDE.md). The ones a package-scoped reader is most likely to miss:
-
-- **Pre-push gate** — before EVERY push, run all of the following from the **repo root** and fix any failures: `pnpm run typecheck`, `pnpm run test:unit:all`, `pnpm run lint`, `pnpm run format`.
-- **`test:unit:all` is recursive** — it runs the unit AND Flight/RSC suites for every package and consumer app (cloudflare-basic, mini, vite-rsc-demo, ...), not just `@rangojs/router`. A change can pass this package's own tests while breaking a consumer app's `@rangojs/router/testing` dogfood suite, so do not run only `pnpm --filter @rangojs/router test:unit`.
-- **Dev + prod e2e parity is mandatory** — every e2e test must cover BOTH dev and production modes; never add a dev-only test without its production counterpart. See the dev/prod bucketing convention in the root `AGENTS.md`.
+This package is developed in the monorepo at https://github.com/ivogt/vite-rsc. If you are contributing there rather than consuming the published package, read the root `AGENTS.md` in that repo for the pre-push gate and e2e rules — they apply to the monorepo, not to consumer apps.
