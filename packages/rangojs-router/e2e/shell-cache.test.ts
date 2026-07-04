@@ -8,6 +8,7 @@ import {
   waitForNavigation,
   goBack,
 } from "./helper";
+import { guardHydrationErrors } from "@shared/e2e";
 
 // End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
 // option (test-app/src/urls/shell-cache.tsx) — serving is integral to the router
@@ -86,36 +87,6 @@ function splitPrelude(html: string): { prelude: string; resumed: string } {
   return {
     prelude: html.slice(0, preludeEnd),
     resumed: html.slice(preludeEnd),
-  };
-}
-
-/**
- * Fail on any hydration / minified-React console error or pageerror. Pins the PPR
- * consistency contract: a cached prelude served ahead of a freshly rendered
- * hydration payload must not drift.
- */
-function guardHydrationErrors(page: Page) {
-  const errors: string[] = [];
-  const isHydrationError = (text: string) =>
-    text.includes("hydration") ||
-    text.includes("Hydration") ||
-    text.includes("Minified React error");
-  const onConsole = (msg: import("@playwright/test").ConsoleMessage) => {
-    if (msg.type() === "error" && isHydrationError(msg.text())) {
-      errors.push(msg.text());
-    }
-  };
-  const onPageError = (err: Error) => {
-    if (isHydrationError(err.message)) errors.push(err.message);
-  };
-  page.on("console", onConsole);
-  page.on("pageerror", onPageError);
-  return {
-    [Symbol.dispose]: () => {
-      page.off("console", onConsole);
-      page.off("pageerror", onPageError);
-      expect(errors, "no hydration / Minified React errors").toEqual([]);
-    },
   };
 }
 
@@ -573,6 +544,44 @@ function runShellCacheSpec(f: Fixture): void {
       Number(h.match(/Streamed inner (\d+)/)?.[1]);
     expect(outerSeq(second.html)).toBe(outerSeq(html));
     expect(innerSeq(second.html)).toBeGreaterThan(innerSeq(html)!);
+  });
+
+  // /shell-cache/settled: the settled-marker regression (the storefront PDP
+  // React #438). The bake-lane loader's nested promise is ALREADY RESOLVED
+  // when the container returns, so it wins the capture window and the
+  // snapshot pins its VALUE. The overlay must hand consumers a rehydrated
+  // Promise.resolve(pinned) — use(data.fast) on the recorded raw value threw
+  // #438 and the root error boundary replaced the entire page on every HIT.
+  test("bake lane, nested promise settled inside the window: HIT pins the value AND keeps the promise shape (no #438)", async ({
+    request,
+    page,
+  }) => {
+    const url = f.url("/shell-cache/settled?probe=settled");
+    await warmToHit(request, url);
+
+    // Raw HTML: label AND fast value are snapshot-pinned across HITs.
+    const { html } = await measureFirstChunk(url);
+    const outerSeq = (h: string) => Number(h.match(/Settled outer (\d+)/)?.[1]);
+    const fastSeq = (h: string) => Number(h.match(/Settled fast (\d+)/)?.[1]);
+    expect(outerSeq(html)).toBeGreaterThan(0);
+    expect(fastSeq(html)).toBe(outerSeq(html));
+    const second = await measureFirstChunk(url);
+    expect(outerSeq(second.html)).toBe(outerSeq(html));
+    expect(fastSeq(second.html)).toBe(fastSeq(html));
+
+    // Browser: the HIT hydrates cleanly and renders the pinned value — the
+    // regression crashed here (#438, unminified: "An unsupported type was
+    // passed to use()"). The SSR'd text is in the DOM before hydration, so
+    // waitForHydration is what keeps the error window inside the guard.
+    using __ = guardHydrationErrors(page);
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(testId(page, "shell-settled-label")).toHaveText(
+      /Settled outer \d+/,
+    );
+    await expect(testId(page, "shell-settled-fast")).toHaveText(
+      /Settled fast \d+/,
+    );
   });
 
   // --- The layout-loader shapes (storefront) on the bake lane. ---

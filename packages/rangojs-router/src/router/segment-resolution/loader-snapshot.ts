@@ -10,15 +10,20 @@
  *
  *   - elide:   deep-walk the settled container; a SETTLED nested promise baked
  *              its value (physics: it won the quiet window), so it is pinned as
- *              that value; a PENDING nested promise is a hole, replaced by
- *              {@link LOADER_HOLE_MARKER}. The result is promise-free and
+ *              that value wrapped in a SETTLED marker — the wrapper remembers
+ *              "this was a promise" so the overlay can rehydrate the shape; a
+ *              PENDING nested promise is a hole, replaced by
+ *              {@link LOADER_HOLE_KEY}. The result is promise-free and
  *              Flight-serializable.
  *   - overlay: on a HIT the loader runs fresh (only the loader body can mint
  *              the live nested promises), then the recorded container is laid
  *              over it: recorded paths win (they are what the prelude froze),
- *              marker paths take the fresh run's value (the live hole), and
- *              fresh-only paths pass through (they cannot contradict prelude
- *              bytes that never rendered them).
+ *              hole-marker paths take the fresh run's value (the live hole),
+ *              SETTLED-marker paths become Promise.resolve(pinned) — consumers
+ *              wrote use(data.x) against a promise-shaped container, and
+ *              handing them the raw value throws React #438 on every HIT (the
+ *              storefront PDP regression) — and fresh-only paths pass through
+ *              (they cannot contradict prelude bytes that never rendered them).
  */
 
 import { isThenable } from "../../handles/is-thenable.js";
@@ -39,6 +44,37 @@ export function isLoaderHoleMarker(value: unknown): value is LoaderHoleMarker {
     typeof value === "object" &&
     value !== null &&
     (value as Record<string, unknown>)[LOADER_HOLE_KEY] === 1
+  );
+}
+
+/**
+ * Marker wrapping the inlined value of a NESTED promise that settled during
+ * capture. The value baked (physics), but the container key was a promise —
+ * the overlay must hand consumers a Promise.resolve(value), not the raw value,
+ * or an unconditional use(data.x) throws React #438 on every HIT. The ROOT
+ * container is never wrapped: loader-cache overlays against the awaited fresh
+ * container value.
+ */
+export const LOADER_SETTLED_KEY = "$rangoLoaderSettled" as const;
+
+export interface LoaderSettledMarker {
+  [LOADER_SETTLED_KEY]: 1;
+  value: unknown;
+  /**
+   * Present when the pinned subtree contains hole markers. Computed once at
+   * capture (elide already visits every node) so the per-HIT overlay never
+   * rescans the pinned structure to pick its rehydration path.
+   */
+  holes?: 1;
+}
+
+export function isLoaderSettledMarker(
+  value: unknown,
+): value is LoaderSettledMarker {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<string, unknown>)[LOADER_SETTLED_KEY] === 1
   );
 }
 
@@ -77,17 +113,22 @@ async function probeSettled(
 }
 
 export type ElideResult =
-  | { state: "ok"; value: unknown }
+  | { state: "ok"; value: unknown; hasHole: boolean }
   | { state: "rejected" };
 
 /**
  * Deep-elide a settled bake-lane container for recording. Settled nested
- * promises are inlined (they baked); pending ones become hole markers; a
- * REJECTED nested promise poisons the record (error UI must never bake into a
- * shared shell) — the caller refuses the capture. Only plain objects/arrays are
+ * promises pin their value behind a settled marker (they baked, but consumers
+ * hold a promise-shaped key); pending ones become hole markers; a REJECTED
+ * nested promise poisons the record (error UI must never bake into a shared
+ * shell) — the caller refuses the capture. Only plain objects/arrays are
  * traversed; anything else (Date, Map, class instance) is a pinned leaf.
  * Cycles are cut as pinned references (best effort — Flight rejects true
  * cycles later regardless).
+ *
+ * The ROOT container promise-chain unwraps with NO marker: loader-cache
+ * overlays against the AWAITED fresh container, so the recorded root must be
+ * the unwrapped structure. Everything below it goes through elideNested.
  */
 export async function elideLoaderContainer(
   value: unknown,
@@ -96,37 +137,61 @@ export async function elideLoaderContainer(
   if (isThenable(value)) {
     const probed = await probeSettled(value);
     if (probed.state === "pending") {
-      return { state: "ok", value: { [LOADER_HOLE_KEY]: 1 } };
+      return { state: "ok", value: { [LOADER_HOLE_KEY]: 1 }, hasHole: true };
     }
     if (probed.state === "rejected") return { state: "rejected" };
     return elideLoaderContainer(probed.value, seen);
   }
+  return elideNested(value, seen);
+}
+
+async function elideNested(
+  value: unknown,
+  seen: Set<object>,
+): Promise<ElideResult> {
+  if (isThenable(value)) {
+    const probed = await probeSettled(value);
+    if (probed.state === "pending") {
+      return { state: "ok", value: { [LOADER_HOLE_KEY]: 1 }, hasHole: true };
+    }
+    if (probed.state === "rejected") return { state: "rejected" };
+    const inner = await elideNested(probed.value, seen);
+    if (inner.state === "rejected") return inner;
+    const marker: LoaderSettledMarker = inner.hasHole
+      ? { [LOADER_SETTLED_KEY]: 1, value: inner.value, holes: 1 }
+      : { [LOADER_SETTLED_KEY]: 1, value: inner.value };
+    return { state: "ok", value: marker, hasHole: inner.hasHole };
+  }
 
   if (Array.isArray(value)) {
-    if (seen.has(value)) return { state: "ok", value };
+    if (seen.has(value)) return { state: "ok", value, hasHole: false };
     seen.add(value);
     const out: unknown[] = new Array(value.length);
+    let hasHole = false;
     for (let i = 0; i < value.length; i++) {
-      const r = await elideLoaderContainer(value[i], seen);
+      const r = await elideNested(value[i], seen);
       if (r.state === "rejected") return r;
       out[i] = r.value;
+      hasHole ||= r.hasHole;
     }
-    return { state: "ok", value: out };
+    return { state: "ok", value: out, hasHole };
   }
 
   if (isPlainObject(value)) {
-    if (seen.has(value)) return { state: "ok", value };
+    if (seen.has(value)) return { state: "ok", value, hasHole: false };
     seen.add(value);
     const out: Record<string, unknown> = {};
+    let hasHole = false;
     for (const key of Object.keys(value)) {
-      const r = await elideLoaderContainer(value[key], seen);
+      const r = await elideNested(value[key], seen);
       if (r.state === "rejected") return r;
       out[key] = r.value;
+      hasHole ||= r.hasHole;
     }
-    return { state: "ok", value: out };
+    return { state: "ok", value: out, hasHole };
   }
 
-  return { state: "ok", value };
+  return { state: "ok", value, hasHole: false };
 }
 
 /**
@@ -141,6 +206,22 @@ export function overlayLoaderContainer(
   recorded: unknown,
 ): unknown {
   if (isLoaderHoleMarker(recorded)) return fresh;
+
+  if (isLoaderSettledMarker(recorded)) {
+    const pinned = recorded.value;
+    // Deep holes inside a settled container (capture-computed `holes` bit)
+    // need the fresh promise's resolved value to fill them; a fully-pinned
+    // container resolves immediately (the prelude already shows it — never
+    // gate it on fresh latency). A rejecting fresh run degrades holes to
+    // undefined instead of poisoning the pin.
+    if (recorded.holes === 1) {
+      return Promise.resolve(fresh).then(
+        (freshValue) => overlayLoaderContainer(freshValue, pinned),
+        () => overlayLoaderContainer(undefined, pinned),
+      );
+    }
+    return Promise.resolve(overlayLoaderContainer(undefined, pinned));
+  }
 
   if (Array.isArray(recorded)) {
     const freshArr = Array.isArray(fresh) ? fresh : [];

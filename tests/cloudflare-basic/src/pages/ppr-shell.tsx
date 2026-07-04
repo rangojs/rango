@@ -4,9 +4,11 @@ import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
+import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
+import { PprShellSettled } from "../components/PprShellSettled.js";
 import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
 
@@ -67,6 +69,13 @@ export function PprShellPricePage() {
 // whether the route carries loading() (see urls.tsx).
 export function PprShellStreamPage() {
   return <PprShellStream loader={PprShellStreamLoader} />;
+}
+
+// Settled-marker regression page (storefront PDP #438): bake-lane loader whose
+// nested promise is already resolved at container return — the snapshot pins
+// its value; the HIT overlay must rehydrate a Promise for use().
+export function PprShellSettledPage() {
+  return <PprShellSettled loader={PprShellSettledLoader} />;
 }
 
 // LAYOUT-LOADER bake-lane layout (the storefront shape): registers

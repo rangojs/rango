@@ -268,9 +268,16 @@ export type PathHelpers<TEnv> = {
    * `{ handler, use? }` whose `use` is scoped to that slot only. Per-slot
    * merge order is `handler.use` → shared `use` → slot-local `use`, with
    * narrowest scope winning for last-write-wins items like `loading()`.
+   *
+   * Not generic over the slots record: an inferred type parameter makes the
+   * object literal an inference site, which suppresses contextual typing of
+   * arrow slot handlers (`(ctx) => ...` was implicit any). Bare handlers infer
+   * now; a descriptor's `handler:` arrow still needs an explicit ctx annotation
+   * because StaticHandlerDefinition's own `.handler` joins the contextual union
+   * (two callables — see parallel-slot-handler-types.test.ts).
    */
-  parallel: <
-    TSlots extends Record<
+  parallel: (
+    slots: Record<
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
@@ -283,8 +290,6 @@ export type PathHelpers<TEnv> = {
           use?: () => ParallelUseItem[];
         }
     >,
-  >(
-    slots: TSlots,
     use?: () => ParallelUseItem[],
   ) => ParallelItem;
 

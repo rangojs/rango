@@ -108,3 +108,27 @@ export const PprBadgeLoader = createLoader(async (): Promise<string> => {
   pprBadgeSeq += 1;
   return `badge-${pprBadgeSeq}`;
 });
+
+// Settled-marker regression fixture (the storefront PDP React #438): a
+// bake-lane loader whose nested promise is ALREADY RESOLVED when the container
+// returns. It always wins the capture window, so the snapshot pins its VALUE —
+// wrapped in the settled marker, which the HIT overlay must rehydrate into
+// Promise.resolve(value): the client consumer calls use(data.fast)
+// unconditionally, and a raw value there threw #438 and the root error
+// boundary replaced the whole page.
+export interface PprShellSettledData {
+  label: string;
+  fast: Promise<string>;
+}
+
+let pprSettledSeq = 0;
+
+export const PprShellSettledLoader = createLoader(
+  async (): Promise<PprShellSettledData> => {
+    pprSettledSeq += 1;
+    return {
+      label: `Settled outer ${pprSettledSeq}`,
+      fast: Promise.resolve(`Settled fast ${pprSettledSeq}`),
+    };
+  },
+);
