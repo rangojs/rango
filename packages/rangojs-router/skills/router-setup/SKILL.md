@@ -1,6 +1,6 @@
 ---
 name: router-setup
-description: Create and configure the RSC router with createRouter
+description: Create and configure the RSC router with createRouter. Use when bootstrapping a new Rango app, or configuring top-level router options like base path, cache store, or environment.
 argument-hint: [option]
 ---
 

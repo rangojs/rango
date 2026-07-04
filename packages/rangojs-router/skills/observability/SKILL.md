@@ -1,6 +1,6 @@
 ---
 name: observability
-description: Debug Rango request performance with debugPerformance, Server-Timing, structured telemetry, and tracing
+description: Debug Rango request performance with debugPerformance, Server-Timing, structured telemetry, and tracing. Use when a request feels slow and you need to see where time is spent, or wiring up tracing/telemetry for production requests.
 argument-hint:
 ---
 

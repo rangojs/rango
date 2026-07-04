@@ -1,6 +1,6 @@
 ---
 name: host-router
-description: Multi-app host routing with domain/subdomain patterns
+description: Multi-app host routing with domain/subdomain patterns. Use when running multiple apps behind one domain or across subdomains, or routing requests to different apps based on hostname.
 argument-hint:
 ---
 

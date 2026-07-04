@@ -1,12 +1,19 @@
 ---
 name: parallel
-description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router
+description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router. Use when a layout needs multiple independently-loading regions (e.g. a sidebar and main panel), or rendering more than one route segment at the same URL.
 argument-hint: [@slot-name]
 ---
 
 # Parallel Routes
 
 Parallel routes render multiple components simultaneously in named slots.
+
+## Not this skill if…
+
+- You want a modal or slide-over that appears only on soft navigation and shows
+  the full page on hard navigation — that is `intercept()`: see `/intercept`.
+- You want a slot rendered conditionally on HOW the user navigated — parallel
+  slots ALWAYS render alongside the page; see `/intercept`.
 
 ## Basic Parallel Routes
 
