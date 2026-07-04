@@ -363,17 +363,21 @@ The expiry invariant holds BY CONSTRUCTION, no filtering logic:
   capture (its loaders never run), so nothing under a hole can tag the shell; it
   stays live and re-renders per request regardless of tag invalidation.
 
-Timing: the capture snapshots the tag union (`attemptCapture`) right after it
-kicks off the shell render. React renders a SYNCHRONOUS server component before
-`renderToReadableStream` returns, so a `cacheTag()` in a synchronous component —
-the #648 case, verified by the cloudflare-basic eviction e2e — is on
-`_requestTags` in time. A tag recorded only AFTER an `await` inside an async
-component lands after that snapshot and is not collected into the shell (a known
-edge, shared with async `cache()`/`"use cache"` reads at capture; the document
-cache does not share it — it buffers the full response body before
-`collectRequestTags`). Deferring the shell's tag snapshot to a render-complete
-barrier is a viable follow-up if async render-recorded shell tags become load-
-bearing.
+Timing: the tag snapshot sits at the putShell WRITE BARRIER (`captureAndStoreShell`,
+right before it builds the `ShellCacheEntry`), not at stream construction. By the
+barrier the capture has already quiesced — handles settled, Flight task-quiet — and
+the deferred cache writes were awaited, so any tag the render recorded onto
+`_requestTags` is on the set: a `cacheTag()` in a synchronous server component (the
+#648 case) AND a tag recorded only AFTER an `await` inside an async server component
+(#676), plus tags propagated by async `cache()`/`"use cache"` reads at capture
+(their `recordRequestTags` can post-date the render). This mirrors the document
+cache, which buffers the full response body before `collectRequestTags`. The earlier
+`attemptCapture` snapshot — taken right after `renderToReadableStream` returned,
+before React had rendered anything past the first await — dropped those late tags
+silently; moving it behind the quiesce gate closed that window (issue #676). Holes
+are unaffected by the move: a masked loader never executes during capture, so
+nothing under a hole records a tag regardless of when the snapshot runs — the
+baked ⇒ evicts / hole ⇒ fresh invariant above still holds by construction.
 
 ### The handles contract: "nesting = liveness"
 

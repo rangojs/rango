@@ -88,6 +88,50 @@ function describeTagEviction(mode: "dev" | "build") {
       await warmToHit(request, url);
     });
 
+    test("a shell tagged AFTER an await in an async server component is evicted by updateTag(), then recaptures (#676)", async ({
+      request,
+    }) => {
+      // The async twin of the sync case above: BlogLayout renders AsyncShellTagger,
+      // an async bake-lane server component that records its cacheTag() only after
+      // an await. Before the write-barrier snapshot moved behind the quiesce gate,
+      // that post-await tag was dropped from the shell entry and this invalidation
+      // could not evict — the exact #676 loss. Distinct probe/param => distinct
+      // shell key and tag, so it never touches the sync case or a sibling shell.
+      const probe = uniqueProbe("async-evict");
+      const tag = `pprblog-async-shell-${probe}`;
+      const url = f.url(`/ppr-blog?asyncshelltag=${probe}`);
+
+      // 1. Prime: virgin shell key MISSes; the background capture records the
+      // async-recorded cacheTag(tag) into the shell entry (only reachable because
+      // the snapshot now runs at the putShell write barrier, post-quiesce).
+      const first = await request.get(url, { headers: HTML_HEADERS });
+      expect(first.status()).toBe(200);
+      expect(first.headers()["x-rango-shell"]).toBe("MISS");
+
+      // 2. Warm until the capture lands as a HIT.
+      await warmToHit(request, url);
+
+      // 3. Invalidate the async-recorded tag.
+      const inv = await request.get(f.url(`/test/invalidate-tag/${tag}`));
+      expect(inv.status()).toBe(200);
+
+      // 4. The shell carries the async tag => it is evicted; the next document GET
+      // MISSes (recapture). Poll to absorb KV marker propagation on the dev worker.
+      await expect
+        .poll(
+          async () =>
+            (await request.get(url, { headers: HTML_HEADERS })).headers()[
+              "x-rango-shell"
+            ],
+          { timeout: 15000 },
+        )
+        .toBe("MISS");
+
+      // 5. It recaptures and HITs again (re-tagged), so the async tag keeps
+      // tracking the shell across generations.
+      await warmToHit(request, url);
+    });
+
     test("an untagged sibling probe shell survives a different tag's invalidation (isolation)", async ({
       request,
     }) => {
