@@ -625,6 +625,55 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(body).toContain("Live price:");
     },
   },
+  // The CONSUMPTION-LANE RULE (issue #672 / #674): server-side handler
+  // consumption via `await ctx.use(loader)` is the BAKED lane in every shared
+  // artifact — cache(), "use cache", and the PPR shell. During capture the
+  // loader EXECUTES with identity reads (cookies()/headers()) permitted
+  // (mirroring the cache() purity allowance), so the capture is never refused;
+  // the value freezes as a capture-time copy wherever it renders as
+  // unshielded shell material. DSL segment lanes are unchanged — a loader
+  // ALSO registered live-lane (loader()+loading()) still masks at capture and
+  // keeps its boundary a live hole. Client-side useLoader is the live lane.
+  {
+    id: "PPR3",
+    contract:
+      "consumption-lane rule: handler ctx.use of a cookie-reading loader executes at capture (no refusal); unshielded value bakes frozen; a registered live-lane slot stays a live hole",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "layout-parallel",
+    assert: async ({ request, baseUrl }) => {
+      const html = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-cache/slot-use?probe=matrix-lane");
+
+      // No refusal: the route reaches HIT despite the handlers' cookies()
+      // reads (pre-rule these tripped the identity guard -> MISS forever).
+      await expect(async () => {
+        const r = await request.get(url, html);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+
+      const first = await (await request.get(url, html)).text();
+      const prelude = first.slice(0, first.indexOf("</html>"));
+      // BAKED: layout-handler-consumed unregistered loader (capture ran
+      // cookie-less -> "anon") froze into the shared prelude.
+      const chip = prelude.match(/srv-chip-(\d+)-anon/);
+      expect(chip).not.toBeNull();
+      // Segment lane unchanged: the same-consumption slot whose loader is
+      // registered live-lane still postpones (fallback frozen, hole live).
+      expect(prelude).toContain("srv badge pending...");
+      expect(prelude).not.toMatch(/srv-badge-\d/);
+
+      // Frozen across HITs AND visitors — the rule's documented footgun.
+      const second = await (
+        await request.get(url, {
+          headers: { ...html.headers, Cookie: "srv_visitor=user-a" },
+        })
+      ).text();
+      const secondPrelude = second.slice(0, second.indexOf("</html>"));
+      expect(secondPrelude).toContain(`srv-chip-${chip![1]}-anon`);
+      expect(secondPrelude).not.toMatch(/srv-chip-\d+-user-a/);
+    },
+  },
 ];
 
 function registerSemanticMatrixSuite(build: BuildAxis): void {

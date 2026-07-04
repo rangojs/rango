@@ -9,7 +9,11 @@
 
 import type { CookieOptions } from "../router/middleware-types.js";
 import { getRequestContext, _getRequestContext } from "./request-context.js";
-import { isInsideCacheScope } from "./context.js";
+import {
+  isInsideCacheScope,
+  getCurrentLoaderBodyId,
+  isInsideHandlerInvokedLoaderBody,
+} from "./context.js";
 import { INSIDE_CACHE_EXEC } from "../cache/taint.js";
 
 /**
@@ -139,9 +143,19 @@ function assertNotInsideCacheContext(ctx: unknown, fnName: string): void {
  * shell-capture.ts). The captured shell prelude is shared across every user
  * hitting the URL, so a request-scoped read here would bake one user's
  * cookies/headers into markup served to others — same hazard as the cache
- * scopes above, at the document tier. Loaders need no exemption: they are
- * masked (never executed) during capture and remain the per-request holes of
- * the shell.
+ * scopes above, at the document tier. DSL segment loaders need no exemption:
+ * the live lane is masked (never executed) during capture, and the bake lane
+ * is exactly what this guard exists for.
+ *
+ * HANDLER-INVOKED loader bodies (`await ctx.use(Loader)` from a handler) are
+ * EXEMPT — the consumption-lane rule: handler consumption yields a BAKED
+ * shared copy in every artifact tier, and the cache-purity guards above
+ * already permit identity reads there (cache()/"use cache" bake the same
+ * reads today). Guarding only the PPR tier made the same code legal under
+ * cache() but capture-refusing under ppr (issue #672 / #674). The trade is
+ * documented: an identity read in a handler-consumed loader bakes the CAPTURE
+ * request's value into the shared shell; client-side consumption (useLoader)
+ * is the live lane.
  *
  * Keys off `_shellCaptureRun`, NOT the `_shellCapture` descriptor: the descriptor
  * is also present during the FOREGROUND render (it means "a capture is wanted"),
@@ -164,12 +178,19 @@ function assertNotInsideShellCapture(ctx: unknown, fnName: string): void {
     typeof ctx === "object" &&
     (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun === true
   ) {
+    if (isInsideHandlerInvokedLoaderBody()) return;
     // Flag the capture context BEFORE throwing: inside an executing bake-lane
     // loader this throw is swallowed by wrapLoaderPromise into per-loader error
     // UI, which would bake silently into the shared shell. The capture checks
-    // the flag after the render and refuses (shell-capture.ts).
+    // the flag after the render and refuses (shell-capture.ts). Also record
+    // WHICH loader body (if any) made the read, so the refusal warning can
+    // name the real source instead of hardcoding a lane — the read may come
+    // from a bake-lane loader OR from handler/render code (issue #672).
     (ctx as { _shellCaptureGuardTripped?: string })._shellCaptureGuardTripped =
       fnName;
+    (
+      ctx as { _shellCaptureGuardTrippedLoaderId?: string }
+    )._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
     throw new Error(
       `${fnName}() cannot be called while capturing a shared shell ` +
         `(shell-cache middleware). The captured shell is served to every user ` +

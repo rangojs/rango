@@ -688,6 +688,75 @@ function runShellCacheSpec(f: Fixture): void {
     const secondSeq = Number(second.html.match(/badge-(\d+)/)?.[1]);
     expect(secondSeq).toBeGreaterThan(firstSeq);
   });
+
+  // /shell-cache/slot-use + /shell-cache/slot-use/other: the CONSUMPTION-LANE
+  // RULE (issue #672 / #674; semantic-matrix row "ppr-capture-handler-ctx-use").
+  // Handlers consume cookie-reading loaders server-side via `await
+  // ctx.use(...)`; during capture the loaders EXECUTE and the identity reads
+  // are EXEMPT from the shell guard (mirroring cache() purity semantics) — no
+  // refusal, both routes flip MISS->HIT. WHERE the value lands splits by what
+  // shields it, and this test pins both halves on both routes:
+  // - the CHIP (layout handler, UNREGISTERED loader, plain shell material):
+  //   the capture-time value — seq AND cookie identity — BAKES into the
+  //   shared prelude, identical across HITs and across visitors. The frozen
+  //   identity is the rule's documented footgun; client-side useLoader
+  //   (/shell-cache/slot-hole above) is the live lane.
+  // - the @srvBadge SLOT (same loader also registered live-lane on the
+  //   parallel: loader()+loading()): the SEGMENT lane is unchanged by the
+  //   rule — its masked loaderData pins the slot boundary, so the slot stays
+  //   a LIVE hole: fallback frozen in the prelude, value fresh (and
+  //   visitor-correct) per serve.
+  for (const [label, route, staticText] of [
+    ["first route", "/shell-cache/slot-use", "Srv slot home static content"],
+    [
+      "sibling route",
+      "/shell-cache/slot-use/other",
+      "Srv slot other static content",
+    ],
+  ] as const) {
+    test(`handler ctx.use of cookie-reading loaders (${label}): HIT; unshielded value BAKED and frozen, live-lane slot stays a fresh hole`, async ({
+      request,
+    }) => {
+      const url = f.url(`${route}?probe=srv-slot`);
+      await warmToHit(request, url);
+
+      const { html } = await measureFirstChunk(url);
+      const { prelude, resumed } = splitPrelude(html);
+
+      expect(prelude).toContain("Srv slot chrome static text");
+      expect(prelude).toContain(staticText);
+
+      // BAKED half: the chip (capture ran cookie-less -> "anon") is IN the
+      // shared prelude.
+      const bakedChip = prelude.match(/srv-chip-(\d+)-anon/);
+      expect(bakedChip).not.toBeNull();
+
+      // LIVE half: the slot's registered live-lane segment keeps the badge a
+      // hole — fallback frozen, value only in the resumed tail.
+      expect(prelude).toContain("srv badge pending...");
+      expect(prelude).not.toMatch(/srv-badge-\d/);
+      expect(resumed).toMatch(/srv-badge-\d+-anon/);
+
+      // Frozen across HITs AND visitors: a later HIT carrying a visitor
+      // cookie still serves the SAME baked chip seq + identity in the
+      // prelude — the shared-copy footgun the rule accepts and documents —
+      // while the live badge hole resolves the REAL visitor, fresh seq.
+      const second = await request.get(url, {
+        headers: { ...HTML_HEADERS, Cookie: "srv_visitor=user-a" },
+      });
+      expect(second.status()).toBe(200);
+      expect(second.headers()["x-rango-shell"]).toBe("HIT");
+      const secondHtml = await second.text();
+      const secondPrelude = splitPrelude(secondHtml).prelude;
+      const secondChip = secondPrelude.match(/srv-chip-(\d+)-anon/);
+      expect(secondChip).not.toBeNull();
+      expect(secondChip![1]).toBe(bakedChip![1]);
+      expect(secondPrelude).not.toMatch(/srv-chip-\d+-user-a/);
+      expect(secondHtml).toMatch(/srv-badge-\d+-user-a/);
+      const badgeSeq = (h: string) => Number(h.match(/srv-badge-(\d+)-/)?.[1]);
+      expect(badgeSeq(secondHtml)).toBeGreaterThan(badgeSeq(html));
+    });
+  }
 }
 
 test.describe("shell-cache (dev)", () => {

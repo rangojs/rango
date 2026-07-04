@@ -346,6 +346,43 @@ test.describe("cache-loader-behavior", () => {
         loadedAt: firstLoadedAt,
       });
   });
+
+  // Consumption-lane rule, cache() tier (docs/internal/execution-model.md;
+  // the PPR twin is semantic matrix row PPR3): a route-level cache() scope
+  // whose HANDLER consumes an UNCACHED loader via `await ctx.use(...)` serves
+  // the BAKED copy on every hit — count and loadedAt frozen at the values the
+  // cached render captured. Client-side useLoader is the live lane.
+  test("route-level cache(): handler ctx.use value is a baked copy, frozen across hits", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/handler-consumed"));
+    await waitForHydration(page);
+
+    const firstCount = await page.getByTestId("loader-count").textContent();
+    const firstLoadedAt = await page.getByTestId("loaded-at").textContent();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-test/handler-consumed"));
+          await waitForHydration(page);
+          const count = await page.getByTestId("loader-count").textContent();
+          const loadedAt = await page.getByTestId("loaded-at").textContent();
+          return { count, loadedAt };
+        },
+        {
+          timeout: 8000,
+          message:
+            "Expected the handler-consumed value to be served from cache",
+        },
+      )
+      .toEqual({ count: firstCount, loadedAt: firstLoadedAt });
+  });
 });
 
 // ============================================================================
@@ -416,6 +453,41 @@ test.describe("cache-loader-behavior (production)", () => {
         count: firstCount,
         loadedAt: firstLoadedAt,
       });
+  });
+
+  // Consumption-lane rule, cache() tier — production counterpart of the dev
+  // case above (docs/internal/execution-model.md; PPR twin: semantic matrix
+  // row PPR3).
+  test("route-level cache(): handler ctx.use value is a baked copy, frozen across hits", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/handler-consumed"));
+    await waitForHydration(page);
+
+    const firstCount = await page.getByTestId("loader-count").textContent();
+    const firstLoadedAt = await page.getByTestId("loaded-at").textContent();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-test/handler-consumed"));
+          await waitForHydration(page);
+          const count = await page.getByTestId("loader-count").textContent();
+          const loadedAt = await page.getByTestId("loaded-at").textContent();
+          return { count, loadedAt };
+        },
+        {
+          timeout: 8000,
+          message:
+            "Expected the handler-consumed value to be served from cache",
+        },
+      )
+      .toEqual({ count: firstCount, loadedAt: firstLoadedAt });
   });
 });
 

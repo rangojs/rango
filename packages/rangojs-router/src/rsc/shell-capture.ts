@@ -878,11 +878,25 @@ async function captureAndStoreShell(
   const refuseOnGuardTrip = (): "refused" | undefined => {
     const fnName = reqCtx._shellCaptureGuardTripped;
     if (!fnName) return undefined;
+    // Name the recorded source instead of hardcoding a lane. Under the
+    // consumption-lane rule, handler-INVOKED loader bodies are exempt from
+    // the guard (their value is a baked shared copy, mirroring cache()), so a
+    // trip can only come from a bake-lane SEGMENT loader or from non-loader
+    // handler/render code — the old blanket "bake-lane loader" attribution
+    // sent a live-lane debugging session down the wrong lane (issue #672).
+    const loaderId = reqCtx._shellCaptureGuardTrippedLoaderId;
+    const origin = loaderId
+      ? `segment loader "${loaderId}"`
+      : "handler/render code (no loader body was executing)";
     warnCaptureRefusedOnce(
       capture.key,
-      `a bake-lane loader (a loader on an entry with no loading()) called ${fnName}() during capture. ` +
-        "Identity must not bake into a shared shell. Give that loader's entry a loading() boundary " +
-        "(the live lane, exempt from the guard) or move the identity-dependent part into a nested promise.",
+      `${origin} called ${fnName}() during capture. Identity must not bake into a shared shell. ` +
+        "For a segment loader (bake lane, no loading()): give its entry a loading() boundary " +
+        "(the live lane, masked at capture) or move the identity-dependent part into a nested " +
+        "promise. For handler/render code: keep the value live by consuming a loader " +
+        'client-side (useLoader in a "use client" component). Note: `await ctx.use(loader)` ' +
+        "inside a HANDLER is exempt from this guard — its value bakes into the shared shell " +
+        "as a capture-time copy, mirroring cache() semantics (the consumption-lane rule).",
     );
     return "refused";
   };

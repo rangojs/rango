@@ -438,11 +438,6 @@ export function createRouter<TEnv = any>(
   const findNearestNotFoundBoundary = (entry: EntryData | null) =>
     findNotFoundBoundary(entry, defaultNotFoundBoundary);
 
-  // Helper to get handleStore from request context
-  const getHandleStore = (): HandleStore | undefined => {
-    return _getRequestContext()?._handleStore;
-  };
-
   // Track a pending handler promise (non-blocking).
   // Attaches a side-effect .catch() to report streaming handler errors to onError
   // without altering the rejection chain (React's streaming error boundary still handles it).
@@ -453,13 +448,14 @@ export function createRouter<TEnv = any>(
       segmentType?: string;
     },
   ): Promise<T> => {
-    const store = getHandleStore();
+    // One ALS read serves both the store lookup and the onError closure.
+    const reqCtx = _getRequestContext();
+    const store = reqCtx?._handleStore;
     const tracked = store ? store.track(promise) : promise;
 
     // Report streaming handler errors to onError as a side-effect.
     // The rejection still propagates to the RSC stream for client error boundaries.
     // Captures request context eagerly (closure) so the catch handler has full context.
-    const reqCtx = _getRequestContext();
     if (reqCtx && onError) {
       tracked.catch((error) => {
         callOnError(error, "handler", {

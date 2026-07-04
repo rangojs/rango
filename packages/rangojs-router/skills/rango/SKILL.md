@@ -117,6 +117,15 @@ stated, greppable contract.
 - `path()`/`include()` are always visible in `urls()`; config helpers are extractable.
 - **Cache decides freshness; `revalidate()` decides client-update.** Orthogonal; compose.
 - Loaders resolve fresh every request (even inside `cache()`) and never run twice/request.
+- **The consumption-lane rule.** For every shared artifact (`cache()`,
+  `"use cache"`, the PPR shell): server-side handler consumption
+  (`await ctx.use(loader)`) yields a BAKED copy — identity reads
+  (`cookies()`/`headers()`) are permitted there and the capture-time value
+  freezes into the shared artifact (a documented footgun; see `/caching` →
+  "Cache purity & tainted objects"). Client-side consumption (`useLoader` in
+  a `"use client"` component) is the LIVE lane. DSL `loader()` segments
+  follow their lane machinery (live under renderable `loading()`, bake
+  otherwise). Pinned by semantic-matrix row PPR3.
 - Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
   is captured on miss and replayed on hit. (The non-cacheable read guard is a

@@ -368,16 +368,27 @@ stay live. Your levers, in order of preference:
    Slot-owned loaders are masked at capture and GUARANTEED fresh per serve —
    use this where the bake lane's physics (a fast resolve bakes) or pinning
    (capture-time data for the shell's lifetime) is not acceptable, at the cost
-   of a widget-sized fallback in the shell.
+   of a widget-sized fallback in the shell. The slot handler must hand the
+   loader to a CLIENT component (`useLoader` in a `"use client"` component)
+   for the freshness guarantee to reach the rendered value: server-side
+   `await ctx.use(...)` in the handler is the BAKED lane (the consumption-lane
+   rule, `/rango` → Invariants) — it executes at capture with identity reads
+   permitted, but the value it renders is a capture-time copy wherever it is
+   not shielded by the slot's masked LoaderBoundary.
 
 4. **Shared layout data can also leave the loader lane entirely**: an
    un-awaited handler promise under the consumer's `<Suspense>` (a physics
    hole) or `cache()`/`"use cache"` to bake it with tag-invalidation.
 
 The identity rule, stated once: per-user data on a PPR page lives in a NESTED
-promise (a hole, fresh per request) or behind `loading()` (the live lane).
-Reading `cookies()`/`headers()` where the value would bake — handler shell
-material or a bake-lane container — refuses the capture by construction.
+promise (a hole, fresh per request) or behind `loading()` with CLIENT-side
+consumption (the live lane). Reading `cookies()`/`headers()` where the value
+would bake as SEGMENT material — handler/render code or a bake-lane loader
+container — refuses the capture by construction. The one exemption is
+handler-INVOKED loader bodies (`await ctx.use(loader)`): they execute at
+capture with identity reads permitted, and the value bakes as a shared
+capture-time copy — mirroring `cache()` semantics (the consumption-lane
+rule; semantic-matrix row PPR3).
 
 ## Execution matrix
 

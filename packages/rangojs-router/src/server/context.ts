@@ -770,14 +770,23 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
 
 // Purity-only scope: marks that a loader FUNCTION BODY is executing, regardless
 // of how the loader was invoked (DSL via runInsideLoaderScope, or handler-
-// invoked via ctx.use). Consulted ONLY by isInsideCacheScope() to exempt
-// request-scoped reads. It deliberately does NOT affect isInsideLoaderScope(),
-// so rendered()/barrier/deadlock gating (which must distinguish DSL from
-// handler-invoked loaders) is unchanged.
+// invoked via ctx.use). Consulted by isInsideCacheScope() to exempt
+// request-scoped reads, by getCurrentLoaderBodyId() for guard-warning
+// attribution, and by isInsideHandlerInvokedLoaderBody() for the
+// consumption-lane rule (the shell-capture guard exemption). It deliberately
+// does NOT affect isInsideLoaderScope(), so rendered()/barrier/deadlock
+// gating (which must distinguish DSL from handler-invoked loaders) is
+// unchanged.
 const LOADER_BODY_SCOPE_KEY = Symbol.for("rangojs-router:loader-body-scope");
-const loaderBodyScopeALS: AsyncLocalStorage<{ active: true }> = ((
-  globalThis as any
-)[LOADER_BODY_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+const loaderBodyScopeALS: AsyncLocalStorage<{
+  active: true;
+  loaderId?: string;
+  handlerInvoked?: boolean;
+}> = ((globalThis as any)[LOADER_BODY_SCOPE_KEY] ??= new AsyncLocalStorage<{
+  active: true;
+  loaderId?: string;
+  handlerInvoked?: boolean;
+}>());
 
 /**
  * Check if the current execution is inside a cache() DSL boundary.
@@ -822,8 +831,37 @@ export function runInsideLoaderScope<T>(fn: () => T): T {
  * and handler-invoked via ctx.use) so request-scoped reads inside a loader
  * never trip the cache-scope guards — loaders always run fresh.
  */
-export function runInsideLoaderBodyScope<T>(fn: () => T): T {
-  return loaderBodyScopeALS.run({ active: true }, fn);
+export function runInsideLoaderBodyScope<T>(
+  fn: () => T,
+  loaderId?: string,
+  handlerInvoked?: boolean,
+): T {
+  return loaderBodyScopeALS.run({ active: true, loaderId, handlerInvoked }, fn);
+}
+
+/**
+ * The $$id of the loader whose body is currently executing, or undefined
+ * outside any loader body. Used by the shell-capture identity guard
+ * (cookie-store.ts) so its refusal warning can name the loader that read
+ * cookies()/headers() instead of blaming a lane it cannot see — the old
+ * hardcoded "bake-lane loader" text misled a live-lane debugging session
+ * (issue #672, secondary).
+ */
+export function getCurrentLoaderBodyId(): string | undefined {
+  return loaderBodyScopeALS.getStore()?.loaderId;
+}
+
+/**
+ * True while a HANDLER-invoked loader body (`await ctx.use(Loader)` from a
+ * handler, not the DSL segment funnel) is executing. The consumption-lane
+ * rule keys off this: handler consumption yields a BAKED copy in every shared
+ * artifact — cache(), "use cache", and the PPR shell — so the shell-capture
+ * identity guard (cookie-store.ts) permits cookies()/headers() here, exactly
+ * like the cache-purity guards do. DSL segment loaders (live lane masked at
+ * capture, bake lane guarded) never set the flag.
+ */
+export function isInsideHandlerInvokedLoaderBody(): boolean {
+  return loaderBodyScopeALS.getStore()?.handlerInvoked === true;
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

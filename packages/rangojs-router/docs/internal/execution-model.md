@@ -115,7 +115,9 @@ global middleware
   HTTP request (pinned by the middleware-run counter in `[PPR1]`). Within the
   capture, `cache()`d segments replay from the segment cache and UNCACHED
   segments execute their handlers fresh (the `cookies()`/`headers()` capture
-  guard is load-bearing); loaders are masked — they are the structural holes.
+  guard is load-bearing for handler/render code and bake-lane segment loaders;
+  handler-INVOKED loader bodies are exempt — the consumption-lane rule below);
+  live-lane segment loaders are masked — they are the structural holes.
   Holes are render-defined: `loading()` subtrees (structural), pending promises
   in handed-over data under the consumer's Suspense (physics), everything else
   is shell — including TOP-LEVEL pushed handle promises, which are awaited
@@ -125,6 +127,25 @@ global middleware
   HIT — runs the full chain (middleware + handlers + fresh loaders); only the
   shell HTML is cached, so a HIT still runs the loader holes fresh. Pinned by
   the `[PPR2]` semantic matrix row.
+- **The consumption-lane rule.** For every shared-artifact capture — `cache()`,
+  `"use cache"`, and the PPR shell — HOW a loader is consumed decides its lane:
+  - Server-side handler consumption (`await ctx.use(loader)`) is the BAKED
+    lane: the loader executes during capture and identity reads
+    (`cookies()`/`headers()`) are PERMITTED there (the shell guard exempts
+    handler-invoked loader bodies, exactly like the cache-purity guards). The
+    value freezes as a capture-time copy wherever it renders as unshielded
+    shell/cache material — a documented footgun, consistent across all three
+    artifact tiers.
+  - Client-side consumption (`useLoader` in a `"use client"` component) is the
+    LIVE lane: fresh per request, per visitor.
+  - DSL `loader()` segments follow their lane machinery: renderable
+    `loading()` = live (masked at capture — and the mask also keeps a
+    same-loader handler consumption's subtree a live hole when it sits under
+    that boundary), otherwise bake (executes at capture WITH the identity
+    guard active).
+    Pinned by the `[PPR3]` semantic matrix row and
+    `e2e/shell-cache.test.ts` (slot-use cases); cache()-tier precedent pinned
+    by the blog-cache suites (frozen sidebar on ring-3 hits).
 
 ## Handler Loading Contract
 

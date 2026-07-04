@@ -239,6 +239,8 @@ layout(<AccountLayout />, () => [
 
 A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an independent streaming unit, exactly as in the **Streaming Behavior** section above.
 
+Under a shared artifact (`cache()`, `"use cache"`, a PPR shell), the server-side `await ctx.use(CartLoader)` above is the BAKED lane — the capture-time value (identity reads included) freezes into the artifact; consume the loader client-side (`useLoader` in a `"use client"` component) to keep the slot live per request. One rule, stated once: `/rango` → Invariants ("the consumption-lane rule").
+
 The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
 
 `transition` is allowed in the slot allow-list, but slot-level rendering does **not** currently apply a `<ViewTransition>` wrapper — only the layout/route wraps take effect at render time. For a modal-only morph today, use an element-level React `<ViewTransition>` inside the slot's component. The reverse direction is the useful guarantee: a layout-level `transition()` fires when the layout's default outlet content changes but **not** when a `<ParallelOutlet />` mounts new content (modal opens are not subtree updates of the layout VT). See [skills/view-transitions](../view-transitions/SKILL.md) for the wrap rules and the intercept caveat.

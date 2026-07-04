@@ -200,3 +200,42 @@ export const ShellIdentityLoader = createLoader(async (): Promise<string> => {
   const { cookies } = await import("@rangojs/router");
   return cookies().get("session")?.value ?? "anon-visitor";
 });
+
+// Consumption-lane-rule fixtures (issue #672 / #674). Handler consumption
+// (`await ctx.use(...)`) EXECUTES during PPR capture with its cookies() read
+// EXEMPT from the identity guard (mirroring cache() purity semantics) — no
+// refusal, the route captures. WHERE the value lands then depends on what
+// shields it:
+//
+// - ShellSrvBadgeLoader is ALSO registered as a live-lane segment
+//   (loader()+loading() on the @srvBadge parallel). The segment lane is
+//   unchanged by the rule: its masked loaderData pins the slot's
+//   LoaderBoundary, so the slot stays a LIVE hole (fallback frozen, value
+//   fresh per serve) and the handler-computed copy is discarded with the
+//   postponed subtree. seq advances per execution to pin liveness.
+//   ~150ms delay mirrors ShellBadgeLoader.
+// - ShellSrvChipLoader is UNREGISTERED (no loader() anywhere): consumed by
+//   the LAYOUT handler and rendered straight into shell material, so the
+//   capture-time value — seq AND cookie identity — BAKES into the shared
+//   prelude, identical across HITs and visitors. The frozen identity is the
+//   rule's documented footgun; client-side useLoader is the live lane.
+const SHELL_SRV_BADGE_DELAY_MS = 150;
+
+let shellSrvBadgeSeq = 0;
+
+export const ShellSrvBadgeLoader = createLoader(async (): Promise<string> => {
+  const { cookies } = await import("@rangojs/router");
+  const visitor = cookies().get("srv_visitor")?.value ?? "anon";
+  await new Promise((resolve) => setTimeout(resolve, SHELL_SRV_BADGE_DELAY_MS));
+  shellSrvBadgeSeq += 1;
+  return `srv-badge-${shellSrvBadgeSeq}-${visitor}`;
+});
+
+let shellSrvChipSeq = 0;
+
+export const ShellSrvChipLoader = createLoader(async (): Promise<string> => {
+  const { cookies } = await import("@rangojs/router");
+  const visitor = cookies().get("srv_visitor")?.value ?? "anon";
+  shellSrvChipSeq += 1;
+  return `srv-chip-${shellSrvChipSeq}-${visitor}`;
+});

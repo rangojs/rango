@@ -435,6 +435,12 @@ is **not** guarded. `ctx.use()` is a server-side escape hatch for non-rendered
 uses (set a ctx var, make a routing decision); never render its result inside a
 cached handler.
 
+This is the **consumption-lane rule**, and it holds identically for every
+shared artifact — `cache()`, `"use cache"`, and the PPR shell (`/ppr`):
+handler consumption = baked copy with identity reads permitted; client-side
+`useLoader` = live. Stated once in `/rango` → Invariants; pinned by
+semantic-matrix row PPR3 and the `e2e/cache.test.ts` "baked copy" case.
+
 ```typescript
 // WRONG — throws: cookies() read directly in a cached handler
 cache({ ttl: 60 }, () => [

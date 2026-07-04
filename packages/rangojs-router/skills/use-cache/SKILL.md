@@ -153,6 +153,13 @@ const locale = cookies().get("locale")?.value ?? "en";
 const data = await getCachedData(locale); // locale is now in the cache key
 ```
 
+The guard does not reach into LOADER bodies consumed inside the cached
+function (`await ctx.use(loader)`): loaders always run fresh, so their reads
+are exempt — but the CONSUMED VALUE is captured into the shared cache entry
+like any other computed data. Same rule across `cache()` and the PPR shell:
+handler/cached-scope consumption = baked copy, client-side `useLoader` = live
+(the consumption-lane rule, `/rango` → Invariants).
+
 ### Side-Effect Guards
 
 These ctx methods **throw** inside a `"use cache"` function because their effects
