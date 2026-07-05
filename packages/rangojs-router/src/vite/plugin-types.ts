@@ -108,6 +108,11 @@ export type ClientChunks =
 // -- Plugin options ---------------------------------------------------------
 
 /**
+ * Document script strategy. See {@link RangoBaseOptions.headScripts}.
+ */
+export type HeadScriptsOption = "preinit" | "preload";
+
+/**
  * Base options shared by all presets
  */
 interface RangoBaseOptions {
@@ -125,6 +130,34 @@ interface RangoBaseOptions {
    * @default true
    */
   clientChunks?: ClientChunks;
+
+  /**
+   * How the document ships its JavaScript.
+   *
+   * - `"preinit"` (**default**): client-reference chunks render as EXECUTING
+   *   `<script type="module" async>` tags hoisted into `<head>` (upgrading
+   *   plugin-rsc's modulepreload hints in place), and the browser entry ships
+   *   as Fizz `bootstrapModules` — a head `modulepreload fetchpriority=low`
+   *   hint plus the executing end-of-shell `id="_R_"` module script. Chunk
+   *   execution overlaps body streaming instead of waiting for the hydration
+   *   import walk; under PPR everything lands in the stored shell prelude.
+   * - `"preload"`: the previous behavior — `<link rel="modulepreload">` hints
+   *   only, entry as an inline `import()` script at end of shell. Chunks
+   *   fetch+compile early but execute only when hydration imports them.
+   *
+   * Build-only for the chunk half: plugin-rsc resolves no JS deps per client
+   * reference in dev, so dev documents carry no head chunk scripts in either
+   * mode (the bootstrap conversion does apply in dev). Trades and upstream
+   * limits are documented in src/ssr/preinit-client-references.ts.
+   *
+   * Wired in the generated virtual SSR entry
+   * (`src/ssr/preinit-client-references.ts` has the mechanism); apps with a
+   * custom SSR entry choose per-handler via `SSRDependencies.headScripts` and
+   * `installClientReferencePreinit`.
+   *
+   * @default "preinit"
+   */
+  headScripts?: HeadScriptsOption;
 
   /**
    * Filter which files route discovery scans, by glob. Paths are matched

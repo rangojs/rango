@@ -182,6 +182,42 @@ function runShellCacheSpec(f: Fixture): void {
     expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
   });
 
+  // Script strategy inside the composite HIT (src/ssr/preinit-client-references.ts):
+  // the frozen prelude carries the executing module scripts (bootstrap always;
+  // preinit-upgraded chunk scripts in build, where client-reference deps exist),
+  // and the resumed tail re-emits NONE of them — the preinit dedupe markers and
+  // cleared bootstrap fields ride inside the serialized postponed state.
+  test("HIT: executing module scripts live in the prelude, exactly once each", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache?probe=scripts");
+    await warmToHit(request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const { prelude, resumed } = splitPrelude(html);
+
+    const executingSrcs = (part: string) =>
+      [...part.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)]
+        .filter((m) => m[0].includes('type="module"'))
+        .map((m) => m[1]!);
+
+    // The executing bootstrap (id="_R_") is frozen into the prelude.
+    expect(prelude).toContain('id="_R_"');
+    const preludeSrcs = executingSrcs(prelude);
+    expect(preludeSrcs.length).toBeGreaterThan(0);
+
+    // The resume pass never duplicates a script the shell already shipped.
+    const resumedSrcs = executingSrcs(resumed);
+    for (const src of preludeSrcs) {
+      expect(resumedSrcs, `resume re-emitted ${src}`).not.toContain(src);
+    }
+    const seen = new Set<string>();
+    for (const src of preludeSrcs) {
+      expect(seen.has(src), `prelude duplicated ${src}`).toBe(false);
+      seen.add(src);
+    }
+  });
+
   // --- The hole doctrine: PHYSICS and HANDLES holes ---
 
   // PHYSICS hole: ShellCacheLayout hands a PENDING handler-created promise
