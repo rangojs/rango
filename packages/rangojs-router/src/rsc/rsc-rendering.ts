@@ -595,6 +595,7 @@ function serveShellHit(
         if (tail instanceof ReadableStream) {
           const reader = tail.getReader();
           let firstTailChunk = true;
+          let tailBytes = 0;
           try {
             for (;;) {
               const { done, value } = await reader.read();
@@ -605,10 +606,20 @@ function serveShellHit(
                   `[Server][ppr] shell HIT: first tail chunk on the wire +${Math.round(performance.now() - serveStart)}ms`,
                 );
               }
+              if (INTERNAL_RANGO_DEBUG) tailBytes += value.length;
               controller.enqueue(value);
             }
           } finally {
             reader.releaseLock();
+          }
+          // Bounds the post-header work Server-Timing structurally cannot see:
+          // the HIT commits headers at the flush, so ALL live-tail time (match,
+          // loaders, Flight, resume) happens inside the response body. This
+          // line plus the [Server][segments] build logs narrate that window.
+          if (INTERNAL_RANGO_DEBUG) {
+            console.log(
+              `[Server][ppr] shell HIT: tail complete +${Math.round(performance.now() - serveStart)}ms (${tailBytes}b)`,
+            );
           }
         } else {
           // Defensive, near-unreachable: a redirecting match cannot have captured
