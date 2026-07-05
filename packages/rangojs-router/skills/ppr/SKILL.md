@@ -272,7 +272,11 @@ capturing session's identifiers — served to anonymous visitors.)
   by the capture's 5s guard).
 - `ctx.use(H)({ x: promise })` — the container passes through verbatim
   (resolution is shallow); the nested promise streams to the consumer, who must
-  `<Suspense>` it. Under capture that boundary postpones — a hole.
+  `<Suspense>` it. Under capture that boundary postpones — a hole — REGARDLESS
+  of settle timing: the capture masks nested thenables in pushed handle
+  containers (the capture store's push wrap, shell-capture.ts), so even an
+  already-resolved nested promise holes instead of baking its value into the
+  shared shell. Same shape-is-the-declaration rule as bake-lane loaders.
 
 ### Want a hole for already-resolved data?
 

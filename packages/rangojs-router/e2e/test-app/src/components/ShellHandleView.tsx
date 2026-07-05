@@ -8,6 +8,10 @@ function Nested({ promise }: { promise: Promise<string> }) {
   return <span data-testid="shell-handle-nested">{use(promise)}</span>;
 }
 
+function NestedFast({ promise }: { promise: Promise<string> }) {
+  return <span data-testid="shell-handle-nested-fast">{use(promise)}</span>;
+}
+
 /**
  * Handles-contract consumer ("nesting = liveness"):
  *   - the BAKED item was pushed as a TOP-LEVEL promise; the router awaited it
@@ -21,9 +25,21 @@ export function ShellHandleView() {
   const items = useHandle(ShellHandles) ?? [];
   const baked = items.find((i) => i.kind === "baked");
   const nested = items.find((i) => i.kind === "nested");
+  const nestedFast = items.find((i) => i.kind === "nested-fast");
   return (
     <div data-testid="shell-handle-view">
       <span data-testid="shell-handle-baked">{baked?.value ?? "none"}</span>
+      {nestedFast?.pending ? (
+        <Suspense
+          fallback={
+            <span data-testid="shell-handle-nested-fast-fallback">
+              nested-fast pending...
+            </span>
+          }
+        >
+          <NestedFast promise={nestedFast.pending} />
+        </Suspense>
+      ) : null}
       {nested?.pending ? (
         <Suspense
           fallback={

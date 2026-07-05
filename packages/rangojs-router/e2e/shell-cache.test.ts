@@ -228,6 +228,13 @@ function runShellCacheSpec(f: Fixture): void {
     expect(prelude).toContain("nested pending...");
     expect(prelude).not.toContain("NESTED-HANDLE-STREAMED");
     expect(resumed).toContain("NESTED-HANDLE-STREAMED");
+    // Nested promise that is ALREADY RESOLVED at push time — the extreme of
+    // the settle race. Shape is the liveness declaration: the capture masks
+    // nested thenables in pushed handle containers, so this holes exactly like
+    // the slow one instead of baking its value into the shared shell.
+    expect(prelude).toContain("nested-fast pending...");
+    expect(prelude).not.toContain("NESTED-FAST-STREAMED");
+    expect(resumed).toContain("NESTED-FAST-STREAMED");
   });
 
   // THEME fidelity on a HIT (regression: PPR'd blog routes rendered light for

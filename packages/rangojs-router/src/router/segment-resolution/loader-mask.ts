@@ -36,17 +36,10 @@ export function isShellCaptureActive(
   return reqCtx?._shellCaptureRun === true;
 }
 
-/**
- * A promise that never settles — the masked stand-in for a loader's value during
- * shell capture. The consuming Suspense subtree suspends forever, so the static
- * prerender postpones it as a hole instead of baking a per-request value into the
- * shared shell. The capture abort (`maxWaitMs` in captureShellHTML) bounds how
- * long the prerender waits before it freezes the prelude, so this never hangs the
- * request.
- */
-export function createMaskedLoaderPromise<T = unknown>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
+// createMaskedLoaderPromise moved to the leaf module mask-nested.ts (shared
+// with the handle-push funnel in request-context, which cannot import THIS
+// module without a cycle). Re-exported to keep the mask API in one place.
+export { createMaskedLoaderPromise } from "./mask-nested.js";
 
 /**
  * Lane decision for an entry's loaders under PPR (the loading() value decides;

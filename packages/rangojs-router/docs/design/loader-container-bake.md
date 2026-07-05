@@ -64,6 +64,15 @@ Implementation notes (deltas from the sketch below, all deliberate):
   handler-side consumption (the consumption-lane rule, PPR3) keeps real
   values. Pinned by the flipped `/shell-cache/settled` + `/ppr-shell/settled`
   e2e twins (outer pins, nested stays fresh) and loader-snapshot unit tests.
+  The SAME mask applies to pushed HANDLE containers via the capture store's
+  push wrap (shell-capture.ts): `ctx.use(H)({ x: promise })` holes its nested
+  promise regardless of settle timing (pinned by the fast-nested assertion in
+  the handles-pair e2e); a TOP-LEVEL promise push keeps its documented bake
+  contract, with the container it resolves to masked the same way. Handler
+  PROP promises (a promise passed into JSX from a path/layout/parallel
+  handler) remain physics-only: they are minted inside a server component's
+  render, invisible to any rango funnel until React renders them — per-request
+  data belongs in loaders or handles, where liveness is now guaranteed.
 - **SETTLED markers (`$rangoLoaderSettled`) are now legacy-decode-only.** New
   captures cannot record them (nested thenables are masked pending), but
   snapshots stored before the mask still contain them; the overlay keeps

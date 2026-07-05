@@ -13,6 +13,7 @@ import {
   ShellHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
+  makeNestedFastHandlePush,
   makePhysicsPromise,
   getDriftStamp,
 } from "./shell-cache.defs.js";
@@ -59,6 +60,7 @@ function ShellCacheLayout(ctx: HandlerContext) {
   const pushShellHandle = ctx.use(ShellHandles);
   pushShellHandle(makeBakedHandlePush());
   pushShellHandle(makeNestedHandlePush());
+  pushShellHandle(makeNestedFastHandlePush());
 
   return (
     <main data-testid="shell-cache-page">
