@@ -280,6 +280,19 @@ export interface ShellCacheEntry {
    * heals it. See docs/design/ppr-shell-resume.md ("the capture data snapshot").
    */
   snapshot?: ShellSnapshotRecord[];
+  /**
+   * True when the capture's HANDLER layer declared per-request liveness: a
+   * handle pushed OUTSIDE a DSL loader scope carried a nested thenable (the
+   * capture mask turns it into a never-filling hole), such a push was still
+   * pending when the entry was written, or a handler-invoked loader
+   * (ctx.use(loader) from a handler body — the consumption lane, #672)
+   * executed during the capture. The serve tail then must NOT take the
+   * handler-free fast path (the implicit doc-cache hit): only a handler
+   * re-run can mint that hole's live promise or refresh that consumed value.
+   * DSL-loader pushes never set this — loaders re-run fresh on every HIT, so
+   * their holes always fill.
+   */
+  handlerLiveHoles?: boolean;
   /** Epoch ms when the shell was captured. */
   createdAt: number;
 }

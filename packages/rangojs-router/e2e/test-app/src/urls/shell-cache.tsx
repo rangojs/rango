@@ -10,6 +10,8 @@ import {
   ShellSrvChipLoader,
   ShellIdentityLoader,
   ShellSettledLoader,
+  ShellExecLoader,
+  shellExecCounters,
   ShellHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
@@ -25,6 +27,7 @@ import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
 import { ShellHandleView } from "../components/ShellHandleView.js";
+import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
@@ -241,6 +244,32 @@ function ShellBareHomePage() {
   return <p data-testid="shell-bare-home">Bare home static content</p>;
 }
 
+// Shell fast-path execution matrix (docs/design/shell-fast-path.md): each
+// layer increments its module counter; the DSL loader (live lane) reports the
+// snapshot per serve. On a fast-path HIT, ONLY middleware + the loader may
+// advance — the three handler counters are pinned frozen by the e2e (handlers
+// are replayed from the captured doc segment record, never executed).
+function ShellExecLayout() {
+  shellExecCounters.layout += 1;
+  return (
+    <main data-testid="shell-exec-page">
+      <p data-testid="shell-exec-chrome">Exec matrix static chrome</p>
+      <ParallelOutlet name="@execBadge" />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellExecBadgeSlot() {
+  shellExecCounters.parallel += 1;
+  return <span data-testid="shell-exec-badge">exec badge</span>;
+}
+
+function ShellExecPage() {
+  shellExecCounters.path += 1;
+  return <ShellExecMatrix loader={ShellExecLoader} />;
+}
+
 // Identity-guard negative page: renders the bake-lane identity loader's value.
 function ShellGuardPage() {
   return <ShellGuardValue loader={ShellIdentityLoader} />;
@@ -361,6 +390,37 @@ export const shellCachePatterns = urls(
         ppr: true,
       }),
     ]),
+    // Shell fast-path execution matrix: middleware + layout + parallel + path
+    // + loader counters, asserted layer-by-layer across consecutive HITs. The
+    // middleware is scoped to this subtree so its counter isolates the fixture.
+    middleware(
+      async (_ctx, next) => {
+        shellExecCounters.middleware += 1;
+        return next();
+      },
+      () => [
+        layout(ShellExecLayout, () => [
+          parallel({
+            "@execBadge": {
+              handler: ShellExecBadgeSlot,
+            },
+          }),
+          path(
+            "/shell-cache/exec-matrix",
+            ShellExecPage,
+            { name: "shellCacheExecMatrix", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(ShellExecLoader),
+              loading(
+                <div data-testid="shell-exec-fallback">
+                  Loading exec matrix...
+                </div>,
+              ),
+            ],
+          ),
+        ]),
+      ],
+    ),
     // Settled-marker regression (storefront PDP #438): bake-lane loader whose
     // nested promise is already resolved at container return — the snapshot
     // pins its value; the HIT overlay must rehydrate a Promise for use().

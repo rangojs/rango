@@ -1,4 +1,8 @@
-import { CacheScope, createCacheScope } from "../cache/cache-scope.js";
+import {
+  CacheScope,
+  createCacheScope,
+  resolveShellImplicitCacheScope,
+} from "../cache/cache-scope.js";
 import { RouteNotFoundError } from "../errors";
 import {
   createErrorInfo,
@@ -180,7 +184,10 @@ export async function createMatchContextForFull<TEnv>(
     },
     isSameRouteNavigation: false,
     interceptResult: null,
-    cacheScope: snapshot.cacheScope,
+    // Shell fast path: a capture or an eligible HIT tail may substitute an
+    // implicit doc-level scope (marker-gated; a route-derived scope wins).
+    // Full matches only — partial navigations never serve a shell.
+    cacheScope: resolveShellImplicitCacheScope(snapshot.cacheScope),
     isIntercept: false,
     actionContext: undefined,
     isAction: false,

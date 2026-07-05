@@ -111,6 +111,19 @@ export class RecordingShellStore<
   }
 
   /**
+   * Record a segment-family write into the snapshot WITHOUT touching the inner
+   * store. The shell fast path's implicit doc-cache scope writes through this
+   * (via {@link SnapshotOnlySegmentStore}): the recorded doc entry must ride
+   * ONLY inside the shell entry — a passthrough write would leave a doc-keyed
+   * entry in the real store that the NEXT capture's lookup would hit, replaying
+   * the previous generation's segments instead of re-running handlers (breaking
+   * SWR recapture freshness).
+   */
+  recordSegmentWrite(key: string, data: CachedEntryData): void {
+    this.record("segment", key, data);
+  }
+
+  /**
    * Await the tracked deferred writes so their records are present before drain.
    * Drains ITERATIVELY: a write task can schedule a NESTED write (the ring-3
    * cacheRoute path schedules its actual store.set in a second waitUntil while the
@@ -243,6 +256,40 @@ export function getRecordingStore<TEnv>(
   store: SegmentCacheStore<TEnv> | undefined,
 ): RecordingShellStore<TEnv> | undefined {
   return store instanceof RecordingShellStore ? store : undefined;
+}
+
+/**
+ * The store the shell fast path's IMPLICIT doc-cache scope resolves during a
+ * capture: reads pass through the recording store (a real-store hit is
+ * recorded, exactly like any capture read), but segment WRITES are recorded
+ * into the snapshot only — see {@link RecordingShellStore.recordSegmentWrite}
+ * for why passthrough would break SWR recapture. Routes with their OWN
+ * cache() config never see this store (their scope resolves the app-level
+ * recording store and keeps today's record-and-write behavior).
+ */
+export class SnapshotOnlySegmentStore<
+  TEnv = unknown,
+> implements SegmentCacheStore<TEnv> {
+  constructor(private readonly recording: RecordingShellStore<TEnv>) {}
+
+  get defaults(): SegmentCacheStore<TEnv>["defaults"] {
+    return this.recording.defaults;
+  }
+  get keyGenerator(): SegmentCacheStore<TEnv>["keyGenerator"] {
+    return this.recording.keyGenerator;
+  }
+
+  async get(key: string): Promise<CacheGetResult | null> {
+    return this.recording.get(key);
+  }
+
+  async set(key: string, data: CachedEntryData): Promise<void> {
+    this.recording.recordSegmentWrite(key, data);
+  }
+
+  async delete(key: string): Promise<boolean> {
+    return this.recording.delete(key);
+  }
 }
 
 /**

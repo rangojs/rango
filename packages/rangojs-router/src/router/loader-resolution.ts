@@ -430,6 +430,22 @@ function createLoaderExecutor<TEnv>(
     // nested deps inherit isDslLoader=false only when the CHAIN started in a
     // handler; a chain started by the segment funnel stays DSL (the loader
     // scope ALS survives the body's awaits).
+    // Shell fast path eligibility: a HANDLER-invoked loader executing during a
+    // capture is handler-layer dynamism — on a handler-free (replayed) HIT it
+    // would never re-run, freezing its consumption-lane value (#672's "fresh
+    // per serve" slot shape). Mark the capture; the entry declines the fast
+    // path and keeps the full tail. DSL loaders re-run on every HIT and never
+    // set this.
+    if (!isDslLoader) {
+      const captureCtx = _getRequestContext();
+      if (
+        captureCtx?._shellCaptureRun &&
+        captureCtx._shellCaptureHandleLiveness
+      ) {
+        captureCtx._shellCaptureHandleLiveness.handlerInvokedLoader = true;
+      }
+    }
+
     const promise = observePhase(PHASES.loader(loader.$$id), () =>
       Promise.resolve(
         runInsideLoaderBodyScope(

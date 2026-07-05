@@ -634,6 +634,65 @@ function describePprShell(mode: "dev" | "build") {
       const secondSeq = Number(second.html.match(/badge-(\d+)/)?.[1]);
       expect(secondSeq).toBeGreaterThan(firstSeq);
     });
+
+    // Shell fast path (docs/design/shell-fast-path.md): on a HIT the tail
+    // match hits the captured doc segment record and REPLAYS the handler
+    // layer — only middleware and DSL loaders execute. The fixture's
+    // per-layer counters ride out through the loader (live lane), so two
+    // consecutive HITs expose exactly which layers ran in between. The SWR
+    // recapture is the deliberate exception (it re-runs handlers in a
+    // background capture); the fixture's ttl (300s) keeps it out of the test
+    // window.
+    test("fast-path HIT executes ONLY middleware and loaders — path/layout/parallel handlers are replayed, not run", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell/exec-matrix?probe=exec");
+      await warmToHit(request, url);
+
+      const readHit = async (): Promise<{
+        counters: {
+          middleware: number;
+          layout: number;
+          parallel: number;
+          path: number;
+          loader: number;
+        };
+        html: string;
+      }> => {
+        const res = await request.get(url, { headers: HTML_HEADERS });
+        expect(res.status()).toBe(200);
+        expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        const html = await res.text();
+        const match = html.match(
+          /data-testid="ppr-exec-counters"[^>]*>(\{[^<]+\})</,
+        );
+        expect(
+          match,
+          "streamed counters JSON present in the document",
+        ).toBeTruthy();
+        // React escapes double quotes in text nodes; decode before parsing.
+        return {
+          counters: JSON.parse(match![1].replace(/&quot;/g, '"')),
+          html,
+        };
+      };
+
+      const first = (await readHit()).counters;
+      const second = await readHit();
+
+      // Live layers: exactly one execution per HIT.
+      expect(second.counters.middleware).toBe(first.middleware + 1);
+      expect(second.counters.loader).toBe(first.loader + 1);
+
+      // Handler layers: replayed from the captured record — frozen across HITs.
+      expect(second.counters.path).toBe(first.path);
+      expect(second.counters.layout).toBe(first.layout);
+      expect(second.counters.parallel).toBe(first.parallel);
+
+      // The replayed handler output still renders (structure intact).
+      expect(second.html).toContain("Exec matrix static chrome");
+      expect(second.html).toContain("exec badge");
+    });
   });
 }
 

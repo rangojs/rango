@@ -28,7 +28,11 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { createHandleStore, type HandleStore } from "../server/handle-store.js";
-import { maskNestedContainerThenables } from "../router/segment-resolution/mask-nested.js";
+import {
+  maskNestedContainerThenables,
+  type MaskReport,
+} from "../router/segment-resolution/mask-nested.js";
+import { isInsideLoaderScope } from "../server/context.js";
 import { isThenable } from "../handles/is-thenable.js";
 import type {
   ShellCacheEntry,
@@ -41,6 +45,7 @@ import {
 } from "../router/segment-resolution/loader-snapshot.js";
 import {
   RecordingShellStore,
+  SnapshotOnlySegmentStore,
   getRecordingStore,
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -701,6 +706,18 @@ async function runShellCapture(
   return "no-shell";
 }
 
+/** Fold the capture's handle-liveness record into the entry flag (true | undefined). */
+function handlerLayerIsLive(
+  liveness: RequestContext["_shellCaptureHandleLiveness"],
+): true | undefined {
+  if (!liveness) return undefined;
+  return liveness.holes ||
+    liveness.pendingPushes > 0 ||
+    liveness.handlerInvokedLoader
+    ? true
+    : undefined;
+}
+
 /**
  * One capture attempt in a DERIVED request context.
  *
@@ -764,21 +781,74 @@ async function attemptCapture(
   // the store exists only for this capture attempt, so every push wrapper
   // (setupLoaderAccess, createUseFunction, prerender) inherits the policy and
   // the foreground store is untouched.
+  // Shell fast path bookkeeping on the same funnel:
+  //  - handleLiveness: a nested thenable in a push made OUTSIDE a DSL loader
+  //    scope (attribution read synchronously at push time — handler bodies,
+  //    handler-invoked ctx.use(loader) callbacks, defers) declares
+  //    handler-layer per-request data. Its mask is a hole only a handler
+  //    re-run can fill, so the entry must not serve handler-free
+  //    (ShellCacheEntry.handlerLiveHoles). Still-pending top-level handler
+  //    pushes at the putShell barrier count too — their liveness is unknowable.
+  //  - loaderScopedPushValues: DSL-loader pushes re-run fresh on every HIT, so
+  //    their captured values must NOT enter a segment record's handle snapshot
+  //    (replay would duplicate the fresh push, and their masked nested
+  //    promises would stall the Flight handle encode to its timeout). The set
+  //    rides the derived context (_shellCaptureLoaderHandleValues) and is
+  //    applied ONLY at the captureHandles cache-write call site — every other
+  //    getDataForSegment consumer (the render-barrier snapshot, prerender)
+  //    sees every push.
+  const handleLiveness = {
+    holes: false,
+    pendingPushes: 0,
+    handlerInvokedLoader: false,
+  };
+  const loaderScopedPushValues = new WeakSet<object>();
   const rawCapturePush = freshHandleStore.push.bind(freshHandleStore);
   freshHandleStore.push = (
     handleName: string,
     segmentId: string,
     value: unknown,
   ) => {
-    const masked = isThenable(value)
-      ? value.then((v: unknown) => maskNestedContainerThenables(v))
-      : maskNestedContainerThenables(value);
+    const pushedInLoaderScope = isInsideLoaderScope();
+    // Single walk: the mask reports whether it masked any nested thenable
+    // (the liveness declaration) while building the capture copy.
+    const maskWithLiveness = (v: unknown): unknown => {
+      const report: MaskReport = { thenable: false };
+      const masked = maskNestedContainerThenables(v, undefined, report);
+      if (!pushedInLoaderScope && report.thenable) {
+        handleLiveness.holes = true;
+      }
+      return masked;
+    };
+    let masked: unknown;
+    if (isThenable(value)) {
+      if (!pushedInLoaderScope) {
+        handleLiveness.pendingPushes++;
+        const settle = () => handleLiveness.pendingPushes--;
+        value.then(settle, settle);
+      }
+      masked = value.then(maskWithLiveness);
+    } else {
+      masked = maskWithLiveness(value);
+    }
+    if (pushedInLoaderScope && typeof masked === "object" && masked !== null) {
+      loaderScopedPushValues.add(masked);
+    }
     rawCapturePush(handleName, segmentId, masked);
   };
 
   const derivedCtx: RequestContext = Object.create(reqCtx);
   derivedCtx._handleStore = freshHandleStore;
+  derivedCtx._shellCaptureLoaderHandleValues = loaderScopedPushValues;
   derivedCtx._requestTags = new Set<string>();
+  // Own explicit-store registry: cache-store resolutions during the capture
+  // (the implicit scope's SnapshotOnlySegmentStore, any per-capture explicit
+  // store instance) must NOT register into the handler-lifetime
+  // _explicitTaggedStores set — a capture-ephemeral store pinned there would
+  // trip the partial-tag-store warning on every later updateTag() and retain
+  // the whole capture snapshot in memory. Capture registrations die with this
+  // context; module-singleton stores stay registered by normal renders.
+  derivedCtx._explicitTaggedStores = new Set();
   derivedCtx._transitionWhen = [];
   derivedCtx._shellCaptureRun = true;
   derivedCtx._metricsStore = undefined;
@@ -812,6 +882,7 @@ async function attemptCapture(
   // forwarding to the parent so the write persists and the worker stays alive),
   // then captureAndStoreShell awaits them before draining. Reads that HIT are
   // recorded synchronously during the render and need none of this.
+  derivedCtx._shellCaptureHandleLiveness = handleLiveness;
   if (reqCtx._cacheStore) {
     const recordingStore = new RecordingShellStore(reqCtx._cacheStore);
     derivedCtx._cacheStore = recordingStore;
@@ -819,6 +890,17 @@ async function attemptCapture(
       const p = Promise.resolve().then(fn);
       recordingStore.trackWrite(p);
       reqCtx.waitUntil(() => p);
+    };
+    // Shell fast path (capture side): the implicit doc-cache scope makes the
+    // capture's match write ALL matched non-loader segments as one doc-keyed
+    // segment record — into the snapshot only (SnapshotOnlySegmentStore), so
+    // the record dies with the shell entry and the next capture's lookup
+    // still misses (handlers re-run on recapture). Routes deriving their own
+    // cache scope are untouched (resolveShellImplicitCacheScope).
+    derivedCtx._shellImplicitCache = {
+      ttl: descriptor.ttl,
+      swr: descriptor.swr,
+      store: new SnapshotOnlySegmentStore(recordingStore),
     };
   }
 
@@ -1142,6 +1224,14 @@ async function captureAndStoreShell(
           // ShellCacheEntry.initialTheme.
           initialTheme: reqCtx.theme,
           snapshot,
+          // Handler-layer liveness folded at the barrier: nested thenables in
+          // handler-scoped pushes, handler pushes still pending (liveness
+          // unknowable), or a handler-invoked loader execution — any of them
+          // refuses the FAST PATH, not the capture. See
+          // _shellCaptureHandleLiveness.
+          handlerLiveHoles: handlerLayerIsLive(
+            reqCtx._shellCaptureHandleLiveness,
+          ),
           createdAt: Date.now(),
         };
         await store.putShell(

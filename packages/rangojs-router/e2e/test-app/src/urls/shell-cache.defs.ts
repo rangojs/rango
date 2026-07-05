@@ -252,3 +252,41 @@ export const ShellSrvChipLoader = createLoader(async (): Promise<string> => {
   shellSrvChipSeq += 1;
   return `srv-chip-${shellSrvChipSeq}-${visitor}`;
 });
+
+// Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md).
+// Per-layer module counters, incremented by the exec-matrix route's middleware,
+// layout handler, parallel handler, path handler, and DSL loader. The loader —
+// the LIVE lane (loading() on the route) — returns a snapshot of ALL counters,
+// so every serve reports which layers executed. The e2e takes two consecutive
+// HITs and asserts the deltas: middleware and loader advance (live), the three
+// handler counters stay frozen (replayed from the captured doc segment record,
+// never executed). An SWR recapture is the documented exception — it re-runs
+// handlers in a background capture — so the fixture uses a TTL long past the
+// test window. The ~150ms delay keeps the loader honest real-I/O (masked at
+// capture) and ensures a full tail's same-request handler increments land
+// before the snapshot, so the delta assertions read cleanly either way.
+const SHELL_EXEC_DELAY_MS = 150;
+
+export interface ShellExecCounters {
+  middleware: number;
+  layout: number;
+  parallel: number;
+  path: number;
+  loader: number;
+}
+
+export const shellExecCounters: ShellExecCounters = {
+  middleware: 0,
+  layout: 0,
+  parallel: 0,
+  path: 0,
+  loader: 0,
+};
+
+export const ShellExecLoader = createLoader(
+  async (): Promise<ShellExecCounters> => {
+    shellExecCounters.loader += 1;
+    await new Promise((resolve) => setTimeout(resolve, SHELL_EXEC_DELAY_MS));
+    return { ...shellExecCounters };
+  },
+);

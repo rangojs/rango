@@ -132,3 +132,36 @@ export const PprShellSettledLoader = createLoader(
     };
   },
 );
+
+// Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md),
+// the workerd/KV counterpart of test-app's shell-cache exec matrix. Per-layer
+// module counters; the DSL loader (live lane) reports the snapshot per serve,
+// so two consecutive HITs expose which layers executed in between: middleware
+// and loader advance, the three handler counters stay frozen (replayed from
+// the captured doc segment record). Module state persists per isolate, the
+// same mechanism the seq-based liveness fixtures above rely on.
+const PPR_EXEC_DELAY_MS = 150;
+
+export interface PprExecCounters {
+  middleware: number;
+  layout: number;
+  parallel: number;
+  path: number;
+  loader: number;
+}
+
+export const pprExecCounters: PprExecCounters = {
+  middleware: 0,
+  layout: 0,
+  parallel: 0,
+  path: 0,
+  loader: 0,
+};
+
+export const PprShellExecLoader = createLoader(
+  async (): Promise<PprExecCounters> => {
+    pprExecCounters.loader += 1;
+    await new Promise((resolve) => setTimeout(resolve, PPR_EXEC_DELAY_MS));
+    return { ...pprExecCounters };
+  },
+);
