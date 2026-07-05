@@ -350,17 +350,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // kv - yet every tagged read still serves stale data with no other signal.
     // Surface that misconfiguration.
     if (!this.kv && (this.tagCacheTtl > 0 || this.onRevalidateTag)) {
-      const id = this.namespace ?? "default";
-      if (!warnedNoKvReadInvalidation.has(id)) {
-        warnedNoKvReadInvalidation.add(id);
-        console.warn(
-          `[CFCacheStore] tagCacheTtl/onRevalidateTag is configured without a KV ` +
-            `namespace, so tag invalidation has NO read-side effect: tagged reads ` +
-            `are never treated as invalidated and serve stale data. Configure ` +
-            `{ kv } for distributed tag invalidation.`,
-        );
-      }
+      this.warnOncePerNamespace(
+        warnedNoKvReadInvalidation,
+        `[CFCacheStore] tagCacheTtl/onRevalidateTag is configured without a KV ` +
+          `namespace, so tag invalidation has NO read-side effect: tagged reads ` +
+          `are never treated as invalidated and serve stale data. Configure ` +
+          `{ kv } for distributed tag invalidation.`,
+      );
     }
+  }
+
+  /**
+   * Warn about a namespace-scoped misconfiguration once per namespace per
+   * isolate. `seen` is the module-level Set for that message family -- Sets
+   * are module-level (not instance fields) so re-constructed stores in the
+   * same isolate don't re-warn.
+   * @internal
+   */
+  private warnOncePerNamespace(seen: Set<string>, message: string): void {
+    const id = this.namespace ?? "default";
+    if (seen.has(id)) return;
+    seen.add(id);
+    console.warn(message);
   }
 
   /**
@@ -378,16 +389,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (value == null) return undefined;
     if (!Number.isFinite(value) || value <= 0) return undefined;
     if (value < KV_MIN_EXPIRATION_TTL) {
-      const id = this.namespace ?? "default";
-      if (!warnedTagInvalidationTtlFloor.has(id)) {
-        warnedTagInvalidationTtlFloor.add(id);
-        console.warn(
-          `[CFCacheStore] tagInvalidationTtl ${value} is below Cloudflare KV's ` +
-            `${KV_MIN_EXPIRATION_TTL}s expirationTtl floor; raising to ` +
-            `${KV_MIN_EXPIRATION_TTL}. It must still exceed your largest entry ` +
-            `TTL+SWR or invalidated entries can resurrect when the marker expires.`,
-        );
-      }
+      this.warnOncePerNamespace(
+        warnedTagInvalidationTtlFloor,
+        `[CFCacheStore] tagInvalidationTtl ${value} is below Cloudflare KV's ` +
+          `${KV_MIN_EXPIRATION_TTL}s expirationTtl floor; raising to ` +
+          `${KV_MIN_EXPIRATION_TTL}. It must still exceed your largest entry ` +
+          `TTL+SWR or invalidated entries can resurrect when the marker expires.`,
+      );
       return KV_MIN_EXPIRATION_TTL;
     }
     return value;
@@ -2271,17 +2279,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // that path only fires for a positive below-floor value, never the unset
       // default sanitizeTagInvalidationTtl passes through as undefined.
       if (!this.tagInvalidationTtl) {
-        const id = this.namespace ?? "default";
-        if (!warnedNoTagInvalidationTtl.has(id)) {
-          warnedNoTagInvalidationTtl.add(id);
-          console.warn(
-            `[CFCacheStore] invalidateTags is writing KV markers with no expiry ` +
-              `(tagInvalidationTtl is unset): high-cardinality tags accumulate KV ` +
-              `keys unboundedly (storage + list-scan cost) with no reaper. Set ` +
-              `tagInvalidationTtl above your largest entry TTL+SWR to bound marker ` +
-              `growth; setting it too small resurrects invalidated entries.`,
-          );
-        }
+        this.warnOncePerNamespace(
+          warnedNoTagInvalidationTtl,
+          `[CFCacheStore] invalidateTags is writing KV markers with no expiry ` +
+            `(tagInvalidationTtl is unset): high-cardinality tags accumulate KV ` +
+            `keys unboundedly (storage + list-scan cost) with no reaper. Set ` +
+            `tagInvalidationTtl above your largest entry TTL+SWR to bound marker ` +
+            `growth; setting it too small resurrects invalidated entries.`,
+        );
       }
       await Promise.all(
         tags.map(async (tag) => {
