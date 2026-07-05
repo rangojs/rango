@@ -8,6 +8,13 @@
 
 export { rango } from "./rango.js";
 export { poke } from "./plugins/refresh-cmd.js";
+// The built-in clientChunks strategy, exported so a custom `clientChunks`
+// function can OVERLAY it (route a few modules to a dedicated chunk, delegate
+// the rest) instead of replacing the whole route/marker grouping. Without this
+// a consumer override silently loses app-fallback/route splitting for the
+// entire app. Note: called without a ClientChunkContext the fallbackRefs-based
+// `app-fallback` split is inactive — discovery wires it only for the built-in.
+export { directoryClientChunks } from "./utils/client-chunks.js";
 
 export type {
   RangoNodeOptions,
