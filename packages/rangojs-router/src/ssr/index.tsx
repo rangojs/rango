@@ -637,11 +637,6 @@ export function createShellResumeHandler<TEnv = unknown>(
         nonce,
       });
 
-      const resumed = await resume(<SsrRoot />, JSON.parse(postponed), {
-        onError: (error) => reportRenderError(onError, error),
-        nonce,
-      });
-
       // EAGER injection (resume-only): the stored prelude — a complete document
       // through </body></html> — is already on the wire ahead of this stream,
       // so a Flight <script> is valid as the first tail byte. The stock
@@ -649,7 +644,36 @@ export function createShellResumeHandler<TEnv = unknown>(
       // first hole's loaders resolve — parking the whole hydration payload
       // (root row included) behind the slowest live loader. See
       // inject-rsc-eager.ts for the measured failure mode.
-      return resumed.pipeThrough(injectRSCPayloadEager(rscStream2, { nonce }));
+      //
+      // EAGER HANDOVER: return the injector's readable BEFORE awaiting
+      // resume(). react-dom's resume() promise resolves only when the resumed
+      // shell (everything above the postponed holes) completes — which waits
+      // on the live loaders — so `await resume(...).pipeThrough(...)` parked
+      // the already-flowing Flight bytes a second time, behind the handshake
+      // instead of the stream (measured: injector output at +9ms, first tail
+      // byte on the wire at +735ms). Piping fizz in when it materializes lets
+      // serveShellHit start draining Flight immediately; pipeTo closes the
+      // writable on completion, which runs the injector's flush (trailer). A
+      // resume() rejection aborts the writable so the response errors instead
+      // of hanging.
+      const injector = injectRSCPayloadEager(rscStream2, { nonce });
+      void (async () => {
+        try {
+          const resumed = await resume(<SsrRoot />, JSON.parse(postponed), {
+            onError: (error) => reportRenderError(onError, error),
+            nonce,
+          });
+          await resumed.pipeTo(injector.writable);
+        } catch (error) {
+          reportRenderError(onError, error);
+          try {
+            await injector.writable.abort(error);
+          } catch {
+            // Writable already errored/closed; the readable side has the error.
+          }
+        }
+      })();
+      return injector.readable;
     } catch (error) {
       reportRenderError(onError, error);
       throw error;

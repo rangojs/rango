@@ -81,7 +81,7 @@ export function injectRSCPayloadEager(
     if (INTERNAL_RANGO_DEBUG && !loggedFirstHtml && buffered.length > 0) {
       loggedFirstHtml = true;
       console.log(
-        `[Server][ppr] eager-inject: first resumed HTML batch +${Math.round(performance.now() - t0)}ms`,
+        `[Server][ppr] eager-inject: first resumed HTML batch +${Math.round(performance.now() - t0)}ms (abs ${Math.round(performance.now())})`,
       );
     }
     for (const chunk of buffered) {
@@ -123,7 +123,7 @@ export function injectRSCPayloadEager(
         if (INTERNAL_RANGO_DEBUG && !loggedFirstFlight) {
           loggedFirstFlight = true;
           console.log(
-            `[Server][ppr] eager-inject: first flight script +${Math.round(performance.now() - t0)}ms`,
+            `[Server][ppr] eager-inject: first flight script +${Math.round(performance.now() - t0)}ms (abs ${Math.round(performance.now())})`,
           );
         }
         writeScript(controller, jsExpr, nonce);

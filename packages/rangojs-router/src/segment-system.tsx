@@ -18,14 +18,20 @@ import {
 } from "./segment-loader-promise.js";
 
 /**
- * Client-only debug log for the segment tree build. Gated on the baked flag
- * AND `typeof window` (renderSegments also runs during SSR/RSC, which must
- * stay silent). Timestamped so tree-build steps line up with the
- * `[Browser][boot]` sequence around hydrateRoot.
+ * Debug log for the segment tree build, gated on the baked flag. Runs on BOTH
+ * sides now, environment-tagged: `[Browser][segments]` lines up with the
+ * `[Browser][boot]` sequence around hydrateRoot; `[Server][segments]` exposes
+ * the SSR/RSC tree-build stalls (blocking loader awaits during fizz are what
+ * dominate MISS TTFB) that used to be invisible because the logs were
+ * window-gated. Server lines have no request correlation — segment-system is
+ * shared client code and cannot import request-context (node:async_hooks
+ * would enter the browser bundle) — so on a busy server, correlate by
+ * timestamp + segment ids.
  */
 function segDebugLog(msg: string, details?: Record<string, unknown>): void {
-  if (!(INTERNAL_RANGO_DEBUG && typeof window === "object")) return;
-  const prefix = `[Browser][segments] ${msg} @ ${Math.round(performance.now())}ms`;
+  if (!INTERNAL_RANGO_DEBUG) return;
+  const env = typeof window === "object" ? "[Browser]" : "[Server]";
+  const prefix = `${env}[segments] ${msg} @ ${Math.round(performance.now())}ms`;
   if (details) {
     console.log(prefix, details);
     return;
@@ -228,7 +234,7 @@ export async function renderSegments(
     rootLayout: RootLayout,
   } = options || {};
 
-  const segDebug = INTERNAL_RANGO_DEBUG && typeof window === "object";
+  const segDebug = INTERNAL_RANGO_DEBUG;
   const segDebugStart = segDebug ? performance.now() : 0;
   if (segDebug) {
     segDebugLog("renderSegments start", {
@@ -299,15 +305,7 @@ export async function renderSegments(
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`,
     );
     const { component, id, params, loading } = node.segment;
-
-    if (segDebug) {
-      segDebugLog(`segment ${id}`, {
-        type: node.segment.type,
-        loaders: node.loaders.map((l) => l.loaderId).filter(Boolean),
-        hasLoading: loading !== undefined && loading !== null,
-        parallel: node.parallel.map((p) => p.id),
-      });
-    }
+    const segNodeStart = segDebug ? performance.now() : 0;
 
     // Param-agnostic keys are opt-in via the transition() DSL (see
     // inTransitionScope above). A route (and its route-owned layouts) inside a
@@ -350,7 +348,13 @@ export async function renderSegments(
 
     let resolvedComponent = component;
     if (isAction && component instanceof Promise) {
+      const componentAwaitStart = segDebug ? performance.now() : 0;
       resolvedComponent = await component;
+      if (segDebug) {
+        segDebugLog(`segment ${id}: component awaited (action)`, {
+          ms: Math.round(performance.now() - componentAwaitStart),
+        });
+      }
     }
 
     let nodeContent: ReactNode = null;
@@ -367,9 +371,16 @@ export async function renderSegments(
       // suspends on mount inside the content still reveals a fallback (it is not
       // pre-resolved).
       const contentPromise = getMemoizedContentPromise(resolvedComponent);
-      const loadingContent: Promise<ReactNode> | ReactNode = forceAwait
-        ? await contentPromise
-        : contentPromise;
+      let loadingContent: Promise<ReactNode> | ReactNode = contentPromise;
+      if (forceAwait) {
+        const contentAwaitStart = segDebug ? performance.now() : 0;
+        loadingContent = await contentPromise;
+        if (segDebug) {
+          segDebugLog(`segment ${id}: content awaited (forceAwait)`, {
+            ms: Math.round(performance.now() - contentAwaitStart),
+          });
+        }
+      }
       nodeContent = createElement(RouteContentWrapper, {
         key: `suspense-loading-${id}`,
         content: loadingContent,
@@ -492,10 +503,19 @@ export async function renderSegments(
           ms: Math.round(performance.now() - layoutAwaitStart),
         });
       }
+      const decodeStart = segDebug ? performance.now() : 0;
       const { loaderData, errorFallback } = decodeLoaderResults(
         resolvedData,
         layoutLoaderIds,
       );
+      if (segDebug) {
+        const decodeMs = Math.round(performance.now() - decodeStart);
+        if (decodeMs > 0) {
+          segDebugLog(`segment ${id}: loader results decoded`, {
+            ms: decodeMs,
+          });
+        }
+      }
 
       if (parallelOwnedLoaders.length > 0) {
         const loadersByParallelNamespace = new Map<string, ResolvedSegment[]>();
@@ -566,6 +586,16 @@ export async function renderSegments(
       content = createElement(MountContextProvider, {
         value: node.segment.mountPath,
         children: content,
+      });
+    }
+
+    if (segDebug) {
+      segDebugLog(`segment ${id} built`, {
+        type: node.segment.type,
+        ms: Math.round(performance.now() - segNodeStart),
+        loaders: node.loaders.map((l) => l.loaderId).filter(Boolean),
+        hasLoading: loading !== undefined && loading !== null,
+        parallel: node.parallel.map((p) => p.id),
       });
     }
   }

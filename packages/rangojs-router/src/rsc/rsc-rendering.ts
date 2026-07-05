@@ -493,7 +493,13 @@ function serveShellHit(
   const renderTail = async (
     activeCtx: RequestContext<any>,
   ): Promise<ReadableStream<Uint8Array> | { redirect: string }> => {
+    const matchStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
     const match = await ctx.router.match(request, { env });
+    if (INTERNAL_RANGO_DEBUG) {
+      console.log(
+        `[Server][ppr] shell HIT: tail match done +${Math.round(performance.now() - matchStart)}ms (abs ${Math.round(performance.now())}, started ${Math.round(matchStart)})`,
+      );
+    }
     if (match.redirect) return { redirect: match.redirect };
     setRequestContextParams(match.params, match.routeName);
     const payload = buildFullPayload(match, ctx, url, activeCtx, handleStore);
@@ -530,7 +536,7 @@ function serveShellHit(
             if (!first) {
               first = true;
               console.log(
-                `[Server][ppr] flight render: first chunk +${Math.round(performance.now() - tapStart)}ms`,
+                `[Server][ppr] flight render: first chunk +${Math.round(performance.now() - tapStart)}ms (abs ${Math.round(performance.now())})`,
               );
             }
             controller.enqueue(chunk);
@@ -571,7 +577,13 @@ function serveShellHit(
       // decode into a seed Map for the resolveLoaderData overlay, so the
       // payload's baked container bytes match the frozen prelude while the
       // hole-marker paths keep the fresh run's live nested promises.
+      const seedStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
       const loaderSeed = await buildShellLoaderSeed(entry.snapshot);
+      if (INTERNAL_RANGO_DEBUG) {
+        console.log(
+          `[Server][ppr] shell HIT: loader seed built +${Math.round(performance.now() - seedStart)}ms (abs ${Math.round(performance.now())})`,
+        );
+      }
       if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
       return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
     }
@@ -592,9 +604,15 @@ function serveShellHit(
       }
       try {
         const tail = await tailPromise;
+        if (INTERNAL_RANGO_DEBUG) {
+          console.log(
+            `[Server][ppr] shell HIT: tail stream handed over +${Math.round(performance.now() - serveStart)}ms (abs ${Math.round(performance.now())})`,
+          );
+        }
         if (tail instanceof ReadableStream) {
           const reader = tail.getReader();
           let firstTailChunk = true;
+          let tailBytes = 0;
           try {
             for (;;) {
               const { done, value } = await reader.read();
@@ -602,13 +620,23 @@ function serveShellHit(
               if (INTERNAL_RANGO_DEBUG && firstTailChunk) {
                 firstTailChunk = false;
                 console.log(
-                  `[Server][ppr] shell HIT: first tail chunk on the wire +${Math.round(performance.now() - serveStart)}ms`,
+                  `[Server][ppr] shell HIT: first tail chunk on the wire +${Math.round(performance.now() - serveStart)}ms (abs ${Math.round(performance.now())})`,
                 );
               }
+              if (INTERNAL_RANGO_DEBUG) tailBytes += value.length;
               controller.enqueue(value);
             }
           } finally {
             reader.releaseLock();
+          }
+          // Bounds the post-header work Server-Timing structurally cannot see:
+          // the HIT commits headers at the flush, so ALL live-tail time (match,
+          // loaders, Flight, resume) happens inside the response body. This
+          // line plus the [Server][segments] build logs narrate that window.
+          if (INTERNAL_RANGO_DEBUG) {
+            console.log(
+              `[Server][ppr] shell HIT: tail complete +${Math.round(performance.now() - serveStart)}ms (${tailBytes}b)`,
+            );
           }
         } else {
           // Defensive, near-unreachable: a redirecting match cannot have captured

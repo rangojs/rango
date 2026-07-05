@@ -516,7 +516,15 @@ describe("createShellResumeHandler", () => {
     expect(html).toContain('nonce="abc123"');
   });
 
-  it("routes a resume setup error through onError with phase rendering, then rethrows", async () => {
+  it("routes a resume setup error through onError with phase rendering, then errors the returned stream", async () => {
+    // EAGER HANDOVER contract (ssr/index.tsx): resumeShellHTML returns the
+    // injector's readable BEFORE awaiting resume(), so Flight bytes flow
+    // immediately instead of waiting for the resume shell (which is gated on
+    // the live loaders). A resume() failure therefore no longer rejects the
+    // handler's promise — it aborts the injector's writable, and the error
+    // surfaces when the returned stream is read (serveShellHit's reader loop,
+    // which errors the response body). onError still fires with phase
+    // "rendering" either way.
     const onError = vi.fn();
     const failing = vi.fn().mockRejectedValue(new Error("resume boom")) as any;
     const deps = makeDeps({ resume: failing, onError });
@@ -524,9 +532,11 @@ describe("createShellResumeHandler", () => {
       Promise.resolve(makeTree(Promise.resolve("ok"), "res")),
     );
     const resumeHandler = createShellResumeHandler(deps);
-    await expect(
-      resumeHandler(makeRscStream("X"), { postponed: "{}" }),
-    ).rejects.toThrow("resume boom");
+    const stream = await resumeHandler(makeRscStream("X"), {
+      postponed: "{}",
+    });
+    expect(stream).toBeInstanceOf(ReadableStream);
+    await expect(readAll(stream)).rejects.toThrow("resume boom");
     expect(onError).toHaveBeenCalledWith(expect.any(Error), {
       phase: "rendering",
     });
