@@ -175,7 +175,7 @@ describe("createDocumentCacheMiddleware", () => {
       await vi.runAllTimersAsync();
 
       // Verify cached
-      expect(mockStore.cache.has("/page:html")).toBe(true);
+      expect(mockStore.cache.has("localhost/page:html")).toBe(true);
     });
 
     it("tags the document entry with the request-scoped tag union (#1)", async () => {
@@ -208,7 +208,7 @@ describe("createDocumentCacheMiddleware", () => {
       // can invalidate the full-page entry.
       expect(mockStore.putResponseTags).toHaveLength(1);
       expect(mockStore.putResponseTags[0]).toEqual(["products", "nav"]);
-      expect(mockStore.cache.get("/page:html")?.tags).toEqual([
+      expect(mockStore.cache.get("localhost/page:html")?.tags).toEqual([
         "products",
         "nav",
       ]);
@@ -244,7 +244,9 @@ describe("createDocumentCacheMiddleware", () => {
 
       expect(mockStore.putResponseTags).toHaveLength(1);
       expect(mockStore.putResponseTags[0]).toEqual(["render-tag"]);
-      expect(mockStore.cache.get("/page:html")?.tags).toEqual(["render-tag"]);
+      expect(mockStore.cache.get("localhost/page:html")?.tags).toEqual([
+        "render-tag",
+      ]);
     });
 
     it("passes undefined tags for an untagged document (header-free)", async () => {
@@ -490,7 +492,7 @@ describe("createDocumentCacheMiddleware", () => {
       await vi.runAllTimersAsync();
 
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");
-      expect(mockStore.cache.has("/page:html")).toBe(true);
+      expect(mockStore.cache.has("localhost/page:html")).toBe(true);
     });
   });
 
@@ -503,7 +505,7 @@ describe("createDocumentCacheMiddleware", () => {
       const cachedResponse = new Response("Cached content", {
         headers: { "Cache-Control": "s-maxage=60" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: cachedResponse,
         staleAt: Date.now() + 60 * 1000,
       });
@@ -535,7 +537,7 @@ describe("createDocumentCacheMiddleware", () => {
       const cachedResponse = new Response("Repeat body", {
         headers: { "Cache-Control": "s-maxage=60" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: cachedResponse,
         staleAt: Date.now() + 60 * 1000,
       });
@@ -572,7 +574,7 @@ describe("createDocumentCacheMiddleware", () => {
       const staleResponse = new Response("Stale content", {
         headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=300" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: staleResponse,
         staleAt: Date.now() - 1000, // Already stale
       });
@@ -614,7 +616,7 @@ describe("createDocumentCacheMiddleware", () => {
       const staleResponse = new Response("Stale content", {
         headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=300" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: staleResponse,
         staleAt: Date.now() - 1000,
       });
@@ -730,7 +732,7 @@ describe("createDocumentCacheMiddleware", () => {
       const cachedResponse = new Response("Cached GET", {
         headers: { "Cache-Control": "s-maxage=60" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: cachedResponse,
         staleAt: Date.now() + 60 * 1000,
       });
@@ -815,7 +817,7 @@ describe("createDocumentCacheMiddleware", () => {
       const htmlResponse = new Response("HTML", {
         headers: { "Cache-Control": "s-maxage=60" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: htmlResponse,
         staleAt: Date.now() + 60 * 1000,
       });
@@ -883,8 +885,8 @@ describe("createDocumentCacheMiddleware", () => {
 
       expect(htmlNext).toHaveBeenCalledTimes(1);
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");
-      expect(mockStore.cache.has("/page:rsc")).toBe(true);
-      expect(mockStore.cache.has("/page:html")).toBe(true);
+      expect(mockStore.cache.has("localhost/page:rsc")).toBe(true);
+      expect(mockStore.cache.has("localhost/page:html")).toBe(true);
     });
 
     it("should include segment hash in cache key for partial requests", async () => {
@@ -996,6 +998,81 @@ describe("createDocumentCacheMiddleware", () => {
       expect(next2).not.toHaveBeenCalled();
       expect(response2.headers.get("x-document-cache-status")).toBe("HIT");
       expect(await response2.text()).toBe("Tabbed");
+    });
+  });
+
+  describe("host isolation (multi-domain)", () => {
+    it("isolates the default key by host so one hostname never serves another", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      // Tenant A caches /pricing on a.example (same shared store/function).
+      const ctxA = createMockMiddlewareContext("http://a.example/pricing");
+      const nextA = vi.fn().mockResolvedValue(
+        new Response("A pricing", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const responseA = (await middleware(ctxA, nextA)) as Response;
+      await vi.runAllTimersAsync();
+      expect(responseA.headers.get("x-document-cache-status")).toBe("MISS");
+
+      // Tenant B requests the identical pathname on b.example. Without host in
+      // the key this store (which keys by the raw string, like
+      // MemorySegmentCacheStore/VercelCacheStore) would replay A's body to B.
+      // Host namespacing forces a MISS so B renders its own body.
+      const ctxB = createMockMiddlewareContext("http://b.example/pricing");
+      const nextB = vi.fn().mockResolvedValue(
+        new Response("B pricing", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const responseB = (await middleware(ctxB, nextB)) as Response;
+      await vi.runAllTimersAsync();
+
+      expect(nextB).toHaveBeenCalledTimes(1);
+      expect(responseB.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(await responseB.text()).toBe("B pricing");
+
+      // Two isolated entries, each under its own host-namespaced key.
+      expect(mockStore.cache.has("a.example/pricing:html")).toBe(true);
+      expect(mockStore.cache.has("b.example/pricing:html")).toBe(true);
+    });
+
+    it("still HITs a same-host, same-path request under the host-namespaced key", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate under the host-namespaced default key.
+      const cachedResponse = new Response("A pricing", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("a.example/pricing:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://a.example/pricing");
+      const next = vi.fn();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      expect(next).not.toHaveBeenCalled();
+      expect(response.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(await response.text()).toBe("A pricing");
     });
   });
 
@@ -1140,7 +1217,7 @@ describe("createDocumentCacheMiddleware", () => {
       const cachedResponse = new Response("Cached", {
         headers: { "Cache-Control": "s-maxage=60" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: cachedResponse,
         staleAt: Date.now() + 60 * 1000,
       });
@@ -1178,7 +1255,7 @@ describe("createDocumentCacheMiddleware", () => {
           "Cache-Control": "s-maxage=60, stale-while-revalidate=300",
         },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: staleResponse,
         staleAt: Date.now() - 1000,
       });
@@ -1220,7 +1297,7 @@ describe("createDocumentCacheMiddleware", () => {
       const cachedResponse = new Response("Cached", {
         headers: { "Cache-Control": "s-maxage=60" },
       });
-      mockStore.cache.set("/page:html", {
+      mockStore.cache.set("localhost/page:html", {
         response: cachedResponse,
         staleAt: Date.now() + 60 * 1000,
       });

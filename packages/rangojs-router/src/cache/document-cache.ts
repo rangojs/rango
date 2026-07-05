@@ -188,7 +188,13 @@ export interface DocumentCacheOptions<TEnv = any> {
   skipPaths?: string[];
 
   /**
-   * Custom cache key generator
+   * Custom cache key generator.
+   *
+   * Replaces the default `host + pathname + search` key entirely. On a
+   * multi-domain deployment served by one function you MUST include `url.host`
+   * (or an equivalent tenant discriminator) yourself — the default key is
+   * host-namespaced, but a custom generator's output is used verbatim, so
+   * omitting host bleeds one hostname's cached response to another.
    */
   keyGenerator?: (url: URL) => string;
 
@@ -319,9 +325,17 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         }
       }
 
+      // Host-namespace the default key. VercelCacheStore/MemorySegmentCacheStore
+      // key by the raw string with no host prefix (only CFCacheStore adds host
+      // internally), so on a single function serving multiple domains an
+      // un-namespaced key bleeds tenant A's full response to tenant B. Mirrors
+      // the segment path's cache-scope.ts getCacheKeyBase (`${host}${pathname}`).
+      // The keyGenerator branch is left untouched: a consumer-supplied generator
+      // owns its own namespacing (auto-prefixing host would silently change their
+      // existing keys and double any host they already include).
       const cacheKey = keyGenerator
         ? keyGenerator(url) + segmentHash + typeSuffix
-        : `${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
+        : `${url.host}${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
       // 1. Check cache
       const cached = await store.getResponse(cacheKey);
 
