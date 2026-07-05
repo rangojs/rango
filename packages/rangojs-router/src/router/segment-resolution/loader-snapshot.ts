@@ -8,12 +8,14 @@
  * payload byte-identical to that frozen prelude, the capture pins the container
  * in the shell snapshot:
  *
- *   - elide:   deep-walk the settled container; a SETTLED nested promise baked
- *              its value (physics: it won the quiet window), so it is pinned as
- *              that value wrapped in a SETTLED marker — the wrapper remembers
- *              "this was a promise" so the overlay can rehydrate the shape; a
- *              PENDING nested promise is a hole, replaced by
- *              {@link LOADER_HOLE_KEY}. The result is promise-free and
+ *   - elide:   deep-walk the settled container; a PENDING nested promise is a
+ *              hole, replaced by {@link LOADER_HOLE_KEY} — and since
+ *              loader-cache masks every nested thenable at capture
+ *              ({@link maskNestedContainerThenables}), nested promises are
+ *              ALWAYS pending here for new captures. The SETTLED-marker branch
+ *              below is legacy: it fires only if a settled thenable reaches
+ *              elide anyway, and the overlay keeps decoding SETTLED markers
+ *              from pre-mask snapshots. The result is promise-free and
  *              Flight-serializable.
  *   - overlay: on a HIT the loader runs fresh (only the loader body can mint
  *              the live nested promises), then the recorded container is laid
@@ -27,6 +29,7 @@
  */
 
 import { isThenable } from "../../handles/is-thenable.js";
+import { createMaskedLoaderPromise } from "./loader-mask.js";
 
 /**
  * Marker object standing in for a pending nested promise in a recorded loader
@@ -110,6 +113,60 @@ async function probeSettled(
   } catch {
     return { state: "rejected" };
   }
+}
+
+/**
+ * Deep-copy a settled bake-lane container with every NESTED thenable replaced
+ * by a masked (never-resolving) promise. Applied by loader-cache's capture
+ * branch to the container the capture RENDER and the capture RECORD consume.
+ *
+ * Why: nested-promise SHAPE is the liveness declaration — a consumer that
+ * returns `{ x: Promise }` is saying "x is per-request". The elide contract
+ * below only kept that promise live if it happened to still be PENDING when
+ * the capture's quiet window closed; the window waits for the slowest shared
+ * material on the page (plus the bake-lane holdUntil), so any real data source
+ * (a 5ms SQL read, a 200ms basket API) settles first, and its value was baked
+ * into the SHARED shell and snapshot-pinned for every HIT — per-request data
+ * frozen and served cross-session (found live: a storefront basket, carrying
+ * the capturing session's basketId/customer identifiers, served to anonymous
+ * visitors). Masking makes the consuming subtree postpone as a hole no matter
+ * when the promise settles, so elide records a HOLE marker and every HIT
+ * streams the fresh value: liveness by declaration, not by racing the window.
+ *
+ * Only plain objects/arrays are traversed (same rules as elideNested); other
+ * values are leaves. The INPUT IS NEVER MUTATED — handler-side consumption
+ * (the consumption-lane rule, semantic-matrix PPR3) shares the raw container
+ * and must keep real values. Cycles are preserved as cycles in the copy.
+ */
+export function maskNestedContainerThenables(
+  value: unknown,
+  seen: Map<object, unknown> = new Map(),
+): unknown {
+  if (isThenable(value)) return createMaskedLoaderPromise();
+
+  if (Array.isArray(value)) {
+    const cached = seen.get(value);
+    if (cached !== undefined) return cached;
+    const out: unknown[] = new Array(value.length);
+    seen.set(value, out);
+    for (let i = 0; i < value.length; i++) {
+      out[i] = maskNestedContainerThenables(value[i], seen);
+    }
+    return out;
+  }
+
+  if (isPlainObject(value)) {
+    const cached = seen.get(value);
+    if (cached !== undefined) return cached;
+    const out: Record<string, unknown> = {};
+    seen.set(value, out);
+    for (const key of Object.keys(value)) {
+      out[key] = maskNestedContainerThenables(value[key], seen);
+    }
+    return out;
+  }
+
+  return value;
 }
 
 export type ElideResult =

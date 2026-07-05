@@ -251,18 +251,18 @@ async function Handler(ctx: HandlerContext) {
 | already-resolved / instant / synchronous values | `loader(() => Promise.resolve(x))` + `loading()`                  | a raw promise that settles inside the quiet window BAKES; only the live lane guarantees live     |
 | none of the above                               | nothing                                                           | it bakes — that is what the shell is for                                                         |
 
-The physics caveat in one line: promise holes are holes because the I/O is
-genuinely pending at capture. If the value can resolve near-instantly (memory
-read, warmed cache), it may bake into the shell — when liveness must be
-guaranteed rather than probable, use the live lane (`loading()`). The same
-physics governs bake-lane nested promises, with one shape guarantee: a nested
-promise that settles inside the window pins its VALUE, but the container key
-KEEPS its promise shape on HITs (the snapshot rehydrates a
-`Promise.resolve(pinned)`), so an unconditional `use(data.x)` consumer never
-breaks — it just reads the pinned value. Note the timing consequence: whether
-such a value is pinned or live can vary per capture (concurrent loader traffic
-extends the quiet window), so treat "fast-resolving promise on the bake lane"
-as PINNED for correctness purposes.
+The physics caveat in one line: HANDLER-created promise props are holes only
+because the I/O is genuinely pending at capture — if the value can resolve
+near-instantly (memory read, warmed cache), it may bake into the shell; when
+liveness must be guaranteed rather than probable, use a loader. BAKE-LANE
+NESTED promises are exempt from that race: the capture MASKS every thenable
+nested in a bake-lane container regardless of settle timing
+(`maskNestedContainerThenables`, loader-cache.ts), so the consuming boundary
+always postpones as a hole and every HIT streams the FRESH value — the
+promise SHAPE is the liveness declaration, not a bet on latency. (Before the
+mask, a nested promise that settled inside the window pinned its capture-time
+value into the shared shell; found live as a storefront basket — with the
+capturing session's identifiers — served to anonymous visitors.)
 
 ### Handles: "nesting = liveness"
 
@@ -284,8 +284,9 @@ how fast the value settles.
 
 A loader on an entry with no renderable `loading()` EXECUTES during capture
 (the capture gate holds open for its real latency, bounded by the 5s guard).
-Its settled container bakes into the prelude; every promise still nested in it
-postpones at the consumer's own `<Suspense>` — a hole. On every HIT the
+Its settled container bakes into the prelude; every promise nested in it is
+masked at capture (regardless of how fast it settles) and postpones at the
+consumer's own `<Suspense>` — a hole. On every HIT the
 capture snapshot's loader family overlays the recorded container onto the
 fresh run, so the payload matches the frozen prelude byte-for-byte while the
 nested promises run fresh. The return shape is the declaration:
@@ -552,21 +553,22 @@ evicted by tag at all — move always-fresh data under a `loading()` hole.
 - **The session-object bake trap (the guard cannot save you here)**: the
   capture guard sees `cookies()`/`headers()` calls ONLY. A bake-lane loader
   reading a middleware-provided session object (`ctx.get("session")`) refuses
-  nothing — and its FAST-RESOLVE branch is the killer:
+  nothing. Per-user data survives ONLY behind a nested promise — the shape is
+  the declaration, and it holds for BOTH branches regardless of settle timing
+  (nested thenables are masked at capture):
 
   ```typescript
   const CartLoader = createLoader(async (ctx) => {
     const basketId = ctx.get("session")!.get("basketId");
-    if (!basketId) return { cart: Promise.resolve(null) }; // SETTLED → BAKES
-    return { cart: fetchBasket(basketId) }; // pending → hole
+    if (!basketId) return { cart: Promise.resolve(null) }; // nested thenable → masked → hole, fresh per HIT
+    return { cart: fetchBasket(basketId) }; // nested thenable → masked → hole, fresh per HIT
   });
   ```
 
-  If the capturing request is anonymous (it usually is), `cart: null` bakes
-  and is snapshot-pinned: every logged-in user gets the anonymous badge on
-  every HIT. The branch asymmetry makes it nondeterministic per capture. Any
-  loader whose data is per-user belongs on the live lane — for a header
-  widget, a parallel slot with its own `loading()` (playbook lever 3).
+  The remaining trap is returning per-user data as PLAIN container material:
+  `return { user: session.user }` bakes it into the shared shell like any
+  other settled value — deterministically, not by race. Wrap it in a promise
+  (even an already-resolved one) or put the loader on the live lane.
 
 - **Theme on a HIT is capture-then-corrected**: the resume tree replays the
   CAPTURE's `initialTheme` (resume requires it to match the frozen prelude);

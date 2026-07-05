@@ -47,17 +47,32 @@ Implementation notes (deltas from the sketch below, all deliberate):
   every HIT) and was replaced by the rule. Pinned by semantic-matrix row
   PPR3. See ppr-shell-resume.md ("Handler-side consumption") and
   docs/internal/execution-model.md ("The consumption-lane rule").
-- **Settled nested promises pin behind a SETTLED marker, not as raw values**
-  (`$rangoLoaderSettled`, added post-ship). The first cut inlined a settled
-  nested promise's value directly, so the HIT overlay handed consumers a plain
-  value where their code says `use(data.x)` — React #438, root error boundary,
-  whole page down (found live on a storefront PDP whose 165ms price fetch won
-  the quiet window because a concurrent loader kept the Flight stream
-  byte-active past it). The overlay rehydrates the marker as
-  `Promise.resolve(pinned)`; a fully-pinned container resolves immediately,
-  one with deeper holes chains on the fresh promise to fill them
-  (`loader-snapshot.ts`, pinned by the `/shell-cache/settled` +
-  `/ppr-shell/settled` e2e twins and the #438 unit regressions).
+- **Nested thenables are MASKED at capture — shape is the liveness
+  declaration** (`maskNestedContainerThenables`, applied in loader-cache's
+  capture branch; supersedes the settled-pinning below). A nested promise that
+  settled before the quiet window closed used to pin its VALUE into the
+  snapshot (`$rangoLoaderSettled`), so every HIT served the capture-time value
+  to every visitor — per-request data frozen into the SHARED shell (found
+  live: a storefront basket, carrying the capturing session's
+  basketId/customer identifiers, served to anonymous requests; the window
+  waits for the slowest material on the page plus the bake-lane holdUntil, so
+  ANY real data source — a 5ms SQL read, a 200ms basket API — lost the race).
+  The capture now deep-copies the container with every nested thenable
+  replaced by a never-resolving mask: the consuming boundary postpones as a
+  hole no matter when the promise settles, elide records a HOLE marker, and
+  every HIT streams the fresh value. The raw container is untouched, so
+  handler-side consumption (the consumption-lane rule, PPR3) keeps real
+  values. Pinned by the flipped `/shell-cache/settled` + `/ppr-shell/settled`
+  e2e twins (outer pins, nested stays fresh) and loader-snapshot unit tests.
+- **SETTLED markers (`$rangoLoaderSettled`) are now legacy-decode-only.** New
+  captures cannot record them (nested thenables are masked pending), but
+  snapshots stored before the mask still contain them; the overlay keeps
+  rehydrating them as `Promise.resolve(pinned)` — the original #438 fix — so
+  pre-mask shells stay servable until their TTL turns them over. History: the
+  first cut inlined a settled nested promise's value directly, so the HIT
+  overlay handed consumers a plain value where their code says `use(data.x)`
+  — React #438, root error boundary, whole page down (found live on a
+  storefront PDP whose 165ms price fetch won the quiet window).
 
 ## The asymmetry this closes
 
