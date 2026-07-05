@@ -335,6 +335,25 @@ describe("VercelCacheStore", () => {
       expect(hit?.shouldRevalidate).toBe(false);
     });
 
+    it("round-trips a large binary body (>32 KB spanning bytes 0-255) with no call-stack overflow", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      // 200 KB spanning every byte value 0-255 (exercises latin1 high bytes
+      // 128-255) forces ~25 String.fromCharCode.apply chunks. The old encoder
+      // spread up to 32,768 bytes as function arguments, which can throw
+      // RangeError under stack pressure and silently degrade the write to a
+      // no-op. The shared chunk-capped encoder must round-trip byte-for-byte.
+      const size = 200_000;
+      const bytes = new Uint8Array(size);
+      for (let i = 0; i < size; i++) bytes[i] = i % 256;
+      await s.putResponse("doc:big", new Response(bytes), 60, 300);
+      const hit = await s.getResponse("doc:big");
+      expect(hit).not.toBeNull();
+      const roundTripped = new Uint8Array(await hit!.response.arrayBuffer());
+      expect(roundTripped.length).toBe(size);
+      expect(roundTripped).toEqual(bytes);
+    });
+
     it("strips per-client signal headers (Set-Cookie)", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
