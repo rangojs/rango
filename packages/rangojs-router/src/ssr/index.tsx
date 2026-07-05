@@ -1,5 +1,6 @@
 import React from "react";
 import { createSsrRootComponent } from "./ssr-root.js";
+import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
 import type { ErrorPhase } from "../types.js";
 
 /**
@@ -594,7 +595,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
 export function createShellResumeHandler<TEnv = unknown>(
   deps: SSRDependencies<TEnv>,
 ) {
-  const { createFromReadableStream, injectRSCPayload, resume, onError } = deps;
+  const { createFromReadableStream, resume, onError } = deps;
 
   /**
    * @param rscStream - Fresh full Flight stream for this request.
@@ -609,11 +610,12 @@ export function createShellResumeHandler<TEnv = unknown>(
     try {
       if (postponed === null) {
         // DATA variant: the stored prelude is the complete shell. No fizz runs;
-        // feed injectRSCPayload a minimal HTML stream so its flush appends the
-        // fresh Flight payload scripts after the shell. The stream must emit at
-        // least one chunk — see createDataVariantHtmlStream.
+        // the eager injector pumps the fresh Flight payload scripts without
+        // needing an HTML chunk to trigger it (the stock injector deadlocked on
+        // a chunkless stream — see createDataVariantHtmlStream, kept for the
+        // batching invariant's sake).
         return createDataVariantHtmlStream().pipeThrough(
-          injectRSCPayload(rscStream, { nonce }),
+          injectRSCPayloadEager(rscStream, { nonce }),
         );
       }
 
@@ -640,7 +642,14 @@ export function createShellResumeHandler<TEnv = unknown>(
         nonce,
       });
 
-      return resumed.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
+      // EAGER injection (resume-only): the stored prelude — a complete document
+      // through </body></html> — is already on the wire ahead of this stream,
+      // so a Flight <script> is valid as the first tail byte. The stock
+      // injector waits for the first fizz chunk, which only appears when the
+      // first hole's loaders resolve — parking the whole hydration payload
+      // (root row included) behind the slowest live loader. See
+      // inject-rsc-eager.ts for the measured failure mode.
+      return resumed.pipeThrough(injectRSCPayloadEager(rscStream2, { nonce }));
     } catch (error) {
       reportRenderError(onError, error);
       throw error;
