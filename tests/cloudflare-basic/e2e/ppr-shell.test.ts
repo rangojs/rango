@@ -693,6 +693,50 @@ function describePprShell(mode: "dev" | "build") {
       expect(second.html).toContain("Exec matrix static chrome");
       expect(second.html).toContain("exec badge");
     });
+
+    // Prerender + ppr COMPOSITION (docs/design/shell-fast-path.md): one route
+    // carries both a build-time Prerender handler (trie pr:true) and the ppr
+    // option. Build-time segments bake into the frozen prelude; the slot-owned
+    // loader is the live hole (seq advances per HIT). The Prerender handler
+    // never executes at serve (production evicts it to a stub).
+    test("prerender + ppr compose: build-time segments are the frozen prelude, the slot loader streams fresh per HIT", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell/prerendered/alpha?probe=pp");
+      const miss = await request.get(url, { headers: HTML_HEADERS });
+      expect(miss.status()).toBe(200);
+      expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+      expect(await miss.text()).toContain(
+        "Prerendered shell content for alpha",
+      );
+      await warmToHit(request, url);
+
+      const { html } = await measureFirstChunk(url);
+      const { prelude, resumed } = splitPrelude(html);
+      expect(prelude).toContain("Prerendered shell content for alpha");
+      expect(prelude).toContain("Loading pp seq...");
+      expect(prelude).not.toContain("ppr-pp-seq:");
+      expect(resumed).toContain("ppr-pp-seq:");
+
+      // Slot loader liveness: seq advances across HITs while the shell replays.
+      const second = await request.get(url, { headers: HTML_HEADERS });
+      expect(second.headers()["x-rango-shell"]).toBe("HIT");
+      const seq1 = Number(html.match(/ppr-pp-seq: (\d+)/)?.[1]);
+      const seq2 = Number(
+        (await second.text()).match(/ppr-pp-seq: (\d+)/)?.[1],
+      );
+      expect(seq2).toBe(seq1 + 1);
+
+      // Per-param shells: the sibling prerendered slug HITs with its own content.
+      const betaUrl = f.url("/ppr-shell/prerendered/beta?probe=pp");
+      await warmToHit(request, betaUrl);
+      const beta = await (
+        await request.get(betaUrl, { headers: HTML_HEADERS })
+      ).text();
+      expect(splitPrelude(beta).prelude).toContain(
+        "Prerendered shell content for beta",
+      );
+    });
   });
 }
 

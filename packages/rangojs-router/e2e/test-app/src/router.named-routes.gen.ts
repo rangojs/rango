@@ -262,6 +262,7 @@ export const NamedRoutes = {
   "plainProduct.detail": "/plain-product/:id",
   plpMeta: "/plp-meta",
   plpMetaTx: "/plp-meta-tx",
+  "pp.article": "/pp/:slug",
   "prerender-handle": "/prerender-handle",
   "prerender-reverse": "/prerender-reverse",
   "prerenderComplex.detail": "/prerender-complex/:slug",
