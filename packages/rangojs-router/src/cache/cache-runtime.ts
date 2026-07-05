@@ -412,26 +412,26 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       try {
         const result = await serveCached(cached);
         // Background revalidation — must capture handles if tainted args present.
-        // Use an isolated handle store so background pushes don't pollute the
-        // live response or throw LateHandlePushError on the completed store.
-        // Same isolation pattern as route-level background-revalidation.ts.
         runBackground(requestCtx, async () => {
-          // The closure-captured requestCtx is reused for the framework's own
-          // reads (handle store swap, error reporting) AND, below, to
-          // re-establish the request-context ALS around the user fn. ALS context
-          // may be gone inside waitUntil: on workerd a waitUntil task runs
-          // detached from the request's I/O context, so getRequestContext()
-          // inside the cached body would otherwise throw.
-          let originalHandleStore:
-            | ReturnType<typeof createHandleStore>
-            | undefined;
-          if (hasTaintedArgs && requestCtx) {
-            originalHandleStore = requestCtx._handleStore;
-            requestCtx._handleStore = createHandleStore();
-          }
-          const bgHandleStore = hasTaintedArgs
-            ? requestCtx?._handleStore
-            : undefined;
+          // The background body runs under a DERIVED context with an OWN
+          // _handleStore (the shell-capture isolation pattern —
+          // shell-capture.ts attemptCapture): its handle pushes land in the
+          // isolated store (captured below, persisted with the entry) while
+          // the foreground keeps pushing into the ORIGINAL store, untouched.
+          // Derivation matters because the foreground is STILL RENDERING here
+          // — runBackground/waitUntil starts the task on the next microtask,
+          // not after the response. The previous shape swapped
+          // requestCtx._handleStore in place (restore in finally), which
+          // routed the whole overlap window's foreground pushes into the
+          // background store: lost from the live document AND persisted into
+          // the revalidated entry (issue #684, plan 010).
+          const bgHandleStore =
+            hasTaintedArgs && requestCtx ? createHandleStore() : undefined;
+          const bgCtx: typeof requestCtx = bgHandleStore
+            ? Object.assign(Object.create(requestCtx), {
+                _handleStore: bgHandleStore,
+              })
+            : requestCtx;
           let bgCapture: HandleCapture | undefined;
           let bgStopCapture: (() => void) | undefined;
           if (bgHandleStore) {
@@ -440,28 +440,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             bgStopCapture = c.stop;
           }
 
-          // Stamp tainted ARGS only — not requestCtx. The args stamp guards
-          // direct ctx method calls (ctx.set, ctx.header, ctx.onResponse, etc.)
-          // which is sufficient for correctness.
-          //
-          // We intentionally skip stamping requestCtx here because:
-          // 1. runBackground starts the async task synchronously (before the
-          //    first await), so stampCacheExec would pollute the shared
-          //    requestCtx while the foreground pipeline is still running.
-          //    This causes assertNotInsideCacheExec to fire when cache-store
-          //    later calls requestCtx.onResponse().
-          // 2. requestCtx methods are closure-bound to the original ctx, so
-          //    neither Object.create() nor a proxy can isolate the stamp.
-          // 3. The foreground miss path already stamps requestCtx and catches
-          //    cookies()/headers() misuse on first execution. The background
-          //    re-runs the same function with the same request.
-          const bgTaintedArgs: unknown[] = [];
-          for (const arg of args) {
-            if (isTainted(arg)) {
-              stampCacheExec(arg as object);
-              bgTaintedArgs.push(arg);
-            }
-          }
+          // Tainted args are NOT stamped here, in contrast to the foreground
+          // miss path below. The args include the live HandlerContext the
+          // still-rendering foreground holds, and INSIDE_CACHE_EXEC is a
+          // property stamped onto that SHARED object — so for the whole
+          // revalidation window a concurrent foreground ctx.set() /
+          // ctx.headers.*() would throw (issue #684, plan 010). requestCtx is
+          // not stamped for the same reason. In-fn misuse is already caught
+          // by the miss path's stamps on the function's FIRST execution — the
+          // background re-runs the same function with the same request.
 
           try {
             // Re-establish the request-context ALS so a "use cache" body that
@@ -469,8 +456,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             // getRequestContext().env.ApiKey) resolves during the background
             // revalidation instead of throwing "called outside of a request
             // context". runWithRequestContext sets the store for fn's
-            // synchronous kickoff; its async continuations inherit it.
-            const scoped = runWithRequestContext(requestCtx, () =>
+            // synchronous kickoff; its async continuations inherit it. The
+            // DERIVED context goes in, so ambient _handleStore reads inside
+            // the body resolve to the isolated store.
+            const scoped = runWithRequestContext(bgCtx, () =>
               runWithCacheTagScope(() => fn.apply(this, args)),
             );
             const freshResult = await scoped.result;
@@ -507,15 +496,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
               "[use cache] background revalidation failed",
               requestCtx,
             );
-          } finally {
-            for (const arg of bgTaintedArgs) {
-              unstampCacheExec(arg as object);
-            }
-            // Restore original handle store
-            if (originalHandleStore && requestCtx) {
-              requestCtx._handleStore = originalHandleStore;
-            }
           }
+          // No finally: nothing shared was mutated — the derived context and
+          // its handle store are garbage after the task settles.
         });
         return result;
       } catch (error) {
@@ -601,6 +584,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // inside the cached function body (those side effects are lost on hit).
     // Uses ref-counted stamp/unstamp so overlapping executions
     // sharing the same ctx don't clear each other's guards.
+    //
+    // LOAD-BEARING for the stale-revalidation path above: the background
+    // re-execution deliberately does NOT re-stamp (the objects are live
+    // foreground state mid-render), relying on THIS stamp having caught in-fn
+    // misuse on the function's first execution — an entry only becomes
+    // stale-revalidatable because a stamped miss ran clean and stored it. Do
+    // not create a "use cache" entry via any path that skips this stamp.
     const taintedArgs: unknown[] = [];
     for (const arg of args) {
       if (isTainted(arg)) {
