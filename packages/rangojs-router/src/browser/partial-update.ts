@@ -395,6 +395,13 @@ export function createPartialUpdater(
           return;
         }
         if (mode.type === "action") {
+          // An action refetch that lands on missing segments (navigated away /
+          // consolidation / HMR) drops rather than refetch-all: the action flow
+          // is storeOnly / skipLoadingState, so a full refetch here would fight
+          // it. Keep the stale-but-consistent tree; log so the drop is visible.
+          debugLog(
+            `[Browser] Action refetch: ${missingCount} segments missing; dropping (stale-but-consistent tree kept).`,
+          );
           return;
         }
         console.warn(

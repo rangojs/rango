@@ -327,6 +327,39 @@ function warnCaptureRefusedOnce(key: string, reason: string): void {
   );
 }
 
+/** Keys already warned about untagged bake-lane data baked into the shell. */
+const warnedUntaggedShellBakes = new Set<string>();
+
+/**
+ * Warn once per shell key that a bake-lane loader baked material into the shell
+ * but the capture recorded ZERO tags (no render-collected _requestTags, no
+ * static ppr.tags). Such data is frozen in the shared shell until TTL and is
+ * un-evictable by tag: a server action refreshes the CLIENT only (rotates Rango
+ * state, busts the browser HTTP cache) and never touches the server shell store,
+ * and updateTag()/revalidateTag() cannot drop data that was baked WITHOUT a tag.
+ *
+ * Coarse per-shell-key signal, not per-loader attribution — the tag set is
+ * unioned globally at the write barrier, not tracked per loader, so we cannot
+ * name the offending loader without adding attribution plumbing (deliberately
+ * not done). Dev-only + once-per-key so it never spams production or fires on
+ * every capture.
+ */
+function warnUntaggedShellBakeOnce(key: string): void {
+  if (warnedUntaggedShellBakes.has(key)) return;
+  warnedUntaggedShellBakes.add(key);
+  console.warn(
+    `[rango] Shell capture for "${key}" baked bake-lane loader data into the ` +
+      "shell with NO cache tag. That data is frozen in the shared shell until " +
+      "TTL and cannot be tag-invalidated: a server action refresh touches the " +
+      "client only (not the server shell store), and updateTag() cannot evict " +
+      "data that was baked without a tag.\n" +
+      'Fix: tag the data (cacheTag() / "use cache" / cache({ tags })) so ' +
+      "updateTag() drops the shell, or move the volatile read under a loading() " +
+      "hole so it stays on the live lane and is never baked. See the /ppr skill " +
+      "(node_modules/@rangojs/router/skills/ppr/SKILL.md).",
+  );
+}
+
 export interface FlightCaptureGate {
   /** Identity passthrough of the source stream; feed this to captureShellHTML. */
   stream: ReadableStream<Uint8Array>;
@@ -992,6 +1025,10 @@ async function captureAndStoreShell(
     // gate above already returned no-shell) or postponed under an ANCESTOR
     // boundary (it is a hole; omitting the record keeps it live).
     const loaderRecords = reqCtx._shellCaptureLoaderRecords;
+    // Set once a bake-lane loader settles with real (non-hole) material: its data
+    // is frozen into the shell prelude regardless of whether snapshot
+    // serialization succeeds. Drives the untagged-bake dev warning below.
+    let bakedLoaderMaterial = false;
     if (loaderRecords && loaderRecords.size > 0) {
       // The codec import is deferred past the elide probes: a rejected record
       // refuses and a never-settled record is omitted WITHOUT touching Flight
@@ -1012,6 +1049,9 @@ async function captureAndStoreShell(
         // The container itself never settled: it is a hole (under an ancestor
         // boundary) or the trivial-prelude gate already fired. Omit — no pin.
         if (isLoaderHoleMarker(elided.value)) continue;
+        // Past the hole check: this container settled with real material that
+        // bakes into the shell prelude (independent of the snapshot pin below).
+        bakedLoaderMaterial = true;
         try {
           // serializeResult (not rscSerialize): null is a valid container and
           // must round-trip; serializeResult preserves it through Flight.
@@ -1044,6 +1084,15 @@ async function captureAndStoreShell(
     const collected = [...reqCtx._requestTags];
     const union = new Set<string>([...(capture.tags ?? []), ...collected]);
     const shellTags = union.size > 0 ? [...union] : undefined;
+
+    // Untagged-bake diagnostic: a bake-lane loader froze mutable data into the
+    // shell but nothing tags the entry, so it is un-invalidatable except by TTL —
+    // a read-your-own-writes gap on the document channel (an action refresh skips
+    // the server shell; updateTag cannot drop untagged data). Coarse per-shell-key
+    // signal; dev-only and once-per-key so it never spams production.
+    if (isDevMode() && bakedLoaderMaterial && shellTags === undefined) {
+      warnUntaggedShellBakeOnce(capture.key);
+    }
 
     const store = capture.store ?? reqCtx._cacheStore;
     if (store?.putShell) {
