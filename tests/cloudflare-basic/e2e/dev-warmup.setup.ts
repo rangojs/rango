@@ -41,6 +41,10 @@ const PPR_WARMUP_ROUTES = [
   "/ppr-shell",
   "/ppr-shell/stream",
   "/ppr-shell/no-hole",
+  // Prerender + ppr composition: its capture additionally round-trips the dev
+  // /__rsc_prerender endpoint (temp-server on-demand render of never-before-
+  // rendered modules) — the coldest capture path in the suite on a CI runner.
+  "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
   "/ppr-blog",
   "/ppr-blog/getting-started-with-rsc",
@@ -54,6 +58,7 @@ const PPR_WARMUP_ROUTES = [
 const PPR_WARMUP_HIT_ROUTES = [
   "/ppr-shell",
   "/ppr-shell/stream",
+  "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
   "/ppr-blog",
 ];
