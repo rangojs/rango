@@ -656,6 +656,7 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     prelude: btoa("<html><body>SHELL</body></html>"),
     postponed: JSON.stringify({ hole: 1 }),
     reactVersion: "19.2.6",
+    buildVersion: "build-abc",
     createdAt: T0,
     ...overrides,
   };

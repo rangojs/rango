@@ -548,6 +548,7 @@ export interface ShellCacheEntry {
   prelude: string;          // base64-encoded prelude bytes
   postponed: string | null; // JSON.stringify of React postponed state
   reactVersion: string;     // React.version at capture time
+  buildVersion?: string;    // build stamp at capture time (second validity gate)
   createdAt: number;        // epoch ms
 }
 
@@ -572,7 +573,12 @@ once-per-key warning, since the declared intent cannot be honored).
 commit point: `resolvePprConfig` (normalizes the route's `ppr` option;
 `DEFAULT_PPR_TTL_SECONDS` = 300), `buildShellKey`
 (`${host}${pathname}${sortedSearch}:shell` — host-scoped so multi-tenant shells
-never collide), `isValidShellHit` (reactVersion gate), `hasShellFamily`, the
+never collide), `isValidShellHit` (reactVersion + buildVersion gates — the
+postponed blob encodes hole positions against one exact tree, so neither a
+React upgrade nor an app redeploy may resume a stored blob),
+`hasIntactShellPayload` (pre-commit integrity check: an undecodable prelude or
+unparseable postponed degrades to a MISS instead of throwing after the 200 +
+prelude committed), `hasShellFamily`, the
 once-per-key missing-store-family warning, and `warnPprNonceActiveOnce` (the
 once-per-key active-per-request-nonce warning; see the nonce-gate scar tissue
 above). The route's ppr config is read
@@ -899,16 +905,17 @@ per-request data in loaders (holes); keep handles on the replay path.
 
 ## Constraints (the contract with consumers)
 
-| Case                       | Behavior                                                                                                                                                                                                                                                                               |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shell content              | shared per host+URL key — personalization must live in loaders/holes (the shell-manifest pattern). ENFORCED: `cookies()`/`headers()` reads throw during a capture render (`assertNotInsideShellCapture`, cookie-store.ts), making cookie-reading shells PPR-ineligible by construction |
-| Multi-tenant / host-router | the default key incorporates `url.host` so one tenant's shell can never compose into another tenant's page on a shared worker + store; custom `keyGenerator`s own host scoping themselves                                                                                              |
-| Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries                                                                                                            |
-| Actions / PE / formState   | always axis 1                                                                                                                                                                                                                                                                          |
-| Per-request nonce          | always axis 1                                                                                                                                                                                                                                                                          |
-| React/router upgrade       | shells invalidated via `reactVersion` check (treated as a miss on mismatch; recapture overwrites and TTL ages the entry out — v1 has no `deleteShell`)                                                                                                                                 |
-| Dev server                 | works; shells are memory-store-scoped and cheap to recapture; HMR edits produce stale shells until TTL/recapture — documented, acceptable                                                                                                                                              |
-| Composite response         | per-request; only the shell entry is cacheable. Note ordering with the document cache: if the document-cache middleware wraps a ppr route, it may cache the composite — correct output, but it makes shell caching redundant for that route. Pick one per route.                       |
+| Case                       | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shell content              | shared per host+URL key — personalization must live in loaders/holes (the shell-manifest pattern). ENFORCED: `cookies()`/`headers()` reads throw during a capture render (`assertNotInsideShellCapture`, cookie-store.ts), making cookie-reading shells PPR-ineligible by construction                                                                                                                                             |
+| Multi-tenant / host-router | the default key incorporates `url.host` so one tenant's shell can never compose into another tenant's page on a shared worker + store; custom `keyGenerator`s own host scoping themselves                                                                                                                                                                                                                                          |
+| Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries                                                                                                                                                                                                                                                        |
+| Actions / PE / formState   | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Per-request nonce          | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| React/router upgrade       | shells invalidated via `reactVersion` check (treated as a miss on mismatch; recapture overwrites and TTL ages the entry out — v1 has no `deleteShell`)                                                                                                                                                                                                                                                                             |
+| App redeploy (same React)  | shells invalidated via the `buildVersion` check — a persistent shared store (KV/runtime-cache) survives deploys, and resuming an old build's postponed blob against the new build's tree would tree-mismatch AFTER the 200 + prelude committed. Pre-field entries miss the same way. Corrupt entries fail `hasIntactShellPayload` pre-commit and degrade identically; a tail failure on a served HIT schedules a healing recapture |
+| Dev server                 | works; shells are memory-store-scoped and cheap to recapture; HMR edits produce stale shells until TTL/recapture — documented, acceptable                                                                                                                                                                                                                                                                                          |
+| Composite response         | per-request; only the shell entry is cacheable. Note ordering with the document cache: if the document-cache middleware wraps a ppr route, it may cache the composite — correct output, but it makes shell caching redundant for that route. Pick one per route.                                                                                                                                                                   |
 
 ## Platform notes
 

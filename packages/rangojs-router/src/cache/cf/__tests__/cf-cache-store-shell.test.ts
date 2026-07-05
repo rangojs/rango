@@ -46,6 +46,7 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     prelude: btoa("<html><body>SHELL</body></html>"),
     postponed: JSON.stringify({ hole: 1 }),
     reactVersion: REACT_VERSION,
+    buildVersion: "build-abc",
     createdAt: Date.now(),
     ...overrides,
   };
@@ -124,6 +125,9 @@ describe("CFCacheStore shell family (KV-only)", () => {
     const hit = await store.getShell("k");
     expect(hit?.entry.initialTheme).toBe("dark");
     expect(hit?.entry.snapshot).toEqual(entry.snapshot);
+    // buildVersion rides the envelope (bv) — dropping it in either direction
+    // would make every persisted HIT fail the validity gate (infinite MISS).
+    expect(hit?.entry.buildVersion).toBe("build-abc");
   });
 
   it("no-ops getShell/putShell when no KV namespace is configured", async () => {

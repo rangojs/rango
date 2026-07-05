@@ -38,6 +38,7 @@ import {
   resolvePprConfig,
   buildShellKey,
   isValidShellHit,
+  hasIntactShellPayload,
   base64ToBytes,
   hasShellFamily,
   warnShellStoreMissingOnce,
@@ -164,6 +165,7 @@ async function handleRscRenderingInner<TEnv>(
         ) {
           const descriptor: ShellCaptureDescriptor = {
             key,
+            buildVersion: ctx.version,
             ttl: pprConfig.ttl,
             swr: pprConfig.swr,
             tags: pprConfig.tags,
@@ -177,30 +179,46 @@ async function handleRscRenderingInner<TEnv>(
             // A failing store read degrades to axis 1 (MISS), never a 500.
             reportCacheError(error, "cache-read", "[ShellServe] getShell");
           }
-          if (cached && isValidShellHit(cached.entry)) {
-            // Stale (SWR) hit: serve the stale shell now, recapture in the
-            // background (stampede-guarded + backoff inside scheduleShellCapture).
-            if (cached.shouldRevalidate) {
-              scheduleShellCapture(
+          if (cached && isValidShellHit(cached.entry, ctx.version)) {
+            if (!hasIntactShellPayload(cached.entry)) {
+              // Corrupt stored payload (undecodable prelude / unparseable
+              // postponed): a store-layer fault worth a diagnostic, unlike the
+              // silent version-mismatch lifecycle misses above. Degrade to MISS
+              // — pprMiss below schedules the recapture that overwrites it.
+              reportCacheError(
+                new Error(
+                  `corrupt shell entry for "${key}": prelude/postponed failed ` +
+                    "the integrity check; serving axis 1 and recapturing",
+                ),
+                "cache-read",
+                "[ShellServe] getShell",
+              );
+            } else {
+              // Stale (SWR) hit: serve the stale shell now, recapture in the
+              // background (stampede-guarded + backoff inside scheduleShellCapture).
+              if (cached.shouldRevalidate) {
+                scheduleShellCapture(
+                  ctx,
+                  request,
+                  env,
+                  url,
+                  reqCtx,
+                  ssrModule,
+                  descriptor,
+                );
+              }
+              return serveShellHit(
                 ctx,
                 request,
                 env,
                 url,
                 reqCtx,
+                handleStore,
                 ssrModule,
+                cached.entry,
                 descriptor,
               );
             }
-            return serveShellHit(
-              ctx,
-              request,
-              env,
-              url,
-              reqCtx,
-              handleStore,
-              ssrModule,
-              cached.entry,
-            );
           }
           // MISS (no entry, invalid reactVersion, or store read failure): axis 1
           // + a background capture scheduled once the response is known servable.
@@ -468,6 +486,7 @@ function serveShellHit(
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   ssrModule: SSRModule,
   entry: ShellCacheEntry,
+  descriptor: ShellCaptureDescriptor,
 ): Response {
   const preludeBytes = base64ToBytes(entry.prelude);
 
@@ -577,6 +596,24 @@ function serveShellHit(
         }
         controller.close();
       } catch (error) {
+        // Self-heal on a failed tail: the pre-commit gates (isValidShellHit +
+        // hasIntactShellPayload) cannot catch a parseable-but-mismatched
+        // postponed blob or a hard render error above the holes — those throw
+        // here, AFTER the 200 + prelude flushed, and would otherwise re-fail on
+        // every request until the entry ages out (nothing else evicts it).
+        // Recapturing overwrites the entry with one the current server
+        // produced. A client disconnect mid-stream also lands here and
+        // schedules a spurious-but-idempotent recapture — bounded by the
+        // stampede guard + backoff inside scheduleShellCapture.
+        scheduleShellCapture(
+          ctx,
+          request,
+          env,
+          url,
+          reqCtx,
+          ssrModule,
+          descriptor,
+        );
         controller.error(error);
       }
     },

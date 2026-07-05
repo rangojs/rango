@@ -177,6 +177,8 @@ interface VercelShellEnvelope {
   po: string | null;
   /** React.version at capture. */
   rv: string;
+  /** Build version at capture (ShellCacheEntry.buildVersion). */
+  bv?: string;
   /** createdAt (ms since epoch). */
   c: number;
   /** staleAt (ms since epoch). */
@@ -776,6 +778,7 @@ export class VercelCacheStore<
         prelude: env.p,
         postponed: env.po,
         reactVersion: env.rv,
+        buildVersion: env.bv,
         initialTheme: env.i,
         snapshot: env.sn,
         createdAt: env.c,
@@ -805,6 +808,7 @@ export class VercelCacheStore<
         p: entry.prelude,
         po: entry.postponed,
         rv: entry.reactVersion,
+        bv: entry.buildVersion,
         c: entry.createdAt,
         s: staleAt,
         e: expiresAt,
@@ -1091,7 +1095,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, c, s, e, t, i, sn } = raw;
+    const { p, po, rv, bv, c, s, e, t, i, sn } = raw;
     if (typeof p !== "string" || typeof rv !== "string") return null;
     if (po !== null && typeof po !== "string") return null;
     if (typeof c !== "number") return null;
@@ -1100,6 +1104,7 @@ export class VercelCacheStore<
       p,
       po: po as string | null,
       rv,
+      bv: typeof bv === "string" ? bv : undefined,
       c,
       s,
       e,
