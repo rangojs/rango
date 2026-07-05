@@ -371,6 +371,9 @@ Tooling ────────────┘
   forwarded to `@vitejs/plugin-rsc`'s `clientChunks`. Shared runtime
   (React/router/`node_modules`) stays unsplit. **On by default pre-1.0**; opt out
   with `clientChunks: false`. See [client-chunking.md](../client-chunking.md).
+  The built-in strategy is exported as `directoryClientChunks` so a custom
+  function can OVERLAY it (route a few modules to a dedicated chunk, delegate
+  the rest) instead of silently replacing route splitting for the whole app.
 - Runtime CLI route extraction (`rango generate <paths>`) for CI and repo bootstrapping
 - Debug surfaces: `debugManifest()`, `getMatchDebugStats()`, strict runtime/per-route tracing in development
 - Internal instrumentation and plugin internals for multi-router deployments and manifest isolation

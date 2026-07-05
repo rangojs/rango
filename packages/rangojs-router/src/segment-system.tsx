@@ -17,6 +17,22 @@ import {
   getMemoizedLoaderPromise,
 } from "./segment-loader-promise.js";
 
+/**
+ * Client-only debug log for the segment tree build. Gated on the baked flag
+ * AND `typeof window` (renderSegments also runs during SSR/RSC, which must
+ * stay silent). Timestamped so tree-build steps line up with the
+ * `[Browser][boot]` sequence around hydrateRoot.
+ */
+function segDebugLog(msg: string, details?: Record<string, unknown>): void {
+  if (!(INTERNAL_RANGO_DEBUG && typeof window === "object")) return;
+  const prefix = `[Browser][segments] ${msg} @ ${Math.round(performance.now())}ms`;
+  if (details) {
+    console.log(prefix, details);
+    return;
+  }
+  console.log(prefix);
+}
+
 // ViewTransition is only available in React experimental.
 // Access via namespace import to avoid compile-time errors on stable React.
 const ReactViewTransition: any =
@@ -212,6 +228,17 @@ export async function renderSegments(
     rootLayout: RootLayout,
   } = options || {};
 
+  const segDebug = INTERNAL_RANGO_DEBUG && typeof window === "object";
+  const segDebugStart = segDebug ? performance.now() : 0;
+  if (segDebug) {
+    segDebugLog("renderSegments start", {
+      segments: segments.map((s) => `${s.id}:${s.type}`),
+      isAction: !!isAction,
+      forceAwait: !!forceAwait,
+      intercepts: interceptSegments?.length ?? 0,
+    });
+  }
+
   const temporalLazyRefs: Promise<any>[] = [];
   const normalizedSegments = restoreParallelLoaderMarkers(segments);
   const normalizedInterceptSegments = interceptSegments
@@ -272,6 +299,15 @@ export async function renderSegments(
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`,
     );
     const { component, id, params, loading } = node.segment;
+
+    if (segDebug) {
+      segDebugLog(`segment ${id}`, {
+        type: node.segment.type,
+        loaders: node.loaders.map((l) => l.loaderId).filter(Boolean),
+        hasLoading: loading !== undefined && loading !== null,
+        parallel: node.parallel.map((p) => p.id),
+      });
+    }
 
     // Param-agnostic keys are opt-in via the transition() DSL (see
     // inTransitionScope above). A route (and its route-owned layouts) inside a
@@ -403,10 +439,25 @@ export async function renderSegments(
 
     if (loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
+      let boundaryLoaderData: Promise<any[]> | any[] = loaderDataPromise;
+      if (forceAwait || isAction) {
+        const awaitStart = segDebug ? performance.now() : 0;
+        boundaryLoaderData = await loaderDataPromise;
+        if (segDebug) {
+          segDebugLog(`segment ${id}: loaders awaited (forceAwait/action)`, {
+            loaderIds,
+            ms: Math.round(performance.now() - awaitStart),
+          });
+        }
+      } else if (segDebug) {
+        segDebugLog(
+          `segment ${id}: streaming loaders via LoaderBoundary (suspense)`,
+          { loaderIds },
+        );
+      }
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
-        loaderDataPromise:
-          forceAwait || isAction ? await loaderDataPromise : loaderDataPromise,
+        loaderDataPromise: boundaryLoaderData,
         loaderIds,
         fallback: loading,
         outletKey: key,
@@ -430,7 +481,17 @@ export async function renderSegments(
       );
 
       const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
+      // No loading() on this segment, so its loader data cannot stream behind
+      // a Suspense fallback — the tree build BLOCKS here until the data
+      // arrives. On the initial document this await runs before hydrateRoot.
+      const layoutAwaitStart = segDebug ? performance.now() : 0;
       const resolvedData = await buildLoaderPromise(layoutLoaders);
+      if (segDebug) {
+        segDebugLog(`segment ${id}: layout loaders awaited (blocking)`, {
+          loaderIds: layoutLoaderIds,
+          ms: Math.round(performance.now() - layoutAwaitStart),
+        });
+      }
       const { loaderData, errorFallback } = decodeLoaderResults(
         resolvedData,
         layoutLoaderIds,
@@ -463,10 +524,27 @@ export async function renderSegments(
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          p.loaderDataPromise =
-            (forceAwait || isAction) && aggregated instanceof Promise
-              ? await aggregated
-              : aggregated;
+          if ((forceAwait || isAction) && aggregated instanceof Promise) {
+            const parallelAwaitStart = segDebug ? performance.now() : 0;
+            p.loaderDataPromise = await aggregated;
+            if (segDebug) {
+              segDebugLog(
+                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action)`,
+                {
+                  loaderIds: p.loaderIds,
+                  ms: Math.round(performance.now() - parallelAwaitStart),
+                },
+              );
+            }
+          } else {
+            p.loaderDataPromise = aggregated;
+            if (segDebug) {
+              segDebugLog(
+                `segment ${id}: parallel ${p.id} loaders streaming (suspense)`,
+                { loaderIds: p.loaderIds },
+              );
+            }
+          }
         }
       }
 
@@ -521,6 +599,12 @@ export async function renderSegments(
   if (RootLayout) {
     result = createElement(RootLayout, {
       children: errorBoundaryWrapped,
+    });
+  }
+
+  if (segDebug) {
+    segDebugLog("renderSegments complete", {
+      ms: Math.round(performance.now() - segDebugStart),
     });
   }
 

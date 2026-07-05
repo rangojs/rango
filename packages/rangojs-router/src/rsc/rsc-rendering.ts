@@ -512,11 +512,32 @@ function serveShellHit(
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
-    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+    let rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
       onError: (error: unknown) => {
         ctx.callOnError(error, "rendering", { request, url, env });
       },
     });
+    // Timing tap: when does the Flight render produce its FIRST byte? Compared
+    // with the eager-inject/first-tail logs this proves whether hydration-start
+    // latency is genuine server work (loaders) or stream plumbing holding
+    // ready bytes back.
+    if (INTERNAL_RANGO_DEBUG) {
+      const tapStart = performance.now();
+      let first = false;
+      rscStream = rscStream.pipeThrough(
+        new TransformStream({
+          transform(chunk, controller) {
+            if (!first) {
+              first = true;
+              console.log(
+                `[Server][ppr] flight render: first chunk +${Math.round(performance.now() - tapStart)}ms`,
+              );
+            }
+            controller.enqueue(chunk);
+          },
+        }),
+      );
+    }
     return observePhase(PHASES.ssr, () =>
       ssrModule.resumeShellHTML!(rscStream, {
         postponed: entry.postponed,
@@ -560,17 +581,30 @@ function serveShellHit(
   // failure before the stream is pulled never surfaces as an unhandled rejection.
   tailPromise.catch(() => {});
 
+  const serveStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       controller.enqueue(preludeBytes);
+      if (INTERNAL_RANGO_DEBUG) {
+        console.log(
+          `[Server][ppr] shell HIT: prelude enqueued (${preludeBytes.length}b) +${Math.round(performance.now() - serveStart)}ms`,
+        );
+      }
       try {
         const tail = await tailPromise;
         if (tail instanceof ReadableStream) {
           const reader = tail.getReader();
+          let firstTailChunk = true;
           try {
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
+              if (INTERNAL_RANGO_DEBUG && firstTailChunk) {
+                firstTailChunk = false;
+                console.log(
+                  `[Server][ppr] shell HIT: first tail chunk on the wire +${Math.round(performance.now() - serveStart)}ms`,
+                );
+              }
               controller.enqueue(value);
             }
           } finally {

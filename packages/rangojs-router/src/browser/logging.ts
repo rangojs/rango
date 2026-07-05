@@ -63,3 +63,21 @@ export function debugLog(msg: string, ...args: unknown[]): void {
     console.log(msg, ...args);
   }
 }
+
+/**
+ * Boot-sequence debug log: one line per initial-document step (flight decode,
+ * handle stream, bridge wiring, initial tree build, hydration commit), each
+ * stamped with performance.now() so the gap BEFORE hydrateRoot is visible.
+ * The initial document path was otherwise silent — FE debug only started
+ * talking at the first soft navigation, so a boot stall (e.g. an await that
+ * holds initBrowserApp, and with it hydrateRoot) was invisible.
+ */
+export function bootLog(step: string, details?: Record<string, unknown>): void {
+  if (!INTERNAL_RANGO_DEBUG) return;
+  const prefix = `[Browser][boot] ${step} @ ${Math.round(performance.now())}ms`;
+  if (details) {
+    console.log(prefix, details);
+    return;
+  }
+  console.log(prefix);
+}
