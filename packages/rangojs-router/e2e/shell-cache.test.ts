@@ -757,6 +757,43 @@ function runShellCacheSpec(f: Fixture): void {
       expect(badgeSeq(secondHtml)).toBeGreaterThan(badgeSeq(html));
     });
   }
+
+  // --- Serve-gate hardening (issue #684 SSR-03/SSR-04): a corrupt or
+  // stale-build stored entry must degrade to a WORKING axis-1 MISS — never the
+  // pre-fix failure mode (200 + full static prelude committed, then the tail
+  // throws: a visually complete page that never hydrates, re-served on every
+  // request until TTL). The /shell-cache/__corrupt fixture endpoint overwrites
+  // the stored entry in place; the follow-up MISS's background recapture then
+  // heals the key back to a HIT.
+  for (const [label, mode, probe] of [
+    ["corrupt postponed blob", "postponed", "corrupt-postponed"],
+    ["stale buildVersion", "build", "stale-build"],
+  ] as const) {
+    test(`a stored entry with a ${label} degrades to a working MISS and the recapture heals it`, async ({
+      request,
+    }) => {
+      const target = `/shell-cache?probe=${probe}`;
+      const url = f.url(target);
+      await warmToHit(request, url);
+
+      const corrupt = await request.get(
+        f.url(
+          `/shell-cache/__corrupt?target=${encodeURIComponent(target)}&mode=${mode}`,
+        ),
+      );
+      expect(corrupt.status()).toBe(200);
+      expect(await corrupt.json()).toEqual({ ok: true, found: true });
+
+      // The poisoned entry fails the pre-commit gate: plain MISS, page intact.
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["x-rango-shell"]).toBe("MISS");
+      expect(await res.text()).toContain("shell-cache-header");
+
+      // The MISS scheduled a recapture that overwrites the poisoned entry.
+      await warmToHit(request, url);
+    });
+  }
 }
 
 test.describe("shell-cache (dev)", () => {

@@ -529,6 +529,13 @@ export function gateFlightForCapture(
  */
 export interface ShellCaptureDescriptor {
   key: string;
+  /**
+   * The RSC handler's build version (HandlerContext.version), stamped into the
+   * stored entry as ShellCacheEntry.buildVersion — the serve-side
+   * isValidShellHit gate compares it against the running build so a persistent
+   * store can never resume a stale build's postponed blob.
+   */
+  buildVersion: string;
   ttl?: number;
   swr?: number;
   tags?: string[];
@@ -1104,6 +1111,7 @@ async function captureAndStoreShell(
           prelude: bufferToBase64(result.prelude.slice().buffer as ArrayBuffer),
           postponed: result.postponed,
           reactVersion: React.version,
+          buildVersion: capture.buildVersion,
           // The theme this capture's payload was built with (buildFullPayload
           // reads reqCtx.theme off the derived context). The serve tail replays
           // it so the resume tree matches the frozen prelude — see

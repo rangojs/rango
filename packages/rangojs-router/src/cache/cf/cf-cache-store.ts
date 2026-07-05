@@ -211,6 +211,8 @@ interface KVShellEnvelope {
   po: string | null;
   /** React.version captured at prerender time */
   rv: string;
+  /** Build version captured at prerender time (ShellCacheEntry.buildVersion) */
+  bv?: string;
   /** createdAt (ms epoch) */
   c: number;
   /** When entry becomes stale (ms epoch) */
@@ -1665,6 +1667,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           prelude: envelope.p,
           postponed: envelope.po,
           reactVersion: envelope.rv,
+          buildVersion: envelope.bv,
           initialTheme: envelope.i,
           snapshot: envelope.sn,
           createdAt: envelope.c,
@@ -1726,6 +1729,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               p: entry.prelude,
               po: entry.postponed,
               rv: entry.reactVersion,
+              bv: entry.buildVersion,
               c: entry.createdAt,
               s: staleAt,
               e: staleAt + swrWindow * 1000,

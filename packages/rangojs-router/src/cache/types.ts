@@ -225,10 +225,13 @@ export interface CacheItemResult {
  * One entry carries BOTH artifacts a resume needs — the rendered HTML prelude
  * and React's postponed state — because the pair is version- and
  * generation-coupled and must never be mixed across a React upgrade or a build
- * change. The reactVersion field is the read-time gate that enforces that: the
- * shell-cache middleware treats an entry whose reactVersion differs from the
- * running React as a miss (the postponed blob is build-coupled and cannot be
- * resumed by a different React).
+ * change. The reactVersion and buildVersion fields are the read-time gates that
+ * enforce both halves: isValidShellHit (rsc/shell-serve.ts) treats an entry
+ * whose reactVersion differs from the running React, or whose buildVersion
+ * differs from the running build, as a miss (the postponed blob encodes hole
+ * positions against one exact tree; resuming it against a different React or a
+ * different app build tree-mismatches inside resume(), AFTER the 200 + prelude
+ * are committed — an unrecoverable broken serve).
  */
 export interface ShellCacheEntry {
   /** Rendered HTML prelude bytes, base64-encoded (stores are JSON-serializing). */
@@ -240,6 +243,17 @@ export interface ShellCacheEntry {
   postponed: string | null;
   /** React.version captured at prerender time; the read-time invalidation gate. */
   reactVersion: string;
+  /**
+   * Build version captured at prerender time (the RSC handler's `version` —
+   * the `@rangojs/router:version` build stamp by default, bumped per build and
+   * on dev RSC-module edits). The second read-time gate: a persistent shared
+   * store (KV/runtime-cache) survives deploys, and an app-code change that
+   * keeps the same React version would otherwise leave a stale-build
+   * prelude+postponed live under the same key. Optional only for entries
+   * stored before the field existed — those are treated as a miss and the
+   * recapture re-stamps them (pre-release, no compat shim).
+   */
+  buildVersion?: string;
   /**
    * The initialTheme the CAPTURE render was built with (the derived context's
    * reqCtx.theme). The resume tail must render ThemeProvider with the SAME

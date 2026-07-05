@@ -424,5 +424,33 @@ export const shellCachePatterns = urls(
         ppr: true,
       }),
     ]),
+    // Test-only fault injector for the serve-gate hardening e2e: overwrites the
+    // stored shell entry for `target` with a corrupted/version-skewed copy, so
+    // the suite can pin that the gate degrades to a working MISS (never a
+    // committed-200 dead page) and that the recapture heals the key.
+    // `mode`: postponed (unparseable JSON) | prelude (undecodable base64) |
+    // build (stale buildVersion). The key mirrors buildShellKey for the
+    // single-search-param URLs the suite uses (sorted search == raw search).
+    // router.js is imported dynamically to avoid the urls -> router cycle.
+    path.json(
+      "/shell-cache/__corrupt",
+      async (ctx): Promise<{ ok: boolean; found: boolean }> => {
+        const url = new URL(ctx.request.url);
+        const target = url.searchParams.get("target") ?? "";
+        const mode = url.searchParams.get("mode") ?? "postponed";
+        const { cacheStore } = await import("../router.js");
+        const t = new URL(target, url);
+        const key = `${t.host}${t.pathname}${t.search}:shell`;
+        const hit = await cacheStore.getShell(key);
+        if (!hit) return { ok: false, found: false };
+        const entry = { ...hit.entry };
+        if (mode === "postponed") entry.postponed = '{"truncated';
+        else if (mode === "prelude") entry.prelude = "%%%not-base64%%%";
+        else if (mode === "build") entry.buildVersion = "stale-build";
+        await cacheStore.putShell(key, entry, 300, 120);
+        return { ok: true, found: true };
+      },
+      { name: "shellCacheCorrupt" },
+    ),
   ],
 );

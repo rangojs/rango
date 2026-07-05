@@ -95,7 +95,7 @@ async function runCapture(
     emptyStream(),
     createHandleStore(),
     reqCtx,
-    { ...descriptor, store: reqCtx._cacheStore },
+    { buildVersion: "test-build", ...descriptor, store: reqCtx._cacheStore },
   );
 }
 

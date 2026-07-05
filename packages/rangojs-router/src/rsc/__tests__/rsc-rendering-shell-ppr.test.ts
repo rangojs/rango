@@ -42,6 +42,8 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     prelude: btoa(PRELUDE_HTML),
     postponed: JSON.stringify({ hole: 1 }),
     reactVersion: React.version,
+    // Matches makeCtx's ctx.version — the build half of the validity gate.
+    buildVersion: "v-test",
     createdAt: Date.now(),
     ...overrides,
   };
@@ -220,6 +222,66 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     expect(scheduleMock).toHaveBeenCalledTimes(1);
   });
 
+  // A persistent shared store (KV/runtime-cache) survives deploys; an app-code
+  // change that keeps the same React version would otherwise resume a stale
+  // build's postponed blob against the new build's tree — a tree mismatch AFTER
+  // the 200 + prelude committed. buildVersion is the second validity gate.
+  it("treats a buildVersion-mismatched entry as a MISS and schedules a recapture stamped with the running build", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ buildVersion: "stale-build" }), 300);
+    const ssrModule = fullSsrModule();
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    // The recapture descriptor carries the RUNNING build's version, so the
+    // overwriting entry passes the gate next time.
+    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    expect(descriptor.buildVersion).toBe("v-test");
+  });
+
+  it("treats an entry with NO buildVersion (stored pre-field) as a MISS", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ buildVersion: undefined }), 300);
+    const ssrModule = fullSsrModule();
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Corrupt stored payloads previously exploded AFTER the commit point: an
+  // unparseable postponed blob threw inside resumeShellHTML with the 200 + full
+  // static prelude already flushed — a visually complete page that never
+  // hydrates, re-served on every request until TTL. The integrity gate turns
+  // both corruption shapes into a plain MISS the recapture overwrites.
+  it("treats an entry whose postponed blob is not parseable JSON as a MISS (axis 1 served, recapture scheduled)", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ postponed: '{"truncated' }), 300);
+    const ssrModule = fullSsrModule();
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats an entry whose prelude is not decodable base64 as a MISS", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ prelude: "%%%not-base64%%%" }), 300);
+    const ssrModule = fullSsrModule();
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does NOT schedule when the axis-1 response is not a 200 HTML document, but still tags MISS", async () => {
     const ssrModule = fullSsrModule();
     const { response } = await run({
@@ -260,6 +322,33 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(ssrModule.renderHTML).not.toHaveBeenCalled();
     // Fresh hit: no recapture.
     expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  // Self-heal on a failed tail: the pre-commit gates cannot catch a
+  // parseable-but-mismatched postponed blob or a hard render error above the
+  // holes — those throw after the 200 + prelude flushed. Without the recapture
+  // the same entry re-fails every request until it ages out (nothing else
+  // evicts it).
+  it("schedules a recapture when the tail fails after the prelude committed", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry(), 300, 30);
+    const ssrModule = fullSsrModule();
+    (ssrModule.resumeShellHTML as any).mockRejectedValue(
+      new Error("resume tree mismatch"),
+    );
+
+    const { response } = await run({ ssrModule, ppr: true, store });
+    // The commit already happened: HIT headers, 200.
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    // Draining the body surfaces the tail failure as a stream error...
+    await expect(readAll(response.body!)).rejects.toThrow(
+      "resume tree mismatch",
+    );
+    // ...and the catch scheduled the healing recapture for the same key.
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    expect(descriptor.key).toBe(KEY);
+    expect(descriptor.buildVersion).toBe("v-test");
   });
 
   it("replays the CAPTURE's initialTheme into the resume payload (theme fidelity)", async () => {

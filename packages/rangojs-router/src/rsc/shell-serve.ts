@@ -75,13 +75,44 @@ export function buildShellKey(url: URL): string {
 }
 
 /**
- * React version captured at prerender time is the invalidation gate: a stored
- * shell whose reactVersion differs from the running React cannot be resumed (the
- * postponed blob is build-coupled), so it is treated as a miss — the recapture
- * overwrites the same key and the entry otherwise ages out via TTL.
+ * Version gates for a stored shell: reactVersion AND buildVersion must both
+ * match the running server. The postponed blob encodes hole positions against
+ * one exact tree, so resuming it under a different React OR a different app
+ * build tree-mismatches inside resume() — after the 200 + prelude committed,
+ * with no recovery. Either mismatch is a miss: the recapture overwrites the
+ * same key (self-healing) and the entry otherwise ages out via TTL. An entry
+ * with no buildVersion (stored before the field existed) is a miss for the
+ * same reason — its build is unknown, so it cannot be proven resumable.
  */
-export function isValidShellHit(entry: ShellCacheEntry): boolean {
-  return entry.reactVersion === React.version;
+export function isValidShellHit(
+  entry: ShellCacheEntry,
+  buildVersion: string,
+): boolean {
+  return (
+    entry.reactVersion === React.version && entry.buildVersion === buildVersion
+  );
+}
+
+/**
+ * Payload integrity gate, run BEFORE the HIT response commits: a stored entry
+ * whose prelude is not decodable base64 or whose postponed blob is not
+ * parseable JSON would otherwise throw AFTER the 200 + full static prelude
+ * flushed (`serveShellHit` decodes at stream construction, `resumeShellHTML`
+ * parses in the tail) — the client gets a visually complete page that never
+ * hydrates, re-served on every request until the entry ages out (no eviction
+ * path exists; failure schedules no recapture by itself). Checking here turns
+ * a corrupt entry (store-layer fault) into a plain MISS the recapture
+ * overwrites. Cost: one duplicate decode/parse per HIT, sub-ms against a
+ * prelude flush that dominates the path.
+ */
+export function hasIntactShellPayload(entry: ShellCacheEntry): boolean {
+  try {
+    base64ToBytes(entry.prelude);
+    if (entry.postponed !== null) JSON.parse(entry.postponed);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Decode a base64 prelude back into bytes for stream composition. */

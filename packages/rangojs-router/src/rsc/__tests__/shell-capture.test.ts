@@ -217,6 +217,7 @@ function makePutShell() {
         prelude: string;
         postponed: string | null;
         reactVersion: string;
+        buildVersion?: string;
         initialTheme?: string;
         createdAt: number;
       },
@@ -275,7 +276,7 @@ describe("captureAndStoreShell", () => {
         emptyStream(),
         createHandleStore(),
         reqCtx,
-        { key: "/guard-trip:shell", ttl: 300 },
+        { key: "/guard-trip:shell", buildVersion: "test-build", ttl: 300 },
       );
 
       expect(outcome).toBe("refused");
@@ -308,7 +309,7 @@ describe("captureAndStoreShell", () => {
         emptyStream(),
         createHandleStore(),
         reqCtx,
-        { key: "/bake-reject:shell", ttl: 300 },
+        { key: "/bake-reject:shell", buildVersion: "test-build", ttl: 300 },
       );
 
       expect(outcome).toBe("refused");
@@ -337,7 +338,7 @@ describe("captureAndStoreShell", () => {
       emptyStream(),
       createHandleStore(),
       reqCtx,
-      { key: "/bake-pending:shell", ttl: 300 },
+      { key: "/bake-pending:shell", buildVersion: "test-build", ttl: 300 },
     );
 
     expect(outcome).toBe("stored");
@@ -370,6 +371,7 @@ describe("captureAndStoreShell", () => {
       makeReqCtx(makePutShell()),
       {
         key: "/p:shell",
+        buildVersion: "test-build",
         ttl: 300,
         swr: 60,
         tags: ["t1"],
@@ -385,6 +387,9 @@ describe("captureAndStoreShell", () => {
     expect(tags).toEqual(["t1"]);
     expect(entry.postponed).toBe('{"h":1}');
     expect(entry.reactVersion).toBe(React.version);
+    // The descriptor's buildVersion stamps the entry — the serve-side validity
+    // gate compares it against the running build.
+    expect(entry.buildVersion).toBe("test-build");
     expect(typeof entry.createdAt).toBe("number");
     expect(
       new TextDecoder().decode(new Uint8Array(base64ToBytes(entry.prelude))),
@@ -412,6 +417,7 @@ describe("captureAndStoreShell", () => {
       reqCtx,
       {
         key: "/p:shell",
+        buildVersion: "test-build",
         store: { putShell } as any,
       },
     );
@@ -436,7 +442,11 @@ describe("captureAndStoreShell", () => {
       emptyStream(),
       createHandleStore(),
       makeReqCtx(ctxPut),
-      { key: "/p:shell", store: { putShell: flagPut } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell: flagPut } as any,
+      },
     );
 
     expect(flagPut).toHaveBeenCalledTimes(1);
@@ -457,7 +467,11 @@ describe("captureAndStoreShell", () => {
       emptyStream(),
       createHandleStore(),
       makeReqCtx(putShell),
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
     );
     expect(outcome).toBe("no-shell");
     expect(putShell).not.toHaveBeenCalled();
@@ -484,7 +498,11 @@ describe("captureAndStoreShell", () => {
       emptyStream(),
       createHandleStore(),
       reqCtx,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
     );
     expect(outcome).toBe("no-shell");
     expect(putShell).not.toHaveBeenCalled();
@@ -507,7 +525,11 @@ describe("captureAndStoreShell", () => {
         emptyStream(),
         createHandleStore(),
         makeReqCtx(putShell),
-        { key: "/p:shell", store: { putShell } as any },
+        {
+          key: "/p:shell",
+          buildVersion: "test-build",
+          store: { putShell } as any,
+        },
       ),
     ).rejects.toThrow("shell component blew up");
     expect(putShell).not.toHaveBeenCalled();
@@ -533,7 +555,11 @@ describe("captureAndStoreShell", () => {
         emptyStream(),
         createHandleStore(),
         reqCtx,
-        { key: "/p:shell", store: { putShell } as any },
+        {
+          key: "/p:shell",
+          buildVersion: "test-build",
+          store: { putShell } as any,
+        },
       );
       expect(reqCtx._reportBackgroundError).toHaveBeenCalledTimes(1);
     } finally {
@@ -620,7 +646,12 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       reqCtx,
       ssrModule,
-      { key: "/p:shell", ttl: 300, store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+      },
     );
 
     expect(ctx.router.match).toHaveBeenCalledTimes(1);
@@ -646,7 +677,11 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
     );
 
     expect(ssrModule.captureShellHTML).not.toHaveBeenCalled();
@@ -667,7 +702,11 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
       0, // retryDelayMs=0: exercise the retry without a real wall-clock wait
     );
 
@@ -696,7 +735,12 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", ttl: 300, store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+      },
       0,
     );
 
@@ -727,7 +771,11 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
       0,
     );
 
@@ -752,7 +800,11 @@ describe("runShellCapture", () => {
         new URL("http://localhost/p"),
         makeReqCtx(),
         ssrModule,
-        { key: "/p:shell", store: { putShell } as any },
+        {
+          key: "/p:shell",
+          buildVersion: "test-build",
+          store: { putShell } as any,
+        },
         0,
       ),
     ).rejects.toThrow("shell component blew up");
@@ -780,6 +832,7 @@ describe("runShellCapture", () => {
       const url = new URL("http://localhost/err");
       const descriptor = {
         key: "/err-genuine:shell",
+        buildVersion: "test-build",
         store: { putShell: makePutShell() } as any,
       };
 
@@ -836,7 +889,7 @@ describe("runShellCapture", () => {
             new URL("http://localhost/p"),
             makeReqCtx(),
             ssrModule,
-            { key, store: { putShell } as any },
+            { key, buildVersion: "test-build", store: { putShell } as any },
             0,
           ),
         ).resolves.toBe("no-shell"); // no throw; terminal outcome is no-shell
@@ -885,7 +938,7 @@ describe("runShellCapture", () => {
         new URL("http://localhost/p"),
         makeReqCtx(),
         ssrModule,
-        { key, store: { putShell } as any },
+        { key, buildVersion: "test-build", store: { putShell } as any },
         0,
       );
       expect(putShell).toHaveBeenCalledTimes(1);
@@ -919,6 +972,7 @@ describe("runShellCapture", () => {
     const url = new URL("http://localhost/hot");
     const descriptor = {
       key: "/hot:shell",
+      buildVersion: "test-build",
       store: { putShell: makePutShell() } as any,
     };
 
@@ -955,6 +1009,7 @@ describe("runShellCapture", () => {
       const url = new URL("http://localhost/bo1");
       const descriptor = {
         key: "/bo1-backoff:shell",
+        buildVersion: "test-build",
         store: { putShell: makePutShell() } as any,
       };
 
@@ -1019,6 +1074,7 @@ describe("runShellCapture", () => {
       const putShell = makePutShell();
       const descriptor = {
         key: "/bo2-backoff:shell",
+        buildVersion: "test-build",
         store: { putShell } as any,
       };
 
@@ -1115,7 +1171,12 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any, tags: ["op:x"] },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+        tags: ["op:x"],
+      },
       0,
     );
 
@@ -1150,7 +1211,12 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any, tags: ["ppr:static"] },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+        tags: ["ppr:static"],
+      },
       0,
     );
 
@@ -1187,7 +1253,11 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
       0,
     );
 
@@ -1218,7 +1288,12 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any, tags: ["dup"] },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+        tags: ["dup"],
+      },
       0,
     );
 
@@ -1251,7 +1326,7 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       reqCtx,
       ssrModule,
-      { key: "/p:shell", ttl: 300, store },
+      { key: "/p:shell", buildVersion: "test-build", ttl: 300, store },
       0,
     );
 
@@ -1296,7 +1371,12 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any, tags: ["ppr:static"] },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+        tags: ["ppr:static"],
+      },
       0,
     );
 
@@ -1340,7 +1420,11 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       makeReqCtx(),
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
       0,
     );
 
@@ -1382,7 +1466,7 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       reqCtx,
       ssrModule,
-      { key: "/p:shell", ttl: 300, store },
+      { key: "/p:shell", buildVersion: "test-build", ttl: 300, store },
       0,
     );
 
@@ -1417,7 +1501,7 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       reqCtx,
       ssrModule,
-      { key: "/p:shell", store },
+      { key: "/p:shell", buildVersion: "test-build", store },
       0,
     );
 
@@ -1470,7 +1554,11 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       reqCtx,
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
       0,
     );
 
@@ -1503,7 +1591,11 @@ describe("runShellCapture", () => {
         new URL("http://localhost/p"),
         reqCtx,
         ssrModule,
-        { key: "/p:shell", store: { putShell } as any },
+        {
+          key: "/p:shell",
+          buildVersion: "test-build",
+          store: { putShell } as any,
+        },
         0,
       );
       await vi.runAllTimersAsync(); // fires the barrier's deadline guard
@@ -1534,7 +1626,11 @@ describe("runShellCapture", () => {
       new URL("http://localhost/p"),
       reqCtx,
       ssrModule,
-      { key: "/p:shell", store: { putShell } as any },
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
     );
 
     expect((reqCtx as any)._shellCaptureRun).toBeUndefined();
