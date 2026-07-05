@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { sanitizeError } from "../errors";
 import type { ErrorInfo, ErrorPhase, MatchResult } from "../types";
 import type {
@@ -291,7 +292,13 @@ export function createMatchHandlers<TEnv = any>(
           });
           emitter.start();
 
+          const ctxBuildStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
           const result = await createMatchContextForFull(request, env);
+          if (INTERNAL_RANGO_DEBUG) {
+            console.log(
+              `[Server][match] context built +${Math.round(performance.now() - ctxBuildStart)}ms (abs ${Math.round(performance.now())})`,
+            );
+          }
 
           if ("type" in result && result.type === "redirect") {
             emitter.end(0, false);
@@ -310,7 +317,13 @@ export function createMatchHandlers<TEnv = any>(
           try {
             const state = createPipelineState();
             const pipeline = createMatchPartialPipeline(ctx, state);
+            const pipeStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
             const matchResult = await collectMatchResult(pipeline, ctx, state);
+            if (INTERNAL_RANGO_DEBUG) {
+              console.log(
+                `[Server][match] pipeline collected +${Math.round(performance.now() - pipeStart)}ms (abs ${Math.round(performance.now())})`,
+              );
+            }
             if (hasTelemetry || cacheSignalEnabled) {
               const signalSegments = buildSignal(ctx.routeKey, state);
               recordSignalIfEnabled(signalSegments);
