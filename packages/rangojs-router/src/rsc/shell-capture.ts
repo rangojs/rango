@@ -28,6 +28,8 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { createHandleStore, type HandleStore } from "../server/handle-store.js";
+import { maskNestedContainerThenables } from "../router/segment-resolution/mask-nested.js";
+import { isThenable } from "../handles/is-thenable.js";
 import type {
   ShellCacheEntry,
   SegmentCacheStore,
@@ -751,6 +753,28 @@ async function attemptCapture(
 
   const freshHandleStore = createHandleStore();
   freshHandleStore.onError = reqCtx._handleStore.onError;
+  // Shape = liveness for handles, exactly as for bake-lane loader containers
+  // (mask-nested.ts): nested thenables in a pushed handle container are
+  // per-request by declaration, so the CAPTURE's copy masks them — the
+  // consuming boundary postpones as a hole regardless of settle timing,
+  // instead of a fast-settling nested value baking into the shared shell. A
+  // TOP-LEVEL promise push keeps its documented bake contract (awaited
+  // pre-SSR, gate held open for it), but the container it RESOLVES to gets
+  // the same nested masking. Wrapping THIS store's push is the single funnel:
+  // the store exists only for this capture attempt, so every push wrapper
+  // (setupLoaderAccess, createUseFunction, prerender) inherits the policy and
+  // the foreground store is untouched.
+  const rawCapturePush = freshHandleStore.push.bind(freshHandleStore);
+  freshHandleStore.push = (
+    handleName: string,
+    segmentId: string,
+    value: unknown,
+  ) => {
+    const masked = isThenable(value)
+      ? value.then((v: unknown) => maskNestedContainerThenables(v))
+      : maskNestedContainerThenables(value);
+    rawCapturePush(handleName, segmentId, masked);
+  };
 
   const derivedCtx: RequestContext = Object.create(reqCtx);
   derivedCtx._handleStore = freshHandleStore;

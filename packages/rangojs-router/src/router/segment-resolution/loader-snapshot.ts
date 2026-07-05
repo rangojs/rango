@@ -8,12 +8,14 @@
  * payload byte-identical to that frozen prelude, the capture pins the container
  * in the shell snapshot:
  *
- *   - elide:   deep-walk the settled container; a SETTLED nested promise baked
- *              its value (physics: it won the quiet window), so it is pinned as
- *              that value wrapped in a SETTLED marker — the wrapper remembers
- *              "this was a promise" so the overlay can rehydrate the shape; a
- *              PENDING nested promise is a hole, replaced by
- *              {@link LOADER_HOLE_KEY}. The result is promise-free and
+ *   - elide:   deep-walk the settled container; a PENDING nested promise is a
+ *              hole, replaced by {@link LOADER_HOLE_KEY} — and since
+ *              loader-cache masks every nested thenable at capture
+ *              ({@link maskNestedContainerThenables}), nested promises are
+ *              ALWAYS pending here for new captures. The SETTLED-marker branch
+ *              below is legacy: it fires only if a settled thenable reaches
+ *              elide anyway, and the overlay keeps decoding SETTLED markers
+ *              from pre-mask snapshots. The result is promise-free and
  *              Flight-serializable.
  *   - overlay: on a HIT the loader runs fresh (only the loader body can mint
  *              the live nested promises), then the recorded container is laid
@@ -27,6 +29,12 @@
  */
 
 import { isThenable } from "../../handles/is-thenable.js";
+
+// Capture-side nested-thenable masking lives in the LEAF module mask-nested.ts
+// (request-context also needs it for handle pushes and cannot import through
+// loader-mask without a cycle). Re-exported here so loader-cache and the unit
+// tests keep one import site for the snapshot family.
+export { maskNestedContainerThenables } from "./mask-nested.js";
 
 /**
  * Marker object standing in for a pending nested promise in a recorded loader

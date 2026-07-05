@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   elideLoaderContainer,
+  maskNestedContainerThenables,
   overlayLoaderContainer,
   isLoaderHoleMarker,
   isLoaderSettledMarker,
@@ -241,5 +242,66 @@ describe("overlayLoaderContainer", () => {
     const resolved = await out;
     expect(typeof resolved.inner?.then).toBe("function");
     await expect(resolved.inner).resolves.toBe("deep-pinned");
+  });
+});
+
+// maskNestedContainerThenables: the capture-side half of "nested-promise shape
+// is the liveness declaration". Applied to the container the capture render and
+// record consume, so a nested promise holes regardless of settle timing —
+// previously a promise that settled before the quiet window baked its value
+// into the shared shell and the snapshot pinned it for every visitor
+// (per-request basket data served cross-session, found live).
+describe("maskNestedContainerThenables", () => {
+  it("replaces nested thenables (settled AND pending) with never-resolving masks", async () => {
+    const settled = Promise.resolve("per-request-value");
+    const pending = never();
+    const out = maskNestedContainerThenables({
+      label: "shared",
+      fast: settled,
+      slow: pending,
+    }) as Record<string, unknown>;
+    expect(out.label).toBe("shared");
+    expect(typeof (out.fast as Promise<unknown>).then).toBe("function");
+    expect(out.fast).not.toBe(settled);
+    expect(out.slow).not.toBe(pending);
+    // The masks never settle: elide must record holes for them.
+    const elided = await elideLoaderContainer(out);
+    expect(elided.state).toBe("ok");
+    if (elided.state !== "ok") return;
+    const v = elided.value as Record<string, unknown>;
+    expect(v.label).toBe("shared");
+    expect(isLoaderHoleMarker(v.fast)).toBe(true);
+    expect(isLoaderHoleMarker(v.slow)).toBe(true);
+  });
+
+  it("does not mutate the input container (handler consumption keeps real values)", () => {
+    const fast = Promise.resolve("real");
+    const input = { label: "shared", nested: { fast }, list: [fast] };
+    const out = maskNestedContainerThenables(input) as typeof input;
+    expect(input.nested.fast).toBe(fast);
+    expect(input.list[0]).toBe(fast);
+    expect(out.nested.fast).not.toBe(fast);
+    expect(out.list[0]).not.toBe(fast);
+  });
+
+  it("traverses arrays and plain objects only; other values are leaves", () => {
+    const date = new Date(0);
+    const map = new Map([["k", Promise.resolve(1)]]);
+    const out = maskNestedContainerThenables({
+      date,
+      map,
+      arr: [1, "x", null],
+    }) as Record<string, unknown>;
+    expect(out.date).toBe(date);
+    expect(out.map).toBe(map);
+    expect(out.arr).toEqual([1, "x", null]);
+  });
+
+  it("preserves cycles as cycles in the copy", () => {
+    const input: Record<string, unknown> = { label: "a" };
+    input.self = input;
+    const out = maskNestedContainerThenables(input) as Record<string, unknown>;
+    expect(out.self).toBe(out);
+    expect(out).not.toBe(input);
   });
 });

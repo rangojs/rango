@@ -461,34 +461,44 @@ function describePprShell(mode: "dev" | "build") {
       expect(innerSeq(second.html)).toBeGreaterThan(innerSeq(html)!);
     });
 
-    // /ppr-shell/settled: the settled-marker regression (the storefront PDP
-    // React #438). The bake-lane loader's nested promise is ALREADY RESOLVED
-    // when the container returns, so it wins the capture window and the
-    // snapshot pins its VALUE. The overlay must hand consumers a rehydrated
-    // Promise.resolve(pinned) — use(data.fast) on the recorded raw value threw
-    // #438 and the root error boundary replaced the entire page on every HIT.
-    test("bake lane, nested promise settled inside the window: HIT pins the value AND keeps the promise shape (no #438)", async ({
+    // /ppr-shell/settled: nested-promise SHAPE is the liveness declaration.
+    // A bake-lane loader's nested promise that is ALREADY RESOLVED at
+    // container return previously won the capture window and its VALUE was
+    // snapshot-pinned — every HIT then served the capture-time value to every
+    // visitor (found live: a storefront basket, with the capturing session's
+    // identifiers, frozen into the shared shell and served to anonymous
+    // requests). Nested thenables are now MASKED at capture regardless of
+    // settle timing: the consumer's own Suspense postpones (its fallback bakes
+    // as the hole) and every HIT streams the FRESH value. The consumer still
+    // receives a real promise, so the original #438 regression stays
+    // impossible. Runs on the real KV-backed CFCacheStore under workerd, so
+    // the hole-marker record round-trips the KV envelope.
+    test("bake lane, nested promise settled inside the window: holes anyway — outer pins, nested value stays FRESH per request", async ({
       request,
       page,
     }) => {
       const url = f.url("/ppr-shell/settled?probe=settled");
       await warmToHit(request, url);
 
-      // Raw HTML: label AND fast value are snapshot-pinned across HITs.
       const { html } = await measureFirstChunk(url);
       const outerSeq = (h: string) =>
         Number(h.match(/Settled outer (\d+)/)?.[1]);
       const fastSeq = (h: string) => Number(h.match(/Settled fast (\d+)/)?.[1]);
+      // Parity: the outer (non-promise) container material is snapshot-pinned.
       expect(outerSeq(html)).toBeGreaterThan(0);
-      expect(fastSeq(html)).toBe(outerSeq(html));
+      // The frozen prelude holds the consumer's Suspense fallback, never a
+      // pinned nested value — the nested promise holes by declaration.
+      const { prelude } = splitPrelude(html);
+      expect(prelude).toContain("fast pending...");
+      expect(prelude).not.toMatch(/Settled fast \d+/);
+      // Liveness: the nested value is a FRESH execution's and advances per HIT.
+      expect(fastSeq(html)).toBeGreaterThan(outerSeq(html)!);
       const second = await measureFirstChunk(url);
       expect(outerSeq(second.html)).toBe(outerSeq(html));
-      expect(fastSeq(second.html)).toBe(fastSeq(html));
+      expect(fastSeq(second.html)).toBeGreaterThan(fastSeq(html)!);
 
-      // Browser: the HIT hydrates cleanly and renders the pinned value — the
-      // regression crashed here. The SSR'd text is in the DOM before
-      // hydration, so waitForHydration keeps the error window inside the
-      // guard.
+      // Browser: the HIT hydrates cleanly — use(data.fast) still receives a
+      // real promise (the fresh one), so #438 cannot recur.
       using __ = guardHydrationErrors(page);
       await page.goto(url);
       await waitForHydration(page);

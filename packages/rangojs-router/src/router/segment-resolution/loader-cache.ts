@@ -36,7 +36,10 @@ import {
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
-import { overlayLoaderContainer } from "./loader-snapshot.js";
+import {
+  maskNestedContainerThenables,
+  overlayLoaderContainer,
+} from "./loader-snapshot.js";
 import { recordRequestTags } from "../../cache/cache-tag.js";
 import {
   isShellCaptureActive,
@@ -162,8 +165,21 @@ export function resolveLoaderData<TEnv>(
     // never as an unhandled rejection that can kill the worker before the
     // drain probes this record.
     containerPromise.catch(() => {});
-    reqCtx?._shellCaptureLoaderRecords?.set(bakeSegmentKey, containerPromise);
-    return containerPromise;
+    // Nested-promise SHAPE is the liveness declaration: mask nested thenables
+    // in the capture's copy of the container so the consuming subtree
+    // postpones as a hole no matter when the promise settles, elide records a
+    // HOLE marker, and every HIT streams the fresh value. Without this, a
+    // nested promise that settled before the quiet window baked its value into
+    // the SHARED shell and the snapshot pinned it for every visitor
+    // (per-request basket data served cross-session, found live). The raw
+    // container is untouched: handler-side ctx.use consumption (the
+    // consumption-lane rule, semantic-matrix PPR3) keeps real values.
+    const maskedPromise = containerPromise.then((container: unknown) =>
+      maskNestedContainerThenables(container),
+    );
+    maskedPromise.catch(() => {});
+    reqCtx?._shellCaptureLoaderRecords?.set(bakeSegmentKey, maskedPromise);
+    return maskedPromise;
   }
 
   if (bakeSegmentKey) {

@@ -88,7 +88,7 @@ export const ShellStreamLoader = createLoader(
 // Values are DETERMINISTIC (no seq): baked shell material must not drift between
 // the captured prelude and the fresh hydration payload.
 export interface ShellHandleItem {
-  kind: "baked" | "nested";
+  kind: "baked" | "nested" | "nested-fast";
   value?: string;
   pending?: Promise<string>;
 }
@@ -108,6 +108,19 @@ export function makeBakedHandlePush(): Promise<ShellHandleItem> {
       SHELL_HANDLE_BAKED_DELAY_MS,
     ),
   );
+}
+
+/**
+ * Container push whose nested promise is ALREADY RESOLVED — the extreme of the
+ * settle race. Shape is the liveness declaration: this must hole at capture
+ * exactly like the slow nested push above, never bake its value into the
+ * shared shell.
+ */
+export function makeNestedFastHandlePush(): ShellHandleItem {
+  return {
+    kind: "nested-fast",
+    pending: Promise.resolve("NESTED-FAST-STREAMED"),
+  };
 }
 
 /** Container push with a nested promise: the nested value stays a hole. */
