@@ -1,4 +1,4 @@
-import { type ConsoleMessage, type Page } from "@playwright/test";
+import { expect, type ConsoleMessage, type Page } from "@playwright/test";
 import { utimesSync, writeFileSync } from "node:fs";
 
 /**
@@ -265,4 +265,43 @@ export function guardHydrationErrors(page: Page): {
       }
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Document script-shape helpers (head-script-preinit e2e in both apps)
+// ---------------------------------------------------------------------------
+
+/** All `<script>`/`<link>` open tags in the document, in order. */
+export function scriptAndLinkTags(html: string): string[] {
+  return [...html.matchAll(/<(?:script|link)\b[^>]*>/g)].map((m) => m[0]);
+}
+
+/** hrefs of every `<link rel="modulepreload">` in the document. */
+export function modulepreloadHrefs(html: string): string[] {
+  return scriptAndLinkTags(html)
+    .filter((t) => t.includes('rel="modulepreload"'))
+    .map((t) => t.match(/href="([^"]+)"/)?.[1])
+    .filter((href): href is string => typeof href === "string");
+}
+
+/**
+ * The Fizz bootstrap script — the executing entry tag React stamps with the
+ * completed-shell id (`id="_R_"`). Throws (via expect) when absent.
+ */
+export function fizzBootstrapScript(html: string): {
+  tag: string;
+  src: string;
+} {
+  const tag = scriptAndLinkTags(html).find((t) => t.includes('id="_R_"'));
+  expect(tag, "the fizz bootstrap script (id=_R_) is present").toBeTruthy();
+  const src = tag!.match(/src="([^"]+)"/)?.[1];
+  expect(src, "the bootstrap script has a src").toBeTruthy();
+  return { tag: tag!, src: src! };
+}
+
+/** Fetch a URL as a document (Accept: text/html) and return the HTML text. */
+export async function fetchDocument(url: string): Promise<string> {
+  const res = await fetch(url, { headers: { Accept: "text/html" } });
+  expect(res.ok).toBe(true);
+  return res.text();
 }

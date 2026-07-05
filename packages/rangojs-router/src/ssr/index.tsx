@@ -1,7 +1,11 @@
 import React from "react";
 import { createSsrRootComponent } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
+import { runWithPreinitNonce } from "./preinit-client-references.js";
 import type { ErrorPhase } from "../types.js";
+import type { HeadScriptsOption } from "../vite/plugin-types.js";
+
+export { installClientReferencePreinit } from "./preinit-client-references.js";
 
 /**
  * Options for injectRSCPayload
@@ -18,6 +22,7 @@ export interface InjectRSCPayloadOptions {
  */
 interface RenderToReadableStreamOptions {
   bootstrapScriptContent?: string;
+  bootstrapModules?: string[];
   nonce?: string;
   formState?: unknown;
 }
@@ -35,6 +40,7 @@ interface ReactDOMReadableStream extends ReadableStream<Uint8Array> {
 interface PrerenderOptions {
   signal?: AbortSignal;
   bootstrapScriptContent?: string;
+  bootstrapModules?: string[];
   onError?: (error: unknown) => void;
 }
 
@@ -132,6 +138,17 @@ export interface SSRDependencies<TEnv = unknown> {
    * Typically: () => import.meta.viteRsc.loadBootstrapScriptContent("index")
    */
   loadBootstrapScriptContent: () => Promise<string>;
+
+  /**
+   * Document script strategy; the generated virtual SSR entry threads the
+   * `rango({ headScripts })` plugin option here (canonical docs on
+   * `RangoBaseOptions.headScripts` in vite/plugin-types.ts). The
+   * bootstrapModules conversion runs ONLY on an explicit `"preinit"`:
+   * undefined keeps the inline bootstrap verbatim, so a custom SSR entry that
+   * never installed the preinit hook cannot drift into the half-converted
+   * state on upgrade (the generated entry always passes an explicit value).
+   */
+  headScripts?: HeadScriptsOption;
 
   /**
    * prerender from react-dom/static.edge. Optional; required only by
@@ -327,6 +344,47 @@ interface ShellResumeOptions {
 }
 
 /**
+ * The exact shape plugin-rsc's loadBootstrapScriptContent returns in both dev
+ * and build: a single dynamic import of the browser entry, nothing else.
+ * Escapes/other statements never appear in that generated content; anything
+ * that doesn't match falls back to inline bootstrapScriptContent unchanged.
+ */
+const BOOTSTRAP_IMPORT_ONLY_RE =
+  /^\s*import\(\s*(["'])([^"'\\]+)\1\s*\)\s*;?\s*$/;
+
+/**
+ * Prefer bootstrapModules over the inline import() bootstrap. When the content
+ * is exactly `import("<entry-url>")`, hand Fizz the URL instead: React then
+ * emits a `<link rel="modulepreload" fetchpriority="low">` hint in the head
+ * plus the executing `<script type="module" src async>` at end of shell — the
+ * entry fetch starts with the first flushed bytes instead of when the parser
+ * reaches an opaque inline script that only reveals the URL once executed.
+ * Fizz stamps the request nonce on both tags (the inline form needed that
+ * too), and under PPR both land in the stored prelude; on resume React has
+ * already cleared the bootstrap fields from the postponed state, so nothing
+ * re-emits.
+ */
+function resolveBootstrapOptions(
+  content: string,
+  headScripts: SSRDependencies["headScripts"],
+): Pick<
+  RenderToReadableStreamOptions,
+  "bootstrapScriptContent" | "bootstrapModules"
+> {
+  // Explicit opt-in only: undefined (a custom SSR entry that predates the
+  // option, which also never installed the preinit hook) keeps the inline
+  // bootstrap byte-for-byte — converting by default would break CSPs that
+  // allowlist the known inline import() via a script hash.
+  if (headScripts !== "preinit") {
+    return { bootstrapScriptContent: content };
+  }
+  const match = BOOTSTRAP_IMPORT_ONLY_RE.exec(content);
+  return match
+    ? { bootstrapModules: [match[2]!] }
+    : { bootstrapScriptContent: content };
+}
+
+/**
  * Create an SSR handler that converts RSC streams to HTML.
  *
  * @example
@@ -383,12 +441,16 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 
       // Render React tree to HTML stream
       // Pass formState for useActionState progressive enhancement if provided
-      // Pass nonce for CSP if provided
-      const htmlStream = await renderToReadableStream(<SsrRoot />, {
-        bootstrapScriptContent,
-        formState,
-        nonce,
-      });
+      // Pass nonce for CSP if provided. runWithPreinitNonce makes the same
+      // nonce visible to the client-reference preinit hook (ALS — the hook is
+      // isolate-global, the nonce per request).
+      const htmlStream = await runWithPreinitNonce(nonce, () =>
+        renderToReadableStream(<SsrRoot />, {
+          ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
+          formState,
+          nonce,
+        }),
+      );
 
       // Wait for all Suspense boundaries to resolve when streamMode is "allReady".
       // This buffers the entire HTML before flushing — used for bots that
@@ -490,7 +552,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
       const abortReason = { rangoShellCaptureAbort: true };
       const prerenderPromise = prerender(<SsrRoot />, {
         signal: controller.signal,
-        bootstrapScriptContent,
+        ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
         // Abort is how capture WORKS: once the shell is quiet we abort() to
         // freeze the prelude and let the still-pending holes postpone. React
         // reports the abort reason for each pending boundary through onError.
@@ -659,10 +721,15 @@ export function createShellResumeHandler<TEnv = unknown>(
       const injector = injectRSCPayloadEager(rscStream2, { nonce });
       void (async () => {
         try {
-          const resumed = await resume(<SsrRoot />, JSON.parse(postponed), {
-            onError: (error) => reportRenderError(onError, error),
-            nonce,
-          });
+          // Nonce wrap mirrors renderHTML: client references first discovered
+          // during resume (holes the shell never rendered) preinit into the
+          // resumed stream and need the per-request nonce.
+          const resumed = await runWithPreinitNonce(nonce, () =>
+            resume(<SsrRoot />, JSON.parse(postponed), {
+              onError: (error) => reportRenderError(onError, error),
+              nonce,
+            }),
+          );
           await resumed.pipeTo(injector.writable);
         } catch (error) {
           reportRenderError(onError, error);

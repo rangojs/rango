@@ -24,6 +24,7 @@ export type {
   RangoOptions,
   ClientChunks,
   ClientChunkMeta,
+  HeadScriptsOption,
   BuildEnvOption,
   BuildEnvFactory,
   BuildEnvFactoryContext,

@@ -1,1 +1,4 @@
-export { createFromReadableStream } from "@vitejs/plugin-rsc/ssr";
+export {
+  createFromReadableStream,
+  setOnClientReference,
+} from "@vitejs/plugin-rsc/ssr";

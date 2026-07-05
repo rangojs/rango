@@ -239,7 +239,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       },
     });
 
-    plugins.push(createVirtualEntriesPlugin(finalEntries));
+    plugins.push(
+      createVirtualEntriesPlugin(finalEntries, undefined, {
+        headScripts: resolvedOptions.headScripts,
+      }),
+    );
     plugins.push(performanceTracksPlugin());
     plugins.push(
       rsc({
@@ -476,7 +480,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       },
     });
 
-    plugins.push(createVirtualEntriesPlugin(finalEntries, routerRef));
+    plugins.push(
+      createVirtualEntriesPlugin(finalEntries, routerRef, {
+        headScripts: resolvedOptions.headScripts,
+      }),
+    );
     plugins.push(performanceTracksPlugin());
     plugins.push(
       rsc({

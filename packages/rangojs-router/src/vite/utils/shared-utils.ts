@@ -5,12 +5,13 @@ import { getPublishedPackageName } from "./package-resolution.js";
 import { performanceTracksOptimizeDepsPlugin } from "../plugins/performance-tracks.js";
 import {
   VIRTUAL_ENTRY_BROWSER,
-  VIRTUAL_ENTRY_SSR,
+  getVirtualEntrySSR,
   getVirtualEntryRSC,
   getVirtualEntryRSCHost,
   getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "../plugins/virtual-entries.js";
+import type { HeadScriptsOption } from "../plugin-types.js";
 
 // Cloudflare preset: @cloudflare/vite-plugin sets optimizeDeps.entries (string
 // or array) on the rsc environment. Single source for both the discovery plugin
@@ -109,6 +110,7 @@ export function normalizeHostRouterEntry(
 export function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
   routerPathRef?: { path?: string; kind?: "router" | "host" },
+  options?: { headScripts?: HeadScriptsOption },
 ): Plugin {
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
@@ -117,7 +119,7 @@ export function createVirtualEntriesPlugin(
     virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
   }
   if (entries.ssr === VIRTUAL_IDS.ssr) {
-    virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
+    virtualModules[VIRTUAL_IDS.ssr] = getVirtualEntrySSR(options?.headScripts);
   }
 
   // RSC entry is resolved lazily in load() because routerPath may be
