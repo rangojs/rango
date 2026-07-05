@@ -1,0 +1,146 @@
+---
+title: Tailwind
+description: Set up Tailwind CSS v4 in a Rango app with the @tailwindcss/vite plugin and a ?url import in the Document.
+type: guide
+---
+
+You want Tailwind CSS v4 in your Rango app, with utility classes generated in dev and production and the stylesheet applied before first paint. The setup is four small steps: install, register the Vite plugin, create a CSS entry point, and link it in the Document with a `?url` import.
+
+## Install
+
+```bash
+pnpm add -D tailwindcss @tailwindcss/vite
+```
+
+## Register the Vite plugin
+
+```typescript
+// vite.config.ts
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [
+    tailwindcss(),
+    // ... other plugins
+  ],
+});
+```
+
+## Create the CSS entry point
+
+```css
+/* src/index.css */
+@import "tailwindcss";
+```
+
+That single import is the whole entry point. Tailwind v4 does not need a `tailwind.config.js`, and the `@tailwindcss/vite` plugin handles content detection automatically — no `content` globs to maintain.
+
+## Link it in the Document
+
+Import the CSS file with `?url` to get a hashed URL, then preload and link it in `<head>`. Give the `<link rel="stylesheet">` a `precedence` prop so React 19 manages it as a resource — de-duped by `href`, ordered, and loaded before paint (no flash of unstyled content):
+
+```tsx
+// src/document.tsx
+"use client";
+
+import type { ReactNode } from "react";
+import { MetaTags } from "@rangojs/router/client";
+import styles from "./index.css?url";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <link rel="preload" href={styles} as="style" precedence="default" />
+        <link rel="stylesheet" href={styles} precedence="default" />
+        <MetaTags />
+      </head>
+      <body className="font-sans antialiased text-slate-900 bg-slate-50">
+        {children}
+      </body>
+    </html>
+  );
+}
+```
+
+The `?url` suffix tells Vite to return the processed CSS file's URL instead of injecting it as a side effect. This gives you a stable, hashed asset path that works in both development and production. The `<link rel="preload" as="style">` eliminates render-blocking by starting the download early.
+
+`?url` is required here — a bare side-effect `import "./index.css"` also produces managed CSS via `@vitejs/plugin-rsc`, but it carries an SSR-streaming caveat, so prefer the `?url` + `<link precedence>` form for document CSS. The [CSS guide](/docs/rango/guides/css) has the full reasoning.
+
+## Customizing the theme
+
+Tailwind v4 uses the CSS `@theme` block for customization — colors, fonts, breakpoints all live in your entry point:
+
+```css
+/* src/index.css */
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --color-primary: #3b82f6;
+  --color-secondary: #64748b;
+  --breakpoint-3xl: 1920px;
+}
+```
+
+## Dark mode
+
+Combine Tailwind with the Rango theme system (see the [Theme guide](/docs/rango/guides/theme)):
+
+```typescript
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  theme: { attribute: "class" },
+});
+```
+
+Then use Tailwind's `dark:` variant, which reads the `class` attribute:
+
+```tsx
+<div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+  Content
+</div>
+```
+
+## Custom fonts
+
+Use `@fontsource-variable` for self-hosted fonts bundled by Vite — the [Fonts guide](/docs/rango/guides/fonts) covers all the options:
+
+```bash
+pnpm add @fontsource-variable/inter
+```
+
+```css
+/* src/index.css */
+@import "@fontsource-variable/inter";
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+}
+```
+
+No extra `<link>` tags needed in the Document — Vite bundles the font files from `node_modules` automatically.
+
+## Multiple apps under a host router
+
+If you run several apps under one [host router](/docs/rango/guides/host-router), you don't need to coordinate stylesheet `href`s or `precedence` values across them. A client-side navigation that crosses an app boundary is a **full document load**, not a soft swap — the framework redirects on an app switch, so each app's document (stylesheets, theme, meta) is re-established cleanly by the target app's own load.
+
+This matters for Tailwind specifically: every app's `@import "tailwindcss"` compiles to one hashed asset, so under an earlier soft-swap design a shared stylesheet could be dropped by React's by-`href` resource dedup if the apps disagreed on `precedence`. The full reload removes that footgun entirely.
+
+## Pitfalls
+
+- **Classes not applied at all?** Check the `?url` import and the `<link>` in the Document — a bare CSS import injects styles as a side effect and does not work with SSR streaming.
+- **Reaching for `tailwind.config.js`?** Tailwind v4 doesn't use it — put customization in the `@theme` block in CSS instead.
+- **Missing `precedence` on the stylesheet link?** Without it, React doesn't manage the sheet — you lose dedup, ordering, and the before-paint load guarantee.
+
+<Cards>
+  <Card href="/docs/rango/guides/css" title="CSS">
+    Why document CSS uses ?url + precedence, and when side-effect imports are
+    fine.
+  </Card>
+  <Card href="/docs/rango/guides/theme" title="Theme">
+    Dark mode without a flash of the wrong theme.
+  </Card>
+</Cards>

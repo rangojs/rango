@@ -1,0 +1,156 @@
+---
+title: Document Cache
+description: Cache complete HTTP responses at the edge with Cache-Control s-maxage — the outermost layer over segment and function caching.
+type: guide
+---
+
+You have public pages — a blog, marketing pages, docs — where the whole response is the same for everyone, and you want to cut origin hits by serving it straight from the edge. The document cache stores complete HTTP responses (HTML and RSC payloads) and serves them on the next request; routes opt in by setting a `Cache-Control` header with `s-maxage`.
+
+This is the coarsest cache layer, and it freezes the _whole_ response — loader output included. If loaders should stay live while rendered segments are reused, that's segment `cache()` ([Caching & Revalidation](/docs/rango/features/caching)). If you want a cached HTML shell with per-request live holes, that's [PPR](/docs/rango/guides/ppr).
+
+## Setup
+
+Document caching is a middleware. Add `createDocumentCacheMiddleware()` with `.use()`. It reads from the app-level store you configure on `createRouter({ cache })` (available on the request context as `requestCtx._cacheStore`) — you don't pass a store to the middleware:
+
+```ts
+import { createRouter } from "@rangojs/router";
+import {
+  createDocumentCacheMiddleware,
+  CFCacheStore,
+} from "@rangojs/router/cache";
+import { urlpatterns } from "./urls";
+
+const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  // App-level cache store. The document cache middleware uses this store's
+  // getResponse/putResponse methods.
+  cache: (_env, ctx) => ({ store: new CFCacheStore({ ctx: ctx! }) }),
+});
+
+router.use(
+  createDocumentCacheMiddleware({
+    skipPaths: ["/api", "/admin"],
+    debug: process.env.NODE_ENV === "development",
+  }),
+);
+
+export default router;
+```
+
+## Opting routes in
+
+Nothing is cached until a handler sets `Cache-Control` with `s-maxage`. Add `stale-while-revalidate` to enable background revalidation:
+
+```tsx
+// Cache full page for 5 min, serve stale for 1 hour
+function BlogIndex(ctx) {
+  ctx.headers.set("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
+  return <BlogIndexPage />;
+}
+
+// Long cache for individual posts
+function BlogPost(ctx) {
+  ctx.headers.set(
+    "Cache-Control",
+    "s-maxage=3600, stale-while-revalidate=86400",
+  );
+  return <BlogPostPage />;
+}
+
+// Dashboard sets no Cache-Control header, so it is never document-cached.
+```
+
+The route tree needs nothing special — opt-in lives entirely in the handlers:
+
+```tsx
+// urls.tsx
+import { urls } from "@rangojs/router";
+
+export const urlpatterns = urls(({ path, layout, loader }) => [
+  layout(<BlogLayout />, () => [
+    path("/blog", BlogIndex, { name: "blog" }),
+    path("/blog/:slug", BlogPost, { name: "blogPost" }, () => [
+      loader(BlogPostLoader),
+    ]),
+  ]),
+  layout(<DashboardLayout />, () => [
+    path("/dashboard", Dashboard, { name: "dashboard" }),
+  ]),
+]);
+```
+
+## Request flow
+
+On each request the middleware checks the store. A fresh hit returns immediately without touching your handlers. A stale hit (past `s-maxage`, within `stale-while-revalidate`) returns the stale response immediately and re-renders in the background. A miss runs the handler as normal, then caches the response only if it came back 200 with an `s-maxage` directive.
+
+Every response carries an `x-document-cache-status` header so you can verify behavior from curl or the network tab:
+
+| Status  | Meaning                                  |
+| ------- | ---------------------------------------- |
+| `HIT`   | Fresh cache hit                          |
+| `STALE` | Served stale, revalidating in background |
+| `MISS`  | Cache miss, response was generated fresh |
+
+With `debug: true`, the middleware also logs HIT / MISS / STALE / REVALIDATED.
+
+## Options
+
+```ts
+createDocumentCacheMiddleware({
+  // Skip specific paths (matched by pathname prefix)
+  skipPaths: ["/api", "/admin"],
+
+  // Custom cache key generator
+  keyGenerator: (url) => url.pathname,
+
+  // Conditional caching, evaluated per request
+  isEnabled: (ctx) => !ctx.request.headers.has("x-preview"),
+
+  // Debug logging (HIT, MISS, STALE, REVALIDATED)
+  debug: true,
+});
+```
+
+Default keys differentiate the two response kinds one URL can produce:
+
+- HTML requests: `{pathname}:html`
+- RSC partials (client navigation): `{pathname}:{segmentHash}:rsc`
+
+The segment hash matters because a navigation to `/blog/hello` from inside the blog layout needs a different RSC partial than one arriving from an unrelated layout — the hash keeps those cached separately.
+
+## What gets cached — and what never does
+
+Cached: full HTML documents, RSC navigation payloads — but only 200 OK responses whose `Cache-Control` includes `s-maxage`.
+
+Never cached, regardless of headers:
+
+- Server actions (`_rsc_action`)
+- Loader requests (`_rsc_loader`)
+- Non-GET requests
+- Responses without an `s-maxage` directive
+- Non-200 responses
+
+So [server actions](/docs/rango/guides/server-actions) always reach the origin, and fetchable loader reads stay live even on document-cached pages.
+
+## Layering with the router's own caching
+
+The document cache sits _outside_ the router: on a hit, handlers, loaders, segment `cache()`, and `"use cache"` functions don't run at all. On a miss, the response is produced by the normal pipeline — inner caches included — and then frozen whole. That's the trade: maximum cheapness, zero per-request variation.
+
+| Feature      | Document Cache             | Segment Cache         |
+| ------------ | -------------------------- | --------------------- |
+| Granularity  | Full response              | Individual segments   |
+| Opt-in       | `Cache-Control` `s-maxage` | `cache({ ttl, swr })` |
+| Use case     | Static pages               | Dynamic compositions  |
+| Key includes | URL + segment hash         | Route params          |
+
+Use the document cache for mostly-static pages. Use segment `cache()` when different parts of a page have different cache requirements, and [use cache](/docs/rango/guides/use-cache) when a single function should memoize its own output.
+
+<Cards>
+  <Card href="/docs/rango/features/caching" title="Caching & Revalidation">
+    Segment-level caching and the freshness model underneath.
+  </Card>
+  <Card href="/docs/rango/guides/ppr" title="PPR">
+    Cached shell with live holes — the middle ground.
+  </Card>
+</Cards>

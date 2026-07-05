@@ -1,0 +1,172 @@
+---
+title: Type Safety
+description: Which generated file covers which surface, how Handler<"name"> resolves params and search, and the ambient types and identity scheme that hold it together.
+type: concept
+---
+
+Type safety in Rango isn't one mechanism — it's a handful of surfaces that each cover a different gap. Skip one and you get a specific, recognizable symptom: `ctx.reverse()` / `href()` accept any string (a typo 404s at runtime, not compile time), `ctx.search` / `ctx.params` fall back to a loose `Record<string, string>`, or `ctx.env` / `ctx.get()` are untyped so a missing binding surfaces as `undefined` in production instead of a build error.
+
+## Two generated files, two different jobs
+
+`npx rango generate` (see the [CLI reference](/docs/rango/reference/cli)) can emit two kinds of file, and they are **not interchangeable** — pick the one that matches what you're typing:
+
+| Surface             | Source                                   | Scope  | Gives                                    | Does not give                                                                                    |
+| ------------------- | ---------------------------------------- | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GeneratedRouteMap` | `router.named-routes.gen.ts` (auto)      | global | route names, path params, search schemas | response/MIME payloads                                                                           |
+| `routes`            | per-module `*.gen.ts` (`rango generate`) | local  | local names, params, search              | the global app map                                                                               |
+| `RegisteredRoutes`  | manual `extends typeof router.routeMap`  | global | paths, params, **response payloads**     | the `Handler`/`Prerender` default (those read `GeneratedRouteMap` to avoid a `router.tsx` cycle) |
+
+`router.named-routes.gen.ts` augments the global `Rango.GeneratedRouteMap` — that's what drives `Handler<"name">`, server `ctx.reverse("name")`, and prerender param inference. A per-module `*.gen.ts` is CLI-opt-in and exports a local `routes` map for `useReverse(routes)` and explicit local handler typing (`Handler<".name", routes>`). Neither one carries response payloads — that inference comes only from `typeof router.routeMap`, exposed globally via a manually-augmented `RegisteredRoutes`.
+
+Recommended setup, once, in your router file:
+
+```typescript
+// router.tsx
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls";
+import type { AppBindings, AppVars } from "./env";
+
+export const router = createRouter<AppBindings>({}).routes(urlpatterns);
+
+declare global {
+  namespace Rango {
+    interface Env extends AppBindings {}
+    interface Vars extends AppVars {}
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
+
+`rango generate` alone — no manual augmentation — already gives you path-checked `href()` and typed `Handler<"name">`. Add `RegisteredRoutes` only when you need response-payload inference (`Rango.PathResponse`, below). If a type error ever points at a generated `.gen.ts` file instead of your call site, that's a smell: fix the call site or regenerate, never hand-edit the generated file.
+
+## `Handler<"name">`: typed params and search
+
+Add a `search` schema to `path()` options, and `Handler<"name">` resolves both `ctx.params` and `ctx.search` from the global route map with no explicit import:
+
+```typescript
+// pages/search.tsx
+import type { Handler } from "@rangojs/router";
+
+export const SearchPage: Handler<"search"> = (ctx) => {
+  // ctx.search is typed: { q: string; page?: number; sort?: string }
+  const { q, page, sort } = ctx.search;
+  return <SearchResults q={q} page={page} sort={sort} />;
+};
+```
+
+Supported search types are `"string"`, `"number"`, `"boolean"`, with a `?` suffix for optional — values coerce from the query string automatically (`"2"` becomes `2`).
+
+For per-module isolation, pass an explicit route map (opt-in, after `npx rango generate`). With a local map the name is **dot-prefixed**:
+
+```typescript
+import type { Handler } from "@rangojs/router";
+import type { routes } from "./urls.gen.js";
+
+export const SearchPage: Handler<".search", routes> = (ctx) => {
+  /* ... */
+};
+```
+
+`Handler<"search">` (no dot) resolves against the global `GeneratedRouteMap`; `Handler<".search", routes>` resolves against the local `routes` map. Mixing them — `Handler<"search", routes>` — silently ignores `routes` for param/search inference and only uses it for local `ctx.reverse(".x")`.
+
+`RouteSearchParams<"name">` and `RouteParams<"name">` extract the same typed shapes standalone, for component props or return types:
+
+```typescript
+import type { RouteSearchParams, RouteParams } from "@rangojs/router";
+
+type SP = RouteSearchParams<"search">;
+// { q: string; page?: number; sort?: string }
+
+type P = RouteParams<"checkout">; // route: /checkout/:step?
+// { step?: string } — optional URL params are string | undefined at runtime,
+// because absent segments are omitted from ctx.params
+```
+
+Both default to the global route map (`RegisteredRoutes` or `GeneratedRouteMap`); pass a `routes` import as the second type argument for a local module.
+
+## Ambient types: Rango.Env, Rango.Vars, Rango.Path
+
+Bindings (`TEnv`) and context variables register through the same `declare global` block shown above — `Rango.Env` types `ctx.env`, `Rango.Vars` types the string-keyed form of `ctx.get()` / `ctx.set()`. No import is required at handler call sites; they're ambient.
+
+`Rango.Path` is the ambient counterpart for path validation. It's what `href()` checks paths against, and it's how a wrapper around `href()` keeps the same compile-time checking:
+
+```typescript
+import { href } from "@rangojs/router/client";
+
+export const appHref = (path: Rango.Path): string => href(path);
+```
+
+## createVar(): scoped context tokens
+
+`Rango.Vars` is app-global — right for state shared everywhere, like auth. `createVar<T>()` is the scoped alternative: producer and consumer import the same token, creating a typed contract without adding to the global surface.
+
+```typescript
+import { createVar } from "@rangojs/router";
+
+interface PaginationData {
+  current: number;
+  total: number;
+  perPage: number;
+}
+export const Pagination = createVar<PaginationData>();
+
+// Non-cacheable var — reading inside cache() or "use cache" throws at runtime
+const Session = createVar<SessionData>({ cache: false });
+```
+
+```typescript
+// Producer — handler or middleware
+ctx.set(Pagination, { current: 1, total: 10, perPage: 5 }); // type-checked
+
+// Consumer — layout, parallel, or any context with get
+const pagination = ctx.get(Pagination); // typed as PaginationData | undefined
+```
+
+`createVar`'s `cache` option (default `true`) controls whether the var's values can be read inside cache scopes. A single write can also escalate: `ctx.set(Var, value, { cache: false })` marks that write non-cacheable even if the var itself allows caching. Least-cacheable wins — if either the var or a specific write says `cache: false`, reading it inside `cache()` or `"use cache"` throws. Both approaches coexist: `ctx.get("user")` (global, via `Rango.Vars`) and `ctx.get(Pagination)` (scoped, via `createVar`) work side by side.
+
+## Stable identity: ctx.isAction() matches by reference
+
+Loaders, handles, cached functions, and server actions all share one identity scheme — `{modulePath}#{exportName}` — injected at build time. It's also the identity React server actions carry across the Flight boundary, which is why a `revalidate()` predicate sees an action as a `path#export` string like `"src/actions/cart.ts#addToCart"`.
+
+Matching that string by hand (`actionId?.includes("cart.ts#")`) is brittle — a rename or a moved file stops matching with no compile error. `ctx.isAction()`, available on the `revalidate()` predicate's context, resolves the reference the same way the router derives the id, so a rename becomes a type error at the one call site instead of a silent runtime miss:
+
+```typescript
+import { addToCart, removeFromCart } from "./actions/cart";
+import * as CartActions from "./actions/cart";
+
+revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
+revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
+revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
+```
+
+`ctx.isAction()` returns a raw boolean — combine it with `|| undefined` to defer to the default decision for unrelated actions ("mine, else let the default decide"), or leave it bare to suppress revalidation for everything else ("mine only"). `actionId` stays available as the raw string for advanced cases.
+
+## Response payloads: Rango.PathResponse
+
+Named-route and local-module typing never carry response bodies — that's deliberate, so `Handler`/`Prerender` can default to `GeneratedRouteMap` without a circular import on `router.tsx`. Response-route payload inference is a separate ambient lookup, `Rango.PathResponse<T>`, and it only resolves once `RegisteredRoutes` is wired (see the setup snippet above):
+
+```typescript
+import { href } from "@rangojs/router/client";
+
+type Product = Rango.PathResponse<"/api/products/:id">; // by pattern
+type Same = Rango.PathResponse<"/api/products/42">; // by concrete path
+
+async function get<T extends Rango.Path>(
+  path: T,
+): Promise<Rango.PathResponse<T>> {
+  return fetch(href(path)).then((r) => r.json());
+}
+const product = await get("/api/products/42"); // Product
+```
+
+`Rango.PathResponse` describes the JSON **wire** shape, not the handler's raw return — a `path.json()` handler returning `{ createdAt: Date }` resolves here to `{ createdAt: string }`, matching what `r.json()` actually yields. The transform is `Rango.JsonSerialize<T>` (`Date -> string`, honors `toJSON()`, drops functions/`undefined`, `bigint -> never`); a separate `Rango.FlightSerialize<T>` models the higher-fidelity RSC Flight boundary (loaders and RSC props, where `Date` is preserved) — don't use `FlightSerialize` for `path.json()`. For your own types, the zero-config way to control the wire shape is a `toJSON()` method, which `JsonSerialize` honors directly.
+
+<Cards>
+  <Card href="/docs/rango/features/named-routes" title="Named Routes & Links">
+    The full ctx.reverse() / href() / useReverse() surface this typing sits on
+    top of.
+  </Card>
+  <Card href="/docs/rango/reference/cli" title="CLI">
+    What rango generate detects, what it emits, and where it can't reach.
+  </Card>
+</Cards>

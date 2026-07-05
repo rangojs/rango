@@ -1,0 +1,171 @@
+---
+title: 2. Routes & Pages
+description: Add Brew's catalog, dynamic routes with typed params, generated route types, and 404s for unknown products.
+type: tutorial
+---
+
+**Where we are:** the app boots and serves a placeholder home page at `/`.
+
+## The catalog
+
+Brew's catalog is a hardcoded array. That's deliberate — no database means every snippet in this tutorial runs exactly as written. In part 4 this data moves behind loaders without changing shape.
+
+```ts
+// src/data.ts
+export interface Product {
+  slug: string;
+  name: string;
+  price: number;
+  description: string;
+}
+
+export const PRODUCTS: Product[] = [
+  {
+    slug: "pour-over-kettle",
+    name: "Pour-Over Kettle",
+    price: 49,
+    description: "Gooseneck spout for a slow, precise pour.",
+  },
+  {
+    slug: "ceramic-dripper",
+    name: "Ceramic Dripper",
+    price: 24,
+    description: "A classic cone dripper that never wears out.",
+  },
+  {
+    slug: "burr-grinder",
+    name: "Burr Grinder",
+    price: 129,
+    description: "Uniform grounds, from espresso-fine to press-coarse.",
+  },
+  {
+    slug: "french-press",
+    name: "French Press",
+    price: 34,
+    description: "Full-bodied brews with zero paper waste.",
+  },
+];
+```
+
+## Two new routes
+
+Add the shop grid and the product page to the tree. `:slug` in a pattern is a URL parameter — whatever matches that segment shows up in the handler as `ctx.params.slug`:
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import { HomePage } from "./pages/home";
+import { ProductPage } from "./pages/product";
+import { ShopPage } from "./pages/shop";
+
+export const urlpatterns = urls(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+  path("/shop", ShopPage, { name: "shop" }),
+  path("/shop/:slug", ProductPage, { name: "product" }),
+]);
+```
+
+Every route gets a name (`home`, `shop`, `product`). Names are how you refer to routes from now on — for typed handlers and for building URLs.
+
+## Generate route types
+
+Rango generates a route map from your `urls()` modules so that route names carry their param types:
+
+```bash
+npx rango generate src/
+```
+
+This writes `*.gen.ts` files next to your modules — a map of route names to patterns. Commit them, never edit them by hand, and re-run the command whenever a `path()` pattern changes. The easiest way to keep them fresh is a `predev` script:
+
+```jsonc
+// package.json (scripts section)
+{
+  "scripts": {
+    "predev": "rango generate src",
+    "dev": "vite",
+  },
+}
+```
+
+With the map generated, `Handler<"product">` resolves automatically: the compiler knows that route has a `slug` param and types `ctx.params` accordingly.
+
+## The shop grid
+
+```tsx
+// src/pages/shop.tsx
+import type { Handler } from "@rangojs/router";
+import { PRODUCTS } from "../data";
+
+export const ShopPage: Handler<"shop"> = (ctx) => {
+  return (
+    <section>
+      <h1>Shop</h1>
+      <ul>
+        {PRODUCTS.map((product) => (
+          <li key={product.slug}>
+            <a href={ctx.reverse("product", { slug: product.slug })}>
+              {product.name} — ${product.price}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+};
+```
+
+The interesting line is `ctx.reverse("product", { slug: product.slug })`. Instead of hardcoding `/shop/${product.slug}`, you ask the router to build the URL from the route's name — Django's `reverse()`, if you've used it. If the pattern ever changes in `urls.tsx`, every generated URL follows; nothing to hunt down.
+
+Plain `<a>` tags mean full page loads for now. Part 3 upgrades these to client-side navigation.
+
+## The product page
+
+```tsx
+// src/pages/product.tsx
+import { notFound } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
+import { PRODUCTS } from "../data";
+
+export const ProductPage: Handler<"product"> = (ctx) => {
+  const product = PRODUCTS.find((p) => p.slug === ctx.params.slug);
+  if (!product) notFound(`No product called "${ctx.params.slug}"`);
+
+  return (
+    <article>
+      <h1>{product.name}</h1>
+      <p>{product.description}</p>
+      <p>${product.price}</p>
+    </article>
+  );
+};
+```
+
+Two things to notice:
+
+- `ctx.params.slug` is a typed `string` — that's `Handler<"product">` doing its job from the generated route map.
+- `notFound()` covers the case where the route _matched_ but the data doesn't exist: `/shop/decaf-pods` fits the `/shop/:slug` pattern, yet there's no such product. Calling `notFound()` stops the handler and responds with HTTP 404 and a built-in not-found page. When no route matches at all (say, `/warehouse`), the router 404s on its own without any code from you. Both fallbacks are customizable — see [Routing](/docs/rango/features/routing) when you want branded 404 pages.
+
+## Point the home page at the shop
+
+`ctx.reverse()` works in any handler, so give the landing page a real link:
+
+```tsx
+// src/pages/home.tsx
+import type { Handler } from "@rangojs/router";
+
+export const HomePage: Handler<"home"> = (ctx) => (
+  <section>
+    <h1>Brew</h1>
+    <p>Gear for better coffee.</p>
+    <a href={ctx.reverse("shop")}>Browse the shop</a>
+  </section>
+);
+```
+
+## Try it
+
+Run `pnpm dev` and click around: `/` links to `/shop`, the grid links to each product, and a made-up slug like `/shop/decaf-pods` returns a 404. Three routes, all typed, all addressable by name.
+
+The pages work, but they share no chrome and every click reloads the document. That's next.
+
+Next: [3. Layouts & Navigation](/docs/rango/tutorial/layouts-and-navigation)

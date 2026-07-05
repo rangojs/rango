@@ -1,21 +1,71 @@
 ---
-description: Learn about the Vercel Shop template and what it offers.
 title: Introduction
+description: Rango is a Django-inspired RSC router for Vite — an explicit route tree, server components, and correctness-first caching.
 type: overview
 ---
 
-Vercel Shop is a Rango storefront template for Shopify, built from the ground up for agentic development.
+Rango (`@rangojs/router`) is a React Server Components router built on Vite. It is Django-inspired: routes are expressed in one tree, every route carries a name, and URLs are built from names — never hand-assembled from strings. Apps deploy to Cloudflare Workers or Vercel.
 
-## Agentic development
+The stance underneath everything: **explicit over implicit, correct by default, and the source is the source of truth.** Every behavior is a stated contract you can read, test against, and grep for.
 
-The template ships with context, feedback loops, and project-scoped plugins that let coding agents understand and extend your store. Recipes and `vercel-shop` skills describe common tasks - from enabling Shopify Markets to swapping your CMS - so an agent can execute them in a single command.
+## The shape of Rango
 
-Every skill includes the context an agent needs: which files to touch, what patterns to follow, and how to validate the result. This means less back-and-forth and more correct code on the first pass.
+- **Routes are expressed, not configured.** The `urls()` tree shows where every route, layout, loader, and cache lives. No file-system convention, no hunting across `page.tsx` / `layout.tsx` / `route.ts` siblings.
+- **Two freshness axes, orthogonal.** "Is this stored value still good?" is answered by `cache()` and `"use cache"`. "Should this segment re-render right now?" is answered by `revalidate()`. Other frameworks answer both with one word; Rango never conflates them.
+- **Loaders are the live lane.** A loader resolves fresh on every request — even inside a cached render — and streams, so data latency overlaps first paint instead of blocking it.
+- **Type-safe end to end.** Route names, params, search schemas, loader return types, and `reverse()` / `href()` are checked at compile time against generated route maps.
+- **Semantics are a contract, not folklore.** Dev and production resolve every request through the same route trie, and JS and no-JS produce the same middleware effects, cookies, and rendered state — both pinned by a semantic matrix test suite.
 
-## What's included
+## Start here
 
-- **Collections and search** with filtering and optimistic filter updates - all high performance
-- **Product detail pages** with statically cached layouts and streamed dynamic content
-- **Shopify pages support** for rendering custom pages from your Shopify admin
-- **Optimistic cart** with instant add-to-cart and quantity changes
-- **Cache directives** (`"use cache"`) for instant static responses with dynamic parts streamed in
+<Cards>
+  <Card href="/docs/rango/getting-started" title="Getting Started">
+    Wire up the Vite plugin, define a tree, and serve your first request.
+  </Card>
+  <Card href="/docs/rango/tutorial" title="Tutorial">
+    Build a small storefront in six parts — routes, layouts, loaders, actions,
+    caching, deploy.
+  </Card>
+  <Card href="/docs/rango/features" title="Features">
+    The load-bearing ideas — routing, loaders, caching, middleware, and more —
+    each shown in code.
+  </Card>
+  <Card href="/docs/rango/concepts" title="Concepts">
+    The mental models underneath: execution order, segments, freshness, data
+    flow, type safety.
+  </Card>
+  <Card href="/docs/rango/guides" title="Guides">
+    Task-oriented recipes, one per requirement — from modals to migrations.
+  </Card>
+  <Card href="/docs/rango/reference" title="Reference">
+    Hooks, createRouter options, and the CLI.
+  </Card>
+</Cards>
+
+## A taste
+
+One tree, both axes visible — structure (`layout` / `path`) versus config (everything else), freshness (`cache`) versus client-update (`revalidate`):
+
+```tsx
+export const urlpatterns = urls(
+  ({ path, layout, loader, loading, cache, revalidate }) => [
+    layout(<ShopLayout />, () => [
+      loader(CartLoader, () => [
+        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      ]),
+      path("/shop/:slug", ProductPage, { name: "product" }, () => [
+        loader(ProductLoader, () => [cache({ ttl: 60 })]),
+        loading(<ProductSkeleton />),
+      ]),
+    ]),
+  ],
+);
+```
+
+From this one file you can answer the three questions that usually require a codebase tour: what URLs exist and who owns them, can I trust this reference without leaving the call site, and what re-renders after this action.
+
+## Status
+
+The router is experimental. The semantics are pinned and tested, and the API is converging, but pre-1.0 means pre-1.0.
+
+> The **Shop Template (review)** section contains the docs of the storefront template this site started from. It is kept temporarily while we review its pages and components for reuse; it does not document Rango itself.

@@ -1,0 +1,185 @@
+---
+title: Observability
+description: See where request time goes with the debugPerformance waterfall, then wire telemetry sinks and tracing spans for production.
+type: guide
+---
+
+A request feels slow and you need to see where the time went — or you're heading to production and need durable request events and traces. Rango covers both with two complementary surfaces, and both cost nothing until you turn them on.
+
+| Surface                                   | What it gives you                                                    | Reach for it when                                    |
+| ----------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
+| Performance timeline (`debugPerformance`) | A per-request waterfall in the console plus a `Server-Timing` header | Debugging one slow request, locally or targeted      |
+| Structured telemetry (`telemetry`)        | Lifecycle events sent to a pluggable sink                            | Production monitoring, OpenTelemetry, custom metrics |
+
+## The performance waterfall
+
+Enable it globally while you investigate:
+
+```tsx
+import { createRouter } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  debugPerformance: true,
+});
+```
+
+Or flip it on per request from [middleware](/docs/rango/features/middleware) — only for the route, user, or query param you're chasing:
+
+```ts
+middleware(async (ctx, next) => {
+  if (ctx.url.searchParams.has("debug")) {
+    ctx.debugPerformance();
+  }
+  await next();
+});
+```
+
+Call `ctx.debugPerformance()` before `await next()`. That request then prints a shared-axis waterfall and adds a `Server-Timing` header you can compare against browser network timing.
+
+### Reading the timeline
+
+The rows are intervals on one shared axis:
+
+- `handler:total` is the whole router request.
+- `render:total` / `ssr-render-html` show the render pass.
+- `loader:*` rows should overlap the render work. A loader that starts only after the render bar is serialized latency — that's your finding.
+- Cache, route matching, middleware pre/post, RSC serialization, and SSR phases appear as separate spans, so the slow phase is visible without guessing.
+
+### Caveat: deployed Cloudflare Workers
+
+On production Workers, timers are frozen during request execution (Spectre mitigation), so `Server-Timing` durations read as roughly zero on the deployed edge — they only advance across genuine awaited I/O. Treat the waterfall as a local diagnostic (dev, `vite preview`, `wrangler dev`). For deployed workers, measure from the client (`PerformanceResourceTiming`, TTFB) and use structured telemetry for server-side events.
+
+## Structured telemetry
+
+Use telemetry when you want durable production events rather than a one-request debug waterfall. The simplest sink logs to the console:
+
+```tsx
+import { createRouter, createConsoleSink } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  telemetry: createConsoleSink(),
+});
+```
+
+A custom sink is just an object with `emit(event)`:
+
+```tsx
+import { createRouter } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  telemetry: {
+    emit(event) {
+      myMetrics.record(event);
+    },
+  },
+});
+```
+
+Events include `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`, and `request.origin-rejected`. The exported `TelemetryEvent` union (`import type { TelemetryEvent } from "@rangojs/router"`) is the full contract — every event kind and its fields are typed there.
+
+## Tracing: phase spans
+
+Phase spans live in a separate `tracing` slot on the router; `telemetry` stays independent (events only, no phase spans). Every tracing factory emits the same phases, co-emitted from the same site as the `debugPerformance` timeline: `rango.request`, `rango.middleware`, `rango.action`, `rango.loader`, `rango.render`, `rango.ssr`. Each factory returns a `RouterTracingConfig`, and off-platform (no Cloudflare tracing destination, no OTel SDK) every span call is a transparent pass-through — the request behaves as if tracing were off.
+
+### OpenTelemetry
+
+Phase spans come from `createOTelTracing`; discrete-fact spans (handler errors, cache decisions, …) from the `createOTelSink` telemetry sink:
+
+```tsx
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
+import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing: createOTelTracing(tracer), // request/loader/render/… phase spans
+  telemetry: createOTelSink(tracer), // handler errors, cache decisions, …
+});
+```
+
+### Cloudflare Workers
+
+Use `createCloudflareTracing` for the `tracing` slot instead — it emits the same phases as native Cloudflare custom spans (they appear in the Workers trace waterfall next to the automatic KV/D1/fetch spans), with no `@opentelemetry/api` dependency:
+
+```tsx
+import { createRouter } from "@rangojs/router";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing: createCloudflareTracing(), // all phases on by default
+  // tracing: createCloudflareTracing({ spans: { ssr: false } }), // toggle phases
+});
+```
+
+### Vercel Functions
+
+On the Node runtime, `createVercelTracing` is a thin wrapper over `createOTelTracing` that reads the global OTel tracer installed by `@vercel/otel`'s `registerOTel()` — you don't call `trace.getTracer` yourself. Custom spans are Node-only (unsupported on the Edge runtime):
+
+```tsx
+// instrumentation.ts — install the provider, then export the tracing config.
+// Importing this module is what runs registerOTel() — a Rango/Vite app does not
+// auto-load instrumentation.ts like Next.js, so a standalone registerOTel() that
+// nothing imports is a silent no-op.
+import { registerOTel } from "@vercel/otel";
+import { createVercelTracing } from "@rangojs/router/vercel";
+registerOTel({ serviceName: "my-app" });
+export const tracing = createVercelTracing(); // { enabled, spans, tracerName, tracer }
+
+// router.tsx — importing `tracing` runs instrumentation.ts
+import { createRouter } from "@rangojs/router";
+import { tracing } from "./instrumentation.js";
+
+const router = createRouter({ document: Document, urls: urlpatterns, tracing });
+```
+
+See [Deploy to Vercel](/docs/rango/guides/deploy-vercel) for the full deployment story around this.
+
+## Debugging stale data and revalidation
+
+When the question is stale UI or an unexpected partial render, run the waterfall and a sink together:
+
+```tsx
+import { createConsoleSink, createRouter } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  debugPerformance: true,
+  telemetry: createConsoleSink(),
+});
+```
+
+Then inspect:
+
+- `revalidation.decision` telemetry to see which segment re-ran or skipped.
+- Cache spans and `cache.decision` events for hit, miss, stale, and background-revalidation behavior (background: [Caching](/docs/rango/features/caching), [Freshness](/docs/rango/concepts/freshness)).
+- Loader spans to confirm live loaders overlap the render rather than blocking first paint.
+- The `Server-Timing` header to compare server logs with browser network timing.
+
+## What it costs when off
+
+Nothing. `debugPerformance` is off by default, and `telemetry` emits nothing unless a sink is configured. Per-request `ctx.debugPerformance()` lets you scope the waterfall to exactly the traffic you're investigating.
+
+<Cards>
+  <Card href="/docs/rango/guides/bundle-analysis" title="Bundle Analysis">
+    If the problem is payload size rather than server time, audit the bundles
+    next.
+  </Card>
+  <Card href="/docs/rango/guides/deploy-vercel" title="Deploy to Vercel">
+    The Vercel preset, Runtime Cache wiring, and where tracing fits in.
+  </Card>
+</Cards>

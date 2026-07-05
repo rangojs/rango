@@ -26,7 +26,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-gray-alpha-400 bg-background-100/80 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-[90rem] items-center gap-6 px-6">
+      <div className="flex h-14 items-center gap-6 px-6">
         <Link className="shrink-0" to="/">
           <Logo />
         </Link>

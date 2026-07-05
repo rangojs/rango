@@ -2,6 +2,15 @@ import { Link } from "@rangojs/router/client";
 import type { AnchorHTMLAttributes, ReactNode } from "react";
 
 import { Pre } from "@/components/code-block";
+import {
+  CacheHitDemo,
+  LoaderLanesDemo,
+  MetaLayersDemo,
+  MiddlewareOnionDemo,
+  NegotiationDemo,
+  TreeToPageDemo,
+  TwoTabsDemo,
+} from "@/components/docs-demos";
 import { CartBrowser } from "@/components/fake-browser/cart-browser";
 import { ContentBrowser } from "@/components/fake-browser/content-browser";
 import { HomeBrowser } from "@/components/fake-browser/home-browser";
@@ -73,12 +82,19 @@ export function Cards({ children }: { children?: ReactNode }) {
 
 export const mdxComponents = {
   a: DocLink,
+  CacheHitDemo,
   Card,
   CartBrowser,
   Cards,
   ContentBrowser,
   HomeBrowser,
+  LoaderLanesDemo,
+  MetaLayersDemo,
+  MiddlewareOnionDemo,
+  NegotiationDemo,
   PDPBrowser,
   PLPBrowser,
   pre: Pre,
+  TreeToPageDemo,
+  TwoTabsDemo,
 } as const;

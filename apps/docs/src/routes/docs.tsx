@@ -61,7 +61,7 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
       : undefined;
 
   return (
-    <div className="mx-auto flex w-full max-w-[90rem] gap-10 px-6 py-10">
+    <div className="flex w-full gap-10 px-6 py-10">
       <aside className="hidden w-60 shrink-0 lg:block">
         <nav className="sticky top-10 text-sm">
           <ParallelOutlet name="@docsNav" />
@@ -69,7 +69,7 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <article className="prose prose-gray max-w-2xl dark:prose-invert">
+        <article className="prose prose-gray mx-auto w-full max-w-5xl dark:prose-invert">
           <h1 className="mb-2">{page.title}</h1>
           {page.description ? (
             <p className="not-prose mt-0 mb-8 text-lg text-gray-900">
@@ -80,7 +80,7 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
         </article>
 
         {prev || next ? (
-          <nav className="mt-16 flex max-w-2xl items-center gap-4 border-t border-gray-alpha-400 pt-6 text-sm">
+          <nav className="mx-auto mt-16 flex w-full max-w-5xl items-center gap-4 border-t border-gray-alpha-400 pt-6 text-sm">
             {prev ? (
               <Link
                 className="text-gray-900 transition-colors hover:text-gray-1000"

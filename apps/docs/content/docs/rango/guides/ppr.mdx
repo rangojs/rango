@@ -1,0 +1,180 @@
+---
+title: PPR
+description: Cache a page's rendered HTML shell and serve it instantly while the live parts resume on every request.
+type: guide
+---
+
+You have a page whose frame is stable — layout, headings, product copy — but parts of it must stay fresh on every request: a price, a basket badge, reviews. PPR caches the rendered HTML shell of the page (the React `prerender` prelude bytes plus `postponed` state) and, on later requests, flushes those bytes before any render work happens, then resumes rendering just the live holes. The browser sees one ordinary streamed document; loaders stay fresh on every request.
+
+If you want the whole response frozen, loader output included, use the [Document Cache](/docs/rango/guides/document-cache) instead. If you want routes rendered at build time, that is [Prerender](/docs/rango/guides/prerender) — the `ppr` path option captures at runtime.
+
+## Opt in with the `ppr` path option
+
+PPR is declared on the page route. Serving is integral to the router — there is nothing to mount. The only prerequisite is an app-level `createRouter({ cache })` store that implements the shell family (`getShell`/`putShell`): `MemorySegmentCacheStore` (dev/tests), `CFCacheStore` (Cloudflare KV), or `VercelCacheStore` (runtime cache). A `ppr` route on a store without the family keeps rendering normally, with a once-per-key warning.
+
+```tsx
+import { createRouter, urls } from "@rangojs/router";
+import { CFCacheStore } from "@rangojs/router/cache";
+
+export const urlpatterns = urls(({ path, layout, loader, loading }) => [
+  layout(ProductShell, () => [
+    path(
+      "/products/:id",
+      PricePage,
+      // `ppr` is the whole opt-in AND the policy. `ppr: true` uses the default
+      // ttl (300s); an object sets ttl/swr/tags (PartialPrerenderProps).
+      { name: "product", ppr: { ttl: 600, swr: 120 } },
+      () => [
+        loader(LivePriceLoader),
+        loading(<PriceSkeleton />), // structural hole: the loader subtree stays live
+      ],
+    ),
+  ]),
+]);
+
+const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  cache: (env, ctx) => ({
+    store: new CFCacheStore({ kv: env.CACHE_KV, ctx: ctx! }),
+  }),
+});
+export default router;
+```
+
+A route without `ppr` pays zero cost: no store read, no capture, no logs. `ppr` is per page route — declaring it on a layout is not supported. The shell is keyed per host + pathname + sorted search, shared across all users — which is exactly why the identity rules below exist.
+
+## What counts as a hole
+
+Holes are render-defined — decided by the shape of your tree, not by configuration. Three classes:
+
+| Class          | What makes the hole                                                                                    | At capture                                               | At serve                           |
+| -------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- | ---------------------------------- |
+| **Structural** | the entire segment subtree under a `loading()` registration — the loader live lane                     | loaders masked; the fallback bakes in as route structure | loaders run fresh; resume fills it |
+| **Physics**    | any promise nested in handed-over data still pending at capture, under the consumer's own `<Suspense>` | real I/O cannot settle in time; the boundary postpones   | the promise settles and streams in |
+| **Shell**      | awaited handler data, resolved promises, replayed `cache()` segments, bake-lane loader containers      | baked into the prelude                                   | served from the frozen prelude     |
+
+One rule for promises, every lane — handlers, handles, and loaders: **a promise nested inside your data is never baked; the container settles.**
+
+### Promise holes: no loader required
+
+A route whose live regions are pending promises under `<Suspense>` PPRs with no `loader()` and no `loading()` anywhere. Hand the un-awaited promise over as a prop; the consumer suspends under its own boundary, which postpones at capture and becomes the hole:
+
+```tsx
+// Handler: kick off the fetch, do NOT await it.
+function ProductPage(ctx: HandlerContext) {
+  const reviews = fetchReviews(ctx.params.id); // Promise<Review[]> — pending
+  return (
+    <main>
+      <h1>Product {ctx.params.id}</h1> {/* shell — baked into the prelude */}
+      <ReviewsSection promise={reviews} /> {/* hole — resumes per request */}
+    </main>
+  );
+}
+```
+
+```tsx
+// ReviewsSection.tsx — the consumer owns its Suspense boundary.
+"use client";
+import { Suspense, use } from "react";
+
+function Inner({ promise }: { promise: Promise<Review[]> }) {
+  return <ReviewList reviews={use(promise)} />;
+}
+export function ReviewsSection({ promise }: { promise: Promise<Review[]> }) {
+  return (
+    <Suspense fallback={<ReviewsSkeleton />}>
+      <Inner promise={promise} />
+    </Suspense>
+  );
+}
+```
+
+This is exactly how an existing Suspense-shaped tree (for example, migrated from Next.js PPR) works with zero restructuring. One caveat: promise holes are holes because the I/O is genuinely pending at capture. A value that resolves near-instantly (memory read, warmed cache) may bake into the shell — when liveness must be guaranteed rather than probable, use the loader live lane.
+
+### Loaders: `loading()` is the lane selector
+
+`loading()` is not the gate for holes — it picks the lane for loader data:
+
+- **Present — the live lane.** The loader is masked at capture and runs fresh on every serve, no matter how fast it resolves. This is the guaranteed hole, and the trick for already-resolved data: `loader(() => Promise.resolve(x))` plus `loading()` stays live.
+- **Absent — the bake lane.** The loader executes during capture; its settled container bakes into the prelude, and every promise still nested in it stays a live hole at the consumer's own `<Suspense>`:
+
+```ts
+export const StorefrontContextLoader = createLoader(async (ctx) => {
+  const config = await loadSiteConfig(ctx.params.locale); // bakes (pinned per shell)
+  return {
+    config, // shell material
+    basket: fetchBasket(ctx), // hole — consumer <Suspense>s it, fresh per request
+  };
+});
+```
+
+The lane is decided per tree node, at the entry that registers the loaders — `loading()` on a child route does not change a parent layout's lane, and `loading()` is valid on layout and parallel entries, not just routes. Do not put `loading()` on an app-wide layout to make it live: the fallback would wrap the layout's entire subtree and your header, nav, and footer fall out of the shell into the skeleton. For guaranteed-fresh widgets under a shared layout, use a [parallel slot](/docs/rango/guides/parallel-routes) with its own `loader()` + `loading()` — the chrome bakes and each widget becomes an independent, widget-sized hole. The slot handler must hand the loader to a client component (`useLoader` in a `"use client"` component) for the freshness guarantee to reach the rendered value.
+
+| Your live region is…                          | Use                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------- |
+| loader data, must be fresh on every serve     | `loader()` + `loading()` (the live lane)                              |
+| loader data, stable container with live parts | bake-lane loader (no `loading()`), nested promises for the live parts |
+| handler-fetched real I/O (db, fetch)          | un-awaited promise prop + consumer `<Suspense>` + `use()`             |
+| per-segment metadata consumed elsewhere       | handle container with a nested promise + consumer `<Suspense>`        |
+| already-resolved / instant values             | `loader(() => Promise.resolve(x))` + `loading()`                      |
+| none of the above                             | nothing — it bakes; that is what the shell is for                     |
+
+Handles follow "nesting = liveness" too: a top-level `ctx.use(H)(promise)` is awaited server-side before SSR and baked; `ctx.use(H)({ x: promise })` passes the container through and the nested promise streams to a consumer who must `<Suspense>` it.
+
+## How a request is served
+
+On a document GET to a `ppr` route the router runs: match, then the **whole middleware chain** (global `router.use()` and route DSL `middleware()`), then the shell lookup. The commit point is after all middleware — any rejection, redirect, or 401 wins before a single shell byte, on MISS and HIT alike, so auth middleware guards PPR for free.
+
+- **HIT** — the stored prelude bytes flush first; segment resolution, the fresh Flight render, and the resume of just the holes run behind them inside the response stream.
+- **MISS** — a plain live serve, plus a background capture (stampede-guarded, with exponential backoff). Middleware is not re-run during capture; the capture inherits the triggering request's post-middleware context.
+
+The observability header is `x-rango-shell: HIT | MISS`, on document responses only. A bare `curl` without an `Accept` header negotiates a Flight payload with no header at all — which reads as "PPR is off" but is only the wrong request shape:
+
+```bash
+curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/products/1 | grep -i x-rango-shell
+```
+
+First document GET: `MISS` plus a background capture; in production the second request is a `HIT`. Dev shows a few extra MISSes (cold module transforms abort the capture window — per-attempt breadcrumbs with `INTERNAL_RANGO_DEBUG=1`); this self-heals. A declared route that never flips has an eligibility problem — look for the once-per-key warning. Some requests always stay on the normal render path: non-GET, RSC/partial/action/loader fetches, per-request CSP nonce, `streamMode: "allReady"`, redirects, 404s, error renders, and stores without the shell family. For bots, `ssr: { resolveStreaming }` returning `"allReady"` bypasses PPR entirely and serves one complete buffered document. Stored shells self-invalidate when `React.version` changes, so deploys self-heal via recapture.
+
+## Options and invalidation
+
+| Field  | Default | Notes                                                              |
+| ------ | ------- | ------------------------------------------------------------------ |
+| `ttl`  | `300`   | shell freshness window in seconds (`ppr: true` uses the default)   |
+| `swr`  | —       | stale window: serve the stale shell + background recapture         |
+| `tags` | —       | operational tags unioned with the tags the capture render collects |
+
+`updateTag()`/`revalidateTag()` is the only lever that changes the frozen shell HTML — a shell auto-carries every non-loader `cacheTag(...)` recorded during capture, and hitting one drops the shell for a recapture. Loader tags never attach (the holes are already live). `revalidate()` is a data lever: it re-renders holes with fresh data but never touches the shell.
+
+## Per-user data
+
+The shell is shared per host + URL across all users, so identity must never bake:
+
+- `cookies()`/`headers()` **throw during the capture render** — in handlers and in bake-lane loaders. A shell that reads them is PPR-ineligible by construction; live-lane loaders (behind `loading()`) are exempt.
+- The guard sees only those two calls. A bake-lane loader reading a middleware-provided session object (`ctx.get("session")`) refuses nothing — whatever it returns as settled data is photographed as the capturing user's state. The killer is the fast-resolve branch: `return { cart: Promise.resolve(null) }` for an anonymous capture bakes `null`, and every logged-in user gets the anonymous badge on every HIT. Any per-user loader belongs on the live lane.
+- Rule of thumb: per-user data on a PPR page lives in a nested pending promise (fresh per request) or behind `loading()` with client-side consumption.
+
+## Pitfalls
+
+- **A bake-lane container that must be fresh per document GET** — it is snapshot-pinned for the shell's lifetime by design. Use the live lane or a nested promise.
+- **A bake-lane loader slower than the capture guard (~5s)** — the capture cannot hold for it: eternal MISS with the once-per-key warning.
+- **Shell shows capture-time data for the shell's lifetime** — a `cache()`/`"use cache"` value baked into the shell is pinned at capture and replayed on every HIT, even after that cache entry expires or is tag-invalidated. Parity beats freshness inside the shell; if a region needs freshness, put it under a hole, or make the shell itself invalidatable via `ppr.tags`.
+- **Uncached nondeterminism in shell material** — raw `Date.now()`/`Math.random()`/uncached `fetch` drifts between capture and hit and detonates hydration. Wrap it in `cache()`/`"use cache"` (pinned) or move it under a hole.
+- **Stacking with the Document Cache** — pick one per route; the document cache would cache the composite.
+- **Per-request CSP nonce** — supply it via `createRouter({ nonce })`, the canonical path; a nonced route serves the normal render path with a once-per-key warning (a shared shell cannot bake one request's nonce).
+- **HIT status commits at the flush** — a failing hole cannot become a 500/redirect after the first shell byte; error UI renders inline via Suspense/error boundaries, like any streamed SSR page.
+
+<Cards>
+  <Card href="/docs/rango/guides/prerender" title="Prerender">
+    Build-time rendering as a cache write — the same segment cache, filled
+    during the build.
+  </Card>
+  <Card href="/docs/rango/guides/shell-manifest" title="Shell Manifest">
+    Replayed handles as cache metadata — a frozen shell tells live loaders
+    exactly what its holes need.
+  </Card>
+  <Card href="/docs/rango/features/caching" title="Caching">
+    Segment and loader caching — the rings PPR sits on top of.
+  </Card>
+</Cards>

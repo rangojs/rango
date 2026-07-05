@@ -1,0 +1,13 @@
+{
+  "title": "Concepts",
+  "pages": [
+    "index",
+    "execution-model",
+    "segments-and-rendering",
+    "freshness",
+    "structure-vs-config",
+    "data-flow",
+    "progressive-enhancement",
+    "typesafety"
+  ]
+}

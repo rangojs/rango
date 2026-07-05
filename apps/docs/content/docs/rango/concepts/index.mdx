@@ -1,0 +1,45 @@
+---
+title: Overview
+description: The mental models behind Rango — read these when you want to understand why the primitives behave the way they do.
+type: concept
+---
+
+The [Features](/docs/rango/features) pages show what each primitive does; these pages explain the model underneath. None of them are required reading to ship — but each one exists because a real misunderstanding kept happening without it.
+
+<Cards>
+  <Card href="/docs/rango/concepts/execution-model" title="Execution Model">
+    The exact order of middleware, actions, loaders, and rendering — and what is
+    guaranteed versus incidental.
+  </Card>
+  <Card
+    href="/docs/rango/concepts/segments-and-rendering"
+    title="Segments & Rendering"
+  >
+    How the tree becomes segments, how segments render and merge, and what a
+    partial update actually replaces.
+  </Card>
+  <Card href="/docs/rango/concepts/freshness" title="Freshness">
+    The two axes — stored-value freshness and client-update selection — and how
+    to pick a caching primitive.
+  </Card>
+  <Card
+    href="/docs/rango/concepts/structure-vs-config"
+    title="Structure vs Config"
+  >
+    The one design rule of the tree, and how to build reusable route factories
+    around it.
+  </Card>
+  <Card href="/docs/rango/concepts/data-flow" title="Data Flow">
+    The four rungs for passing per-request data down the tree, ordered
+    safest-first.
+  </Card>
+  <Card
+    href="/docs/rango/concepts/progressive-enhancement"
+    title="Progressive Enhancement"
+  >
+    Why JS and no-JS are the same contract, and what that buys you.
+  </Card>
+  <Card href="/docs/rango/concepts/typesafety" title="Type Safety">
+    Where the generated types come from and which surface each one covers.
+  </Card>
+</Cards>

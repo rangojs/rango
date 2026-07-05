@@ -1,0 +1,101 @@
+---
+title: Named Routes & Links
+description: Every route carries a name, and URLs are built from names — never hand-assembled from strings.
+type: guide
+---
+
+Every route carries a name, and URLs are built from names, never hand-assembled from strings:
+
+```tsx
+// in a handler, action, or middleware — far from the tree
+throw redirect(ctx.reverse("product", { slug: "espresso-cup" }));
+```
+
+`ctx.reverse()` on the server and `useReverse()` on the client are compile-time checked against the generated route map: a misspelled name or a missing param is a type error, not a runtime 404. The payoff is rename safety — change `/shop/:slug` to `/store/:slug` in the one place it is defined, and every link, redirect, and prefetch in the codebase follows. There is no grep-for-the-old-URL migration, because no call site ever knew the URL.
+
+## Server: ctx.reverse()
+
+The default way to generate URLs on the server. Local names are dot-prefixed and resolve within the current `include()` scope; global names resolve against the full route map:
+
+```tsx
+// inside shopPatterns, mounted at include("/shop", shopPatterns, { name: "shop" })
+path(
+  "/product/:slug",
+  (ctx) => {
+    ctx.reverse(".cart"); // "/shop/cart" (local)
+    ctx.reverse(".product", { slug: "widget" }); // "/shop/product/widget"
+    ctx.reverse("blog.post", { slug: "hi" }); // "/blog/hi" (global)
+    return <ProductPage slug={ctx.params.slug} />;
+  },
+  { name: "product" },
+);
+```
+
+When routes are mounted via a parameterized `include()`, mount params auto-fill from the current match — explicit params override:
+
+```tsx
+// mounted at include("/tenant/:tenantId", tenantPatterns, { name: "tenant" })
+ctx.reverse(".settings"); // "/tenant/acme/settings" (tenantId auto-filled)
+ctx.reverse(".settings", { tenantId: "other" }); // "/tenant/other/settings"
+```
+
+Routes with a `search` schema take a typed search object as the third argument:
+
+```tsx
+path(
+  "/search",
+  (ctx) => {
+    const url = ctx.reverse("search", {}, { q: "react", page: 2 });
+    // "/search?q=react&page=2"
+    return <Link to={url}>Search React</Link>;
+  },
+  { name: "search", search: { q: "string", page: "number?" } },
+);
+```
+
+## Client: useReverse(routes)
+
+`ctx.reverse()` is server-only. When a client component needs to generate URLs itself, import the generated `routes` map from the relevant `urls()` module and pass it to `useReverse()`:
+
+```tsx
+"use client";
+import { Link, useReverse } from "@rangojs/router/client";
+import { routes as blogRoutes } from "../urls/blog.gen.js";
+
+export function BlogNav() {
+  const reverse = useReverse(blogRoutes);
+  return (
+    <nav>
+      <Link to={reverse("index")}>Blog</Link>
+      <Link to={reverse("post", { postId: "hello" })}>Post</Link>
+    </nav>
+  );
+}
+```
+
+The imported map is the exposure boundary: only that module's names enter the client bundle. Patterns are mount-relative and joined at runtime, so the same component works under any `include()` — mount the blog at `/news` and `/journal`, and `reverse("post", …)` produces the right URL under each.
+
+The other client pattern is simpler: generate URLs on the server and hand strings to client components as props, loader data, or an action's return value.
+
+## Static paths: href()
+
+For static paths where no named-route lookup is needed, `href()` validates the path at compile time against the registered route patterns:
+
+```tsx
+"use client";
+import { href, Link } from "@rangojs/router/client";
+
+<Link to={href("/about")}>About</Link>;
+```
+
+`useHref()` is the mount-aware variant — inside `include("/shop", …)`, `useHref()("/cart")` returns `/shop/cart`.
+
+## When to use what
+
+| Context          | API                            | Use for                                          |
+| ---------------- | ------------------------------ | ------------------------------------------------ |
+| Server handler   | `ctx.reverse("name")`          | Default server-side URL generation               |
+| Client component | `useReverse(routes)`           | Typed in-module URLs without a server round-trip |
+| Client component | URL passed as prop/loader data | Cross-module URLs or one-off names               |
+| Client component | `href("/path")`                | Static paths, compile-time validated             |
+| Client component | `useHref()`                    | Local navigation inside an `include()` mount     |

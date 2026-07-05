@@ -1,0 +1,80 @@
+---
+title: Loaders
+description: The live data lane — fresh on every request, parallel, streaming, and fetchable on demand.
+type: guide
+---
+
+First, the default data path: handlers are async server components, so you fetch where you render. React Router and Remix split data into a loader beside the component because components couldn't fetch; RSC collapses that split, and Rango doesn't reintroduce it.
+
+`loader()` is a different tool, and the choice is semantic: **where you fetch decides which side of the freshness boundary the data lives on.** Handler data belongs to the shell — rendered with it, frozen with it when cached. Loader data outlives the shell.
+
+<LoaderLanesDemo />
+
+A loader is a server function attached to route segments in the tree; all of a route's loaders start in parallel right after middleware, so data latency overlaps the render instead of serializing after it. Client components read them with `useLoader()`:
+
+```tsx
+export const StockLoader = createLoader(async (ctx) => {
+  "use server";
+  return ctx.env.DB.stockFor(ctx.params.slug);
+});
+
+// in a client component
+const { data, isLoading } = useLoader(StockLoader);
+```
+
+## Live by default, even inside caches
+
+A loader resolves fresh on every request — including cache and prerender hits:
+
+```tsx
+cache({ ttl: 600 }, () => [
+  path("/products", ProductsPage, { name: "products" }, () => [
+    loader(StockLoader), // never cached: re-runs on every hit
+  ]),
+]);
+```
+
+A cache hit streams the stored UI instantly while `StockLoader` resolves fresh alongside it. Caching a loader's data is a separate, explicit opt-in:
+
+```tsx
+loader(ProductLoader, () => [cache({ ttl: 60 })]),
+```
+
+## Skeletons are a choice, not the default
+
+On a document request, a segment without `loading()` waits for its loaders — the HTML arrives with data in place, a ready page. Declaring `loading()` (or your own Suspense boundary) opts that segment into skeleton-then-stream. A per-request `ssr.resolveStreaming` resolver can force fully-settled HTML (`"allReady"`) for bots and crawlers.
+
+## Fetchable on demand
+
+`createLoader(fn, true)` makes a loader callable from any client component — typed params, optional request bodies, per-loader middleware guarding the fetch endpoint. No route registration and no `/api` mirror to maintain: fetchable loaders are discovered at build time, so importing one into the client component that calls it is enough.
+
+```tsx
+export const SearchLoader = createLoader(async (ctx) => {
+  "use server";
+  return db.search(ctx.params.q);
+}, true);
+
+// client: search-as-you-type, no hand-rolled endpoint
+const { data, load } = useFetchLoader(SearchLoader);
+```
+
+## Loaders carry RSC, not just JSON
+
+Loader values serialize through Flight, so a loader can return ReactNode — server-rendered content, lazy-loaded exactly when the client asks for it:
+
+```tsx
+export const ReviewsPanel = createLoader(async (ctx) => {
+  "use server";
+  const reviews = await db.reviewsFor(ctx.params.slug);
+  return <ReviewList reviews={reviews} />; // RSC, streamed to the client
+}, true);
+
+// client: pull server-rendered content in when the tab opens
+const { data: panel, load } = useFetchLoader(ReviewsPanel);
+```
+
+That closes a gap RSC frameworks usually leave to bespoke endpoints or full-route navigation: fetching a server-rendered fragment on interaction — a tab panel, a modal body, a chart — dynamic when it should be, cached when it can be.
+
+## When to reach for a loader
+
+If the data can be a loader, make it a loader. Loaders resolve fresh on every pass — full renders, action revalidations, cache hits — so there is nothing to keep in sync. Handler fetching is right when the data belongs to the shell and should freeze with it; a loader is right when the data must outlive the shell's freshness.

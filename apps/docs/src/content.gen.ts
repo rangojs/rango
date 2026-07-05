@@ -3,9 +3,2817 @@ import type { PageMeta, TreeNode } from "./content";
 
 export const pageMeta: PageMeta[] = [
   {
-    "description": "Learn about the Vercel Shop template and what it offers.",
+    "description": "Rango is a Django-inspired RSC router for Vite — an explicit route tree, server components, and correctness-first caching.",
     "filePath": "/content/docs/index.mdx",
     "slug": "",
+    "title": "Introduction",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shape-of-rango",
+        "text": "The shape of Rango"
+      },
+      {
+        "depth": 2,
+        "id": "start-here",
+        "text": "Start here"
+      },
+      {
+        "depth": 2,
+        "id": "a-taste",
+        "text": "A taste"
+      },
+      {
+        "depth": 2,
+        "id": "status",
+        "text": "Status"
+      }
+    ],
+    "type": "overview",
+    "url": "/docs"
+  },
+  {
+    "description": "The mental models behind Rango — read these when you want to understand why the primitives behave the way they do.",
+    "filePath": "/content/docs/rango/concepts/index.mdx",
+    "slug": "rango/concepts",
+    "title": "Overview",
+    "toc": [],
+    "type": "concept",
+    "url": "/docs/rango/concepts"
+  },
+  {
+    "description": "The four rungs for passing per-request data down the tree, ordered safest-first — and the silent failure mode the ladder exists to prevent.",
+    "filePath": "/content/docs/rango/concepts/data-flow.mdx",
+    "slug": "rango/concepts/data-flow",
+    "title": "Data Flow",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-failure-mode-the-ladder-prevents",
+        "text": "The failure mode the ladder prevents"
+      },
+      {
+        "depth": 2,
+        "id": "rung-1-a-loader",
+        "text": "Rung 1: a loader"
+      },
+      {
+        "depth": 2,
+        "id": "rung-2-middleware-ctxset",
+        "text": "Rung 2: middleware ctx.set()"
+      },
+      {
+        "depth": 2,
+        "id": "rung-3-handler-ctxset-to-its-own-children",
+        "text": "Rung 3: handler ctx.set() to its own children"
+      },
+      {
+        "depth": 2,
+        "id": "rung-4-cross-entry-sharing-with-named-revalidation-contracts",
+        "text": "Rung 4: cross-entry sharing, with named revalidation contracts"
+      },
+      {
+        "depth": 2,
+        "id": "picking-a-rung",
+        "text": "Picking a rung"
+      }
+    ],
+    "type": "concept",
+    "url": "/docs/rango/concepts/data-flow"
+  },
+  {
+    "description": "The exact order of middleware, actions, and rendering per request — what is guaranteed, what is incidental, and why it holds in dev and production alike.",
+    "filePath": "/content/docs/rango/concepts/execution-model.mdx",
+    "slug": "rango/concepts/execution-model",
+    "title": "Execution Model",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-request-lifecycle",
+        "text": "The request lifecycle"
+      },
+      {
+        "depth": 2,
+        "id": "what-the-render-pass-actually-is",
+        "text": "What the render pass actually is"
+      },
+      {
+        "depth": 2,
+        "id": "handler-first-ordering--and-its-exact-scope",
+        "text": "Handler-first ordering — and its exact scope"
+      },
+      {
+        "depth": 2,
+        "id": "partial-revalidation-briefly",
+        "text": "Partial revalidation, briefly"
+      },
+      {
+        "depth": 2,
+        "id": "dev-and-production-run-the-same-model",
+        "text": "Dev and production run the same model"
+      }
+    ],
+    "type": "concept",
+    "url": "/docs/rango/concepts/execution-model"
+  },
+  {
+    "description": "The two orthogonal freshness axes, how to pick between cache() and \"use cache\", and how invalidation and the correctness guards work.",
+    "filePath": "/content/docs/rango/concepts/freshness.mdx",
+    "slug": "rango/concepts/freshness",
+    "title": "Freshness",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "cache-vs-use-cache",
+        "text": "cache() vs \"use cache\""
+      },
+      {
+        "depth": 2,
+        "id": "ttl-and-swr",
+        "text": "TTL and SWR"
+      },
+      {
+        "depth": 2,
+        "id": "tags-and-invalidation",
+        "text": "Tags and invalidation"
+      },
+      {
+        "depth": 2,
+        "id": "nesting-the-outer-window-bounds-the-inner",
+        "text": "Nesting: the outer window bounds the inner"
+      },
+      {
+        "depth": 2,
+        "id": "correctness-guards",
+        "text": "Correctness guards"
+      },
+      {
+        "depth": 2,
+        "id": "version-segmented-store-keys",
+        "text": "Version-segmented store keys"
+      },
+      {
+        "depth": 2,
+        "id": "coming-from-nextjs-or-remix-false-friends",
+        "text": "Coming from Next.js or Remix (false friends)"
+      }
+    ],
+    "type": "concept",
+    "url": "/docs/rango/concepts/freshness"
+  },
+  {
+    "description": "JS and no-JS are the same contract — one action pipeline, two transports, matching middleware effects, cookies, and rendered state.",
+    "filePath": "/content/docs/rango/concepts/progressive-enhancement.mdx",
+    "slug": "rango/concepts/progressive-enhancement",
+    "title": "Progressive Enhancement",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "one-pipeline-two-transports",
+        "text": "One pipeline, two transports"
+      },
+      {
+        "depth": 2,
+        "id": "why-route-middleware-observes-action-set-state-in-both-transports",
+        "text": "Why route middleware observes action-set state in both transports"
+      },
+      {
+        "depth": 2,
+        "id": "what-the-same-contract-covers",
+        "text": "What \"the same contract\" covers"
+      },
+      {
+        "depth": 2,
+        "id": "a-concrete-walk-through",
+        "text": "A concrete walk-through"
+      },
+      {
+        "depth": 2,
+        "id": "divergence-is-a-bug",
+        "text": "Divergence is a bug"
+      },
+      {
+        "depth": 2,
+        "id": "what-this-buys-you",
+        "text": "What this buys you"
+      }
+    ],
+    "type": "concept",
+    "url": "/docs/rango/concepts/progressive-enhancement"
+  },
+  {
+    "description": "How the urls() tree becomes segments, how segments render and merge, and what a partial update actually replaces.",
+    "filePath": "/content/docs/rango/concepts/segments-and-rendering.mdx",
+    "slug": "rango/concepts/segments-and-rendering",
+    "title": "Segments & Rendering",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "from-tree-to-segments",
+        "text": "From tree to segments"
+      },
+      {
+        "depth": 2,
+        "id": "the-rendered-tree-is-a-contract",
+        "text": "The rendered tree is a contract"
+      },
+      {
+        "depth": 2,
+        "id": "param-changes-remount-by-default-reconcile-with-transition",
+        "text": "Param changes: remount by default, reconcile with transition()"
+      },
+      {
+        "depth": 2,
+        "id": "what-a-partial-update-replaces",
+        "text": "What a partial update replaces"
+      },
+      {
+        "depth": 2,
+        "id": "forwardback-is-a-segment-cache-too",
+        "text": "Forward/back is a segment cache too"
+      }
+    ],
+    "type": "concept",
+    "url": "/docs/rango/concepts/segments-and-rendering"
+  },
+  {
+    "description": "Why path() and include() stay visible in urls() while everything else extracts into reusable factories.",
+    "filePath": "/content/docs/rango/concepts/structure-vs-config.mdx",
+    "slug": "rango/concepts/structure-vs-config",
+    "title": "Structure vs Config",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "structure-stays-visible",
+        "text": "Structure stays visible"
+      },
+      {
+        "depth": 2,
+        "id": "config-is-importable",
+        "text": "Config is importable"
+      },
+      {
+        "depth": 2,
+        "id": "factories-name-a-concern-return-an-array",
+        "text": "Factories: name a concern, return an array"
+      },
+      {
+        "depth": 3,
+        "id": "factories-amplify-footguns",
+        "text": "Factories amplify footguns"
+      },
+      {
+        "depth": 3,
+        "id": "keep-factories-small-and-intention-named",
+        "text": "Keep factories small and intention-named"
+      },
+      {
+        "depth": 2,
+        "id": "include-composing-modules-and-code-splitting-them",
+        "text": "include(): composing modules, and code-splitting them"
+      }
+    ],
+    "type": "concept",
+    "url": "/docs/rango/concepts/structure-vs-config"
+  },
+  {
+    "description": "Which generated file covers which surface, how Handler<\"name\"> resolves params and search, and the ambient types and identity scheme that hold it together.",
+    "filePath": "/content/docs/rango/concepts/typesafety.mdx",
+    "slug": "rango/concepts/typesafety",
+    "title": "Type Safety",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "two-generated-files-two-different-jobs",
+        "text": "Two generated files, two different jobs"
+      },
+      {
+        "depth": 2,
+        "id": "handlername-typed-params-and-search",
+        "text": "Handler<\"name\">: typed params and search"
+      },
+      {
+        "depth": 2,
+        "id": "ambient-types-rangoenv-rangovars-rangopath",
+        "text": "Ambient types: Rango.Env, Rango.Vars, Rango.Path"
+      },
+      {
+        "depth": 2,
+        "id": "createvar-scoped-context-tokens",
+        "text": "createVar(): scoped context tokens"
+      },
+      {
+        "depth": 2,
+        "id": "stable-identity-ctxisaction-matches-by-reference",
+        "text": "Stable identity: ctx.isAction() matches by reference"
+      },
+      {
+        "depth": 2,
+        "id": "response-payloads-rangopathresponse",
+        "text": "Response payloads: Rango.PathResponse"
+      }
+    ],
+    "type": "concept",
+    "url": "/docs/rango/concepts/typesafety"
+  },
+  {
+    "description": "The load-bearing ideas in Rango, and which page covers each.",
+    "filePath": "/content/docs/rango/features/index.mdx",
+    "slug": "rango/features",
+    "title": "Overview",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "pick-a-primitive",
+        "text": "Pick a primitive"
+      },
+      {
+        "depth": 2,
+        "id": "the-pages",
+        "text": "The pages"
+      }
+    ],
+    "type": "overview",
+    "url": "/docs/rango/features"
+  },
+  {
+    "description": "Two axes of freshness, never conflated — stored-value freshness versus client-update selection.",
+    "filePath": "/content/docs/rango/features/caching.mdx",
+    "slug": "rango/features/caching",
+    "title": "Caching & Revalidation",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "axis-1-cache",
+        "text": "Axis 1: cache()"
+      },
+      {
+        "depth": 2,
+        "id": "tags-and-invalidation",
+        "text": "Tags and invalidation"
+      },
+      {
+        "depth": 2,
+        "id": "axis-2-revalidate",
+        "text": "Axis 2: revalidate()"
+      },
+      {
+        "depth": 2,
+        "id": "coming-from-another-framework",
+        "text": "Coming from another framework"
+      },
+      {
+        "depth": 2,
+        "id": "nested-caches",
+        "text": "Nested caches"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/caching"
+  },
+  {
+    "description": "The live data lane — fresh on every request, parallel, streaming, and fetchable on demand.",
+    "filePath": "/content/docs/rango/features/loaders.mdx",
+    "slug": "rango/features/loaders",
+    "title": "Loaders",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "live-by-default-even-inside-caches",
+        "text": "Live by default, even inside caches"
+      },
+      {
+        "depth": 2,
+        "id": "skeletons-are-a-choice-not-the-default",
+        "text": "Skeletons are a choice, not the default"
+      },
+      {
+        "depth": 2,
+        "id": "fetchable-on-demand",
+        "text": "Fetchable on demand"
+      },
+      {
+        "depth": 2,
+        "id": "loaders-carry-rsc-not-just-json",
+        "text": "Loaders carry RSC, not just JSON"
+      },
+      {
+        "depth": 2,
+        "id": "when-to-reach-for-a-loader",
+        "text": "When to reach for a loader"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/loaders"
+  },
+  {
+    "description": "Push metadata at the point where the data already exists — and build your own cross-segment channels with the same primitive.",
+    "filePath": "/content/docs/rango/features/metadata.mdx",
+    "slug": "rango/features/metadata",
+    "title": "Metadata & Handles",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "segments-layer",
+        "text": "Segments layer"
+      },
+      {
+        "depth": 2,
+        "id": "meta-is-not-a-special-case",
+        "text": "Meta is not a special case"
+      },
+      {
+        "depth": 2,
+        "id": "handles-replay-on-cache-hits",
+        "text": "Handles replay on cache hits"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/metadata"
+  },
+  {
+    "description": "The onion model — global middleware wraps the whole request, route middleware wraps every render pass.",
+    "filePath": "/content/docs/rango/features/middleware.mdx",
+    "slug": "rango/features/middleware",
+    "title": "Middleware",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "global-middleware-routeruse",
+        "text": "Global middleware: router.use()"
+      },
+      {
+        "depth": 2,
+        "id": "route-middleware-middleware-in-the-tree",
+        "text": "Route middleware: middleware() in the tree"
+      },
+      {
+        "depth": 2,
+        "id": "writing-middleware",
+        "text": "Writing middleware"
+      },
+      {
+        "depth": 2,
+        "id": "typed-context-variables",
+        "text": "Typed context variables"
+      },
+      {
+        "depth": 2,
+        "id": "redirects-with-flash-state",
+        "text": "Redirects with flash state"
+      },
+      {
+        "depth": 2,
+        "id": "why-route-middleware-is-never-stale",
+        "text": "Why route middleware is never stale"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/middleware"
+  },
+  {
+    "description": "Every route carries a name, and URLs are built from names — never hand-assembled from strings.",
+    "filePath": "/content/docs/rango/features/named-routes.mdx",
+    "slug": "rango/features/named-routes",
+    "title": "Named Routes & Links",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "server-ctxreverse",
+        "text": "Server: ctx.reverse()"
+      },
+      {
+        "depth": 2,
+        "id": "client-usereverseroutes",
+        "text": "Client: useReverse(routes)"
+      },
+      {
+        "depth": 2,
+        "id": "static-paths-href",
+        "text": "Static paths: href()"
+      },
+      {
+        "depth": 2,
+        "id": "when-to-use-what",
+        "text": "When to use what"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/named-routes"
+  },
+  {
+    "description": "Fully-prefetched navigations commit instantly — and turning prefetch up is safe because invalidation always fails toward freshness.",
+    "filePath": "/content/docs/rango/features/navigation.mdx",
+    "slug": "rango/features/navigation",
+    "title": "Navigation & Prefetching",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "why-aggressive-prefetch-is-safe",
+        "text": "Why aggressive prefetch is safe"
+      },
+      {
+        "depth": 2,
+        "id": "the-escape-hatch-is-per-invocation",
+        "text": "The escape hatch is per-invocation"
+      },
+      {
+        "depth": 2,
+        "id": "connection-warmup",
+        "text": "Connection warmup"
+      },
+      {
+        "depth": 2,
+        "id": "js-and-no-js-are-the-same-contract",
+        "text": "JS and no-JS are the same contract"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/navigation"
+  },
+  {
+    "description": "Your API lives in the same tree — JSON, text, XML, images, and streams as ordinary route entries, with content negotiation built in.",
+    "filePath": "/content/docs/rango/features/response-routes.mdx",
+    "slug": "rango/features/response-routes",
+    "title": "Response Routes",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "content-negotiation-out-of-the-box",
+        "text": "Content negotiation out of the box"
+      },
+      {
+        "depth": 2,
+        "id": "inferred-endpoint-types",
+        "text": "Inferred endpoint types"
+      },
+      {
+        "depth": 2,
+        "id": "streams-and-sockets",
+        "text": "Streams and sockets"
+      },
+      {
+        "depth": 2,
+        "id": "why-this-beats-an-api-directory",
+        "text": "Why this beats an /api directory"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/response-routes"
+  },
+  {
+    "description": "Routes are expressed, not configured — one tree shows every URL, who owns it, what data it loads, and what wraps it.",
+    "filePath": "/content/docs/rango/features/routing.mdx",
+    "slug": "rango/features/routing",
+    "title": "The Route Tree",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-dsl",
+        "text": "The DSL"
+      },
+      {
+        "depth": 2,
+        "id": "structure-versus-config",
+        "text": "Structure versus config"
+      },
+      {
+        "depth": 2,
+        "id": "composing-sub-apps-with-include",
+        "text": "Composing sub-apps with include()"
+      },
+      {
+        "depth": 2,
+        "id": "not-found-handling",
+        "text": "Not-found handling"
+      },
+      {
+        "depth": 2,
+        "id": "dev-and-production-agree",
+        "text": "Dev and production agree"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/routing"
+  },
+  {
+    "description": "Every consumer-touchable feature is reachable through shipped testing primitives — real handlers, real middleware, real Flight serialization.",
+    "filePath": "/content/docs/rango/features/testing.mdx",
+    "slug": "rango/features/testing",
+    "title": "Testing",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-primitives",
+        "text": "The primitives"
+      },
+      {
+        "depth": 2,
+        "id": "the-dogfood-guarantee",
+        "text": "The dogfood guarantee"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/features/testing"
+  },
+  {
+    "description": "Wire the Rango Vite plugin, define a route tree, create the router, and serve requests.",
+    "filePath": "/content/docs/rango/getting-started/index.mdx",
+    "slug": "rango/getting-started",
+    "title": "Setup",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "vite-config",
+        "text": "Vite config"
+      },
+      {
+        "depth": 2,
+        "id": "the-route-tree",
+        "text": "The route tree"
+      },
+      {
+        "depth": 2,
+        "id": "the-router",
+        "text": "The router"
+      },
+      {
+        "depth": 2,
+        "id": "serving-requests",
+        "text": "Serving requests"
+      },
+      {
+        "depth": 2,
+        "id": "typed-environment",
+        "text": "Typed environment"
+      },
+      {
+        "depth": 2,
+        "id": "route-types",
+        "text": "Route types"
+      },
+      {
+        "depth": 2,
+        "id": "deploying-to-vercel",
+        "text": "Deploying to Vercel"
+      },
+      {
+        "depth": 2,
+        "id": "next",
+        "text": "Next"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/getting-started"
+  },
+  {
+    "description": "Task-oriented guides — each one takes a requirement and shows the Rango way to meet it.",
+    "filePath": "/content/docs/rango/guides/index.mdx",
+    "slug": "rango/guides",
+    "title": "Overview",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "routing-patterns",
+        "text": "Routing patterns"
+      },
+      {
+        "depth": 2,
+        "id": "data--mutations",
+        "text": "Data & mutations"
+      },
+      {
+        "depth": 2,
+        "id": "advanced-caching",
+        "text": "Advanced caching"
+      },
+      {
+        "depth": 2,
+        "id": "presentation",
+        "text": "Presentation"
+      },
+      {
+        "depth": 2,
+        "id": "assets",
+        "text": "Assets"
+      },
+      {
+        "depth": 2,
+        "id": "apis--streaming",
+        "text": "APIs & streaming"
+      },
+      {
+        "depth": 2,
+        "id": "production-health",
+        "text": "Production health"
+      },
+      {
+        "depth": 2,
+        "id": "deployment--migration",
+        "text": "Deployment & migration"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides"
+  },
+  {
+    "description": "Build a typed client for consuming your own response-route JSON APIs — no codegen, no runtime dependency.",
+    "filePath": "/content/docs/rango/guides/api-client.mdx",
+    "slug": "rango/guides/api-client",
+    "title": "API Client",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "what-you-get",
+        "text": "What you get"
+      },
+      {
+        "depth": 2,
+        "id": "the-two-inputs",
+        "text": "The two inputs"
+      },
+      {
+        "depth": 2,
+        "id": "the-helper-copy-into-your-app",
+        "text": "The helper (copy into your app)"
+      },
+      {
+        "depth": 2,
+        "id": "using-it",
+        "text": "Using it"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls-and-variations",
+        "text": "Pitfalls and variations"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/api-client"
+  },
+  {
+    "description": "Accumulate a breadcrumb trail across nested route segments with the built-in Breadcrumbs handle.",
+    "filePath": "/content/docs/rango/guides/breadcrumbs.mdx",
+    "slug": "rango/guides/breadcrumbs",
+    "title": "Breadcrumbs",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "push-crumbs-from-server-segments",
+        "text": "Push crumbs from server segments"
+      },
+      {
+        "depth": 2,
+        "id": "render-the-trail-on-the-client",
+        "text": "Render the trail on the client"
+      },
+      {
+        "depth": 2,
+        "id": "async-content",
+        "text": "Async content"
+      },
+      {
+        "depth": 3,
+        "id": "deferred-crumbs-decide-in-the-handler-resolve-from-a-deep-component",
+        "text": "Deferred crumbs: decide in the handler, resolve from a deep component"
+      },
+      {
+        "depth": 2,
+        "id": "deduplication",
+        "text": "Deduplication"
+      },
+      {
+        "depth": 2,
+        "id": "beyond-breadcrumbs-custom-handles",
+        "text": "Beyond breadcrumbs: custom handles"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/breadcrumbs"
+  },
+  {
+    "description": "Audit your client, SSR, and RSC bundles for server-code leaks, doubled React, and oversized chunks with per-environment treemaps.",
+    "filePath": "/content/docs/rango/guides/bundle-analysis.mdx",
+    "slug": "rango/guides/bundle-analysis",
+    "title": "Bundle Analysis",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "what-can-go-wrong",
+        "text": "What can go wrong"
+      },
+      {
+        "depth": 2,
+        "id": "set-up-the-visualizer",
+        "text": "Set up the visualizer"
+      },
+      {
+        "depth": 2,
+        "id": "build-and-open-the-reports",
+        "text": "Build and open the reports"
+      },
+      {
+        "depth": 2,
+        "id": "triage-the-reports",
+        "text": "Triage the reports"
+      },
+      {
+        "depth": 3,
+        "id": "clienthtml-first",
+        "text": "client.html first"
+      },
+      {
+        "depth": 3,
+        "id": "then-ssrhtml",
+        "text": "Then ssr.html"
+      },
+      {
+        "depth": 3,
+        "id": "then-rschtml",
+        "text": "Then rsc.html"
+      },
+      {
+        "depth": 2,
+        "id": "fix-what-you-find",
+        "text": "Fix what you find"
+      },
+      {
+        "depth": 2,
+        "id": "when-to-re-run",
+        "text": "When to re-run"
+      },
+      {
+        "depth": 2,
+        "id": "reporting-a-framework-regression",
+        "text": "Reporting a framework regression"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/bundle-analysis"
+  },
+  {
+    "description": "Rango placed next to Next.js App Router, TanStack Start, and Waku — where its design leads, and where the others still do.",
+    "filePath": "/content/docs/rango/guides/comparison.mdx",
+    "slug": "rango/guides/comparison",
+    "title": "Comparison",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "tldr",
+        "text": "TL;DR"
+      },
+      {
+        "depth": 2,
+        "id": "at-a-glance",
+        "text": "At a glance"
+      },
+      {
+        "depth": 2,
+        "id": "start-simple-grow-without-changing-models",
+        "text": "Start simple; grow without changing models"
+      },
+      {
+        "depth": 2,
+        "id": "where-rangos-design-leads",
+        "text": "Where Rango's design leads"
+      },
+      {
+        "depth": 2,
+        "id": "coming-from-a-specific-framework",
+        "text": "Coming from a specific framework"
+      },
+      {
+        "depth": 2,
+        "id": "where-the-others-still-lead",
+        "text": "Where the others still lead"
+      },
+      {
+        "depth": 2,
+        "id": "bottom-line",
+        "text": "Bottom line"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/comparison"
+  },
+  {
+    "description": "Import stylesheets in the Document head with ?url and a precedence-managed link — loaded before paint, no flash of unstyled content.",
+    "filePath": "/content/docs/rango/guides/css.mdx",
+    "slug": "rango/guides/css",
+    "title": "CSS",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-pattern",
+        "text": "The pattern"
+      },
+      {
+        "depth": 3,
+        "id": "why-url",
+        "text": "Why ?url"
+      },
+      {
+        "depth": 3,
+        "id": "why-precedence",
+        "text": "Why precedence"
+      },
+      {
+        "depth": 2,
+        "id": "side-effect-imports-vs-url",
+        "text": "Side-effect imports vs ?url"
+      },
+      {
+        "depth": 2,
+        "id": "cross-app-navigation-host-router",
+        "text": "Cross-app navigation (host router)"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      },
+      {
+        "depth": 2,
+        "id": "related-guides",
+        "text": "Related guides"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/css"
+  },
+  {
+    "description": "Inspect the generated route manifest when a path matches the wrong handler or the route tree isn't shaped how you expect.",
+    "filePath": "/content/docs/rango/guides/debug-manifest.mdx",
+    "slug": "rango/guides/debug-manifest",
+    "title": "Debug Manifest",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "quick-look-in-the-browser",
+        "text": "Quick look in the browser"
+      },
+      {
+        "depth": 2,
+        "id": "programmatic-access",
+        "text": "Programmatic access"
+      },
+      {
+        "depth": 2,
+        "id": "reading-shortcodes",
+        "text": "Reading shortCodes"
+      },
+      {
+        "depth": 2,
+        "id": "what-to-verify",
+        "text": "What to verify"
+      },
+      {
+        "depth": 2,
+        "id": "diffing-manifests-across-a-change",
+        "text": "Diffing manifests across a change"
+      },
+      {
+        "depth": 2,
+        "id": "common-issues",
+        "text": "Common issues"
+      },
+      {
+        "depth": 3,
+        "id": "routes-have-parentshortcode-null",
+        "text": "Routes have parentShortCode: null"
+      },
+      {
+        "depth": 3,
+        "id": "layouts-missing-from-the-hierarchy",
+        "text": "Layouts missing from the hierarchy"
+      },
+      {
+        "depth": 3,
+        "id": "wrong-mount-index",
+        "text": "Wrong mount index"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/debug-manifest"
+  },
+  {
+    "description": "Build a single streaming Node Function with the vercel preset, wire the Runtime Cache, and emit tracing spans.",
+    "filePath": "/content/docs/rango/guides/deploy-vercel.mdx",
+    "slug": "rango/guides/deploy-vercel",
+    "title": "Deploy to Vercel",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-short-path",
+        "text": "The short path"
+      },
+      {
+        "depth": 2,
+        "id": "function-configuration",
+        "text": "Function configuration"
+      },
+      {
+        "depth": 2,
+        "id": "runtime-cache",
+        "text": "Runtime Cache"
+      },
+      {
+        "depth": 2,
+        "id": "multi-app-host-routers",
+        "text": "Multi-app host routers"
+      },
+      {
+        "depth": 2,
+        "id": "tracing",
+        "text": "Tracing"
+      },
+      {
+        "depth": 2,
+        "id": "previewing-locally-without-deploying",
+        "text": "Previewing locally without deploying"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/deploy-vercel"
+  },
+  {
+    "description": "Cache complete HTTP responses at the edge with Cache-Control s-maxage — the outermost layer over segment and function caching.",
+    "filePath": "/content/docs/rango/guides/document-cache.mdx",
+    "slug": "rango/guides/document-cache",
+    "title": "Document Cache",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "setup",
+        "text": "Setup"
+      },
+      {
+        "depth": 2,
+        "id": "opting-routes-in",
+        "text": "Opting routes in"
+      },
+      {
+        "depth": 2,
+        "id": "request-flow",
+        "text": "Request flow"
+      },
+      {
+        "depth": 2,
+        "id": "options",
+        "text": "Options"
+      },
+      {
+        "depth": 2,
+        "id": "what-gets-cached--and-what-never-does",
+        "text": "What gets cached — and what never does"
+      },
+      {
+        "depth": 2,
+        "id": "layering-with-the-routers-own-caching",
+        "text": "Layering with the router's own caching"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/document-cache"
+  },
+  {
+    "description": "Load web fonts with preload hints — Fontsource, Google Fonts, or self-hosted files.",
+    "filePath": "/content/docs/rango/guides/fonts.mdx",
+    "slug": "rango/guides/fonts",
+    "title": "Fonts",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-recommended-path-fontsource",
+        "text": "The recommended path: Fontsource"
+      },
+      {
+        "depth": 2,
+        "id": "google-fonts",
+        "text": "Google Fonts"
+      },
+      {
+        "depth": 2,
+        "id": "self-hosted-font-files",
+        "text": "Self-hosted font files"
+      },
+      {
+        "depth": 2,
+        "id": "performance-checklist",
+        "text": "Performance checklist"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/fonts"
+  },
+  {
+    "description": "Attach default loaders, middleware, and other use items directly to a handler so every mount site gets them for free.",
+    "filePath": "/content/docs/rango/guides/handler-use.mdx",
+    "slug": "rango/guides/handler-use",
+    "title": "handler.use",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "define-a-handler-with-use",
+        "text": "Define a handler with .use"
+      },
+      {
+        "depth": 2,
+        "id": "what-each-mount-site-allows",
+        "text": "What each mount site allows"
+      },
+      {
+        "depth": 2,
+        "id": "merge-order-handler-defaults-first-explicit-second",
+        "text": "Merge order: handler defaults first, explicit second"
+      },
+      {
+        "depth": 2,
+        "id": "the-main-pay-off-composable-parallel-slots",
+        "text": "The main pay-off: composable parallel slots"
+      },
+      {
+        "depth": 2,
+        "id": "loading-is-single-assignment--scope-it-deliberately",
+        "text": "loading() is single-assignment — scope it deliberately"
+      },
+      {
+        "depth": 2,
+        "id": "gotchas",
+        "text": "Gotchas"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/handler-use"
+  },
+  {
+    "description": "Route requests to different apps by domain, subdomain, or path prefix — with middleware, lazy loading, and a dev cookie override.",
+    "filePath": "/content/docs/rango/guides/host-router.mdx",
+    "slug": "rango/guides/host-router",
+    "title": "Host Router",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shortest-path",
+        "text": "The shortest path"
+      },
+      {
+        "depth": 2,
+        "id": "pattern-syntax",
+        "text": "Pattern syntax"
+      },
+      {
+        "depth": 2,
+        "id": "lazy-vs-map",
+        "text": ".lazy vs .map"
+      },
+      {
+        "depth": 2,
+        "id": "deploying-who-owns-the-server-entry",
+        "text": "Deploying: who owns the server entry"
+      },
+      {
+        "depth": 2,
+        "id": "handling-unmatched-hosts",
+        "text": "Handling unmatched hosts"
+      },
+      {
+        "depth": 2,
+        "id": "middleware",
+        "text": "Middleware"
+      },
+      {
+        "depth": 2,
+        "id": "dev-cookie-based-host-override",
+        "text": "Dev: cookie-based host override"
+      },
+      {
+        "depth": 2,
+        "id": "testing",
+        "text": "Testing"
+      },
+      {
+        "depth": 2,
+        "id": "error-types",
+        "text": "Error types"
+      },
+      {
+        "depth": 2,
+        "id": "cross-app-navigation-is-a-full-document-load",
+        "text": "Cross-app navigation is a full document load"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/host-router"
+  },
+  {
+    "description": "Locale-aware routing with an optional :locale? prefix, a resolution chain, and react-intl integration.",
+    "filePath": "/content/docs/rango/guides/i18n.mdx",
+    "slug": "rango/guides/i18n",
+    "title": "i18n",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "mount-routes-under-an-optional-locale-prefix",
+        "text": "Mount routes under an optional locale prefix"
+      },
+      {
+        "depth": 3,
+        "id": "constrain-to-known-locales",
+        "text": "Constrain to known locales"
+      },
+      {
+        "depth": 2,
+        "id": "resolve-the-active-locale",
+        "text": "Resolve the active locale"
+      },
+      {
+        "depth": 3,
+        "id": "redirect-to-the-canonical-url",
+        "text": "Redirect to the canonical URL"
+      },
+      {
+        "depth": 2,
+        "id": "generate-localized-urls",
+        "text": "Generate localized URLs"
+      },
+      {
+        "depth": 2,
+        "id": "wire-up-react-intl",
+        "text": "Wire up react-intl"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/i18n"
+  },
+  {
+    "description": "Open a route as a modal or slide-over on soft navigation while the same URL serves the full page on hard navigation.",
+    "filePath": "/content/docs/rango/guides/intercepting-routes.mdx",
+    "slug": "rango/guides/intercepting-routes",
+    "title": "Intercepting Routes",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shortest-path",
+        "text": "The shortest path"
+      },
+      {
+        "depth": 2,
+        "id": "modal-chrome-and-closing",
+        "text": "Modal chrome and closing"
+      },
+      {
+        "depth": 2,
+        "id": "conditional-intercepts-with-when",
+        "text": "Conditional intercepts with when"
+      },
+      {
+        "depth": 2,
+        "id": "middleware-and-data",
+        "text": "Middleware and data"
+      },
+      {
+        "depth": 3,
+        "id": "revalidation-across-entries",
+        "text": "Revalidation across entries"
+      },
+      {
+        "depth": 2,
+        "id": "self-contained-modals-with-handleruse",
+        "text": "Self-contained modals with handler.use"
+      },
+      {
+        "depth": 2,
+        "id": "interaction-with-view-transitions",
+        "text": "Interaction with view transitions"
+      },
+      {
+        "depth": 2,
+        "id": "interaction-with-prerender",
+        "text": "Interaction with prerender"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/intercepting-routes"
+  },
+  {
+    "description": "Wrap child routes in a persistent shell with layout() and Outlet, and control how layout data revalidates.",
+    "filePath": "/content/docs/rango/guides/layouts.mdx",
+    "slug": "rango/guides/layouts",
+    "title": "Layouts",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shortest-path",
+        "text": "The shortest path"
+      },
+      {
+        "depth": 2,
+        "id": "three-ways-to-pass-the-layout",
+        "text": "Three ways to pass the layout"
+      },
+      {
+        "depth": 2,
+        "id": "layouts-carry-their-own-data-and-config",
+        "text": "Layouts carry their own data and config"
+      },
+      {
+        "depth": 2,
+        "id": "passing-handler-data-down-orphan-layouts",
+        "text": "Passing handler data down: orphan layouts"
+      },
+      {
+        "depth": 2,
+        "id": "revalidation-on-actions",
+        "text": "Revalidation on actions"
+      },
+      {
+        "depth": 3,
+        "id": "revalidation-contracts",
+        "text": "Revalidation contracts"
+      },
+      {
+        "depth": 2,
+        "id": "reusable-layouts-with-handleruse",
+        "text": "Reusable layouts with handler.use"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/layouts"
+  },
+  {
+    "description": "Map every App Router concept to its Rango equivalent and migrate a Next.js project route by route.",
+    "filePath": "/content/docs/rango/guides/migrate-from-nextjs.mdx",
+    "slug": "rango/guides/migrate-from-nextjs",
+    "title": "Migrate from Next.js",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "replace-imports--never-shim-next",
+        "text": "Replace imports — never shim Next"
+      },
+      {
+        "depth": 2,
+        "id": "step-1-project-setup",
+        "text": "Step 1: Project setup"
+      },
+      {
+        "depth": 2,
+        "id": "step-2-routes-and-layouts",
+        "text": "Step 2: Routes and layouts"
+      },
+      {
+        "depth": 3,
+        "id": "file-paths-become-url-patterns",
+        "text": "File paths become URL patterns"
+      },
+      {
+        "depth": 3,
+        "id": "layouts-use-outlet-not-children",
+        "text": "Layouts use Outlet, not children"
+      },
+      {
+        "depth": 3,
+        "id": "route-groups-become-include",
+        "text": "Route groups become include()"
+      },
+      {
+        "depth": 3,
+        "id": "parallel-routes",
+        "text": "Parallel routes"
+      },
+      {
+        "depth": 3,
+        "id": "intercepting-routes",
+        "text": "Intercepting routes"
+      },
+      {
+        "depth": 2,
+        "id": "step-3-data-fetching",
+        "text": "Step 3: Data fetching"
+      },
+      {
+        "depth": 3,
+        "id": "inline-fetching-carries-over-as-is",
+        "text": "Inline fetching carries over as-is"
+      },
+      {
+        "depth": 3,
+        "id": "when-to-reach-for-a-loader",
+        "text": "When to reach for a loader"
+      },
+      {
+        "depth": 3,
+        "id": "generatestaticparams-becomes-prerender--passthrough",
+        "text": "generateStaticParams becomes Prerender + Passthrough"
+      },
+      {
+        "depth": 3,
+        "id": "segment-config-maps-to-explicit-primitives",
+        "text": "Segment config maps to explicit primitives"
+      },
+      {
+        "depth": 3,
+        "id": "partial-prerendering-the-ppr-path-option",
+        "text": "Partial prerendering: the ppr path option"
+      },
+      {
+        "depth": 3,
+        "id": "revalidation-is-two-separate-axes",
+        "text": "Revalidation is two separate axes"
+      },
+      {
+        "depth": 2,
+        "id": "step-4-middleware",
+        "text": "Step 4: Middleware"
+      },
+      {
+        "depth": 2,
+        "id": "step-5-loading-error-and-not-found-states",
+        "text": "Step 5: Loading, error, and not-found states"
+      },
+      {
+        "depth": 2,
+        "id": "step-6-navigation",
+        "text": "Step 6: Navigation"
+      },
+      {
+        "depth": 2,
+        "id": "step-7-server-actions",
+        "text": "Step 7: Server actions"
+      },
+      {
+        "depth": 2,
+        "id": "step-8-metadata",
+        "text": "Step 8: Metadata"
+      },
+      {
+        "depth": 2,
+        "id": "step-9-api-routes",
+        "text": "Step 9: API routes"
+      },
+      {
+        "depth": 2,
+        "id": "step-10-theme-and-dark-mode",
+        "text": "Step 10: Theme and dark mode"
+      },
+      {
+        "depth": 2,
+        "id": "migration-checklist",
+        "text": "Migration checklist"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/migrate-from-nextjs"
+  },
+  {
+    "description": "Map React Router and Remix loaders, actions, and route modules to Rango handlers and the urls() DSL.",
+    "filePath": "/content/docs/rango/guides/migrate-from-react-router.mdx",
+    "slug": "rango/guides/migrate-from-react-router",
+    "title": "Migrate from React Router",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "identify-the-mode-first",
+        "text": "Identify the mode first"
+      },
+      {
+        "depth": 2,
+        "id": "replace-imports--never-shim-react-router",
+        "text": "Replace imports — never shim React Router"
+      },
+      {
+        "depth": 2,
+        "id": "step-1-project-setup",
+        "text": "Step 1: Project setup"
+      },
+      {
+        "depth": 2,
+        "id": "step-2-route-mapping",
+        "text": "Step 2: Route mapping"
+      },
+      {
+        "depth": 3,
+        "id": "route-module-exports-framework-mode",
+        "text": "Route module exports (framework mode)"
+      },
+      {
+        "depth": 3,
+        "id": "route-paths",
+        "text": "Route paths"
+      },
+      {
+        "depth": 3,
+        "id": "layouts-and-nesting",
+        "text": "Layouts and nesting"
+      },
+      {
+        "depth": 2,
+        "id": "step-3-data-and-actions",
+        "text": "Step 3: Data and actions"
+      },
+      {
+        "depth": 3,
+        "id": "loaders-merge-into-handlers--the-default-migration",
+        "text": "Loaders merge into handlers — the default migration"
+      },
+      {
+        "depth": 3,
+        "id": "when-to-use-createloader",
+        "text": "When to use createLoader()"
+      },
+      {
+        "depth": 3,
+        "id": "actions-become-use-server-functions",
+        "text": "Actions become \"use server\" functions"
+      },
+      {
+        "depth": 3,
+        "id": "clientloader--clientaction",
+        "text": "clientLoader / clientAction"
+      },
+      {
+        "depth": 3,
+        "id": "shouldrevalidate-becomes-revalidate",
+        "text": "shouldRevalidate becomes revalidate()"
+      },
+      {
+        "depth": 2,
+        "id": "step-4-route-protection",
+        "text": "Step 4: Route protection"
+      },
+      {
+        "depth": 2,
+        "id": "step-5-loading-and-error-states",
+        "text": "Step 5: Loading and error states"
+      },
+      {
+        "depth": 2,
+        "id": "step-6-navigation",
+        "text": "Step 6: Navigation"
+      },
+      {
+        "depth": 2,
+        "id": "step-7-metadata-api-routes-theme",
+        "text": "Step 7: Metadata, API routes, theme"
+      },
+      {
+        "depth": 2,
+        "id": "cloudflare-workers-rr7-on-workers-apps",
+        "text": "Cloudflare Workers (RR7-on-Workers apps)"
+      },
+      {
+        "depth": 2,
+        "id": "key-conceptual-differences",
+        "text": "Key conceptual differences"
+      },
+      {
+        "depth": 2,
+        "id": "migration-checklist",
+        "text": "Migration checklist"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/migrate-from-react-router"
+  },
+  {
+    "description": "Serve different response types — RSC, JSON, text, XML — from the same URL, dispatched on the Accept header.",
+    "filePath": "/content/docs/rango/guides/mime-routes.mdx",
+    "slug": "rango/guides/mime-routes",
+    "title": "MIME Routes",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "two-handlers-one-url",
+        "text": "Two handlers, one URL"
+      },
+      {
+        "depth": 2,
+        "id": "how-the-router-picks",
+        "text": "How the router picks"
+      },
+      {
+        "depth": 2,
+        "id": "more-than-two-variants",
+        "text": "More than two variants"
+      },
+      {
+        "depth": 2,
+        "id": "wildcard-patterns",
+        "text": "Wildcard patterns"
+      },
+      {
+        "depth": 2,
+        "id": "api-only-negotiation-no-rsc-primary",
+        "text": "API-only negotiation (no RSC primary)"
+      },
+      {
+        "depth": 2,
+        "id": "typing-negotiated-responses",
+        "text": "Typing negotiated responses"
+      },
+      {
+        "depth": 2,
+        "id": "caching",
+        "text": "Caching"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/mime-routes"
+  },
+  {
+    "description": "See where request time goes with the debugPerformance waterfall, then wire telemetry sinks and tracing spans for production.",
+    "filePath": "/content/docs/rango/guides/observability.mdx",
+    "slug": "rango/guides/observability",
+    "title": "Observability",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-performance-waterfall",
+        "text": "The performance waterfall"
+      },
+      {
+        "depth": 3,
+        "id": "reading-the-timeline",
+        "text": "Reading the timeline"
+      },
+      {
+        "depth": 3,
+        "id": "caveat-deployed-cloudflare-workers",
+        "text": "Caveat: deployed Cloudflare Workers"
+      },
+      {
+        "depth": 2,
+        "id": "structured-telemetry",
+        "text": "Structured telemetry"
+      },
+      {
+        "depth": 2,
+        "id": "tracing-phase-spans",
+        "text": "Tracing: phase spans"
+      },
+      {
+        "depth": 3,
+        "id": "opentelemetry",
+        "text": "OpenTelemetry"
+      },
+      {
+        "depth": 3,
+        "id": "cloudflare-workers",
+        "text": "Cloudflare Workers"
+      },
+      {
+        "depth": 3,
+        "id": "vercel-functions",
+        "text": "Vercel Functions"
+      },
+      {
+        "depth": 2,
+        "id": "debugging-stale-data-and-revalidation",
+        "text": "Debugging stale data and revalidation"
+      },
+      {
+        "depth": 2,
+        "id": "what-it-costs-when-off",
+        "text": "What it costs when off"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/observability"
+  },
+  {
+    "description": "Render multiple independently-loading regions — sidebars, panels, metadata slots — as named slots at the same URL.",
+    "filePath": "/content/docs/rango/guides/parallel-routes.mdx",
+    "slug": "rango/guides/parallel-routes",
+    "title": "Parallel Routes",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "declare-slots-render-them-with-paralleloutlet",
+        "text": "Declare slots, render them with ParallelOutlet"
+      },
+      {
+        "depth": 2,
+        "id": "streaming-loading-decides-who-waits",
+        "text": "Streaming: loading() decides who waits"
+      },
+      {
+        "depth": 2,
+        "id": "a-meta-slot-for-per-route-metadata",
+        "text": "A @meta slot for per-route metadata"
+      },
+      {
+        "depth": 2,
+        "id": "self-contained-slots-via-handleruse",
+        "text": "Self-contained slots via handler.use"
+      },
+      {
+        "depth": 2,
+        "id": "scoping-explicit-use-broadcast-vs-slot-local",
+        "text": "Scoping explicit use(): broadcast vs slot-local"
+      },
+      {
+        "depth": 2,
+        "id": "slot-overrides-last-definition-wins",
+        "text": "Slot overrides: last definition wins"
+      },
+      {
+        "depth": 2,
+        "id": "revalidation",
+        "text": "Revalidation"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/parallel-routes"
+  },
+  {
+    "description": "Cache a page's rendered HTML shell and serve it instantly while the live parts resume on every request.",
+    "filePath": "/content/docs/rango/guides/ppr.mdx",
+    "slug": "rango/guides/ppr",
+    "title": "PPR",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "opt-in-with-the-ppr-path-option",
+        "text": "Opt in with the ppr path option"
+      },
+      {
+        "depth": 2,
+        "id": "what-counts-as-a-hole",
+        "text": "What counts as a hole"
+      },
+      {
+        "depth": 3,
+        "id": "promise-holes-no-loader-required",
+        "text": "Promise holes: no loader required"
+      },
+      {
+        "depth": 3,
+        "id": "loaders-loading-is-the-lane-selector",
+        "text": "Loaders: loading() is the lane selector"
+      },
+      {
+        "depth": 2,
+        "id": "how-a-request-is-served",
+        "text": "How a request is served"
+      },
+      {
+        "depth": 2,
+        "id": "options-and-invalidation",
+        "text": "Options and invalidation"
+      },
+      {
+        "depth": 2,
+        "id": "per-user-data",
+        "text": "Per-user data"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/ppr"
+  },
+  {
+    "description": "Render route segments at build time as a cache write — the worker serves stored Flight payloads instead of executing handler code.",
+    "filePath": "/content/docs/rango/guides/prerender.mdx",
+    "slug": "rango/guides/prerender",
+    "title": "Prerender",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shortest-path",
+        "text": "The shortest path"
+      },
+      {
+        "depth": 2,
+        "id": "passthrough-a-live-fallback-for-unknown-params",
+        "text": "Passthrough: a live fallback for unknown params"
+      },
+      {
+        "depth": 2,
+        "id": "what-the-handler-sees-buildcontext",
+        "text": "What the handler sees: BuildContext"
+      },
+      {
+        "depth": 2,
+        "id": "how-the-dsl-items-behave",
+        "text": "How the DSL items behave"
+      },
+      {
+        "depth": 2,
+        "id": "skipping-and-per-param-fallback",
+        "text": "Skipping and per-param fallback"
+      },
+      {
+        "depth": 2,
+        "id": "build-output",
+        "text": "Build output"
+      },
+      {
+        "depth": 2,
+        "id": "dev-mode",
+        "text": "Dev mode"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/prerender"
+  },
+  {
+    "description": "Enable React Compiler the vite-rsc way — a separate Babel plugin after react() and before the RSC plugin, compiling client components only.",
+    "filePath": "/content/docs/rango/guides/react-compiler.mdx",
+    "slug": "rango/guides/react-compiler",
+    "title": "React Compiler",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shape-read-first",
+        "text": "The shape (read first)"
+      },
+      {
+        "depth": 2,
+        "id": "step-1-install",
+        "text": "Step 1: Install"
+      },
+      {
+        "depth": 2,
+        "id": "step-2-wire-it-in",
+        "text": "Step 2: Wire it in"
+      },
+      {
+        "depth": 3,
+        "id": "default-non-cloudflare-app",
+        "text": "Default (non-Cloudflare) app"
+      },
+      {
+        "depth": 3,
+        "id": "cloudflare-app",
+        "text": "Cloudflare app"
+      },
+      {
+        "depth": 2,
+        "id": "what-gets-compiled-client-only",
+        "text": "What gets compiled (client-only)"
+      },
+      {
+        "depth": 2,
+        "id": "options",
+        "text": "Options"
+      },
+      {
+        "depth": 2,
+        "id": "interaction-with-build-time-prerender",
+        "text": "Interaction with build-time prerender"
+      },
+      {
+        "depth": 2,
+        "id": "step-3-verify-the-compiler-actually-ran",
+        "text": "Step 3: Verify the compiler actually ran"
+      },
+      {
+        "depth": 2,
+        "id": "troubleshooting",
+        "text": "Troubleshooting"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/react-compiler"
+  },
+  {
+    "description": "Inject GTM, analytics, and widget scripts via the Script handle and the Scripts component — with the CSP nonce applied automatically.",
+    "filePath": "/content/docs/rango/guides/scripts.mdx",
+    "slug": "rango/guides/scripts",
+    "title": "Third-Party Scripts",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "setup",
+        "text": "Setup"
+      },
+      {
+        "depth": 2,
+        "id": "push-from-a-handler",
+        "text": "Push from a handler"
+      },
+      {
+        "depth": 2,
+        "id": "the-execution-contract-read-this",
+        "text": "The execution contract (read this)"
+      },
+      {
+        "depth": 2,
+        "id": "the-inline-self-inject-rule-gtmga4segment",
+        "text": "The inline-self-inject rule (GTM/GA4/Segment)"
+      },
+      {
+        "depth": 3,
+        "id": "per-route-tagging-on-the-first-render",
+        "text": "Per-route tagging on the first render"
+      },
+      {
+        "depth": 2,
+        "id": "csp-and-the-nonce",
+        "text": "CSP and the nonce"
+      },
+      {
+        "depth": 2,
+        "id": "not-covered-by-the-handle-do-it-yourself",
+        "text": "Not covered by the handle (do it yourself)"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/scripts"
+  },
+  {
+    "description": "Mutations with \"use server\" — forms, useActionState, validation, revalidation selection, and action-side auth.",
+    "filePath": "/content/docs/rango/guides/server-actions.mdx",
+    "slug": "rango/guides/server-actions",
+    "title": "Server Actions",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shortest-path",
+        "text": "The shortest path"
+      },
+      {
+        "depth": 2,
+        "id": "forms-with-useactionstate",
+        "text": "Forms with useActionState"
+      },
+      {
+        "depth": 2,
+        "id": "validation",
+        "text": "Validation"
+      },
+      {
+        "depth": 2,
+        "id": "choosing-what-revalidates",
+        "text": "Choosing what revalidates"
+      },
+      {
+        "depth": 2,
+        "id": "redirects",
+        "text": "Redirects"
+      },
+      {
+        "depth": 2,
+        "id": "auth-inside-actions",
+        "text": "Auth inside actions"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/server-actions"
+  },
+  {
+    "description": "Let a frozen shell describe itself through a replayed handle, so live loaders fetch exactly what the shell's holes need in one batch.",
+    "filePath": "/content/docs/rango/guides/shell-manifest.mdx",
+    "slug": "rango/guides/shell-manifest",
+    "title": "Shell Manifest",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-problem-this-solves",
+        "text": "The problem this solves"
+      },
+      {
+        "depth": 2,
+        "id": "the-mechanism",
+        "text": "The mechanism"
+      },
+      {
+        "depth": 2,
+        "id": "the-recipe-pre-rendered-list-live-prices",
+        "text": "The recipe: pre-rendered list, live prices"
+      },
+      {
+        "depth": 2,
+        "id": "works-with-runtime-cache-too",
+        "text": "Works with runtime cache() too"
+      },
+      {
+        "depth": 2,
+        "id": "contract-and-gotchas",
+        "text": "Contract and gotchas"
+      },
+      {
+        "depth": 2,
+        "id": "testing-the-loader",
+        "text": "Testing the loader"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/shell-manifest"
+  },
+  {
+    "description": "Server-Sent Events via path.stream and WebSocket upgrades via path.any, with middleware interaction and runtime caveats.",
+    "filePath": "/content/docs/rango/guides/streams-and-websockets.mdx",
+    "slug": "rango/guides/streams-and-websockets",
+    "title": "Streams & WebSockets",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "choosing-a-shape",
+        "text": "Choosing a shape"
+      },
+      {
+        "depth": 2,
+        "id": "server-sent-events",
+        "text": "Server-Sent Events"
+      },
+      {
+        "depth": 3,
+        "id": "sse-pitfalls",
+        "text": "SSE pitfalls"
+      },
+      {
+        "depth": 2,
+        "id": "websockets-cloudflare-workers",
+        "text": "WebSockets (Cloudflare Workers)"
+      },
+      {
+        "depth": 3,
+        "id": "durable-objects",
+        "text": "Durable Objects"
+      },
+      {
+        "depth": 3,
+        "id": "the-agents-library",
+        "text": "The agents library"
+      },
+      {
+        "depth": 2,
+        "id": "middleware-and-upgrades",
+        "text": "Middleware and upgrades"
+      },
+      {
+        "depth": 2,
+        "id": "caching",
+        "text": "Caching"
+      },
+      {
+        "depth": 2,
+        "id": "runtime-support",
+        "text": "Runtime support"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/streams-and-websockets"
+  },
+  {
+    "description": "Set up Tailwind CSS v4 in a Rango app with the @tailwindcss/vite plugin and a ?url import in the Document.",
+    "filePath": "/content/docs/rango/guides/tailwind.mdx",
+    "slug": "rango/guides/tailwind",
+    "title": "Tailwind",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "install",
+        "text": "Install"
+      },
+      {
+        "depth": 2,
+        "id": "register-the-vite-plugin",
+        "text": "Register the Vite plugin"
+      },
+      {
+        "depth": 2,
+        "id": "create-the-css-entry-point",
+        "text": "Create the CSS entry point"
+      },
+      {
+        "depth": 2,
+        "id": "link-it-in-the-document",
+        "text": "Link it in the Document"
+      },
+      {
+        "depth": 2,
+        "id": "customizing-the-theme",
+        "text": "Customizing the theme"
+      },
+      {
+        "depth": 2,
+        "id": "dark-mode",
+        "text": "Dark mode"
+      },
+      {
+        "depth": 2,
+        "id": "custom-fonts",
+        "text": "Custom fonts"
+      },
+      {
+        "depth": 2,
+        "id": "multiple-apps-under-a-host-router",
+        "text": "Multiple apps under a host router"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/tailwind"
+  },
+  {
+    "description": "Opt-in light/dark mode with FOUC prevention, persisted on the server and the client.",
+    "filePath": "/content/docs/rango/guides/theme.mdx",
+    "slug": "rango/guides/theme",
+    "title": "Theme",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "enable-it",
+        "text": "Enable it"
+      },
+      {
+        "depth": 2,
+        "id": "wire-up-your-document",
+        "text": "Wire up your Document"
+      },
+      {
+        "depth": 2,
+        "id": "toggle-it-on-the-client",
+        "text": "Toggle it on the client"
+      },
+      {
+        "depth": 2,
+        "id": "read-and-set-it-on-the-server",
+        "text": "Read and set it on the server"
+      },
+      {
+        "depth": 2,
+        "id": "pitfalls",
+        "text": "Pitfalls"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/theme"
+  },
+  {
+    "description": "Function-level caching with the \"use cache\" directive — profiles, tags, and the guards that keep per-request data out of shared entries.",
+    "filePath": "/content/docs/rango/guides/use-cache.mdx",
+    "slug": "rango/guides/use-cache",
+    "title": "use cache",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-shortest-path",
+        "text": "The shortest path"
+      },
+      {
+        "depth": 2,
+        "id": "profiles",
+        "text": "Profiles"
+      },
+      {
+        "depth": 2,
+        "id": "what-makes-the-cache-key",
+        "text": "What makes the cache key"
+      },
+      {
+        "depth": 2,
+        "id": "passing-ctx-tainted-arguments-and-handles",
+        "text": "Passing ctx: tainted arguments and handles"
+      },
+      {
+        "depth": 2,
+        "id": "what-throws-inside-use-cache",
+        "text": "What throws inside \"use cache\""
+      },
+      {
+        "depth": 2,
+        "id": "where-the-directive-is-rejected",
+        "text": "Where the directive is rejected"
+      },
+      {
+        "depth": 2,
+        "id": "tags-and-invalidation",
+        "text": "Tags and invalidation"
+      },
+      {
+        "depth": 2,
+        "id": "what-blocks-the-response",
+        "text": "What blocks the response"
+      },
+      {
+        "depth": 2,
+        "id": "where-it-fits",
+        "text": "Where it fits"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/use-cache"
+  },
+  {
+    "description": "Animate navigations across layouts, routes, and parallel slots with transition() in the route DSL.",
+    "filePath": "/content/docs/rango/guides/view-transitions.mdx",
+    "slug": "rango/guides/view-transitions",
+    "title": "View Transitions",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-two-layers",
+        "text": "The two layers"
+      },
+      {
+        "depth": 2,
+        "id": "a-cross-fade-between-pages",
+        "text": "A cross-fade between pages"
+      },
+      {
+        "depth": 2,
+        "id": "where-the-wrap-lands",
+        "text": "Where the wrap lands"
+      },
+      {
+        "depth": 2,
+        "id": "direction-aware-transitions",
+        "text": "Direction-aware transitions"
+      },
+      {
+        "depth": 2,
+        "id": "grouping-without-a-layout-component",
+        "text": "Grouping without a layout component"
+      },
+      {
+        "depth": 2,
+        "id": "intercept-modals-dont-fire-the-layout-transition",
+        "text": "Intercept modals don't fire the layout transition"
+      },
+      {
+        "depth": 2,
+        "id": "placing-your-own-viewtransition",
+        "text": "Placing your own <ViewTransition>"
+      },
+      {
+        "depth": 2,
+        "id": "conditional-transitions-with-when",
+        "text": "Conditional transitions with when"
+      },
+      {
+        "depth": 2,
+        "id": "recommendations",
+        "text": "Recommendations"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/view-transitions"
+  },
+  {
+    "description": "API reference — hooks, router options, and the CLI.",
+    "filePath": "/content/docs/rango/reference/index.mdx",
+    "slug": "rango/reference",
+    "title": "Overview",
+    "toc": [],
+    "type": "reference",
+    "url": "/docs/rango/reference"
+  },
+  {
+    "description": "npx rango generate — file and directory forms, auto-detection, recursive includes, deduplication, and its static-analysis limits.",
+    "filePath": "/content/docs/rango/reference/cli.mdx",
+    "slug": "rango/reference/cli",
+    "title": "CLI",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "npx-rango-generate",
+        "text": "npx rango generate"
+      },
+      {
+        "depth": 2,
+        "id": "auto-detection",
+        "text": "Auto-detection"
+      },
+      {
+        "depth": 2,
+        "id": "two-generated-files-not-interchangeable",
+        "text": "Two generated files, not interchangeable"
+      },
+      {
+        "depth": 2,
+        "id": "recursive-includes",
+        "text": "Recursive includes"
+      },
+      {
+        "depth": 2,
+        "id": "first-wins-deduplication",
+        "text": "First-wins deduplication"
+      },
+      {
+        "depth": 2,
+        "id": "limitations",
+        "text": "Limitations"
+      },
+      {
+        "depth": 2,
+        "id": "preserveiflarger-dev-guard",
+        "text": "preserveIfLarger dev guard"
+      },
+      {
+        "depth": 2,
+        "id": "predev-workflow",
+        "text": "predev workflow"
+      }
+    ],
+    "type": "reference",
+    "url": "/docs/rango/reference/cli"
+  },
+  {
+    "description": "The full RangoOptions surface, request handling, chaining, and the notFound() fallback chain.",
+    "filePath": "/content/docs/rango/reference/create-router.mdx",
+    "slug": "rango/reference/create-router",
+    "title": "createRouter",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "rangooptions",
+        "text": "RangoOptions"
+      },
+      {
+        "depth": 2,
+        "id": "document",
+        "text": "document"
+      },
+      {
+        "depth": 2,
+        "id": "basename",
+        "text": "basename"
+      },
+      {
+        "depth": 2,
+        "id": "cache",
+        "text": "cache"
+      },
+      {
+        "depth": 2,
+        "id": "theme",
+        "text": "theme"
+      },
+      {
+        "depth": 2,
+        "id": "ssrresolvestreaming",
+        "text": "ssr.resolveStreaming"
+      },
+      {
+        "depth": 2,
+        "id": "telemetry--tracing",
+        "text": "telemetry / tracing"
+      },
+      {
+        "depth": 2,
+        "id": "warmup",
+        "text": "warmup"
+      },
+      {
+        "depth": 2,
+        "id": "prefetchcachettl",
+        "text": "prefetchCacheTTL"
+      },
+      {
+        "depth": 2,
+        "id": "nonce",
+        "text": "nonce"
+      },
+      {
+        "depth": 2,
+        "id": "notfound--defaulterrorboundary--defaultnotfoundboundary",
+        "text": "notFound / defaultErrorBoundary / defaultNotFoundBoundary"
+      },
+      {
+        "depth": 3,
+        "id": "fallback-chain-for-notfound",
+        "text": "Fallback chain for notFound()"
+      },
+      {
+        "depth": 2,
+        "id": "routerfetch-routes-and-use",
+        "text": "router.fetch, .routes(), and .use()"
+      }
+    ],
+    "type": "reference",
+    "url": "/docs/rango/reference/create-router"
+  },
+  {
+    "description": "Client-side React hooks for navigation, loader data, URL generation, history state, and outlets.",
+    "filePath": "/content/docs/rango/reference/hooks.mdx",
+    "slug": "rango/reference/hooks",
+    "title": "Hooks",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "summary",
+        "text": "Summary"
+      },
+      {
+        "depth": 2,
+        "id": "navigation",
+        "text": "Navigation"
+      },
+      {
+        "depth": 3,
+        "id": "usenavigation",
+        "text": "useNavigation()"
+      },
+      {
+        "depth": 3,
+        "id": "userouter",
+        "text": "useRouter()"
+      },
+      {
+        "depth": 3,
+        "id": "usesegments",
+        "text": "useSegments()"
+      },
+      {
+        "depth": 3,
+        "id": "uselinkstatus",
+        "text": "useLinkStatus()"
+      },
+      {
+        "depth": 2,
+        "id": "data",
+        "text": "Data"
+      },
+      {
+        "depth": 3,
+        "id": "useloaderloader-options",
+        "text": "useLoader(loader, options?)"
+      },
+      {
+        "depth": 3,
+        "id": "usefetchloaderloader-options",
+        "text": "useFetchLoader(loader, options?)"
+      },
+      {
+        "depth": 3,
+        "id": "userefreshloaders",
+        "text": "useRefreshLoaders()"
+      },
+      {
+        "depth": 2,
+        "id": "url-generation",
+        "text": "URL generation"
+      },
+      {
+        "depth": 3,
+        "id": "useparams",
+        "text": "useParams()"
+      },
+      {
+        "depth": 3,
+        "id": "usepathname",
+        "text": "usePathname()"
+      },
+      {
+        "depth": 3,
+        "id": "usesearchparams",
+        "text": "useSearchParams()"
+      },
+      {
+        "depth": 3,
+        "id": "usehref",
+        "text": "useHref()"
+      },
+      {
+        "depth": 3,
+        "id": "usemount",
+        "text": "useMount()"
+      },
+      {
+        "depth": 3,
+        "id": "usereverseroutes",
+        "text": "useReverse(routes)"
+      },
+      {
+        "depth": 2,
+        "id": "handles-and-actions",
+        "text": "Handles and actions"
+      },
+      {
+        "depth": 3,
+        "id": "usehandlehandle-selector",
+        "text": "useHandle(handle, selector?)"
+      },
+      {
+        "depth": 3,
+        "id": "useactionaction-selector",
+        "text": "useAction(action, selector?)"
+      },
+      {
+        "depth": 2,
+        "id": "state-and-cache-control",
+        "text": "State and cache control"
+      },
+      {
+        "depth": 3,
+        "id": "uselocationstatedefinition",
+        "text": "useLocationState(definition)"
+      },
+      {
+        "depth": 3,
+        "id": "invalidateclientcache",
+        "text": "invalidateClientCache()"
+      },
+      {
+        "depth": 2,
+        "id": "outlets",
+        "text": "Outlets"
+      },
+      {
+        "depth": 3,
+        "id": "useoutlet",
+        "text": "useOutlet()"
+      }
+    ],
+    "type": "reference",
+    "url": "/docs/rango/reference/hooks"
+  },
+  {
+    "description": "Build Brew, a small coffee-gear storefront, in six parts — from an empty directory to a deployed Cloudflare Worker.",
+    "filePath": "/content/docs/rango/tutorial/index.mdx",
+    "slug": "rango/tutorial",
+    "title": "Build a Storefront",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "what-youre-building",
+        "text": "What you're building"
+      },
+      {
+        "depth": 2,
+        "id": "prerequisites",
+        "text": "Prerequisites"
+      },
+      {
+        "depth": 2,
+        "id": "the-six-parts",
+        "text": "The six parts"
+      },
+      {
+        "depth": 2,
+        "id": "how-to-read-this-tutorial",
+        "text": "How to read this tutorial"
+      }
+    ],
+    "type": "tutorial",
+    "url": "/docs/rango/tutorial"
+  },
+  {
+    "description": "Add a cookie-backed cart with a \"use server\" action, a form driven by useActionState, and a cart badge that revalidates after cart mutations.",
+    "filePath": "/content/docs/rango/tutorial/actions-and-revalidation.mdx",
+    "slug": "rango/tutorial/actions-and-revalidation",
+    "title": "5. Actions & Revalidation",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-cart-action",
+        "text": "The cart action"
+      },
+      {
+        "depth": 2,
+        "id": "the-form",
+        "text": "The form"
+      },
+      {
+        "depth": 2,
+        "id": "a-cart-badge-in-the-shop-layout",
+        "text": "A cart badge in the shop layout"
+      },
+      {
+        "depth": 2,
+        "id": "how-revalidation-works",
+        "text": "How revalidation works"
+      },
+      {
+        "depth": 2,
+        "id": "it-works-without-javascript",
+        "text": "It works without JavaScript"
+      }
+    ],
+    "type": "tutorial",
+    "url": "/docs/rango/tutorial/actions-and-revalidation"
+  },
+  {
+    "description": "Cache the shop segment on the Cloudflare edge while loaders stay live, bust it by tag from the cart action, add a JSON endpoint, and deploy.",
+    "filePath": "/content/docs/rango/tutorial/caching-and-deployment.mdx",
+    "slug": "rango/tutorial/caching-and-deployment",
+    "title": "6. Caching & Deployment",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "wire-a-cache-store",
+        "text": "Wire a cache store"
+      },
+      {
+        "depth": 2,
+        "id": "cache-the-shop-segment",
+        "text": "Cache the shop segment"
+      },
+      {
+        "depth": 2,
+        "id": "tag-the-product-cache-bust-it-from-the-action",
+        "text": "Tag the product cache, bust it from the action"
+      },
+      {
+        "depth": 2,
+        "id": "a-json-endpoint-for-products",
+        "text": "A JSON endpoint for products"
+      },
+      {
+        "depth": 2,
+        "id": "ship-it",
+        "text": "Ship it"
+      }
+    ],
+    "type": "tutorial",
+    "url": "/docs/rango/tutorial/caching-and-deployment"
+  },
+  {
+    "description": "Share a shop shell across routes with layout() and switch to client-side navigation with prefetching links.",
+    "filePath": "/content/docs/rango/tutorial/layouts-and-navigation.mdx",
+    "slug": "rango/tutorial/layouts-and-navigation",
+    "title": "3. Layouts & Navigation",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "wrap-the-shop-routes-in-a-layout",
+        "text": "Wrap the shop routes in a layout"
+      },
+      {
+        "depth": 2,
+        "id": "the-layout-component",
+        "text": "The layout component"
+      },
+      {
+        "depth": 2,
+        "id": "the-nav",
+        "text": "The nav"
+      },
+      {
+        "depth": 2,
+        "id": "upgrade-the-product-grid-links",
+        "text": "Upgrade the product grid links"
+      },
+      {
+        "depth": 2,
+        "id": "try-it",
+        "text": "Try it"
+      }
+    ],
+    "type": "tutorial",
+    "url": "/docs/rango/tutorial/layouts-and-navigation"
+  },
+  {
+    "description": "Stream per-product stock into the product page with createLoader, then add search-as-you-type to the shop grid with a fetchable loader.",
+    "filePath": "/content/docs/rango/tutorial/live-data-with-loaders.mdx",
+    "slug": "rango/tutorial/live-data-with-loaders",
+    "title": "4. Live Data with Loaders",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-stock-loader",
+        "text": "The stock loader"
+      },
+      {
+        "depth": 2,
+        "id": "register-it-under-the-product-route",
+        "text": "Register it under the product route"
+      },
+      {
+        "depth": 2,
+        "id": "read-it-in-a-client-component",
+        "text": "Read it in a client component"
+      },
+      {
+        "depth": 2,
+        "id": "search-as-you-type-on-the-shop-grid",
+        "text": "Search-as-you-type on the shop grid"
+      }
+    ],
+    "type": "tutorial",
+    "url": "/docs/rango/tutorial/live-data-with-loaders"
+  },
+  {
+    "description": "Install the toolchain, wire Vite and Wrangler, and render Brew's first route from a Cloudflare Worker.",
+    "filePath": "/content/docs/rango/tutorial/project-setup.mdx",
+    "slug": "rango/tutorial/project-setup",
+    "title": "1. Project Setup",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "install-dependencies",
+        "text": "Install dependencies"
+      },
+      {
+        "depth": 2,
+        "id": "vite-configuration",
+        "text": "Vite configuration"
+      },
+      {
+        "depth": 2,
+        "id": "wrangler-configuration",
+        "text": "Wrangler configuration"
+      },
+      {
+        "depth": 2,
+        "id": "the-document-shell",
+        "text": "The document shell"
+      },
+      {
+        "depth": 2,
+        "id": "the-first-route",
+        "text": "The first route"
+      },
+      {
+        "depth": 2,
+        "id": "the-router",
+        "text": "The router"
+      },
+      {
+        "depth": 2,
+        "id": "the-worker-entry",
+        "text": "The worker entry"
+      },
+      {
+        "depth": 2,
+        "id": "run-it",
+        "text": "Run it"
+      }
+    ],
+    "type": "tutorial",
+    "url": "/docs/rango/tutorial/project-setup"
+  },
+  {
+    "description": "Add Brew's catalog, dynamic routes with typed params, generated route types, and 404s for unknown products.",
+    "filePath": "/content/docs/rango/tutorial/routes-and-pages.mdx",
+    "slug": "rango/tutorial/routes-and-pages",
+    "title": "2. Routes & Pages",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "the-catalog",
+        "text": "The catalog"
+      },
+      {
+        "depth": 2,
+        "id": "two-new-routes",
+        "text": "Two new routes"
+      },
+      {
+        "depth": 2,
+        "id": "generate-route-types",
+        "text": "Generate route types"
+      },
+      {
+        "depth": 2,
+        "id": "the-shop-grid",
+        "text": "The shop grid"
+      },
+      {
+        "depth": 2,
+        "id": "the-product-page",
+        "text": "The product page"
+      },
+      {
+        "depth": 2,
+        "id": "point-the-home-page-at-the-shop",
+        "text": "Point the home page at the shop"
+      },
+      {
+        "depth": 2,
+        "id": "try-it",
+        "text": "Try it"
+      }
+    ],
+    "type": "tutorial",
+    "url": "/docs/rango/tutorial/routes-and-pages"
+  },
+  {
+    "description": "Learn about the Vercel Shop template and what it offers.",
+    "filePath": "/content/docs/shop-template/index.mdx",
+    "slug": "shop-template",
     "title": "Introduction",
     "toc": [
       {
@@ -20,12 +2828,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "overview",
-    "url": "/docs"
+    "url": "/docs/shop-template"
   },
   {
     "description": "How the storefront makes itself legible to AI answer engines and generative search, with built-in content negotiation, structured data, and discovery surfaces.",
-    "filePath": "/content/docs/anatomy/aeo-geo.mdx",
-    "slug": "anatomy/aeo-geo",
+    "filePath": "/content/docs/shop-template/anatomy/aeo-geo.mdx",
+    "slug": "shop-template/anatomy/aeo-geo",
     "title": "AEO & GEO",
     "toc": [
       {
@@ -75,12 +2883,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/aeo-geo"
+    "url": "/docs/shop-template/anatomy/aeo-geo"
   },
   {
     "description": "The shopping assistant - AI-powered product discovery, cart management, and generative UI.",
-    "filePath": "/content/docs/anatomy/agent.mdx",
-    "slug": "anatomy/agent",
+    "filePath": "/content/docs/shop-template/anatomy/agent.mdx",
+    "slug": "shop-template/anatomy/agent",
     "title": "Agent",
     "toc": [
       {
@@ -145,12 +2953,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/agent"
+    "url": "/docs/shop-template/anatomy/agent"
   },
   {
     "description": "Built-in customer authentication with better-auth and Shopify Customer Account API OIDC.",
-    "filePath": "/content/docs/anatomy/authentication.mdx",
-    "slug": "anatomy/authentication",
+    "filePath": "/content/docs/shop-template/anatomy/authentication.mdx",
+    "slug": "shop-template/anatomy/authentication",
     "title": "Authentication",
     "toc": [
       {
@@ -224,12 +3032,12 @@ export const pageMeta: PageMeta[] = [
         "text": "Extending"
       }
     ],
-    "url": "/docs/anatomy/authentication"
+    "url": "/docs/shop-template/anatomy/authentication"
   },
   {
     "description": "The cart system - state management, optimistic updates, server actions, and Shopify integration.",
-    "filePath": "/content/docs/anatomy/cart.mdx",
-    "slug": "anatomy/cart",
+    "filePath": "/content/docs/shop-template/anatomy/cart.mdx",
+    "slug": "shop-template/anatomy/cart",
     "title": "Cart",
     "toc": [
       {
@@ -279,12 +3087,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/cart"
+    "url": "/docs/shop-template/anatomy/cart"
   },
   {
     "description": "The storefront footer - copyright, social links, and optional Shopify menu columns.",
-    "filePath": "/content/docs/anatomy/footer.mdx",
-    "slug": "anatomy/footer",
+    "filePath": "/content/docs/shop-template/anatomy/footer.mdx",
+    "slug": "shop-template/anatomy/footer",
     "title": "Footer",
     "toc": [
       {
@@ -309,12 +3117,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/footer"
+    "url": "/docs/shop-template/anatomy/footer"
   },
   {
     "description": "The storefront navigation system - navbar, quick links, mobile bottom bar, and responsive layout.",
-    "filePath": "/content/docs/anatomy/navigation.mdx",
-    "slug": "anatomy/navigation",
+    "filePath": "/content/docs/shop-template/anatomy/navigation.mdx",
+    "slug": "shop-template/anatomy/navigation",
     "title": "Navigation",
     "toc": [
       {
@@ -364,21 +3172,21 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/navigation"
+    "url": "/docs/shop-template/anatomy/navigation"
   },
   {
     "description": "The core page types that make up your storefront.",
-    "filePath": "/content/docs/anatomy/pages/index.mdx",
-    "slug": "anatomy/pages",
+    "filePath": "/content/docs/shop-template/anatomy/pages/index.mdx",
+    "slug": "shop-template/anatomy/pages",
     "title": "Pages",
     "toc": [],
     "type": "overview",
-    "url": "/docs/anatomy/pages"
+    "url": "/docs/shop-template/anatomy/pages"
   },
   {
     "description": "The storefront landing page - hero, products, and promotional content.",
-    "filePath": "/content/docs/anatomy/pages/home.mdx",
-    "slug": "anatomy/pages/home",
+    "filePath": "/content/docs/shop-template/anatomy/pages/home.mdx",
+    "slug": "shop-template/anatomy/pages/home",
     "title": "Home",
     "toc": [
       {
@@ -403,12 +3211,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/pages/home"
+    "url": "/docs/shop-template/anatomy/pages/home"
   },
   {
     "description": "Individual product pages with variants, media, and add-to-cart.",
-    "filePath": "/content/docs/anatomy/pages/pdp.mdx",
-    "slug": "anatomy/pages/pdp",
+    "filePath": "/content/docs/shop-template/anatomy/pages/pdp.mdx",
+    "slug": "shop-template/anatomy/pages/pdp",
     "title": "Product Detail Page (PDP)",
     "toc": [
       {
@@ -473,12 +3281,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/pages/pdp"
+    "url": "/docs/shop-template/anatomy/pages/pdp"
   },
   {
     "description": "Collection and search results pages with filtering, sorting, and infinite scroll.",
-    "filePath": "/content/docs/anatomy/pages/plp.mdx",
-    "slug": "anatomy/pages/plp",
+    "filePath": "/content/docs/shop-template/anatomy/pages/plp.mdx",
+    "slug": "shop-template/anatomy/pages/plp",
     "title": "Product Listing Page (PLP)",
     "toc": [
       {
@@ -528,12 +3336,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/pages/plp"
+    "url": "/docs/shop-template/anatomy/pages/plp"
   },
   {
     "description": "Public pages serve instantly from a cached HTML shell while per-user widgets stay live - the ppr route option, live-lane loaders, and shell invalidation.",
-    "filePath": "/content/docs/anatomy/ppr.mdx",
-    "slug": "anatomy/ppr",
+    "filePath": "/content/docs/shop-template/anatomy/ppr.mdx",
+    "slug": "shop-template/anatomy/ppr",
     "title": "Partial prerendering",
     "toc": [
       {
@@ -563,12 +3371,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/ppr"
+    "url": "/docs/shop-template/anatomy/ppr"
   },
   {
     "description": "The shared tile that displays a product's image, title, and price in grids and sliders.",
-    "filePath": "/content/docs/anatomy/product-card.mdx",
-    "slug": "anatomy/product-card",
+    "filePath": "/content/docs/shop-template/anatomy/product-card.mdx",
+    "slug": "shop-template/anatomy/product-card",
     "title": "Product Card",
     "toc": [
       {
@@ -618,12 +3426,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/product-card"
+    "url": "/docs/shop-template/anatomy/product-card"
   },
   {
     "description": "A sitemap index plus paged child sitemaps backed by Shopify's Storefront sitemap query — the same model Hydrogen uses.",
-    "filePath": "/content/docs/anatomy/sitemap.mdx",
-    "slug": "anatomy/sitemap",
+    "filePath": "/content/docs/shop-template/anatomy/sitemap.mdx",
+    "slug": "shop-template/anatomy/sitemap",
     "title": "Sitemap",
     "toc": [
       {
@@ -648,12 +3456,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/sitemap"
+    "url": "/docs/shop-template/anatomy/sitemap"
   },
   {
     "description": "Shopify webhook handler that invalidates Rango cache tags so storefront content updates near-instantly when products, collections, or CMS metaobjects change.",
-    "filePath": "/content/docs/anatomy/webhooks.mdx",
-    "slug": "anatomy/webhooks",
+    "filePath": "/content/docs/shop-template/anatomy/webhooks.mdx",
+    "slug": "shop-template/anatomy/webhooks",
     "title": "Webhooks",
     "toc": [
       {
@@ -703,12 +3511,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/anatomy/webhooks"
+    "url": "/docs/shop-template/anatomy/webhooks"
   },
   {
     "description": "Set up Shopify, create a project, and run Vercel Shop locally.",
-    "filePath": "/content/docs/getting-started/index.mdx",
-    "slug": "getting-started",
+    "filePath": "/content/docs/shop-template/getting-started/index.mdx",
+    "slug": "shop-template/getting-started",
     "title": "Setup",
     "toc": [
       {
@@ -758,12 +3566,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/getting-started"
+    "url": "/docs/shop-template/getting-started"
   },
   {
     "description": "Prompt patterns and challenges for extending your storefront with a coding agent.",
-    "filePath": "/content/docs/getting-started/customizing.mdx",
-    "slug": "getting-started/customizing",
+    "filePath": "/content/docs/shop-template/getting-started/customizing.mdx",
+    "slug": "shop-template/getting-started/customizing",
     "title": "Customizing Your Store",
     "toc": [
       {
@@ -813,12 +3621,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/getting-started/customizing"
+    "url": "/docs/shop-template/getting-started/customizing"
   },
   {
     "description": "Use coding agents like Claude Code, Cursor, and Codex to personalize and extend your storefront.",
-    "filePath": "/content/docs/getting-started/extending-with-agents.mdx",
-    "slug": "getting-started/extending-with-agents",
+    "filePath": "/content/docs/shop-template/getting-started/extending-with-agents.mdx",
+    "slug": "shop-template/getting-started/extending-with-agents",
     "title": "Extending with Agents",
     "toc": [
       {
@@ -873,12 +3681,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/getting-started/extending-with-agents"
+    "url": "/docs/shop-template/getting-started/extending-with-agents"
   },
   {
     "description": "Required and optional environment variables for Vercel Shop.",
-    "filePath": "/content/docs/reference/env-vars.mdx",
-    "slug": "reference/env-vars",
+    "filePath": "/content/docs/shop-template/reference/env-vars.mdx",
+    "slug": "shop-template/reference/env-vars",
     "title": "Environment Variables",
     "toc": [
       {
@@ -903,12 +3711,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "reference",
-    "url": "/docs/reference/env-vars"
+    "url": "/docs/shop-template/reference/env-vars"
   },
   {
     "description": "Every URL in the storefront mapped to its source file and purpose.",
-    "filePath": "/content/docs/reference/routes.mdx",
-    "slug": "reference/routes",
+    "filePath": "/content/docs/shop-template/reference/routes.mdx",
+    "slug": "shop-template/reference/routes",
     "title": "Routes",
     "toc": [
       {
@@ -933,12 +3741,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "reference",
-    "url": "/docs/reference/routes"
+    "url": "/docs/shop-template/reference/routes"
   },
   {
     "description": "How the template calls Shopify's Storefront GraphQL API - the fetch client, query patterns, caching, and error handling.",
-    "filePath": "/content/docs/reference/storefront-api.mdx",
-    "slug": "reference/storefront-api",
+    "filePath": "/content/docs/shop-template/reference/storefront-api.mdx",
+    "slug": "shop-template/reference/storefront-api",
     "title": "Storefront API",
     "toc": [
       {
@@ -1003,12 +3811,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "reference",
-    "url": "/docs/reference/storefront-api"
+    "url": "/docs/shop-template/reference/storefront-api"
   },
   {
     "description": "Shopify Storefront API scopes required by Vercel Shop and its optional skills.",
-    "filePath": "/content/docs/reference/storefront-api-permissions.mdx",
-    "slug": "reference/storefront-api-permissions",
+    "filePath": "/content/docs/shop-template/reference/storefront-api-permissions.mdx",
+    "slug": "shop-template/reference/storefront-api-permissions",
     "title": "Storefront API Permissions",
     "toc": [
       {
@@ -1028,12 +3836,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "reference",
-    "url": "/docs/reference/storefront-api-permissions"
+    "url": "/docs/shop-template/reference/storefront-api-permissions"
   },
   {
     "description": "Solutions to common setup and runtime issues.",
-    "filePath": "/content/docs/reference/troubleshooting.mdx",
-    "slug": "reference/troubleshooting",
+    "filePath": "/content/docs/shop-template/reference/troubleshooting.mdx",
+    "slug": "shop-template/reference/troubleshooting",
     "title": "Troubleshooting",
     "toc": [
       {
@@ -1083,12 +3891,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "troubleshooting",
-    "url": "/docs/reference/troubleshooting"
+    "url": "/docs/shop-template/reference/troubleshooting"
   },
   {
     "description": "How the template maps to Shopify concepts - menus, products, collections, and cache invalidation via webhooks.",
-    "filePath": "/content/docs/shopify/index.mdx",
-    "slug": "shopify",
+    "filePath": "/content/docs/shop-template/shopify/index.mdx",
+    "slug": "shop-template/shopify",
     "title": "Shopify Integration",
     "toc": [
       {
@@ -1133,12 +3941,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "reference",
-    "url": "/docs/shopify"
+    "url": "/docs/shop-template/shopify"
   },
   {
     "description": "Shopify product configuration for the Product Detail Page - variants, metafields, swatches, and SEO.",
-    "filePath": "/content/docs/shopify/pdp.mdx",
-    "slug": "shopify/pdp",
+    "filePath": "/content/docs/shop-template/shopify/pdp.mdx",
+    "slug": "shop-template/shopify/pdp",
     "title": "Product Setup",
     "toc": [
       {
@@ -1193,12 +4001,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "reference",
-    "url": "/docs/shopify/pdp"
+    "url": "/docs/shop-template/shopify/pdp"
   },
   {
     "description": "Step-by-step guide to adding a new Storefront API query or mutation.",
-    "filePath": "/content/docs/shopify/writing-shopify-queries.mdx",
-    "slug": "shopify/writing-shopify-queries",
+    "filePath": "/content/docs/shop-template/shopify/writing-shopify-queries.mdx",
+    "slug": "shop-template/shopify/writing-shopify-queries",
     "title": "Writing Shopify Queries",
     "toc": [
       {
@@ -1248,21 +4056,21 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/shopify/writing-shopify-queries"
+    "url": "/docs/shop-template/shopify/writing-shopify-queries"
   },
   {
     "description": "Agent-ready skills for extending your Shopify storefront.",
-    "filePath": "/content/docs/skills/index.mdx",
-    "slug": "skills",
+    "filePath": "/content/docs/shop-template/skills/index.mdx",
+    "slug": "shop-template/skills",
     "title": "Extending with Skills",
     "toc": [],
     "type": "overview",
-    "url": "/docs/skills"
+    "url": "/docs/shop-template/skills"
   },
   {
     "description": "Build or adapt Shopify storefronts with source-backed Vercel Shop patterns.",
-    "filePath": "/content/docs/skills/build-shop.mdx",
-    "slug": "skills/build-shop",
+    "filePath": "/content/docs/shop-template/skills/build-shop.mdx",
+    "slug": "shop-template/skills/build-shop",
     "title": "Build with Vercel Shop",
     "toc": [
       {
@@ -1312,12 +4120,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/skills/build-shop"
+    "url": "/docs/shop-template/skills/build-shop"
   },
   {
     "description": "Add Vercel Analytics, Vercel Speed Insights, and Google Tag Manager to the storefront.",
-    "filePath": "/content/docs/skills/enable-analytics.mdx",
-    "slug": "skills/enable-analytics",
+    "filePath": "/content/docs/shop-template/skills/enable-analytics.mdx",
+    "slug": "shop-template/skills/enable-analytics",
     "title": "Analytics",
     "toc": [
       {
@@ -1392,12 +4200,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/skills/enable-analytics"
+    "url": "/docs/shop-template/skills/enable-analytics"
   },
   {
     "description": "Locale-prefixed URLs and per-locale message catalogs via use-intl, without Shopify Markets.",
-    "filePath": "/content/docs/skills/enable-i18n.mdx",
-    "slug": "skills/enable-i18n",
+    "filePath": "/content/docs/shop-template/skills/enable-i18n.mdx",
+    "slug": "shop-template/skills/enable-i18n",
     "title": "i18n",
     "toc": [
       {
@@ -1502,12 +4310,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/skills/enable-i18n"
+    "url": "/docs/shop-template/skills/enable-i18n"
   },
   {
     "description": "Wire Shopify metaobjects as the CMS for homepage and marketing page content.",
-    "filePath": "/content/docs/skills/enable-shopify-cms.mdx",
-    "slug": "skills/enable-shopify-cms",
+    "filePath": "/content/docs/shop-template/skills/enable-shopify-cms.mdx",
+    "slug": "shop-template/skills/enable-shopify-cms",
     "title": "Shopify CMS",
     "toc": [
       {
@@ -1572,12 +4380,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/skills/enable-shopify-cms"
+    "url": "/docs/shop-template/skills/enable-shopify-cms"
   },
   {
     "description": "Add multi-locale and multi-currency support with Shopify Markets.",
-    "filePath": "/content/docs/skills/enable-shopify-markets.mdx",
-    "slug": "skills/enable-shopify-markets",
+    "filePath": "/content/docs/shop-template/skills/enable-shopify-markets.mdx",
+    "slug": "shop-template/skills/enable-shopify-markets",
     "title": "Shopify Markets",
     "toc": [
       {
@@ -1732,12 +4540,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/skills/enable-shopify-markets"
+    "url": "/docs/shop-template/skills/enable-shopify-markets"
   },
   {
     "description": "Replace the hardcoded nav and footer menus with Shopify-powered menus.",
-    "filePath": "/content/docs/skills/enable-shopify-menus.mdx",
-    "slug": "skills/enable-shopify-menus",
+    "filePath": "/content/docs/shop-template/skills/enable-shopify-menus.mdx",
+    "slug": "shop-template/skills/enable-shopify-menus",
     "title": "Shopify Menus",
     "toc": [
       {
@@ -1777,12 +4585,12 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/skills/enable-shopify-menus"
+    "url": "/docs/shop-template/skills/enable-shopify-menus"
   },
   {
     "description": "Integrate Shopify-validated GraphQL with Vercel Shop's operations, domain types, cache roles, and invalidation.",
-    "filePath": "/content/docs/skills/shopify-graphql-reference.mdx",
-    "slug": "skills/shopify-graphql-reference",
+    "filePath": "/content/docs/shop-template/skills/shopify-graphql-reference.mdx",
+    "slug": "shop-template/skills/shopify-graphql-reference",
     "title": "Shopify GraphQL Integration",
     "toc": [
       {
@@ -1807,16 +4615,16 @@ export const pageMeta: PageMeta[] = [
       }
     ],
     "type": "guide",
-    "url": "/docs/skills/shopify-graphql-reference"
+    "url": "/docs/shop-template/skills/shopify-graphql-reference"
   },
   {
     "description": "Why we built Vercel Shop — an agent-first Shopify starter for Rango on Vercel.",
-    "filePath": "/content/docs/why-use-this.mdx",
-    "slug": "why-use-this",
+    "filePath": "/content/docs/shop-template/why-use-this.mdx",
+    "slug": "shop-template/why-use-this",
     "title": "Why Use This",
     "toc": [],
     "type": "overview",
-    "url": "/docs/why-use-this"
+    "url": "/docs/shop-template/why-use-this"
   }
 ];
 
@@ -1826,165 +4634,453 @@ export const pageTree: TreeNode[] = [
     "url": "/docs"
   },
   {
-    "title": "Why Use This",
-    "url": "/docs/why-use-this"
-  },
-  {
     "children": [
       {
-        "title": "Setup",
-        "url": "/docs/getting-started"
-      },
-      {
-        "title": "Extending with Agents",
-        "url": "/docs/getting-started/extending-with-agents"
-      },
-      {
-        "title": "Customizing Your Store",
-        "url": "/docs/getting-started/customizing"
-      }
-    ],
-    "title": "Getting Started"
-  },
-  {
-    "children": [
-      {
-        "title": "Agent",
-        "url": "/docs/anatomy/agent"
-      },
-      {
-        "title": "Authentication",
-        "url": "/docs/anatomy/authentication"
-      },
-      {
-        "title": "Cart",
-        "url": "/docs/anatomy/cart"
+        "children": [
+          {
+            "title": "Setup",
+            "url": "/docs/rango/getting-started"
+          }
+        ],
+        "title": "Getting Started"
       },
       {
         "children": [
           {
-            "title": "Home",
-            "url": "/docs/anatomy/pages/home"
+            "title": "Build a Storefront",
+            "url": "/docs/rango/tutorial"
           },
           {
-            "title": "Product Detail Page (PDP)",
-            "url": "/docs/anatomy/pages/pdp"
+            "title": "1. Project Setup",
+            "url": "/docs/rango/tutorial/project-setup"
           },
           {
-            "title": "Product Listing Page (PLP)",
-            "url": "/docs/anatomy/pages/plp"
+            "title": "2. Routes & Pages",
+            "url": "/docs/rango/tutorial/routes-and-pages"
+          },
+          {
+            "title": "3. Layouts & Navigation",
+            "url": "/docs/rango/tutorial/layouts-and-navigation"
+          },
+          {
+            "title": "4. Live Data with Loaders",
+            "url": "/docs/rango/tutorial/live-data-with-loaders"
+          },
+          {
+            "title": "5. Actions & Revalidation",
+            "url": "/docs/rango/tutorial/actions-and-revalidation"
+          },
+          {
+            "title": "6. Caching & Deployment",
+            "url": "/docs/rango/tutorial/caching-and-deployment"
           }
         ],
-        "title": "Pages"
+        "title": "Tutorial"
       },
       {
-        "title": "Product Card",
-        "url": "/docs/anatomy/product-card"
+        "children": [
+          {
+            "title": "Overview",
+            "url": "/docs/rango/concepts"
+          },
+          {
+            "title": "Execution Model",
+            "url": "/docs/rango/concepts/execution-model"
+          },
+          {
+            "title": "Segments & Rendering",
+            "url": "/docs/rango/concepts/segments-and-rendering"
+          },
+          {
+            "title": "Freshness",
+            "url": "/docs/rango/concepts/freshness"
+          },
+          {
+            "title": "Structure vs Config",
+            "url": "/docs/rango/concepts/structure-vs-config"
+          },
+          {
+            "title": "Data Flow",
+            "url": "/docs/rango/concepts/data-flow"
+          },
+          {
+            "title": "Progressive Enhancement",
+            "url": "/docs/rango/concepts/progressive-enhancement"
+          },
+          {
+            "title": "Type Safety",
+            "url": "/docs/rango/concepts/typesafety"
+          }
+        ],
+        "title": "Concepts"
       },
       {
-        "title": "Navigation",
-        "url": "/docs/anatomy/navigation"
+        "children": [
+          {
+            "title": "Overview",
+            "url": "/docs/rango/features"
+          },
+          {
+            "title": "The Route Tree",
+            "url": "/docs/rango/features/routing"
+          },
+          {
+            "title": "Named Routes & Links",
+            "url": "/docs/rango/features/named-routes"
+          },
+          {
+            "title": "Loaders",
+            "url": "/docs/rango/features/loaders"
+          },
+          {
+            "title": "Middleware",
+            "url": "/docs/rango/features/middleware"
+          },
+          {
+            "title": "Caching & Revalidation",
+            "url": "/docs/rango/features/caching"
+          },
+          {
+            "title": "Response Routes",
+            "url": "/docs/rango/features/response-routes"
+          },
+          {
+            "title": "Metadata & Handles",
+            "url": "/docs/rango/features/metadata"
+          },
+          {
+            "title": "Navigation & Prefetching",
+            "url": "/docs/rango/features/navigation"
+          },
+          {
+            "title": "Testing",
+            "url": "/docs/rango/features/testing"
+          }
+        ],
+        "title": "Features"
       },
       {
-        "title": "Footer",
-        "url": "/docs/anatomy/footer"
+        "children": [
+          {
+            "title": "Overview",
+            "url": "/docs/rango/guides"
+          },
+          {
+            "title": "Layouts",
+            "url": "/docs/rango/guides/layouts"
+          },
+          {
+            "title": "Parallel Routes",
+            "url": "/docs/rango/guides/parallel-routes"
+          },
+          {
+            "title": "Intercepting Routes",
+            "url": "/docs/rango/guides/intercepting-routes"
+          },
+          {
+            "title": "handler.use",
+            "url": "/docs/rango/guides/handler-use"
+          },
+          {
+            "title": "Host Router",
+            "url": "/docs/rango/guides/host-router"
+          },
+          {
+            "title": "Server Actions",
+            "url": "/docs/rango/guides/server-actions"
+          },
+          {
+            "title": "use cache",
+            "url": "/docs/rango/guides/use-cache"
+          },
+          {
+            "title": "Document Cache",
+            "url": "/docs/rango/guides/document-cache"
+          },
+          {
+            "title": "PPR",
+            "url": "/docs/rango/guides/ppr"
+          },
+          {
+            "title": "Prerender",
+            "url": "/docs/rango/guides/prerender"
+          },
+          {
+            "title": "Shell Manifest",
+            "url": "/docs/rango/guides/shell-manifest"
+          },
+          {
+            "title": "Theme",
+            "url": "/docs/rango/guides/theme"
+          },
+          {
+            "title": "i18n",
+            "url": "/docs/rango/guides/i18n"
+          },
+          {
+            "title": "View Transitions",
+            "url": "/docs/rango/guides/view-transitions"
+          },
+          {
+            "title": "Breadcrumbs",
+            "url": "/docs/rango/guides/breadcrumbs"
+          },
+          {
+            "title": "Fonts",
+            "url": "/docs/rango/guides/fonts"
+          },
+          {
+            "title": "CSS",
+            "url": "/docs/rango/guides/css"
+          },
+          {
+            "title": "Tailwind",
+            "url": "/docs/rango/guides/tailwind"
+          },
+          {
+            "title": "Third-Party Scripts",
+            "url": "/docs/rango/guides/scripts"
+          },
+          {
+            "title": "React Compiler",
+            "url": "/docs/rango/guides/react-compiler"
+          },
+          {
+            "title": "API Client",
+            "url": "/docs/rango/guides/api-client"
+          },
+          {
+            "title": "MIME Routes",
+            "url": "/docs/rango/guides/mime-routes"
+          },
+          {
+            "title": "Streams & WebSockets",
+            "url": "/docs/rango/guides/streams-and-websockets"
+          },
+          {
+            "title": "Observability",
+            "url": "/docs/rango/guides/observability"
+          },
+          {
+            "title": "Bundle Analysis",
+            "url": "/docs/rango/guides/bundle-analysis"
+          },
+          {
+            "title": "Debug Manifest",
+            "url": "/docs/rango/guides/debug-manifest"
+          },
+          {
+            "title": "Deploy to Vercel",
+            "url": "/docs/rango/guides/deploy-vercel"
+          },
+          {
+            "title": "Migrate from Next.js",
+            "url": "/docs/rango/guides/migrate-from-nextjs"
+          },
+          {
+            "title": "Migrate from React Router",
+            "url": "/docs/rango/guides/migrate-from-react-router"
+          },
+          {
+            "title": "Comparison",
+            "url": "/docs/rango/guides/comparison"
+          }
+        ],
+        "title": "Guides"
       },
       {
-        "title": "AEO & GEO",
-        "url": "/docs/anatomy/aeo-geo"
-      },
-      {
-        "title": "Partial prerendering",
-        "url": "/docs/anatomy/ppr"
-      },
-      {
-        "title": "Sitemap",
-        "url": "/docs/anatomy/sitemap"
-      },
-      {
-        "title": "Webhooks",
-        "url": "/docs/anatomy/webhooks"
+        "children": [
+          {
+            "title": "Overview",
+            "url": "/docs/rango/reference"
+          },
+          {
+            "title": "Hooks",
+            "url": "/docs/rango/reference/hooks"
+          },
+          {
+            "title": "createRouter",
+            "url": "/docs/rango/reference/create-router"
+          },
+          {
+            "title": "CLI",
+            "url": "/docs/rango/reference/cli"
+          }
+        ],
+        "title": "Reference"
       }
     ],
-    "title": "Features"
+    "title": "Rango"
   },
   {
     "children": [
       {
-        "title": "Writing Shopify Queries",
-        "url": "/docs/shopify/writing-shopify-queries"
+        "title": "Introduction",
+        "url": "/docs/shop-template"
       },
       {
-        "title": "Shopify Integration",
-        "url": "/docs/shopify"
+        "title": "Why Use This",
+        "url": "/docs/shop-template/why-use-this"
       },
       {
-        "title": "Product Setup",
-        "url": "/docs/shopify/pdp"
+        "children": [
+          {
+            "title": "Setup",
+            "url": "/docs/shop-template/getting-started"
+          },
+          {
+            "title": "Extending with Agents",
+            "url": "/docs/shop-template/getting-started/extending-with-agents"
+          },
+          {
+            "title": "Customizing Your Store",
+            "url": "/docs/shop-template/getting-started/customizing"
+          }
+        ],
+        "title": "Getting Started"
+      },
+      {
+        "children": [
+          {
+            "title": "Agent",
+            "url": "/docs/shop-template/anatomy/agent"
+          },
+          {
+            "title": "Authentication",
+            "url": "/docs/shop-template/anatomy/authentication"
+          },
+          {
+            "title": "Cart",
+            "url": "/docs/shop-template/anatomy/cart"
+          },
+          {
+            "children": [
+              {
+                "title": "Home",
+                "url": "/docs/shop-template/anatomy/pages/home"
+              },
+              {
+                "title": "Product Detail Page (PDP)",
+                "url": "/docs/shop-template/anatomy/pages/pdp"
+              },
+              {
+                "title": "Product Listing Page (PLP)",
+                "url": "/docs/shop-template/anatomy/pages/plp"
+              }
+            ],
+            "title": "Pages"
+          },
+          {
+            "title": "Product Card",
+            "url": "/docs/shop-template/anatomy/product-card"
+          },
+          {
+            "title": "Navigation",
+            "url": "/docs/shop-template/anatomy/navigation"
+          },
+          {
+            "title": "Footer",
+            "url": "/docs/shop-template/anatomy/footer"
+          },
+          {
+            "title": "AEO & GEO",
+            "url": "/docs/shop-template/anatomy/aeo-geo"
+          },
+          {
+            "title": "Partial prerendering",
+            "url": "/docs/shop-template/anatomy/ppr"
+          },
+          {
+            "title": "Sitemap",
+            "url": "/docs/shop-template/anatomy/sitemap"
+          },
+          {
+            "title": "Webhooks",
+            "url": "/docs/shop-template/anatomy/webhooks"
+          }
+        ],
+        "title": "Features"
+      },
+      {
+        "children": [
+          {
+            "title": "Writing Shopify Queries",
+            "url": "/docs/shop-template/shopify/writing-shopify-queries"
+          },
+          {
+            "title": "Shopify Integration",
+            "url": "/docs/shop-template/shopify"
+          },
+          {
+            "title": "Product Setup",
+            "url": "/docs/shop-template/shopify/pdp"
+          }
+        ],
+        "title": "Shopify"
+      },
+      {
+        "children": [
+          {
+            "title": "Extending with Skills",
+            "url": "/docs/shop-template/skills"
+          },
+          {
+            "title": "Build with Vercel Shop",
+            "url": "/docs/shop-template/skills/build-shop"
+          },
+          {
+            "title": "Shopify GraphQL Integration",
+            "url": "/docs/shop-template/skills/shopify-graphql-reference"
+          },
+          {
+            "title": "Analytics",
+            "url": "/docs/shop-template/skills/enable-analytics"
+          },
+          {
+            "title": "i18n",
+            "url": "/docs/shop-template/skills/enable-i18n"
+          },
+          {
+            "title": "Shopify Markets",
+            "url": "/docs/shop-template/skills/enable-shopify-markets"
+          },
+          {
+            "title": "Shopify CMS",
+            "url": "/docs/shop-template/skills/enable-shopify-cms"
+          },
+          {
+            "title": "Shopify Menus",
+            "url": "/docs/shop-template/skills/enable-shopify-menus"
+          }
+        ],
+        "title": "Skills"
+      },
+      {
+        "children": [
+          {
+            "title": "Routes",
+            "url": "/docs/shop-template/reference/routes"
+          },
+          {
+            "title": "Environment Variables",
+            "url": "/docs/shop-template/reference/env-vars"
+          },
+          {
+            "title": "Storefront API Permissions",
+            "url": "/docs/shop-template/reference/storefront-api-permissions"
+          },
+          {
+            "title": "Storefront API",
+            "url": "/docs/shop-template/reference/storefront-api"
+          },
+          {
+            "title": "Troubleshooting",
+            "url": "/docs/shop-template/reference/troubleshooting"
+          }
+        ],
+        "title": "Reference"
       }
     ],
-    "title": "Shopify"
-  },
-  {
-    "children": [
-      {
-        "title": "Extending with Skills",
-        "url": "/docs/skills"
-      },
-      {
-        "title": "Build with Vercel Shop",
-        "url": "/docs/skills/build-shop"
-      },
-      {
-        "title": "Shopify GraphQL Integration",
-        "url": "/docs/skills/shopify-graphql-reference"
-      },
-      {
-        "title": "Analytics",
-        "url": "/docs/skills/enable-analytics"
-      },
-      {
-        "title": "i18n",
-        "url": "/docs/skills/enable-i18n"
-      },
-      {
-        "title": "Shopify Markets",
-        "url": "/docs/skills/enable-shopify-markets"
-      },
-      {
-        "title": "Shopify CMS",
-        "url": "/docs/skills/enable-shopify-cms"
-      },
-      {
-        "title": "Shopify Menus",
-        "url": "/docs/skills/enable-shopify-menus"
-      }
-    ],
-    "title": "Skills"
-  },
-  {
-    "children": [
-      {
-        "title": "Routes",
-        "url": "/docs/reference/routes"
-      },
-      {
-        "title": "Environment Variables",
-        "url": "/docs/reference/env-vars"
-      },
-      {
-        "title": "Storefront API Permissions",
-        "url": "/docs/reference/storefront-api-permissions"
-      },
-      {
-        "title": "Storefront API",
-        "url": "/docs/reference/storefront-api"
-      },
-      {
-        "title": "Troubleshooting",
-        "url": "/docs/reference/troubleshooting"
-      }
-    ],
-    "title": "Reference"
+    "title": "Shop Template (review)"
   }
 ];

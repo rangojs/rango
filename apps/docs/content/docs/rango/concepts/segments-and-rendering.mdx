@@ -1,0 +1,72 @@
+---
+title: Segments & Rendering
+description: How the urls() tree becomes segments, how segments render and merge, and what a partial update actually replaces.
+type: concept
+---
+
+The segment is Rango's unit of everything. Rendering, caching, revalidation, and client-side merging all operate on segments — not pages. Once you stop thinking "the page re-renders" and start thinking "some segments get replaced, the rest are kept", the behaviors that look surprising become predictable: why form state survives an action, why `/product/1` to `/product/2` shows the skeleton again by default, why a layout above a navigation never flickers.
+
+## From tree to segments
+
+When a request matches, the `urls()` tree resolves to a chain of segments: layouts outermost, the route innermost, with loaders, parallels, and error/not-found boundaries attached along the way. Every node you write becomes a segment:
+
+```tsx
+export const urlpatterns = urls(({ path, layout, loader, loading }) => [
+  layout(<ShopLayout />, () => [
+    path("/shop/:slug", ProductPage, { name: "product" }, () => [
+      loader(ProductLoader),
+      loading(<ProductSkeleton />),
+    ]),
+  ]),
+]);
+```
+
+Matching `/shop/widget` produces a layout segment (`ShopLayout`), a route segment (`ProductPage`, wrapped in the boundary its `loading()` declares), and a loader segment (`ProductLoader`). Each renders its own piece; the router assembles them into one React tree, with layouts rendering their children through `<Outlet />`.
+
+Segments are also what the rest of the system holds on to:
+
+- `cache()` stores **rendered segments** — on a hit the stored subtree is served without running your handler, while loaders (excluded from the segment cache) re-resolve fresh. See [Freshness](/docs/rango/concepts/freshness).
+- `revalidate()` selects **which segments** re-run and stream to the client on a navigation or action.
+- The browser's forward/back cache keeps **rendered segments** per history entry.
+
+## The rendered tree is a contract
+
+React decides "is this the same component instance?" from tree position and keys. If two renders of the same page produce different structure at the same position — an extra wrapper, a missing boundary, a changed key — React remounts. Remounting destroys client state: `useActionState` resets, refs are dropped, local state vanishes. Nothing errors when this happens; state just silently disappears, which makes it one of the most miserable bug classes to track down.
+
+So Rango treats tree structure as a hard guarantee: SSR, client navigation, and action re-renders all produce an identical tree shape for the same segment. Submit a form through a server action and every kept input's state is still there afterwards — that is the guarantee doing its job, not luck.
+
+`loading()` is part of that shape. A segment that declares `loading()` renders inside a boundary that can show your fallback; a segment without one renders with no boundary at all. Because the boundary is structural, the merge step preserves each kept segment's boundary shape exactly — an update can never silently change the structure of a segment it didn't replace.
+
+## Param changes: remount by default, reconcile with transition()
+
+By default, a route segment's identity includes its params. Navigating from `/product/1` to `/product/2` remounts the route subtree: state resets and the `loading()` skeleton shows again. That is the intended default — a different product is a different page.
+
+Declaring `transition()` on a layout or route in the matched chain changes this. The route and the layouts that belong to it drop params from their identity, so navigating between two param values of the same route **reconciles** the existing subtree instead of remounting it. The previous content stays visible while the new render commits — no skeleton flash — and on experimental React the persistent `<ViewTransition>` animates the same-route swap as a morph rather than an exit/enter pair.
+
+Two details worth knowing:
+
+- Whether a route sits in a transition scope is a **static property of its position in the tree** — it declares `transition()` or it doesn't. Its identity is therefore the same on SSR, navigation, and action renders; behavior never depends on how you arrived at the page.
+- Error and not-found boundaries always keep param-bearing identity, so they reset across param changes even inside a transition scope.
+
+## What a partial update replaces
+
+A client navigation or an action response is not a page render. The server re-runs a **selected subset** of segments, streams them, and the client merges them into the cached segment set:
+
+- After an action, the matched route's own entry — its handler plus its orphan layouts and parallels — re-runs together by default. Outer layout entries are skipped by default (the revalidation trace calls this `action:parent-chain-skip`).
+- `revalidate()` predicates adjust that selection per segment — see [Loaders](/docs/rango/features/loaders).
+- Everything not selected is kept exactly as cached, boundary shape included, so React reconciles kept segments in place. State in a kept layout survives while the route below it streams in fresh.
+
+Keep the axis straight: this selection is **not** caching. A segment selected for a re-run still consults its own `cache()` (a hit means no recompute), and busting a cache does not force a client update. The two axes compose — [Freshness](/docs/rango/concepts/freshness) covers the other one.
+
+## Forward/back is a segment cache too
+
+The history cache is mutation-aware. Any server action marks the cached entries stale and broadcasts that to other tabs. On back/forward the router finds the entry, sees it is stale, paints the stale view instantly, and revalidates — your `revalidate()` predicates re-run and fresh data streams in. You get instant back-button paints without ever presenting pre-mutation data as final.
+
+<Cards>
+  <Card href="/docs/rango/concepts/execution-model" title="Execution Model">
+    The exact order segments execute in: middleware, actions, loaders, render.
+  </Card>
+  <Card href="/docs/rango/concepts/freshness" title="Freshness">
+    The stored-value axis: cache(), "use cache", TTL/SWR, and tag invalidation.
+  </Card>
+</Cards>

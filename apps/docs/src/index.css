@@ -15,6 +15,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Global base text size. Everything rem-based (Tailwind text-* utilities,
+   prose typography, spacing set in rem) scales from this one knob. */
+@layer base {
+  html {
+    font-size: 15px;
+  }
+}
+
 /* rehype-autolink-headings ("wrap") wraps heading text in an anchor; keep those
    headings looking plain instead of underlined prose links. */
 .prose :where(h1, h2, h3, h4, h5, h6) a {

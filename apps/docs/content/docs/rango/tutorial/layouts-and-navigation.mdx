@@ -1,0 +1,125 @@
+---
+title: 3. Layouts & Navigation
+description: Share a shop shell across routes with layout() and switch to client-side navigation with prefetching links.
+type: tutorial
+---
+
+**Where we are:** three typed routes — `/`, `/shop`, `/shop/:slug` — with server-generated links, but no shared chrome and a full page load on every click.
+
+## Wrap the shop routes in a layout
+
+The shop grid and the product pages should share a nav. In Rango that's `layout()` — wrap the routes in the tree:
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import { ShopLayout } from "./layouts/shop-layout";
+import { HomePage } from "./pages/home";
+import { ProductPage } from "./pages/product";
+import { ShopPage } from "./pages/shop";
+
+export const urlpatterns = urls(({ path, layout }) => [
+  path("/", HomePage, { name: "home" }),
+  layout(<ShopLayout />, () => [
+    path("/shop", ShopPage, { name: "shop" }),
+    path("/shop/:slug", ProductPage, { name: "product" }),
+  ]),
+]);
+```
+
+The important thing about `layout()`: it contributes nothing to the URL. `path()` defines URLs; `layout()` only wraps the routes declared inside its callback. `/shop` and `/shop/:slug` are exactly the addresses they were before — the layout is presentation structure, not URL structure. That also means no codegen re-run: route types regenerate when patterns change, and no pattern changed.
+
+The home page stays outside the layout on purpose — it's a landing page with its own look.
+
+## The layout component
+
+A layout renders its own chrome and places child routes with `<Outlet />`, imported from `@rangojs/router/client`:
+
+```tsx
+// src/layouts/shop-layout.tsx
+import { Outlet } from "@rangojs/router/client";
+import { ShopNav } from "../components/shop-nav";
+
+export function ShopLayout() {
+  return (
+    <div>
+      <ShopNav />
+      <main>
+        <Outlet />
+      </main>
+    </div>
+  );
+}
+```
+
+Whichever child route matches — the grid or a product page — renders where `<Outlet />` sits. Layouts persist during navigation within their scope: moving from `/shop` to a product page swaps the outlet content while the layout around it stays put.
+
+## The nav
+
+The nav is a client component, so `Link` can navigate without reloading the document:
+
+```tsx
+// src/components/shop-nav.tsx
+"use client";
+import { href, Link } from "@rangojs/router/client";
+
+export function ShopNav() {
+  return (
+    <nav>
+      <Link to={href("/")} prefetch="viewport">
+        Brew
+      </Link>
+      <Link to={href("/shop")} prefetch="viewport">
+        Shop
+      </Link>
+    </nav>
+  );
+}
+```
+
+Three things going on here:
+
+- **`Link`** performs client-side navigation — the router fetches just what changed and updates in place, no document reload.
+- **`href()`** is the client-side helper for static paths. There's no handler context in the browser, so `ctx.reverse()` isn't available here; for fixed addresses like `/` and `/shop`, `href()` is the right tool, and it validates the path at compile time against your route patterns. A typo like `href("/shpo")` fails the build instead of shipping a dead link.
+- **`prefetch="viewport"`** starts fetching a link's target when the link scrolls into view. Links don't prefetch by default; with viewport prefetching, the response is often already in the prefetch cache by the time the user clicks.
+
+## Upgrade the product grid links
+
+Product links are dynamic — one per slug — so `href()` doesn't apply. The pattern: generate the URL on the server with `ctx.reverse()`, hand the string to `Link`:
+
+```tsx
+// src/pages/shop.tsx
+import type { Handler } from "@rangojs/router";
+import { Link } from "@rangojs/router/client";
+import { PRODUCTS } from "../data";
+
+export const ShopPage: Handler<"shop"> = (ctx) => {
+  return (
+    <section>
+      <h1>Shop</h1>
+      <ul>
+        {PRODUCTS.map((product) => (
+          <li key={product.slug}>
+            <Link
+              to={ctx.reverse("product", { slug: product.slug })}
+              prefetch="viewport"
+            >
+              {product.name} — ${product.price}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+};
+```
+
+This division of labor is the house style: the server knows the full route map, so URL _generation_ happens there with `ctx.reverse()`; the client handles the _navigation_ via `Link`. You can give the home page's "Browse the shop" link the same treatment — swap the `<a>` for a `Link` around `ctx.reverse("shop")`. For the full menu of URL-generation APIs on each side, see [Named Routes](/docs/rango/features/named-routes).
+
+## Try it
+
+Run `pnpm dev` and open `/shop`. The nav appears on the grid and on every product page, and clicking between them no longer reloads the document — the layout stays mounted while the content inside `<Outlet />` swaps. Scroll the grid and the product pages prefetch as their links come into view, so clicking through feels immediate. The home page, outside the layout, keeps its standalone look.
+
+The storefront now looks like an app. But the catalog is still read at render time straight from an array, and there's no loading state anywhere — time to make the data layer real.
+
+Next: [4. Live Data with Loaders](/docs/rango/tutorial/live-data-with-loaders)

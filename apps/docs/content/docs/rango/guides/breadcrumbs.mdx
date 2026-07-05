@@ -1,0 +1,215 @@
+---
+title: Breadcrumbs
+description: Accumulate a breadcrumb trail across nested route segments with the built-in Breadcrumbs handle.
+type: guide
+---
+
+Nested routes need a breadcrumb trail, and no single component knows the whole path — each level knows only its own label. The built-in `Breadcrumbs` handle solves this: every layout or route pushes its own item via `ctx.use(Breadcrumbs)`, and the items are collected in parent-to-child order with automatic deduplication by `href`.
+
+Each item has this shape:
+
+```ts
+interface BreadcrumbItem {
+  label: string; // Display text
+  href: string; // URL the breadcrumb links to
+  content?: ReactNode | Promise<ReactNode>; // Optional extra content (sync or async)
+}
+```
+
+## Push crumbs from server segments
+
+Import `Breadcrumbs` from `@rangojs/router` in server context. Each segment pushes at the point where it already knows its label:
+
+```tsx
+// urls.tsx
+import { urls, Breadcrumbs, Meta } from "@rangojs/router";
+import { Outlet, MetaTags } from "@rangojs/router/client";
+import { BreadcrumbNav } from "./components/BreadcrumbNav";
+
+function RootLayout() {
+  return (
+    <html lang="en">
+      <head>
+        <MetaTags />
+      </head>
+      <body>
+        <BreadcrumbNav />
+        <main>
+          <Outlet />
+        </main>
+      </body>
+    </html>
+  );
+}
+
+export const urlpatterns = urls(({ path, layout }) => [
+  layout(
+    (ctx) => {
+      ctx.use(Breadcrumbs)({ label: "Home", href: "/" });
+      ctx.use(Meta)({ title: "My App" });
+      return <RootLayout />;
+    },
+    () => [
+      path("/", () => <h1>Welcome</h1>, { name: "home" }),
+
+      layout(
+        (ctx) => {
+          ctx.use(Breadcrumbs)({ label: "Shop", href: "/shop" });
+          return <Outlet />;
+        },
+        () => [
+          path("/shop", () => <h1>Shop</h1>, { name: "shop" }),
+          path(
+            "/shop/:slug",
+            (ctx) => {
+              ctx.use(Breadcrumbs)({
+                label: ctx.params.slug,
+                href: `/shop/${ctx.params.slug}`,
+              });
+              return <h1>Product: {ctx.params.slug}</h1>;
+            },
+            { name: "shop.product" },
+          ),
+        ],
+      ),
+    ],
+  ),
+]);
+```
+
+Navigating to `/shop/widget` produces: `Home / Shop / widget`.
+
+## Render the trail on the client
+
+Read the accumulated items with `useHandle(Breadcrumbs)` in a client component:
+
+```tsx
+"use client";
+import { useHandle, Breadcrumbs, Link } from "@rangojs/router/client";
+
+function BreadcrumbNav() {
+  const breadcrumbs = useHandle(Breadcrumbs);
+
+  if (!breadcrumbs.length) return null;
+
+  return (
+    <nav aria-label="Breadcrumb">
+      <ol>
+        {breadcrumbs.map((crumb, i) => (
+          <li key={crumb.href}>
+            {i === breadcrumbs.length - 1 ? (
+              <span aria-current="page">{crumb.label}</span>
+            ) : (
+              <Link to={crumb.href}>{crumb.label}</Link>
+            )}
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
+```
+
+`useHandle` takes an optional selector so the component re-renders only when the selected value changes:
+
+```tsx
+const current = useHandle(Breadcrumbs, (data) => data.at(-1)); // only the last crumb
+const count = useHandle(Breadcrumbs, (data) => data.length); // just the count
+```
+
+You can also pass the handle itself from a server component to a client component as a prop (`<DashboardNav handle={Breadcrumbs} />`) and call `useHandle(handle)` on the other side.
+
+## Async content
+
+The `content` field accepts a `Promise<ReactNode>`, so a crumb can stream extra detail without blocking the push:
+
+```tsx
+path(
+  "/product/:id",
+  async (ctx) => {
+    const breadcrumb = ctx.use(Breadcrumbs);
+    const productPromise = fetchProduct(ctx.params.id);
+
+    breadcrumb({
+      label: "Product",
+      href: `/product/${ctx.params.id}`,
+      content: productPromise.then((p) => <span>({p.category})</span>),
+    });
+
+    const product = await productPromise;
+    return <ProductPage product={product} />;
+  },
+  { name: "product" },
+);
+```
+
+Resolve async `content` in your component with React's `use()` hook wrapped in `<Suspense>`.
+
+### Deferred crumbs: decide in the handler, resolve from a deep component
+
+Sometimes the handler must _decide_ to push a crumb (it holds `ctx`, and the decision has to land before the handles stream seals) but even the `label`/`href` are produced far away, by a deep async component. Call `.defer()` on the push function: it reserves the crumb's slot synchronously and returns a resolver you call later, anywhere in the render, with the same argument you'd have passed to the push:
+
+```tsx
+import { Breadcrumbs } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+import { Suspense } from "react";
+
+function DocsLayout(ctx) {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  // Decide now; resolve later.
+  const resolveCrumb = breadcrumb.defer({ timeoutMs: 5000, else: null });
+
+  // Deep, async, far from the handler — closes over the resolver, never touches ctx.
+  async function LiveCrumb() {
+    const n = await countOpenIssues();
+    resolveCrumb({ label: "Docs", href: "/docs", content: <span>{n}</span> });
+    return null;
+  }
+
+  return (
+    <>
+      <Suspense>
+        <LiveCrumb />
+      </Suspense>
+      <Outlet />
+    </>
+  );
+}
+```
+
+The timeout is the safety net: if the resolver is never called, the slot auto-resolves to `else` after `timeoutMs` (default 10s) and warns in dev — graceful degradation instead of a hung request. `timeoutMs: 0` or `Infinity` disable it intentionally; other non-finite or negative values fall back to the default.
+
+Consumers never see the deferral: `useHandle(Breadcrumbs)` returns the resolved item, never a `Promise`. On a full/SSR load the value resolves server-side; on soft navigation the breadcrumbs hold the previous resolved value until the deferred one lands, then swap — no blank, no pending entry. If the slot times out to `else: null`, the entry is dropped.
+
+Reach for `.defer()` only when even `label`/`href` are unknown at handler time. If you know them and only the extra detail is async, push a concrete item with a `Promise` `content` field instead.
+
+## Deduplication
+
+The built-in collect function deduplicates by `href` — if multiple segments push the same `href`, the last one wins. This prevents duplicates when navigating between sibling routes that share a common breadcrumb.
+
+## Beyond breadcrumbs: custom handles
+
+`Breadcrumbs` is one instance of the handle primitive ([Metadata & Handles](/docs/rango/features/metadata)). `createHandle()` builds your own:
+
+```ts
+import { createHandle } from "@rangojs/router";
+
+// Custom collect: last value wins.
+export const PageTitle = createHandle<string, string>(
+  (segments) => segments.flat().at(-1) ?? "Default Title",
+);
+
+// No collect: the default is the identity (lossless) — useHandle(Warnings)
+// is string[][], one array per segment that pushed, in segment order.
+export const Warnings = createHandle<string>();
+
+// Want a single flat list instead? Opt in:
+export const FlatWarnings = createHandle<string, string[]>((segments) =>
+  segments.flat(),
+);
+```
+
+Two things to know:
+
+- A handle whose module is never imported (so `createHandle()` never registered its collect) falls back to the identity default and warns in dev.
+- For project-local code, the Vite `exposeInternalIds` plugin auto-injects a stable `$$id` from file path and export name. The plugin skips `node_modules/`, so handles published in packages need a manual tag as the second argument — `createHandle(collectFn, "__my_package_breadcrumbs__")`, or `createHandle(undefined, "__my_package_tag__")` without a collect. The tag must be globally unique and stable across builds; without one, `createHandle` throws in development mode.
