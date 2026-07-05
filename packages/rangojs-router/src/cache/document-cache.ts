@@ -19,7 +19,7 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
-import { sortedSearchString } from "./cache-key-utils.js";
+import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
 
@@ -317,25 +317,17 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
       const typeSuffix = isRscRequest ? ":rsc" : ":html";
 
-      let searchSuffix = "";
-      if (!keyGenerator) {
-        const sorted = sortedSearchString(url.searchParams);
-        if (sorted) {
-          searchSuffix = `?${sorted}`;
-        }
-      }
-
-      // Host-namespace the default key. VercelCacheStore/MemorySegmentCacheStore
-      // key by the raw string with no host prefix (only CFCacheStore adds host
-      // internally), so on a single function serving multiple domains an
-      // un-namespaced key bleeds tenant A's full response to tenant B. Mirrors
-      // the segment path's cache-scope.ts getCacheKeyBase (`${host}${pathname}`).
+      // Default key rides the shared host-namespaced base (cacheKeyBase) so the
+      // segment tier (cache-scope.ts) and this document tier cannot drift on the
+      // host-namespacing rule -- see the contract on cacheKeyBase.
       // The keyGenerator branch is left untouched: a consumer-supplied generator
       // owns its own namespacing (auto-prefixing host would silently change their
       // existing keys and double any host they already include).
       const cacheKey = keyGenerator
         ? keyGenerator(url) + segmentHash + typeSuffix
-        : `${url.host}${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
+        : cacheKeyBase(url.host, url.pathname, url.searchParams) +
+          segmentHash +
+          typeSuffix;
       // 1. Check cache
       const cached = await store.getResponse(cacheKey);
 

@@ -19,7 +19,10 @@ import {
   createScanFilter,
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
-import { injectClientDebugFlag } from "./inject-client-debug.js";
+import {
+  injectClientDebugFlag,
+  internalDebugNoCacheMiddleware,
+} from "./inject-client-debug.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
@@ -391,6 +394,11 @@ export function createRouterDiscoveryPlugin(
       // Skip if this is a temp server created by buildStart
       if ((globalThis as any).__rscRouterDiscoveryActive) return;
       s.devServer = server;
+
+      // Serve the internal-debug module no-cache: consumers resolve it into
+      // node_modules, where dev's immutable `?v=` caching pinned browsers to a
+      // stale baked INTERNAL_RANGO_DEBUG. See internalDebugNoCacheMiddleware.
+      server.middlewares.use(internalDebugNoCacheMiddleware());
 
       // Discovery promise that the handler can await if requests arrive
       // before discovery completes

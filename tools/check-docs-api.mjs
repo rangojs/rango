@@ -35,6 +35,20 @@ const REPO_ROOT = path.resolve(
 const DOCS = [
   "packages/rangojs-router/README.md",
   "packages/rangojs-router/docs/why-rango.md",
+  // The caching/PPR skill family teaches API surface the same way the
+  // positioning docs do, and has drifted the same way: skills taught a
+  // "use cache"-only cacheTag() after src shipped the render-callable form
+  // (issue #684, plan 003). Guard them with the same identifier check.
+  ...[
+    "cache-guide",
+    "caching",
+    "defer-hydration",
+    "document-cache",
+    "ppr",
+    "prerender",
+    "shell-manifest",
+    "use-cache",
+  ].map((skill) => `packages/rangojs-router/skills/${skill}/SKILL.md`),
 ];
 
 const SRC_ROOT = path.join(REPO_ROOT, "packages/rangojs-router/src");
@@ -46,6 +60,10 @@ const ALLOWLIST = new Set([
   // ("config extracts into factories you can share").
   "withCaching",
   "withAuth",
+  // Suggested userland factory name in the defer-hydration recipe ("factor the
+  // module into a createHydrationGate() if you go there") -- deliberately not a
+  // shipped API; the recipe has zero API commitment.
+  "createHydrationGate",
 ]);
 
 // --- extraction ------------------------------------------------------------
@@ -123,7 +141,13 @@ const corpus = collectSrcCorpus(SRC_ROOT, []).join("\n");
 
 function existsInSrc(name) {
   const escaped = name.replace(/\$/g, "\\$");
-  return new RegExp(`\\b${escaped}\\s*(?:\\(|:|=[^=]|\\?:|<)`).test(corpus);
+  // Second alternation: class declarations (`export class Skip extends Error`)
+  // sit in none of the value-ish positions the first pattern matches -- found
+  // when the skills joined the doc list and `Skip` false-negatived.
+  return (
+    new RegExp(`\\b${escaped}\\s*(?:\\(|:|=[^=]|\\?:|<)`).test(corpus) ||
+    new RegExp(`\\bclass\\s+${escaped}\\b`).test(corpus)
+  );
 }
 
 // --- run ---------------------------------------------------------------------

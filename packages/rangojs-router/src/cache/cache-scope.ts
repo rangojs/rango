@@ -31,7 +31,7 @@ import {
   encodeHandles,
   decodeHandles,
 } from "./handle-snapshot.js";
-import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
+import { cacheKeyBase } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
   isFiniteNonNegativeSeconds,
@@ -85,21 +85,6 @@ function validatedSwr(value: number | undefined): number | undefined {
   return isValidCacheSeconds(value, "swr") ? value : undefined;
 }
 
-function getCacheKeyBase(
-  host: string,
-  pathname: string,
-  params?: Record<string, string>,
-  searchParams?: URLSearchParams,
-): string {
-  const paramStr = sortedRouteParams(params);
-  const searchStr = searchParams ? sortedSearchString(searchParams) : "";
-
-  let key = `${host}${pathname}`;
-  if (paramStr) key += `:${paramStr}`;
-  if (searchStr) key += `?${searchStr}`;
-  return key;
-}
-
 function getDefaultRouteCacheKey(
   pathname: string,
   params?: Record<string, string>,
@@ -113,7 +98,7 @@ function getDefaultRouteCacheKey(
   // Intercept navigations get their own cache namespace
   const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
 
-  return `${prefix}:${getCacheKeyBase(host, pathname, params, searchParams)}`;
+  return `${prefix}:${cacheKeyBase(host, pathname, searchParams, params)}`;
 }
 
 // ============================================================================

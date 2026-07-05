@@ -45,7 +45,10 @@ import {
   warnPprNonceActiveOnce,
 } from "./shell-serve.js";
 import { contextGet } from "../context-var.js";
-import { resolveSameOriginRedirect } from "../redirect-origin.js";
+import {
+  resolveSameOriginRedirect,
+  safeSameOriginLanding,
+} from "../redirect-origin.js";
 import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
@@ -451,7 +454,7 @@ export function resolveShellHitRedirectTarget(
 ): string {
   return (
     resolveSameOriginRedirect(rawTarget, requestOrigin) ??
-    (basename && basename !== "/" ? basename : "/")
+    safeSameOriginLanding(basename)
   );
 }
 
