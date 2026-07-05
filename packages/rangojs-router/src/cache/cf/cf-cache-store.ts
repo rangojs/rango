@@ -137,6 +137,16 @@ const warnedNoKvReadInvalidation = new Set<string>();
  */
 const warnedTagInvalidationTtlFloor = new Set<string>();
 
+/**
+ * Stores (by namespace) already warned that tag invalidation is writing KV
+ * markers with no expiry (tagInvalidationTtl unset), so the unbounded-growth
+ * warning fires once per process rather than once per invalidateTags call
+ * (CFCacheStore is constructed per request; invalidateTags runs per marker
+ * batch). Distinct from the floor warning: that one only fires for a positive
+ * below-floor value, never for the unset (no-expiry) default that this bounds.
+ */
+const warnedNoTagInvalidationTtl = new Set<string>();
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -2254,6 +2264,25 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const failedTags = new Set<string>();
     const errors: unknown[] = [];
     if (this.kv) {
+      // Markers written with no expiry (tagInvalidationTtl unset) never expire,
+      // so high-cardinality tags accumulate KV keys unboundedly with no reaper.
+      // Warn once per namespace at the batch entry point (not per marker write,
+      // which would fire once per tag). Kept separate from the floor warning:
+      // that path only fires for a positive below-floor value, never the unset
+      // default sanitizeTagInvalidationTtl passes through as undefined.
+      if (!this.tagInvalidationTtl) {
+        const id = this.namespace ?? "default";
+        if (!warnedNoTagInvalidationTtl.has(id)) {
+          warnedNoTagInvalidationTtl.add(id);
+          console.warn(
+            `[CFCacheStore] invalidateTags is writing KV markers with no expiry ` +
+              `(tagInvalidationTtl is unset): high-cardinality tags accumulate KV ` +
+              `keys unboundedly (storage + list-scan cost) with no reaper. Set ` +
+              `tagInvalidationTtl above your largest entry TTL+SWR to bound marker ` +
+              `growth; setting it too small resurrects invalidated entries.`,
+          );
+        }
+      }
       await Promise.all(
         tags.map(async (tag) => {
           const markerKey = this.tagMarkerKey(tag);

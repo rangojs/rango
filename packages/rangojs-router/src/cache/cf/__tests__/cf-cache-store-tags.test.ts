@@ -1341,6 +1341,43 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         warn.mockRestore();
       });
 
+      it("warns exactly once per namespace when invalidating with no tagInvalidationTtl (unbounded KV markers)", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        // Unique namespace: the warning de-dupes once per namespace at the
+        // module level, so reusing "default" would consume that slot for the
+        // rest of the process and couple this test to others' ordering.
+        const store = makeStore({ namespace: "no-ttl-warn-fixture" });
+
+        // Two distinct tags in one batch, plus a second batch: still ONE warning.
+        await store.invalidateTags(["alpha", "beta"]);
+        await store.invalidateTags(["gamma"]);
+
+        const noExpiryWarns = warn.mock.calls.filter(([msg]) =>
+          String(msg).includes("tagInvalidationTtl is unset"),
+        );
+        expect(noExpiryWarns).toHaveLength(1);
+        expect(noExpiryWarns[0]![0]).toEqual(
+          expect.stringContaining("tagInvalidationTtl"),
+        );
+        warn.mockRestore();
+      });
+
+      it("does NOT emit the no-expiry warning when tagInvalidationTtl is set", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const store = makeStore({
+          namespace: "ttl-set-fixture",
+          tagInvalidationTtl: 300,
+        });
+
+        await store.invalidateTags(["alpha", "beta"]);
+
+        const noExpiryWarns = warn.mock.calls.filter(([msg]) =>
+          String(msg).includes("tagInvalidationTtl is unset"),
+        );
+        expect(noExpiryWarns).toHaveLength(0);
+        warn.mockRestore();
+      });
+
       it("treats a non-finite tagCacheTtl (Infinity) as disabled, not 'max-age=Infinity'", async () => {
         const store = makeStore({ tagCacheTtl: Infinity });
         await store.set("k", createTestData(["shared"]), 300);
