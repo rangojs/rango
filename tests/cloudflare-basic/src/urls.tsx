@@ -24,12 +24,17 @@ import {
   PprBareHomePage,
   PprSlotChromeLayout,
   PprSlotHomePage,
+  PprExecLayout,
+  PprExecBadgeSlot,
+  PprExecPage,
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
   PprShellSettledLoader,
+  PprShellExecLoader,
+  pprExecCounters,
   PprChromeLoader,
   PprBadgeLoader,
 } from "./loaders/ppr-shell.js";
@@ -431,6 +436,38 @@ export const urlpatterns = urls(
             () => [loader(PprShellSettledLoader)],
           ),
         ]),
+        // Shell fast-path execution matrix (docs/design/shell-fast-path.md):
+        // middleware + layout + parallel + path + loader counters, asserted
+        // layer-by-layer across consecutive HITs on workerd/KV. The middleware
+        // is scoped to this subtree so its counter isolates the fixture.
+        middleware(
+          async (_ctx, next) => {
+            pprExecCounters.middleware += 1;
+            return next();
+          },
+          () => [
+            layout(PprExecLayout, () => [
+              parallel({
+                "@pprExecBadge": {
+                  handler: PprExecBadgeSlot,
+                },
+              }),
+              path(
+                "/ppr-shell/exec-matrix",
+                PprExecPage,
+                { name: "pprShellExecMatrix", ppr: { ttl: 300, swr: 120 } },
+                () => [
+                  loader(PprShellExecLoader),
+                  loading(
+                    <div data-testid="ppr-exec-fallback">
+                      Loading exec matrix...
+                    </div>,
+                  ),
+                ],
+              ),
+            ]),
+          ],
+        ),
         // LAYOUT-LOADER shapes (the storefront): the layout registers a
         // loader with NO loading() on the LAYOUT — the BAKE lane
         // (docs/design/loader-container-bake.md). PprChromeLoader executes at

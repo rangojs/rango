@@ -585,6 +585,30 @@ function serveShellHit(
         );
       }
       if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
+      // Shell fast path (serve side): when the capture recorded the implicit
+      // doc segment record and the handler layer declared no liveness, arm the
+      // implicit scope on the seeded context — the tail match's cache lookup
+      // then HITs the SeededShellStore's doc entry and the whole handler layer
+      // is REPLAYED, not re-executed (loaders still run fresh via
+      // resolveFreshLoadersAndYield; per-request payload metadata is rebuilt
+      // by buildFullPayload as always). A route with handler-live holes, a
+      // route-derived cache scope, or a missing/corrupt record degrades to
+      // the full tail (handler re-run — today's behavior) automatically.
+      if (!entry.handlerLiveHoles) {
+        seededCtx._shellImplicitCache = {
+          ttl: descriptor.ttl,
+          swr: descriptor.swr,
+        };
+        if (INTERNAL_RANGO_DEBUG) {
+          console.log(
+            `[Server][ppr] shell HIT: fast path armed (implicit doc cache) (abs ${Math.round(performance.now())})`,
+          );
+        }
+      } else if (INTERNAL_RANGO_DEBUG) {
+        console.log(
+          `[Server][ppr] shell HIT: fast path declined — handler-live holes; tail re-runs handlers (abs ${Math.round(performance.now())})`,
+        );
+      }
       return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
     }
     return renderTail(reqCtx);

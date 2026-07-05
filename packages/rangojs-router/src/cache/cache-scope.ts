@@ -452,7 +452,11 @@ export class CacheScope {
       }
 
       // Collect handle data for non-loader segments only
-      const handles = captureHandles(nonLoaderSegments, handleStore);
+      const handles = captureHandles(
+        nonLoaderSegments,
+        handleStore,
+        requestCtx._shellCaptureLoaderHandleValues,
+      );
 
       try {
         if (INTERNAL_RANGO_DEBUG) {
@@ -511,4 +515,29 @@ export function createCacheScope(
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent
   return new CacheScope(config.options, parent);
+}
+
+/**
+ * Shell fast path: when the route tree derived NO cache scope and the current
+ * request context carries the `_shellImplicitCache` marker (a shell capture,
+ * or a HIT tail serving an eligible entry), substitute an implicit doc-level
+ * scope so withCacheLookup/withCacheStore treat the WHOLE matched route as a
+ * cache() boundary — the shell entry IS a cache() of the handler layer, with
+ * loaders as the live carve-outs (resolveFreshLoadersAndYield).
+ *
+ * An existing scope — including an explicit cache(false) opt-out — always
+ * wins: the consumer's cache() semantics (their ttl/swr/store/condition) are
+ * never overridden, and cache(false) keeps the tail on the full handler
+ * re-run path.
+ */
+export function resolveShellImplicitCacheScope(
+  scope: CacheScope | null,
+): CacheScope | null {
+  if (scope) return scope;
+  const marker = getRequestContext()?._shellImplicitCache;
+  if (!marker) return null;
+  return new CacheScope(
+    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
+    null,
+  );
 }

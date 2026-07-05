@@ -5,12 +5,14 @@ import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
 import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
+import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
 import { PprShellSettled } from "../components/PprShellSettled.js";
 import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
+import { PprShellExecMatrix } from "../components/PprShellExecMatrix.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -112,4 +114,30 @@ export function PprSlotChromeLayout() {
 
 export function PprSlotHomePage() {
   return <p data-testid="ppr-slot-home">Slot home static content</p>;
+}
+
+// Shell fast-path execution matrix (docs/design/shell-fast-path.md): each
+// layer increments its module counter; the DSL loader (live lane) reports the
+// snapshot per serve. On a fast-path HIT, ONLY middleware + the loader may
+// advance — the three handler counters are pinned frozen by the e2e (handlers
+// are replayed from the captured doc segment record, never executed).
+export function PprExecLayout() {
+  pprExecCounters.layout += 1;
+  return (
+    <main data-testid="ppr-exec-page">
+      <p data-testid="ppr-exec-chrome">Exec matrix static chrome</p>
+      <ParallelOutlet name="@pprExecBadge" />
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprExecBadgeSlot() {
+  pprExecCounters.parallel += 1;
+  return <span data-testid="ppr-exec-badge">exec badge</span>;
+}
+
+export function PprExecPage() {
+  pprExecCounters.path += 1;
+  return <PprShellExecMatrix loader={PprShellExecLoader} />;
 }

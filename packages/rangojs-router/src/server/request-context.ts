@@ -211,6 +211,53 @@ export interface RequestContext<
   _shellLoaderSeed?: Map<string, unknown>;
 
   /**
+   * @internal Shell fast-path marker: makes the NEXT full match treat the whole
+   * matched route as an implicit doc-level cache() boundary (see
+   * resolveShellImplicitCacheScope in cache/cache-scope.ts). Set ONLY on
+   * (a) the capture's derived context — with a record-only store so the
+   * capture's cacheRoute write lands in the snapshot, never the real store —
+   * and (b) a HIT tail's seeded context when the entry is eligible
+   * (!handlerLiveHoles), where the SeededShellStore serves the recorded doc
+   * entry and the match skips handler execution entirely. Routes with their
+   * own cache() config (including cache(false)) are never overridden: the
+   * marker only applies when the route tree derived NO cache scope.
+   */
+  _shellImplicitCache?: {
+    ttl?: number;
+    swr?: number;
+    store?: SegmentCacheStore;
+  };
+
+  /**
+   * @internal Handler-layer liveness observed DURING a shell capture, from
+   * three sources: (a) the capture handle-store push wrapper (shell-capture.ts)
+   * when a push made OUTSIDE a DSL loader scope carries a nested thenable
+   * (masked to a never-filling hole); (b) still-pending top-level handler
+   * pushes (liveness unknowable at the barrier); (c) a handler-invoked loader
+   * executing during the capture (loader-resolution.ts — its consumption-lane
+   * value would freeze on a handler-free HIT). captureAndStoreShell folds it
+   * into ShellCacheEntry.handlerLiveHoles at the putShell barrier. Own
+   * property of the capture's derived context only.
+   */
+  _shellCaptureHandleLiveness?: {
+    holes: boolean;
+    pendingPushes: number;
+    handlerInvokedLoader: boolean;
+  };
+
+  /**
+   * @internal Handle values pushed from a DSL loader scope DURING a shell
+   * capture (identity set; populated by the capture push wrapper in
+   * shell-capture.ts). cacheRoute threads it into captureHandles so those
+   * values stay out of cache-write handle records — loaders re-run fresh on
+   * every HIT, so replaying their captured (masked) values would duplicate
+   * the fresh push and stall the Flight handle encode. Own property of the
+   * capture's derived context only; render-time handle consumers are
+   * unaffected (the exclusion applies only at the captureHandles call site).
+   */
+  _shellCaptureLoaderHandleValues?: WeakSet<object>;
+
+  /**
    * @internal Set (to the offending fn name) by the cookies()/headers()
    * capture guard when it throws DURING a capture render. Load-bearing for the
    * bake lane: a guard throw inside an executing loader is swallowed by

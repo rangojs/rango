@@ -64,6 +64,9 @@ vi.mock("../logging.js", () => ({
 vi.mock("../../cache/cache-scope.js", () => ({
   CacheScope: vi.fn(),
   createCacheScope: vi.fn(() => null),
+  // Identity pass-through: these tests exercise snapshot reuse, not the shell
+  // fast path's implicit scope substitution (covered in shell-fast-path.test.ts).
+  resolveShellImplicitCacheScope: vi.fn((scope) => scope),
 }));
 
 vi.mock("../error-handling.js", () => ({

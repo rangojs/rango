@@ -53,6 +53,7 @@ export const NamedRoutes = {
   pprDrift: "/ppr-drift",
   pprNonce: "/ppr-nonce",
   pprShell: "/ppr-shell",
+  pprShellExecMatrix: "/ppr-shell/exec-matrix",
   pprShellLayoutLoader: "/ppr-shell/layout-loader",
   pprShellLayoutLoaderBare: "/ppr-shell/layout-loader-bare",
   pprShellNoHole: "/ppr-shell/no-hole",

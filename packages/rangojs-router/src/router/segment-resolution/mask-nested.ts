@@ -51,11 +51,27 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * rule, semantic-matrix PPR3) shares the raw container and must keep real
  * values. Cycles are preserved as cycles in the copy.
  */
+/**
+ * Optional single-walk report for maskNestedContainerThenables: `thenable`
+ * flips true when the walk masked at least one thenable. The shell fast path
+ * reads it at handle-push time — a pushed container with a nested thenable
+ * declares per-request data, and a shell entry whose HANDLER layer made such
+ * a declaration cannot be served handler-free (the hole would never fill).
+ * Same single-pass shape as elideLoaderContainer's `hasHole`.
+ */
+export interface MaskReport {
+  thenable: boolean;
+}
+
 export function maskNestedContainerThenables(
   value: unknown,
   seen: Map<object, unknown> = new Map(),
+  report?: MaskReport,
 ): unknown {
-  if (isThenable(value)) return createMaskedLoaderPromise();
+  if (isThenable(value)) {
+    if (report) report.thenable = true;
+    return createMaskedLoaderPromise();
+  }
 
   if (Array.isArray(value)) {
     const cached = seen.get(value);
@@ -63,7 +79,7 @@ export function maskNestedContainerThenables(
     const out: unknown[] = new Array(value.length);
     seen.set(value, out);
     for (let i = 0; i < value.length; i++) {
-      out[i] = maskNestedContainerThenables(value[i], seen);
+      out[i] = maskNestedContainerThenables(value[i], seen, report);
     }
     return out;
   }
@@ -74,7 +90,7 @@ export function maskNestedContainerThenables(
     const out: Record<string, unknown> = {};
     seen.set(value, out);
     for (const key of Object.keys(value)) {
-      out[key] = maskNestedContainerThenables(value[key], seen);
+      out[key] = maskNestedContainerThenables(value[key], seen, report);
     }
     return out;
   }
