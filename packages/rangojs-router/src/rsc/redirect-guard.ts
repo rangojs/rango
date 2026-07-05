@@ -38,6 +38,7 @@ import {
   resolveSameOriginRedirect,
   resolveExternalRedirect,
   isExternalRedirect,
+  safeSameOriginLanding,
   EXTERNAL_REDIRECT_MARKER,
 } from "../redirect-origin.js";
 import { carryOverRedirectHeaders } from "./helpers.js";
@@ -79,7 +80,7 @@ export function guardOutgoingRedirect(
 
   // Cross-origin (or unsafe-scheme external): neutralize to a safe same-origin
   // landing.
-  const safeTarget = basename && basename !== "/" ? basename : "/";
+  const safeTarget = safeSameOriginLanding(basename);
   if (process.env.NODE_ENV !== "production") {
     console.error(
       `[rango] Blocked cross-origin redirect to "${location}"; sent to ` +

@@ -61,6 +61,20 @@ export function resolveExternalRedirect(
 }
 
 /**
+ * The safe same-origin landing for a blocked redirect.
+ *
+ * Every guard that neutralizes a cross-origin/unsafe redirect target sends the
+ * browser here instead: the app's basename root, or `"/"` when unset. Kept
+ * beside the resolvers so the "where does a blocked redirect go" answer lives
+ * in ONE place -- the server 3xx guard (`rsc/redirect-guard.ts`) and the
+ * shell-HIT degradation path (`rsc/rsc-rendering.ts`) must agree, or a blocked
+ * redirect lands differently depending on which exit it took.
+ */
+export function safeSameOriginLanding(basename: string | undefined): string {
+  return basename && basename !== "/" ? basename : "/";
+}
+
+/**
  * Out-of-band brand for `redirect(url, { external: true })`.
  *
  * The external opt-in MUST be settable only by app code calling `redirect(...,
