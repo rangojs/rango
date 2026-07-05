@@ -236,6 +236,29 @@ describe("createShellCaptureHandler", () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
+  it("bounds a hung bootstrap load under maxWaitMs (degrades to null, no hang)", async () => {
+    // SSR-02: loadBootstrapScriptContent() was awaited BEFORE the maxWaitMs timer
+    // was armed, so a hung bootstrap load hung captureShellHTML with no upper
+    // bound and held the background capture task open. The deadline is now armed
+    // first and the bootstrap load races it — a load that never resolves within
+    // maxWaitMs is the same bounded no-shell degrade as a shell that never goes
+    // quiet: null, not a hang. Before the fix this test hangs to the vitest
+    // per-test timeout instead of resolving.
+    const start = Date.now();
+    const result = await captureShell(
+      makeDeps({
+        loadBootstrapScriptContent: vi.fn(() => new Promise<string>(() => {})),
+      }),
+      "cap",
+      { maxWaitMs: 50 },
+    );
+    const elapsed = Date.now() - start;
+    expect(result).toBeNull();
+    // Bounded by the deadline, not hung.
+    expect(elapsed).toBeGreaterThanOrEqual(45);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
   it("captures the DATA variant (no holes -> postponed null) with a healthy prelude", async () => {
     // No Suspense hole: the shell completes fully, so postponed is null.
     mockedRenderSegments.mockImplementation(() =>
@@ -290,21 +313,21 @@ describe("createShellCaptureHandler", () => {
     ).rejects.toThrow("prerender exploded");
   });
 
-  it("returns null when the abort itself rejects the prerender (AbortError)", async () => {
+  it("returns null when the abort itself rejects the prerender (our abort reason)", async () => {
     // Dev cold paths: module transform / first-render latency can outlast
     // flight quiesce, so our own abort lands before the shell completed and
-    // prerender REJECTS with an AbortError instead of returning a prelude.
-    // Expected degradation, same class as a trivial prelude: null, no throw;
-    // a later request re-captures. Only rejections carrying the abort (signal
-    // aborted + AbortError name) are treated this way - the hard-rejection
-    // test above pins that real errors still propagate.
+    // prerender REJECTS with the abort reason instead of returning a prelude.
+    // Expected degradation, same class as a trivial prelude: null, no throw; a
+    // later request re-captures. Discrimination is by IDENTITY, not error.name:
+    // real react-dom aborts with `signal.reason` and rejects with that exact
+    // object (capture's private abortReason), so this fake rejects with
+    // `options.signal.reason` to mirror the real shape. The genuine-AbortError
+    // test above pins that a NON-sentinel AbortError still propagates.
     const abortingPrerender = vi.fn(
       (_element: unknown, options: { signal?: AbortSignal }) =>
         new Promise((_resolve, reject) => {
           options.signal?.addEventListener("abort", () => {
-            const err = new Error("The operation was aborted");
-            err.name = "AbortError";
-            reject(err);
+            reject(options.signal?.reason);
           });
         }),
     );
@@ -317,6 +340,97 @@ describe("createShellCaptureHandler", () => {
       quiesce: Promise.resolve(),
     });
     expect(result).toBeNull();
+  });
+
+  it("propagates a genuine AbortError-named throw (NOT our abort) instead of masking it as null", async () => {
+    // Regression for SSR-01. A component throwing an error whose NAME is
+    // "AbortError" (a component's own fetch/AbortController cancellation, a
+    // nested boundary React aborts) is NOT capture's deliberate abort. Capture
+    // aborts UNCONDITIONALLY before awaiting the prerender, so the old
+    // discrimination `signal.aborted && error.name === "AbortError"` collapsed to
+    // a pure name check and swallowed this genuine failure into a retryable null
+    // no-shell — hiding it from reportCacheError. Identity discrimination
+    // (error === abortReason) lets it propagate. A root throw is FATAL: real
+    // react-dom/static.edge rejects the prerender with the thrown DOMException
+    // (verified), so capture rethrows it rather than resolving null.
+    const onError = vi.fn();
+    const deps = makeDeps({ onError });
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(
+        React.createElement(
+          "html",
+          null,
+          React.createElement(
+            "body",
+            null,
+            React.createElement(function Boom(): React.ReactNode {
+              throw new DOMException("genuine cancel", "AbortError");
+            }),
+          ),
+        ),
+      ),
+    );
+    const capture = createShellCaptureHandler(deps);
+    await expect(
+      capture(makeRscStream("GENUINE_ABORT_FLIGHT"), {
+        quiesce: Promise.resolve(),
+      }),
+    ).rejects.toThrow("genuine cancel");
+    // The genuine error also surfaced through the deps.onError channel.
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "AbortError" }),
+      { phase: "rendering" },
+    );
+  });
+
+  it("releases the reader and cancels the source when the prelude stream errors mid-read", async () => {
+    // SSR-05: readStreamToUint8Array had no try/finally, so a prelude that errors
+    // mid-read (a documented abort path) propagated with the reader still locked
+    // and the source uncancelled. A spy prelude stream observes that the throw
+    // path now releases the lock and cancels the source before rethrowing. The
+    // mid-read error is NOT our abort reason, so it propagates (not null).
+    const midReadError = new Error("prelude stream boom mid-read");
+    let released = false;
+    let cancelledWith: unknown;
+    const preludeStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("<body>partial"));
+      },
+      pull(controller) {
+        controller.error(midReadError);
+      },
+    });
+    const realGetReader = preludeStream.getReader.bind(preludeStream);
+    preludeStream.getReader = (() => {
+      const reader = (
+        realGetReader as () => ReadableStreamDefaultReader<Uint8Array>
+      )();
+      const realRelease = reader.releaseLock.bind(reader);
+      const realCancel = reader.cancel.bind(reader);
+      reader.releaseLock = () => {
+        released = true;
+        realRelease();
+      };
+      reader.cancel = (reason?: unknown) => {
+        cancelledWith = reason;
+        return realCancel(reason);
+      };
+      return reader;
+    }) as typeof preludeStream.getReader;
+
+    const fakePrerender = vi
+      .fn()
+      .mockResolvedValue({ prelude: preludeStream, postponed: { s: 1 } });
+    const deps = makeDeps({ prerender: fakePrerender as any });
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(makeTree(new Promise(() => {}), "cap")),
+    );
+    const capture = createShellCaptureHandler(deps);
+    await expect(
+      capture(makeRscStream("MIDREAD_FLIGHT"), { quiesce: Promise.resolve() }),
+    ).rejects.toThrow("prelude stream boom mid-read");
+    expect(released).toBe(true);
+    expect(cancelledWith).toBe(midReadError);
   });
 });
 

@@ -247,11 +247,22 @@ async function readStreamToUint8Array(
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    total += value.length;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.length;
+    }
+  } catch (error) {
+    // Mid-read abort path (documented): the prelude stream errors with our
+    // abort reason while we are still reading it. Cancel the source before
+    // rethrowing so it is not left uncancelled; releaseLock always runs in
+    // finally. Mirrors src/rsc/rsc-rendering.ts's serve-side reader cleanup.
+    reader.cancel(error).catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
   const out = new Uint8Array(total);
   let offset = 0;
@@ -434,113 +445,140 @@ export function createShellCaptureHandler<TEnv = unknown>(
   ): Promise<ShellCaptureResult | null> {
     const maxWaitMs = opts.maxWaitMs ?? DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS;
 
-    // No nonce (nonce'd requests never reach capture); no formState.
-    const SsrRoot = createSsrRootComponent({
-      createFromReadableStream,
-      rscStream,
-    });
-
-    const bootstrapScriptContent = await loadBootstrapScriptContent();
-
-    // Start prerender first, then run the abort schedule concurrently. When
-    // holes are pending, prerender's promise settles only after abort(); when
-    // the shell completes with no holes it settles on its own and the later
-    // abort() is a harmless no-op (the DATA variant).
-    const controller = new AbortController();
-    const prerenderPromise = prerender(<SsrRoot />, {
-      signal: controller.signal,
-      bootstrapScriptContent,
-      // Abort is how capture WORKS: once the shell is quiet we abort() to freeze
-      // the prelude and let the still-pending holes postpone. React reports the
-      // abort reason for each pending boundary through onError. Without an onError
-      // here React falls back to console.error, so every capture that still has a
-      // live hole at abort time (the normal case, and every cold-module capture
-      // where the shell is not yet done) dumps a DOMException [AbortError] stack —
-      // once per pending boundary. That is EXPECTED degradation, not a failure, so
-      // swallow the abort here. Genuine shell render errors (a component throwing)
-      // are NOT the abort and still surface through the deps.onError channel, the
-      // same one renderHTML uses. See docs/design/ppr-shell-resume.md.
-      onError: (error: unknown) => {
-        if (
-          controller.signal.aborted &&
-          (error as { name?: string } | null)?.name === "AbortError"
-        ) {
-          return;
-        }
-        reportRenderError(onError, error);
-      },
-    });
-    // Pre-attach a no-op catch: the real await sits AFTER quiesce + the
-    // post-quiesce hops, so an early prerender rejection (e.g. a bake-lane
-    // loader tripping the identity guard within milliseconds) would otherwise
-    // spend several turns handler-less and crash the worker as an unhandled
-    // rejection. The actual rejection handling still happens at the await
-    // below; this parallel handler only keeps the gap crash-free.
-    prerenderPromise.catch(() => {});
-
-    // Wait for the caller's quiesce signal. By the time it resolves the Flight
-    // input is byte-quiet and FROZEN by the capture gate (shell-capture.ts
-    // gateFlightForCapture), so there is no wall-clock debounce here — maxWaitMs
-    // is only the pathological guard for a shell that never goes quiet (a root
-    // postpone / hung handle), and should never fire in tests.
-    const timer = createCancelableTimeout(maxWaitMs);
+    // Arm the maxWaitMs deadline BEFORE the first await so it bounds the ENTIRE
+    // capture, the bootstrap-script load included. loadBootstrapScriptContent()
+    // used to run before the timer, so a hung/slow bootstrap load hung
+    // captureShellHTML with no upper bound and held the background capture task
+    // open. One deadline, shared by the bootstrap race below and the quiesce
+    // race, keeps the whole path "bounded by maxWaitMs like every quiesce input".
+    const deadline = createCancelableTimeout(maxWaitMs);
     try {
-      await Promise.race([opts.quiesce, timer.promise]);
-    } finally {
-      timer.cancel();
-    }
-    // Fixed task hops before the abort: give React's fizz worker turns to flush
-    // the now-complete shell and mark the still-pending boundaries as POSTPONED
-    // rather than errored. Deterministic (the byte set is already frozen), so a
-    // fixed count of turns suffices — no wall-clock.
-    for (let i = 0; i < POST_QUIESCE_TASK_HOPS; i++) {
-      await macrotask();
-    }
-    controller.abort();
+      // No nonce (nonce'd requests never reach capture); no formState.
+      const SsrRoot = createSsrRootComponent({
+        createFromReadableStream,
+        rscStream,
+      });
 
-    // A hard prerender rejection (fatal shell error) propagates. Expected
-    // degradation surfaces three ways and all return null: a trivial prelude
-    // (sanity gate below), the prerender REJECTING with an AbortError, or the
-    // prelude STREAM erroring with the abort reason mid-read — both abort
-    // shapes happen when our own abort lands before the shell completed (seen
-    // on dev cold paths, where module transform / first-render latency
-    // outlasts flight quiesce; a later request re-captures against warm
-    // modules and succeeds).
-    let prelude: Uint8Array;
-    let postponed: unknown;
-    try {
-      const result = await prerenderPromise;
-      prelude = await readStreamToUint8Array(result.prelude);
-      postponed = result.postponed;
-    } catch (error) {
-      // Name-based match: the rejection is a DOMException on workerd/Node,
-      // which is not an Error subclass there, so instanceof Error would let
-      // the abort escape as a spurious reported error.
-      if (
-        controller.signal.aborted &&
-        (error as { name?: string } | null)?.name === "AbortError"
-      ) {
+      // Bootstrap load raced against the deadline. A load that never resolves
+      // within maxWaitMs is the same bounded no-shell degrade as a shell that
+      // never goes quiet: return null, do not hang. A load that REJECTS is a
+      // genuine error and still propagates (it is not the deadline). `null` is
+      // the deadline sentinel — disjoint from the load's `Promise<string>`, so
+      // the race narrows to `string | null` with no wrapper. The no-op catch
+      // keeps a late rejection off the unhandledRejection path when the deadline
+      // already won; a rejection that lands first still propagates out.
+      const load = loadBootstrapScriptContent();
+      load.catch(() => {});
+      const bootstrapScriptContent = await Promise.race([
+        load,
+        deadline.promise.then(() => null),
+      ]);
+      if (bootstrapScriptContent === null) {
         return null;
       }
-      throw error;
-    }
 
-    // Sanity gate: a prelude with no `<body` is the no-shell failure mode.
-    // Return null and store nothing; the request falls back to axis 1 and a
-    // later request re-captures. The dominant real-world cause is a loader
-    // route WITHOUT a route-level loading() boundary: renderSegments' loading-
-    // less branch awaits loader data at TREE-BUILD, so the masked loader pins
-    // the whole tree above <body> (root postpone). Root-postponing layouts and
-    // hung handles degrade the same way. shell-capture.ts logs a once-per-key
-    // warning so the eternal-MISS shape is diagnosable.
-    if (!new TextDecoder().decode(prelude).includes("<body")) {
-      return null;
-    }
+      // Start prerender first, then run the abort schedule concurrently. When
+      // holes are pending, prerender's promise settles only after abort(); when
+      // the shell completes with no holes it settles on its own and the later
+      // abort() is a harmless no-op (the DATA variant).
+      const controller = new AbortController();
+      // Private reason object: the deliberate abort is identified by object
+      // IDENTITY in both the onError below and the post-await catch. React
+      // propagates this EXACT object to onError for every still-pending boundary
+      // (verified identity-preserving), and rejects/errors the prelude with it.
+      const abortReason = { rangoShellCaptureAbort: true };
+      const prerenderPromise = prerender(<SsrRoot />, {
+        signal: controller.signal,
+        bootstrapScriptContent,
+        // Abort is how capture WORKS: once the shell is quiet we abort() to
+        // freeze the prelude and let the still-pending holes postpone. React
+        // reports the abort reason for each pending boundary through onError.
+        // Without an onError here React falls back to console.error, so every
+        // capture that still has a live hole at abort time (the normal case)
+        // dumps a stack once per pending boundary. That is EXPECTED degradation,
+        // so swallow OUR abort — matched by IDENTITY (error === abortReason).
+        // Discriminate by identity, NOT error.name: capture aborts before
+        // awaiting, so signal.aborted is unconditionally true and a name check
+        // swallowed genuine AbortError-named throws (a component's own
+        // fetch/AbortController cancellation) as if they were our abort. Genuine
+        // render errors are NOT our sentinel and still surface through
+        // deps.onError, the same channel renderHTML uses. See
+        // docs/design/ppr-shell-resume.md.
+        onError: (error: unknown) => {
+          if (error === abortReason) {
+            return;
+          }
+          reportRenderError(onError, error);
+        },
+      });
+      // Pre-attach a no-op catch: the real await sits AFTER quiesce + the
+      // post-quiesce hops, so an early prerender rejection (e.g. a bake-lane
+      // loader tripping the identity guard within milliseconds) would otherwise
+      // spend several turns handler-less and crash the worker as an unhandled
+      // rejection. The actual rejection handling still happens at the await
+      // below; this parallel handler only keeps the gap crash-free.
+      prerenderPromise.catch(() => {});
 
-    return {
-      prelude,
-      postponed: postponed == null ? null : JSON.stringify(postponed),
-    };
+      // Wait for the caller's quiesce signal, bounded by the SAME deadline. By
+      // the time it resolves the Flight input is byte-quiet and FROZEN by the
+      // capture gate (shell-capture.ts gateFlightForCapture), so there is no
+      // wall-clock debounce here — maxWaitMs is only the pathological guard for a
+      // shell that never goes quiet (a root postpone / hung handle).
+      await Promise.race([opts.quiesce, deadline.promise]);
+      // Fixed task hops before the abort: give React's fizz worker turns to flush
+      // the now-complete shell and mark the still-pending boundaries as POSTPONED
+      // rather than errored. Deterministic (the byte set is already frozen), so a
+      // fixed count of turns suffices — no wall-clock.
+      for (let i = 0; i < POST_QUIESCE_TASK_HOPS; i++) {
+        await macrotask();
+      }
+      controller.abort(abortReason);
+
+      // A hard prerender rejection (fatal shell error) propagates. Expected
+      // degradation surfaces three ways and all return null: a trivial prelude
+      // (sanity gate below), the prerender REJECTING with our abort reason, or
+      // the prelude STREAM erroring with our abort reason mid-read — both abort
+      // shapes happen when our own abort lands before the shell completed (seen
+      // on dev cold paths, where module transform / first-render latency
+      // outlasts flight quiesce; a later request re-captures against warm
+      // modules and succeeds).
+      let prelude: Uint8Array;
+      let postponed: unknown;
+      try {
+        const result = await prerenderPromise;
+        prelude = await readStreamToUint8Array(result.prelude);
+        postponed = result.postponed;
+      } catch (error) {
+        // Identity match: swallow ONLY our own deliberate abort
+        // (error === abortReason). Not error.name — capture aborts before this
+        // await, so signal.aborted is always true, and a name check let a
+        // genuine AbortError-named throw masquerade as our abort and degrade
+        // into a retryable no-shell, hiding real failures from reportCacheError.
+        if (error === abortReason) {
+          return null;
+        }
+        throw error;
+      }
+
+      // Sanity gate: a prelude with no `<body` is the no-shell failure mode.
+      // Return null and store nothing; the request falls back to axis 1 and a
+      // later request re-captures. The dominant real-world cause is a loader
+      // route WITHOUT a route-level loading() boundary: renderSegments' loading-
+      // less branch awaits loader data at TREE-BUILD, so the masked loader pins
+      // the whole tree above <body> (root postpone). Root-postponing layouts and
+      // hung handles degrade the same way. shell-capture.ts logs a once-per-key
+      // warning so the eternal-MISS shape is diagnosable.
+      if (!new TextDecoder().decode(prelude).includes("<body")) {
+        return null;
+      }
+
+      return {
+        prelude,
+        postponed: postponed == null ? null : JSON.stringify(postponed),
+      };
+    } finally {
+      deadline.cancel();
+    }
   };
 }
 
