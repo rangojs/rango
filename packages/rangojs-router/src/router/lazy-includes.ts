@@ -91,7 +91,11 @@ export function evaluateLazyEntry<TEnv = any>(
         for (const [name, pattern] of Object.entries(routes)) {
           deps.mergedRouteMap[name] = pattern;
         }
-        registerRouteMap(deps.mergedRouteMap);
+        // Register only this entry's routes (the delta): the full
+        // mergedRouteMap is seeded from the generated manifest at
+        // createRouter() time and already registered there — re-passing it
+        // made this request-path call O(total routes) (issue #666).
+        registerRouteMap(routes);
         return;
       }
     }
@@ -245,7 +249,9 @@ function runExpansion<TEnv = any>(
     deps.routesEntries.splice(insertIndex, 0, nestedEntry);
   }
 
-  registerRouteMap(deps.mergedRouteMap);
+  // Delta only — see the matching comment on the precomputed branch above and
+  // the WHY block on registerRouteMap (issue #666).
+  registerRouteMap(routesObject);
 
   // Expansion fully succeeded (handler ran, routes + nested includes spliced) —
   // mark done now so a mid-expansion throw above leaves lazyEvaluated=false and

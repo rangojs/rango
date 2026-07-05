@@ -20,11 +20,25 @@ let cachedPrecomputedEntries: Array<{
 /**
  * Register routes into the global route map.
  * Routes are merged with any existing registered routes.
- * Called by createRouter() during module evaluation.
+ * Called by createRouter() during module evaluation, and by lazy-include
+ * expansion (src/router/lazy-includes.ts) with each expansion's route delta.
+ *
+ * Merges IN PLACE — O(|map|), not O(total routes). The previous
+ * `globalRouteMap = { ...globalRouteMap, ...map }` copy made every
+ * lazy-include first hit O(total routes) on the request path: with a 26k-route
+ * manifest the spread measured 8.9ms/call (M4, node), paid once per level of a
+ * nested async-include chain (3 calls on a 3-level chain — the 464ms edge
+ * cold-hit in issue #666).
+ *
+ * In-place mutation is safe because every getGlobalRouteMap() consumer reads
+ * it fresh per call (server/request-context.ts, rsc/loader-fetch.ts,
+ * router/intercept-resolution.ts, testing/generated-routes.ts,
+ * rsc/manifest-init.ts) — none memoizes the returned reference. If you add a
+ * consumer that caches the map object, it will now observe later
+ * registrations; snapshot it yourself if you need frozen contents.
  */
 export function registerRouteMap(map: Record<string, string>): void {
-  // Always merge with existing map (don't replace)
-  globalRouteMap = { ...globalRouteMap, ...map };
+  Object.assign(globalRouteMap, map);
 }
 
 /**
