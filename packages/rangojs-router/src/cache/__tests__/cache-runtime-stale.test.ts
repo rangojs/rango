@@ -23,12 +23,22 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 
 // Mock request context. runWithRequestContext is exercised by the background
 // revalidation path (it re-establishes the request-context ALS so the cached
-// body's getRequestContext() resolves off the request's I/O context); the mock
-// just invokes the callback since getRequestContext is stubbed separately.
+// body's getRequestContext() resolves off the request's I/O context). The mock
+// THREADS the ctx for the callback's synchronous window: the background body
+// must observe the DERIVED context (own isolated _handleStore), not the shared
+// foreground one — a passthrough mock would hide the isolation under test.
 const mockGetRequestContext = vi.fn<() => any>(() => null);
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => mockGetRequestContext(),
-  runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
+  runWithRequestContext: <T>(ctx: unknown, fn: () => T): T => {
+    const prev = mockGetRequestContext.getMockImplementation();
+    mockGetRequestContext.mockImplementation(() => ctx);
+    try {
+      return fn();
+    } finally {
+      mockGetRequestContext.mockImplementation(prev ?? (() => null));
+    }
+  },
 }));
 
 // Mock segment codec — identity transforms for testing
@@ -256,7 +266,12 @@ describe("use cache stale revalidation handle preservation", () => {
     }
   });
 
-  it("stamps INSIDE_CACHE_EXEC on tainted args during stale background revalidation", async () => {
+  it("does NOT stamp INSIDE_CACHE_EXEC on shared tainted args during stale background revalidation", async () => {
+    // The tainted arg is the live HandlerContext the still-rendering
+    // foreground holds; a stamp on it makes a concurrent foreground
+    // ctx.set()/ctx.headers.*() throw for the whole revalidation window
+    // (issue #684, plan 010). In-fn misuse is caught by the foreground miss
+    // path's stamps on the function's FIRST execution instead.
     const waitUntilFns: Array<() => Promise<void>> = [];
 
     const mockStore = {
@@ -307,15 +322,101 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(waitUntilFns).toHaveLength(1);
     await waitUntilFns[0]();
 
-    // Tainted args should be stamped during background execution
-    expect(taintedDuringBgExec).toBe(true);
-    // RequestContext is intentionally NOT stamped in background to avoid
-    // polluting the shared foreground context (see cache-runtime.ts comment)
+    // Neither the shared arg nor the request context is stamped in the
+    // background — both are live foreground objects.
+    expect(taintedDuringBgExec).toBe(false);
     expect(requestCtxTaintedDuringBgExec).toBe(false);
-
-    // After background execution, the stamps should be cleaned up
     expect((taintedCtx as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
     expect((requestCtxObj as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
+  });
+
+  it("background revalidation never mutates the shared context mid-render (production-faithful microtask scheduling)", async () => {
+    // The unsafe pre-fix shape only stayed green because the queue-style
+    // waitUntil mocks above run the background AFTER the foreground finished.
+    // Production waitUntil is Promise.resolve().then(fn)
+    // (request-context.ts): the background prologue runs one microtask after
+    // scheduling, INSIDE the foreground's render window. This test uses that
+    // scheduling and holds the background open on a gate to inspect the
+    // window. Pre-fix, all four assertions in the window failed: the shared
+    // _handleStore was swapped, the foreground push landed in the background
+    // store (lost from the live document), it was persisted into the
+    // revalidated entry, and the shared arg carried INSIDE_CACHE_EXEC.
+    const backgroundTasks: Array<Promise<void>> = [];
+
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const liveHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const taintedCtx = makeTaintedCtx();
+
+    const requestCtxObj: any = {
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
+      _handleStore: liveHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        backgroundTasks.push(Promise.resolve().then(fn));
+      },
+    };
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      handles: {},
+      shouldRevalidate: true,
+    });
+
+    // Gate the background body open so the overlap window can be inspected.
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const fn = async (_ctx: any) => {
+      // Push via the AMBIENT context, the way loader/handle plumbing reads
+      // the store (static-store.ts / loader-resolution.ts) — must resolve to
+      // the ISOLATED background store, never the live one.
+      mockGetRequestContext()._handleStore.push("test#H", "seg-bg", "bg-value");
+      await gate;
+      return "fresh-result";
+    };
+
+    const cached = registerCachedFunction(fn, "test-race-window", "default");
+    await expect(cached(taintedCtx)).resolves.toBe("stale-result");
+
+    // Let the background prologue run (one microtask), then inspect the
+    // window while the body is still gated open — this is the foreground
+    // mid-render state.
+    await Promise.resolve();
+    await Promise.resolve();
+    const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    expect(requestCtxObj._handleStore).toBe(liveHandleStore);
+    expect((taintedCtx as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
+
+    // A foreground handle push inside the window reaches the LIVE store.
+    requestCtxObj._handleStore.push("test#H", "seg-fg", "fg-value");
+    expect(liveHandleStore.push).toHaveBeenCalledWith(
+      "test#H",
+      "seg-fg",
+      "fg-value",
+    );
+
+    releaseGate();
+    await Promise.all(backgroundTasks);
+
+    // The revalidated entry carries the background's push, not the
+    // foreground's (no cross-contamination).
+    expect(mockStore.setItem).toHaveBeenCalledTimes(1);
+    const persistedHandles = String(
+      mockStore.setItem.mock.calls[0]![2].handles,
+    );
+    expect(persistedHandles).toContain("bg-value");
+    expect(persistedHandles).not.toContain("fg-value");
   });
 
   it("fresh hit path does not trigger background revalidation", async () => {
