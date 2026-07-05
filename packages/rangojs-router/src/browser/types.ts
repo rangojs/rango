@@ -81,6 +81,11 @@ export interface RscMetadata {
    */
   prefetchConcurrency?: number;
   /**
+   * Router-wide default prefetch strategy for Links without a `prefetch` prop.
+   * Sent on initial render; applied once at init (default-strategy.ts).
+   */
+  defaultPrefetch?: import("../router/prefetch-default.js").PrefetchStrategy;
+  /**
    * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
    * reads it verbatim and binds the rango state cookie to it; composition
    * happens only server-side.

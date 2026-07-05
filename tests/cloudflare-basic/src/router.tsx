@@ -31,6 +31,11 @@ export const router = createRouter<AppBindings>({
   // size 100 / concurrency 2).
   prefetchCacheSize: 25,
   prefetchConcurrency: 3,
+  // Manual prefetch mode (default is "viewport"): this app dogfoods the
+  // opt-out seat — bare Links stay quiet, per-Link `prefetch` props still opt
+  // in (e2e/default-prefetch-none.test.ts). The test-app dogfoods the
+  // default-on seat.
+  defaultPrefetch: "none",
   // Enable theme support with system detection
   theme: {
     defaultTheme: "light",

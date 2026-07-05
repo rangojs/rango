@@ -275,6 +275,7 @@ async function handleRscRenderingInner<TEnv>(
           prefetchCacheTTL: ctx.router.prefetchCacheTTL,
           prefetchCacheSize: ctx.router.prefetchCacheSize,
           prefetchConcurrency: ctx.router.prefetchConcurrency,
+          defaultPrefetch: ctx.router.defaultPrefetch,
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       };

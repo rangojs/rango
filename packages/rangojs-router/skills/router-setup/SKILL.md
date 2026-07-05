@@ -120,6 +120,11 @@ interface RangoOptions<TEnv> {
   // Set to false to disable prefetch caching.
   prefetchCacheTTL?: number | false;
 
+  // Default prefetch strategy for Links without a `prefetch` prop
+  // (default: "viewport"). "none" = manual mode: only Links with an explicit
+  // `prefetch` prop fetch speculatively. Per-Link props win in both directions.
+  defaultPrefetch?: "hover" | "viewport" | "render" | "adaptive" | "none";
+
   // CSP nonce provider (for router.fetch)
   nonce?: (
     request: Request,

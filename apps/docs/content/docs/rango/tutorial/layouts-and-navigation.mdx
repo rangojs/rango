@@ -81,7 +81,7 @@ Three things going on here:
 
 - **`Link`** performs client-side navigation — the router fetches just what changed and updates in place, no document reload.
 - **`href()`** is the client-side helper for static paths. There's no handler context in the browser, so `ctx.reverse()` isn't available here; for fixed addresses like `/` and `/shop`, `href()` is the right tool, and it validates the path at compile time against your route patterns. A typo like `href("/shpo")` fails the build instead of shipping a dead link.
-- **`prefetch="viewport"`** starts fetching a link's target when the link scrolls into view. Links don't prefetch by default; with viewport prefetching, the response is often already in the prefetch cache by the time the user clicks.
+- **`prefetch="viewport"`** starts fetching a link's target when the link scrolls into view — and it's the default, so a bare `Link` already does this. The response is often already in the prefetch cache by the time the user clicks. Set `prefetch="none"` on a Link (or `defaultPrefetch: "none"` on `createRouter` for app-wide manual mode) to opt out.
 
 ## Upgrade the product grid links
 

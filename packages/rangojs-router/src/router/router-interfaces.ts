@@ -318,6 +318,13 @@ export interface RangoInternal<
   readonly prefetchConcurrency: number;
 
   /**
+   * Router-wide default Link prefetch strategy for Links without an explicit
+   * `prefetch` prop. Shipped to the client in payload metadata. Derived from
+   * the `defaultPrefetch` option (default "viewport").
+   */
+  readonly defaultPrefetch: import("./prefetch-default.js").PrefetchStrategy;
+
+  /**
    * Resolved rango state cookie name (`{prefix}_{routerId}`), composed once at
    * router init and shipped to the client in payload metadata. The server-side
    * cookie writer reads it from here; the client reads it from metadata.

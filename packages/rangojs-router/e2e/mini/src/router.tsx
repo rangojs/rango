@@ -205,6 +205,10 @@ function FallbackWrap({
 // ---------------------------------------------------------------------------
 
 export const router = createRouter({
+  // Manual prefetch mode: keeps this suite's request assertions free of
+  // default-on viewport prefetch traffic (default-on is dogfooded by the
+  // router's e2e test-app).
+  defaultPrefetch: "none",
   cache: { store: cacheStore },
   cacheProfiles: {
     short: { ttl: 60, swr: 120 },

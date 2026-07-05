@@ -10,6 +10,7 @@ import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
 import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
+import type { PrefetchStrategy } from "./prefetch-default.js";
 import type { TelemetrySink } from "./telemetry.js";
 import type { RouterTracingConfig } from "./tracing.js";
 import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
@@ -526,6 +527,35 @@ export interface RangoOptions<TEnv = any> {
    * @default 2
    */
   prefetchConcurrency?: number;
+
+  /**
+   * Default prefetch strategy for every `<Link>` that does not set its own
+   * `prefetch` prop. A per-Link `prefetch` prop always wins, in both
+   * directions (a Link can opt out of an aggressive default with
+   * `prefetch="none"`, or opt in under `defaultPrefetch: "none"`).
+   *
+   * - `"viewport"` (default): prefetch when the link enters the viewport —
+   *   idle-gated and queued (see `prefetchConcurrency`), so prefetches never
+   *   compete with hydration or an active navigation.
+   * - `"hover"`: prefetch on mouse enter only. Much lighter on the server —
+   *   only links the pointer approaches are fetched — at the cost of the
+   *   ~100-300ms head start viewport prefetch gives.
+   * - `"adaptive"`: `"hover"` on pointer devices, `"viewport"` on touch
+   *   devices (no hover to wait for).
+   * - `"render"`: prefetch on mount regardless of visibility.
+   * - `"none"`: manual mode — nothing prefetches unless a Link opts in.
+   *
+   * Server-load note: with the default, every visible Link triggers an RSC
+   * render (loaders included) on the server. Routes served from cache/PPR
+   * absorb this cheaply; per-user dynamic routes pay full price per viewport
+   * entry. Set `"hover"`, `"adaptive"`, or `"none"` when that cost matters.
+   *
+   * To disable the prefetch subsystem entirely (including per-Link opt-ins
+   * and `useRouter().prefetch()`), set `prefetchCacheTTL: false` instead.
+   *
+   * @default "viewport"
+   */
+  defaultPrefetch?: PrefetchStrategy;
 
   /**
    * Prefix for the rango state cookie name. The resolved name is

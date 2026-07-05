@@ -1161,6 +1161,7 @@ export function createRSCHandler<
               prefetchCacheTTL: router.prefetchCacheTTL,
               prefetchCacheSize: router.prefetchCacheSize,
               prefetchConcurrency: router.prefetchConcurrency,
+              defaultPrefetch: router.defaultPrefetch,
               stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,

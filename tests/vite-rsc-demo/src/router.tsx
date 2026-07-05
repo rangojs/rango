@@ -135,6 +135,10 @@ const cspMiddleware: Middleware = async (ctx, next) => {
 const router = createRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
+  // Manual prefetch mode: keeps this suite's request-count/timing assertions
+  // free of default-on viewport prefetch traffic. Default-on is dogfooded by
+  // the router's e2e test-app; the opt-out seat by tests/cloudflare-basic.
+  defaultPrefetch: "none",
   cache: { store: cacheStore },
   // Auto-generate a per-request CSP nonce, applied to React's bootstrap scripts
   // and consumable by userland head scripts (GTM) via useNonce().

@@ -16,7 +16,10 @@ import { blogPatterns } from "./blog/urls.jsx";
 // the full feature surface at a smoke level: routing, layouts, include()
 // composition, server actions, loaders, fetchable loaders, handles, location
 // state (navigation-set and action-set), and revalidation.
-export const router = createRouter().routes(
+// Manual prefetch mode: keeps this suite's request assertions free of
+// default-on viewport prefetch traffic (default-on is dogfooded by the
+// router's e2e test-app).
+export const router = createRouter({ defaultPrefetch: "none" }).routes(
   ({ path, layout, include, loader, loading, revalidate, transition }) => [
     layout(AppLayout, () => [
       path("/", HomePage, { name: "home" }),

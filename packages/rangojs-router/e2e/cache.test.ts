@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { waitForHydration, expectNoPageError, blockPrefetch } from "./helper";
 
 // This file intentionally exercises shared runtime cache behavior and several
 // sections rely on cache state established earlier in the same describe/file.
@@ -207,6 +207,11 @@ test.describe("cache-server-logs", () => {
 
   test("__no_cache query param should bypass cache", async ({ page }) => {
     using _ = expectNoPageError(page);
+
+    // The pages this test walks render bare Links whose default-on viewport
+    // prefetches produce server cache logs of their own; ones draining into
+    // the bypass log window would fail the zero-logs assertions below.
+    await blockPrefetch(page);
 
     // Populate the cache (likely already cached by previous tests in this block)
     await page.goto(f.url("/blog"));
@@ -955,6 +960,12 @@ test.describe("proactive-caching", () => {
   test("proactive caching populates cache for future partial navigations", async ({
     page,
   }) => {
+    // The bare proactive-nav-b Link viewport-prefetches item-b right after
+    // hydration (before the log window below opens); the click would then
+    // adopt the warmed entry, no live partial request would reach the server,
+    // and the proactive cache write this test polls for would never fire.
+    await blockPrefetch(page);
+
     // Step 1: Document request to item-a (MISS - first visit)
     const beforeFirstVisit = f.proc().stdout();
     await page.goto(f.url("/proactive-cache/item-a"));
@@ -995,6 +1006,11 @@ test.describe("proactive-caching", () => {
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {
+    // Same shape as the test above: the bare proactive-nav-a Link would
+    // viewport-prefetch item-a before the log window opens and the click
+    // would adopt it — no live partial, no cache write inside the window.
+    await blockPrefetch(page);
+
     // Step 1: Document request to index (populates cache)
     await page.goto(f.url("/proactive-cache"));
     await waitForHydration(page);

@@ -32,6 +32,9 @@ function runPrefetchMetadataSpec(f: Fixture): void {
     // field is present.
     expect(body).toMatch(/"prefetchCacheSize"\s*:\s*25\b/);
     expect(body).toMatch(/"prefetchConcurrency"\s*:\s*3\b/);
+    // Non-default strategy ("none" vs the "viewport" default — manual mode,
+    // see src/router.tsx): proves defaultPrefetch propagated end-to-end too.
+    expect(body).toMatch(/"defaultPrefetch"\s*:\s*"none"/);
   });
 }
 

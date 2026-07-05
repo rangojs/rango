@@ -159,6 +159,53 @@ export async function measureTime<T>(
   return { elapsed, result };
 }
 
+/**
+ * True when the request is a speculative prefetch (Link viewport/hover/render
+ * strategies or `useRouter().prefetch()`). Every prefetch fetch carries the
+ * `X-Rango-Prefetch` header. Links prefetch by default (`defaultPrefetch`,
+ * "viewport" unless the router opts out), so tests that track `_rsc_partial`
+ * requests to pin NAVIGATION behavior must skip these — a request-count or
+ * first-request assertion otherwise races background prefetch traffic.
+ */
+export function isPrefetchRequest(req: {
+  headers: () => Record<string, string>;
+}): boolean {
+  return !!req.headers()["x-rango-prefetch"];
+}
+
+// Module-level matcher + handler so blockPrefetch/unblockPrefetch share
+// stable references — Playwright's unroute matches by identity.
+const rscPartialUrl = (url: URL): boolean =>
+  url.searchParams.has("_rsc_partial");
+async function abortPrefetchRoute(
+  route: import("@playwright/test").Route,
+): Promise<void> {
+  if (isPrefetchRequest(route.request())) {
+    await route.abort("aborted");
+  } else {
+    await route.fallback();
+  }
+}
+
+/**
+ * Abort every speculative prefetch request on this page. Install BEFORE
+ * `page.goto` so no prefetch can complete first. For tests whose semantics
+ * need a virgin prefetch cache: a click on a Link whose target was already
+ * prefetched ADOPTS the warmed entry and issues no navigation fetch at all —
+ * a `page.route` override, a request waiter, or a Set-Cookie assertion aimed
+ * at the navigation request then sees nothing (or sees the prefetch's side
+ * effects instead). Aborted prefetches are benign by design (evicted, never
+ * adopted, no page error), so the click's real fetch is guaranteed live.
+ */
+export async function blockPrefetch(page: Page): Promise<void> {
+  await page.route(rscPartialUrl, abortPrefetchRoute);
+}
+
+/** Remove a `blockPrefetch` guard, restoring normal prefetch traffic. */
+export async function unblockPrefetch(page: Page): Promise<void> {
+  await page.unroute(rscPartialUrl, abortPrefetchRoute);
+}
+
 // ============================================================================
 //  Factory-bound helpers (need the injected `expect`)
 // ============================================================================
