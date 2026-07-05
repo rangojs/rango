@@ -44,6 +44,7 @@ import {
   warnPprNonceActiveOnce,
 } from "./shell-serve.js";
 import { contextGet } from "../context-var.js";
+import { resolveSameOriginRedirect } from "../redirect-origin.js";
 import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
@@ -414,6 +415,29 @@ async function handleRscRenderingInner<TEnv>(
 }
 
 /**
+ * Neutralize the shell-HIT degradation redirect target.
+ *
+ * The inline `location.replace` emitted by serveShellHit when a shell HIT lands
+ * on a URL whose route became redirecting mid-TTL is a document-native redirect
+ * exit that BYPASSES the 3xx chokepoint (guardOutgoingRedirect acts only on 3xx
+ * + Location responses, never a committed 200 body). So it reuses the ONE
+ * same-origin resolver directly: a cross-origin/unparseable/unsafe target
+ * neutralizes to the same safe same-origin landing as redirect-guard.ts
+ * (basename root, or "/" when unset) rather than navigating the user off-host.
+ * A safe same-origin/relative target passes through as its normalized href.
+ */
+export function resolveShellHitRedirectTarget(
+  rawTarget: string,
+  requestOrigin: string,
+  basename: string | undefined,
+): string {
+  return (
+    resolveSameOriginRedirect(rawTarget, requestOrigin) ??
+    (basename && basename !== "/" ? basename : "/")
+  );
+}
+
+/**
  * Serve a validated shell HIT: commit the composed response NOW — the stored
  * prelude bytes are the first thing on the wire — and run the live tail
  * (match(), fresh loaders, full Flight render for hydration, fizz resume of just
@@ -535,10 +559,16 @@ function serveShellHit(
           // a shell (capture bails on redirects), so a HIT on a redirecting URL
           // requires the route to have BECOME redirecting within the shell TTL.
           // The 200 + prelude are already committed; degrade to a client-side
-          // replace so the user still lands on the target.
+          // replace so the user still lands on the target. The target is
+          // neutralized first (see resolveShellHitRedirectTarget).
+          const safeTarget = resolveShellHitRedirectTarget(
+            tail.redirect,
+            url.origin,
+            ctx.router.basename,
+          );
           controller.enqueue(
             new TextEncoder().encode(
-              `<script>location.replace(${JSON.stringify(tail.redirect)})</script>`,
+              `<script>location.replace(${JSON.stringify(safeTarget)})</script>`,
             ),
           );
         }
