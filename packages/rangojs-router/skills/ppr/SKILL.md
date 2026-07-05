@@ -516,16 +516,23 @@ multi-tenant shells never collide).
 HTML; `revalidate()` is a DATA lever that never touches it.
 
 A captured shell auto-carries the UNION of the non-loader tags recorded during
-the capture render — every `cacheTag(...)` from a `"use cache"` function or
-`cache()` segment that ran as shell material. Loader tags never attach (the
-holes are already live). `ppr.tags` adds operational tags the render cannot
-know (a tenant id, a deploy marker).
+the capture render — every `cacheTag(...)` that ran as shell material, whether
+from a `"use cache"` function, a `cache()` segment, or a render-callable
+`cacheTag()` in a plain server component (no `"use cache"`/`cache()` in its
+tree). Loader tags never attach (the holes are already live). `ppr.tags` adds
+operational tags the render cannot know (a tenant id, a deploy marker).
 
 | Lever                                         | Reaches the frozen shell?                                     | Reaches the holes?                                  |
 | --------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- |
 | `updateTag` / `revalidateTag` on a SHELL tag  | YES — drops the shell → MISS → recapture                      | n/a (holes are already live)                        |
 | `updateTag` / `revalidateTag` on a LOADER tag | no — loader tags never attach to a shell                      | drops that loader's cached value (if it `cache()`s) |
 | `revalidate()` (named revalidation contract)  | **no** — re-runs segments/loaders for the PAYLOAD, never HTML | yes — the hole re-renders with fresh data           |
+
+A server action's automatic invalidation refreshes the CLIENT only — it re-runs
+the holes and streams a fresh payload, but does NOT evict the server shell.
+Shell-baked data stays stale until the shell's TTL unless you tag-invalidate it
+(`updateTag` on a shell tag). Data baked into the shell WITHOUT a tag cannot be
+evicted by tag at all — move always-fresh data under a `loading()` hole.
 
 ## Pitfalls
 
@@ -574,8 +581,11 @@ cache"` value baked into the shell is PINNED at capture (the capture data
   tag-invalidated. This is deliberate — parity beats freshness inside the shell.
   If a shell region needs to be fresh, put it under a hole — `loading()` for
   loader data, or an un-awaited promise under the consumer's `<Suspense>`
-  (holes are never pinned) — or make the SHELL itself invalidatable by adding
-  the tag to `ppr.tags`. Ring-1/ring-3 tag invalidation does NOT drop the shell.
+  (holes are never pinned) — or make the SHELL itself invalidatable by tagging
+  it: call `cacheTag(...)` from the shell-material render code (the render-time
+  lever), or add the tag to `ppr.tags` (operational tags the render cannot know —
+  a tenant id, a deploy marker). Ring-1/ring-3 tag invalidation does NOT drop the
+  shell.
 - **Uncached nondeterminism in the shell is a hydration hazard**: a raw
   `Date.now()` / `Math.random()` / uncached `fetch` rendered directly in shell
   material (outside any cache ring) drifts between capture and hit and the

@@ -20,7 +20,9 @@ caching:
 1. **Stored-value freshness** — _is a cached value still good?_
    → `"use cache"` (fn/component), `cache()` (segment), loader `cache()` (loader data).
    Entries expire by **TTL/SWR** and can be tagged (`cache({ tags })` or runtime
-   `cacheTag(...tags)`). Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`)
+   `cacheTag(...tags)` — inside `"use cache"` it tags that entry; called during a
+   request render outside `"use cache"` it tags the document/shell artifact).
+   Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`)
    index by tag; invalidate on demand with `updateTag(...tags)` (awaitable,
    read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking).
    Both hard-purge; the difference is awaitability, not stale-serving.

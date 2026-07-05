@@ -51,6 +51,15 @@ import {
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
+// Reuse the CF store's binary-safe base64 helpers. bufferToBase64 caps each
+// String.fromCharCode batch at 8192 and uses .apply (never a spread), so a large
+// Response/PPR-shell body cannot blow the JS argument-count ceiling (~65k) and
+// throw RangeError inside putResponse/putShell - which the outer try/catch would
+// swallow as a cache-write degrade, silently never caching the entry. Output is
+// byte-identical to a per-byte encoder (chunk size does not affect base64), so
+// this is a robustness fix, not a format change. Do NOT reintroduce a local
+// spread-based encoder or raise the chunk here; cf-base64.ts is import-pure.
+import { bufferToBase64, base64ToBuffer } from "../cf/cf-base64.js";
 
 /**
  * Minimal structural shape of the Vercel Runtime Cache returned by `getCache()`
@@ -275,25 +284,6 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-/** Encode binary body bytes to base64 in chunks (avoids call-stack blowups). */
-function bufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-/** Decode a base64 body back into bytes. */
-function base64ToBuffer(b64: string): ArrayBuffer {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
 }
 
 /**

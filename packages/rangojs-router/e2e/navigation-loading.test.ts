@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import {
   waitForHydration,
   expectNoPageError,
@@ -7,12 +7,7 @@ import {
   getHistoryState,
 } from "./helper";
 
-test.describe("navigation-state", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function runNavigationStateSpec(f: Fixture) {
   test("should pass state to loading skeleton via Link state prop", async ({
     page,
   }) => {
@@ -117,14 +112,9 @@ test.describe("navigation-state", () => {
     expect(locationState?.productName).toBe("Slow Product A");
     expect(locationState?.productPrice).toBe(99);
   });
-});
+}
 
-test.describe("intercept-loading-states", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function runInterceptLoadingSpec(f: Fixture) {
   test("should show loading skeleton in modal while slow loader resolves", async ({
     page,
   }) => {
@@ -407,4 +397,36 @@ test.describe("intercept-loading-states", () => {
       page.locator('[data-testid="slow-modal-product-name"]'),
     ).toBeVisible();
   });
+}
+
+test.describe("navigation-state (dev)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  runNavigationStateSpec(f);
+});
+
+test.describe("navigation-state (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  runNavigationStateSpec(f);
+});
+
+test.describe("intercept-loading-states (dev)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  runInterceptLoadingSpec(f);
+});
+
+test.describe("intercept-loading-states (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  runInterceptLoadingSpec(f);
 });

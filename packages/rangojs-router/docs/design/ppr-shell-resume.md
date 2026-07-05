@@ -990,8 +990,11 @@ are not revived.
   with the same storage contract.
 - CF Cache-API L1 tier for shell entries (KV only in v1).
 - Vercel BOA `chain` / streaming-lambda serving.
-- Segment-tag union auto-collection for shell entries (v1: TTL/SWR + explicit
-  tags option + reactVersion gate).
+- Render-recorded shell-tag union for shell entries: SHIPPED in #648 (originally
+  scoped out of v1, which had only TTL/SWR + the explicit `ppr.tags` option +
+  reactVersion gate). The render-callable `cacheTag()` unions render-recorded tags
+  onto the shell entry — see "Shell invalidation is DERIVATIVE (render-recorded
+  tags, #648)" above.
 - Flight-byte splicing for the cached portion of the payload (the full Flight
   render still runs per request; hydration needs it anyway).
 - Warm-pass two-phase capture: a second capture render that lets non-loader

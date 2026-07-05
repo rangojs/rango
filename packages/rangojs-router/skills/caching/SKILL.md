@@ -111,7 +111,7 @@ Caching") over caching the rendered segment.
 
 ## Tag-Based Invalidation
 
-Tag cached entries, then invalidate them on demand. Tags can be attached three ways:
+Tag cached entries, then invalidate them on demand. Tags can be attached four ways:
 
 ```typescript
 // 1. Static tags in the cache() DSL
@@ -129,7 +129,21 @@ async function getProduct(id: string) {
   cacheTag(`product:${id}`, "products"); // variadic, additive
   return db.getProduct(id);
 }
+
+// 4. Render-callable — a plain server component (no "use cache" in its tree)
+//    records onto the request's document/shell artifact.
+function CampaignBanner() {
+  cacheTag("campaign:spring"); // rides ctx._requestTags → shell/document entry
+  return <aside>Spring sale</aside>;
+}
 ```
+
+Form 4 is how you make a PPR shell or a `/document-cache` page tag-invalidatable
+without wrapping anything in `"use cache"`: the tag rides the request's
+`_requestTags` onto the shell/document entry, and `revalidateTag` then evicts it.
+On a route that is neither PPR nor document-cached the tag records where nothing
+reads it — a silent no-op, so don't expect a bare `cacheTag()` to tag an ordinary
+uncached page.
 
 Invalidate with one of two server-only verbs (both variadic, imported from
 `@rangojs/router`):
@@ -171,7 +185,8 @@ converge within `tagCacheTtl` (the **maximum extra cross-colo invalidation
 latency** when no purge is wired). Keep it small (e.g. 30–60), or wire a purge
 (below) and set it large. (Contrast `tagInvalidationTtl`, which must be _large_
 — it bounds how long the KV marker itself lives and must exceed your max entry
-TTL+SWR.)
+TTL+SWR. Left unset there is no expiry: KV markers accumulate unbounded under
+high-cardinality tags, so set it above your largest entry TTL+SWR to bound them.)
 
 To make other colos prompt without a short `tagCacheTtl`, pass `onRevalidateTag`:
 each cached marker carries a namespaced Cloudflare `Cache-Tag`, and the hook is

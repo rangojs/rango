@@ -353,8 +353,11 @@ export async function getProducts() {
 Writes to the same `SegmentCacheStore` as `cache()` DSL, `Static()`, and `Prerender()`.
 One store, one configuration.
 
-Cache entries (and `cacheProfiles`) can be tagged via `cache({ tags })` or, inside
-a `"use cache"` function, runtime `cacheTag(...tags)`. The built-in
+Cache entries (and `cacheProfiles`) can be tagged via `cache({ tags })` or runtime
+`cacheTag(...tags)`. `cacheTag` has two forms: inside a `"use cache"` function it
+tags that entry; called during a request render outside `"use cache"` it tags the
+request's document/shell artifact (rides `_requestTags`) instead of throwing. The
+built-in
 `MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate on demand
 with `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or
 `revalidateTag(...tags)` (background, non-blocking; for route handlers/webhooks).
