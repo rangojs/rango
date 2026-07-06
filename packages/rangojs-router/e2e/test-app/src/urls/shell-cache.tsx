@@ -20,6 +20,7 @@ import {
   makeNestedFastHandlePush,
   makePhysicsPromise,
   getDriftStamp,
+  getCapStamp,
   outlinedRenderCounter,
 } from "./shell-cache.defs.js";
 import { ShellBadge } from "../components/ShellBadge.js";
@@ -194,6 +195,30 @@ function ShellDriftLayout(ctx: HandlerContext) {
 }
 
 function ShellDriftPricePage() {
+  return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// Snapshot SIZE-CAP fixture layout (issue #651): same shape as the drift
+// fixture — a cached stamp baked into the shell + the live price hole — but the
+// route's ppr.maxSnapshotBytes is far below any real snapshot, so every capture
+// skips the snapshot while still storing the shell. See getCapStamp.
+async function CapStamp({ stamp }: { stamp: Promise<string> }) {
+  return <p data-testid="cap-stamp">{await stamp}</p>;
+}
+
+function ShellCapLayout(ctx: HandlerContext) {
+  const stamp = getCapStamp(ctx);
+  return (
+    <main data-testid="shell-cap-page">
+      <h1 data-testid="shell-cap-header">Shell Cap Demo</h1>
+      <CapStamp stamp={stamp} />
+      <ShellCacheCounter />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellCapPricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
 }
 
@@ -402,6 +427,26 @@ export const shellCachePatterns = urls(
           loading(
             <div data-testid="drift-price-fallback">Loading price...</div>,
           ),
+        ],
+      ),
+    ]),
+    // Snapshot SIZE-CAP route (issue #651): maxSnapshotBytes far below any real
+    // snapshot → every capture skips the snapshot (over cap, stored WITHOUT it)
+    // but the shell must still store and the HIT lane must serve + hydrate
+    // cleanly — the cap degrades pinning, never serving. The cap-stamp's
+    // default-profile ttl outlasts the test, so the un-pinned live re-read
+    // matches the frozen prelude (drift after expiry is the documented trade).
+    layout(ShellCapLayout, () => [
+      path(
+        "/shell-cache/snapshot-cap",
+        ShellCapPricePage,
+        {
+          name: "shellCacheSnapshotCap",
+          ppr: { ttl: 300, swr: 120, maxSnapshotBytes: 64 },
+        },
+        () => [
+          loader(ShellPriceLoader),
+          loading(<div data-testid="cap-price-fallback">Loading price...</div>),
         ],
       ),
     ]),

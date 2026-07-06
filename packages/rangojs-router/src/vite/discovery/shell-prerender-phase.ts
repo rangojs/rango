@@ -243,6 +243,7 @@ export async function runShellPrerenderPhase(
             ttl: policy.ttl,
             swr: policy.swr,
             tags: policy.tags,
+            maxSnapshotBytes: policy.maxSnapshotBytes,
             buildEnv: s.resolvedBuildEnv,
             buildVersion,
             captureShellHTML,

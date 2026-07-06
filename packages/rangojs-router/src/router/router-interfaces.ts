@@ -6,6 +6,7 @@ import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
+import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
@@ -343,6 +344,12 @@ export interface RangoInternal<
    * Used by the request handler to create metrics before middleware runs.
    */
   readonly debugPerformance?: boolean;
+
+  /**
+   * PPR shell-capture debug sink (createRouter({ debugShellCapture })), read
+   * by rsc-rendering when it builds the capture descriptor for a ppr route.
+   */
+  readonly debugShellCapture?: ShellCaptureDebug;
 
   /**
    * Resolved platform phase-span tracing (Cloudflare custom spans or OTel), or

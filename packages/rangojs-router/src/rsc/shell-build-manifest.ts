@@ -133,6 +133,7 @@ export interface DevShellLookup {
   ttl: number;
   swr?: number;
   tags?: string[];
+  maxSnapshotBytes?: number;
 }
 
 /**
@@ -162,6 +163,9 @@ async function fetchDevShellEntry(
   });
   if (dev.swr !== undefined) params.set("swr", String(dev.swr));
   if (dev.tags && dev.tags.length > 0) params.set("tags", dev.tags.join(","));
+  if (dev.maxSnapshotBytes !== undefined) {
+    params.set("maxSnapshotBytes", String(dev.maxSnapshotBytes));
+  }
   try {
     const res = await fetch(`${devUrl}/__rsc_shell?${params}`, {
       signal: AbortSignal.timeout(DEV_SHELL_FETCH_TIMEOUT_MS),

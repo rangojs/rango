@@ -168,6 +168,7 @@ export function createRouter<TEnv = any>(
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
     debugCacheSignal: debugCacheSignalOption = false,
+    debugShellCapture: debugShellCaptureOption,
     strictMode: strictModeOption = true,
   } = options;
 
@@ -1006,6 +1007,10 @@ export function createRouter<TEnv = any>(
 
     // Expose router-wide performance debugging for request-level metrics setup
     debugPerformance,
+
+    // Expose the PPR shell-capture debug sink for the render layer
+    // (rsc-rendering resolves it into the capture descriptor)
+    debugShellCapture: debugShellCaptureOption,
 
     // Expose resolved span tracing for the handler (Cloudflare custom spans)
     tracing: resolvedTracing,

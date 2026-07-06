@@ -88,6 +88,12 @@ export type {
   OriginCheckPhase,
 } from "./rsc/origin-guard.js";
 
+// PPR shell-capture debug sink types (RangoOptions.debugShellCapture)
+export type {
+  ShellCaptureDebug,
+  ShellCaptureDebugEvent,
+} from "./rsc/shell-capture.js";
+
 // Server-side createLoader and redirect
 export {
   createLoader,

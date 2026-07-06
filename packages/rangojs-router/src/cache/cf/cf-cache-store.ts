@@ -138,6 +138,13 @@ const warnedNoKvReadInvalidation = new Set<string>();
 const warnedTagInvalidationTtlFloor = new Set<string>();
 
 /**
+ * Stores (by namespace) already warned about the shell family being inert
+ * (getShell/putShell no-op without a KV namespace), so a ppr route hitting the
+ * silent fail-open warns once per isolate instead of on every request.
+ */
+const warnedShellFamilyInert = new Set<string>();
+
+/**
  * Stores (by namespace) already warned that tag invalidation is writing KV
  * markers with no expiry (tagInvalidationTtl unset), so the unbounded-growth
  * warning fires once per process rather than once per invalidateTags call
@@ -1643,6 +1650,27 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // same KV markers isGloballyInvalidated() reads for every other tier.
 
   /**
+   * Warn once per isolate that the shell family is inert: getShell/putShell
+   * are ONLY called for routes that declared the `ppr` path option, so firing
+   * here (not in the constructor) scopes the warning to apps that actually
+   * use PPR — a KV-less CFCacheStore is a perfectly fine config otherwise.
+   * Without it, the correctness-first fail-open (issue #651) is invisible:
+   * every ppr route is a permanent MISS with zero diagnostics.
+   * @internal
+   */
+  private warnShellFamilyInertOnce(): void {
+    this.warnOncePerNamespace(
+      warnedShellFamilyInert,
+      `[CFCacheStore] a ppr route resolved to this store, but no KV namespace ` +
+        `is configured, so the shell family (getShell/putShell) is a no-op: ` +
+        `every ppr route stays a permanent shell MISS (the page still serves ` +
+        `via a full render). Bind a KV namespace and pass it — ` +
+        `new CFCacheStore({ ctx, kv: env.CACHE_KV }) — or use a shell-capable ` +
+        `store via createRouter({ cache }).`,
+    );
+  }
+
+  /**
    * Get a cached PPR shell entry by key from KV (no L1). Applies the KV read
    * budget, corrupt-entry eviction, hard-expiry, and tag invalidation exactly
    * like kvGetItem, minus the L1 promote. SWR is a plain staleness flag — KV has
@@ -1652,7 +1680,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    if (!this.kv) return null;
+    if (!this.kv) {
+      this.warnShellFamilyInertOnce();
+      return null;
+    }
     try {
       const kvKey = this.toKVKey(`shell:${key}`);
       const { value: envelope, timedOut } =
@@ -1709,7 +1740,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     tags?: string[],
   ): Promise<void> {
     // KV-only tier: needs a KV namespace and waitUntil (writes are non-blocking).
-    if (!this.kv || !this.waitUntil) return;
+    if (!this.kv) {
+      this.warnShellFamilyInertOnce();
+      return;
+    }
+    if (!this.waitUntil) return;
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);

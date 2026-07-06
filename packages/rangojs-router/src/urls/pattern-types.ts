@@ -62,6 +62,17 @@ export interface PartialPrerenderProps {
    * capture render auto-collects (the shell's own non-loader request tags).
    */
   tags?: string[];
+  /**
+   * Upper bound (serialized UTF-8 bytes) on the capture data snapshot riding
+   * inside the shell entry. The snapshot duplicates every cache-store value
+   * the capture pinned, so a page over a large cache() segment can push the
+   * entry toward store value limits (Cloudflare KV caps a value at 25 MiB).
+   * Over the cap the snapshot is skipped: the shell is still stored and
+   * served, but pinned reads fall back to the live store, so drifted cached
+   * content can hydration-mismatch and be repaired client-side (the
+   * pre-snapshot behavior). Reported once per key. Defaults to 8 MiB.
+   */
+  maxSnapshotBytes?: number;
 }
 
 export interface PathOptions<

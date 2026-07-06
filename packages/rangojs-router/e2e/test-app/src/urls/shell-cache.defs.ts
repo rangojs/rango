@@ -19,6 +19,25 @@ export async function getDriftStamp(ctx: HandlerContext): Promise<string> {
   return `drift-${driftExecutions}`;
 }
 
+// Snapshot SIZE-CAP fixture (issue #651): a default-profile cached value baked
+// into the shell above loading(). The route caps ppr.maxSnapshotBytes far below
+// any real snapshot, so EVERY capture skips the snapshot (over cap, once-per-key
+// warning) yet still stores the shell. A HIT's tail then re-reads this value
+// LIVE from the real store — the default profile's ttl outlasts the test, so
+// the un-pinned read returns the capture-time value and the page hydrates
+// without mismatch. (Drift after expiry is the documented trade, exercised
+// conceptually by the drift fixture above — not asserted here.)
+let capStampExecutions = 0;
+
+export async function getCapStamp(ctx: HandlerContext): Promise<string> {
+  "use cache";
+  // ctx is a tainted key arg (excluded from the value, scopes the key by
+  // pathname+search); reference it so the transform keeps it.
+  void ctx.pathname;
+  capStampExecutions += 1;
+  return `cap-stamp-${capStampExecutions}`;
+}
+
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to
 // prove loaders stay fresh while the shell is served from the cached prelude.

@@ -434,6 +434,49 @@ function runShellCacheSpec(f: Fixture): void {
     expect(liveSeq).toBeGreaterThan(firstSeq);
   });
 
+  // --- Snapshot size cap (issue #651): over-cap snapshot skipped, serving intact. ---
+
+  // /shell-cache/snapshot-cap declares ppr.maxSnapshotBytes: 64 — far below the
+  // snapshot its capture records (the cap-stamp "use cache" item alone exceeds
+  // it) — so every capture stores the shell WITHOUT its snapshot (the skip +
+  // once-per-key report mechanics are pinned in shell-capture.test.ts). The
+  // contract pinned HERE: the cap degrades pinning, never serving — the route
+  // still flips MISS -> HIT and the HIT hydrates with zero errors (the
+  // cap-stamp's default-profile ttl outlasts the test, so the un-pinned live
+  // re-read agrees with the frozen prelude), while the price hole stays live.
+  test("size-cap fallback: an over-cap snapshot still stores the shell and the HIT hydrates cleanly", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/shell-cache/snapshot-cap?probe=capfallback");
+    await warmToHit(page.request, url);
+
+    // Raw-wire HIT: the shell serves from the store even though its snapshot
+    // was dropped, with the baked cap-stamp in the document.
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const html = await res.text();
+    expect(html).toMatch(/cap-stamp-\d+/);
+    const firstSeq = Number(/data-seq="(\d+)"/.exec(html)?.[1] ?? "0");
+
+    // Browser HIT: zero hydration errors (the guards above), the shell island
+    // is interactive, and the live hole advances past the baseline.
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(testId(page, "cap-stamp")).toHaveText(/cap-stamp-\d+/);
+    const counter = testId(page, "shell-counter");
+    await expect(counter).toHaveText("count: 0");
+    await counter.click();
+    await expect(counter).toHaveText("count: 1");
+    const price = testId(page, "shell-price");
+    await expect(price).toContainText("Live price:");
+    const liveSeq = Number(await price.getAttribute("data-seq"));
+    expect(liveSeq).toBeGreaterThan(firstSeq);
+  });
+
   // --- Loader-carried promise: the deterministic streaming lane in a hole. ---
 
   // /shell-cache/stream's loader resolves an outer value fast but carries a nested

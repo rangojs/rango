@@ -217,6 +217,38 @@ describe("generateServerTiming", () => {
     const timing = generateServerTiming(store);
     expect(timing).toBe("top-level;dur=10.00, no-depth;dur=5.00");
   });
+
+  // desc carries outcome detail (the PPR capture mirror emits e.g.
+  // `ppr-capture;dur=…;desc="stored attempt=1 …"`); a metric without desc
+  // stays byte-identical to the pre-desc output.
+  it("emits desc as a quoted-string and escapes its delimiters", () => {
+    const store: MetricsStore = {
+      enabled: true,
+      requestStart: 0,
+      metrics: [
+        {
+          label: "ppr:capture",
+          duration: 42,
+          startTime: 0,
+          desc: "stored attempt=1 snapshot=123b",
+        },
+        { label: "plain", duration: 5, startTime: 1 },
+        {
+          label: "esc",
+          duration: 1,
+          startTime: 2,
+          desc: 'quote " and slash \\',
+        },
+      ],
+    };
+
+    const timing = generateServerTiming(store);
+    expect(timing).toBe(
+      'ppr-capture;dur=42.00;desc="stored attempt=1 snapshot=123b", ' +
+        "plain;dur=5.00, " +
+        'esc;dur=1.00;desc="quote \\" and slash \\\\"',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

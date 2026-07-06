@@ -155,11 +155,31 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(await store.isTagsInvalidatedSince(["absent"], t0)).toBe(false);
   });
 
-  it("no-ops getShell/putShell when no KV namespace is configured", async () => {
+  it("no-ops getShell/putShell when no KV namespace is configured, warning once per isolate", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const inertWarnings = () =>
+      warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === "string" &&
+          c[0].includes("shell family (getShell/putShell) is a no-op"),
+      );
+
     const store = new CFCacheStore({ ctx: mockCtx }); // no kv
     await store.putShell("k", shellEntry(), 300, 30);
     await drain(mockCtx);
     expect(await store.getShell("k")).toBeNull();
+
+    // The silent fail-open is loud exactly once (issue #651): getShell/
+    // putShell only run for ppr routes, so this names the permanent-MISS
+    // shape and the fix without spamming every request.
+    expect(inertWarnings()).toHaveLength(1);
+    expect(inertWarnings()[0][0]).toContain("kv: env.CACHE_KV");
+
+    // Once per ISOLATE, not per instance: CFCacheStore is constructed per
+    // request, so a second no-KV store must not re-warn.
+    const store2 = new CFCacheStore({ ctx: createMockCtx() });
+    expect(await store2.getShell("k")).toBeNull();
+    expect(inertWarnings()).toHaveLength(1);
   });
 
   it("skips the KV write when ttl+swr is below the 60s KV floor", async () => {

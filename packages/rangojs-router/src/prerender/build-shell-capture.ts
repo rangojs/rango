@@ -76,6 +76,12 @@ export interface BuildShellCaptureOptions {
   swr?: number;
   /** The route's static ppr.tags (the capture unions render-recorded tags). */
   tags?: string[];
+  /**
+   * The route's resolved snapshot size cap (ResolvedPprConfig.maxSnapshotBytes)
+   * — build captures apply the same over-cap skip as runtime captures, so a
+   * raised per-route cap behaves identically across both producers.
+   */
+  maxSnapshotBytes?: number;
   /** Build-time env bindings (rango plugin buildEnv), if configured. */
   buildEnv?: unknown;
   /**
@@ -185,6 +191,7 @@ async function attemptBuildCapture(
     tags: opts.tags,
     store: collector as any,
     debug: opts.debug,
+    maxSnapshotBytes: opts.maxSnapshotBytes,
   };
 
   let mismatchedRouteName: string | undefined;
