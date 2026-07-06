@@ -1105,10 +1105,56 @@ export function createRequestContext<TEnv>(
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
   };
 
-  // Lazy allocation: only create Promise when a loader calls rendered().
+  wireRenderBarrier(ctx, handleStore);
+
+  ctx.use = createUseFunction({
+    handleStore,
+    loaderPromises,
+    getContext: () => ctx,
+  });
+
+  (ctx as any)[NOCACHE_SYMBOL] = true;
+  return ctx;
+}
+
+/**
+ * Wire a fresh render barrier onto `ctx`, closure-bound to THIS ctx and THIS
+ * handle store. Called by createRequestContext for every fresh context, and by
+ * deriveShellCaptureContext (rsc/shell-capture.ts) for the PPR capture's
+ * derived context.
+ *
+ * The derived-context call is load-bearing (issue #684, plan 009): the capture
+ * context is `Object.create(reqCtx)`, so without its own wiring every
+ * `_renderBarrier*` read fell through the prototype to the FOREGROUND
+ * request's barrier — whose getter and resolver are closure-bound to the
+ * foreground ctx and its handle store, and whose resolver no-ops once
+ * resolved. A bake-lane loader's `await ctx.rendered()` during capture then
+ * resolved instantly against the foreground's barrier and `ctx.use(handle)`
+ * read the foreground's handle snapshot; the capture's fresh `_handleStore`
+ * was invisible, so foreground per-request handle data could bake into the
+ * shared shell.
+ */
+export function wireRenderBarrier(
+  ctx: RequestContext<any, any>,
+  handleStore: HandleStore,
+): void {
+  // Reset the whole barrier family as OWN properties. No-op for a fresh
+  // context; for the derived capture context this shadows the foreground's
+  // resolved state so the capture runs its own barrier lifecycle. In
+  // particular _treeHasStreaming must be recomputed for the CAPTURE's tree
+  // (cache-lookup/segment-resolution only set it when undefined): an
+  // inherited `true` made a capture-lane rendered() seal the capture's fresh
+  // store at loader start and pair it with the foreground's segment order.
+  ctx._renderBarrierSegmentOrder = undefined;
+  ctx._renderBarrierWaiters = undefined;
+  ctx._renderBarrierHandleSnapshot = undefined;
+  ctx._renderBarrierGuardClosed = undefined;
+  ctx._handlerLoaderDeps = undefined;
+  ctx._treeHasStreaming = undefined;
+
+  // Lazy allocation: only create the Promise when a loader calls rendered().
   let barrierResolved = false;
   let resolveBarrier: (() => void) | undefined;
-  ctx._renderBarrier = null as any;
   ctx._resolveRenderBarrier = (
     segments: Array<{ type: string; id: string }>,
   ) => {
@@ -1136,6 +1182,9 @@ export function createRequestContext<TEnv>(
     }
     if (resolveBarrier) resolveBarrier();
   };
+  // defineProperty, not assignment: on a derived context the prototype's
+  // _renderBarrier may already be a non-writable data property (the getter
+  // pins it after first access), which would reject a plain assignment.
   Object.defineProperty(ctx, "_renderBarrier", {
     get() {
       const p = barrierResolved
@@ -1152,15 +1201,6 @@ export function createRequestContext<TEnv>(
     },
     configurable: true,
   });
-
-  ctx.use = createUseFunction({
-    handleStore,
-    loaderPromises,
-    getContext: () => ctx,
-  });
-
-  (ctx as any)[NOCACHE_SYMBOL] = true;
-  return ctx;
 }
 
 // Capture the Max-Age value so it can be parsed numerically. A leading zero
