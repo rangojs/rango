@@ -290,3 +290,27 @@ export const ShellExecLoader = createLoader(
     return { ...shellExecCounters };
   },
 );
+
+/**
+ * Render counter for the /shell-cache/outlined fixture. Fizz OUTLINES any
+ * Suspense boundary over ~500 bytes (fallback written inline first, content
+ * as a queued task, outline-deferred at flush), so the big section exercises
+ * the outlined render + flush path end to end. Baked correctly, the section
+ * renders only during capture; the count riding inside the stored prelude is
+ * a capture-time snapshot by construction.
+ */
+export const outlinedRenderCounter: { count: number } = { count: 0 };
+
+// Slot loader for the /shell-cache/outlined fixture's masked hole. Dedicated
+// (not ShellBadgeLoader) so its seq is isolated from the slot-hole suite; the
+// value advancing across HITs pins that the hole stays LIVE while the outlined
+// section beside it is served from the frozen prelude.
+let outlinedBadgeSeq = 0;
+
+export const ShellOutlinedBadgeLoader = createLoader(
+  async (): Promise<string> => {
+    await new Promise((resolve) => setTimeout(resolve, SHELL_BADGE_DELAY_MS));
+    outlinedBadgeSeq += 1;
+    return `outlined-badge-${outlinedBadgeSeq}`;
+  },
+);

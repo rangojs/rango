@@ -333,6 +333,7 @@ export const NamedRoutes = {
   shellCacheLayoutLoaderBare: "/shell-cache/layout-loader-bare",
   shellCacheNoHole: "/shell-cache/no-hole",
   shellCacheNonceToken: "/shell-cache/nonce-token",
+  shellCacheOutlined: "/shell-cache/outlined",
   shellCacheSettled: "/shell-cache/settled",
   shellCacheSlotHole: "/shell-cache/slot-hole",
   shellCacheSlotUse: "/shell-cache/slot-use",

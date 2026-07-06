@@ -624,7 +624,12 @@ export function createShellCaptureHandler<TEnv = unknown>(
       // the now-complete shell and mark the still-pending boundaries as POSTPONED
       // rather than errored. Deterministic (the byte set is already frozen and
       // the payload is settled), so a fixed count of turns suffices — no
-      // wall-clock.
+      // wall-clock. Ready-but-queued fizz render work (however large — a multi-MB
+      // outlined boundary) can never lose this race: tracked-postpones pings run
+      // on scheduleMicrotask, so every runnable task drains before the FIRST
+      // setTimeout hop fires; only tasks parked on genuinely pending promises
+      // (masked loaders, real per-request I/O) remain, and those are exactly the
+      // holes that must postpone (issue #702).
       for (let i = 0; i < POST_QUIESCE_TASK_HOPS; i++) {
         await macrotask();
       }

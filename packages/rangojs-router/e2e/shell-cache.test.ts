@@ -39,6 +39,10 @@ const LOADER_DELAY_MS = 400;
 // outer value resolves fast, the nested pendingData promise settles ~300ms later.
 const STREAM_INNER_DELAY_MS = 300;
 
+// Last row index of the /shell-cache/outlined fixture's big section
+// (OUTLINED_ROW_COUNT - 1 in test-app/src/urls/shell-cache.tsx).
+const OUTLINED_LAST_ROW = 9999;
+
 // The shell cache only engages for HTML document GETs; mayNeedSSR treats a request
 // whose Accept omits text/html as RSC and bypasses. Playwright's raw request.get
 // defaults to Accept: * / *, so document probes must ask for HTML the way a browser
@@ -903,6 +907,68 @@ function runShellCacheSpec(f: Fixture): void {
     // The replayed handler output still renders (structure intact, not blank).
     expect(second.html).toContain("Exec matrix static chrome");
     expect(second.html).toContain("exec badge");
+  });
+
+  // Issue #702: fizz OUTLINES any Suspense boundary over ~500 bytes (fallback
+  // written inline first, content as a queued task; past progressiveChunkSize
+  // the completed content is outline-DEFERRED at flush into an out-of-band
+  // segment + $RC — all prelude bytes). This pins that outlined-but-READY
+  // content bakes into the STORED shell: fizz's runnable work is microtask-
+  // atomic relative to the capture's macrotask abort schedule (tracked-
+  // postpones pings run on scheduleMicrotask; the quiesce hops and abort on
+  // setTimeout), so ready content of any size flushes before the abort lands.
+  //
+  // Structural scar tissue (why the hole is a SLOT): the original reproducer
+  // put the section under a route-level loading() + loader. That shape can
+  // NEVER bake the section — LoaderResolver use()es the masked loader promise
+  // ABOVE the whole route subtree, so at capture nothing below it renders,
+  // and React postpones whole Suspense boundaries (the fallback owns the
+  // boundary's DOM slot), so bytes inside the postponed boundary cannot ride
+  // the prelude. Under loading(), the entire route body IS the hole by
+  // doctrine; content that must bake belongs BESIDE the hole (slot/layout
+  // chrome) — the layout-with-loaders playbook.
+  test("large sync Suspense section bakes into the shell — outlined content flushes before the capture abort", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/outlined?probe=outlined");
+    await warmToHit(request, url);
+
+    // Byte PROVENANCE is the discriminator: the stored prelude ends at the
+    // first </html> (splitPrelude); the resumed tail (holes + $RC + hydration
+    // payload) streams after it. Baked = every row inside the prelude; the
+    // broken shape baked only the fallback and re-streamed the section per
+    // request (measured on a real storefront: ~2.7MB re-rendered per HIT).
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const html = await res.text();
+    const { prelude, resumed } = splitPrelude(html);
+
+    expect(prelude).toContain("Outlined row 0<");
+    expect(prelude).toContain(`Outlined row ${OUTLINED_LAST_ROW}<`);
+    expect(prelude).toContain('data-testid="outlined-static"');
+
+    // The masked slot hole still postpones: the fallback is frozen into the
+    // prelude, the live value (`outlined-badge-<seq>`, digit-anchored so the
+    // fallback's own testid can't match) exists only in the per-request
+    // resumed tail — masked-loader content must never bake.
+    expect(prelude).toContain("outlined badge pending...");
+    expect(prelude).not.toMatch(/outlined-badge-\d/);
+    expect(resumed).toMatch(/outlined-badge-\d/);
+
+    // The hole is LIVE: a second HIT serves the identical frozen prelude while
+    // the badge seq advances (the loader re-ran for this request).
+    const res2 = await request.get(url, { headers: HTML_HEADERS });
+    expect(res2.headers()["x-rango-shell"]).toBe("HIT");
+    const html2 = await res2.text();
+    const second = splitPrelude(html2);
+    expect(second.prelude).toBe(prelude);
+    const seqOf = (body: string): number => {
+      const m = /outlined-badge-(\d+)/.exec(body);
+      expect(m, "resumed badge value present").toBeTruthy();
+      return Number(m![1]);
+    };
+    expect(seqOf(second.resumed)).toBeGreaterThan(seqOf(resumed));
   });
 }
 
