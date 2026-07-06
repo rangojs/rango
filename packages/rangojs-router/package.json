@@ -128,6 +128,11 @@
       "types": "./src/build/index.ts",
       "import": "./src/build/index.ts"
     },
+    "./build/shell-capture": {
+      "types": "./src/prerender/build-shell-capture.ts",
+      "react-server": "./src/prerender/build-shell-capture.ts",
+      "import": "./src/prerender/build-shell-capture.ts"
+    },
     "./host": {
       "types": "./src/host/index.ts",
       "react-server": "./src/host/index.ts",

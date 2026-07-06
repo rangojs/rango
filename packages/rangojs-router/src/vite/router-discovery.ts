@@ -1432,6 +1432,8 @@ export function createRouterDiscoveryPlugin(
       resetStagedBuildAssets(s.projectRoot);
       s.prerenderManifestEntries = null;
       s.staticManifestEntries = null;
+      s.shellCandidates = null;
+      s.prerenderPayloadValues = null;
 
       // Acquire build-time env bindings if configured
       await timed(debugDiscovery, "build acquireBuildEnv", () =>
@@ -1503,9 +1505,18 @@ export function createRouterDiscoveryPlugin(
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
         if (tempServer) {
-          await timed(debugDiscovery, "build tempServer.close", () =>
-            tempServer.close(),
-          );
+          if (s.shellCandidates?.length) {
+            // Prerender+ppr candidates exist: keep the temp server (and its
+            // realm — tries installed, registry populated) alive for the
+            // post-build shell capture phase (buildApp post, producer B #699).
+            // The prelude embeds built client asset URLs, so the capture can
+            // only run after the client build; that phase closes the server.
+            s.shellPhaseTempServer = tempServer;
+          } else {
+            await timed(debugDiscovery, "build tempServer.close", () =>
+              tempServer.close(),
+            );
+          }
         }
         await releaseBuildEnv(s);
         debugDiscovery?.(
@@ -1513,6 +1524,16 @@ export function createRouterDiscoveryPlugin(
           (performance.now() - buildStartTime).toFixed(1),
         );
       }
+    },
+
+    // Post-build PPR shell capture (producer B, #699): runs after EVERY
+    // environment bundle is written — the shell prelude embeds built client
+    // asset URLs (bootstrap entry), which do not exist at buildStart.
+    buildApp: {
+      order: "post",
+      async handler(builder) {
+        await runShellPrerenderPhase(s, builder?.config as any);
+      },
     },
 
     // Suppress vite's HMR cascade for our own gen-file writes.

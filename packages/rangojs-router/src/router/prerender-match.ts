@@ -21,6 +21,7 @@ import type { RouterContext } from "./router-context.js";
 import type { ResolveSegmentOptions } from "./segment-resolution.js";
 import { runWithRouterContext } from "./router-context.js";
 import type { EntryData, InterceptEntry } from "../server/context";
+import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type {
   HandlerContext,
   InternalHandlerContext,
@@ -74,6 +75,13 @@ export async function matchForPrerender<TEnv = any>(
    *  the sinks store it as-is (no longer merge raw records). */
   interceptHandles?: string;
   passthrough?: true;
+  /**
+   * The matched route entry's `ppr` path option, surfaced so the build
+   * collection can flag Prerender+ppr routes as build-time shell candidates
+   * (issue #699 producer B). Runtime-only today; the build otherwise never
+   * sees the option (it lives on EntryData, not the trie).
+   */
+  ppr?: boolean | PartialPrerenderProps;
 } | null> {
   // 1. Find the matching route entry
   const matched = await deps.findMatch(pathname);
@@ -306,6 +314,18 @@ export async function matchForPrerender<TEnv = any>(
       // Use the trie-level route key (e.g., "docs", "docs.article")
       const routeName = matched.routeKey;
 
+      // Surface the matched route entry's ppr option for the build collection
+      // (leaf-first: the deepest type:"route" entry in the ancestor chain is
+      // the matched page route; ancestors are layouts/includes).
+      let routePpr: boolean | PartialPrerenderProps | undefined;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const e = entries[i]!;
+        if (e.type === "route") {
+          routePpr = e.ppr;
+          break;
+        }
+      }
+
       // 14. Resolve intercept segments for this route (if any ancestor defines
       //     an intercept targeting this route). At build time we skip when()
       //     evaluation -- we pre-render all intercepts unconditionally and let
@@ -420,6 +440,7 @@ export async function matchForPrerender<TEnv = any>(
         params: matchedParams,
         interceptSegments,
         interceptHandles,
+        ppr: routePpr,
       };
     });
   });

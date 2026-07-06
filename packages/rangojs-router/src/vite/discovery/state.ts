@@ -58,6 +58,18 @@ export interface PerRouterManifestEntry {
   factoryOnlyPrefixes?: Set<string>;
 }
 
+/**
+ * One Prerender+ppr URL the build must additionally produce a PPR shell entry
+ * for (issue #699 producer B). `ppr` is the route's raw path option, already
+ * filtered to truthy by the collector.
+ */
+export interface ShellPrerenderCandidate {
+  urlPath: string;
+  routeName: string;
+  paramHash: string;
+  ppr: true | { ttl?: number; swr?: number; tags?: string[] };
+}
+
 export interface DiscoveryState {
   resolvedEntryPath: string | undefined;
   projectRoot: string;
@@ -93,6 +105,25 @@ export interface DiscoveryState {
 
   prerenderManifestEntries: Record<string, string> | null;
   staticManifestEntries: Record<string, string> | null;
+  /**
+   * Build-time PPR shell candidates: prerender routes that ALSO declare the
+   * `ppr` path option (issue #699 producer B). Collected by
+   * expandPrerenderRoutes; consumed by the post-build shell capture phase.
+   */
+  shellCandidates: ShellPrerenderCandidate[] | null;
+  /**
+   * Raw prerender payload JSON strings keyed by manifest key, retained in
+   * memory so the shell capture phase can seed an in-realm prerender store
+   * without re-reading staged asset files.
+   */
+  prerenderPayloadValues: Map<string, string> | null;
+  /**
+   * The buildStart temp RSC server, kept alive past discovery when shell
+   * candidates exist: the shell capture phase (buildApp post) reuses its
+   * realm — tries installed, registry populated — after the client build has
+   * produced the asset URLs the prelude must embed. Closed by that phase.
+   */
+  shellPhaseTempServer: any;
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;
@@ -145,6 +176,9 @@ export function createDiscoveryState(
 
     prerenderManifestEntries: null,
     staticManifestEntries: null,
+    shellCandidates: null,
+    prerenderPayloadValues: null,
+    shellPhaseTempServer: null,
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: null,
