@@ -970,6 +970,93 @@ function runShellCacheSpec(f: Fixture): void {
     };
     expect(seqOf(second.resumed)).toBeGreaterThan(seqOf(resumed));
   });
+
+  // --- Fragment splice (issue #700): a HIT tail emits stored snapshot
+  // fragments VERBATIM into the hydration payload instead of re-serializing
+  // the baked tree per request. On the wire the replayed segments travel as
+  // __rangoFragment envelopes (string copy); the SSR resume pass and browser
+  // hydration expand them through their own Flight deserializers. ---
+
+  // Cold-graph absorber for the fragment assertions below: the capture's doc
+  // segment record is written under waitUntil and pinned into the snapshot
+  // only if it settles within the capture's write-settle window — on a COLD
+  // dev module graph the first serialization outlasts it, storing a
+  // snapshot-less entry whose HITs keep the full tail (no fast path, no
+  // fragments) until TTL. Warming a sacrificial probe first compiles the
+  // codec so the asserted probes' captures settle in time. Production builds
+  // serialize in milliseconds and never need this.
+  async function warmFragmentGraph(request: Page["request"]): Promise<void> {
+    await warmToHit(request, f.url("/shell-cache?probe=fragwarmup"));
+  }
+
+  test("HIT hydration payload carries verbatim fragment envelopes; MISS carries none", async ({
+    request,
+  }) => {
+    await warmFragmentGraph(request);
+    const url = f.url("/shell-cache/outlined?probe=fragments");
+
+    // First request: MISS — a fresh render serializes real elements, so no
+    // envelope may appear anywhere in the document. Conditional on a genuine
+    // MISS so a test RETRY (probe already warmed by attempt 1) stays valid.
+    const miss = await request.get(url, { headers: HTML_HEADERS });
+    expect(miss.status()).toBe(200);
+    if (miss.headers()["x-rango-shell"] === "MISS") {
+      expect(await miss.text()).not.toContain("__rangoFragment");
+    }
+
+    await warmToHit(request, url);
+
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const { prelude, resumed } = splitPrelude(await res.text());
+
+    // The envelope marker rides ONLY the resumed tail (the inlined hydration
+    // payload); the frozen prelude HTML never carries it.
+    expect(prelude).not.toContain("__rangoFragment");
+    expect(resumed).toContain("__rangoFragment");
+
+    // Payload completeness: the baked section's rows still reach the client
+    // for hydration — inside the fragment strings, not as freshly
+    // re-serialized element rows.
+    expect(resumed).toContain(`Outlined row ${OUTLINED_LAST_ROW}`);
+  });
+
+  // Route choice: /shell-cache/slot-hole, deliberately. The fragment splice
+  // requires the ARMED fast path (a snapshot-seeded doc record), and in dev
+  // that depends on the capture's deferred doc-record write settling inside
+  // the snapshot write-settle window — which slot-hole's lean tree does
+  // deterministically, while /shell-cache's heavier chrome misses the window
+  // in dev (pre-existing #695 behavior: those dev HITs keep the full tail)
+  // and /shell-cache/outlined has a pre-existing dev-only render-counter
+  // drift (hydration mismatches on main too, fragments or not). Not
+  // exec-matrix: its test asserts exact module-counter deltas, and this
+  // test's requests to the same route would race them.
+  test("fragment-envelope HIT hydrates with zero errors and the slot hole stays live", async ({
+    page,
+  }) => {
+    await warmFragmentGraph(page.request);
+    const url = f.url("/shell-cache/slot-hole?probe=fraghydrate");
+    await warmToHit(page.request, url);
+
+    // Confirm this exact probe's HIT really is fragment-shaped before driving
+    // the browser at it — the hydration guard below then proves the envelopes
+    // are consumer-invisible.
+    const res = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    expect(await res.text()).toContain("__rangoFragment");
+
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    await page.goto(url);
+    await waitForHydration(page);
+
+    await expect(testId(page, "shell-slot-home")).toHaveText(
+      "Slot home static content",
+    );
+    // The masked slot hole stayed live: the badge value streamed in fresh
+    // through the expanded-fragment shell.
+    await expect(testId(page, "shell-badge-value")).toContainText(/badge-\d/);
+  });
 }
 
 test.describe("shell-cache (dev)", () => {

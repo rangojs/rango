@@ -22,6 +22,7 @@ import type {
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
+import { expandSegmentFragments } from "../segment-fragments.js";
 import { initRangoState } from "./rango-state.js";
 import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
@@ -161,6 +162,16 @@ export async function initBrowserApp(
   bootLog("flight decode: awaiting initial payload from document stream");
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
+
+  // Shell-HIT documents carry replayed segments as VERBATIM stored fragments
+  // (segment-fragments.ts, issue #700); expand them through the browser
+  // deserializer BEFORE any consumer reads the segments (store seed,
+  // renderSegments, history cache). Non-HIT payloads have no envelopes and pay
+  // one field scan. The SSR resume pass ran the same expansion (ssr-root.tsx),
+  // so the hydrated tree matches the server-rendered one by construction.
+  await expandSegmentFragments(initialPayload.metadata?.segments, (stream) =>
+    deps.createFromReadableStream(stream),
+  );
 
   // Extract themeConfig and initialTheme from payload if not explicitly provided
   // This allows virtual entries to work without importing the router

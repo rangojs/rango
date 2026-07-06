@@ -229,6 +229,19 @@ export interface RequestContext<
   };
 
   /**
+   * @internal Shell-HIT tail marker: cache/prerender-store hits during THIS
+   * render emit stored segment fragments VERBATIM into the payload
+   * (segment-codec fragmentSegments) instead of deserialize -> re-serialize
+   * per request; the payload consumers (SSR resume + browser hydration)
+   * expand them (segment-fragments.ts, issue #700). Own property of
+   * serveShellHit's derived tail context ONLY — it must never be visible to a
+   * capture render: the capture SSR-prerenders the payload AND serializes
+   * segments into records (cacheRoute), and an envelope reaching
+   * serializeSegments would store a double-encoded fragment.
+   */
+  _shellFragmentPayload?: boolean;
+
+  /**
    * @internal Handler-layer liveness observed DURING a shell capture, from
    * three sources: (a) the capture handle-store push wrapper (shell-capture.ts)
    * when a push made OUTSIDE a DSL loader scope carries a nested thenable
@@ -575,6 +588,7 @@ export type PublicRequestContext<
   | "_transitionWhen"
   | "_cacheStore"
   | "_shellCaptureRun"
+  | "_shellFragmentPayload"
   | "_shellCaptureGuardTrippedLoaderId"
   | "_explicitTaggedStores"
   | "_requestTags"

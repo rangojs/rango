@@ -523,6 +523,66 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(getItemSpy).toHaveBeenCalledWith("it1");
   });
 
+  // Fragment splice (issue #700): every HIT tail render — snapshot-seeded or
+  // not — runs under a derived context carrying _shellFragmentPayload, so its
+  // cache/prerender-store hits emit stored fragments verbatim. The flag must
+  // never mutate the SHARED reqCtx: scheduleShellCapture derives the capture
+  // context from reqCtx, and a capture render seeing the flag would serialize
+  // fragment envelopes into records (double-encoding).
+  for (const withSnapshot of [true, false]) {
+    it(`arms _shellFragmentPayload on the HIT tail context (${withSnapshot ? "snapshot-seeded" : "no snapshot"}) without touching the shared reqCtx`, async () => {
+      const store = new MemorySegmentCacheStore();
+      const snapshot: ShellSnapshotRecord[] | undefined = withSnapshot
+        ? [{ family: "item", key: "it1", value: { value: "PINNED" } }]
+        : undefined;
+      await store.putShell(KEY, shellEntry({ snapshot }), 300, 30);
+
+      const ssrModule = fullSsrModule();
+      const { ctx } = makeCtx(ssrModule, "stream");
+      let tailFlag: boolean | undefined;
+      (ctx as any).renderToReadableStream = () => {
+        tailFlag = getRequestContext()._shellFragmentPayload;
+        return new ReadableStream();
+      };
+
+      const request = new Request("http://localhost/p", {
+        headers: { accept: "text/html" },
+      });
+      const url = new URL(request.url);
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url,
+        variables: {},
+      }) as RequestContext<unknown>;
+      reqCtx._cacheStore = store as any;
+      (reqCtx as any)._classifiedRoute = {
+        manifestEntry: { type: "route", ppr: true },
+      };
+
+      const response = await runWithRequestContext(reqCtx, () =>
+        handleRscRendering(
+          ctx,
+          request,
+          {},
+          url,
+          false,
+          reqCtx._handleStore,
+          undefined,
+        ),
+      );
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(response.body!); // drive the tail render
+
+      expect(tailFlag).toBe(true);
+      // Own property of the derived tail context only — the shared reqCtx (the
+      // capture derivation base) must not carry it.
+      expect(
+        Object.prototype.hasOwnProperty.call(reqCtx, "_shellFragmentPayload"),
+      ).toBe(false);
+    });
+  }
+
   it("a stale (SWR) hit serves the stale shell AND schedules a background recapture", async () => {
     const store = new MemorySegmentCacheStore();
     // ttl 0 => stale as soon as the clock advances; swr 300 keeps it servable.

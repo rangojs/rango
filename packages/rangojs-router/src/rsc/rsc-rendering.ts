@@ -653,9 +653,24 @@ function serveShellHit(
           `[Server][ppr] shell HIT: fast path declined — handler-live holes; tail re-runs handlers (abs ${Math.round(performance.now())})`,
         );
       }
+      // Fragment splice (issue #700): cache/prerender-store hits inside THIS
+      // tail render emit their stored segment fragments verbatim into the
+      // payload; the SSR resume pass and browser hydration expand them
+      // (segment-fragments.ts). Tail-only: the flag lives on the derived
+      // context so it can never leak into a capture render (which serializes
+      // segments and must see real elements).
+      seededCtx._shellFragmentPayload = true;
       return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
     }
-    return renderTail(reqCtx);
+    // No snapshot (e.g. a producer B entry whose capture hit only the
+    // prerender store): still a shell-HIT tail, so arm the fragment splice on
+    // a derived context — the tail's prerender-store/cache hits (if any) then
+    // splice; a route with neither serves exactly as before. Derived, never
+    // the shared reqCtx: scheduleShellCapture derives the capture context from
+    // reqCtx and the flag must not be inherited there.
+    const fragmentCtx: RequestContext<any> = Object.create(reqCtx);
+    fragmentCtx._shellFragmentPayload = true;
+    return runWithRequestContext(fragmentCtx, () => renderTail(fragmentCtx));
   })();
   // The stream below is the only consumer; pre-attach a no-op catch so a tail
   // failure before the stream is pulled never surfaces as an unhandled rejection.
