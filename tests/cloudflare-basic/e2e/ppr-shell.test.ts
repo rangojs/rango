@@ -242,6 +242,51 @@ function describePprShell(mode: "dev" | "build") {
       await expect(counter).toHaveText("count: 1");
     });
 
+    // Fragment splice (issue #700): a HIT tail emits the stored snapshot
+    // fragments VERBATIM into the hydration payload (__rangoFragment envelopes
+    // the SSR resume pass and browser hydration expand) instead of
+    // re-serializing the baked tree per request on the worker. A MISS (fresh
+    // render) carries none; the warmed page must stay hydration-clean and its
+    // hole live — the envelopes are consumer-invisible.
+    test("HIT payload carries verbatim fragment envelopes; the page hydrates cleanly on workerd", async ({
+      page,
+    }) => {
+      // Cold-graph absorber: the capture's doc segment record is written under
+      // waitUntil and pinned into the snapshot only if it settles within the
+      // capture's write-settle window — a COLD dev worker's first serialization
+      // can outlast it, storing a snapshot-less entry whose HITs keep the full
+      // tail (no fragments) until TTL. Warm a sacrificial probe first so the
+      // asserted probe's capture settles in time.
+      await warmToHit(page.request, f.url("/ppr-shell?probe=fragwarmup"));
+      const url = f.url("/ppr-shell?probe=fragments");
+
+      const miss = await page.request.get(url, { headers: HTML_HEADERS });
+      if (miss.headers()["x-rango-shell"] === "MISS") {
+        // A persisted-KV rerun may already HIT; only a genuine MISS pins the
+        // no-envelope half.
+        expect(await miss.text()).not.toContain("__rangoFragment");
+      }
+
+      await warmToHit(page.request, url);
+      const res = await page.request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const { prelude, resumed } = splitPrelude(await res.text());
+      expect(prelude).not.toContain("__rangoFragment");
+      expect(resumed).toContain("__rangoFragment");
+
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      await page.goto(url);
+      await waitForHydration(page);
+      await expect(testId(page, "ppr-shell-header")).toHaveText(
+        "PPR Shell Demo",
+      );
+      await expect(testId(page, "ppr-price")).toContainText("Live price:");
+      const counter = testId(page, "ppr-counter");
+      await counter.click();
+      await expect(counter).toHaveText("count: 1");
+    });
+
     // --- Loader-carried promise: the deterministic streaming lane in a hole. ---
 
     // /ppr-shell/stream's loader resolves an outer value fast but carries a nested

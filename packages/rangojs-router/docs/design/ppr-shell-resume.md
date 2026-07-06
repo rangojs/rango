@@ -1002,8 +1002,15 @@ are not revived.
   reactVersion gate). The render-callable `cacheTag()` unions render-recorded tags
   onto the shell entry — see "Shell invalidation is DERIVATIVE (render-recorded
   tags, #648)" above.
-- Flight-byte splicing for the cached portion of the payload (the full Flight
-  render still runs per request; hydration needs it anyway).
+- Flight-byte splicing for the cached portion of the payload: SHIPPED as #700
+  (originally scoped out — "the full Flight render still runs per request").
+  A HIT tail now emits the STORED per-segment fragment strings verbatim into
+  the hydration payload (`__rangoFragment` envelopes, `src/segment-fragments.ts`;
+  `fragmentSegments` in segment-codec.ts) and the SSR resume pass + browser
+  hydration expand them through their own Flight deserializers — per-SEGMENT
+  splicing, so the whole-payload hazards recorded above (the handles
+  AsyncGenerator, live promises, row-id surgery) never apply. See
+  docs/design/shell-fast-path.md ("The fragment splice, as built").
 - Warm-pass two-phase capture: a second capture render that lets non-loader
   in-shell async settle (closing the last residual quiesce window — raw
   in-component I/O in the shell, above) rather than relying on the anti-pattern

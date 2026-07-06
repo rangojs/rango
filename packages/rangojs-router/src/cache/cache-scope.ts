@@ -285,10 +285,19 @@ export class CacheScope {
       // partial: evict the entry (self-heal - the re-render re-caches under the
       // same key) and report it as corruption, distinct from a transient infra
       // error (handled by the outer catch).
+      //
+      // Shell-HIT tail (_shellFragmentPayload, issue #700): skip the decode and
+      // carry the stored fragment strings verbatim — the payload consumers
+      // expand them (segment-fragments.ts). Read off the ambient context at the
+      // same point the cache key was resolved (getDefaultRouteCacheKey), so the
+      // flag shares fate with the key: a disrupted ALS already missed the
+      // seeded record and degraded to the full tail.
       let segments: ResolvedSegment[];
       try {
-        const { deserializeSegments } = await import("./segment-codec.js");
-        segments = await deserializeSegments(cached.segments);
+        const codec = await import("./segment-codec.js");
+        segments = _getRequestContext()?._shellFragmentPayload
+          ? await codec.fragmentSegments(cached.segments)
+          : await codec.deserializeSegments(cached.segments);
       } catch (error) {
         reportCacheError(
           error,

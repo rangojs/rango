@@ -88,6 +88,28 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(seq2).toBe(seq1 + 1);
   });
 
+  // Fragment splice (issue #700) on the Prerender+ppr composition: the HIT
+  // tail serves its segments from the PRERENDER STORE (the lookup runs before
+  // the cache scope), so the splice must engage there too — the hydration
+  // payload carries the stored fragments verbatim (__rangoFragment envelopes)
+  // instead of re-serializing the prerendered tree per request.
+  test("HIT payload carries verbatim fragment envelopes (prerender-store splice)", async ({
+    request,
+  }) => {
+    const url = f.url("/pp/alpha?probe=fragments");
+    await warmToHit(request, url);
+
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const { prelude, resumed } = splitPrelude(await res.text());
+
+    expect(prelude).not.toContain("__rangoFragment");
+    expect(resumed).toContain("__rangoFragment");
+    // Payload completeness: the prerendered content still reaches the client
+    // for hydration, inside the fragment strings.
+    expect(resumed).toContain("Prerendered shell content for alpha");
+  });
+
   // ---------------------------------------------------------------------
   // Producer B (#699): the shell entry is produced at BUILD time (dev: on
   // demand via /__rsc_shell), so the FIRST request already HITs. Build

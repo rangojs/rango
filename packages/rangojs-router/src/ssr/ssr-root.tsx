@@ -1,4 +1,5 @@
 import React from "react";
+import { expandSegmentFragments } from "../segment-fragments.js";
 import { renderSegments } from "../segment-system.js";
 import {
   filterSegmentOrder,
@@ -169,7 +170,24 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
 
   return function SsrRoot() {
     if (payload === undefined) {
-      payload = createFromReadableStream<RscPayload>(rscStream);
+      // Shell-HIT tails carry replayed segments as VERBATIM stored fragments
+      // (segment-fragments.ts, issue #700); expand them through this
+      // environment's deserializer before anything reads the segments. Every
+      // other payload (full render, capture, actions) has no envelopes and
+      // pays one field scan. onPayloadSettled fires AFTER expansion: the
+      // capture's fizz-readiness gate must include fragment module loads.
+      // Promise.resolve() adoption is load-bearing: some wirings (the build
+      // temp server's vendored Flight client) return a THENABLE Chunk whose
+      // .then returns undefined — chaining on it directly yields undefined.
+      payload = Promise.resolve(
+        createFromReadableStream<RscPayload>(rscStream),
+      ).then(async (resolvedPayload) => {
+        await expandSegmentFragments(
+          resolvedPayload.metadata?.segments,
+          createFromReadableStream,
+        );
+        return resolvedPayload;
+      });
       if (onPayloadSettled) payload.then(onPayloadSettled, onPayloadSettled);
     }
     const resolved = React.use(payload);
