@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { urls, Meta, Breadcrumbs, nonce } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
@@ -11,6 +12,7 @@ import {
   ShellIdentityLoader,
   ShellSettledLoader,
   ShellExecLoader,
+  ShellOutlinedBadgeLoader,
   shellExecCounters,
   ShellHandles,
   makeBakedHandlePush,
@@ -18,6 +20,7 @@ import {
   makeNestedFastHandlePush,
   makePhysicsPromise,
   getDriftStamp,
+  outlinedRenderCounter,
 } from "./shell-cache.defs.js";
 import { ShellBadge } from "../components/ShellBadge.js";
 import { ShellSettledValue } from "../components/ShellSettledValue.js";
@@ -92,6 +95,68 @@ function ShellCacheLayout(ctx: HandlerContext) {
 
 function ShellCachePricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// Large SYNCHRONOUS Suspense-wrapped section: fizz outlines any boundary over
+// ~500 bytes (fallback inline first, content as a queued task) and, past
+// progressiveChunkSize, outline-DEFERS it at flush (placeholder + out-of-band
+// segment + $RC — all inside the stored prelude). Big enough that the section
+// dominates the capture's fizz work: a capture abort that raced ready-but-
+// queued render work would truncate it. Fizz's runnable work is microtask-
+// atomic relative to the capture's macrotask abort schedule (tracked-postpones
+// pings are scheduleMicrotask; the abort hops are setTimeout), so ready
+// content of ANY size flushes before the abort can land — issue #702.
+const OUTLINED_ROW_COUNT = 10000;
+
+function OutlinedRows() {
+  outlinedRenderCounter.count += 1;
+  const renderCount = outlinedRenderCounter.count;
+  return (
+    <div data-testid="outlined-content">
+      <span data-testid="outlined-render-count">{renderCount}</span>
+      {Array.from({ length: OUTLINED_ROW_COUNT }, (_, i) => (
+        <a
+          key={i}
+          href={`/shell-cache/outlined#row-${i}`}
+          className="outlined-fixture-row transition-all duration-150 ease-in-out text-sm tracking-normal font-light border-neutral-200 hover:text-emphasis"
+        >
+          {`Outlined row ${i}`}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function ShellOutlinedPage() {
+  return (
+    <div>
+      <p data-testid="outlined-static">Outlined page static</p>
+      <Suspense
+        fallback={<div data-testid="outlined-fallback">Loading section...</div>}
+      >
+        <OutlinedRows />
+      </Suspense>
+    </div>
+  );
+}
+
+// Chrome layout for the outlined fixture: the masked hole is a SIBLING slot
+// (@outlinedBadge, own loader + loading()), never an ANCESTOR of the section.
+// Structural scar tissue (issue #702): a route-level loading() can NOT host
+// this fixture — LoaderBoundary's LoaderResolver use()es the masked loader
+// promise ABOVE the route subtree, so during capture nothing below it ever
+// renders, and React postpones at Suspense-boundary granularity (the fallback
+// occupies the boundary's DOM slot), so content inside the postponed boundary
+// can never ride the prelude. Under loading(), the WHOLE route body is the
+// hole by construction; static material that must bake belongs beside the
+// hole (a slot, layout chrome) — the layout-with-loaders playbook.
+function ShellOutlinedChromeLayout() {
+  return (
+    <main data-testid="shell-outlined-page">
+      <ParallelOutlet name="@outlinedBadge" />
+      <Outlet />
+    </main>
+  );
 }
 
 // Loader-carried-promise page, reused by BOTH /shell-cache/stream (WITH
@@ -421,6 +486,33 @@ export const shellCachePatterns = urls(
         ]),
       ],
     ),
+    // Outlined-boundary fixture (issue #702): a big sync Suspense section
+    // beside a masked SLOT hole. The hole is a sibling (slot with its own
+    // loader + loading()), never an ancestor — see ShellOutlinedChromeLayout
+    // for why a route-level loading() cannot host this shape. Pins that
+    // outlined-but-ready content bakes into the STORED prelude (green = every
+    // row before the first </html>) while the masked hole still postpones
+    // (badge fallback frozen in the prelude, value fresh in the resumed tail
+    // on every HIT).
+    layout(ShellOutlinedChromeLayout, () => [
+      parallel({
+        "@outlinedBadge": {
+          handler: () => <ShellBadge loader={ShellOutlinedBadgeLoader} />,
+          use: () => [
+            loader(ShellOutlinedBadgeLoader),
+            loading(
+              <span data-testid="outlined-badge-fallback">
+                outlined badge pending...
+              </span>,
+            ),
+          ],
+        },
+      }),
+      path("/shell-cache/outlined", ShellOutlinedPage, {
+        name: "shellCacheOutlined",
+        ppr: { ttl: 300, swr: 120 },
+      }),
+    ]),
     // Settled-marker regression (storefront PDP #438): bake-lane loader whose
     // nested promise is already resolved at container return — the snapshot
     // pins its value; the HIT overlay must rehydrate a Promise for use().
