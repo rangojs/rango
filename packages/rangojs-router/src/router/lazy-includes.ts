@@ -9,6 +9,10 @@ import {
 import type { UrlPatterns } from "../urls.js";
 import type { AllUseItems, IncludeItem } from "../route-types.js";
 import type { ResolvedRouteMap, RouteEntry, TrailingSlashMode } from "../types";
+import {
+  isIncludeProvider,
+  resolveIncludeModule,
+} from "../urls/include-provider.js";
 
 export interface LazyEvalDeps<TEnv = any> {
   routesEntries: RouteEntry<TEnv>[];
@@ -69,7 +73,7 @@ export function findLazyIncludes<TEnv = any>(
 export function evaluateLazyEntry<TEnv = any>(
   entry: RouteEntry<TEnv>,
   deps: LazyEvalDeps<TEnv>,
-): void {
+): void | Promise<void> {
   if (!entry.lazy || entry.lazyEvaluated || !entry.lazyPatterns) {
     return;
   }
@@ -87,15 +91,62 @@ export function evaluateLazyEntry<TEnv = any>(
         for (const [name, pattern] of Object.entries(routes)) {
           deps.mergedRouteMap[name] = pattern;
         }
-        registerRouteMap(deps.mergedRouteMap);
+        // Register only this entry's routes (the delta): the full
+        // mergedRouteMap is seeded from the generated manifest at
+        // createRouter() time and already registered there — re-passing it
+        // made this request-path call O(total routes) (issue #666).
+        registerRouteMap(routes);
         return;
       }
     }
   }
 
-  entry.lazyEvaluated = true;
+  // Async provider (`() => import("./routes")`): the route module is evaluated
+  // off the startup path, on the first request reaching this prefix. Concurrent
+  // first-hits share one in-flight promise so the import + expansion run exactly
+  // once. The eager path below stays fully synchronous (no Promise), so the
+  // per-entry match loop pays no microtask for normal includes.
+  const lazyPatterns = entry.lazyPatterns;
+  if (isIncludeProvider(lazyPatterns)) {
+    const inflight = (entry as { _lazyInflight?: Promise<void> })._lazyInflight;
+    if (inflight) return inflight;
+    const work = (async () => {
+      const resolved = resolveIncludeModule(
+        await lazyPatterns(),
+        entry.staticPrefix,
+      );
+      // Cache the resolved patterns: any later re-entry expands synchronously.
+      entry.lazyPatterns = resolved as unknown as UrlPatterns<TEnv>;
+      runExpansion(entry, deps, resolved as UrlPatterns<TEnv>);
+    })();
+    (entry as { _lazyInflight?: Promise<void> })._lazyInflight = work;
+    const clear = () => {
+      (entry as { _lazyInflight?: Promise<void> })._lazyInflight = undefined;
+    };
+    // On failure, clear the flag (lazyEvaluated stays false) so a later request
+    // can retry the import rather than wedging the route permanently.
+    work.then(clear, clear);
+    return work;
+  }
 
-  const lazyPatterns = entry.lazyPatterns as UrlPatterns<TEnv>;
+  runExpansion(entry, deps, lazyPatterns as UrlPatterns<TEnv>);
+}
+
+/**
+ * Synchronously expand a lazy entry's (already-resolved) patterns into routes
+ * and splice any nested lazy includes as new entries. Runs once per entry.
+ */
+function runExpansion<TEnv = any>(
+  entry: RouteEntry<TEnv>,
+  deps: LazyEvalDeps<TEnv>,
+  lazyPatterns: UrlPatterns<TEnv>,
+): void {
+  // lazyEvaluated is set at the END, only after the handler ran and the routes
+  // (and any nested includes) were spliced. Setting it up-front would mark the
+  // entry done even if the handler throws mid-expansion: the async provider
+  // path clears _lazyInflight on rejection so a later request can retry, but a
+  // premature lazyEvaluated=true would make evaluateLazyEntry short-circuit
+  // (line ~77) forever, wedging the route at 404 until the isolate restarts.
   const lazyContext = entry.lazyContext;
 
   const manifest = new Map<string, EntryData>();
@@ -105,12 +156,9 @@ export function evaluateLazyEntry<TEnv = any>(
 
   let handlerResult: AllUseItems[] = [];
 
-  const lazyCounters: Record<string, number> = {};
-  if (lazyContext?.counters) {
-    for (const [key, value] of Object.entries(lazyContext.counters)) {
-      lazyCounters[key] = value;
-    }
-  }
+  const lazyCounters: Record<string, number> = lazyContext?.counters
+    ? { ...lazyContext.counters }
+    : {};
 
   RangoContext.run(
     {
@@ -170,7 +218,12 @@ export function evaluateLazyEntry<TEnv = any>(
       staticPrefix: extractStaticPrefix(fullPrefix),
       routes: {} as ResolvedRouteMap<any>,
       trailingSlash: entry.trailingSlash,
-      handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
+      // include entries don't invoke their own handler (real handlers come from
+      // the expanded routes); use the parent's placeholder. A provider has no
+      // `.handler` until resolved, so never read it here.
+      handler: isIncludeProvider(lazyInclude.patterns)
+        ? entry.handler
+        : (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
       mountIndex: deps.nextMountIndex(),
       routerId: deps.routerId,
       lazy: true,
@@ -196,5 +249,12 @@ export function evaluateLazyEntry<TEnv = any>(
     deps.routesEntries.splice(insertIndex, 0, nestedEntry);
   }
 
-  registerRouteMap(deps.mergedRouteMap);
+  // Delta only — see the matching comment on the precomputed branch above and
+  // the WHY block on registerRouteMap (issue #666).
+  registerRouteMap(routesObject);
+
+  // Expansion fully succeeded (handler ran, routes + nested includes spliced) —
+  // mark done now so a mid-expansion throw above leaves lazyEvaluated=false and
+  // the entry retriable.
+  entry.lazyEvaluated = true;
 }

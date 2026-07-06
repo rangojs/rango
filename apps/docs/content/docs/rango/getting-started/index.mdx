@@ -1,0 +1,172 @@
+---
+title: Setup
+description: Wire the Rango Vite plugin, define a route tree, create the router, and serve requests.
+type: guide
+---
+
+A Rango app is four files: a Vite config with the plugin, a `urls.tsx` route tree, a `router.tsx` that creates the router, and an entry that hands requests to `router.fetch`. This page walks through each, targeting Cloudflare Workers; the Vercel differences are one option at the end.
+
+## Vite config
+
+```ts
+// vite.config.ts
+import { cloudflare } from "@cloudflare/vite-plugin";
+import { rango } from "@rangojs/router/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [
+    react(),
+    rango({ preset: "cloudflare" }),
+    cloudflare({
+      configPath: "./wrangler.json",
+      viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+    }),
+  ],
+});
+```
+
+The `rango()` plugin owns RSC wiring, route discovery, and route-type generation. The preset matches your deployment target: `"cloudflare"` or `"vercel"`.
+
+## The route tree
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+
+import { RootLayout } from "./layouts/root-layout";
+import { AboutPage } from "./pages/about";
+import { HomePage } from "./pages/home";
+import { ProductPage } from "./pages/product";
+
+export const urlpatterns = urls(({ path, layout }) => [
+  layout(<RootLayout />, () => [
+    path("/", HomePage, { name: "home" }),
+    path("/about", AboutPage, { name: "about" }),
+    path("/product/:slug", ProductPage, { name: "product" }),
+  ]),
+]);
+```
+
+Handlers are async server components — they receive a context and return JSX. Fetch where you render:
+
+```tsx
+// src/pages/product.tsx
+import { notFound } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
+
+export const ProductPage: Handler<"product"> = async (ctx) => {
+  const product = await db.getProduct(ctx.params.slug);
+  if (!product) notFound("Product not found");
+  return <h1>{product.name}</h1>;
+};
+```
+
+## The router
+
+```tsx
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+
+import { Document } from "./document";
+import { urlpatterns } from "./urls";
+
+export const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+});
+
+export default router;
+```
+
+The `Document` is the HTML frame around every page:
+
+```tsx
+// src/document.tsx
+import type { ReactNode } from "react";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+## Serving requests
+
+On Cloudflare Workers, the fetch handler delegates to the router:
+
+```ts
+// src/worker.ts
+import { router } from "./router";
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return router.fetch(request, { env, ctx });
+  },
+};
+```
+
+`pnpm vite dev` runs the app in miniflare; `pnpm vite build` produces the production worker; `wrangler deploy` ships it.
+
+## Typed environment
+
+Pass your bindings as the router's type parameter and register them globally, so `ctx.env` is typed in every handler, loader, and middleware:
+
+```ts
+interface AppBindings {
+  DB: D1Database;
+  KV: KVNamespace;
+}
+
+export const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+});
+
+declare global {
+  namespace Rango {
+    interface Env extends AppBindings {}
+  }
+}
+```
+
+## Route types
+
+Named-route typing (`ctx.reverse("product")`, `Handler<"product">`) comes from generated `.gen.ts` files. The Vite plugin regenerates the router-level map during `dev` and `build`; the CLI generates everything on demand:
+
+```bash
+npx rango generate src/
+```
+
+Commit the generated files — they are the compile-time route map.
+
+## Deploying to Vercel
+
+Swap the preset and drop the Cloudflare plugin:
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  plugins: [react(), rango({ preset: "vercel" })],
+});
+```
+
+## Next
+
+<Cards>
+  <Card href="/docs/rango/features/routing" title="The Route Tree">
+    Structure versus config, layouts, includes, and code-splitting.
+  </Card>
+  <Card href="/docs/rango/features" title="All features">
+    Loaders, caching, middleware, response routes, metadata, navigation,
+    testing.
+  </Card>
+</Cards>

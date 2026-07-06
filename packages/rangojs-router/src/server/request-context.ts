@@ -50,7 +50,6 @@ import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
 import type { TransitionWhenFn } from "../types/segments.js";
 import type { ResolvedTracing } from "../router/tracing.js";
-import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import {
   THEME_COOKIE,
   isValidTheme,
@@ -175,6 +174,110 @@ export interface RequestContext<
   _cacheStore?: SegmentCacheStore;
 
   /**
+   * @internal PPR shell-capture ACTIVE marker. True ONLY inside the background
+   * capture task's derived request context (built by shell-capture.ts). This is
+   * the switch every capture-specific behavior reads: loader masking
+   * (loader-mask.ts isShellCaptureActive / fresh.ts emitStreaming) and the
+   * cookies()/headers() capture guard (cookie-store.ts
+   * assertNotInsideShellCapture). The foreground render never sets it, so the
+   * served response is byte-identical to axis 1. The capture descriptor itself
+   * (key/ttl/swr/tags/store) is NOT threaded through the request context — the
+   * integrated PPR serve path (rsc/shell-serve.ts + rsc-rendering.ts) builds it
+   * locally and passes it to scheduleShellCapture directly.
+   */
+  _shellCaptureRun?: boolean;
+
+  /**
+   * @internal Bake-lane loader containers collected DURING a shell capture:
+   * segment-key -> the loader's (pre-wrap) result promise. Populated by
+   * resolveLoaderData for loaders on entries with no renderable loading() (the
+   * bake lane — they execute at capture instead of being masked; see
+   * docs/design/loader-container-bake.md). Drained by captureAndStoreShell
+   * after the shell quiesces: settled containers are promise-elided,
+   * Flight-serialized, and pinned into the snapshot's loader family; a
+   * REJECTED container refuses the capture (error UI must never bake into the
+   * shared shell). Own property of the capture's derived context only.
+   */
+  _shellCaptureLoaderRecords?: Map<string, Promise<unknown>>;
+
+  /**
+   * @internal Loader-family snapshot seed for a shell HIT's tail render:
+   * segment-key -> the capture's elided container (already Flight-deserialized
+   * by serveShellHit). resolveLoaderData overlays it onto the fresh run's
+   * container (recorded paths pinned, hole-marker paths keep the fresh nested
+   * promises) so the payload's baked bytes match the frozen prelude. Own
+   * property of the HIT tail's derived context only.
+   */
+  _shellLoaderSeed?: Map<string, unknown>;
+
+  /**
+   * @internal Shell fast-path marker: makes the NEXT full match treat the whole
+   * matched route as an implicit doc-level cache() boundary (see
+   * resolveShellImplicitCacheScope in cache/cache-scope.ts). Set ONLY on
+   * (a) the capture's derived context — with a record-only store so the
+   * capture's cacheRoute write lands in the snapshot, never the real store —
+   * and (b) a HIT tail's seeded context when the entry is eligible
+   * (!handlerLiveHoles), where the SeededShellStore serves the recorded doc
+   * entry and the match skips handler execution entirely. Routes with their
+   * own cache() config (including cache(false)) are never overridden: the
+   * marker only applies when the route tree derived NO cache scope.
+   */
+  _shellImplicitCache?: {
+    ttl?: number;
+    swr?: number;
+    store?: SegmentCacheStore;
+  };
+
+  /**
+   * @internal Handler-layer liveness observed DURING a shell capture, from
+   * three sources: (a) the capture handle-store push wrapper (shell-capture.ts)
+   * when a push made OUTSIDE a DSL loader scope carries a nested thenable
+   * (masked to a never-filling hole); (b) still-pending top-level handler
+   * pushes (liveness unknowable at the barrier); (c) a handler-invoked loader
+   * executing during the capture (loader-resolution.ts — its consumption-lane
+   * value would freeze on a handler-free HIT). captureAndStoreShell folds it
+   * into ShellCacheEntry.handlerLiveHoles at the putShell barrier. Own
+   * property of the capture's derived context only.
+   */
+  _shellCaptureHandleLiveness?: {
+    holes: boolean;
+    pendingPushes: number;
+    handlerInvokedLoader: boolean;
+  };
+
+  /**
+   * @internal Handle values pushed from a DSL loader scope DURING a shell
+   * capture (identity set; populated by the capture push wrapper in
+   * shell-capture.ts). cacheRoute threads it into captureHandles so those
+   * values stay out of cache-write handle records — loaders re-run fresh on
+   * every HIT, so replaying their captured (masked) values would duplicate
+   * the fresh push and stall the Flight handle encode. Own property of the
+   * capture's derived context only; render-time handle consumers are
+   * unaffected (the exclusion applies only at the captureHandles call site).
+   */
+  _shellCaptureLoaderHandleValues?: WeakSet<object>;
+
+  /**
+   * @internal Set (to the offending fn name) by the cookies()/headers()
+   * capture guard when it throws DURING a capture render. Load-bearing for the
+   * bake lane: a guard throw inside an executing loader is swallowed by
+   * wrapLoaderPromise into per-loader error UI, which would otherwise bake
+   * silently into the shared shell — the capture checks this flag after the
+   * render and refuses instead. Deterministic, so the capture does not retry.
+   */
+  _shellCaptureGuardTripped?: string;
+
+  /**
+   * @internal The loader $$id whose BODY was executing when the capture guard
+   * tripped (read off the loader-body ALS scope at trip time), or undefined
+   * when the read came from handler/render code. Only used to make the
+   * once-per-key refusal warning name the real source — the old text
+   * hardcoded "a bake-lane loader", which misattributed handler-land reads
+   * and sent users debugging the wrong lane (issue #672, secondary).
+   */
+  _shellCaptureGuardTrippedLoaderId?: string;
+
+  /**
    * @internal Handler-owned registry of explicit per-scope stores from
    * cache({ store }). Created once per createRSCHandler() and threaded into
    * every request context, so it accumulates every explicit store the handler
@@ -220,6 +323,19 @@ export interface RequestContext<
 
   /** @internal Registered onResponse callbacks */
   _onResponseCallbacks: Array<(response: Response) => Response>;
+
+  /**
+   * @internal Promises of the background tasks scheduled via this context's
+   * waitUntil (deferred cache writes, revalidations, consumer tasks). The PPR
+   * shell capture drains this list BEFORE its match/render as an ORDERING EDGE:
+   * every foreground deferred cache write is scheduled here before the capture
+   * task is, so settling the list first guarantees the capture's cache reads
+   * observe the foreground's generation instead of racing it (see
+   * shell-capture.ts). Tasks whose scheduling fn carries
+   * UNTRACKED_BACKGROUND_TASK are not tracked (the capture task itself —
+   * tracking it would make that drain await its own promise).
+   */
+  _pendingBackgroundTasks?: Array<Promise<unknown>>;
 
   /**
    * Current theme setting (only available when theme is enabled in router config)
@@ -409,6 +525,15 @@ export interface RequestContext<
   /** @internal Request-scoped performance metrics store */
   _metricsStore?: MetricsStore;
 
+  /**
+   * @internal True request entry timestamp (performance.now() at handler entry).
+   * Set once at request-context creation (rsc/handler.ts) so a metrics store
+   * created MID-request — ctx.debugPerformance() or the getMetricsStore wrapper —
+   * anchors its timeline to the real request start instead of the opt-in moment,
+   * keeping phases that began before the opt-in at their true (non-negative) offset.
+   */
+  _handlerStart?: number;
+
   /** @internal Resolved platform phase-span tracing for this request (Cloudflare or OTel) */
   _tracing?: ResolvedTracing;
 
@@ -449,6 +574,8 @@ export type PublicRequestContext<
   | "_handleStore"
   | "_transitionWhen"
   | "_cacheStore"
+  | "_shellCaptureRun"
+  | "_shellCaptureGuardTrippedLoaderId"
   | "_explicitTaggedStores"
   | "_requestTags"
   | "_cacheProfiles"
@@ -476,6 +603,7 @@ export type PublicRequestContext<
   | "_reportBackgroundError"
   | "_debugPerformance"
   | "_metricsStore"
+  | "_handlerStart"
   | "_basename"
   | "_setStatus"
   | "_rotateStateCookie"
@@ -485,6 +613,17 @@ export type PublicRequestContext<
   | "_cacheSignal"
   | "res"
 >;
+
+/**
+ * Marker for a waitUntil-scheduled fn whose task promise must NOT enter
+ * _pendingBackgroundTasks. Used by the PPR shell capture for its own task:
+ * the capture's pre-render write barrier settles that list, so tracking the
+ * capture itself would make the drain wait on its own (still-running) promise.
+ * @internal
+ */
+export const UNTRACKED_BACKGROUND_TASK: unique symbol = Symbol.for(
+  "rango.untrackedBackgroundTask",
+);
 
 // AsyncLocalStorage instance for request context
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
@@ -897,20 +1036,37 @@ export function createRequestContext<TEnv>(
     _cacheProfiles: cacheProfiles,
 
     waitUntil(fn: () => Promise<void>): void {
+      // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
+      // non-async callback becomes a rejected promise handed to the host's
+      // waitUntil (logged as a background failure), instead of escaping into
+      // the request flow. Mirrors fireAndForgetWaitUntil's deferral.
+      const task = Promise.resolve().then(fn);
+      // Track the task promise so the PPR shell capture can settle the
+      // foreground's deferred cache writes before its own match/render (the
+      // ordering edge; see _pendingBackgroundTasks). The capture task itself
+      // opts out via the marker — the drain must never await its own promise.
+      if (
+        !(fn as { [UNTRACKED_BACKGROUND_TASK]?: boolean })[
+          UNTRACKED_BACKGROUND_TASK
+        ]
+      ) {
+        ctx._pendingBackgroundTasks?.push(task);
+      }
       if (executionContext?.waitUntil) {
-        // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
-        // non-async callback becomes a rejected promise handed to the host's
-        // waitUntil (logged as a background failure), instead of escaping into
-        // the request flow. Mirrors fireAndForgetWaitUntil's deferral.
-        executionContext.waitUntil(Promise.resolve().then(fn));
+        executionContext.waitUntil(task);
       } else {
-        fireAndForgetWaitUntil(fn);
+        // Node/dev fallback: fire-and-forget with error logging (the same
+        // policy fireAndForgetWaitUntil applies).
+        task.catch((err) =>
+          console.error("[waitUntil] Background task failed:", err),
+        );
       }
     },
 
     executionContext,
 
     _onResponseCallbacks: [],
+    _pendingBackgroundTasks: [],
 
     onResponse(callback: (response: Response) => Response): void {
       assertNotInsideCacheExec(ctx, "onResponse");
@@ -940,6 +1096,7 @@ export function createRequestContext<TEnv>(
 
     _reportedErrors: new WeakSet<object>(),
     _metricsStore: undefined,
+    _handlerStart: undefined,
 
     _renderBarrier: null as any,
     _resolveRenderBarrier: null as any,

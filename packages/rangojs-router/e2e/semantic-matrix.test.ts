@@ -9,7 +9,7 @@ import { expectNoPageError, testId, waitForHydration } from "./helper";
 
 type BuildAxis = "dev" | "prod";
 type TransportAxis = "js" | "pe" | "request";
-type ExecutionAxis = "full-render" | "action-followup";
+type ExecutionAxis = "full-render" | "action-followup" | "shell-capture";
 type ScopeAxis =
   | "in-scope-child"
   | "sibling-orphan"
@@ -538,6 +538,140 @@ const matrixRows: SemanticMatrixRow[] = [
       await waitForHydration(page);
       const ts2 = await readTestIdText(page, "prerender-ctx-timestamp");
       expect(ts2).not.toBe(ts1);
+    },
+  },
+  // PPR commit point + capture execution model: the shell serve path commits
+  // AFTER the whole middleware chain (global router.use() AND route DSL
+  // middleware()), so a middleware rejection wins before a single shell byte —
+  // even on a warmed route. And the background capture renders under a derived
+  // context that INHERITS the request's post-middleware state instead of
+  // re-running the chain: the middleware-run counter advances exactly once per
+  // HTTP request, captures included, while the captured shell still carries the
+  // middleware-derived ctx value (scope fidelity). Holes are render-defined
+  // (loading() boundaries and pending promises under Suspense), not config.
+  {
+    id: "PPR1",
+    contract:
+      "shell serve commits after ALL middleware (401 => zero shell bytes) and capture never re-runs the chain (counter exact, mw ctx value photographed)",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "n/a",
+    assert: async ({ request, baseUrl }) => {
+      const authed = {
+        headers: { Accept: "text/html", "x-shell-auth": "yes" },
+      };
+      const unauthed = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-secure?probe=matrix-guarded");
+      const readRuns = async () =>
+        Number(await (await request.get(baseUrl("/shell-secure-runs"))).text());
+
+      // Warm to HIT with authorized requests.
+      await expect(async () => {
+        const r = await request.get(url, authed);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+
+      // Unauthorized on the WARMED route: middleware 401, zero shell bytes.
+      const denied = await request.get(url, unauthed);
+      expect(denied.status()).toBe(401);
+      const deniedBody = await denied.text();
+      expect(deniedBody).toBe("unauthorized");
+      expect(denied.headers()["x-rango-shell"]).toBeUndefined();
+
+      // Scope fidelity: the captured prelude carries the middleware ctx value.
+      const hit = await request.get(url, authed);
+      const html = await hit.text();
+      expect(html.slice(0, html.indexOf("</html>"))).toContain(
+        "MW-SCOPE-VALUE",
+      );
+
+      // Capture never re-runs middleware: exactly one run per request.
+      const before = await readRuns();
+      for (let i = 0; i < 3; i++) {
+        const r = await request.get(url, authed);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }
+      await new Promise((r) => setTimeout(r, 300));
+      // 3 authed requests above; the unauthorized/denied ones are separate GETs
+      // counted at their own time, so only the delta window matters here.
+      expect((await readRuns()) - before).toBe(3);
+    },
+  },
+  // Serve-time guarding: every serve — MISS and HIT — runs the FULL chain (route
+  // middleware + handlers + fresh loaders) via executeRender; only the shell HTML
+  // is cached. So a HIT body carries BOTH the frozen shell AND freshly-rendered live
+  // loader content — proving the chain executed at serve time, not just replayed a
+  // cached document. (Composition is marker-gated, so a short-circuit — 401/redirect
+  // — never composes a shell; the shell-cache middleware unit tests pin that half.)
+  {
+    id: "PPR2",
+    contract:
+      "serve-time guarding: a HIT still runs the full chain — the shell is frozen but the loader hole is fresh",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "n/a",
+    assert: async ({ request, baseUrl }) => {
+      const html = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-cache?probe=matrix-guard");
+      await expect(async () => {
+        const r = await request.get(url, html);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+      const res = await request.get(url, html);
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const body = await res.text();
+      // Frozen shell (from ring-3 replay) AND fresh live loader output (chain ran).
+      expect(body).toContain("Shell Cache Demo");
+      expect(body).toContain("Live price:");
+    },
+  },
+  // The CONSUMPTION-LANE RULE (issue #672 / #674): server-side handler
+  // consumption via `await ctx.use(loader)` is the BAKED lane in every shared
+  // artifact — cache(), "use cache", and the PPR shell. During capture the
+  // loader EXECUTES with identity reads (cookies()/headers()) permitted
+  // (mirroring the cache() purity allowance), so the capture is never refused;
+  // the value freezes as a capture-time copy wherever it renders as
+  // unshielded shell material. DSL segment lanes are unchanged — a loader
+  // ALSO registered live-lane (loader()+loading()) still masks at capture and
+  // keeps its boundary a live hole. Client-side useLoader is the live lane.
+  {
+    id: "PPR3",
+    contract:
+      "consumption-lane rule: handler ctx.use of a cookie-reading loader executes at capture (no refusal); unshielded value bakes frozen; a registered live-lane slot stays a live hole",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "layout-parallel",
+    assert: async ({ request, baseUrl }) => {
+      const html = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-cache/slot-use?probe=matrix-lane");
+
+      // No refusal: the route reaches HIT despite the handlers' cookies()
+      // reads (pre-rule these tripped the identity guard -> MISS forever).
+      await expect(async () => {
+        const r = await request.get(url, html);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+
+      const first = await (await request.get(url, html)).text();
+      const prelude = first.slice(0, first.indexOf("</html>"));
+      // BAKED: layout-handler-consumed unregistered loader (capture ran
+      // cookie-less -> "anon") froze into the shared prelude.
+      const chip = prelude.match(/srv-chip-(\d+)-anon/);
+      expect(chip).not.toBeNull();
+      // Segment lane unchanged: the same-consumption slot whose loader is
+      // registered live-lane still postpones (fallback frozen, hole live).
+      expect(prelude).toContain("srv badge pending...");
+      expect(prelude).not.toMatch(/srv-badge-\d/);
+
+      // Frozen across HITs AND visitors — the rule's documented footgun.
+      const second = await (
+        await request.get(url, {
+          headers: { ...html.headers, Cookie: "srv_visitor=user-a" },
+        })
+      ).text();
+      const secondPrelude = second.slice(0, second.indexOf("</html>"));
+      expect(secondPrelude).toContain(`srv-chip-${chip![1]}-anon`);
+      expect(secondPrelude).not.toMatch(/srv-chip-\d+-user-a/);
     },
   },
 ];

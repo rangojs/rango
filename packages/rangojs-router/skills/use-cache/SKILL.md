@@ -1,6 +1,6 @@
 ---
 name: use-cache
-description: Function-level caching with "use cache" directive for RSC data functions and components
+description: Function-level caching with the "use cache" directive for RSC data functions and components in @rangojs/router. Use when a single function or component should memoize its own output, not a whole route/segment subtree or HTTP response.
 argument-hint: [profile-name]
 ---
 
@@ -9,6 +9,12 @@ argument-hint: [profile-name]
 Function-level caching for async server functions and RSC components. Caches
 return values with TTL + stale-while-revalidate. Complementary to the route-level
 `cache()` DSL and build-time `Static()`/`Prerender()`.
+
+## Not this skill if…
+
+- You want to cache a whole route or a rendered subtree of segments — that is
+  the segment-level `cache()` DSL: see `/caching`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## Basic Usage
 
@@ -146,6 +152,13 @@ Extract the value before the cached function and pass it as an argument:
 const locale = cookies().get("locale")?.value ?? "en";
 const data = await getCachedData(locale); // locale is now in the cache key
 ```
+
+The guard does not reach into LOADER bodies consumed inside the cached
+function (`await ctx.use(loader)`): loaders always run fresh, so their reads
+are exempt — but the CONSUMED VALUE is captured into the shared cache entry
+like any other computed data. Same rule across `cache()` and the PPR shell:
+handler/cached-scope consumption = baked copy, client-side `useLoader` = live
+(the consumption-lane rule, `/rango` → Invariants).
 
 ### Side-Effect Guards
 
@@ -340,8 +353,11 @@ export async function getProducts() {
 Writes to the same `SegmentCacheStore` as `cache()` DSL, `Static()`, and `Prerender()`.
 One store, one configuration.
 
-Cache entries (and `cacheProfiles`) can be tagged via `cache({ tags })` or, inside
-a `"use cache"` function, runtime `cacheTag(...tags)`. The built-in
+Cache entries (and `cacheProfiles`) can be tagged via `cache({ tags })` or runtime
+`cacheTag(...tags)`. `cacheTag` has two forms: inside a `"use cache"` function it
+tags that entry; called during a request render outside `"use cache"` it tags the
+request's document/shell artifact (rides `_requestTags`) instead of throwing. The
+built-in
 `MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate on demand
 with `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or
 `revalidateTag(...tags)` (background, non-blocking; for route handlers/webhooks).

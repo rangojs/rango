@@ -31,7 +31,7 @@ import {
   encodeHandles,
   decodeHandles,
 } from "./handle-snapshot.js";
-import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
+import { cacheKeyBase } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
   isFiniteNonNegativeSeconds,
@@ -85,21 +85,6 @@ function validatedSwr(value: number | undefined): number | undefined {
   return isValidCacheSeconds(value, "swr") ? value : undefined;
 }
 
-function getCacheKeyBase(
-  host: string,
-  pathname: string,
-  params?: Record<string, string>,
-  searchParams?: URLSearchParams,
-): string {
-  const paramStr = sortedRouteParams(params);
-  const searchStr = searchParams ? sortedSearchString(searchParams) : "";
-
-  let key = `${host}${pathname}`;
-  if (paramStr) key += `:${paramStr}`;
-  if (searchStr) key += `?${searchStr}`;
-  return key;
-}
-
 function getDefaultRouteCacheKey(
   pathname: string,
   params?: Record<string, string>,
@@ -113,7 +98,7 @@ function getDefaultRouteCacheKey(
   // Intercept navigations get their own cache namespace
   const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
 
-  return `${prefix}:${getCacheKeyBase(host, pathname, params, searchParams)}`;
+  return `${prefix}:${cacheKeyBase(host, pathname, searchParams, params)}`;
 }
 
 // ============================================================================
@@ -467,7 +452,11 @@ export class CacheScope {
       }
 
       // Collect handle data for non-loader segments only
-      const handles = captureHandles(nonLoaderSegments, handleStore);
+      const handles = captureHandles(
+        nonLoaderSegments,
+        handleStore,
+        requestCtx._shellCaptureLoaderHandleValues,
+      );
 
       try {
         if (INTERNAL_RANGO_DEBUG) {
@@ -526,4 +515,29 @@ export function createCacheScope(
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent
   return new CacheScope(config.options, parent);
+}
+
+/**
+ * Shell fast path: when the route tree derived NO cache scope and the current
+ * request context carries the `_shellImplicitCache` marker (a shell capture,
+ * or a HIT tail serving an eligible entry), substitute an implicit doc-level
+ * scope so withCacheLookup/withCacheStore treat the WHOLE matched route as a
+ * cache() boundary — the shell entry IS a cache() of the handler layer, with
+ * loaders as the live carve-outs (resolveFreshLoadersAndYield).
+ *
+ * An existing scope — including an explicit cache(false) opt-out — always
+ * wins: the consumer's cache() semantics (their ttl/swr/store/condition) are
+ * never overridden, and cache(false) keeps the tail on the full handler
+ * re-run path.
+ */
+export function resolveShellImplicitCacheScope(
+  scope: CacheScope | null,
+): CacheScope | null {
+  if (scope) return scope;
+  const marker = getRequestContext()?._shellImplicitCache;
+  if (!marker) return null;
+  return new CacheScope(
+    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
+    null,
+  );
 }

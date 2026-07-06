@@ -1,6 +1,6 @@
 ---
 name: middleware
-description: Define middleware for authentication, logging, and request processing in @rangojs/router
+description: Define middleware for authentication, logging, and request processing in @rangojs/router. Use when gating routes behind auth checks, logging requests, or running shared logic before a handler runs.
 argument-hint: [middleware-name]
 ---
 
@@ -60,8 +60,12 @@ data itself.
 ### Revalidation Contracts with Middleware-Backed Trees
 
 Middleware can establish request-level context (`ctx.set`) for segments that
-execute in the current render pass. It does not change partial revalidation
-boundaries between handler/layout/parallel segments.
+execute in the current render pass. Because route middleware wraps **every**
+render pass — normal renders, post-action revalidation, PE re-renders — its
+variables are never stale: middleware is the safest `ctx.set` rung on the
+data-passing ladder (`/rango` → "Passing data down the tree"). But it does
+not change partial revalidation boundaries between handler/layout/parallel
+segments.
 
 For shared segment data, use named revalidation contracts on both the producer
 and consumer segments, even when middleware is present in the chain.

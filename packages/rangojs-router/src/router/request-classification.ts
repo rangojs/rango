@@ -121,7 +121,9 @@ export type {
 };
 
 export interface ClassifyRequestDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   routerVersion: string;
   routerId: string;
 }
@@ -148,6 +150,23 @@ export async function classifyRequest<TEnv = any>(
   const pathname = url.pathname;
   const isAction =
     request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+  const isLoaderFetch = url.searchParams.has("_rsc_loader");
+  const isPartialReq = url.searchParams.has("_rsc_partial");
+  const contentType = request.headers.get("content-type") || "";
+  const isFormSubmission =
+    contentType.includes("multipart/form-data") ||
+    contentType.includes("application/x-www-form-urlencoded");
+  const isPeRender = request.method === "POST" && !isAction && isFormSubmission;
+
+  // A plain document request (full-render mode) is the only mode that renders
+  // through match() with isSSR:true; every other mode (action, loader, PE,
+  // partial) renders — if at all — through the non-SSR matchPartial() path.
+  // Resolve the manifest under the flag the eventual render will use so
+  // createMatchContextForFull can reuse this snapshot instead of re-resolving.
+  // Response routes ignore isSSR entirely (they short-circuit before match),
+  // so the flag is moot for them. Mode detection below reuses these booleans.
+  const willFullRender =
+    !isAction && !isLoaderFetch && !isPartialReq && !isPeRender;
 
   const clientVersion = url.searchParams.get("_rsc_v");
   if (
@@ -189,6 +208,7 @@ export async function classifyRequest<TEnv = any>(
   const result = await resolveRoute<TEnv>(pathname, {
     findMatch: deps.findMatch,
     lite: true,
+    isSSR: willFullRender,
   });
 
   if (!result) {
@@ -229,7 +249,6 @@ export async function classifyRequest<TEnv = any>(
 
   const actionId =
     request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
-  const isLoaderFetch = url.searchParams.has("_rsc_loader");
 
   const hasVariants =
     snapshot.matched.negotiateVariants &&
@@ -244,15 +263,11 @@ export async function classifyRequest<TEnv = any>(
     return { mode: "loader", route: snapshot };
   }
 
-  const contentType = request.headers.get("content-type") || "";
-  const isFormSubmission =
-    contentType.includes("multipart/form-data") ||
-    contentType.includes("application/x-www-form-urlencoded");
-  if (request.method === "POST" && !isAction && isFormSubmission) {
+  if (isPeRender) {
     return { mode: "pe-render", route: snapshot };
   }
 
-  if (url.searchParams.has("_rsc_partial")) {
+  if (isPartialReq) {
     return { mode: "partial-render", route: snapshot, negotiated };
   }
 

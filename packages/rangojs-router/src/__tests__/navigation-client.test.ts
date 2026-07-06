@@ -115,6 +115,37 @@ describe("navigation-client", () => {
     await expect(result.streamComplete).resolves.toBeUndefined();
   });
 
+  it("reads rango state once per fetch, threading it into the header (B6)", async () => {
+    getRangoStateMock.mockClear();
+    const fetchMock = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return { metadata: { matched: [], diff: [], isPartial: true } };
+      },
+    );
+
+    const client = createNavigationClient({ createFromFetch } as any);
+    // Cache-miss fresh fetch (no staleRevalidation): the cache-key lookup and
+    // the fetch header must share ONE rango-state read. Previously two.
+    await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    expect(getRangoStateMock).toHaveBeenCalledTimes(1);
+    const init = (fetchMock.mock.calls[0]![1] ?? {}) as RequestInit;
+    expect((init.headers as Record<string, string>)["X-Rango-State"]).toBe(
+      "v1:abc",
+    );
+  });
+
   it("reloads to the navigation target when the response router id does not match", async () => {
     const fetchMock = vi.fn(
       async () =>

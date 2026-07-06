@@ -7,6 +7,7 @@ import {
 } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
+import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
 
 // App-level cache store with defaults
@@ -58,6 +59,9 @@ export interface AppVariables {
   childData?: string;
   // Action → ctx.set → handler reads test variable
   actionCtxValue?: string;
+  // PPR scope-fidelity: set by the /shell-secure auth middleware, rendered by
+  // the shell layout (urls/shell-secure.tsx)
+  shellMwVar?: string;
 }
 
 export type AppEnv = AppBindings;
@@ -175,6 +179,11 @@ export const router = createRouter<AppEnv>({
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },
+    // PPR capture-data-snapshot drift fixture (urls/shell-cache.tsx): a cached
+    // shell value that expires FAST (ttl 1, swr 0 so it is fully gone after 1s,
+    // not merely stale) — the underlying entry drifts between capture and a later
+    // HIT, exercising the snapshot's parity guarantee. See ppr-shell-resume.md.
+    drift: { ttl: 1, swr: 0 },
     // Opt-in: a stale entry re-executes in the foreground during an action's
     // revalidation render (fresh action response), instead of SWR. ttl=2 so the
     // stale window opens fast.
@@ -208,6 +217,16 @@ export const router = createRouter<AppEnv>({
     });
   },
 })
+  // Per-request perf-debug opt-in (docs/telemetry.md "Per-request opt-in"):
+  // ?__perf_debug=1 turns on the metrics store for THIS request only, so the
+  // suite is not spammed with [RSC Perf] logs. Must run before next() so
+  // downstream phases record into the store.
+  .use(async (ctx, next) => {
+    if (ctx.url.searchParams.has("__perf_debug")) {
+      ctx.debugPerformance();
+    }
+    await next();
+  })
   // Bug-repro: cookies set AFTER await next() in the outermost middleware.
   // Registered before globalMiddleware so no outer early-return merge can mask the bug.
   .use("/middleware-test/cookies-after-next", async (_ctx, next) => {
@@ -309,6 +328,15 @@ export const router = createRouter<AppEnv>({
     });
     await next();
   })
+  // PPR guarding fixture (docs/design/ppr-shell-resume.md): a GLOBAL auth
+  // middleware upstream of the ppr /shell-secure route. The PPR commit point is
+  // after the whole middleware chain, so an unauthorized request gets its 401
+  // with zero shell bytes even when the shell is warm; an authorized request's
+  // post-middleware ctx state (shellMwVar) is inherited by the background
+  // capture and photographed into the shared shell (scope fidelity). PPR itself
+  // needs NO middleware — serving is integral; routes opt in via the `ppr` path
+  // option (see urls/shell-cache.tsx, urls/shell-secure.tsx).
+  .use("/shell-secure/*", shellSecureAuthMiddleware)
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

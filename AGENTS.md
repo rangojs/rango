@@ -1,127 +1,186 @@
-- Do not add "Co-Authored-By" or "Generated with Claude Code" lines to commits or PRs.
-- When writing code comments, never use icons and emojis. Keep comments technical and focused on implementation details.
-- Before working on routing, run `/rango` to understand the API. Skills are in `node_modules/@rangojs/router/skills/`.
-- Run the full test suite with `pnpm test 2>&1 | tail -80` from the repo root. The output is massive; always pipe through `tail -80` to see the summary.
-- **CRITICAL**: Avoid burst-pushing multiple commits in quick succession to `main` or PR branches. Each push triggers a full CI run (~12 min, expensive). Squash related fixes into a single commit before pushing. If a review produces follow-up fixes, amend or squash them into one commit rather than pushing 2-3 separate fixups.
-- **CRITICAL**: Always commit generated route files — `router.named-routes.gen.ts` and any other `*.gen.ts` — in **every** app (test-app, cloudflare-basic, demos, …), not just the test-app, whenever you add, remove, or rename routes. These generated files must stay in sync with the route definitions; a missing or stale `.gen.ts` breaks typecheck/build in CI even when the source change looks complete. Check `git status` for uncommitted `*.gen.ts` before every push. Use `--no-verify` if the formatter hook rejects the generated file.
-- **CRITICAL**: Before EVERY push, ALWAYS run ALL of the following and fix any failures. No exceptions:
-  1. `pnpm run typecheck` (typecheck)
-  2. `pnpm run test:unit:all` from the **repo root** — the one-shot shorthand for `pnpm run test:unit && pnpm run test:unit:rsc`. Both are recursive (`pnpm -r --if-present run …`), so this runs the unit AND Flight/RSC suites for **every package, not only the router**: `@rangojs/router` plus every consumer app that defines them (cloudflare-basic, mini, vite-rsc-demo, …). Do NOT run only `pnpm --filter @rangojs/router test:unit`: a change can pass the router's own tests while breaking a consumer app's `@rangojs/router/testing` dogfood suite. (CI's `unit-tests` job runs the same two recursive scripts.)
-  3. `pnpm run lint` (oxlint)
-  4. `pnpm run format` (oxfmt — run without `--check` to fix)
-- After changing router Vite plugin code (`packages/rangojs-router/src/vite/`), rebuild with `pnpm build-router` before running `pnpm dev`.
-- **HMR watcher tests** (`route-types-hmr.test.ts`) are skipped on CI due to unreliable file watcher behavior on GitHub Actions. When changing route types generation or the Vite plugin watcher code, run these tests locally before opening a PR: `pnpm --filter @rangojs/router exec playwright test route-types-hmr --project=hmr`
-- **MANDATORY**: All e2e tests MUST cover BOTH dev AND production modes. Never write a dev-only test. When adding new e2e test cases, always add the production counterpart. Verify output in both modes. Any gap in production test coverage must be flagged immediately — it is not acceptable. Test the cloudflare basic app and e2e test app.
+# Agent guide
 
-### Dev/prod bucketing convention
+Contract for any coding agent in this repo (CLAUDE.md symlinks here). **Hard rules** are never violated; everything else is strong guidance. Where a rule comes with a why, the rule is the contract — the why exists so you don't break it in a novel way.
 
-E2e suites split dev vs production by **grepping the describe title**: the `production` Playwright project matches titles containing `(production)`; the `dev` project matches everything else. A production-mode describe (one wiring `useFixture({ mode: "build" })`) whose title omits `(production)` silently lands in the **dev** bucket — production coverage is lost with no error. This has bitten the repo (`(prod)` vs `(production)`, `-build`/`-prod` suffixes).
+## Repo map
 
-Rules:
+- `packages/rangojs-router/` — the `@rangojs/router` package (the product).
+- `packages/rangojs-router/e2e/` — the router's own e2e apps and suites (test-app, mini, e2e-basic, …). NOT a root `e2e/` directory.
+- `tests/` — consumer app suites (cloudflare-basic, vite-rsc-demo, no-typescript, react-experimental, …) that dogfood the published API.
+- `examples/`, `apps/` — example/demo apps. Examples are API surface: an old pattern in an example reads as endorsed.
+- `docs/` (root) and `packages/rangojs-router/docs/` — design docs and internal reference docs.
+- `tools/` — repo check scripts (`check:e2e-bucketing`, `check:docs-api`, bundle analyzer, …).
 
-- A build-fixture describe MUST be titled `... (production)`. A dev-fixture describe (`devURL`/`mode: "dev"`) must NOT contain `(production)`.
-- Prefer the `prodDescribe(name, (f) => { ... })` helper (e.g. `tests/vite-rsc-demo/e2e/helper.ts`) — it generates the `(production)` tag and wires the build fixture, so the title can never drift. Use `f.url(...)` for navigation.
-- `pnpm check:e2e-bucketing` enforces this (runs in CI lint + lefthook pre-commit), matching each suite's real production grep and recognizing chained describes (`test.describe.serial`, etc.). `pnpm check:e2e-parity` is an advisory report of dev describes lacking a `(production)` sibling.
-- Helper-generated dev/prod pairs that pass a `mode` variable to `useFixture` (e.g. `defineSpec(label, mode)`) are a guard blind spot — the static check cannot tie the mode to the title. The helper itself must couple `mode: "build"` with a `(production)` title. `pnpm check:e2e-parity` lists these "guard-blind" describes.
+## If you are about to…
 
-### Running a subset of e2e tests locally
+| Task                                                                                                         | Obligation                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Work on routing / the DSL                                                                                    | First read the router skills: `/rango` skill, or `node_modules/@rangojs/router/skills/*/SKILL.md` directly if your harness has no skills              |
+| Modify `src/router/segment-resolution/`, `src/router/middleware.ts`, or `src/rsc/progressive-enhancement.ts` | Run `pnpm --filter @rangojs/router exec playwright test semantic-matrix` before push                                                                  |
+| Change Vite plugin code (`packages/rangojs-router/src/vite/`)                                                | `pnpm build-router` before `pnpm dev`; run `pnpm --filter @rangojs/router exec playwright test route-types-hmr --project=hmr` locally (skipped on CI) |
+| Add/remove/rename routes                                                                                     | Commit `*.gen.ts` in EVERY app (Hard rule 2)                                                                                                          |
+| Change pre-rendering                                                                                         | First read `packages/rangojs-router/docs/prerender-api-design.md`                                                                                     |
+| Change caching                                                                                               | First read `docs/design/caching.md`                                                                                                                   |
+| Modify segment rendering, merging, or wrapper components                                                     | First read `packages/rangojs-router/docs/tree-structure.md`                                                                                           |
+| Add any e2e test                                                                                             | Both a dev AND a `(production)` describe (Hard rule 3 + bucketing)                                                                                    |
+| Change exports or add/remove source files                                                                    | Update the Internal reference docs in the same PR                                                                                                     |
+| Locate where a feature lives                                                                                 | Start from `docs/internal/feature-map.md` and `docs/internal/feature-file-map.md`                                                                     |
 
-`playwright test --grep X` can balloon into running an entire suite. Two causes:
+## Hard rules
 
-1. **Project dependencies run unfiltered.** The `production` project depends on `dev` (which depends on `dev-warmup`), and `--grep` does NOT filter dependency projects — so grepping one production test pulls in the full ~200-test `dev` suite (measured: 208 vs 1). Add **`--no-deps`** to run only the matched tests.
-2. **`--grep` is a regex.** A pasted title with `()` / `[]` / `?` (the `(production)` tag itself, or `include("/oi/:locale?")`) silently mis-matches. Use a metacharacter-free title fragment, or escape the metacharacters.
+1. **Pre-push gate.** Before EVERY push, from the repo root, fix any failures in:
+   1. `pnpm run typecheck`
+   2. `pnpm run test:unit:all` (= `test:unit` + `test:unit:rsc`, both recursive) — runs unit AND Flight/RSC suites for **every package**: the router plus every consumer app. Never substitute `pnpm --filter @rangojs/router test:unit`; a change can pass the router's tests while breaking a consumer app's `@rangojs/router/testing` dogfood suite. CI's `unit-tests` job runs the same two scripts.
+   3. `pnpm run lint` (oxlint `--deny-warnings`)
+   4. `pnpm run format` (check) — `pnpm run format:fix` to fix.
+2. **Generated route files.** When routes change, commit `router.named-routes.gen.ts` and all other `*.gen.ts` in **every** app, not just the one you touched — a stale `.gen.ts` breaks CI even when the source change looks complete. Check before push: `git status --porcelain | grep '\.gen\.ts'` must be empty.
+3. **Dev + production e2e coverage.** Never write a dev-only e2e test; every new case gets a production counterpart, verified in both modes. Cover the cloudflare-basic app and the e2e test-app. Any production-coverage gap must be flagged immediately.
+4. **No burst-pushing.** Each push triggers a ~12-min CI run. Squash related fixes into one commit; amend rather than pushing separate fixups.
+5. **Semantic matrix stays green.** `packages/rangojs-router/e2e/semantic-matrix.test.ts` encodes the router's core execution guarantees (middleware scope, handler-first ordering, context visibility, PE/JS parity). Intentional semantic changes update the matrix rows AND `docs/internal/execution-model.md`.
+6. **`--no-verify` only for `*.gen.ts` formatter-hook rejections.** Never to bypass failing checks on source files.
+7. **No "Co-Authored-By" or "Generated with Claude Code" lines** in commits or PRs.
 
-Reliable recipe:
+## Definition of done (shipping a feature)
 
-- Suites whose `playwright.config` `webServer` runs `pnpm build` (rangojs-router, cloudflare-basic): `pnpm exec playwright test --project=production --no-deps --grep "<metachar-free fragment>"` — the webServer still builds/serves; only the dependency test projects are skipped.
-- Suites where the build is a `build` setup project, not a webServer (vite-rsc-demo, no-typescript): build once first (`pnpm build` in the app), then add `--no-deps`.
-- Match by a stable title fragment, not `file:line` — for react-compiler apps (cloudflare-basic, vite-rsc-demo) `--list` line numbers reflect babel-transformed positions, not source.
+A consumer-touchable feature (new `ctx.*` method, hook, DSL primitive, handle behavior, middleware semantic) is done only when ALL hold:
 
-## API Hygiene
+1. Internal unit tests for the implementation module.
+2. A userland test through the public testing primitives (see below).
+3. Dev + production e2e coverage (Hard rule 3).
+4. `*.gen.ts` committed everywhere if routes changed (Hard rule 2).
+5. Internal reference docs updated in the same PR.
+6. PR description per the contract below; its test plan names the userland test and the consumer-visible contract it pins.
+7. Pre-push gate passes (Hard rule 1).
 
-- **Pre-release rule**: No deprecated public API in main before first stable external adoption. Remove transitional types and functions instead of marking them deprecated.
-- Treat examples as part of the API surface. If an example uses an old pattern, it reads as endorsed. Example cleanup is API cleanup.
+## Communication and tone
 
-## Userland test coverage for features
+For commit messages, PR text, review findings, and status reports:
 
-Treat a feature's **testability** as part of its API surface, the same way examples are. Every router feature a consumer can touch — a new `ctx.*` method, a hook, a DSL primitive, a handle behavior, a middleware semantic — MUST ship unit-test coverage that exercises it **through the public `@rangojs/router/testing` primitives** (`renderHandler`, `runLoader`, `runMiddleware`, `renderRoute`, `dispatch`, `flight`), not only an internal white-box test of the implementation module. The reason is the dogfood guarantee: if we can't test the feature with the primitives we hand consumers, neither can they, and we won't find out until someone files an issue. This is **in addition to** the internal unit tests and the dev+prod e2e mandate, not a replacement.
+- **Lead with the outcome** — first sentence answers "what happened / what did you find"; detail after.
+- **State things directly.** Never "honest"/"honestly" ("one caveat", not "one honest caveat"). No emoji anywhere. No marketing tone.
+- **Report failures faithfully.** Failing tests get stated with output. Never call a failure "pre-existing" without running it on the base commit.
+- **Don't overstate findings.** Before calling something a gap, verify it isn't already a working configurable feature. Behavior claims need a file reference or a demonstrating command.
+- **Regression tests are proven red-before-green** — shown failing without the fix, passing with it, output captured in the PR.
+- **Precision over hedging.** `path:line` references, exact identifiers, measured numbers. "Roughly"/"should" signal you haven't verified.
+- **Be token-lean.** Don't restate file contents or logs back; quote only the lines that carry the finding.
 
-- If a testing primitive can't yet reach the feature, **extend the primitive in the same PR** — don't special-case the test. Scar tissue: `ctx.use(Handle).defer()` returns a push carrying a `.defer()` method in production (wired by `withDefer` in `request-context.ts` / `loader-resolution.ts`), but `renderHandler` stubbed `ctx.use` with a bare recording push that lacked `.defer()`, so the feature was unreachable from the harness. The fix was to wrap the stub with the same `withDefer` production uses (`src/testing/render-handler.ts`), then add the userland test. Wrap the stub to match production; don't fake the method.
-- Put the userland test where `pnpm run test:unit:all` runs it: next to the primitive's own suite (`packages/rangojs-router/src/testing/__tests__/`) and/or a consumer dogfood suite (`packages/rangojs-router/e2e/mini/test/*`, `tests/cloudflare-basic/**`), so a consumer app's harness usage is covered too — not only the router's.
-- The PR test-plan checklist (see Pull Request Descriptions) must name the userland test and the consumer-visible contract it pins.
+## Coding guide
 
-## Pull Request Descriptions
+Match the surrounding code first; repo-wide conventions:
 
-PR descriptions must tell the **consumer-side story** alongside the code change. A reviewer should be able to read the PR and understand: what does a consumer write differently, what do they see differently, and what happens if they don't adopt the change. Code-level mechanics are necessary but not sufficient — if the PR changes anything a consumer can touch (public API, middleware semantics, error shapes, HTTP responses, generated types, DX defaults), the description must show it from the consumer's seat. Do **not** trim code-change details to make room — add the consumer narrative on top. Short chore/version-bump PRs are exempt.
+- **Strict TS with `isolatedDeclarations`**: every export needs an explicit type annotation — annotate, don't restructure to dodge it.
+- **ESM with explicit `.js` extensions** on relative imports, even from `.ts`. `import type` / `export type` for type-only.
+- **Named exports only**; no default exports in router source.
+- Constants `SCREAMING_SNAKE_CASE`, files `kebab-case.ts`, types `PascalCase`.
+- **Comments**: technical, terse, no emoji/icons. Non-obvious invariants get a JSDoc block explaining WHY (scar tissue welcome) with exact file/identifier references. Never narrate the diff or address a reviewer.
+- **oxfmt owns formatting** (no hand-alignment); oxlint runs `--deny-warnings` — fix, don't suppress.
+- **Check `docs/internal/feature-file-map.md` before creating a file** — the feature may already have an owning module.
+- **Pre-release API hygiene**: no deprecated public API in main before first stable external adoption — remove transitional types/functions instead of deprecating.
 
-Every non-trivial PR description must include:
+## Environment gotchas
 
-1. **One-paragraph problem statement** — what broke or what was missing, stated in consumer-observable terms (e.g. "miniflare returned an opaque 500 instead of the 302 the middleware intended"), not just internal call-site terms.
-2. **Before vs. after usage example** — a real code snippet a consumer would write, showing the old behavior (or old workaround) and the new behavior side by side. Use the same snippet shape for both so the delta is obvious.
-3. **At least one end-to-end consumer example** — a realistic, copy-pasteable fragment (middleware, handler, component, config — whichever layer the change touches) that exercises the new behavior in a way that reflects actual product usage, not a toy case.
-4. **Semantics table when behavior branches** — if the change introduces or clarifies multiple cases (return vs. throw, authed vs. unauthed, dev vs. production, etc.), include a small markdown table covering each case and the resulting behavior. Include cases the PR deliberately leaves unchanged, so the contract is readable in one place.
-5. **Code-change summary** — the file(s) touched, the shape of the diff (ideally the key block inline), and _why_ that location was chosen over alternatives. This is the existing bar; do not shrink it.
-6. **Test plan checklist** — unit + e2e (dev + production), typecheck, lint, format. Call out any test that is new and what contract it pins down.
-7. **Notes / call-outs** — surprising interactions with adjacent subsystems, migration implications for consumers on the prior behavior, or follow-ups deliberately deferred.
+- `pnpm <script>` can fail locally (verifyDepsBeforeRun → install → lefthook). Run binaries directly instead: `./node_modules/.bin/vitest run`, `./node_modules/.bin/playwright test …` — or reuse running Playwright servers. Don't debug the pnpm wrapper.
+- Full suite output is massive: `pnpm test 2>&1 | tail -80` from the repo root.
+- Format-fix commits go AFTER CI passes on the substantive commit, with `[skip ci]`.
+- Lefthook pre-commit runs formatting and `check:e2e-bucketing`; if your harness bypasses hooks, run `pnpm run format` and `pnpm check:e2e-bucketing` manually.
 
-PR #481 (`fix(router): throw Response from top-level middleware short-circuits`) is a reference template — match its structure for consumer-facing fixes and features.
+## Spawning subagents
+
+If your harness supports subagents (Task/Agent tool), use them well:
+
+- **Spawn for breadth, search directly for depth.** A subagent pays off when the answer spans many files (audit, sweep, "where is X handled across apps") or when work is independent and parallelizable. For a single known file/symbol, grep yourself — a spawn costs more than the lookup.
+- **Launch independent agents in parallel** (one message, multiple calls). Chain only when one agent's output feeds the next. Don't also do the delegated work yourself.
+- **Prompts must be self-contained.** Agents don't see your conversation. Give: exact paths (see Repo map — e2e apps are under `packages/rangojs-router/e2e/`, not root), the commands to run, what "done" means, and the exact return shape you want (`path:line` list, diff, verdict + evidence). Vague prompts return vague essays.
+- **Hard rules don't auto-propagate.** An agent writing code must be told the ones its task can violate: dev+prod e2e pairing, `*.gen.ts` in every app, `isolatedDeclarations` annotations, no default exports. Paste the specific rules into the prompt, not "follow AGENTS.md".
+- **Pass the environment gotchas** to agents that run tests: `./node_modules/.bin/*` directly (pnpm wrapper can fail), pipe long output through `tail`.
+- **Prefer read-only agents** for search/audit/review. Grant write access only for a scoped edit task; use worktree isolation when parallel agents mutate files.
+- **Verify before trusting.** When an agent removes or rewrites code, diff-check it didn't remove too much — this has happened here. Behavior claims from an agent need a file reference you can spot-check.
+- **Agents never push, publish, comment on PRs, or run `pnpm publish`.** They return results; the top-level session (or the user) takes outward-facing actions.
+- **Scout, then fan out.** For large sweeps, run one cheap scout to build the concrete work-list (files, routes, test titles), then parallelize over the list — not N agents each re-discovering scope.
+
+## E2e: dev/prod bucketing
+
+RULES:
+
+- A build-fixture describe (`useFixture({ mode: "build" })`) MUST be titled `... (production)`; a dev-fixture describe must NOT contain `(production)`.
+- Prefer the `prodDescribe(name, (f) => { ... })` helper (e.g. `tests/vite-rsc-demo/e2e/helper.ts`) — it generates the tag and wires the build fixture so the title can't drift. Use `f.url(...)`.
+- A helper taking a `mode` variable (e.g. `defineSpec(label, mode)`) must itself couple `mode: "build"` with a `(production)` title — the static check can't tie a variable mode to a title.
+
+Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (`(prod)`, `-build` — both have happened) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` reports dev describes lacking a `(production)` sibling and guard-blind variable-mode describes.
+
+## E2e: running a subset locally
+
+`--grep` alone balloons: (1) dependency projects run unfiltered — `production` depends on `dev` (~200 tests; measured 208 vs 1) — add **`--no-deps`**; (2) `--grep` is a regex, so `()`/`[]`/`?` in a pasted title silently mis-match — use a metacharacter-free title fragment.
+
+- webServer-build suites (rangojs-router, cloudflare-basic): `pnpm exec playwright test --project=production --no-deps --grep "<fragment>"` — the webServer still builds/serves.
+- Setup-project-build suites (vite-rsc-demo, no-typescript): `pnpm build` in the app first, then `--no-deps`.
+- Match stable title fragments, not `file:line` — react-compiler apps report babel-transformed line numbers in `--list`.
+
+## Userland test coverage
+
+RULE: every consumer-touchable feature ships unit coverage **through the public `@rangojs/router/testing` primitives** (`renderHandler`, `runLoader`, `runMiddleware`, `renderRoute`, `dispatch`, `flight`) — in addition to internal unit tests and dev+prod e2e, not instead. Dogfood guarantee: if we can't test it with the primitives we hand consumers, neither can they.
+
+- If a primitive can't reach the feature, **extend the primitive in the same PR** — wrap stubs with the same production wiring, don't fake methods. (Scar tissue: `renderHandler` stubbed `ctx.use` without production's `withDefer` wrapper, making `.defer()` unreachable from the harness; fix was wrapping the stub in `src/testing/render-handler.ts`.)
+- Put the test where `test:unit:all` runs it: `packages/rangojs-router/src/testing/__tests__/` and/or a consumer dogfood suite (`packages/rangojs-router/e2e/mini/test/*`, `tests/cloudflare-basic/**`).
+
+## Pull request descriptions
+
+PRs tell the **consumer-side story** on top of the code change: what does a consumer write differently, see differently, and what happens if they don't adopt it. If the PR touches anything consumer-visible (public API, middleware semantics, error shapes, HTTP responses, generated types, DX defaults), show it from the consumer's seat — without trimming code-level detail. Chore/version-bump PRs exempt. Every non-trivial PR includes:
+
+1. **Problem statement** — one paragraph, in consumer-observable terms ("miniflare returned an opaque 500 instead of the intended 302"), not call-site terms.
+2. **Before vs. after usage example** — same snippet shape for both so the delta is obvious.
+3. **One end-to-end consumer example** — realistic, copy-pasteable, not a toy.
+4. **Semantics table when behavior branches** (return vs. throw, dev vs. prod, …), including cases deliberately left unchanged.
+5. **Code-change summary** — files touched, shape of the diff (key block inline), why that location over alternatives.
+6. **Test plan checklist** — unit + e2e (dev + production), typecheck, lint, format; name new tests and the contract each pins.
+7. **Notes** — surprising interactions, migration implications, deferred follow-ups.
+
+Reference template: PR #481 (`fix(router): throw Response from top-level middleware short-circuits`).
 
 ## Documentation voice (internal docs)
 
-Internal docs (`docs/internal/*`, design docs, architecture notes) should read like a senior engineer onboarding a teammate — warm and direct, not a spec sheet. The reference exemplar is `packages/rangojs-router/docs/internal/matching-and-lazy-discovery.md`; match its voice.
+Internal docs read like a senior engineer onboarding a teammate — warm and direct, not a spec sheet. Exemplar: `packages/rangojs-router/docs/internal/matching-and-lazy-discovery.md`.
 
-- **Write to the reader.** Use "you". Open by orienting them ("if you're about to touch X, start here"), and where there's a natural doubt, voice it and then answer it ("a fair reaction is 'are we re-running handlers every request?' — we measured; here's the answer").
-- **Lead with the why, then the mechanics.** Give the intuition before the call-site details. A rule the reader actually understands is one they won't accidentally break.
-- **Treat non-obvious rules as scar tissue.** Most invariants exist because something broke; say so. "This started as a bug" earns the reader's care far better than a bare assertion.
-- **Stay precise — warmth is not a substitute for facts.** Keep file references, identifiers, tables, and exact numbers. Warm prose wraps the facts; it never replaces them. Warm ≠ chatty: don't pad, don't editorialize.
-- **No emoji, no marketing tone, no "honest"/"honestly".** State things directly ("one caveat", not "one honest caveat"). The same no-emoji rule as code comments applies.
+- Write to the reader ("you"); orient first, voice natural doubts and answer them.
+- Lead with the why, then the mechanics.
+- Non-obvious rules are scar tissue — say what broke.
+- Warmth never replaces facts: keep file references, identifiers, tables, exact numbers. Warm ≠ chatty.
+- No emoji, no marketing tone, no "honest"/"honestly".
 
-This is for prose docs. Code comments stay terse and implementation-focused — see the top of this file.
+Prose docs only — code comments stay terse (Coding guide).
 
-## Semantic Contract
+## Internal reference docs
 
-- **Semantic matrix** (`packages/rangojs-router/e2e/semantic-matrix.test.ts`): This test encodes the router's core execution guarantees. Any change to middleware scope, handler-first ordering, context visibility, or PE/JS parity MUST keep the semantic matrix green. If a semantic change is intentional, update the matrix rows to match the new contract AND update `packages/rangojs-router/docs/internal/execution-model.md`.
-- Before modifying segment resolution (`src/router/segment-resolution/`), middleware (`src/router/middleware.ts`), or progressive enhancement (`src/rsc/progressive-enhancement.ts`), run the semantic matrix: `pnpm --filter @rangojs/router exec playwright test semantic-matrix`
+Keep in sync in the same PR whenever exports, files, or features change:
 
-## Router Internals
+- `docs/README.md` — docs navigation hub.
+- `docs/internal/feature-map.md` — export surface tables and capability inventory.
+- `docs/internal/feature-file-map.md` — feature-to-source-file ownership map.
+- `docs/why-rango.md` — consumer-facing positioning; hard bar: **nothing aspirational**. Every claim is shipped, source-verified behavior with a real-API snippet or greppable mechanism; in-progress features stay in `docs/design/`. Editing contract in the HTML comment at the top. `pnpm check:docs-api` (CI lint) verifies referenced identifiers still exist in src.
 
-- `packages/rangojs-router/docs/tree-structure.md` — Tree-structure-critical files and rules. Read before modifying segment rendering, merging, or wrapper components.
+## Design documents
 
-## Internal Reference Docs
+- `docs/design/caching.md` — segment-level runtime caching design.
+- `packages/rangojs-router/docs/prerender-api-design.md` — pre-rendering design (canonical): prerender = build-time cache, B segment type, BuildContext, handler eviction, storage layout, passthrough mode, runtime flow.
 
-The following docs in `packages/rangojs-router/docs/` must stay in sync with the codebase:
+**Pre-rendering rule**: pre-rendering is caching at build time. The worker handles every request — NO static .html/.rsc files served from assets. At runtime the worker looks up stored Flight payloads and feeds the segment system, identical to a cache hit; the browser can't tell a route was pre-rendered. Read the design doc before ANY pre-rendering change.
 
-- `docs/README.md` — docs navigation hub; update when adding or removing doc files
-- `docs/internal/feature-map.md` — export surface tables and capability inventory; update when exports, hooks, DSL primitives, or architectural layers change
-- `docs/internal/feature-file-map.md` — feature-to-source-file ownership map; update when files are added, removed, renamed, or when feature ownership shifts
+## Bundle hygiene
 
-When a PR changes exports, adds/removes source files, or introduces new features, update these docs in the same PR.
+RULES:
 
-## Design Documents
+1. **Generated route data lives in exactly ONE chunk** — the contract is lazy-only (`virtual:rsc-router/routes-manifest/<routerId>`, populated via `await ensureRouterManifest(routerId)` before matching). Never add `setRouteTrie`/`setPrecomputedEntries` to the eager manifest.
+2. **Non-Cloudflare app vite configs MUST fold NODE_ENV for build**: `define: { "process.env.NODE_ENV": JSON.stringify("production") }`. Reference: `packages/rangojs-router/e2e/test-app/vite.config.ts`.
 
-Before implementing features, check the design docs for target architecture:
+Why (tree-shaking can't catch either; both caused large regressions — commits `d10a2470`, `e56f2ee2`): (1) inlined `JSON.parse('<huge string>')` data in both an eager and a lazy chunk stays live in BOTH — each is side-effectful; (2) unfolded NODE_ENV makes the minifier keep React's dev AND prod branches, doubling its footprint. The Cloudflare vite plugin folds automatically; vanilla `vite build` folds client only, not SSR/RSC.
 
-- `docs/design/caching.md` — Segment-level caching design (runtime cache)
-- `packages/rangojs-router/docs/prerender-api-design.md` — **Pre-rendering design** (canonical). Defines the core principle (prerender = build-time cache), B segment type, BuildContext, handler eviction, storage layout, passthrough mode, runtime flow, and interaction with caching/loaders/actions.
+Guard: `packages/rangojs-router/e2e/build-test-app.setup.ts` fails any production build containing a `react*.development*.js` chunk. Analyzer: `RANGO_ANALYZE=1 pnpm exec vite build` in any wired app emits treemaps to `<app>/bundle-stats/{client,ssr,rsc}.html` (per-environment plugin instances via `applyToEnvironment` — don't collapse to one visualizer call).
 
-**Pre-rendering architecture rule**: Pre-rendering is caching at build time. The worker handles every request — there are NO static .html or .rsc files served from assets. At runtime, the worker looks up stored Flight payloads (serialized segments) and passes them to the segment system, identical to a cache hit. The browser does not know if a route was pre-rendered. Read `packages/rangojs-router/docs/prerender-api-design.md` before making ANY changes to pre-rendering.
+**Rejected client-runtime optimizations** (don't redo without new information):
 
-## Bundle Hygiene
+- `browser/server-action-bridge.ts` (~3.5 KB gzip) — lazy-loading adds a chunk fetch on first server-action call; actions are fundamental to almost every app.
+- Theme modules (~3 KB) — FOUC prevention; the class must hit `<html>` before first paint, so any chunk fetch defeats it.
+- `NavigationProvider.tsx` per-feature splitting (~1.9 KB) — feature gates are context-shape needed for types regardless; big API churn for <2 KB.
+- `browser/partial-update.ts` (~2.8 KB) — used on every navigation and action response; no path improves cold-start.
 
-Two failure modes that tree-shaking **cannot** catch — both have produced large regressions in this repo (see commits `d10a2470`, `e56f2ee2`):
-
-1. **Generated data must have a single ownership chunk.** When a Vite virtual module emits route data via `JSON.parse('<huge string>')` (or any inlined data structure with side effects), do **not** put the same data in both an eager module and a lazy per-router chunk. Tree-shaking treats both as live code with side effects. Pick one: eager OR lazy. The router's contract is now lazy-only (`virtual:rsc-router/routes-manifest/<routerId>`), populated via `await ensureRouterManifest(routerId)` before any matching. Don't add `setRouteTrie`/`setPrecomputedEntries` calls to the eager manifest.
-2. **Fold `process.env.NODE_ENV` at build time for SSR/RSC.** React's CJS files use `if (process.env.NODE_ENV !== "production") { ...dev... } else { ...prod... }`. If the conditional isn't folded at build time, the minifier keeps **both branches**, doubling React's footprint. The Cloudflare vite plugin folds NODE_ENV automatically; vanilla `vite build` folds for client but not SSR/RSC. Any new non-Cloudflare app config MUST set `define: { "process.env.NODE_ENV": JSON.stringify("production") }` for build mode. Reference: `packages/rangojs-router/e2e/test-app/vite.config.ts`.
-
-**Bundle guard**: `packages/rangojs-router/e2e/build-test-app.setup.ts` walks `dist/` after every production build and fails if any `react*.development*.js` chunk appears. This catches regressions of rule #2.
-
-**Investigating bundle issues**: opt-in analyzer at `tools/bundle-analyze.ts`. Run `RANGO_ANALYZE=1 pnpm exec vite build` in any wired app (all 4 CF apps, e2e/test-app, e2e/e2e-basic) to emit per-environment treemap reports to `<app>/bundle-stats/{client,ssr,rsc}.html`. The visualizer caches options after the first call, so the helper registers a separate plugin instance per Vite environment via `applyToEnvironment` — don't replace it with a single visualizer call.
-
-**Client-runtime optimizations investigated and rejected** (don't redo this without new information):
-
-- `browser/server-action-bridge.ts` (~3.5 KB gzip in client) — _cannot_ lazy-load without adding a chunk fetch on first server-action invocation. Server actions are fundamental to almost every Rango app, so the win applies to a rare case while the cost hits the common one.
-- `theme/ThemeProvider.tsx` + `ThemeScript.tsx` + `theme/constants.ts` (~3 KB combined) — statically imported in `NavigationProvider.tsx` and conditionally wrapped. _Cannot_ lazy-load: theme is FOUC-prevention, the class must be on `<html>` before first paint, so a chunk fetch before paint defeats the feature.
-- `browser/react/NavigationProvider.tsx` per-feature splitting (~1.9 KB) — internal feature gates (location-state, scroll restoration, view transitions) are context-shape and exist for type-checking regardless of configuration. Splitting into per-feature Providers is significant API churn for a sub-2 KB win.
-- `browser/partial-update.ts` (~2.8 KB) — shared RSC stream reconciler used on every navigation and every action response. Lazy-loading would add a chunk fetch before the first navigation; there is no path that improves cold-start.
-
-The Rango client runtime baseline is **~50 KB gzip** across CF apps; the React + RSC client baseline is **~115 KB gzip** (react-dom 96K + react 5K + rsd-webpack-client 12K + scheduler 3K). Further client-side reductions require architectural changes (e.g., a smaller RSC client serializer, or React Compiler output) — not surgical edits to existing modules.
+Baselines: Rango client runtime ~50 KB gzip; React + RSC client ~115 KB gzip (react-dom 96K + react 5K + rsd-webpack-client 12K + scheduler 3K). Further reductions require architectural changes, not surgical edits.

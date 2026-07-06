@@ -54,8 +54,33 @@ function isRoutableSourceFile(name: string): boolean {
   );
 }
 
-function findRouterFilesRecursive(
+function isExcludedScanDir(name: string): boolean {
+  return (
+    name === "node_modules" ||
+    name === "dist" ||
+    name === "coverage" ||
+    name === "__tests__" ||
+    name === "__mocks__" ||
+    name.startsWith(".")
+  );
+}
+
+/**
+ * Recursively collect source files whose code contains `pattern` (a comment- or
+ * string-only mention is ignored via firstCodeMatchIndex). Shared by createRouter
+ * and createHostRouter discovery, which differ only in the call pattern and
+ * `stopAtMatchDir`: createRouter treats a directory containing a match as a router
+ * root and stops descending it; createHostRouter descends the whole tree (the host
+ * entry sits above the sub-app router roots).
+ *
+ * `pattern` is the non-global tester (no lastIndex state); `patternG` is its global
+ * twin for the code-region scan.
+ */
+function findCallSiteFilesRecursive(
   dir: string,
+  pattern: RegExp,
+  patternG: RegExp,
+  stopAtMatchDir: boolean,
   filter: ScanFilter | undefined,
   results: string[],
 ): void {
@@ -70,21 +95,12 @@ function findRouterFilesRecursive(
   }
 
   const childDirs: string[] = [];
-  const routerFilesInDir: string[] = [];
+  const matchesInDir: string[] = [];
 
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (
-        entry.name === "node_modules" ||
-        entry.name === "dist" ||
-        entry.name === "coverage" ||
-        entry.name === "__tests__" ||
-        entry.name === "__mocks__" ||
-        entry.name.startsWith(".")
-      )
-        continue;
-      childDirs.push(fullPath);
+      if (!isExcludedScanDir(entry.name)) childDirs.push(fullPath);
       continue;
     }
 
@@ -100,26 +116,29 @@ function findRouterFilesRecursive(
       // so a mention inside a comment or string is not mistaken for a real
       // router file (which previously triggered a spurious "Multiple routers
       // found" error).
-      if (
-        ROUTER_CALL_PATTERN.test(source) &&
-        firstCodeMatchIndex(source, ROUTER_CALL_PATTERN_G) >= 0
-      ) {
-        routerFilesInDir.push(fullPath);
+      if (pattern.test(source) && firstCodeMatchIndex(source, patternG) >= 0) {
+        matchesInDir.push(fullPath);
       }
     } catch {
       continue;
     }
   }
 
-  // A directory that contains a router file is treated as a router root.
-  // Once found, deeper directories are skipped to avoid redundant scans.
-  if (routerFilesInDir.length > 0) {
-    results.push(...routerFilesInDir);
-    return;
-  }
+  results.push(...matchesInDir);
 
-  for (const childDir of childDirs) {
-    findRouterFilesRecursive(childDir, filter, results);
+  // createRouter (stopAtMatchDir): a directory that contains a match is a router
+  // root, so deeper directories are skipped. createHostRouter: always descend.
+  if (!stopAtMatchDir || matchesInDir.length === 0) {
+    for (const childDir of childDirs) {
+      findCallSiteFilesRecursive(
+        childDir,
+        pattern,
+        patternG,
+        stopAtMatchDir,
+        filter,
+        results,
+      );
+    }
   }
 }
 
@@ -552,7 +571,38 @@ export function detectUnresolvableIncludesForUrlsFile(
  */
 export function findRouterFiles(root: string, filter?: ScanFilter): string[] {
   const result: string[] = [];
-  findRouterFilesRecursive(root, filter, result);
+  findCallSiteFilesRecursive(
+    root,
+    ROUTER_CALL_PATTERN,
+    ROUTER_CALL_PATTERN_G,
+    true,
+    filter,
+    result,
+  );
+  return result;
+}
+
+const HOST_ROUTER_CALL_PATTERN = /\bcreateHostRouter\s*[<(]/;
+const HOST_ROUTER_CALL_PATTERN_G = /\bcreateHostRouter\s*[<(]/g;
+
+/**
+ * Scan for files containing createHostRouter() and return their paths. Unlike
+ * findRouterFiles, this does NOT stop at the first router-root directory -- a host
+ * entry typically sits above the sub-app router roots, so the whole tree is scanned.
+ */
+export function findHostRouterFiles(
+  root: string,
+  filter?: ScanFilter,
+): string[] {
+  const result: string[] = [];
+  findCallSiteFilesRecursive(
+    root,
+    HOST_ROUTER_CALL_PATTERN,
+    HOST_ROUTER_CALL_PATTERN_G,
+    false,
+    filter,
+    result,
+  );
   return result;
 }
 

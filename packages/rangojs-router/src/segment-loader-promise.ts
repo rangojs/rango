@@ -1,4 +1,5 @@
 import type { ResolvedSegment } from "./types.js";
+import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 
 /**
  * Cache of aggregate Promise.all results keyed on the first loader's
@@ -82,6 +83,23 @@ function hasSameReferences(a: any[], b: any[]): boolean {
 export function buildLoaderPromise(loaders: ResolvedSegment[]): Promise<any[]> {
   if (loaders.length === 0) {
     return Promise.resolve([]);
+  }
+  // Debug tap (browser only): log when each PENDING loader promise settles —
+  // i.e. when its data actually lands from the flight stream — independent of
+  // when the tree build awaits it. `.then(cb, cb)` observes on a branch, so
+  // rejections still propagate to the real consumers untouched.
+  if (INTERNAL_RANGO_DEBUG && IS_BROWSER) {
+    const tapStart = performance.now();
+    for (const loader of loaders) {
+      if (loader.loaderData instanceof Promise) {
+        const settle = (outcome: string) => () =>
+          console.log(
+            `[Browser][segments] loader ${loader.loaderId} ${outcome} @ ${Math.round(performance.now())}ms`,
+            { msSinceRequested: Math.round(performance.now() - tapStart) },
+          );
+        loader.loaderData.then(settle("settled"), settle("rejected"));
+      }
+    }
   }
   return Promise.all(
     loaders.map((loader) =>

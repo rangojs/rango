@@ -340,4 +340,48 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
       expect(cached!.value).toBe("value2");
     });
   });
+
+  // The build-shell read-through's eviction gate (#699): a baked manifest
+  // entry is immutable, so updateTag reaches it by MARKER comparison —
+  // isTagsInvalidatedSince(tags, entry.createdAt) — not by deletion.
+  describe("isTagsInvalidatedSince (build-shell markers)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("reports an invalidation at or after `since` (>= — same-ms wins)", async () => {
+      const t0 = Date.now();
+      await store.invalidateTags(["home"]);
+      expect(await store.isTagsInvalidatedSince(["home"], t0)).toBe(true);
+      // Strictly-later reference instant: the marker predates it.
+      expect(await store.isTagsInvalidatedSince(["home"], t0 + 1)).toBe(false);
+    });
+
+    it("returns false for never-invalidated tags", async () => {
+      expect(await store.isTagsInvalidatedSince(["absent"], 0)).toBe(false);
+    });
+
+    it("any one invalidated tag of the set suffices", async () => {
+      const t0 = Date.now();
+      await store.invalidateTags(["b"]);
+      expect(await store.isTagsInvalidatedSince(["a", "b", "c"], t0)).toBe(
+        true,
+      );
+    });
+
+    it("marks the tag even when no runtime entry currently carries it", async () => {
+      // The tagIndex has no bucket for this tag — the marker must land anyway
+      // (build-shell entries live in the manifest, not the store).
+      const t0 = Date.now();
+      await store.invalidateTags(["manifest-only-tag"]);
+      expect(
+        await store.isTagsInvalidatedSince(["manifest-only-tag"], t0),
+      ).toBe(true);
+    });
+  });
 });

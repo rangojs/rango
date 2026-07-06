@@ -1,4 +1,4 @@
-import { Meta, notFound } from "@rangojs/router";
+import { Meta, notFound, cacheTag } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -9,13 +9,49 @@ import {
   type BlogSidebarData,
 } from "../loaders/blog.js";
 
+// #676 render-callable cacheTag AFTER an await: an ASYNC bake-lane server
+// component. Regular server components are NOT masked at capture (only loaders
+// are), so this runs during the shell capture; its tag records past the await —
+// after the synchronous RSC construction where the shell tag snapshot used to
+// sit. The snapshot now sits at the putShell write barrier (after the capture
+// quiesces), so this late tag is still collected and updateTag() drops the shell.
+// Gated (via BlogLayout's `asyncshelltag` probe) so only the async-eviction e2e
+// triggers it — never /blog, never a sibling shell.
+async function AsyncShellTagger({ probe }: { probe: string }) {
+  await Promise.resolve();
+  // Colon-free tag: it round-trips through the /test/invalidate-tag/:tag URL
+  // param without a ":" URL-encoding into a mismatch.
+  cacheTag(`pprblog-async-shell-${probe}`);
+  return null;
+}
+
 export function BlogLayout(ctx: HandlerContext) {
+  // #648 render-callable cacheTag: this baked server component tags the PPR shell
+  // it renders into — NO cache()/"use cache" anywhere in its tree — so
+  // updateTag()/revalidateTag() of that tag drops the shell. Gated on a probe
+  // param, with the tag derived from the probe value, so the eviction e2e evicts
+  // only its OWN shell key and never a sibling /ppr-blog shell. Test-fixture
+  // pattern (mirrors /test/invalidate-tag): never derive invalidation tags from
+  // untrusted input in production.
+  const shellProbe = ctx.searchParams.get("shelltag");
+  if (shellProbe) {
+    // Colon-free tag: it round-trips through the /test/invalidate-tag/:tag URL
+    // param, and a ":" there would URL-encode and mismatch the recorded tag.
+    cacheTag(`pprblog-shell-${shellProbe}`);
+  }
+
+  // #676 async variant: the tag is recorded AFTER an await inside AsyncShellTagger,
+  // not synchronously here. Gated on its own probe so its shell key and tag are
+  // distinct from the sync `shelltag` case and any sibling shell.
+  const asyncShellProbe = ctx.searchParams.get("asyncshelltag");
+
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({ label: "Home", href: ctx.reverse("home") });
   breadcrumb({ label: "Blog", href: ctx.reverse("blog") });
 
   return (
     <div data-testid="blog-layout" style={{ display: "flex", gap: "2rem" }}>
+      {asyncShellProbe ? <AsyncShellTagger probe={asyncShellProbe} /> : null}
       <main style={{ flex: 1 }}>
         <Outlet />
       </main>

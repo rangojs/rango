@@ -17,6 +17,28 @@ import {
   getMemoizedLoaderPromise,
 } from "./segment-loader-promise.js";
 
+/**
+ * Debug log for the segment tree build, gated on the baked flag. Runs on BOTH
+ * sides now, environment-tagged: `[Browser][segments]` lines up with the
+ * `[Browser][boot]` sequence around hydrateRoot; `[Server][segments]` exposes
+ * the SSR/RSC tree-build stalls (blocking loader awaits during fizz are what
+ * dominate MISS TTFB) that used to be invisible because the logs were
+ * window-gated. Server lines have no request correlation — segment-system is
+ * shared client code and cannot import request-context (node:async_hooks
+ * would enter the browser bundle) — so on a busy server, correlate by
+ * timestamp + segment ids.
+ */
+function segDebugLog(msg: string, details?: Record<string, unknown>): void {
+  if (!INTERNAL_RANGO_DEBUG) return;
+  const env = typeof window === "object" ? "[Browser]" : "[Server]";
+  const prefix = `${env}[segments] ${msg} @ ${Math.round(performance.now())}ms`;
+  if (details) {
+    console.log(prefix, details);
+    return;
+  }
+  console.log(prefix);
+}
+
 // ViewTransition is only available in React experimental.
 // Access via namespace import to avoid compile-time errors on stable React.
 const ReactViewTransition: any =
@@ -212,6 +234,17 @@ export async function renderSegments(
     rootLayout: RootLayout,
   } = options || {};
 
+  const segDebug = INTERNAL_RANGO_DEBUG;
+  const segDebugStart = segDebug ? performance.now() : 0;
+  if (segDebug) {
+    segDebugLog("renderSegments start", {
+      segments: segments.map((s) => `${s.id}:${s.type}`),
+      isAction: !!isAction,
+      forceAwait: !!forceAwait,
+      intercepts: interceptSegments?.length ?? 0,
+    });
+  }
+
   const temporalLazyRefs: Promise<any>[] = [];
   const normalizedSegments = restoreParallelLoaderMarkers(segments);
   const normalizedInterceptSegments = interceptSegments
@@ -272,6 +305,7 @@ export async function renderSegments(
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`,
     );
     const { component, id, params, loading } = node.segment;
+    const segNodeStart = segDebug ? performance.now() : 0;
 
     // Param-agnostic keys are opt-in via the transition() DSL (see
     // inTransitionScope above). A route (and its route-owned layouts) inside a
@@ -314,7 +348,13 @@ export async function renderSegments(
 
     let resolvedComponent = component;
     if (isAction && component instanceof Promise) {
+      const componentAwaitStart = segDebug ? performance.now() : 0;
       resolvedComponent = await component;
+      if (segDebug) {
+        segDebugLog(`segment ${id}: component awaited (action)`, {
+          ms: Math.round(performance.now() - componentAwaitStart),
+        });
+      }
     }
 
     let nodeContent: ReactNode = null;
@@ -331,9 +371,16 @@ export async function renderSegments(
       // suspends on mount inside the content still reveals a fallback (it is not
       // pre-resolved).
       const contentPromise = getMemoizedContentPromise(resolvedComponent);
-      const loadingContent: Promise<ReactNode> | ReactNode = forceAwait
-        ? await contentPromise
-        : contentPromise;
+      let loadingContent: Promise<ReactNode> | ReactNode = contentPromise;
+      if (forceAwait) {
+        const contentAwaitStart = segDebug ? performance.now() : 0;
+        loadingContent = await contentPromise;
+        if (segDebug) {
+          segDebugLog(`segment ${id}: content awaited (forceAwait)`, {
+            ms: Math.round(performance.now() - contentAwaitStart),
+          });
+        }
+      }
       nodeContent = createElement(RouteContentWrapper, {
         key: `suspense-loading-${id}`,
         content: loadingContent,
@@ -403,10 +450,25 @@ export async function renderSegments(
 
     if (loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
+      let boundaryLoaderData: Promise<any[]> | any[] = loaderDataPromise;
+      if (forceAwait || isAction) {
+        const awaitStart = segDebug ? performance.now() : 0;
+        boundaryLoaderData = await loaderDataPromise;
+        if (segDebug) {
+          segDebugLog(`segment ${id}: loaders awaited (forceAwait/action)`, {
+            loaderIds,
+            ms: Math.round(performance.now() - awaitStart),
+          });
+        }
+      } else if (segDebug) {
+        segDebugLog(
+          `segment ${id}: streaming loaders via LoaderBoundary (suspense)`,
+          { loaderIds },
+        );
+      }
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
-        loaderDataPromise:
-          forceAwait || isAction ? await loaderDataPromise : loaderDataPromise,
+        loaderDataPromise: boundaryLoaderData,
         loaderIds,
         fallback: loading,
         outletKey: key,
@@ -430,11 +492,30 @@ export async function renderSegments(
       );
 
       const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
+      // No loading() on this segment, so its loader data cannot stream behind
+      // a Suspense fallback — the tree build BLOCKS here until the data
+      // arrives. On the initial document this await runs before hydrateRoot.
+      const layoutAwaitStart = segDebug ? performance.now() : 0;
       const resolvedData = await buildLoaderPromise(layoutLoaders);
+      if (segDebug) {
+        segDebugLog(`segment ${id}: layout loaders awaited (blocking)`, {
+          loaderIds: layoutLoaderIds,
+          ms: Math.round(performance.now() - layoutAwaitStart),
+        });
+      }
+      const decodeStart = segDebug ? performance.now() : 0;
       const { loaderData, errorFallback } = decodeLoaderResults(
         resolvedData,
         layoutLoaderIds,
       );
+      if (segDebug) {
+        const decodeMs = Math.round(performance.now() - decodeStart);
+        if (decodeMs > 0) {
+          segDebugLog(`segment ${id}: loader results decoded`, {
+            ms: decodeMs,
+          });
+        }
+      }
 
       if (parallelOwnedLoaders.length > 0) {
         const loadersByParallelNamespace = new Map<string, ResolvedSegment[]>();
@@ -463,10 +544,27 @@ export async function renderSegments(
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          p.loaderDataPromise =
-            (forceAwait || isAction) && aggregated instanceof Promise
-              ? await aggregated
-              : aggregated;
+          if ((forceAwait || isAction) && aggregated instanceof Promise) {
+            const parallelAwaitStart = segDebug ? performance.now() : 0;
+            p.loaderDataPromise = await aggregated;
+            if (segDebug) {
+              segDebugLog(
+                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action)`,
+                {
+                  loaderIds: p.loaderIds,
+                  ms: Math.round(performance.now() - parallelAwaitStart),
+                },
+              );
+            }
+          } else {
+            p.loaderDataPromise = aggregated;
+            if (segDebug) {
+              segDebugLog(
+                `segment ${id}: parallel ${p.id} loaders streaming (suspense)`,
+                { loaderIds: p.loaderIds },
+              );
+            }
+          }
         }
       }
 
@@ -488,6 +586,16 @@ export async function renderSegments(
       content = createElement(MountContextProvider, {
         value: node.segment.mountPath,
         children: content,
+      });
+    }
+
+    if (segDebug) {
+      segDebugLog(`segment ${id} built`, {
+        type: node.segment.type,
+        ms: Math.round(performance.now() - segNodeStart),
+        loaders: node.loaders.map((l) => l.loaderId).filter(Boolean),
+        hasLoading: loading !== undefined && loading !== null,
+        parallel: node.parallel.map((p) => p.id),
       });
     }
   }
@@ -521,6 +629,12 @@ export async function renderSegments(
   if (RootLayout) {
     result = createElement(RootLayout, {
       children: errorBoundaryWrapped,
+    });
+  }
+
+  if (segDebug) {
+    segDebugLog("renderSegments complete", {
+      ms: Math.round(performance.now() - segDebugStart),
     });
   }
 

@@ -460,6 +460,27 @@ export const CachedTestLoader = createLoader(async () => {
   };
 });
 
+// Counter for the handler-consumed cache() route loader
+let handlerConsumedLoaderCount = 0;
+
+/**
+ * Consumption-lane rule, cache() tier: an UNCACHED loader consumed by a
+ * HANDLER (`await ctx.use(...)`) inside a route-level cache() scope. The
+ * handler-consumed value is a BAKED copy — it freezes into the cached route
+ * segments and is served as-is on every cache hit (client-side useLoader is
+ * the live lane). count/loadedAt advance per execution so the e2e can pin
+ * "frozen across hits" (see e2e/cache.test.ts and the PPR twin, semantic
+ * matrix row PPR3).
+ */
+export const HandlerConsumedTestLoader = createLoader(async () => {
+  handlerConsumedLoaderCount++;
+  return {
+    count: handlerConsumedLoaderCount,
+    message: "Handler-consumed loader data",
+    loadedAt: new Date().toISOString(),
+  };
+});
+
 // Counter for intercept cache test loader
 let interceptCacheLoaderCount = 0;
 

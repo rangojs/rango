@@ -1,0 +1,120 @@
+---
+title: Execution Model
+description: The exact order of middleware, actions, and rendering per request — what is guaranteed, what is incidental, and why it holds in dev and production alike.
+type: concept
+---
+
+Almost every "why is this value undefined" and "why didn't my guard run" question resolves to the same thing: knowing exactly what runs on a request, and in what order. This page is that order. Once you have it, the behavior of middleware, actions, `ctx.set()`, and revalidation stops being surprising — it's all downstream of four short diagrams.
+
+## The request lifecycle
+
+There are three request shapes you'll deal with daily, plus intercepts:
+
+```
+Normal request (no action):
+  global middleware → route middleware → render pass
+
+JS action request:
+  global middleware → action executes → route middleware → revalidation render
+
+No-JS form POST (progressive enhancement):
+  global middleware → action executes → route middleware → full page re-render → HTML response
+
+Intercept request:
+  global middleware → route middleware → intercept middleware → intercept handler / loaders
+```
+
+Two facts fall out of these diagrams, and they matter more than anything else on this page:
+
+- **Global middleware (`router.use(...)`) wraps the entire request** — including server action execution and the render that follows.
+- **Route middleware (`middleware(...)` in the `urls()` tree) wraps render passes only.** It wraps normal renders, post-action revalidation renders, and no-JS re-renders — but it does **not** wrap action execution. Actions run before route middleware.
+
+The consequence for auth is blunt: route middleware cannot guard a server action. Use pattern-scoped global middleware (`router.use("/admin/*", requireAuth)`) or check inside the action body. This is a hard contract boundary, not an accident — it's also what lets route middleware observe state the action just set (cookies, context variables, headers) when it wraps the render that follows. See [Middleware](/docs/rango/features/middleware) for the placement patterns.
+
+The two levels also differ in context scope. Bindings set by global middleware are **request-scoped**: visible to subsequent global middleware, route middleware, handlers, layouts, parallel slots, loaders, server actions, and async server components — including after `await` and inside streamed children. Bindings set by route middleware are **render-scoped**: visible to everything in the render pass, but not to actions, because actions run outside it.
+
+## What the render pass actually is
+
+The last box in each diagram — "render pass" — is not a handler-then-loaders sequence. The render pass resolves the route handler, layouts, orphan layouts, parallel slots, and loaders **together**:
+
+- **Loaders run concurrently and stream.** They kick off right after middleware and resolve alongside rendering, so data latency overlaps first paint instead of blocking it. They are live by default — fresh on every request, even inside a cached render — unless explicitly cached via `loader(Fn, () => [cache({ ttl })])`. See [Loaders](/docs/rango/features/loaders) and [Caching](/docs/rango/features/caching).
+- **Parallel slots with `loading()` are independent streaming units.** Their loaders run without blocking the parent layout or sibling routes — the skeleton renders immediately on SSR while data streams in. Without `loading()`, a parallel slot's loaders block the parent.
+
+## Handler-first ordering — and its exact scope
+
+Within a full render pass, one ordering is guaranteed: **a route handler runs before its child/orphan layouts and its parallel children.** That's what makes this pattern safe — the handler writes, its own subtree reads:
+
+```tsx
+path(
+  "/product/:slug",
+  async (ctx) => {
+    const product = await fetchProduct(ctx.params.slug);
+    ctx.set("product", product);
+    return <ProductPage product={product} />;
+  },
+  { name: "product" },
+  () => [
+    layout((ctx) => {
+      const product = ctx.get("product"); // handler ran first — guaranteed
+      return (
+        <div>
+          <Breadcrumb name={product?.name} />
+          <Outlet />
+        </div>
+      );
+    }),
+  ],
+);
+```
+
+The scope of the guarantee is structural, and it's narrower than people expect. `ctx.set()` values flow **downward through structural scope boundaries only** — visibility follows tree location, not component appearance:
+
+```
+layout
+  ├─ path("/")
+  │    └─ orphan layout
+  │         └─ parallel("@sub-panel")   ← sees handler data AND layout data
+  ├─ orphan layout (sibling of path)
+  │    └─ parallel("@orphan-panel")     ← sees layout data, NOT handler data
+  └─ parallel("@panel")                 ← sees layout data, NOT handler data
+```
+
+Handler data never crosses a sibling boundary, and parallel slots do not share a single global context. If a segment isn't below the producer in the tree, it doesn't see the value — no matter how close the two look in your JSX.
+
+## Partial revalidation, briefly
+
+After a server action, the router does not re-render the world. Revalidation is **segment-scoped**: only selected segments recompute. The defaults, when no `revalidate()` rule is configured:
+
+| Segment                                          | Re-runs by default | Trace reason               |
+| ------------------------------------------------ | ------------------ | -------------------------- |
+| The matched route segment                        | yes                | `action:route-segment`     |
+| Loader segments                                  | yes                | `action:loader-segment`    |
+| The entry's children (orphan layouts, parallels) | yes                | `action:belongs-to-route`  |
+| Parent-chain segments (outer layouts, parallels) | no                 | `action:parent-chain-skip` |
+
+So a route entry re-runs **as a unit** on actions, with handler-first ordering preserved — handler `ctx.set()` data consumed by the entry's own children needs no configuration at all. Outer layouts are the opposite: skipped by default.
+
+The non-guarantee is the part that bites: non-revalidated ancestors do **not** re-run just to rebuild their `ctx.set()` state, and the router does not preserve a prior-pass snapshot for you. A revalidated child reading a skipped ancestor's context variable gets `undefined`. The full safest-first strategy for this lives in [Data Flow](/docs/rango/concepts/data-flow).
+
+## Dev and production run the same model
+
+Everything above holds identically in `pnpm dev` and in a production build: both modes match requests against the same route trie and build the tree through the same builder — there is no dev-only routing path that quietly behaves differently.
+
+That parity is not on the honor system. Each guarantee on this page is pinned by a row in the router's semantic matrix e2e suite, which runs against dev **and** production builds. A semantic change to the model must update the guarantee, its matrix row, and the docs together — so if a behavior you observe in dev disagrees with this page, or production disagrees with dev, that's a bug in the router, not a mode difference to code around.
+
+<Cards>
+  <Card href="/docs/rango/concepts/data-flow" title="Data Flow">
+    The four rungs for passing per-request data down the tree — built directly
+    on the revalidation defaults above.
+  </Card>
+  <Card
+    href="/docs/rango/concepts/progressive-enhancement"
+    title="Progressive Enhancement"
+  >
+    Why the JS action path and the no-JS form POST are the same contract.
+  </Card>
+  <Card href="/docs/rango/features/middleware" title="Middleware">
+    Global vs route middleware in practice: auth guards, context variables, the
+    wrapping form.
+  </Card>
+</Cards>

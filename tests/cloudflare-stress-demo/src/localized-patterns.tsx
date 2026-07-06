@@ -144,3 +144,5 @@ export const localizedPatterns = urls(({ path, layout }) => [
   // === BENCHMARK ROUTE AT THE END (raw Response, no RSC) ===
   path("/bench/last", BenchmarkHandler, { name: "benchLast" }),
 ]);
+
+export default localizedPatterns;

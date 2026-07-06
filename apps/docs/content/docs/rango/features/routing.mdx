@@ -1,0 +1,112 @@
+---
+title: The Route Tree
+description: Routes are expressed, not configured — one tree shows every URL, who owns it, what data it loads, and what wraps it.
+type: guide
+---
+
+One tree shows every URL, who owns it, what data it loads, what wraps it, and what re-renders after an action — no file-system convention, no hunting across `page.tsx` / `layout.tsx` / `route.ts` siblings. The picture and the code map one-to-one:
+
+<TreeToPageDemo />
+
+```tsx
+export const urlpatterns = urls(({ path, layout, loader, loading }) => [
+  layout(<ShopLayout />, () => [
+    loader(CartLoader),
+    path("/shop/:slug", ProductPage, { name: "product" }, () => [
+      loader(StockLoader),
+      loading(<ProductSkeleton />),
+    ]),
+  ]),
+]);
+```
+
+## The DSL
+
+`urls()` hands its callback every primitive:
+
+```ts
+urls(
+  ({
+    path, // define a route
+    layout, // wrap routes in a layout
+    parallel, // parallel routes (slots)
+    loader, // attach a data loader
+    loading, // opt a segment into skeleton-then-stream
+    cache, // cache a rendered subtree
+    middleware, // request processing for a subtree
+    revalidate, // client-update selection after actions
+    intercept, // modal / soft-navigation interception
+    errorBoundary, // error boundary for a subtree
+    notFoundBoundary, // not-found boundary for a subtree
+    transition, // view transitions
+  }) => [
+    // route definitions
+  ],
+);
+```
+
+## Structure versus config
+
+The tree has one design rule, and everything else follows from it:
+
+- `path()` and `include()` are **structure** — they define URLs and must stay visible in `urls()`. They cannot be hidden in a factory.
+- Everything else — `cache`, `loader`, `loading`, `middleware`, `revalidate`, `parallel`, `intercept`, boundaries — is **config**. It attaches to a node via its callback, is importable, and extracts into factories that return arrays (`withAuth()`, `withCaching()`), flattened automatically.
+
+To decide where something can live: **does it define a URL? Structure — stays in `urls()`. Does it modify a node? Config — compose freely.**
+
+```tsx
+// A shared config factory — just a function returning helpers
+export const withCaching = () => [cache({ ttl: 300 }), loading(<Skeleton />)];
+
+path("/products", ProductsPage, { name: "products" }, () => [withCaching()]);
+```
+
+## Composing sub-apps with include()
+
+`include()` mounts a whole `urls()` module under a prefix:
+
+```tsx
+// src/urls/shop.tsx
+export const shopPatterns = urls(({ path }) => [
+  path("/", ShopIndex, { name: "index" }),
+  path("/product/:slug", ProductPage, { name: "product" }),
+]);
+
+// src/urls.tsx
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", HomePage, { name: "home" }),
+  include("/shop", shopPatterns, { name: "shop" }),
+]);
+```
+
+`include()` also accepts an async provider to code-split the group into its own chunk, imported on the first request that reaches the prefix instead of at startup:
+
+```tsx
+// urls/shop.tsx: `export default shopPatterns`
+include("/shop", () => import("./urls/shop"), { name: "shop" }),
+```
+
+Build-time discovery still awaits the provider, so route types, `href()`, and prerendering see every route in the split group — lazily loaded, still fully typed.
+
+## Not-found handling
+
+Two distinct 404s:
+
+1. **No route matches the URL** — the router renders the `notFound` component from `createRouter()`. Automatic.
+2. **The route matched but the data doesn't exist** — the handler calls `notFound()`:
+
+```tsx
+import { notFound } from "@rangojs/router";
+
+path("/product/:slug", async (ctx) => {
+  const product = await db.getProduct(ctx.params.slug);
+  if (!product) notFound("Product not found");
+  return <ProductPage product={product} />;
+});
+```
+
+`notFound()` falls back through `notFoundBoundary()` in the tree, then `defaultNotFoundBoundary` from config, then `notFound`, then a built-in. All cases set HTTP 404.
+
+## Dev and production agree
+
+Dev and production resolve every request through the same route trie, built by the same builder. A route cannot match in dev and 404 in production — a parity test stands guard.

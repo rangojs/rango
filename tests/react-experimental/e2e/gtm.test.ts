@@ -87,6 +87,20 @@ async function checkCspAndNonce(page: Page, url: Url, enforced: boolean) {
     scriptNonces,
     "the inline GTM script carries the CSP nonce in the SSR HTML",
   ).toContain(cspNonce);
+
+  // Every EXECUTING module script (the preinit-upgraded head chunks and the
+  // _R_ bootstrap) must carry the same nonce the CSP names — they are
+  // parser-inserted, so 'strict-dynamic' does not cover them. Pins the
+  // per-request ALS nonce channel in src/ssr/preinit-client-references.ts.
+  const moduleScripts = [...html.matchAll(/<script\b[^>]*>/g)]
+    .map((m) => m[0])
+    .filter((t) => t.includes('type="module"') && t.includes('src="'));
+  expect(moduleScripts.length).toBeGreaterThan(0);
+  for (const tag of moduleScripts) {
+    expect(tag, "executing module script carries the CSP nonce").toContain(
+      `nonce="${cspNonce}"`,
+    );
+  }
   expect(html).toContain('event:"page_view"');
 
   // dataLayer initialised before gtm.js is injected (both in the inline script).

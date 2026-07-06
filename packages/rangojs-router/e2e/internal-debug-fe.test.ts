@@ -21,6 +21,12 @@ import { waitForHydration } from "./helper";
  * `define` was unreliable on. The transform itself is mode-independent and is
  * additionally pinned by `src/vite/__tests__/inject-client-debug.test.ts`.
  *
+ * Consumer caveat these suites cannot see (the monorepo resolves the router from
+ * workspace source, not node_modules): dev's immutable `?v=` caching of
+ * node_modules files kept consumer browsers on a stale baked flag. Fixed by
+ * internalDebugNoCacheMiddleware -- see its JSDoc in
+ * src/vite/inject-client-debug.ts; pinned by the unit tests there.
+ *
  * `[Browser][req:` is the browserDebugLog prefix -- it only appears when the
  * client debug flag is on, never from the always-on console.error logging.
  */

@@ -31,7 +31,7 @@ import { getRangoState } from "../rango-state.js";
 import { isActionFenceActive } from "../action-fence.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
-import { debugLog } from "../logging.js";
+import { debugLog, IS_BROWSER_DEBUG } from "../logging.js";
 import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import type { RscPayload } from "../types.js";
 
@@ -154,6 +154,8 @@ function executePrefetchFetch(
   sourceKey: string,
   fetchUrl: string,
   forceSourceScope: boolean,
+  /** Rango state captured once by the caller (keys + header share one read). */
+  rangoState: string,
   expectedRouterId?: string,
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
@@ -214,7 +216,7 @@ function executePrefetchFetch(
     ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
     signal: effectiveSignal,
     headers: {
-      "X-Rango-State": getRangoState(),
+      "X-Rango-State": rangoState,
       "X-RSC-Router-Client-Path": window.location.href,
       "X-Rango-Prefetch": "1",
     },
@@ -371,26 +373,31 @@ export function prefetchDirect(
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
   if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
-    debugLog("[prefetch] direct dedup (key already exists)", {
+    if (IS_BROWSER_DEBUG) {
+      debugLog("[prefetch] direct dedup (key already exists)", {
+        url,
+        wildcardKey,
+        sourceKey,
+        forceSourceScope,
+      });
+    }
+    return;
+  }
+  if (IS_BROWSER_DEBUG) {
+    debugLog("[prefetch] direct fetch", {
       url,
       wildcardKey,
       sourceKey,
+      source: sourceHref,
       forceSourceScope,
     });
-    return;
   }
-  debugLog("[prefetch] direct fetch", {
-    url,
-    wildcardKey,
-    sourceKey,
-    source: sourceHref,
-    forceSourceScope,
-  });
   executePrefetchFetch(
     wildcardKey,
     sourceKey,
     targetUrl.toString(),
     forceSourceScope,
+    rangoState,
     routerId,
   );
 }
@@ -421,12 +428,14 @@ export function prefetchQueued(
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
   if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
-    debugLog("[prefetch] queued dedup (key already exists)", {
-      url,
-      wildcardKey,
-      sourceKey,
-      forceSourceScope,
-    });
+    if (IS_BROWSER_DEBUG) {
+      debugLog("[prefetch] queued dedup (key already exists)", {
+        url,
+        wildcardKey,
+        sourceKey,
+        forceSourceScope,
+      });
+    }
     return queueKey;
   }
   const fetchUrlStr = targetUrl.toString();
@@ -444,6 +453,7 @@ export function prefetchQueued(
       sourceKey,
       fetchUrlStr,
       forceSourceScope,
+      rangoState,
       routerId,
       signal,
     ).then(() => {});

@@ -1,0 +1,100 @@
+---
+title: Build a Storefront
+description: Build Brew, a small coffee-gear storefront, in six parts — from an empty directory to a deployed Cloudflare Worker.
+type: tutorial
+---
+
+In this tutorial you build **Brew**, a small storefront selling coffee gear. It runs as a single Cloudflare Worker: the router matches the URL, renders React Server Components, and streams HTML — and once the page is up, navigation happens client-side without full page loads.
+
+The point of the tutorial is not the storefront. It's that by the end, you'll have touched every core idea in Rango once — routes declared in one tree, typed params, layouts, loaders, actions, revalidation, caching — each introduced when the app actually needs it.
+
+## What you're building
+
+Three pages and, in the later parts, a JSON endpoint:
+
+| URL           | Route name | What it shows                           |
+| ------------- | ---------- | --------------------------------------- |
+| `/`           | `home`     | A landing page                          |
+| `/shop`       | `shop`     | The product grid                        |
+| `/shop/:slug` | `product`  | One product, or a 404 for unknown slugs |
+
+The catalog is a hardcoded array — no database, no external services. Every snippet in this tutorial runs exactly as written, and you only need a Cloudflare account for the final deploy step.
+
+By the end of part 3 the project looks like this; the later parts add loaders, actions, and the JSON endpoint to the same skeleton:
+
+```
+brew/
+├── package.json
+├── vite.config.ts
+├── wrangler.json
+└── src/
+    ├── urls.tsx          # every route, in one tree
+    ├── router.tsx        # createRouter()
+    ├── document.tsx      # the <html> shell
+    ├── worker.ts         # Cloudflare Worker entry
+    ├── data.ts           # the hardcoded catalog
+    ├── pages/
+    │   ├── home.tsx
+    │   ├── shop.tsx
+    │   └── product.tsx
+    ├── layouts/
+    │   └── shop-layout.tsx
+    └── components/
+        └── shop-nav.tsx  # client nav with prefetching links
+```
+
+## Prerequisites
+
+- **Node 20+**
+- **pnpm**
+- **A Cloudflare account** — only for the deploy at the very end of part 6. Everything before that runs locally.
+
+You should be comfortable with React and TypeScript. You don't need prior experience with React Server Components or Cloudflare Workers; the tutorial explains what it uses as it goes.
+
+## The six parts
+
+Each part starts where the previous one left off and ends with something you can run.
+
+<Cards>
+  <Card href="/docs/rango/tutorial/project-setup" title="1. Project Setup">
+    Install the toolchain, wire Vite and Wrangler, and render a first route from
+    a Worker.
+  </Card>
+  <Card href="/docs/rango/tutorial/routes-and-pages" title="2. Routes & Pages">
+    Add the catalog, dynamic routes with typed params, 404s for unknown
+    products, and generated route types.
+  </Card>
+  <Card
+    href="/docs/rango/tutorial/layouts-and-navigation"
+    title="3. Layouts & Navigation"
+  >
+    Wrap the shop in a shared layout and add a client nav with prefetching
+    links.
+  </Card>
+  <Card
+    href="/docs/rango/tutorial/live-data-with-loaders"
+    title="4. Live Data with Loaders"
+  >
+    Move data fetching into loaders and stream pages with loading states.
+  </Card>
+  <Card
+    href="/docs/rango/tutorial/actions-and-revalidation"
+    title="5. Actions & Revalidation"
+  >
+    Mutate data with server actions and control what re-renders afterwards.
+  </Card>
+  <Card
+    href="/docs/rango/tutorial/caching-and-deployment"
+    title="6. Caching & Deployment"
+  >
+    Cache rendered segments and ship the storefront to Cloudflare Workers.
+  </Card>
+</Cards>
+
+## How to read this tutorial
+
+When a file changes, the part shows its full new contents — you can copy each snippet over the previous version rather than patching lines. Each part opens with a one-line recap of where the app stands, so if you step away you can pick up where you left off.
+
+If you'd rather see the API surface reference-style first, start with [Getting Started](/docs/rango/getting-started) and come back; the tutorial doesn't assume you've read it.
+
+Ready when you are: [1. Project Setup](/docs/rango/tutorial/project-setup).

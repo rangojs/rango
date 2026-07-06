@@ -341,6 +341,31 @@ describe("resolveRoute", () => {
     expect(mockCreateCacheScope).not.toHaveBeenCalled();
   });
 
+  it("records the isSSR flag it resolved with (true)", async () => {
+    mockLoadManifest.mockResolvedValue(makeEntry());
+
+    const result = await resolveRoute("/x", {
+      findMatch: () => makeMatch(),
+      isSSR: true,
+    });
+
+    const snapshot = (result as { type: "match"; snapshot: RouteSnapshot })
+      .snapshot;
+    expect(snapshot.isSSR).toBe(true);
+  });
+
+  it("records the isSSR flag it resolved with (false default)", async () => {
+    mockLoadManifest.mockResolvedValue(makeEntry());
+
+    const result = await resolveRoute("/x", {
+      findMatch: () => makeMatch(),
+    });
+
+    const snapshot = (result as { type: "match"; snapshot: RouteSnapshot })
+      .snapshot;
+    expect(snapshot.isSSR).toBe(false);
+  });
+
   it("skipRouteMatchMetric suppresses route-matching metric", async () => {
     const metricsStore = {
       enabled: true,

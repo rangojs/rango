@@ -29,8 +29,9 @@ const DOCS = [
   "packages/rangojs-router/docs/internal/feature-map.md",
 ];
 
-// Match the path inside a markdown link target: ](../../src/...).
-const SRC_LINK = /\]\((\.\.\/\.\.\/src\/[^)]+)\)/g;
+// Match the path inside a markdown link target: ](../../src/...) or
+// ](../../skills/...).
+const SRC_LINK = /\]\((\.\.\/\.\.\/(?:src|skills)\/[^)]+)\)/g;
 
 const missing = [];
 

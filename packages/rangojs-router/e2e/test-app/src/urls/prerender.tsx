@@ -2,13 +2,16 @@ import {
   urls,
   Prerender,
   Static,
+  createLoader,
   getRequestContext,
   Breadcrumbs,
 } from "@rangojs/router";
 import { Suspense } from "react";
+import { ParallelOutlet } from "@rangojs/router/client";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
+import { PrerenderPprSeq } from "../components/PrerenderPprSeq.js";
 // Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
 // resolve.alias. Reaching this through build-time Static/Prerender handlers
 // asserts discovery's runner honors third-party resolvers (issue #500).
@@ -149,26 +152,136 @@ export const PrerenderHandle = Prerender(async (ctx) => {
   );
 });
 
-export const prerenderPatterns = urls(({ path, loader, notFoundBoundary }) => [
-  path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
-  path("/docs", DocsPage, { name: "docs" }),
-  path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
-    loader(PrerenderTestLoader),
-    notFoundBoundary(({ notFound: info }) => (
-      <div data-testid="docs-not-found">
-        <h1 data-testid="docs-not-found-title">Doc Not Found</h1>
-        <p data-testid="docs-not-found-message">{info.message}</p>
+// Prerender + ppr composition (docs/design/shell-fast-path.md): the SAME route
+// carries a build-time prerendered handler (trie pr:true) AND the ppr shell
+// option. Capture and serve both go through the prerender-store hit in
+// withCacheLookup: the build-time segments — the article content AND the
+// slot handler element — bake into the frozen prelude; the SLOT-owned loader
+// (loader()+loading() on the @ppseq parallel: the slot-hole playbook) is
+// masked at capture and re-runs fresh per HIT (seq advances). A route-level
+// loading() would instead make the WHOLE route subtree the hole — the live
+// data must ride a slot for the prerendered content to be shell material.
+// The Prerender handler never executes at serve (production evicts it to a
+// stub; the store hit replays segments in dev too).
+let prerenderPprSeq = 0;
+
+export const PrerenderPprSeqLoader = createLoader(
+  async (): Promise<{ seq: number }> => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    prerenderPprSeq += 1;
+    return { seq: prerenderPprSeq };
+  },
+);
+
+function PrerenderPprSeqSlot() {
+  return <PrerenderPprSeq loader={PrerenderPprSeqLoader} />;
+}
+
+export const PrerenderPprArticle = Prerender(
+  // "warm" is the e2e warm-up slug: the suite's beforeAll polls its bare path
+  // to HIT so the producer-B machinery (dev: the /__rsc_shell on-demand
+  // capture graph) is hot before the strict first-request assertions run on
+  // the virgin alpha/beta bare paths.
+  async () => [{ slug: "alpha" }, { slug: "beta" }, { slug: "warm" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-article">
+        <h1 data-testid="pp-article-title">{`PP ${ctx.params.slug}`}</h1>
+        <p data-testid="pp-article-content">
+          {`Prerendered shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppseq" />
       </div>
-    )),
-  ]),
-  path("/changelog", ChangelogPage, { name: "changelog" }),
-  // Static handler on a non-dynamic route
-  path("/static-page", StaticPage, { name: "static-page" }),
-  // Static handler on a dynamic route -- same content for any :tag value
-  path("/static-shell/:tag", StaticShell, { name: "static-shell" }),
-  // Prerender + Static handlers with reverse() -- tests URL generation at build time
-  path("/prerender-reverse", PrerenderWithReverse, {
-    name: "prerender-reverse",
-  }),
-  path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
-]);
+    );
+  },
+);
+
+/**
+ * Dedicated fixture for the build-shell EVICTION e2e (#699): its own route +
+ * tag so updateTag("pp-evict-shell") cannot blast the sibling /pp/:slug
+ * entries a concurrently-running test is asserting on (dev runs
+ * fullyParallel). Same slot-hole shape as /pp/:slug.
+ */
+export const PrerenderPprEvictArticle = Prerender(
+  async () => [{ slug: "gamma" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-evict-article">
+        <p data-testid="pp-evict-article-content">
+          {`Evictable shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppseq" />
+      </div>
+    );
+  },
+);
+
+export const prerenderPatterns = urls(
+  ({ path, loader, loading, parallel, notFoundBoundary }) => [
+    path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
+    path("/docs", DocsPage, { name: "docs" }),
+    // Prerender + ppr on ONE route: build-time segments become the frozen
+    // prelude; the slot-owned loader is the badge-sized streaming hole.
+    path(
+      "/pp/:slug",
+      PrerenderPprArticle,
+      { name: "pp.article", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        parallel({
+          "@ppseq": {
+            handler: PrerenderPprSeqSlot,
+            use: () => [
+              loader(PrerenderPprSeqLoader),
+              loading(
+                <span data-testid="pp-seq-fallback">Loading pp seq...</span>,
+              ),
+            ],
+          },
+        }),
+      ],
+    ),
+    // Build-shell eviction fixture (#699): tagged so updateTag can reject the
+    // baked entry via the store's tag markers (manifest entries are immutable
+    // — eviction is a marker comparison, not a deletion).
+    path(
+      "/pp-evict/:slug",
+      PrerenderPprEvictArticle,
+      {
+        name: "pp.evict",
+        ppr: { ttl: 300, swr: 120, tags: ["pp-evict-shell"] },
+      },
+      () => [
+        parallel({
+          "@ppseq": {
+            handler: PrerenderPprSeqSlot,
+            use: () => [
+              loader(PrerenderPprSeqLoader),
+              loading(
+                <span data-testid="pp-seq-fallback">Loading pp seq...</span>,
+              ),
+            ],
+          },
+        }),
+      ],
+    ),
+    path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
+      loader(PrerenderTestLoader),
+      notFoundBoundary(({ notFound: info }) => (
+        <div data-testid="docs-not-found">
+          <h1 data-testid="docs-not-found-title">Doc Not Found</h1>
+          <p data-testid="docs-not-found-message">{info.message}</p>
+        </div>
+      )),
+    ]),
+    path("/changelog", ChangelogPage, { name: "changelog" }),
+    // Static handler on a non-dynamic route
+    path("/static-page", StaticPage, { name: "static-page" }),
+    // Static handler on a dynamic route -- same content for any :tag value
+    path("/static-shell/:tag", StaticShell, { name: "static-shell" }),
+    // Prerender + Static handlers with reverse() -- tests URL generation at build time
+    path("/prerender-reverse", PrerenderWithReverse, {
+      name: "prerender-reverse",
+    }),
+    path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
+  ],
+);

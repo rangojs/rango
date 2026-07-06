@@ -20,6 +20,10 @@ import type {
 import type { SegmentResolutionDeps } from "../types.js";
 import { resolveLoaderData } from "./loader-cache.js";
 import {
+  isShellCaptureActive,
+  entryLoadingMasksLoaders,
+} from "./loader-mask.js";
+import {
   handleHandlerResult,
   tryStaticHandler,
   tryStaticSlot,
@@ -60,6 +64,24 @@ export async function resolveLoaders<TEnv>(
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 
+  // Emit the streaming (non-awaiting) loader shape when loading is enabled OR
+  // during a PPR shell capture. In capture, LIVE-lane loaders are masked with
+  // never-resolving promises (loader-mask.ts); the loading-disabled branch below
+  // AWAITS the loader promises, which would hang the capture render's match()
+  // forever on those masked promises. Forcing the streaming shape lets match()
+  // complete so the prerender can postpone the loader subtrees as holes. The
+  // `!loadingDisabled` short-circuit keeps the ALS check off the hot path (only
+  // loading-disabled entries consult it), so normal requests are unchanged.
+  const emitStreaming = !loadingDisabled || isShellCaptureActive();
+
+  // PPR lane decision for this entry's loaders (loader-container-bake): an
+  // entry WITHOUT renderable loading() puts its loaders on the BAKE lane —
+  // executed at capture (container bakes, nested pending promises hole at the
+  // consumer's Suspense) and overlay-pinned from the shell snapshot on a HIT.
+  // Renderable loading() keeps the LIVE lane (masked at capture, always
+  // fresh). Computed per entry; resolveLoaderData applies the policy.
+  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
+
   // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
   // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
   // telemetry event — wrapLoaderPromise only builds the onError/telemetry path
@@ -67,7 +89,7 @@ export async function resolveLoaders<TEnv>(
   // loader failures the same way handlers/actions/routing/fetchable-loaders do.
   const errorContext = buildLoaderErrorContext(ctx);
 
-  if (!loadingDisabled) {
+  if (emitStreaming) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
     const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
@@ -82,7 +104,12 @@ export async function resolveLoaders<TEnv>(
         loaderId: loader.$$id,
         loaderData: deps.wrapLoaderPromise(
           runInsideLoaderScope(() =>
-            resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+            resolveLoaderData(
+              loaderEntry,
+              ctx,
+              ctx.pathname,
+              bakeLane ? segmentId : null,
+            ),
           ),
           entry,
           segmentId,
@@ -111,7 +138,12 @@ export async function resolveLoaders<TEnv>(
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
     const wrapped = deps.wrapLoaderPromise(
       runInsideLoaderScope(() =>
-        resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+        resolveLoaderData(
+          loaderEntry,
+          ctx,
+          ctx.pathname,
+          bakeLane ? segmentId : null,
+        ),
       ),
       entry,
       segmentId,

@@ -12,6 +12,7 @@ import type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
+  ShellCacheEntry,
 } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 import { isPerClientSignalHeader } from "../browser/cookie-name.js";
@@ -26,8 +27,11 @@ import { reportCacheError } from "./cache-error.js";
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
 const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
+const SHELL_CACHE_REGISTRY_KEY = "__rsc_router_shell_cache_registry__";
 const TAG_INDEX_REGISTRY_KEY = "__rsc_router_tag_index_registry__";
 const KEY_TAGS_REGISTRY_KEY = "__rsc_router_key_tags_registry__";
+const TAG_INVALIDATED_AT_REGISTRY_KEY =
+  "__rsc_router_tag_invalidated_at_registry__";
 
 /**
  * Get or create a named Map from a globalThis-backed registry.
@@ -60,6 +64,13 @@ interface CachedResponseEntry {
 interface CachedItemEntry {
   value: string;
   handles?: string;
+  expiresAt: number;
+  staleAt: number;
+  tags?: string[];
+}
+
+interface CachedShellEntry {
+  entry: ShellCacheEntry;
   expiresAt: number;
   staleAt: number;
   tags?: string[];
@@ -121,7 +132,24 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
     ctx: RequestContext<TEnv>,
     defaultKey: string,
   ) => string | Promise<string>;
+
+  /**
+   * Maximum number of entries kept per internal family (segment, response,
+   * item, shell). On insert, once a family reaches the cap its oldest entry is
+   * evicted FIFO (insertion order) and its tag-index entries are cleaned up, so
+   * a long-lived instance can't grow without bound. Lazy TTL expiry still runs
+   * independently. Defaults to DEFAULT_MAX_ENTRIES (1000).
+   *
+   * @example
+   * ```typescript
+   * const store = new MemorySegmentCacheStore({ maxEntries: 500 });
+   * ```
+   */
+  maxEntries?: number;
 }
+
+/** Default per-family entry cap for MemorySegmentCacheStore (FIFO eviction). */
+const DEFAULT_MAX_ENTRIES = 1000;
 
 /**
  * In-memory segment cache store.
@@ -130,10 +158,16 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
  * For production with multiple instances, use a distributed store
  * like Cloudflare KV or Redis.
  *
+ * Each family is size-capped at `maxEntries` (default 1000) with FIFO eviction
+ * on insert, so a long-lived instance can't grow unbounded; TTL expiry stays
+ * lazy on top of that.
+ *
  * Tag-index cleanup is lazy, mirroring the data maps: a tagged entry that
  * expires but is never re-read or invalidated leaves its forward+reverse index
- * entries resident until the key is reused or invalidated. This is bounded by
- * the distinct-tag count and acceptable for a dev/single-instance store.
+ * entries resident until the key is reused, invalidated, or FIFO-evicted. This
+ * is bounded by the distinct-tag count and acceptable for a dev/single-instance
+ * store. FIFO eviction unregisters the evicted key's tags, so the tag maps do
+ * not outlive the capped data maps.
  *
  * @example
  * ```typescript
@@ -157,15 +191,26 @@ export class MemorySegmentCacheStore<
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
   private itemCache: Map<string, CachedItemEntry>;
-  /** tag -> set of prefixed cache keys (seg:key, res:key, item:key) */
+  private shellCache: Map<string, CachedShellEntry>;
+  /** tag -> set of prefixed cache keys (seg:key, res:key, item:key, shell:key) */
   private tagIndex: Map<string, Set<string>>;
   /** prefixed cache key -> set of tags (reverse index for O(tags) unregister) */
   private keyTags: Map<string, Set<string>>;
+  /**
+   * tag -> epoch ms of its latest invalidateTags() call. The build-shell
+   * read-through's isTagsInvalidatedSince gate: baked shell entries are
+   * immutable in the build manifest, so eviction is answered by comparing
+   * these markers against the entry's build-time createdAt. Per-isolate,
+   * like every other map here — matching this store's tag semantics.
+   */
+  private tagInvalidatedAt: Map<string, number>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
     defaultKey: string,
   ) => string | Promise<string>;
+  /** Per-family FIFO entry cap. */
+  readonly maxEntries: number;
 
   constructor(options?: MemorySegmentCacheStoreOptions<TEnv>) {
     if (options?.name != null) {
@@ -181,6 +226,10 @@ export class MemorySegmentCacheStore<
         ITEM_CACHE_REGISTRY_KEY,
         options.name,
       );
+      this.shellCache = getNamedMap<CachedShellEntry>(
+        SHELL_CACHE_REGISTRY_KEY,
+        options.name,
+      );
       this.tagIndex = getNamedMap<Set<string>>(
         TAG_INDEX_REGISTRY_KEY,
         options.name,
@@ -189,15 +238,43 @@ export class MemorySegmentCacheStore<
         KEY_TAGS_REGISTRY_KEY,
         options.name,
       );
+      this.tagInvalidatedAt = getNamedMap<number>(
+        TAG_INVALIDATED_AT_REGISTRY_KEY,
+        options.name,
+      );
     } else {
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
       this.itemCache = new Map<string, CachedItemEntry>();
+      this.shellCache = new Map<string, CachedShellEntry>();
       this.tagIndex = new Map<string, Set<string>>();
       this.keyTags = new Map<string, Set<string>>();
+      this.tagInvalidatedAt = new Map<string, number>();
     }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
+    this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES;
+  }
+
+  /**
+   * FIFO cap enforcement, called before inserting `incomingKey` into `map`.
+   * When the key is new and the family is at capacity, the oldest entries are
+   * evicted in insertion order and their tag-index entries unregistered (so the
+   * tag maps don't outlive the capped data map). Overwriting an existing key
+   * grows nothing, so it is a no-op.
+   */
+  private evictIfNeeded<V>(
+    map: Map<string, V>,
+    incomingKey: string,
+    prefix: string,
+  ): void {
+    if (map.has(incomingKey)) return;
+    while (map.size >= this.maxEntries) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) break;
+      map.delete(oldest);
+      this.unregisterTags(`${prefix}:${oldest}`);
+    }
   }
 
   async get(key: string): Promise<CacheGetResult | null> {
@@ -230,6 +307,7 @@ export class MemorySegmentCacheStore<
     };
     const prefixedKey = `seg:${key}`;
     this.unregisterTags(prefixedKey);
+    this.evictIfNeeded(this.cache, key, "seg");
     this.cache.set(key, entry);
     if (data.tags && data.tags.length > 0) {
       this.registerTags(data.tags, prefixedKey);
@@ -245,6 +323,7 @@ export class MemorySegmentCacheStore<
     this.cache.clear();
     this.responseCache.clear();
     this.itemCache.clear();
+    this.shellCache.clear();
     this.tagIndex.clear();
     this.keyTags.clear();
   }
@@ -292,6 +371,7 @@ export class MemorySegmentCacheStore<
 
       const prefixedKey = `res:${key}`;
       this.unregisterTags(prefixedKey);
+      this.evictIfNeeded(this.responseCache, key, "res");
       this.responseCache.set(key, {
         body,
         status: response.status,
@@ -341,6 +421,7 @@ export class MemorySegmentCacheStore<
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
     const prefixedKey = `item:${key}`;
     this.unregisterTags(prefixedKey);
+    this.evictIfNeeded(this.itemCache, key, "item");
     this.itemCache.set(key, {
       value,
       handles: options?.handles,
@@ -353,8 +434,63 @@ export class MemorySegmentCacheStore<
     }
   }
 
-  async invalidateTags(tags: string[]): Promise<void> {
+  async getShell(
+    key: string,
+  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    const cached = this.shellCache.get(key);
+    if (!cached) return null;
+
+    const now = Date.now();
+    if (now > cached.expiresAt) {
+      this.unregisterTags(`shell:${key}`);
+      this.shellCache.delete(key);
+      return null;
+    }
+
+    // SWR mirrors the item family: stale within the swr window still serves, and
+    // signals shouldRevalidate so the middleware schedules a background recapture.
+    const shouldRevalidate = cached.staleAt > 0 && now > cached.staleAt;
+    return { entry: cached.entry, shouldRevalidate };
+  }
+
+  async putShell(
+    key: string,
+    entry: ShellCacheEntry,
+    ttlSeconds?: number,
+    swrSeconds?: number,
+    tags?: string[],
+  ): Promise<void> {
+    const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
+    const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
+    const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
+    const prefixedKey = `shell:${key}`;
+    this.unregisterTags(prefixedKey);
+    this.evictIfNeeded(this.shellCache, key, "shell");
+    this.shellCache.set(key, { entry, expiresAt, staleAt, tags });
+    if (tags && tags.length > 0) {
+      this.registerTags(tags, prefixedKey);
+    }
+  }
+
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
     for (const tag of tags) {
+      const at = this.tagInvalidatedAt.get(tag);
+      // >= so a same-millisecond invalidation wins (freshness over staleness),
+      // matching the CF marker comparison.
+      if (at !== undefined && at >= sinceMs) return true;
+    }
+    return false;
+  }
+
+  async invalidateTags(tags: string[]): Promise<void> {
+    const invalidatedAt = Date.now();
+    for (const tag of tags) {
+      // Marker first: build-shell entries evict by marker comparison even when
+      // no runtime entry currently carries the tag (tagIndex miss below).
+      this.tagInvalidatedAt.set(tag, invalidatedAt);
       const keys = this.tagIndex.get(tag);
       if (!keys || keys.size === 0) continue;
 
@@ -371,6 +507,8 @@ export class MemorySegmentCacheStore<
           this.responseCache.delete(rawKey);
         } else if (prefix === "item") {
           this.itemCache.delete(rawKey);
+        } else if (prefix === "shell") {
+          this.shellCache.delete(rawKey);
         }
 
         this.unregisterTags(prefixedKey);
@@ -421,6 +559,7 @@ export class MemorySegmentCacheStore<
     delete (globalThis as any)[CACHE_REGISTRY_KEY];
     delete (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY];
     delete (globalThis as any)[ITEM_CACHE_REGISTRY_KEY];
+    delete (globalThis as any)[SHELL_CACHE_REGISTRY_KEY];
     delete (globalThis as any)[TAG_INDEX_REGISTRY_KEY];
     delete (globalThis as any)[KEY_TAGS_REGISTRY_KEY];
   }

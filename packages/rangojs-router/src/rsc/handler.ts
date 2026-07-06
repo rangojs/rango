@@ -85,7 +85,8 @@ import {
   appendMetric,
   buildMetricsTiming,
 } from "../router/metrics.js";
-import { observePhase, observeEvent, PHASES } from "../router/instrument.js";
+import { observePhase, PHASES } from "../router/instrument.js";
+import { safeEmit, resolveSink, getRequestId } from "../router/telemetry.js";
 import {
   startSSRSetup,
   getSSRSetup,
@@ -246,16 +247,19 @@ export function createRSCHandler<
       metadata: { timeout: true, phase, durationMs },
     });
 
-    observeEvent({
-      type: "request.timeout",
-      timestamp: performance.now(),
-      phase,
-      pathname: url.pathname,
-      routeKey,
-      actionId,
-      durationMs,
-      customHandler: !!router.onTimeout,
-    });
+    if (router.telemetry) {
+      safeEmit(resolveSink(router.telemetry), {
+        type: "request.timeout",
+        timestamp: performance.now(),
+        requestId: getRequestId(request),
+        phase,
+        pathname: url.pathname,
+        routeKey,
+        actionId,
+        durationMs,
+        customHandler: !!router.onTimeout,
+      });
+    }
 
     if (router.onTimeout) {
       try {
@@ -462,6 +466,11 @@ export function createRSCHandler<
       stateCookieName: router.resolvedStateCookieName,
       version,
     });
+    // Thread the true request entry timestamp onto the context so a metrics
+    // store created MID-request (ctx.debugPerformance() / getMetricsStore) anchors
+    // to the real start, not the opt-in moment — phases that began earlier then
+    // report non-negative offsets. Set unconditionally: debug may be enabled later.
+    requestContext._handlerStart = handlerStart;
     if (earlyMetricsStore) {
       requestContext._debugPerformance = true;
       requestContext._metricsStore = earlyMetricsStore;
@@ -569,8 +578,10 @@ export function createRSCHandler<
         if (metricsStore) {
           // When the store was created at handler start (earlyMetricsStore),
           // handler:total covers the full request. When ctx.debugPerformance()
-          // created the store mid-request, use its requestStart to avoid a
-          // negative startTime offset.
+          // created the store mid-request its requestStart is now the threaded
+          // _handlerStart (== handlerStart), so both branches yield the true
+          // request entry; reading the store's own anchor keeps this correct even
+          // if a store ever lands without the threading (falls back to its start).
           const totalStart = earlyMetricsStore
             ? handlerStart
             : metricsStore.requestStart;
@@ -590,7 +601,13 @@ export function createRSCHandler<
 
         const fullTiming = timingParts.join(", ");
         if (fullTiming && !isWebSocketUpgradeResponse(response)) {
-          response.headers.set("Server-Timing", fullTiming);
+          try {
+            response.headers.set("Server-Timing", fullTiming);
+          } catch {
+            // Immutable headers (e.g. a passed-through platform Response) — drop
+            // the timing header, never the response. Instrumentation must not
+            // 500 a request.
+          }
         }
 
         // Single open-redirect chokepoint: every response (PE, full-page,
@@ -737,15 +754,18 @@ export function createRSCHandler<
           },
         });
 
-        observeEvent({
-          type: "request.origin-rejected",
-          timestamp: performance.now(),
-          method: request.method,
-          pathname: url.pathname,
-          phase: originPhase,
-          origin: request.headers.get("origin"),
-          host: request.headers.get("host"),
-        });
+        if (router.telemetry) {
+          safeEmit(resolveSink(router.telemetry), {
+            type: "request.origin-rejected",
+            timestamp: performance.now(),
+            requestId: getRequestId(request),
+            method: request.method,
+            pathname: url.pathname,
+            phase: originPhase,
+            origin: request.headers.get("origin"),
+            host: request.headers.get("host"),
+          });
+        }
 
         return originResult;
       }
@@ -787,15 +807,18 @@ export function createRSCHandler<
         params: reqCtx.params as Record<string, string>,
         handledByBoundary: true,
       });
-      observeEvent({
-        type: "handler.error",
-        timestamp: performance.now(),
-        error,
-        handledByBoundary: true,
-        pathname: url.pathname,
-        routeKey: reqCtx._routeName,
-        params: reqCtx.params as Record<string, string>,
-      });
+      if (router.telemetry) {
+        safeEmit(resolveSink(router.telemetry), {
+          type: "handler.error",
+          timestamp: performance.now(),
+          requestId: getRequestId(request),
+          error,
+          handledByBoundary: true,
+          pathname: url.pathname,
+          routeKey: reqCtx._routeName,
+          params: reqCtx.params as Record<string, string>,
+        });
+      }
     };
 
     // Set route params early so all execution paths can access ctx.params.

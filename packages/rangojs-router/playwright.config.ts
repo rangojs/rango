@@ -12,8 +12,28 @@ const webkitConfig = {
 
 const DEV_SERVER_PORT = 5188;
 const PREVIEW_SERVER_PORT = 5189;
+// Host-router fixture servers (e2e/test-app/.host-fixture) for host-routing.test.ts.
+// Repo-unique ports: 5198/5199 collide with tests/cloudflare-basic (dev 5199 /
+// preview 5198), which under `reuseExistingServer` would silently run the host
+// tests against the cloudflare-basic app. Keep these in sync with the same
+// constants in e2e/host-routing.test.ts.
+const HOST_DEV_PORT = 5296;
+const HOST_PREVIEW_PORT = 5297;
 
 const isUIMode = process.argv.includes("--ui");
+const isCI = !!process.env.CI;
+
+// Host-fixture isolation (finding: host servers must not boot on every shard).
+// The host-routing suite lives in its own `host` project + a dedicated CI job
+// that sets RANGO_E2E_HOST=1. On the sharded dev/production CI jobs the flag is
+// unset, so the two extra host Vite servers (and the host:build) never start --
+// keeping those OOM-sensitive shards lean and decoupling them from host-fixture
+// health. Locally the whole suite runs in one process, so the host project +
+// servers are included there too.
+const RUN_HOST = !isCI || process.env.RANGO_E2E_HOST === "1";
+// The dedicated host CI job runs ONLY `--project=host`, so it skips the heavy
+// test-app build/dev/preview servers.
+const HOST_ONLY = process.env.RANGO_E2E_HOST === "1";
 
 export default defineConfig({
   testDir: "e2e",
@@ -21,23 +41,50 @@ export default defineConfig({
   globalTimeout: 600000, // 10 minutes max
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   webServer: [
-    {
-      // Build first (for production tests), then clean optimizer cache and start
-      // dev server. Building before the dev server prevents `vite build` from
-      // overwriting the running server's optimizer cache (node_modules/.vite/deps).
-      command: `pnpm build && rm -rf node_modules/.vite-e2e-test-app && pnpm dev --port ${DEV_SERVER_PORT}`,
-      cwd: "./e2e/test-app",
-      port: DEV_SERVER_PORT,
-      reuseExistingServer: !process.env.CI,
-    },
-    {
-      // Shared preview server for all production tests using test-app.
-      // Started after the build (included in the dev server command above).
-      command: `pnpm preview --port ${PREVIEW_SERVER_PORT}`,
-      cwd: "./e2e/test-app",
-      port: PREVIEW_SERVER_PORT,
-      reuseExistingServer: !process.env.CI,
-    },
+    ...(HOST_ONLY
+      ? []
+      : [
+          {
+            // Build first (for production tests), then clean optimizer cache and
+            // start dev server. Building before the dev server prevents `vite
+            // build` from overwriting the running server's optimizer cache
+            // (node_modules/.vite/deps).
+            command: `pnpm build && rm -rf node_modules/.vite-e2e-test-app && pnpm dev --port ${DEV_SERVER_PORT}`,
+            cwd: "./e2e/test-app",
+            port: DEV_SERVER_PORT,
+            reuseExistingServer: !process.env.CI,
+          },
+          {
+            // Shared preview server for all production tests using test-app.
+            // Started after the build (included in the dev server command above).
+            command: `pnpm preview --port ${PREVIEW_SERVER_PORT}`,
+            cwd: "./e2e/test-app",
+            port: PREVIEW_SERVER_PORT,
+            reuseExistingServer: !process.env.CI,
+          },
+        ]),
+    ...(RUN_HOST
+      ? [
+          {
+            // Host-router fixture (e2e/test-app/.host-fixture), node preset. Dev
+            // server for host-routing.test.ts "(dev)". Self-contained (vite dev
+            // generates its own manifests).
+            command: `pnpm host:dev --port ${HOST_DEV_PORT}`,
+            cwd: "./e2e/test-app",
+            port: HOST_DEV_PORT,
+            reuseExistingServer: !process.env.CI,
+          },
+          {
+            // Host-router fixture preview (built) for host-routing.test.ts
+            // "(production)". Builds then serves the .vercel/output-equivalent
+            // node build.
+            command: `pnpm host:build && pnpm host:preview --port ${HOST_PREVIEW_PORT}`,
+            cwd: "./e2e/test-app",
+            port: HOST_PREVIEW_PORT,
+            reuseExistingServer: !process.env.CI,
+          },
+        ]
+      : []),
   ],
   use: {
     screenshot: "only-on-failure",
@@ -162,6 +209,34 @@ export default defineConfig({
           },
           dependencies: ["build"],
         },
+        // Host-routing suite: its own project + warmup, included only when the
+        // host servers are up (RUN_HOST). On the sharded dev/production CI jobs
+        // (RUN_HOST false) these are absent and host-routing is excluded from the
+        // dev/production projects below, so no host server needs to boot there.
+        ...(RUN_HOST
+          ? [
+              {
+                // Primes the host-router dev server's dep optimizer before the
+                // host-routing "(dev)" tests, so their client boot is fast/quiet.
+                name: "host-dev-warmup",
+                testMatch: "**/host-warmup.setup.ts",
+                use: {
+                  ...browserConfig,
+                  baseURL: `http://localhost:${HOST_DEV_PORT}`,
+                },
+              },
+              {
+                // host-routing.test.ts drives both the "(dev)" and "(production)"
+                // host describes against absolute-URL host servers (5296/5297), so
+                // it needs no baseURL. Serial: it clears cookies between visits.
+                name: "host",
+                testMatch: "**/host-routing.test.ts",
+                use: browserConfig,
+                fullyParallel: false,
+                dependencies: ["host-dev-warmup"],
+              },
+            ]
+          : []),
         {
           name: "dev",
           // Exclude production tests (by test name) and HMR test files (by file name)
@@ -176,6 +251,9 @@ export default defineConfig({
             "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
+            // host-routing runs in its own `host` project (with its own servers),
+            // not the sharded dev bucket -- see the RUN_HOST block above.
+            "**/host-routing.test.ts",
             // mini is a Vitest dogfood app nested under e2e/; its vitest
             // test/*.test.tsx files must not be collected by Playwright.
             "**/mini/**",
@@ -189,7 +267,12 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production/,
-          testIgnore: ["**/smoke.test.ts", "**/mini/**"],
+          testIgnore: [
+            "**/smoke.test.ts",
+            // host-routing "(production)" runs in the `host` project.
+            "**/host-routing.test.ts",
+            "**/mini/**",
+          ],
           use: {
             ...browserConfig,
             baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,

@@ -1,5 +1,10 @@
 import { test as setup, expect } from "@playwright/test";
 
+// Serial: the ppr warmup below must run AFTER the base warmup has absorbed the
+// dep-optimizer churn (fullyParallel would otherwise let them race on local
+// 2-worker runs and the ppr GETs could see transient optimizer 500s).
+setup.describe.configure({ mode: "serial" });
+
 // Warm up the shared dev server before tests start.
 // The first SSR request triggers Vite's dep optimizer to discover SSR deps
 // (ERR_OUTDATED_OPTIMIZED_DEP). This takes a few seconds, after which a
@@ -24,4 +29,81 @@ setup("warmup dev server", async ({ page, baseURL }) => {
       { timeout: 5_000 },
     );
   }).toPass({ timeout: 30_000, intervals: [2_000, 3_000, 5_000] });
+});
+
+// Every ppr-declared fixture route in src/urls.tsx. The plain GET compiles each
+// route's page/loader modules through the dev transform pipeline; the background
+// capture it schedules compiles the capture-only path (loader mask,
+// captureShellHTML, the fizz prerender). `?probe=warmup` isolates the warmup's
+// shell entries from every test key (the shell key includes the query), so no
+// test-visible MISS/HIT sequence is perturbed — only the module graph is warmed.
+const PPR_WARMUP_ROUTES = [
+  "/ppr-shell",
+  "/ppr-shell/stream",
+  "/ppr-shell/no-hole",
+  // Prerender + ppr composition: its capture additionally round-trips the dev
+  // /__rsc_prerender endpoint (temp-server on-demand render) — the heaviest
+  // capture in the suite. Safe to warm since capture execution is serialized
+  // per isolate (capture-queue.ts): it can no longer starve sibling captures'
+  // quiet windows (the GH-runner rotating eternal-MISS class).
+  "/ppr-shell/prerendered/alpha",
+  "/ppr-drift",
+  "/ppr-blog",
+  "/ppr-blog/getting-started-with-rsc",
+];
+
+// Capturable subset: polled to x-rango-shell HIT, which proves the FULL capture
+// pipeline (Flight render, fizz prerender+abort, putShell) is hot, not merely
+// requested. /ppr-shell/no-hole is excluded — it can never HIT (no loading()
+// boundary; the ppr-shell suite pins that negative). /ppr-blog/:slug shares its
+// modules with /ppr-blog, so polling the index covers it.
+const PPR_WARMUP_HIT_ROUTES = [
+  "/ppr-shell",
+  "/ppr-shell/stream",
+  "/ppr-shell/prerendered/alpha",
+  "/ppr-drift",
+  "/ppr-blog",
+];
+
+// Warm the PPR capture pipeline before the ppr-shell dev tests run.
+//
+// On a cold CI runner the dev module graph is compiled ON DEMAND during the
+// capture render, repeatedly blowing the capture's 5s budget
+// (SHELL_CAPTURE_MAX_WAIT_MS): one probe cycle is ~5s attempt + ~5s in-place
+// retry + backoff, so warmToHit's 20s window fits only ~2 cycles and the suite
+// hard-fails on runners that need more (#652 item 3 — the eternal-MISS shape
+// survived the runtime-side dev backoff cap alone; see PR #659's first CI run,
+// `physics hole` 3x at ~20s). Warming here makes the first real capture attempt
+// run against a hot graph, so it completes inside its budget on attempt 1; the
+// dev backoff cap stays as the safety net for anything this warmup missed.
+setup("warmup ppr capture path", async ({ request }) => {
+  setup.setTimeout(180_000);
+
+  // Warm-and-poll PER ROUTE, not compile-all-then-poll-all: capture execution
+  // is serialized per isolate (capture-queue.ts), so firing every route's GET
+  // up front enqueues one capture per route back-to-back — on a cold runner
+  // each takes 10-20s and the HIT polls then time out waiting behind the
+  // WHOLE queue (both dev shards' warmups failed 3x exactly this way on the
+  // first serialized CI run). Interleaving gives each route's capture an
+  // empty queue and its full budget; later routes get faster as the shared
+  // pipeline warms.
+  for (const route of PPR_WARMUP_HIT_ROUTES) {
+    await expect(async () => {
+      const res = await request.get(`${route}?probe=warmup`, {
+        headers: { Accept: "text/html" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    }).toPass({ timeout: 60_000 });
+  }
+
+  // Module-warm the never-HIT routes last (their scheduled captures refuse or
+  // stay MISS by design; queued after the HIT set, they can't delay it).
+  for (const route of PPR_WARMUP_ROUTES) {
+    if (PPR_WARMUP_HIT_ROUTES.includes(route)) continue;
+    const res = await request.get(`${route}?probe=warmup`, {
+      headers: { Accept: "text/html" },
+    });
+    expect(res.status()).toBe(200);
+  }
 });

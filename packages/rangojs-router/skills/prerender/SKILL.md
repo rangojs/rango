@@ -1,6 +1,6 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender and Passthrough live fallback
+description: Pre-render route segments at build time with Prerender and Passthrough live fallback. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
@@ -10,6 +10,13 @@ Pre-rendering is **caching at build time**. Same serialization format, same
 deserialization path, same segment system. The worker handles every request --
 there are NO static .html or .rsc files served from assets. The worker reads
 pre-computed Flight payloads instead of executing handler code.
+
+## Not this skill if…
+
+- You want a cached HTML shell captured at runtime, with holes and loaders
+  staying live per request — see `/ppr`.
+- You want runtime segment caching with TTL/SWR — that is the `cache()` DSL:
+  see `/caching`. Prerender is the same cache filled at build time.
 
 ## API: Prerender
 

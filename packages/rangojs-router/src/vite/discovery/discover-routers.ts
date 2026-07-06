@@ -186,7 +186,7 @@ export async function discoverRouters(
       continue;
     }
 
-    const manifest = generateManifestFull(
+    const manifest = await generateManifestFull(
       router.urlpatterns,
       routerMountIndex,
       {
@@ -380,6 +380,33 @@ export async function discoverRouters(
   state.perRouterPrecomputedMap = newPerRouterPrecomputedMap;
   state.perRouterTrieMap = newPerRouterTrieMap;
   state.mergedRouteTrie = newMergedRouteTrie;
+
+  // Install the route tries into the RSC realm BEFORE prerender collection.
+  // matchForPrerender resolves each enumerated URL via findMatch, and without
+  // a trie findMatch silently falls back to the insertion-order regex matcher
+  // — a root `path("/*")` declared before a nested static route then wins the
+  // match, and the artifact bakes the CATCH-ALL page under `catchAll/<hash>`
+  // while runtime (trie-ranked: wildcard last) matches the real route and
+  // misses the manifest — wrong-content bake for plain Prerender routes, a
+  // guaranteed 404 once handler eviction runs. Dev never hits this because
+  // propagateDiscoveryState (router-discovery.ts) pushes the same setters on
+  // every discovery/HMR pass; configureServer early-returns in build mode, so
+  // collection was the one findMatch consumer running trieless. Mirrors the
+  // dev perRouterSetters loop; deliberately does NOT markRouterTrieAuthoritative
+  // so a genuine trie gap keeps the regex fallback, exactly as in dev.
+  if (serverMod.setRouteTrie && newMergedRouteTrie) {
+    serverMod.setRouteTrie(newMergedRouteTrie);
+  }
+  const perRouterSetters: Array<[Map<string, unknown>, string]> = [
+    [newPerRouterManifestDataMap, "setRouterManifest"],
+    [newPerRouterTrieMap, "setRouterTrie"],
+    [newPerRouterPrecomputedMap, "setRouterPrecomputedEntries"],
+  ];
+  for (const [map, fn] of perRouterSetters) {
+    const setter = serverMod[fn];
+    if (typeof setter !== "function") continue;
+    for (const [routerId, value] of map) setter(routerId, value);
+  }
 
   // Expand prerender routes and render static handlers (build mode only)
   await expandPrerenderRoutes(state, rscEnv, registry, allManifests);

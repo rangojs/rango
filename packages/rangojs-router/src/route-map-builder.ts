@@ -20,11 +20,25 @@ let cachedPrecomputedEntries: Array<{
 /**
  * Register routes into the global route map.
  * Routes are merged with any existing registered routes.
- * Called by createRouter() during module evaluation.
+ * Called by createRouter() during module evaluation, and by lazy-include
+ * expansion (src/router/lazy-includes.ts) with each expansion's route delta.
+ *
+ * Merges IN PLACE — O(|map|), not O(total routes). The previous
+ * `globalRouteMap = { ...globalRouteMap, ...map }` copy made every
+ * lazy-include first hit O(total routes) on the request path: with a 26k-route
+ * manifest the spread measured 8.9ms/call (M4, node), paid once per level of a
+ * nested async-include chain (3 calls on a 3-level chain — the 464ms edge
+ * cold-hit in issue #666).
+ *
+ * In-place mutation is safe because every getGlobalRouteMap() consumer reads
+ * it fresh per call (server/request-context.ts, rsc/loader-fetch.ts,
+ * router/intercept-resolution.ts, testing/generated-routes.ts,
+ * rsc/manifest-init.ts) — none memoizes the returned reference. If you add a
+ * consumer that caches the map object, it will now observe later
+ * registrations; snapshot it yourself if you need frozen contents.
  */
 export function registerRouteMap(map: Record<string, string>): void {
-  // Always merge with existing map (don't replace)
-  globalRouteMap = { ...globalRouteMap, ...map };
+  Object.assign(globalRouteMap, map);
 }
 
 /**
@@ -139,6 +153,7 @@ export function clearAllRouterData(): void {
   perRouterManifestMap.clear();
   perRouterTrieMap.clear();
   perRouterPrecomputedEntriesMap.clear();
+  authoritativeTrieRouters.clear();
 }
 
 export function setRouterManifest(
@@ -160,6 +175,23 @@ export function setRouterTrie(
   trie: import("./build/route-trie.js").TrieNode,
 ): void {
   perRouterTrieMap.set(routerId, trie);
+}
+
+// Routers whose trie came from the COMPLETE build manifest (deserialized via
+// ensureRouterManifest). For these, a trie miss is a real 404 and findMatch
+// skips the regex fallback scan — the only remaining route-count-proportional
+// match path (#664). Dev rebuilds (manifest-init.ts, router-discovery HMR
+// pushes) deliberately never mark authoritative: the dev-only trie-gap warning
+// in find-match.ts depends on the fallback running on misses, and dev route
+// churn (HMR, dev-time routes) makes a stale-trie 404 unacceptable there.
+const authoritativeTrieRouters: Set<string> = new Set();
+
+export function markRouterTrieAuthoritative(routerId: string): void {
+  authoritativeTrieRouters.add(routerId);
+}
+
+export function isRouterTrieAuthoritative(routerId: string): boolean {
+  return authoritativeTrieRouters.has(routerId);
 }
 
 export function getRouterTrie(
@@ -204,7 +236,12 @@ export async function ensureRouterManifest(routerId: string): Promise<void> {
   if (loader) {
     const mod = await loader();
     if (mod.manifest) perRouterManifestMap.set(routerId, mod.manifest);
-    if (mod.trie) perRouterTrieMap.set(routerId, mod.trie);
+    if (mod.trie) {
+      perRouterTrieMap.set(routerId, mod.trie);
+      // A trie serialized into the build manifest comes from complete
+      // discovery — misses are authoritative 404s (see find-match.ts).
+      markRouterTrieAuthoritative(routerId);
+    }
     if (mod.precomputedEntries)
       perRouterPrecomputedEntriesMap.set(routerId, mod.precomputedEntries);
     routerManifestLoaders.delete(routerId);

@@ -149,8 +149,11 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *              so they take precedence on `loading()` and other last-write-wins
    *              fields.
    */
-  parallel: <
-    TSlots extends Record<
+  // Not generic over the slots record: an inferred type parameter makes the
+  // object literal an inference site, which suppresses contextual typing of
+  // arrow slot handlers (`(ctx) => ...` was implicit any).
+  parallel: (
+    slots: Record<
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
@@ -159,8 +162,6 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
           use?: () => UseItems<ParallelUseItem>;
         }
     >,
-  >(
-    slots: TSlots,
     use?: () => UseItems<ParallelUseItem>,
   ) => ParallelItem;
   /**

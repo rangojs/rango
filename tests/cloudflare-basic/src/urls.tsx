@@ -1,6 +1,6 @@
-import { urls, updateTag, revalidateTag, Meta } from "@rangojs/router";
+import { urls, updateTag, revalidateTag, Meta, nonce } from "@rangojs/router";
 import { Suspense } from "react";
-import { Link } from "@rangojs/router/client";
+import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
@@ -15,6 +15,34 @@ import { HomePage } from "./pages/home.js";
 import { AboutPage } from "./pages/about.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
+import {
+  PprShellLayout,
+  PprShellPricePage,
+  PprShellStreamPage,
+  PprShellSettledPage,
+  PprTrapChromeLayout,
+  PprBareHomePage,
+  PprSlotChromeLayout,
+  PprSlotHomePage,
+  PprExecLayout,
+  PprExecBadgeSlot,
+  PprExecPage,
+  PprPrerenderedArticle,
+  PprPrerenderedEvictArticle,
+  PprPrerenderSeqSlot,
+} from "./pages/ppr-shell.js";
+import { PprShellBadge } from "./components/PprShellBadge.js";
+import {
+  PprShellPriceLoader,
+  PprShellStreamLoader,
+  PprShellSettledLoader,
+  PprShellExecLoader,
+  pprExecCounters,
+  PprPrerenderSeqLoader,
+  PprChromeLoader,
+  PprBadgeLoader,
+} from "./loaders/ppr-shell.js";
+import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
@@ -46,7 +74,6 @@ import {
   InlineDocsPage,
   InlinePricingPage,
 } from "./pages/inline.js";
-import { articlesPatterns } from "./pages/articles.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -352,6 +379,273 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        // PPR shell caching (docs/design/ppr-shell-resume.md). Opt-in per PAGE
+        // ROUTE via the `ppr` path option — serving is integral to the router
+        // (no middleware); the shell store is the app CFCacheStore (KV-backed
+        // getShell/putShell) from createRouter({ cache }).
+        // Shell = PprShellLayout (static text + counter + handle reads + the
+        // physics fallback); STRUCTURAL hole = the price route behind loading()
+        // (LoaderBoundary is the Suspense boundary capture postpones at);
+        // PHYSICS hole = the pending handler promise under PprShellPhysicsValue's
+        // own Suspense. A loader route without loading() awaits its loader at
+        // tree-build and can never produce a shell — the /ppr-shell/no-hole
+        // negative below. See pages/ppr-shell.tsx.
+        layout(PprShellLayout, () => [
+          path(
+            "/ppr-shell",
+            PprShellPricePage,
+            { name: "pprShell", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-price-fallback">Loading price...</div>,
+              ),
+            ],
+          ),
+          // Loader-carried promise WITH loading(): the loading() boundary is the
+          // hole. On a HIT the resume streams three layers in one body — cached
+          // shell, then the outer loader value + the inner Suspense fallback,
+          // then the nested-promise inner value + $RC.
+          path(
+            "/ppr-shell/stream",
+            PprShellStreamPage,
+            { name: "pprShellStream", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprShellStreamLoader),
+              loading(
+                <div data-testid="ppr-stream-fallback">Loading stream...</div>,
+              ),
+            ],
+          ),
+          // Same loader/component, ppr DECLARED, but NO loading(): the
+          // loading-less branch awaits loader data at tree-build, so capture's
+          // masked loader pins the tree and the sanity gate refuses —
+          // x-rango-shell stays MISS forever. The nested inner promise still
+          // streams under axis 1 (no loading() degrades only the caching, never
+          // the route).
+          path(
+            "/ppr-shell/no-hole",
+            PprShellStreamPage,
+            { name: "pprShellNoHole", ppr: true },
+            () => [loader(PprShellStreamLoader)],
+          ),
+          // Settled-marker regression (storefront PDP #438): bake-lane loader
+          // whose nested promise is already resolved at container return —
+          // the snapshot pins its value; the HIT overlay must rehydrate a
+          // Promise for use().
+          path(
+            "/ppr-shell/settled",
+            PprShellSettledPage,
+            { name: "pprShellSettled", ppr: true },
+            () => [loader(PprShellSettledLoader)],
+          ),
+        ]),
+        // Shell fast-path execution matrix (docs/design/shell-fast-path.md):
+        // middleware + layout + parallel + path + loader counters, asserted
+        // layer-by-layer across consecutive HITs on workerd/KV. The middleware
+        // is scoped to this subtree so its counter isolates the fixture.
+        middleware(
+          async (_ctx, next) => {
+            pprExecCounters.middleware += 1;
+            return next();
+          },
+          () => [
+            layout(PprExecLayout, () => [
+              parallel({
+                "@pprExecBadge": {
+                  handler: PprExecBadgeSlot,
+                },
+              }),
+              path(
+                "/ppr-shell/exec-matrix",
+                PprExecPage,
+                { name: "pprShellExecMatrix", ppr: { ttl: 300, swr: 120 } },
+                () => [
+                  loader(PprShellExecLoader),
+                  loading(
+                    <div data-testid="ppr-exec-fallback">
+                      Loading exec matrix...
+                    </div>,
+                  ),
+                ],
+              ),
+            ]),
+          ],
+        ),
+        // Prerender + ppr composition (docs/design/shell-fast-path.md):
+        // build-time segments are the frozen prelude; the slot-owned loader
+        // is the badge-sized streaming hole. See pages/ppr-shell.tsx.
+        path(
+          "/ppr-shell/prerendered/:slug",
+          PprPrerenderedArticle,
+          { name: "pprShellPrerendered", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            parallel({
+              "@ppSeq": {
+                handler: PprPrerenderSeqSlot,
+                use: () => [
+                  loader(PprPrerenderSeqLoader),
+                  loading(
+                    <span data-testid="ppr-pp-seq-fallback">
+                      Loading pp seq...
+                    </span>,
+                  ),
+                ],
+              },
+            }),
+          ],
+        ),
+        // Build-shell eviction fixture (#699): its own route + tag so the
+        // eviction e2e's updateTag cannot blast the sibling prerendered
+        // entries (baked manifest entries are immutable — eviction is a tag
+        // MARKER comparison in the store, not a deletion).
+        path(
+          "/ppr-shell/prerendered-evict/:slug",
+          PprPrerenderedEvictArticle,
+          {
+            name: "pprShellPrerenderedEvict",
+            ppr: { ttl: 300, swr: 120, tags: ["ppr-pp-evict-shell"] },
+          },
+          () => [
+            parallel({
+              "@ppSeq": {
+                handler: PprPrerenderSeqSlot,
+                use: () => [
+                  loader(PprPrerenderSeqLoader),
+                  loading(
+                    <span data-testid="ppr-pp-seq-fallback">
+                      Loading pp seq...
+                    </span>,
+                  ),
+                ],
+              },
+            }),
+          ],
+        ),
+        // LAYOUT-LOADER shapes (the storefront): the layout registers a
+        // loader with NO loading() on the LAYOUT — the BAKE lane
+        // (docs/design/loader-container-bake.md). PprChromeLoader executes at
+        // capture, its container bakes (snapshot-pinned on HITs), and both
+        // children HIT; the loader child keeps its price hole on the LIVE
+        // lane behind loading(). See pages/ppr-shell.tsx.
+        layout(PprTrapChromeLayout, () => [
+          loader(PprChromeLoader),
+          path(
+            "/ppr-shell/layout-loader",
+            PprShellPricePage,
+            { name: "pprShellLayoutLoader", ppr: true },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-trap-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+          // The literal storefront-homepage shape: a BARE ppr route (no
+          // loader, no loading(), no use list at all) under the
+          // loader-registering layout.
+          path("/ppr-shell/layout-loader-bare", PprBareHomePage, {
+            name: "pprShellLayoutLoaderBare",
+            ppr: true,
+          }),
+        ]),
+        // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"):
+        // the same chrome data owned by a @badge parallel slot with its OWN
+        // loading() — a badge-sized GUARANTEED-fresh hole (the bake lane
+        // would pin the value for the shell's lifetime). Chrome + static page
+        // bake; the route needs no loader or loading() of its own.
+        layout(PprSlotChromeLayout, () => [
+          parallel({
+            "@badge": {
+              handler: () => <PprShellBadge loader={PprBadgeLoader} />,
+              use: () => [
+                loader(PprBadgeLoader),
+                loading(
+                  <span data-testid="ppr-badge-fallback">
+                    badge pending...
+                  </span>,
+                ),
+              ],
+            },
+          }),
+          path("/ppr-shell/slot-hole", PprSlotHomePage, {
+            name: "pprShellSlotHole",
+            ppr: true,
+          }),
+        ]),
+        // Capture-data-snapshot DRIFT route: the shell bakes a value from a
+        // short-ttl cache() (getPprDriftStamp, "drift" profile, ttl 2s); the
+        // shell's own ttl is 300. After the inner ttl expires, a HIT must still
+        // show the CAPTURE-time stamp (seeded from the snapshot) — byte parity
+        // with the frozen prelude — while the price loader hole stays live. See
+        // docs/design/ppr-shell-resume.md ("the capture data snapshot").
+        layout(PprDriftLayout, () => [
+          path(
+            "/ppr-drift",
+            PprDriftPricePage,
+            { name: "pprDrift", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-drift-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+        ]),
+        // Per-request nonce via the `nonce` ContextVar TOKEN in route middleware
+        // (issue #656). A shell is shared per host+URL, so baking one request's
+        // nonce into it would break CSP for every other visitor. A ppr route with
+        // an active per-request nonce — provider OR token — must stay on axis 1
+        // (no PPR participation, no x-rango-shell header) with a once-per-key
+        // worker warning. The commit-point gate reads the token AFTER the route
+        // middleware runs; before the fix it saw only the provider-threaded nonce
+        // and this route wrongly entered capture, freezing one nonce for all. The
+        // layout reads ctx.get(nonce) into the SHELL region (above the loading()
+        // hole) so each MISS carries a DISTINCT nonce. Middleware is scoped to THIS
+        // subtree, not global, so it gates only this route and leaves the other
+        // ppr fixtures capturable.
+        middleware(
+          async (ctx, next) => {
+            ctx.set(nonce, crypto.randomUUID());
+            return next();
+          },
+          () => [
+            layout(
+              (ctx) => {
+                const requestNonce = ctx.get(nonce);
+                return (
+                  <main data-testid="ppr-nonce-page">
+                    <h1 data-testid="ppr-nonce-header">PPR Nonce Demo</h1>
+                    <span
+                      data-testid="ppr-nonce-value"
+                      data-nonce={requestNonce ?? "(none)"}
+                    />
+                    <Outlet />
+                  </main>
+                );
+              },
+              () => [
+                path(
+                  "/ppr-nonce",
+                  PprShellPricePage,
+                  { name: "pprNonce", ppr: { ttl: 300, swr: 120 } },
+                  () => [
+                    loader(PprShellPriceLoader),
+                    loading(
+                      <div data-testid="ppr-nonce-price-fallback">
+                        Loading price...
+                      </div>,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
         // Orphan fetchable loader: loader reachable only via a client import,
         // never registered with loader(), never imported by the worker entry.
         path("/orphan-fetch", () => <OrphanFetchTest />, {
@@ -379,7 +673,29 @@ export const urlpatterns = urls(
           () => [loading(<FeatureLoading />), transition()],
         ),
 
-        // Blog routes with sidebar
+        // #642 regression guard: a NAME-LESS 3-arg children-fn route
+        // (path(pattern, component, () => [...]) with no { name } options).
+        // Before the ExtractRoutes widened-name fix, this form let TName infer
+        // to the bare `string` constraint, emitting an index signature that
+        // collapsed the ENTIRE app route map: this app registers
+        // `RegisteredRoutes extends typeof router.routeMap`, so Rango.Path
+        // became `never` and every href()/Link.to in the app failed to
+        // typecheck. Kept unnamed on purpose; its presence keeps this app's
+        // `pnpm typecheck` an end-to-end guard. Reachable by URL only.
+        path(
+          "/unnamed-children-fn",
+          () => (
+            <div data-testid="unnamed-children-fn-route">
+              unnamed children-fn route works
+            </div>
+          ),
+          () => [loading(<FeatureLoading />)],
+        ),
+
+        // Blog routes with sidebar. Deliberately NOT ppr'd: keeping /blog on
+        // axis 1 keeps the classic blog-cache suite (sidebar-preserve, index
+        // render, document-cache interplay) isolated from any PPR capture
+        // interference. The PPR'd twin of this exact shape is /ppr-blog below.
         layout(BlogLayout, () => [
           parallel({ "@sidebar": BlogSidebarHandler }, () => [
             loader(BlogSidebarLoader, () => [cache()]),
@@ -388,14 +704,43 @@ export const urlpatterns = urls(
 
           cache({ ttl: 60, swr: 300 }, () => [
             middleware((ctx, next) => {
-              ctx.header(
-                "Cache-Control",
-                "s-maxage=60, stale-while-revalidate=300",
-              );
+              // ctx.header(
+              //   "Cache-Control",
+              //   "s-maxage=60, stale-while-revalidate=300",
+              // );
               return next();
             }),
-            path("/blog", BlogIndexPage, { name: "blog" }),
-            path("/blog/:slug", BlogPostPage, { name: "blogPost" }),
+            path("/blog", BlogIndexPage, {
+              name: "blog",
+            }),
+            path("/blog/:slug", BlogPostPage, {
+              name: "blogPost",
+            }),
+          ]),
+        ]),
+
+        // PPR'd DUPLICATE of the blog: the realistic PPR shape (sidebar
+        // parallel, ring-3 cache() segment with a rendered timestamp) under the
+        // SAME components/loaders as /blog, but with the `ppr` path option. The
+        // capture data snapshot pins the ring-3 content so a HIT hydrates
+        // cleanly even after the ttl-60 refresh; /blog itself stays non-ppr so
+        // the classic blog-cache suite is isolated from capture interference.
+        // See docs/design/ppr-shell-resume.md ("the capture data snapshot").
+        layout(BlogLayout, () => [
+          parallel({ "@sidebar": BlogSidebarHandler }, () => [
+            loader(BlogSidebarLoader, () => [cache()]),
+            loading(<SidebarSkeleton />),
+          ]),
+
+          cache({ ttl: 60, swr: 300 }, () => [
+            path("/ppr-blog", BlogIndexPage, {
+              name: "pprBlog",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+            path("/ppr-blog/:slug", BlogPostPage, {
+              name: "pprBlogPost",
+              ppr: { ttl: 300, swr: 120 },
+            }),
           ]),
         ]),
 
@@ -572,7 +917,9 @@ export const urlpatterns = urls(
         path("/inline/docs", InlineDocsPage, { name: "inlineDocs" }),
         path("/inline/pricing", InlinePricingPage, { name: "inlinePricing" }),
         // Pre-rendered articles (static content, build-time rendering)
-        include("/articles", articlesPatterns, { name: "articles" }),
+        include("/articles", () => import("./pages/articles.js"), {
+          name: "articles",
+        }),
 
         // Client useReverse() coverage on the Cloudflare preset
         include("/cr/:tenantId", clientReversePatterns, { name: "cr" }),

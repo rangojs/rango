@@ -82,16 +82,25 @@ export interface TracePhaseToggles {
 }
 
 /**
+ * The option pair shared by every tracing factory (enabled master switch +
+ * per-phase span toggles). Extended by OTelTracingOptions,
+ * CloudflareTracingOptions, VercelTracingOptions, and RouterTracingConfig so
+ * a phase added to TracePhaseToggles propagates everywhere from one place.
+ */
+export interface TracingToggleOptions {
+  /** Master switch. Defaults to true. */
+  enabled?: boolean;
+  /** Per-phase span toggles. Omitted phases default to enabled. */
+  spans?: TracePhaseToggles;
+}
+
+/**
  * Value passed to `createRouter({ tracing })`. Produced by a platform factory
  * such as `createCloudflareTracing()`.
  */
-export interface RouterTracingConfig {
+export interface RouterTracingConfig extends TracingToggleOptions {
   /** Platform span runner. */
   runner: SpanRunner;
-  /** Master switch. Defaults to true when a config object is provided. */
-  enabled?: boolean;
-  /** Per-phase span toggles. */
-  spans?: TracePhaseToggles;
 }
 
 /**

@@ -1,6 +1,6 @@
 ---
 name: response-routes
-description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses
+description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.
 argument-hint: [json|text|html|xml|md|image|stream]
 ---
 
@@ -417,6 +417,20 @@ export const urlpatterns = urls(({ path, include }) => [
   include("/blog", blogPatterns, { name: "blog" }),
 ]);
 ```
+
+A heavy module like this is a good code-split candidate. Pass an async provider
+and the module — its handlers, response serializers, and any nested
+`include()`s — loads on the first request under the prefix instead of at startup:
+
+```typescript
+// blog/urls.tsx: `export default blogPatterns`
+include("/blog", () => import("./blog/urls"), { name: "blog" }),
+```
+
+Named routes and response types still resolve through the split: `TRoutes` and
+the `_responses` phantom are inferred from the resolved `urls()` value, so
+`Rango.PathResponse<"/blog/api/stats">` and `ctx.reverse` are unchanged. See
+`/composability`.
 
 ### Type safety after mounting
 

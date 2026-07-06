@@ -1,14 +1,21 @@
+# Hook commands call binaries DIRECTLY (./node_modules/.bin/*, node tools/*),
+# never through pnpm: `pnpm exec`/`pnpm run` trigger verifyDepsBeforeRun -> a
+# full `pnpm install` per job, and with `parallel: true` two installs race each
+# other AND any install in a parallel working copy for the shared store lock —
+# observed hanging commits indefinitely. Dependency sync belongs to the
+# post-merge install job alone; if a binary is missing here, the loud ENOENT
+# is the correct failure.
 pre-commit:
   parallel: true
   jobs:
     - name: format
-      run: pnpm exec oxfmt {staged_files}
+      run: ./node_modules/.bin/oxfmt {staged_files}
       stage_fixed: true
       glob: "*.{ts,tsx,js,jsx,json,css}"
       exclude:
         - "*.gen.ts"
     - name: lint
-      run: pnpm -w run lint
+      run: ./node_modules/.bin/oxlint --deny-warnings
       glob: "*.{ts,tsx,js,jsx}"
     - name: e2e-bucketing
       run: node tools/check-e2e-bucketing.mjs
@@ -16,6 +23,17 @@ pre-commit:
     - name: doc-links
       run: node tools/check-doc-links.mjs
       glob: "packages/rangojs-router/docs/internal/feature-*map.md"
+    - name: skills
+      run: node tools/check-skills.mjs
+      glob: "packages/rangojs-router/skills/**"
+    - name: skills-catalog
+      run: node tools/generate-skills-catalog.mjs --check
+      glob: "packages/rangojs-router/skills/**"
+    - name: docs-api
+      run: node tools/check-docs-api.mjs
+      glob:
+        - "packages/rangojs-router/README.md"
+        - "packages/rangojs-router/docs/why-rango.md"
 
 post-merge:
   jobs:

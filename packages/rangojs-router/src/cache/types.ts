@@ -137,6 +137,39 @@ export interface SegmentCacheStore<TEnv = unknown> {
   ): Promise<void>;
 
   /**
+   * Get a cached PPR shell entry by key.
+   * Returns the stored prelude/postponed pair (see ShellCacheEntry) and whether
+   * it should be revalidated (SWR). Used by the shell-cache middleware to serve
+   * a cached HTML shell and resume fizz for just the live holes.
+   *
+   * Optional: a store that does not implement the shell family disables the
+   * shell-cache middleware (it fails open to the normal HTML render path).
+   */
+  getShell?(
+    key: string,
+  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
+
+  /**
+   * Store a PPR shell entry with TTL and optional SWR window.
+   * The prelude bytes and postponed state are version- and generation-coupled
+   * and travel together in a single entry (they must never mix across a React
+   * upgrade — the reactVersion field on the entry gates that at read time).
+   * @param key - Cache key
+   * @param entry - The shell prelude/postponed/version/createdAt bundle
+   * @param ttlSeconds - Time-to-live in seconds
+   * @param swrSeconds - Optional stale-while-revalidate window in seconds
+   * @param tags - Optional cache tags for invalidation (participates in
+   *   invalidateTags via the same tag machinery as the item family)
+   */
+  putShell?(
+    key: string,
+    entry: ShellCacheEntry,
+    ttlSeconds?: number,
+    swrSeconds?: number,
+    tags?: string[],
+  ): Promise<void>;
+
+  /**
    * Get a cached function result by key.
    * Returns the serialized value, optional handle data, and staleness flag.
    */
@@ -163,6 +196,20 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param tags - The cache tags to invalidate
    */
   invalidateTags?(tags: string[]): Promise<void>;
+
+  /**
+   * True when ANY of `tags` was invalidated (invalidateTags/updateTag) at or
+   * after `sinceMs` (>= so a same-millisecond invalidation wins, favouring
+   * freshness). Consulted by the build-time shell read-through
+   * (rsc/shell-build-manifest.ts): a baked shell entry is immutable in the
+   * build manifest, so "was it evicted" is answered by the store's tag
+   * markers against the entry's createdAt rather than by deleting anything.
+   * Optional: without it, TAGGED build entries are not served (untagged ones
+   * are unaffected — they are evictable only by deploy/buildVersion anyway).
+   * Fail open to `false` on marker-read errors: a transient store fault must
+   * degrade to "still valid", the same posture as the envelope tag checks.
+   */
+  isTagsInvalidatedSince?(tags: string[], sinceMs: number): Promise<boolean>;
 }
 
 /**
@@ -184,6 +231,144 @@ export interface CacheItemResult {
    * re-run, so its runtime tags are only available here, not from re-execution.
    */
   tags?: string[];
+}
+
+/**
+ * A cached PPR (Partial Pre-rendering) shell entry.
+ *
+ * One entry carries BOTH artifacts a resume needs — the rendered HTML prelude
+ * and React's postponed state — because the pair is version- and
+ * generation-coupled and must never be mixed across a React upgrade or a build
+ * change. The reactVersion and buildVersion fields are the read-time gates that
+ * enforce both halves: isValidShellHit (rsc/shell-serve.ts) treats an entry
+ * whose reactVersion differs from the running React, or whose buildVersion
+ * differs from the running build, as a miss (the postponed blob encodes hole
+ * positions against one exact tree; resuming it against a different React or a
+ * different app build tree-mismatches inside resume(), AFTER the 200 + prelude
+ * are committed — an unrecoverable broken serve).
+ */
+export interface ShellCacheEntry {
+  /** Rendered HTML prelude bytes, base64-encoded (stores are JSON-serializing). */
+  prelude: string;
+  /**
+   * JSON.stringify of React's postponed state, or null when the shell settled
+   * with no holes (the DATA variant — served without a fizz resume).
+   */
+  postponed: string | null;
+  /** React.version captured at prerender time; the read-time invalidation gate. */
+  reactVersion: string;
+  /**
+   * Build version captured at prerender time (the RSC handler's `version` —
+   * the `@rangojs/router:version` build stamp by default, bumped per build and
+   * on dev RSC-module edits). The second read-time gate: a persistent shared
+   * store (KV/runtime-cache) survives deploys, and an app-code change that
+   * keeps the same React version would otherwise leave a stale-build
+   * prelude+postponed live under the same key. Optional only for entries
+   * stored before the field existed — those are treated as a miss and the
+   * recapture re-stamps them (pre-release, no compat shim).
+   */
+  buildVersion?: string;
+  /**
+   * The initialTheme the CAPTURE render was built with (the derived context's
+   * reqCtx.theme). The resume tail must render ThemeProvider with the SAME
+   * initialTheme the frozen prelude was rendered with: React resume requires the
+   * tree above the holes to match the prerendered tree, and initialTheme is
+   * per-request METADATA, not part of the cached segments — a visitor whose
+   * theme differs from the capturer's would otherwise produce a divergent resume
+   * tree (broken stitching/hydration). The visitor's real theme is applied
+   * pre-paint by the FOUC script and re-synced from the cookie post-mount by
+   * ThemeProvider.
+   */
+  initialTheme?: string;
+  /**
+   * The CAPTURE DATA SNAPSHOT: every cache-store read-hit and write the capture
+   * render performed, in stored/serialized form. Replaying these on a HIT (via
+   * the SeededShellStore overlay, for the tail render only) reproduces the
+   * shell's cached content byte-identically, so the freshly rendered hydration
+   * payload matches the frozen prelude even after the underlying cache entries
+   * have drifted (expired, been recomputed, or been tag-invalidated).
+   *
+   * Optional: an entry captured before this field existed simply has no
+   * snapshot and keeps the pre-snapshot behavior (the tail reads live, so any
+   * shell-baked cached value that drifted mismatches the prelude). Recapture
+   * heals it. See docs/design/ppr-shell-resume.md ("the capture data snapshot").
+   */
+  snapshot?: ShellSnapshotRecord[];
+  /**
+   * True when the capture's HANDLER layer declared per-request liveness: a
+   * handle pushed OUTSIDE a DSL loader scope carried a nested thenable (the
+   * capture mask turns it into a never-filling hole), such a push was still
+   * pending when the entry was written, or a handler-invoked loader
+   * (ctx.use(loader) from a handler body — the consumption lane, #672)
+   * executed during the capture. The serve tail then must NOT take the
+   * handler-free fast path (the implicit doc-cache hit): only a handler
+   * re-run can mint that hole's live promise or refresh that consumed value.
+   * DSL-loader pushes never set this — loaders re-run fresh on every HIT, so
+   * their holes always fill.
+   */
+  handlerLiveHoles?: boolean;
+  /** Epoch ms when the shell was captured. */
+  createdAt: number;
+}
+
+/**
+ * The families a shell snapshot pins. The item/segment/response families are
+ * cache-store reads/writes (recorded by RecordingShellStore); the loader family
+ * pins the settled CONTAINER of a bake-lane loader (a loader on an entry with
+ * no renderable loading(), executed during capture — see
+ * docs/design/loader-container-bake.md). Excludes the shell family itself
+ * (getShell/putShell) — the snapshot rides INSIDE a shell entry, so recording
+ * it would be self-referential.
+ */
+export type ShellSnapshotFamily = "item" | "segment" | "response" | "loader";
+
+/**
+ * The stored form of a loader-family snapshot value: the bake-lane loader's
+ * settled container, Flight-serialized AFTER eliding every still-pending nested
+ * promise to a hole marker (the marker paths are holes, not shell material; on
+ * a HIT the overlay re-slots the fresh run's promises there). Flight (not JSON)
+ * so typed values (Date/Map) survive the round trip.
+ */
+export interface ShellSnapshotLoaderValue {
+  /** RSC-serialized elided container (see loader-snapshot.ts). */
+  value: string;
+}
+
+/** A serialized cached Response for the response family of a shell snapshot. */
+export interface ShellSnapshotResponseValue {
+  status: number;
+  /** Client-facing header pairs (per-client signal headers excluded at record). */
+  headers: [string, string][];
+  /** base64-encoded response body (binary-safe, JSON-serializable). */
+  body: string;
+}
+
+/** The stored form of an item-family (use cache / loader cache) snapshot value. */
+export interface ShellSnapshotItemValue {
+  /** RSC-serialized return value. */
+  value: string;
+  /** RSC-encoded handle data, if any. */
+  handles?: string;
+  /** The entry's cache tags. */
+  tags?: string[];
+}
+
+/**
+ * One recorded cache-store read-hit or write from the capture render. `value`
+ * carries the entry in its stored/serialized shape so it round-trips through a
+ * JSON-serializing store (KV, CF, Vercel) with the rest of the ShellCacheEntry:
+ * - `item`    -> {@link ShellSnapshotItemValue}
+ * - `segment` -> {@link CachedEntryData} (already JSON-able)
+ * - `response`-> {@link ShellSnapshotResponseValue}
+ */
+export interface ShellSnapshotRecord {
+  family: ShellSnapshotFamily;
+  key: string;
+  value:
+    | ShellSnapshotItemValue
+    | CachedEntryData
+    | ShellSnapshotResponseValue
+    | ShellSnapshotLoaderValue;
 }
 
 /**

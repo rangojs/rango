@@ -12,6 +12,7 @@
     "test-results/",
     ".turbo/",
     "pnpm-lock.yaml",
+    "apps/docs/src/content.gen.ts",
     "tests/vite-rsc-demo/src/thinking.js",
     "tests/cloudflare-stress-demo/benchmark.ts"
   ]

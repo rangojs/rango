@@ -1,5 +1,9 @@
 # Testing surface — high-level API overview
 
+> Point-in-time review snapshot — not maintained. Findings may be fixed,
+> stale, or reference paths from the checkout the review ran in. Do not
+> action items from this document without re-verifying against current src.
+
 > Internal reference. Produced by the 2026-06-13 multi-agent review of the
 > `@rangojs/router/testing` surface (PR #533). Keep in sync with the six
 > testing entries + `@rangojs/router/host/testing` and the `skills/testing/`

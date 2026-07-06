@@ -463,6 +463,42 @@ describe("createReverse", () => {
     ).toBe("/product/shoes/42");
   });
 
+  // Named catch-all reverse (issue #634): unlike a normal `:slug` (which encodes
+  // "/" to %2F, see below), a catch-all value is multi-segment — the separators
+  // are preserved and only each segment is percent-encoded.
+  it("catch-all :name* preserves separators across a multi-segment value", () => {
+    const r = createReverse({ docs: "/docs/:slug*" });
+    expect(r("docs" as any, { slug: "a/b/c" })).toBe("/docs/a/b/c");
+  });
+
+  it("catch-all :name+ preserves separators and strips the modifier", () => {
+    const r = createReverse({ files: "/files/:path+" });
+    expect(r("files" as any, { path: "a/b" })).toBe("/files/a/b");
+  });
+
+  it("catch-all :name* with an absent value collapses to the prefix", () => {
+    const r = createReverse({ docs: "/docs/:slug*" });
+    expect(r("docs" as any, {} as any)).toBe("/docs");
+  });
+
+  it("catch-all :name+ with an absent value throws (one-or-more)", () => {
+    const r = createReverse({ files: "/files/:path+" });
+    expect(() => r("files" as any, {} as any)).toThrow(/Missing param/);
+  });
+
+  it("catch-all encodes each segment but not the separators", () => {
+    const r = createReverse({ docs: "/docs/:slug*" });
+    expect(r("docs" as any, { slug: "a b/c?d" })).toBe("/docs/a%20b/c%3Fd");
+  });
+
+  // Review F2: a substituted value must never be re-scanned as if it contained
+  // more `:name` placeholders. A catch-all value with a colon segment used to
+  // make a later pass read `:abc` and throw "Missing param".
+  it("does not re-scan a catch-all value containing a colon", () => {
+    const r = createReverse({ files: "/files/:path+" });
+    expect(r("files" as any, { path: "sha:abc/x" })).toBe("/files/sha:abc/x");
+  });
+
   it("encodes characters that are unsafe in a path segment", () => {
     // Space, /, ?, #, %, non-ASCII must be encoded or the URL becomes
     // ambiguous / invalid.

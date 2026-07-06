@@ -6,7 +6,7 @@ import {
 } from "./merge-segment-loaders.js";
 import { assertSegmentStructure } from "./segment-structure-assert.js";
 import { splitInterceptSegments } from "./intercept-utils.js";
-import { debugLog } from "./logging.js";
+import { debugLog, IS_BROWSER_DEBUG } from "./logging.js";
 
 /**
  * Determines the merging behavior for segment reconciliation.
@@ -87,15 +87,17 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
   input.cachedSegments.forEach((s) => cachedSegments.set(s.id, s));
 
   const diffSet = new Set(diff);
-  debugLog(
-    `[reconcile] actor=${actor}, matched=${matched.length}, diff=${diff.length}`,
-  );
-  debugLog(
-    `[reconcile] server segments: ${[...serverSegments.keys()].join(", ")}`,
-  );
-  debugLog(
-    `[reconcile] cached segments: ${[...cachedSegments.keys()].join(", ")}`,
-  );
+  if (IS_BROWSER_DEBUG) {
+    debugLog(
+      `[reconcile] actor=${actor}, matched=${matched.length}, diff=${diff.length}`,
+    );
+    debugLog(
+      `[reconcile] server segments: ${[...serverSegments.keys()].join(", ")}`,
+    );
+    debugLog(
+      `[reconcile] cached segments: ${[...cachedSegments.keys()].join(", ")}`,
+    );
+  }
 
   const segments = matched
     .map((segId: string) => {
@@ -106,9 +108,11 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
         const inDiff = diffSet.has(segId);
         // Merge partial loader data when server returns fewer loaders than cached
         if (shouldMergeLoaders && needsLoaderMerge(fromServer, fromCache)) {
-          debugLog(
-            `[reconcile] ${segId}: MERGE loaders (server partial, ${inDiff ? "in diff" : "not in diff"})`,
-          );
+          if (IS_BROWSER_DEBUG) {
+            debugLog(
+              `[reconcile] ${segId}: MERGE loaders (server partial, ${inDiff ? "in diff" : "not in diff"})`,
+            );
+          }
           return mergeSegmentLoaders(fromServer, fromCache);
         }
 
@@ -159,14 +163,18 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           // above fails to preserve a value it should have.
           assertSegmentStructure(fromCache, merged, context);
 
-          debugLog(
-            `[reconcile] ${segId}: SERVER+CACHE merge (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, component=${fromServer.component === null ? "null→cached" : "server"})`,
-          );
+          if (IS_BROWSER_DEBUG) {
+            debugLog(
+              `[reconcile] ${segId}: SERVER+CACHE merge (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, component=${fromServer.component === null ? "null→cached" : "server"})`,
+            );
+          }
           return merged;
         }
-        debugLog(
-          `[reconcile] ${segId}: SERVER only (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, no cache entry)`,
-        );
+        if (IS_BROWSER_DEBUG) {
+          debugLog(
+            `[reconcile] ${segId}: SERVER only (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, no cache entry)`,
+          );
+        }
         return fromServer;
       }
 
@@ -180,9 +188,11 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
         return fromCache;
       }
 
-      debugLog(
-        `[reconcile] ${segId}: CACHE only (not from server, type=${fromCache.type}, component=${fromCache.component != null ? "yes" : "null"})`,
-      );
+      if (IS_BROWSER_DEBUG) {
+        debugLog(
+          `[reconcile] ${segId}: CACHE only (not from server, type=${fromCache.type}, component=${fromCache.component != null ? "yes" : "null"})`,
+        );
+      }
 
       // Return the cached segment as-is, regardless of actor. We used to clear
       // truthy `loading` here to prevent a stale Suspense fallback from

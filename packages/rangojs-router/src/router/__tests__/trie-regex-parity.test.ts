@@ -109,6 +109,33 @@ describe("trie vs regex matcher parity (stable surface)", () => {
       routes: { A: "/a/:s/b" },
       urls: ["/a//b", "/a/x/b"],
     },
+    {
+      // Named catch-all `:name+` (one-or-more): matches 1+ trailing segments,
+      // rejects the bare prefix. Both matchers agree on all three, including the
+      // null on "/docs" (regex `(.+)` needs a char; trie's one-or-more flag
+      // suppresses the empty-remainder terminal). Issue #634.
+      name: "named catch-all one-or-more",
+      routes: { "docs.any": "/docs/:slug+" },
+      urls: ["/docs/a", "/docs/a/b/c", "/docs"],
+    },
+    {
+      // Named catch-all `:name*` (zero-or-more). Review F6 aligned the regex
+      // fallback with the trie on the bare prefix, so "/blog" agrees too (both
+      // bind rest === "").
+      name: "named catch-all zero-or-more (incl. bare prefix)",
+      routes: { "blog.any": "/blog/:rest*" },
+      urls: ["/blog", "/blog/a", "/blog/a/b"],
+    },
+    {
+      // Bare `*` (zero-or-more, unnamed). Issue #636 aligned the regex fallback
+      // with the trie on the bare prefix — the same F6 shape #635 applied to
+      // `:name*`. "/files" now matches on BOTH matchers binding "*" === ""
+      // (previously the regex emitted a corrupt "/file" redirect — the old C1
+      // divergence, now removed from the documented-divergences block below).
+      name: "bare wildcard zero-or-more (incl. bare prefix)",
+      routes: { any: "/files/*" },
+      urls: ["/files", "/files/a", "/files/a/b"],
+    },
   ];
 
   for (const row of AGREEING) {
@@ -126,17 +153,10 @@ describe("trie vs regex matcher parity (stable surface)", () => {
   // The trie is canonical. These rows document where the regex fallback
   // intentionally differs so a future change to either matcher is noticed.
   describe("documented divergences (trie is canonical)", () => {
-    it("C1: trie matches the bare wildcard prefix; regex emits a corrupt redirect", () => {
-      const { trie, entries } = buildBoth({ any: "/files/*" });
-      // Trie (the live matcher) matches with an empty splat, no redirect.
-      expect(norm(tryTrieMatch(trie, "/files"))).toEqual({
-        routeKey: "any",
-        params: { "*": "" },
-        redirectTo: null,
-      });
-      // Regex fallback (never reached in normal operation) redirects to /file.
-      expect(norm(regex(entries, "/files"))?.redirectTo).toBe("/file");
-    });
+    // C1 (bare `*` regex emits a corrupt `/file` redirect on the bare prefix)
+    // was fixed in #636 — the regex fallback now matches the bare prefix binding
+    // "*" === "", the same as the trie. See the "bare wildcard zero-or-more
+    // (incl. bare prefix)" agreeing row above.
 
     it("M4: trie picks by specificity; regex by definition order", () => {
       // param declared BEFORE static.

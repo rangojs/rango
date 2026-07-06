@@ -20,7 +20,11 @@ import {
 } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
-import { debugLog, isBrowserDebugEnabled } from "./logging.js";
+import {
+  debugLog,
+  isBrowserDebugEnabled,
+  IS_BROWSER_DEBUG,
+} from "./logging.js";
 import {
   validateRedirectOrigin,
   validateExternalRedirect,
@@ -147,9 +151,11 @@ export function createPartialUpdater(
         currentCached.filter(isInterceptSegment).map((s) => s.id),
       );
       segments = currentSegments.filter((id) => !interceptIds.has(id));
-      debugLog(
-        `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
-      );
+      if (IS_BROWSER_DEBUG) {
+        debugLog(
+          `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
+        );
+      }
     } else {
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
@@ -159,12 +165,14 @@ export function createPartialUpdater(
         ? segmentState.currentUrl || tx.currentUrl
         : interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
 
-    debugLog(`\n[Browser] >>> NAVIGATION`);
-    debugLog(`[Browser] From: ${previousUrl}`);
-    debugLog(`[Browser] To: ${url}`);
-    debugLog(`[Browser] Segments to send: ${segments.join(", ")}`);
-    if (interceptSourceUrl) {
-      debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+    if (IS_BROWSER_DEBUG) {
+      debugLog(`\n[Browser] >>> NAVIGATION`);
+      debugLog(`[Browser] From: ${previousUrl}`);
+      debugLog(`[Browser] To: ${url}`);
+      debugLog(`[Browser] Segments to send: ${segments.join(", ")}`);
+      if (interceptSourceUrl) {
+        debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+      }
     }
 
     const targetCache =
@@ -173,9 +181,11 @@ export function createPartialUpdater(
         : undefined;
     const cachedSegs = targetCache ?? getCurrentCachedSegments();
     const cachedSegsSource = targetCache ? "history-cache" : "current-page";
-    debugLog(
-      `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
-    );
+    if (IS_BROWSER_DEBUG) {
+      debugLog(
+        `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
+      );
+    }
 
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
     fetchResult = await client.fetchPartial({
@@ -258,8 +268,10 @@ export function createPartialUpdater(
         return;
       }
 
-      debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
-      debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
+      if (IS_BROWSER_DEBUG) {
+        debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
+        debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
+      }
 
       if (!diff || diff.length === 0) {
         const matchedIds = matched || [];
@@ -383,6 +395,13 @@ export function createPartialUpdater(
           return;
         }
         if (mode.type === "action") {
+          // An action refetch that lands on missing segments (navigated away /
+          // consolidation / HMR) drops rather than refetch-all: the action flow
+          // is storeOnly / skipLoadingState, so a full refetch here would fight
+          // it. Keep the stale-but-consistent tree; log so the drop is visible.
+          debugLog(
+            `[Browser] Action refetch: ${missingCount} segments missing; dropping (stale-but-consistent tree kept).`,
+          );
           return;
         }
         console.warn(

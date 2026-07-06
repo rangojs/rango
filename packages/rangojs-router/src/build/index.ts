@@ -10,7 +10,9 @@
  * import { generateManifest } from "@rangojs/router/build";
  * import { urlpatterns } from "./urls";
  *
- * const manifest = generateManifest(urlpatterns);
+ * // Async: generateManifest awaits any async include() providers
+ * // (`() => import("./routes")`) so the split groups appear in the manifest.
+ * const manifest = await generateManifest(urlpatterns);
  * console.log(manifest.routeManifest); // { home: "/", about: "/about", ... }
  * ```
  */

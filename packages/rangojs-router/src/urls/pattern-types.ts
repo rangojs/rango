@@ -35,12 +35,48 @@ export type LocalOnlyInclude = string & { [LOCAL_ONLY_BRAND]: void };
 /**
  * Options for path() function
  */
+/**
+ * Options for the `ppr` path option (PPR shell caching — Axis 2, see
+ * docs/design/ppr-shell-resume.md and the /ppr skill). Declaring
+ * `ppr: true | PartialPrerenderProps` on a page route opts that DOCUMENT into
+ * shell capture: the rendered HTML shell (everything that is not a live hole) is
+ * cached and, on a later GET, flushed immediately while fizz resumes only the
+ * holes. Serving is integral to the router — there is no middleware to mount;
+ * the shell store is the app-level `createRouter({ cache })` store (which must
+ * implement the `getShell`/`putShell` family).
+ */
+export interface PartialPrerenderProps {
+  /**
+   * Shell time-to-live in seconds. Defaults to 300 (`ppr: true` uses the same
+   * default).
+   */
+  ttl?: number;
+  /**
+   * Stale-while-revalidate window in seconds: a stale shell is still served
+   * while a background recapture refreshes it.
+   */
+  swr?: number;
+  /**
+   * Operational tags attached to the captured shell entry for
+   * `updateTag()`/`revalidateTag()`-driven eviction. UNIONED with the tags the
+   * capture render auto-collects (the shell's own non-loader request tags).
+   */
+  tags?: string[];
+}
+
 export interface PathOptions<
   TName extends string = string,
   TSearch extends SearchSchema = {},
 > {
   /** Route name for href() lookups */
   name?: TName;
+  /**
+   * PPR shell caching opt-in for this page route (document-level). `true` uses
+   * the default policy (ttl 300); an object sets ttl/swr/tags. See
+   * {@link PartialPrerenderProps}. Routes without this option are pure axis 1 —
+   * no capture, no store reads, no logs.
+   */
+  ppr?: boolean | PartialPrerenderProps;
   /** Search param schema for typed query parameters */
   search?: TSearch;
   /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */

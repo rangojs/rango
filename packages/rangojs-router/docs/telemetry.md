@@ -116,6 +116,16 @@ store must exist when downstream phases (route matching, rendering, SSR)
 run so they can record their spans. Calling it after `next()` returns
 still emits `handler:total` but misses all upstream metrics.
 
+Offsets anchor to the true request entry. The handler-entry timestamp is threaded
+onto the request context, so a store created mid-request this way uses it — not
+the opt-in moment — as the timeline origin. A phase whose start predates the
+opt-in but is recorded once the store exists (for example a middleware `:pre`
+whose clock started before its handler called `ctx.debugPerformance()`) then
+reports its real, non-negative offset instead of clamping to `0ms`. A phase that
+ran to completion entirely before you opted in is still not captured at all — the
+store did not exist to record it (see the before-`next()` note above); the
+anchoring fixes offsets, not the missing upstream metrics.
+
 ### Server-Timing header
 
 When metrics are enabled, the response includes a `Server-Timing` header
@@ -124,6 +134,7 @@ with every phase encoded as a standard timing entry:
 ```
 Server-Timing: handler-nonce;dur=0.01,
   handler-mw-match;dur=0.03,
+  handler-manifest-cache;dur=0.02,
   handler-ctx-create;dur=0.12,
   handler-classify;dur=0.45,
   d1-middleware-auth-pre;dur=0.02,
@@ -141,9 +152,9 @@ Open Chrome DevTools > Network > click a request > Timing tab to see these
 as a waterfall. Nested metrics (like middleware) use a `d{depth}-` prefix.
 
 Bootstrap handler phases (`handler-nonce`, `handler-mw-match`,
-`handler-ctx-create`, `handler-classify`) are always emitted in the
-`Server-Timing` header, even without `debugPerformance`, to give a baseline
-view of handler overhead on every request.
+`handler-manifest-cache`, `handler-ctx-create`, `handler-classify`) are always
+emitted in the `Server-Timing` header, even without `debugPerformance`, to give
+a baseline view of handler overhead on every request.
 
 ### Early SSR setup
 
@@ -221,6 +232,7 @@ Phase **spans** always come from the `tracing` slot. Pick the factory by platfor
 | Platform                               | `tracing` slot              | Phase spans? |
 | -------------------------------------- | --------------------------- | ------------ |
 | Cloudflare Workers                     | `createCloudflareTracing()` | yes (native) |
+| Vercel Functions (Node runtime)        | `createVercelTracing()`     | yes (OTel)   |
 | Any platform with an OpenTelemetry SDK | `createOTelTracing(tracer)` | yes (OTel)   |
 | Node / anywhere, no tracing slot wired | _(unset)_                   | no           |
 
@@ -308,17 +320,19 @@ All events include a `timestamp` (from `performance.now()`) and an optional
 `requestId` extracted from request headers. The router checks
 `x-rsc-router-request-id`, `x-request-id`, and `cf-ray` (in that order).
 
-| Event                   | Lifecycle                                            |
-| ----------------------- | ---------------------------------------------------- |
-| `request.start`         | Emitted when a request enters the router             |
-| `request.end`           | Emitted when a request completes successfully        |
-| `request.error`         | Emitted when a request fails with an unhandled error |
-| `loader.start`          | Emitted when a loader begins execution               |
-| `loader.end`            | Emitted when a loader completes (success or failure) |
-| `loader.error`          | Emitted when a loader throws an error                |
-| `handler.error`         | Emitted on handler or segment render failure         |
-| `cache.decision`        | Emitted when a cache lookup result is determined     |
-| `revalidation.decision` | Emitted when a segment revalidation decision is made |
+| Event                     | Lifecycle                                             |
+| ------------------------- | ----------------------------------------------------- |
+| `request.start`           | Emitted when a request enters the router              |
+| `request.end`             | Emitted when a request completes successfully         |
+| `request.error`           | Emitted when a request fails with an unhandled error  |
+| `loader.start`            | Emitted when a loader begins execution                |
+| `loader.end`              | Emitted when a loader completes (success or failure)  |
+| `loader.error`            | Emitted when a loader throws an error                 |
+| `handler.error`           | Emitted on handler or segment render failure          |
+| `cache.decision`          | Emitted when a cache lookup result is determined      |
+| `revalidation.decision`   | Emitted when a segment revalidation decision is made  |
+| `request.timeout`         | Emitted when a configured phase deadline elapses      |
+| `request.origin-rejected` | Emitted when the cross-origin guard rejects a request |
 
 ### Request Events
 
@@ -341,6 +355,9 @@ All events include a `timestamp` (from `performance.now()`) and an optional
   durationMs: 15.2,
   segmentCount: 3,
   cacheHit: false,
+  status: 302,  // optional — present only when a Response ended the transaction
+                // (a thrown-Response short-circuit, or dispatch()'s final
+                // response); absent for a normal render completion
 }
 
 // request.error
@@ -354,6 +371,15 @@ All events include a `timestamp` (from `performance.now()`) and an optional
   durationMs: 2.1,
 }
 ```
+
+A thrown `Response` from middleware — a redirect or auth gate short-circuit —
+is completed control flow, not a failure. It emits `request.end` with
+`segmentCount: 0` (the same completed-request event the non-thrown redirect
+path emits) and `status` set to the thrown Response's status (e.g. `302`), never
+`request.error`, so auth redirects do not inflate error counts. `request.error`
+fires only for a genuine unhandled error. A normal render completion omits
+`status` (the Response is built after `match()`), so a sink can split 3xx
+short-circuits from 2xx completions on the field's presence.
 
 ### Loader Events
 
@@ -416,8 +442,19 @@ during segment resolution.
   hit: true,
   shouldRevalidate: false,
   source: "runtime" | "prerender",  // optional
+  segments: [                       // optional (CacheSegmentSignal[])
+    { id: "blog:post", type: "route", cacheStatus: "hit", shouldRevalidate: false },
+  ],
 }
 ```
+
+`segments` is present only when telemetry (or the dev-only `X-Rango-Cache`
+debug header) is enabled. In v1 the pipeline tracks cache decisions at the
+route/entry level, not per individual segment, so the array carries a single
+coarse route-level entry keyed by the route key — a `CacheSegmentSignal` whose
+`cacheStatus` (`CacheSegmentStatus`) is one of `"hit"`, `"miss"`, `"stale"`,
+`"prerendered"`, or `"passthrough"`. The shape is forward-compatible with
+genuine per-segment status if the pipeline later exposes it.
 
 ### Revalidation Decision Events
 
@@ -428,6 +465,44 @@ during segment resolution.
   pathname: "/blog/hello",
   routeKey: "blog:post",
   shouldRevalidate: true,
+}
+```
+
+### Request Timeout Events
+
+Emitted when a configured phase deadline elapses (see `RouterTimeouts`). The
+`phase` is the `TimeoutPhase` whose budget was exceeded (`"action"`,
+`"render-start"`, or `"stream-idle"`). `customHandler` reflects whether an
+`onTimeout` handler was configured — `false` means the router served the
+default timeout response.
+
+```typescript
+{
+  type: "request.timeout",
+  phase: "stream-idle",   // TimeoutPhase: "action" | "render-start" | "stream-idle"
+  pathname: "/blog/hello",
+  routeKey: "blog:post",  // optional
+  actionId: "submit",     // optional (present for action-phase timeouts)
+  durationMs: 5000,
+  customHandler: false,   // whether onTimeout was configured
+}
+```
+
+### Origin-Rejected Events
+
+Emitted when the cross-origin guard rejects a state-changing request before it
+runs. The `phase` is the `OriginCheckPhase` the request was classified as
+(`"action"`, `"loader"`, or `"pe-form"`). `origin` and `host` are the compared
+header values (either may be `null` when the header is absent).
+
+```typescript
+{
+  type: "request.origin-rejected",
+  method: "POST",
+  pathname: "/api/submit",
+  phase: "action",        // OriginCheckPhase: "action" | "loader" | "pe-form"
+  origin: "https://evil.example",  // or null when absent
+  host: "myapp.example",           // or null when absent
 }
 ```
 
@@ -585,6 +660,71 @@ come from the `tracing` slot (`createOTelTracing` or `createCloudflareTracing`).
 There is no overlap, so you can run a tracing adapter and `createOTelSink`
 together without duplicate phase spans.
 
+## Vercel custom spans (`createVercelTracing`)
+
+On Vercel, tracing is OpenTelemetry — there is no native import-free span API
+like Cloudflare's. `createVercelTracing()` is a thin convenience over
+`createOTelTracing` that reads the global OTel tracer
+[`@vercel/otel`](https://www.npmjs.com/package/@vercel/otel)'s `registerOTel()`
+installs, so the router's phases show up in Vercel's trace waterfall.
+
+```typescript
+// instrumentation.ts — installs the global OTel provider, then builds the
+// tracing config off it. Export the config so importing this module is what
+// runs registerOTel(): a Rango/Vite app does NOT auto-load `instrumentation.ts`
+// the way Next.js does, so a standalone registerOTel() that nothing imports is a
+// silent no-op (the tracer stays unregistered and every span is dropped).
+import { registerOTel } from "@vercel/otel";
+import { createVercelTracing } from "@rangojs/router/vercel";
+
+registerOTel({ serviceName: "my-app" });
+
+// All phases on by default; turn individual phases off as needed.
+export const tracing = createVercelTracing({ spans: { ssr: false } });
+```
+
+```typescript
+// router.tsx — importing `tracing` runs instrumentation.ts (and registerOTel).
+import { createRouter } from "@rangojs/router";
+import { tracing } from "./instrumentation.js";
+
+export const router = createRouter({ document: Document, tracing });
+```
+
+Emitted spans are the same set as everywhere else: `rango.request`,
+`rango.middleware`, `rango.action`, `rango.loader`, `rango.handler`,
+`rango.render`, `rango.ssr`. Options: `enabled`, per-phase `spans`, an
+OTel-instrumentation-scope `tracerName` (default `"rango"`), and a `tracer`
+override (defaults to the global `trace.getTracer(tracerName)`).
+
+Platform caveats, all inherited from Vercel / OpenTelemetry (not the router):
+
+- **Node.js runtime only.** Vercel custom spans are unsupported on the Edge
+  runtime — a span created there silently produces nothing. `startActiveSpan`
+  nesting also needs an `AsyncLocalStorageContextManager`, which `@vercel/otel`
+  configures on Node. Keep tracing on Node-runtime functions.
+- **`registerOTel()` must run before the first request** (the `instrumentation`
+  module convention). Reading the tracer via `trace.getTracer` is safe even if
+  it runs first — the API's proxy tracer delegates to the provider once
+  registered — but with no provider every span is a transparent no-op, exactly
+  as if tracing were off.
+- **`@vercel/otel` is what unlocks Vercel's Session Tracing + Trace Drains.** A
+  hand-rolled OpenTelemetry `NodeSDK` produces valid OTLP but forfeits both;
+  `createVercelTracing` is built to ride on `registerOTel`.
+- **Self-contained function bundling.** The `preset: "vercel"` deploy bundles
+  the server (rsc/ssr) with `noExternal`, so `@vercel/otel` and its
+  `@opentelemetry/*` peers must be installed (they go into the bundle, not
+  `node_modules`). `@vercel/otel` is bundle-friendly (zero runtime deps, fetch
+  instrumentation rather than `require-in-the-middle`). OTel bundling failures
+  surface at **runtime** (cold-start), not build time — verify the deployed
+  function, not just `vite build`.
+
+A worked hybrid setup (real `@vercel/otel` plus an in-memory recorder for the
+e2e) lives in `examples/vercel-basic`. Like `createCloudflareTracing`, these
+spans and the `debugPerformance` perf timeline are
+[one instrumentation model](#one-instrumentation-model), and `createVercelTracing`
+composes with `createOTelSink` without duplicate phase spans.
+
 ## Combining Sinks
 
 To send events to multiple backends, compose sinks:
@@ -645,6 +785,8 @@ import type {
   LoaderEndEvent,
   LoaderErrorEvent,
   HandlerErrorEvent,
+  CacheSegmentStatus,
+  CacheSegmentSignal,
   CacheDecisionEvent,
   RevalidationDecisionEvent,
   RequestTimeoutEvent,

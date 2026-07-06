@@ -71,6 +71,7 @@ vi.mock("../response-route-handler.js", () => ({
 vi.mock("../../router/telemetry.js", () => ({
   resolveSink: () => null,
   safeEmit: vi.fn(),
+  getRequestId: () => "test-req-id",
 }));
 
 vi.mock("../../router/router-context.js", () => ({
@@ -78,6 +79,7 @@ vi.mock("../../router/router-context.js", () => ({
 }));
 
 import { createRSCHandler } from "../handler.js";
+import { getRequestContext } from "../../server/request-context.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";
 
 afterEach(() => {
@@ -312,5 +314,49 @@ describe("handler metrics finalization", () => {
     expect(timing).toContain("custom-metric;dur=42.00");
     // Handler metrics are appended alongside
     expect(timing).toContain("handler-total");
+  });
+
+  it("mid-request debugPerformance store anchors :pre to a non-negative offset", async () => {
+    // Regression for the mid-request metrics-store offset: ctx.debugPerformance()
+    // must anchor its store to the true request entry (the threaded
+    // _handlerStart), NOT the opt-in moment. The middleware executor captures
+    // each middleware's :pre metricStart BEFORE the handler runs; if the store's
+    // requestStart were the opt-in time (after a pre-next() delay) the :pre would
+    // land at a NEGATIVE offset. The busy-wait widens that gap so the pre-change
+    // anchor is clearly negative and this assertion is red-before-green.
+    const captured: {
+      metrics?: Array<{ label: string; startTime: number }>;
+    } = {};
+    async function perfMw(ctx: any, next: any) {
+      const spinStart = performance.now();
+      while (performance.now() - spinStart < 2) {
+        /* burn >1ms before opting in */
+      }
+      ctx.debugPerformance();
+      await next();
+      captured.metrics = getRequestContext()._metricsStore?.metrics as
+        | Array<{ label: string; startTime: number }>
+        | undefined;
+    }
+
+    const router = createMockRouter({
+      debugPerformance: false,
+      middleware: [
+        { pattern: null, regex: null, paramNames: [], handler: perfMw },
+      ],
+    });
+
+    const handler = createRSCHandler({ router });
+    const request = new Request("https://example.com/api/data");
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await handler(request, { env: {} });
+
+    const preMetric = captured.metrics?.find((m) => m.label.endsWith(":pre"));
+    expect(preMetric).toBeDefined();
+    // Anchored to _handlerStart the :pre start is a real positive offset; under
+    // the opt-in-time anchor it was negative (metricStart predates the opt-in).
+    expect(preMetric!.startTime).toBeGreaterThanOrEqual(0);
   });
 });

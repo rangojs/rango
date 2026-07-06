@@ -5,6 +5,10 @@ This is the canonical runtime contract for `@rangojs/router`.
 Use this document as the source of truth for request flow, middleware scope,
 segment recomputation, and context visibility.
 
+Guarantees are tagged with the `e2e/semantic-matrix.test.ts` row id that
+pins them (`[S1]`...`[W1]`). A semantic change must update the guarantee,
+its row, and this pairing together.
+
 ## Terminology
 
 - Full render pass: a complete render of the active tree (initial request,
@@ -45,6 +49,9 @@ global middleware
     -> HTML response
 ```
 
+A progressive-enhancement action returns a full HTML document response, not a
+Flight stream. Pinned by the `[P1]` semantic matrix row.
+
 ### 4) Intercept request
 
 ```text
@@ -66,9 +73,24 @@ global middleware
   route handler runs before its child/orphan layouts and parallel children.
 - `ctx.set()` values flow downward through structural scope boundaries only.
 - Loaders are live by default unless explicitly cached via `cache()` in their
-  use params: `loader(Fn, () => [cache({ ttl })])`.
+  use params: `loader(Fn, () => [cache({ ttl })])`. Pinned by the `[C1]`/`[C2]`
+  semantic matrix rows.
+- Under PPR shell capture, `loading()` selects the loader lane
+  (docs/design/loader-container-bake.md): present = live lane (masked at
+  capture, fresh on every serve); absent = bake lane (the loader EXECUTES at
+  capture, its settled container bakes into the shell and is snapshot-pinned
+  on HITs, promises nested in the container stay live at the consumer's own
+  Suspense). Identity reads inside a bake-lane loader refuse the capture.
+  Axis 1 is unchanged in both lanes.
 - Route-level `cache()` does not cache loader segments; loaders remain live.
-- Prerendered handlers can be frozen while loaders remain live.
+- A response route wrapped in `cache()` returns the same payload on a
+  follow-up request; an uncached response route re-executes on every request
+  and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.
+- After a cached entry's SWR TTL expires, a request is served the stale value
+  while a background refresh recomputes the entry; a later request sees the
+  fresh value. Pinned by the `[SWR1]` semantic matrix row.
+- Prerendered handlers can be frozen while loaders remain live. Pinned by the
+  `[PR1]` semantic matrix row.
 - Parallel slots with `loading()` are independent streaming units. Their
   loaders run concurrently without blocking the parent layout or sibling
   routes — on SSR (skeleton renders immediately, data streams), on SPA
@@ -77,6 +99,53 @@ global middleware
   Without `loading()`, parallel loaders block the parent.
 - Slot override: when multiple `parallel()` calls define the same `@slot` name,
   the last definition wins. Earlier definitions of that slot are removed.
+- **PPR commits after the whole middleware chain.** The shell serve path (opt-in
+  per page route via the `ppr` path option; integral, no middleware to mount)
+  lives at the top of the render pass that `executeRender` wraps — strictly
+  after the global `router.use()` chain AND route DSL `middleware()`. Any
+  middleware rejection/redirect/401 returns before a single shell byte, on MISS
+  and on a warmed HIT alike. On a HIT the composed response is committed there:
+  prelude bytes flush first, and match/Flight/resume run behind them inside the
+  response stream. Pinned by the `[PPR1]` semantic matrix row and
+  `e2e/shell-secure.test.ts`.
+- **PPR capture is mixed-chain and never re-runs middleware.** The background
+  capture renders the page under a derived context that INHERITS the triggering
+  request's post-middleware state (so middleware-derived ctx values photograph
+  into the shell — scope fidelity) while the chain itself runs exactly once per
+  HTTP request (pinned by the middleware-run counter in `[PPR1]`). Within the
+  capture, `cache()`d segments replay from the segment cache and UNCACHED
+  segments execute their handlers fresh (the `cookies()`/`headers()` capture
+  guard is load-bearing for handler/render code and bake-lane segment loaders;
+  handler-INVOKED loader bodies are exempt — the consumption-lane rule below);
+  live-lane segment loaders are masked — they are the structural holes.
+  Holes are render-defined: `loading()` subtrees (structural), pending promises
+  in handed-over data under the consumer's Suspense (physics), everything else
+  is shell — including TOP-LEVEL pushed handle promises, which are awaited
+  before SSR ("a promise nested inside your data is never baked; the container
+  settles").
+- **Serve-time guarding is guaranteed on every serve.** Every serve — MISS and
+  HIT — runs the full chain (middleware + handlers + fresh loaders); only the
+  shell HTML is cached, so a HIT still runs the loader holes fresh. Pinned by
+  the `[PPR2]` semantic matrix row.
+- **The consumption-lane rule.** For every shared-artifact capture — `cache()`,
+  `"use cache"`, and the PPR shell — HOW a loader is consumed decides its lane:
+  - Server-side handler consumption (`await ctx.use(loader)`) is the BAKED
+    lane: the loader executes during capture and identity reads
+    (`cookies()`/`headers()`) are PERMITTED there (the shell guard exempts
+    handler-invoked loader bodies, exactly like the cache-purity guards). The
+    value freezes as a capture-time copy wherever it renders as unshielded
+    shell/cache material — a documented footgun, consistent across all three
+    artifact tiers.
+  - Client-side consumption (`useLoader` in a `"use client"` component) is the
+    LIVE lane: fresh per request, per visitor.
+  - DSL `loader()` segments follow their lane machinery: renderable
+    `loading()` = live (masked at capture — and the mask also keeps a
+    same-loader handler consumption's subtree a live hole when it sits under
+    that boundary), otherwise bake (executes at capture WITH the identity
+    guard active).
+    Pinned by the `[PPR3]` semantic matrix row and
+    `e2e/shell-cache.test.ts` (slot-use cases); cache()-tier precedent pinned
+    by the blog-cache suites (frozen sidebar on ring-3 hits).
 
 ## Handler Loading Contract
 
@@ -207,8 +276,14 @@ Bindings set by route middleware are render-scoped. They are visible to:
 - route handlers, layouts, orphan layouts, and parallel slots
 - loaders (via `getRequestContext()`)
 - async server components during the render pass
-- post-action revalidation renders (route middleware wraps revalidation)
-- PE full rerenders (route middleware wraps the rerender)
+- post-action revalidation renders (route middleware wraps revalidation) —
+  pinned by the `[A1]` semantic matrix row
+- PE full rerenders (route middleware wraps the rerender) — pinned by the
+  `[A2]` semantic matrix row
+
+Initial-render visibility of middleware context vars and cookies to layouts
+and loaders — request scope and render scope alike — is pinned by the `[MW1]`
+semantic matrix row.
 
 Route middleware does **not** wrap action execution. Actions see only
 request-scoped bindings from `router.use(...)`. This is a hard contract
@@ -229,7 +304,12 @@ The variadic form `middleware(fn1, fn2, fn3)` is not supported. Use
 
 Bindings set by intercept middleware are visible only to the intercept
 render path. Direct navigation to the same target route does not execute
-intercept middleware.
+intercept middleware. Pinned by the `[I2]` semantic matrix row.
+
+Soft navigation triggers the intercept only when the route's `when()`
+predicate returns true for the navigation origin; when it returns false, the
+soft navigation renders the full target page with no intercept. Pinned by the
+`[I1]`/`[W1]` semantic matrix rows.
 
 ### Async and streaming limits
 
@@ -241,7 +321,7 @@ However, late streaming may hit separate feature-specific mutation limits.
 Handle data (`ctx.use(handle)`) is accumulated into a `HandleStore` that
 settles independently. Read probes (reading context variables) are safe
 throughout streaming; mutation APIs (like handle pushes) have their own
-deadlines documented in `handle-store.ts`.
+deadlines documented in `server/handle-store.ts`.
 
 ## Fetchable Loader Middleware
 
@@ -358,8 +438,11 @@ layout
 Expected visibility pattern:
 
 - `@sub-panel` can see path-local handler data and outer layout data.
+  Pinned by the `[S1]`/`[S4]` semantic matrix rows.
 - `@orphan-panel` can see outer layout data, not path-local handler data.
+  Pinned by the `[S2]`/`[S5]` semantic matrix rows.
 - layout-level `@panel` can see layout data (handler-first), not path-local handler data.
+  Pinned by the `[S3]`/`[S6]` semantic matrix rows.
 
 ### Cache-safety contract for context variables
 
@@ -439,12 +522,30 @@ should not be treated as equivalent.
 ## Revalidation Contract
 
 - Revalidation is segment-scoped and opt-in by rules (`revalidate(...)`).
+- Default decisions during action revalidation (no `revalidate()` configured;
+  seeds for user predicates — see `evaluateRevalidation` in
+  `router/revalidation.ts`):
+
+  | Segment                                                | Default | Trace reason               |
+  | ------------------------------------------------------ | ------- | -------------------------- |
+  | route segment                                          | `true`  | `action:route-segment`     |
+  | loader segment                                         | `true`  | `action:loader-segment`    |
+  | `belongsToRoute` child (orphan layout, entry parallel) | `true`  | `action:belongs-to-route`  |
+  | parent-chain segment (outer layout, its parallels)     | `false` | `action:parent-chain-skip` |
+
+  Consequence: a route entry re-runs as a unit on actions (handler-first
+  preserved), so handler `ctx.set()` data consumed by the entry's own
+  children needs no contract. Producer/consumer contracts are required only
+  when narrowing with a hard `false` predicate or when the producer is an
+  outer entry. The consumer-facing ladder is documented in
+  `skills/rango/SKILL.md` ("Passing data down the tree").
+
 - During partial action revalidation:
   - only revalidated segments recompute
   - non-revalidated ancestors do not rerun just to rebuild `ctx.set()` state
   - downstream `ctx.get()` calls therefore see missing/`undefined` upstream
     values unless the producer reruns; the router does not preserve a prior-pass
-    ancestor snapshot for you
+    ancestor snapshot for you — pinned by the `[R1]` semantic matrix row
 - If a child depends on data set by an outer segment:
   - revalidate that outer segment too, or
   - load/guard the data in the child independently.
@@ -522,9 +623,9 @@ urls(({ path, layout }) => [
 
 - Prerender build passes are full render passes.
 - Child layouts/parallels inside the prerendered path can read handler-set data
-  in that same build render pass.
+  in that same build render pass. Pinned by the `[PR1]` semantic matrix row.
 - Runtime passthrough and action revalidation still follow partial revalidation
-  rules.
+  rules. Pinned by the `[PT1]` semantic matrix row.
 
 ## Middleware Placement Guidance
 

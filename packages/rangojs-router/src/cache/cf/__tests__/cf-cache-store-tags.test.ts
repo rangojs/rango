@@ -732,6 +732,32 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(delSpy).not.toHaveBeenCalled();
     });
 
+    it("rejects an oversized segment KV key (>512 bytes) without calling KV, reports a clear onError", async () => {
+      // Symmetry with the tag-marker key guard: a data-segment key over the KV
+      // 512-byte limit (e.g. from large search params) would fail kv.put() and
+      // silently never persist to L2 -> cold-colo miss storm. It must be rejected
+      // up front with a clear, actionable error, not a doomed put inside waitUntil.
+      const store = makeStore();
+      const hugeKey = "x".repeat(600); // > 512 bytes even before the version prefix
+      const putSpy = vi.spyOn(kv, "put");
+      const { reqCtx, reported } = ctxWithReporter();
+
+      await runWithRequestContext(reqCtx, () =>
+        store.set(hugeKey, createTestData(), 300),
+      );
+      await ctx.flush();
+
+      // The oversized key is rejected before the KV write; kv.put never fires.
+      expect(putSpy).not.toHaveBeenCalled();
+      // ...and it surfaces as a clear cache-write error naming the limit.
+      const writeErr = reported.find((r) => r.category === "cache-write");
+      expect(writeErr).toBeDefined();
+      expect((writeErr!.error as Error).message).toMatch(
+        /over the 512-byte limit/,
+      );
+      putSpy.mockRestore();
+    });
+
     it("a TRANSIENT KV read error degrades to a miss WITHOUT evicting the still-good entry (#1)", async () => {
       // The whole point of reading KV as text + parsing manually: a 5xx/429/
       // network blip must not delete a healthy cross-colo entry (miss storm).
@@ -1312,6 +1338,43 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
           expect.stringContaining("below Cloudflare KV"),
         );
         putSpy.mockRestore();
+        warn.mockRestore();
+      });
+
+      it("warns exactly once per namespace when invalidating with no tagInvalidationTtl (unbounded KV markers)", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        // Unique namespace: the warning de-dupes once per namespace at the
+        // module level, so reusing "default" would consume that slot for the
+        // rest of the process and couple this test to others' ordering.
+        const store = makeStore({ namespace: "no-ttl-warn-fixture" });
+
+        // Two distinct tags in one batch, plus a second batch: still ONE warning.
+        await store.invalidateTags(["alpha", "beta"]);
+        await store.invalidateTags(["gamma"]);
+
+        const noExpiryWarns = warn.mock.calls.filter(([msg]) =>
+          String(msg).includes("tagInvalidationTtl is unset"),
+        );
+        expect(noExpiryWarns).toHaveLength(1);
+        expect(noExpiryWarns[0]![0]).toEqual(
+          expect.stringContaining("tagInvalidationTtl"),
+        );
+        warn.mockRestore();
+      });
+
+      it("does NOT emit the no-expiry warning when tagInvalidationTtl is set", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const store = makeStore({
+          namespace: "ttl-set-fixture",
+          tagInvalidationTtl: 300,
+        });
+
+        await store.invalidateTags(["alpha", "beta"]);
+
+        const noExpiryWarns = warn.mock.calls.filter(([msg]) =>
+          String(msg).includes("tagInvalidationTtl is unset"),
+        );
+        expect(noExpiryWarns).toHaveLength(0);
         warn.mockRestore();
       });
 

@@ -1,0 +1,12 @@
+{
+  "title": "Tutorial",
+  "pages": [
+    "index",
+    "project-setup",
+    "routes-and-pages",
+    "layouts-and-navigation",
+    "live-data-with-loaders",
+    "actions-and-revalidation",
+    "caching-and-deployment"
+  ]
+}

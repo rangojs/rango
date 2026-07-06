@@ -164,6 +164,32 @@ export interface SSRModule {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ) => Promise<ReadableStream<Uint8Array>>;
+
+  /**
+   * PPR shell CAPTURE strategy (Axis 2). Prerenders the loader-masked shell over
+   * the Flight stream, aborts once quiescent, and returns the prelude bytes plus
+   * the postponed resume state — or null when the prelude degraded and must not
+   * be stored. Present only when the SSR virtual entry wires
+   * createShellCaptureHandler; the render layer feature-detects it. See
+   * docs/design/ppr-shell-resume.md.
+   */
+  captureShellHTML?: (
+    rscStream: ReadableStream<Uint8Array>,
+    options: { quiesce: Promise<void>; maxWaitMs?: number },
+  ) => Promise<{ prelude: Uint8Array; postponed: string | null } | null>;
+
+  /**
+   * PPR shell RESUME strategy (Axis 2). Produces the per-request live portion of
+   * the document: resumes fizz over a fresh SsrRoot to emit only the postponed
+   * holes (or, for the DATA variant with postponed === null, just the fresh Flight
+   * payload scripts). The caller prepends the stored prelude bytes to form the
+   * composite response. Present only when the SSR virtual entry wires
+   * createShellResumeHandler; the render layer feature-detects it.
+   */
+  resumeShellHTML?: (
+    rscStream: ReadableStream<Uint8Array>,
+    options: { postponed: string | null; nonce?: string },
+  ) => Promise<ReadableStream<Uint8Array>>;
 }
 
 /**

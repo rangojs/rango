@@ -1,5 +1,5 @@
 import { type PluginOption } from "vite";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
 import {
@@ -15,11 +15,15 @@ import {
   getPublishedPackageName,
   getVendorAliases,
 } from "./utils/package-resolution.js";
-import { findRouterFiles } from "../build/generate-route-types.js";
+import {
+  findRouterFiles,
+  findHostRouterFiles,
+} from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import {
   sharedRolldownOptions,
   createVirtualEntriesPlugin,
+  normalizeHostRouterEntry,
   onwarn,
   getManualChunks,
 } from "./utils/shared-utils.js";
@@ -27,7 +31,12 @@ import {
   resolveClientChunks,
   type ClientChunkContext,
 } from "./utils/client-chunks.js";
-import type { RangoOptions } from "./plugin-types.js";
+import type {
+  RangoOptions,
+  RangoNodeOptions,
+  RangoVercelOptions,
+} from "./plugin-types.js";
+import { createVercelOutputPlugin } from "./plugins/vercel-output.js";
 import { printBanner, rangoVersion } from "./utils/banner.js";
 import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
@@ -110,10 +119,20 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const pkg = getPublishedPackageName();
   const nested = (spec: string) => `${pkg} > ${spec}`;
 
-  // Mutable ref for router path (node preset only).
-  // Set immediately when user-specified, or populated by the auto-discover
-  // config() hook using Vite's resolved root.
-  const routerRef: { path: string | undefined } = { path: undefined };
+  // Mutable ref for the served entry path (node/vercel presets only). Populated
+  // by the auto-discover config() hook using Vite's resolved root. `kind` selects
+  // the RSC entry template: "router" wraps a single createRouter() app in
+  // createRSCHandler; "host" wraps a createHostRouter() instance and serves it
+  // via hostRouter.match().
+  const routerRef: { path: string | undefined; kind: "router" | "host" } = {
+    path: undefined,
+    kind: "router",
+  };
+  // Explicit host-router entry (node/vercel `hostRouter` option), root-relative.
+  const explicitHostRouter =
+    preset !== "cloudflare"
+      ? (resolvedOptions as RangoNodeOptions | RangoVercelOptions).hostRouter
+      : undefined;
 
   // Build-time prerendering is enabled for both presets.
   // Collection runs in-process via the RSC dev environment runner during discoverRouters().
@@ -220,7 +239,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       },
     });
 
-    plugins.push(createVirtualEntriesPlugin(finalEntries));
+    plugins.push(
+      createVirtualEntriesPlugin(finalEntries, undefined, {
+        headScripts: resolvedOptions.headScripts,
+      }),
+    );
     plugins.push(performanceTracksPlugin());
     plugins.push(
       rsc({
@@ -238,20 +261,65 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         const root = userConfig.root
           ? resolve(process.cwd(), userConfig.root)
           : process.cwd();
+        const toRootRelative = (abs: string) =>
+          (abs.startsWith(root)
+            ? "./" + abs.slice(root.length + 1)
+            : abs
+          ).replaceAll("\\", "/");
+        const bulletList = (files: string[]) =>
+          files.map((f) => "  - " + toRootRelative(f)).join("\n");
+
+        // 1. Explicit host entry wins: serve the createHostRouter() instance.
+        if (explicitHostRouter) {
+          routerRef.path = normalizeHostRouterEntry(
+            explicitHostRouter,
+            root,
+            existsSync,
+          );
+          routerRef.kind = "host";
+          return;
+        }
+
+        // 2. A createHostRouter() file means this is a multi-app host deploy:
+        // serve it via the host entry. Checked BEFORE single-router discovery,
+        // because a host app may compose just one createRouter() sub-app plus
+        // host middleware / domain rules / inline .map() routes -- and a lone
+        // sub-app must not shadow the host entry (it would bypass
+        // hostRouter.match()).
+        const hostCandidates = findHostRouterFiles(root);
+        if (hostCandidates.length === 1) {
+          const hostPath = toRootRelative(hostCandidates[0]);
+          // Auto-detection preempts single-router discovery, so name the winning
+          // file: a stale prototype still containing `createHostRouter(` would
+          // otherwise silently become the served entry in place of the app.
+          // eslint-disable-next-line no-console
+          console.info(
+            `[rango] Serving host router entry ${hostPath} (auto-detected). ` +
+              `Set the \`hostRouter\` option to override.`,
+          );
+          routerRef.path = hostPath;
+          routerRef.kind = "host";
+          return;
+        }
+        if (hostCandidates.length > 1) {
+          throw new Error(
+            `[rango] Multiple host routers found:\n${bulletList(hostCandidates)}\n\n` +
+              `Set the \`hostRouter\` option to the entry to serve, e.g. rango({ preset: "${preset}", hostRouter: "./src/worker.rsc.tsx" }).`,
+          );
+        }
+
+        // 3. No host entry: single createRouter() app.
         const candidates = findRouterFiles(root);
         if (candidates.length === 1) {
-          const abs = candidates[0];
-          routerRef.path = (
-            abs.startsWith(root) ? "./" + abs.slice(root.length + 1) : abs
-          ).replaceAll("\\", "/");
-        } else if (candidates.length > 1) {
-          const list = candidates
-            .map(
-              (f) =>
-                "  - " + (f.startsWith(root) ? f.slice(root.length + 1) : f),
-            )
-            .join("\n");
-          throw new Error(`[rango] Multiple routers found:\n${list}`);
+          routerRef.path = toRootRelative(candidates[0]);
+          routerRef.kind = "router";
+          return;
+        }
+        if (candidates.length > 1) {
+          throw new Error(
+            `[rango] Multiple routers found:\n${bulletList(candidates)}\n\n` +
+              `If this is a multi-app host router, export a createHostRouter() instance and set the \`hostRouter\` option (e.g. rango({ preset: "${preset}", hostRouter: "./src/worker.rsc.tsx" })), or use preset: "cloudflare" where you own the worker entry.`,
+          );
         }
       },
     });
@@ -270,8 +338,34 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       name: "@rangojs/router:rsc-integration",
       enforce: "pre",
 
-      config() {
+      config(_userConfig, configEnv) {
+        // Fold NODE_ENV for the vercel preset's build. The cloudflare plugin
+        // does this automatically and node apps do it themselves; vercel has no
+        // platform plugin, so without this React's CJS dev branch survives and
+        // doubles the SSR/RSC bundle (Bundle Hygiene rule #2). Only the exact
+        // `process.env.NODE_ENV` token is replaced.
+        const vercelDefine =
+          preset === "vercel" && configEnv.command === "build"
+            ? { "process.env.NODE_ENV": JSON.stringify("production") }
+            : undefined;
+        // The vercel preset's deployed function has no node_modules, so the
+        // server bundles must be fully self-contained. Bundle every dependency
+        // into the rsc + ssr builds instead of externalizing them (the node
+        // default, which only works because `vite preview` runs where
+        // node_modules exists). node: builtins stay external automatically.
+        //
+        // BUILD ONLY. In `vite dev` this must NOT apply: noExternal forces every
+        // server dependency through the RSC/SSR dev module runners, which cannot
+        // load many CJS packages (pg, mysql2, most SDKs, @vercel/functions) and
+        // crashes the dev server -- while the same app runs fine under
+        // preset: "node" and in the production build. Gating on `build` restores
+        // node-preset dev semantics (deps externalized to Node's require).
+        const vercelServerEnv =
+          preset === "vercel" && configEnv.command === "build"
+            ? { resolve: { noExternal: true as const } }
+            : undefined;
         return {
+          ...(vercelDefine ? { define: vercelDefine } : {}),
           optimizeDeps: {
             exclude: excludeDeps,
             rolldownOptions: sharedRolldownOptions,
@@ -314,6 +408,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               },
             },
             ssr: {
+              ...(vercelServerEnv ?? {}),
               optimizeDeps: {
                 entries: [VIRTUAL_IDS.ssr],
                 include: [
@@ -332,6 +427,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               },
             },
             rsc: {
+              ...(vercelServerEnv ?? {}),
               optimizeDeps: {
                 entries: [VIRTUAL_IDS.rsc],
                 include: [
@@ -363,7 +459,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                 ? "preview"
                 : "dev"
               : "build";
-          printBanner(mode, "node", rangoVersion);
+          printBanner(
+            mode,
+            preset === "vercel" ? "vercel" : "node",
+            rangoVersion,
+          );
         }
 
         const rscMinimalCount = config.plugins.filter(
@@ -380,7 +480,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       },
     });
 
-    plugins.push(createVirtualEntriesPlugin(finalEntries, routerRef));
+    plugins.push(
+      createVirtualEntriesPlugin(finalEntries, routerRef, {
+        headScripts: resolvedOptions.headScripts,
+      }),
+    );
     plugins.push(performanceTracksPlugin());
     plugins.push(
       rsc({
@@ -440,8 +544,20 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       prerenderOnError: options?.prerender?.onError,
       discovery: options?.discovery,
       clientChunkCtx,
+      headScripts: resolvedOptions.headScripts,
     }),
   );
+
+  // Vercel preset: assemble .vercel/output from dist/ after the build. Pushed
+  // last so its buildApp (order "post") hook runs after the discovery plugin's
+  // rsc-env postprocess. buildApp fires once after the whole multi-environment
+  // build, so dist/ is complete (closeBundle is unusable here -- it fires per
+  // environment, twice for ssr; see the plugin's own note).
+  if (preset === "vercel") {
+    plugins.push(
+      createVercelOutputPlugin(resolvedOptions as RangoVercelOptions),
+    );
+  }
 
   debugConfig?.(
     "rango(%s) setup done: %d plugin(s) (%sms)",

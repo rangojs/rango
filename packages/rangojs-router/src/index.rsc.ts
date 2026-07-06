@@ -157,6 +157,7 @@ export {
   urls,
   type PathHelpers,
   type PathOptions,
+  type PartialPrerenderProps,
   type UrlPatterns,
   type IncludeOptions,
   type IncludeItem,
@@ -307,6 +308,7 @@ export type {
   RouterTracingConfig,
   TracePhase,
   TracePhaseToggles,
+  TracingToggleOptions,
 } from "./router/tracing.js";
 
 // Timeout types and error class

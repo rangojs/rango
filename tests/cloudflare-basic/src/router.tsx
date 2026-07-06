@@ -52,6 +52,12 @@ export const router = createRouter<AppBindings>({
   // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the
   // entry in the stale-serve range so the background revalidation path runs.
   cacheProfiles: {
+    // PPR capture-data-snapshot drift fixture (pages/ppr-drift.tsx): a cached
+    // shell value that expires fast (ttl 2, swr 0 so it is fully gone after 2s;
+    // sub-60s items live only in the L1 Cache API tier). The underlying entry
+    // drifts between capture and a later HIT, exercising the snapshot's parity
+    // guarantee on the real CFCacheStore. See ppr-shell-resume.md.
+    drift: { ttl: 2, swr: 0 },
     "swr-ctx": { ttl: 2, swr: 120 },
     // Opt-in: a stale entry re-executes in the foreground during an action's
     // revalidation render (fresh action response) instead of SWR.
@@ -68,6 +74,16 @@ export const router = createRouter<AppBindings>({
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
+  // Per-request perf-debug opt-in (docs/telemetry.md "Per-request opt-in"):
+  // ?__perf_debug=1 turns on the metrics store for THIS request only, so the
+  // suite is not spammed with [RSC Perf] logs. Must run before next() so
+  // downstream phases record into the store.
+  .use(async (ctx, next) => {
+    if (ctx.url.searchParams.has("__perf_debug")) {
+      ctx.debugPerformance();
+    }
+    await next();
+  })
   // Regression repro: top-level middleware throwing a Response must short-circuit
   // under miniflare the same way it does on Node — before the fix, the throw
   // leaked past executeMiddleware and miniflare stringified it as 500.

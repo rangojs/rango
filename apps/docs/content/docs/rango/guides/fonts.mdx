@@ -1,0 +1,177 @@
+---
+title: Fonts
+description: Load web fonts with preload hints — Fontsource, Google Fonts, or self-hosted files.
+type: guide
+---
+
+You need a custom font that loads fast and doesn't flash or swap after first paint. In Rango, fonts are declared in the Document component's `<head>` alongside your stylesheet — this guide covers the three ways to get them there, fastest path first.
+
+## The recommended path: Fontsource
+
+`@fontsource-variable` packages are the recommended approach with Vite. Fonts are installed as npm dependencies, bundled by Vite, and served from your own domain — no external requests, no privacy concerns, no FOUT from slow CDNs.
+
+```bash
+pnpm add @fontsource-variable/inter
+```
+
+Import the font CSS in your stylesheet. Vite resolves the `@fontsource-variable` import from `node_modules` and bundles the woff2 files as hashed assets automatically:
+
+```css
+/* src/index.css */
+@import "@fontsource-variable/inter";
+
+body {
+  font-family: "Inter Variable", sans-serif;
+}
+```
+
+With Tailwind:
+
+```css
+/* src/index.css */
+@import "@fontsource-variable/inter";
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter Variable", sans-serif;
+}
+```
+
+That's it — no changes to your Document. Why this wins over Google Fonts with Vite:
+
+- No external network requests at runtime — fonts are bundled into your build output.
+- No `<link rel="preconnect">` or extra stylesheet needed in the Document.
+- Variable font = single file covers all weights, smaller total download.
+- Vite handles cache-busting via content hashes.
+- Works offline and in edge deployments (Cloudflare Workers) without external dependencies.
+
+Browse available fonts at fontsource.org. Use `@fontsource-variable/*` for variable fonts and `@fontsource/*` for static fonts.
+
+## Google Fonts
+
+If you'd rather load from Google's CDN, wire it up in the Document with preconnect hints — they eliminate DNS + TLS latency before the font stylesheet request:
+
+```tsx
+// src/document.tsx
+"use client";
+
+import type { ReactNode } from "react";
+import { MetaTags } from "@rangojs/router/client";
+import styles from "./index.css?url";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        {/* Preconnect to Google Fonts */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
+
+        {/* Load font stylesheet */}
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
+
+        {/* App styles */}
+        <link rel="preload" href={styles} as="style" />
+        <link rel="stylesheet" href={styles} />
+        <MetaTags />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+Then reference the font in CSS:
+
+```css
+/* src/index.css */
+body {
+  font-family: "Inter", sans-serif;
+}
+```
+
+Or in a Tailwind theme (see the [Tailwind guide](/docs/rango/guides/tailwind)):
+
+```css
+/* src/index.css */
+@theme {
+  --font-sans: "Inter", sans-serif;
+}
+```
+
+## Self-hosted font files
+
+For fonts you own the files for, place them in `public/fonts/` and declare them with `@font-face`:
+
+```css
+/* src/index.css */
+@font-face {
+  font-family: "CustomFont";
+  src: url("/fonts/custom-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "CustomFont";
+  src: url("/fonts/custom-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
+  font-family: "CustomFont", sans-serif;
+}
+```
+
+Then preload the most critical weight in the Document — usually regular 400 — so the browser fetches it before it even parses the CSS:
+
+```tsx
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <link
+          rel="preload"
+          href="/fonts/custom-regular.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+        <link rel="preload" href={styles} as="style" />
+        <link rel="stylesheet" href={styles} />
+        <MetaTags />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+## Performance checklist
+
+- Prefer `@fontsource-variable` with Vite for self-hosted, zero-config font loading.
+- Use `font-display: swap` to prevent invisible text during font load.
+- Preload only the most critical font weight (usually regular 400) — preloading everything defeats the point.
+- Prefer `woff2` format for smaller file sizes.
+- Use variable fonts when multiple weights are needed to reduce total file count.
+- `<link rel="preconnect">` eliminates DNS + TLS latency for external font providers.
+
+<Cards>
+  <Card href="/docs/rango/guides/css" title="CSS">
+    How the Document stylesheet pattern works — ?url imports and
+    precedence-managed links.
+  </Card>
+  <Card href="/docs/rango/guides/tailwind" title="Tailwind">
+    Tailwind v4 setup, including fonts via the @theme block.
+  </Card>
+</Cards>

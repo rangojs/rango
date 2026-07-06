@@ -1,0 +1,61 @@
+---
+title: Overview
+description: The load-bearing ideas in Rango, and which page covers each.
+type: overview
+---
+
+Most features are just-in-time: the core is `urls()`, `path()`, `layout()`, `include()`, and `reverse()`. Caching, parallel routes, intercepts, prerendering, and the rest are opt-in — reach for them when a requirement appears, not up front.
+
+## Pick a primitive
+
+| I need to…                            | Use                             | Page                                                        |
+| ------------------------------------- | ------------------------------- | ----------------------------------------------------------- |
+| define URLs, layouts, and ownership   | the `urls()` tree               | [The Route Tree](/docs/rango/features/routing)              |
+| link to a route without hardcoding it | `ctx.reverse()`, `useReverse()` | [Named Routes & Links](/docs/rango/features/named-routes)   |
+| render data fresh on every request    | `loader()` + `useLoader()`      | [Loaders](/docs/rango/features/loaders)                     |
+| gate or enrich requests               | `router.use()`, `middleware()`  | [Middleware](/docs/rango/features/middleware)               |
+| cache a rendered subtree              | `cache()` on a segment          | [Caching & Revalidation](/docs/rango/features/caching)      |
+| re-render a segment after an action   | `revalidate()`                  | [Caching & Revalidation](/docs/rango/features/caching)      |
+| serve JSON/XML/streams from the tree  | `path.json()`, `path.stream()`… | [Response Routes](/docs/rango/features/response-routes)     |
+| set titles, og tags, breadcrumbs      | the `Meta` handle               | [Metadata & Handles](/docs/rango/features/metadata)         |
+| make navigation instant and safe      | `<Link prefetch>`               | [Navigation & Prefetching](/docs/rango/features/navigation) |
+| test handlers without a server        | `renderHandler()`, `dispatch()` | [Testing](/docs/rango/features/testing)                     |
+
+## The pages
+
+<Cards>
+  <Card href="/docs/rango/features/routing" title="The Route Tree">
+    Routes are expressed, not configured — structure versus config, and why the
+    tree is the app.
+  </Card>
+  <Card href="/docs/rango/features/named-routes" title="Named Routes & Links">
+    URLs are built from names, never strings. Rename a pattern once; every link
+    follows.
+  </Card>
+  <Card href="/docs/rango/features/loaders" title="Loaders">
+    The live lane: fresh on every request, parallel, streaming, and fetchable on
+    demand.
+  </Card>
+  <Card href="/docs/rango/features/middleware" title="Middleware">
+    The onion model — global versus route scope, and which one guards actions.
+  </Card>
+  <Card href="/docs/rango/features/caching" title="Caching & Revalidation">
+    Two axes of freshness, never conflated: stored-value freshness versus
+    client-update selection.
+  </Card>
+  <Card href="/docs/rango/features/response-routes" title="Response Routes">
+    Your API lives in the same tree — content negotiation and inferred endpoint
+    types.
+  </Card>
+  <Card href="/docs/rango/features/metadata" title="Metadata & Handles">
+    Push metadata where the data already is; build your own cross-segment
+    channels.
+  </Card>
+  <Card href="/docs/rango/features/navigation" title="Navigation & Prefetching">
+    Instant commits, and invalidation that always fails toward freshness.
+  </Card>
+  <Card href="/docs/rango/features/testing" title="Testing">
+    Real handlers, real middleware, real Flight serialization — no framework
+    mocks.
+  </Card>
+</Cards>

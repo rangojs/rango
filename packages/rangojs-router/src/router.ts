@@ -420,14 +420,17 @@ export function createRouter<TEnv = any>(
 
   // Wrapper to pass debugPerformance to external createMetricsStore.
   // Also checks per-request flag set by ctx.debugPerformance() in middleware.
+  // With no active request context there is nowhere to hang the store, so return
+  // undefined: an orphan store would collect metrics no reader can reach (nothing
+  // holds it, and appendMetric(undefined, ...) is already a no-op).
   const getMetricsStore = () => {
     const reqCtx = _getRequestContext();
     const enabled = debugPerformance || !!reqCtx?._debugPerformance;
-    if (!enabled) return undefined;
-    if (!reqCtx) {
-      return createMetricsStore(true);
-    }
-    reqCtx._metricsStore ??= createMetricsStore(true);
+    if (!enabled || !reqCtx) return undefined;
+    // Anchor a mid-request store to the true request entry (reqCtx._handlerStart),
+    // not this call's performance.now(); undefined falls back to now() inside
+    // createMetricsStore (metrics.ts).
+    reqCtx._metricsStore ??= createMetricsStore(true, reqCtx._handlerStart);
     return reqCtx._metricsStore;
   };
 
@@ -437,11 +440,6 @@ export function createRouter<TEnv = any>(
 
   const findNearestNotFoundBoundary = (entry: EntryData | null) =>
     findNotFoundBoundary(entry, defaultNotFoundBoundary);
-
-  // Helper to get handleStore from request context
-  const getHandleStore = (): HandleStore | undefined => {
-    return _getRequestContext()?._handleStore;
-  };
 
   // Track a pending handler promise (non-blocking).
   // Attaches a side-effect .catch() to report streaming handler errors to onError
@@ -453,13 +451,14 @@ export function createRouter<TEnv = any>(
       segmentType?: string;
     },
   ): Promise<T> => {
-    const store = getHandleStore();
+    // One ALS read serves both the store lookup and the onError closure.
+    const reqCtx = _getRequestContext();
+    const store = reqCtx?._handleStore;
     const tracked = store ? store.track(promise) : promise;
 
     // Report streaming handler errors to onError as a side-effect.
     // The rejection still propagates to the RSC stream for client error boundaries.
     // Captures request context eagerly (closure) so the catch handler has full context.
-    const reqCtx = _getRequestContext();
     if (reqCtx && onError) {
       tracked.catch((error) => {
         callOnError(error, "handler", {
@@ -501,8 +500,12 @@ export function createRouter<TEnv = any>(
         ? getRequestId(errorContext.request)
         : undefined
       : undefined;
+    // Derived once here for both the loader.start and loader.end emits (the
+    // loader.error emit uses ctx.loaderName from wrapLoaderWithErrorHandling).
+    const loaderName = telemetrySink
+      ? segmentId.split(".").pop() || "unknown"
+      : "";
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       safeEmit(telemetry, {
         type: "loader.start",
         timestamp: loaderStart,
@@ -556,7 +559,6 @@ export function createRouter<TEnv = any>(
 
     // Emit loader.end after the promise settles (fire-and-forget)
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       result.then((r) => {
         safeEmit(telemetry, {
           type: "loader.end",
@@ -620,8 +622,15 @@ export function createRouter<TEnv = any>(
     routerId,
   };
 
-  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
-    _evaluateLazyEntry(entry, lazyEvalDeps);
+  // Must return the Promise from _evaluateLazyEntry: an async include provider
+  // (`() => import("./routes")`) resolves off the startup path, and createFindMatch
+  // awaits this to know when the import + expansion have completed. Dropping it
+  // (typing this `void`) makes the import fire-and-forget, so findMatch spins the
+  // lazy-eval retry loop to its cap and returns null on the first request to any
+  // async include whose prefix isn't already covered by a unique precomputed entry
+  // (nested includes, shared prefixes, regex fallback).
+  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void | Promise<void> {
+    return _evaluateLazyEntry(entry, lazyEvalDeps);
   }
 
   // Create findMatch with single-entry cache, bound to router state
@@ -1000,6 +1009,12 @@ export function createRouter<TEnv = any>(
 
     // Expose resolved span tracing for the handler (Cloudflare custom spans)
     tracing: resolvedTracing,
+
+    // Expose the raw telemetry sink so handler-level emitters (timeout, origin
+    // rejection, late-handle handler.error) can emit outside the match ALS.
+    // Raw (not the resolveSink no-op wrapper) so router.telemetry stays
+    // undefined when unconfigured and call sites gate on truthiness.
+    telemetry: telemetrySink,
 
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,

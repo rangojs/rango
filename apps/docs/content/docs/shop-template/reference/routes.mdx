@@ -1,0 +1,75 @@
+---
+title: Routes
+description: Every URL in the storefront mapped to its source file and purpose.
+type: reference
+---
+
+## Pages
+
+Routes are declared in the route table in `src/urls.tsx`. Each page is a `Handler`
+function exported from `src/routes/*` and rendered inside `RootLayout`.
+
+| Route                  | Handler                                               | Description                                                                                        |
+| ---------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `/`                    | `HomePage` — `src/routes/home.tsx`                    | Home page with hero, products grid, info section                                                   |
+| `/products/:handle`    | `ProductPage` — `src/routes/product.tsx`              | Product detail page; `?color=…&size=…` option params select a variant                              |
+| `/collections`         | `CollectionsIndexPage` — `src/routes/collections.tsx` | All-collections index; each card links to a collection, image falls back to its first product      |
+| `/collections/all`     | `AllProductsPage` — `src/routes/collections-all.tsx`  | Virtual "All Products" listing; synthesized since Shopify's Storefront API has no `all` collection |
+| `/collections/:handle` | `CollectionPage` — `src/routes/collection.tsx`        | Collection listing with filters, sort, pagination                                                  |
+| `/search`              | `SearchPage` — `src/routes/search.tsx`                | Search results (same grid as collections)                                                          |
+| `/cart`                | `CartPage` — `src/routes/cart.tsx`                    | Full cart page with upsells                                                                        |
+| `/about`               | `AboutPage` — `src/routes/about.tsx`                  | About page                                                                                         |
+| `/account`             | `AccountIndexPage` — `src/routes/account.tsx`         | Redirects to `/account/profile`                                                                    |
+| `/account/profile`     | `ProfilePage` — `src/routes/account.tsx`              | Customer profile form                                                                              |
+| `/account/orders`      | `OrdersPage` — `src/routes/account.tsx`               | Order history with cursor pagination                                                               |
+| `/account/orders/:id`  | `OrderDetailPage` — `src/routes/account.tsx`          | Single order detail with line items and totals                                                     |
+| `/account/addresses`   | `AddressesPage` — `src/routes/account.tsx`            | Customer address book                                                                              |
+| `/account/login`       | `LoginPage` — `src/routes/account.tsx`                | Customer login redirect (requires auth enabled)                                                    |
+
+`/collections/all` is registered before `/collections/:handle` so the literal path
+matches before the `:handle` parameter. The `/account/*` routes are nested under
+`AccountLayout`, which gates them behind a customer session; `/account/login` uses a
+separate `LoginLayout` outside that gate.
+
+## API routes
+
+Declared as response routes with `path.any(...)` in `src/urls.tsx`. Each handler
+receives the request context (`request`, `url`, `params`) and returns a `Response`,
+serving every HTTP method for that path.
+
+| Route                   | Handler                                 | Description                                                                                      |
+| ----------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `/api/webhooks/shopify` | `shopifyWebhook` — `src/routes/api.tsx` | Shopify webhook handler for cache invalidation                                                   |
+| `/api/chat`             | `chatHandler` — `src/routes/chat.tsx`   | AI shopping assistant endpoint                                                                   |
+| `/api/draft`            | `draftHandler` — `src/routes/api.tsx`   | Draft mode toggle for content preview                                                            |
+| `/api/auth/*`           | `authHandler` — `src/routes/api.tsx`    | better-auth customer session handler; the `*` wildcard captures the sub-path (`ctx.params["*"]`) |
+
+## Machine routes
+
+SEO- and agent-facing routes declared as response routes (`path.text` / `path.any`)
+in `src/urls.tsx`, with handlers in `src/routes/machine.tsx`. They return plain text,
+XML, or markdown instead of HTML.
+
+| Route                     | Handler                           | Description                                                             |
+| ------------------------- | --------------------------------- | ----------------------------------------------------------------------- |
+| `/robots.txt`             | `robots` — `path.text`            | robots.txt with disallow rules and a sitemap link                       |
+| `/sitemap.xml`            | `sitemapIndex` — `path.any`       | Sitemap index referencing static/product/collection shards              |
+| `/sitemap/:shard`         | `sitemapShard` — `path.any`       | Individual sitemap shard (e.g. `products-1`, `collections-1`, `static`) |
+| `/llms.txt`               | `llms` — `path.any`               | Storefront overview for AI agents                                       |
+| `/md/products/:handle`    | `productMarkdown` — `path.any`    | Product page rendered as markdown                                       |
+| `/md/collections/:handle` | `collectionMarkdown` — `path.any` | Collection page rendered as markdown                                    |
+| `/md/search`              | `searchMarkdown` — `path.any`     | Search results rendered as markdown                                     |
+
+Requests to `/products/:handle`, `/collections/:handle`, and `/search` sent with an
+`Accept: text/markdown` header are served the matching `/md/*` handler by
+`markdownNegotiationMiddleware` (`src/middleware.ts`), so the HTML and markdown
+representations share one URL.
+
+## Variant URLs
+
+Product variant selection uses one query parameter per option, keyed by the lowercased option name:
+
+| URL                                    | Purpose                                                   |
+| -------------------------------------- | --------------------------------------------------------- |
+| `/products/:handle?color=Blue&size=XS` | Opens the product page with the matching variant selected |
+| `/products/:handle`                    | No options selected — renders the first available variant |

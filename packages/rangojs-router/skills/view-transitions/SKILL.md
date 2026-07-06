@@ -1,6 +1,6 @@
 ---
 name: view-transitions
-description: Configure React View Transitions on layouts, routes, and parallel slots in @rangojs/router
+description: Configure React View Transitions on layouts, routes, and parallel slots in @rangojs/router. Use when navigation should animate smoothly between pages, or wiring up React View Transitions on a route or layout.
 argument-hint: [layout|route|parallel|intercept]
 ---
 

@@ -1,0 +1,218 @@
+---
+title: i18n
+description: Locale-aware routing with an optional :locale? prefix, a resolution chain, and react-intl integration.
+type: guide
+---
+
+You need `/`, `/en`, and `/fr` to serve the same routes in the right language. Rango doesn't ship an i18n module — the router gives you the URL primitives (optional include prefixes, constraints, typed reverse) and you compose them with whatever message library you use: `react-intl`, `lingui`, `@formatjs/intl`, or hand-rolled.
+
+## Mount routes under an optional locale prefix
+
+Use an optional param in an `include` prefix so the default locale lives at the bare URL and other locales get a prefix:
+
+```ts
+// urls.tsx
+import { urls } from "@rangojs/router";
+import { menuRoutes } from "./menu";
+
+export const urlpatterns = urls(({ include }) => [
+  include("/:locale?", menuRoutes, { name: "menu" }),
+]);
+```
+
+| URL            | Matched route   | `ctx.params.locale` |
+| -------------- | --------------- | ------------------- |
+| `/`            | `menu.index`    | `undefined`         |
+| `/en`          | `menu.index`    | `"en"`              |
+| `/c/breads`    | `menu.category` | `undefined`         |
+| `/en/c/breads` | `menu.category` | `"en"`              |
+
+### Constrain to known locales
+
+Without a constraint, `/de` matches `menu.index` with `locale: "de"` — any two-letter garbage becomes a "locale". Constrain the param when unknown locales should fall through to other routes (or 404) instead:
+
+```ts
+include("/:locale(en|gb|fr)?", menuRoutes, { name: "menu" });
+```
+
+Now `/de` 404s (the constraint rejects `de`), and `/c/breads` still matches `menu.category` with `locale: undefined`. See [Routing](/docs/rango/features/routing) for the param syntax and [Type Safety](/docs/rango/concepts/typesafety) for how optionals type as `string | undefined`.
+
+## Resolve the active locale
+
+The URL is the strongest signal, but you usually want a fallback chain: URL prefix, then a sticky cookie from a previous language switch, then the browser's `Accept-Language`, then your app default. Put it in a helper every locale-aware handler calls:
+
+```ts
+// lib/locale.ts
+import { cookies, headers } from "@rangojs/router";
+
+export const SUPPORTED_LOCALES = ["en", "gb", "fr"] as const;
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
+const DEFAULT_LOCALE: Locale = "en";
+
+const isSupported = (v: string): v is Locale =>
+  (SUPPORTED_LOCALES as readonly string[]).includes(v);
+
+export function resolveLocale(ctx: {
+  params: Record<string, string | undefined>;
+}): Locale {
+  const fromUrl = ctx.params.locale;
+  if (fromUrl && isSupported(fromUrl)) return fromUrl;
+
+  const fromCookie = cookies().get("locale")?.value;
+  if (fromCookie && isSupported(fromCookie)) return fromCookie;
+
+  const accept = headers().get("accept-language") ?? "";
+  for (const tag of accept.split(",")) {
+    const code = tag.split(";")[0].trim().split("-")[0];
+    if (isSupported(code)) return code as Locale;
+  }
+  return DEFAULT_LOCALE;
+}
+```
+
+In a handler, absent optionals are `undefined` (not `""`), so `??` and `=== undefined` behave as you'd expect:
+
+```tsx
+import { Handler } from "@rangojs/router";
+
+export const MenuIndex: Handler<"menu.index"> = (ctx) => {
+  const locale = resolveLocale(ctx); // ctx.params.locale is string | undefined
+  return <Welcome locale={locale} />;
+};
+```
+
+### Redirect to the canonical URL
+
+If a user with a `gb` cookie visits `/`, you may want to send them to `/gb`. Do that in a global middleware so it covers actions too:
+
+```ts
+import { redirect } from "@rangojs/router";
+
+router.use("/*", async (ctx, next) => {
+  const fromUrl = ctx.params.locale;
+  const resolved = resolveLocale(ctx);
+  if (resolved !== DEFAULT_LOCALE && !fromUrl) {
+    return redirect(`/${resolved}${ctx.url.pathname}`);
+  }
+  await next();
+});
+```
+
+## Generate localized URLs
+
+`reverse()` treats `undefined` and `""` for an optional param as "absent" and collapses the segment cleanly — the round-trip is symmetric with the matcher:
+
+```ts
+ctx.reverse("menu.index", { locale: "" }); // → "/"
+ctx.reverse("menu.index", { locale: undefined }); // → "/"
+ctx.reverse("menu.index", { locale: "en" }); // → "/en"
+ctx.reverse("menu.category", { locale: "en", slug: "breads" }); // → "/en/c/breads"
+ctx.reverse("menu.category", { slug: "breads" }); // → "/c/breads"
+
+// Hiding the default locale ("en" → "/", others → "/<locale>")? Normalize first:
+const normalized = locale === DEFAULT_LOCALE ? undefined : locale;
+const href = ctx.reverse("menu.category", { locale: normalized, slug });
+```
+
+See [Named Routes](/docs/rango/features/named-routes) for `reverse()` in general.
+
+## Wire up react-intl
+
+`react-intl` needs an `<IntlProvider>` wrapping the tree with `locale` and `messages`. The cleanest split: load messages on the server, hand them to a client provider component. Message bundles stay server-side, so they stream through the RSC payload instead of bloating the client bundle:
+
+```ts
+// lib/messages.ts
+import type { Locale } from "./locale";
+
+const loaders: Record<Locale, () => Promise<Record<string, string>>> = {
+  en: () => import("../messages/en.json").then((m) => m.default),
+  gb: () => import("../messages/gb.json").then((m) => m.default),
+  fr: () => import("../messages/fr.json").then((m) => m.default),
+};
+
+export async function loadMessages(locale: Locale) {
+  return loaders[locale]();
+}
+```
+
+```tsx
+// layouts/intl-layout.tsx (server component)
+import type { ReactNode } from "react";
+import { resolveLocale } from "../lib/locale";
+import { loadMessages } from "../lib/messages";
+import { IntlClientProvider } from "../components/intl-client-provider";
+
+export async function IntlLayout({
+  ctx,
+  children,
+}: {
+  ctx: any;
+  children: ReactNode;
+}) {
+  const locale = resolveLocale(ctx);
+  const messages = await loadMessages(locale);
+  return (
+    <IntlClientProvider locale={locale} messages={messages}>
+      {children}
+    </IntlClientProvider>
+  );
+}
+```
+
+```tsx
+// components/intl-client-provider.tsx
+"use client";
+import { IntlProvider } from "react-intl";
+import type { ReactNode } from "react";
+
+export function IntlClientProvider({
+  locale,
+  messages,
+  children,
+}: {
+  locale: string;
+  messages: Record<string, string>;
+  children: ReactNode;
+}) {
+  return (
+    <IntlProvider
+      locale={locale}
+      defaultLocale="en"
+      messages={messages}
+      onError={(err) => {
+        if (err.code === "MISSING_TRANSLATION") return; // common, log only
+        console.error(err);
+      }}
+    >
+      {children}
+    </IntlProvider>
+  );
+}
+```
+
+Mount the layout above your localized routes:
+
+```ts
+import { urls } from "@rangojs/router";
+import { IntlLayout } from "./layouts/intl-layout";
+import { menuRoutes } from "./menu";
+
+export const urlpatterns = urls(({ layout, include }) => [
+  layout(IntlLayout, () => [
+    include("/:locale?", menuRoutes, { name: "menu" }),
+  ]),
+]);
+```
+
+`<FormattedMessage>`, `useIntl()`, and friends now work in any client component under the layout. Server components can use `formatjs`'s `createIntl()` directly with the same `messages` map for static text.
+
+## Pitfalls
+
+| Pitfall                                               | Fix                                                                                                                                        |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ctx.params.locale === ""` never matches              | Absent optionals are `undefined`, not `""`. Use `=== undefined` or `??`.                                                                   |
+| Unknown locale (e.g. `/de`) matches as `locale: "de"` | Add a constraint: `:locale(en\|gb\|fr)?`. Unknown values now 404.                                                                          |
+| Locale switcher loses search params                   | Read `ctx.url.search` and pass it to `reverse(..., undefined, parsedSearch)`.                                                              |
+| Action middleware can't read `ctx.params.locale`      | Route middleware doesn't wrap action execution — use global `router.use()` for actions. See [Middleware](/docs/rango/features/middleware). |
+
+The global-vs-route middleware boundary matters most for actions — [Server Actions](/docs/rango/guides/server-actions) covers it in depth.

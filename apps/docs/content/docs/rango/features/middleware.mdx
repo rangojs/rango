@@ -1,0 +1,121 @@
+---
+title: Middleware
+description: The onion model — global middleware wraps the whole request, route middleware wraps every render pass.
+type: guide
+---
+
+Middleware runs before and after route handlers using the onion model. There are two levels with different execution scopes, and the difference matters most for auth:
+
+<MiddlewareOnionDemo />
+
+## Global middleware: router.use()
+
+Registered on the router instance. Wraps the **entire request** — including server actions, rendering, and no-JS progressive-enhancement re-renders:
+
+```ts
+const router = createRouter<AppEnv>({ document: Document })
+  .use(loggerMiddleware) // all routes
+  .use("/admin/*", authMiddleware) // pattern-scoped
+  .routes(urlpatterns);
+```
+
+## Route middleware: middleware() in the tree
+
+Registered inside `urls()`. Wraps **rendering only** — it does not wrap server action execution. Actions run before route middleware, so when route middleware executes during post-action revalidation it can observe state the action set (cookies, context variables, headers).
+
+```
+Request flow (with action):
+  global mw → action executes → route mw → render pass
+
+Request flow (no action):
+  global mw → route mw → render pass
+```
+
+**Implication for auth:** route middleware cannot guard server actions. Use `router.use("/admin/*", requireAuth)` for action protection, or check inside the action body.
+
+```tsx
+export const urlpatterns = urls(({ path, layout, middleware }) => [
+  layout(<AdminLayout />, () => [
+    middleware(authMiddleware), // admin routes only
+    path("/admin", AdminDashboard, { name: "admin.index" }),
+    path("/admin/users", AdminUsers, { name: "admin.users" }),
+  ]),
+  path("/", HomePage, { name: "home" }), // public — no auth middleware
+]);
+```
+
+The wrapping form scopes middleware to a subset of routes without introducing a visible layout:
+
+```tsx
+middleware(authMw, () => [
+  path("/admin", AdminPage, { name: "admin" }),
+  path("/admin/settings", SettingsPage, { name: "settings" }),
+]),
+```
+
+## Writing middleware
+
+```ts
+import type { Middleware } from "@rangojs/router";
+
+export const authMiddleware: Middleware = async (ctx, next) => {
+  const token = ctx.request.headers.get("Authorization");
+  if (!token) throw new Response("Unauthorized", { status: 401 });
+
+  ctx.set("user", await verifyToken(token));
+  await next();
+  // code after next() runs on the way back out
+};
+```
+
+Throwing a `Response` short-circuits the chain and becomes the HTTP response. `ctx.env` carries your platform bindings; `ctx.set()` shares data with everything downstream.
+
+## Typed context variables
+
+`createVar<T>()` gives type-safe data sharing between middleware and handlers:
+
+```ts
+import { createVar } from "@rangojs/router";
+
+interface AuthUser {
+  id: string;
+  email: string;
+  role: string;
+}
+export const CurrentUser = createVar<AuthUser>();
+
+export const authMiddleware: Middleware = async (ctx, next) => {
+  ctx.set(CurrentUser, await verifyToken(token)); // type-checked
+  await next();
+};
+
+// in a handler
+const user = ctx.get(CurrentUser); // AuthUser | undefined
+```
+
+Use `createVar` for route-local or feature-scoped data; use the global `Rango.Vars` augmentation for app-wide middleware state.
+
+## Redirects with flash state
+
+```ts
+import { createLocationState, redirect } from "@rangojs/router";
+
+export const FlashMessage = createLocationState<{ text: string }>({
+  flash: true,
+});
+
+export const requireAuth: Middleware = async (ctx, next) => {
+  if (!ctx.request.headers.get("Authorization")) {
+    return redirect("/login", {
+      state: [FlashMessage({ text: "Please log in to continue" })],
+    });
+  }
+  await next();
+};
+```
+
+The target page reads the flash with `useLocationState(FlashMessage)`; `{ flash: true }` auto-clears it after first render.
+
+## Why route middleware is never stale
+
+Route middleware wraps **every** render pass — normal renders, post-action revalidation, and no-JS re-renders — so context it sets is never stale. That makes it the safest place for request-shaped context: auth, session, locale. It does not change partial-revalidation boundaries between segments; for shared segment data, put the same named `revalidate()` contract on producer and consumer segments.

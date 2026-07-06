@@ -33,6 +33,7 @@ import {
   splitInterceptSegments,
 } from "./intercept-utils.js";
 import { createAppShellRef } from "./app-shell.js";
+import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -156,6 +157,8 @@ export async function initBrowserApp(
     initialTheme,
   } = options;
 
+  bootLog("initBrowserApp start");
+  bootLog("flight decode: awaiting initial payload from document stream");
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
 
@@ -169,6 +172,14 @@ export async function initBrowserApp(
   // Get initial segments and compute history key from current URL
   const initialSegments = (initialPayload.metadata?.segments ??
     []) as ResolvedSegment[];
+  if (IS_BROWSER_DEBUG) {
+    bootLog("initial payload decoded", {
+      version: initialPayload.metadata?.version,
+      routerId: initialPayload.metadata?.routerId,
+      segments: initialSegments.map((s) => s.id),
+      matched: initialPayload.metadata?.matched,
+    });
+  }
   const initialHistoryKey = generateHistoryKey(window.location.href);
 
   // Create navigation store with history-based caching
@@ -207,11 +218,24 @@ export async function initBrowserApp(
   // This ensures useHandle returns correct data during hydration to avoid mismatch
   // The handles property is an async generator that yields on each push
   if (initialPayload.metadata?.handles) {
+    // This for-await consumes the handle generator to completion BEFORE
+    // hydrateRoot is called — on a streaming/PPR document the generator only
+    // ends when its stream side does, so the per-push logs below are the
+    // primary probe for "the document render is holding hydration".
+    bootLog("handles: consuming payload handle stream (pre-hydration await)");
     const handlesGenerator = initialPayload.metadata.handles;
     let lastHandleData: Record<string, Record<string, unknown[]>> = {};
+    let handlePushes = 0;
     for await (const handleData of handlesGenerator) {
       lastHandleData = handleData;
+      if (IS_BROWSER_DEBUG) {
+        handlePushes += 1;
+        bootLog(`handles: push #${handlePushes}`, {
+          segments: Object.keys(handleData),
+        });
+      }
     }
+    bootLog("handles: stream complete", { pushes: handlePushes });
     // Initialize event controller with initial handle state before hydration.
     eventController.setHandleData(
       lastHandleData,
@@ -221,6 +245,8 @@ export async function initBrowserApp(
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData
     store.updateCacheHandleData(initialHistoryKey, lastHandleData);
+  } else {
+    bootLog("handles: none in payload");
   }
 
   // Create composable utilities
@@ -321,9 +347,17 @@ export async function initBrowserApp(
   if (linkInterception) {
     navigationBridge.registerLinkInterception();
   }
+  bootLog("bridges registered (action + navigation)");
 
   // Build initial tree with rootLayout
+  bootLog("building initial segment tree (renderSegments)");
   const initialTree = renderSegments(initialPayload.metadata!.segments);
+  if (IS_BROWSER_DEBUG && initialTree instanceof Promise) {
+    initialTree.then(
+      () => bootLog("initial segment tree settled"),
+      (err: unknown) => bootLog("initial segment tree rejected", { err }),
+    );
+  }
 
   // Setup HMR with debounce — burst saves (format-on-save, rapid edits)
   // fire many rsc:update events in quick succession. Without debouncing,
@@ -491,8 +525,13 @@ export async function initBrowserApp(
   };
   browserAppContext = context;
 
+  bootLog("initBrowserApp complete -- handing off to hydrateRoot");
   return context;
 }
+
+// Once-flag so the hydration-commit boot log fires a single time (StrictMode
+// re-runs the root effect; the second flush is not a second hydration).
+let hydrationCommitLogged = false;
 
 /**
  * Get the browser app context. Throws if initBrowserApp hasn't been called.
@@ -561,6 +600,10 @@ export function Rango(_props: RangoProps): React.ReactElement {
   // that does not depend on React internals like __reactFiber.
   React.useEffect(() => {
     document.documentElement.dataset.hydrated = "";
+    if (IS_BROWSER_DEBUG && !hydrationCommitLogged) {
+      hydrationCommitLogged = true;
+      bootLog("hydration commit (root effect flushed)");
+    }
   }, []);
 
   return (

@@ -189,4 +189,25 @@ describe("substituteRouteParams", () => {
       ).toBe("//blog");
     });
   });
+
+  // Review F5: the prerender twin must recognize the router's named catch-all
+  // syntax (`:name+`/`:name*`) — preserve "/" separators and consume the
+  // modifier — so the baked prerender URL matches what runtime requests hit.
+  describe("named catch-all (:name+ / :name*)", () => {
+    it("preserves separators and drops the modifier for :slug*", () => {
+      expect(substituteRouteParams("/docs/:slug*", { slug: "a/b" })).toBe(
+        "/docs/a/b",
+      );
+    });
+
+    it("preserves separators and drops the modifier for :path+", () => {
+      expect(substituteRouteParams("/files/:path+", { path: "x/y" })).toBe(
+        "/files/x/y",
+      );
+    });
+
+    it("collapses a zero-or-more :slug* when empty", () => {
+      expect(substituteRouteParams("/docs/:slug*", { slug: "" })).toBe("/docs");
+    });
+  });
 });

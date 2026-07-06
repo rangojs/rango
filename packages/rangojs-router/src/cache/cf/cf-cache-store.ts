@@ -34,6 +34,7 @@ import type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
+  ShellCacheEntry,
 } from "../types.js";
 import {
   _getRequestContext,
@@ -136,6 +137,16 @@ const warnedNoKvReadInvalidation = new Set<string>();
  */
 const warnedTagInvalidationTtlFloor = new Set<string>();
 
+/**
+ * Stores (by namespace) already warned that tag invalidation is writing KV
+ * markers with no expiry (tagInvalidationTtl unset), so the unbounded-growth
+ * warning fires once per process rather than once per invalidateTags call
+ * (CFCacheStore is constructed per request; invalidateTags runs per marker
+ * batch). Distinct from the floor warning: that one only fires for a positive
+ * below-floor value, never for the unset (no-expiry) default that this bounds.
+ */
+const warnedNoTagInvalidationTtl = new Set<string>();
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -187,6 +198,42 @@ interface KVItemEnvelope {
   t?: string[];
   /** Timestamp when tags were attached (ms epoch) */
   ta?: number;
+}
+
+/**
+ * KV envelope for PPR shell cache entries.
+ * @internal
+ */
+interface KVShellEnvelope {
+  /** base64-encoded prelude bytes */
+  p: string;
+  /** postponed state JSON, or null (DATA variant — no holes) */
+  po: string | null;
+  /** React.version captured at prerender time */
+  rv: string;
+  /** Build version captured at prerender time (ShellCacheEntry.buildVersion) */
+  bv?: string;
+  /** createdAt (ms epoch) */
+  c: number;
+  /** When entry becomes stale (ms epoch) */
+  s: number;
+  /** When entry hard-expires (ms epoch) */
+  e: number;
+  /** Cache tags (for distributed tag invalidation) */
+  t?: string[];
+  /** Timestamp when tags were attached (ms epoch) */
+  ta?: number;
+  /** initialTheme the capture render was built with (resume theme fidelity) */
+  i?: string;
+  /** Capture data snapshot: recorded cache-store hits/writes for HIT parity */
+  sn?: import("../types.js").ShellSnapshotRecord[];
+  /**
+   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
+   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
+   * here silently fast-pathed handler-live entries after a KV round trip —
+   * their holes only a handler re-run can fill.
+   */
+  lh?: boolean;
 }
 
 /**
@@ -312,17 +359,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // kv - yet every tagged read still serves stale data with no other signal.
     // Surface that misconfiguration.
     if (!this.kv && (this.tagCacheTtl > 0 || this.onRevalidateTag)) {
-      const id = this.namespace ?? "default";
-      if (!warnedNoKvReadInvalidation.has(id)) {
-        warnedNoKvReadInvalidation.add(id);
-        console.warn(
-          `[CFCacheStore] tagCacheTtl/onRevalidateTag is configured without a KV ` +
-            `namespace, so tag invalidation has NO read-side effect: tagged reads ` +
-            `are never treated as invalidated and serve stale data. Configure ` +
-            `{ kv } for distributed tag invalidation.`,
-        );
-      }
+      this.warnOncePerNamespace(
+        warnedNoKvReadInvalidation,
+        `[CFCacheStore] tagCacheTtl/onRevalidateTag is configured without a KV ` +
+          `namespace, so tag invalidation has NO read-side effect: tagged reads ` +
+          `are never treated as invalidated and serve stale data. Configure ` +
+          `{ kv } for distributed tag invalidation.`,
+      );
     }
+  }
+
+  /**
+   * Warn about a namespace-scoped misconfiguration once per namespace per
+   * isolate. `seen` is the module-level Set for that message family -- Sets
+   * are module-level (not instance fields) so re-constructed stores in the
+   * same isolate don't re-warn.
+   * @internal
+   */
+  private warnOncePerNamespace(seen: Set<string>, message: string): void {
+    const id = this.namespace ?? "default";
+    if (seen.has(id)) return;
+    seen.add(id);
+    console.warn(message);
   }
 
   /**
@@ -340,16 +398,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (value == null) return undefined;
     if (!Number.isFinite(value) || value <= 0) return undefined;
     if (value < KV_MIN_EXPIRATION_TTL) {
-      const id = this.namespace ?? "default";
-      if (!warnedTagInvalidationTtlFloor.has(id)) {
-        warnedTagInvalidationTtlFloor.add(id);
-        console.warn(
-          `[CFCacheStore] tagInvalidationTtl ${value} is below Cloudflare KV's ` +
-            `${KV_MIN_EXPIRATION_TTL}s expirationTtl floor; raising to ` +
-            `${KV_MIN_EXPIRATION_TTL}. It must still exceed your largest entry ` +
-            `TTL+SWR or invalidated entries can resurrect when the marker expires.`,
-        );
-      }
+      this.warnOncePerNamespace(
+        warnedTagInvalidationTtlFloor,
+        `[CFCacheStore] tagInvalidationTtl ${value} is below Cloudflare KV's ` +
+          `${KV_MIN_EXPIRATION_TTL}s expirationTtl floor; raising to ` +
+          `${KV_MIN_EXPIRATION_TTL}. It must still exceed your largest entry ` +
+          `TTL+SWR or invalidated entries can resurrect when the marker expires.`,
+      );
       return KV_MIN_EXPIRATION_TTL;
     }
     return value;
@@ -1575,6 +1630,145 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   // ============================================================================
+  // Shell Cache Methods (PPR shell resume) — KV-only in v1
+  // ============================================================================
+  //
+  // Unlike the segment/item/document tiers, the shell family has NO Cache-API L1
+  // tier: the prelude bytes + postponed blob are large and version-coupled, and a
+  // per-colo L1 for them is a deliberate follow-up (see the PPR shell-resume
+  // design doc). Shell entries live only in KV (the global tier), so the family
+  // requires a configured KV namespace; without one, getShell/putShell no-op and
+  // the shell-cache middleware fails open to a full HTML render. Tag invalidation
+  // still applies: shell entries carry tags/taggedAt and are checked against the
+  // same KV markers isGloballyInvalidated() reads for every other tier.
+
+  /**
+   * Get a cached PPR shell entry by key from KV (no L1). Applies the KV read
+   * budget, corrupt-entry eviction, hard-expiry, and tag invalidation exactly
+   * like kvGetItem, minus the L1 promote. SWR is a plain staleness flag — KV has
+   * no REVALIDATING herd guard, so the shell-cache middleware's module-level
+   * in-flight set is the recapture stampede guard.
+   */
+  async getShell(
+    key: string,
+  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    if (!this.kv) return null;
+    try {
+      const kvKey = this.toKVKey(`shell:${key}`);
+      const { value: envelope, timedOut } =
+        await this.kvGetOrEvict<KVShellEnvelope>(
+          kvKey,
+          (e) =>
+            typeof e.p === "string" &&
+            (e.po === null || typeof e.po === "string") &&
+            typeof e.rv === "string" &&
+            typeof e.e === "number" &&
+            typeof e.s === "number",
+          "getShell",
+        );
+      // A timeout, a missing key, or an already-evicted corrupt entry is a miss.
+      if (timedOut || !envelope) return null;
+
+      const now = Date.now();
+      if (now > envelope.e) return null;
+
+      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
+        return null;
+      }
+
+      const shouldRevalidate = envelope.s > 0 && now > envelope.s;
+      return {
+        entry: {
+          prelude: envelope.p,
+          postponed: envelope.po,
+          reactVersion: envelope.rv,
+          buildVersion: envelope.bv,
+          initialTheme: envelope.i,
+          snapshot: envelope.sn,
+          handlerLiveHoles: envelope.lh,
+          createdAt: envelope.c,
+        },
+        shouldRevalidate,
+      };
+    } catch (error) {
+      reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
+      return null;
+    }
+  }
+
+  /**
+   * Store a PPR shell entry in KV with TTL and optional SWR window. Non-blocking
+   * (waitUntil) like the other KV writes. The tags/taggedAt ride in the envelope
+   * so isGloballyInvalidated() can invalidate the shell via the shared KV markers.
+   */
+  async putShell(
+    key: string,
+    entry: ShellCacheEntry,
+    ttlSeconds?: number,
+    swrSeconds?: number,
+    tags?: string[],
+  ): Promise<void> {
+    // KV-only tier: needs a KV namespace and waitUntil (writes are non-blocking).
+    if (!this.kv || !this.waitUntil) return;
+    try {
+      const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
+      const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
+      const totalTtl = ttl + swrWindow;
+      // KV requires expirationTtl >= 60s; skip a shorter-lived shell rather than
+      // letting kv.put reject inside waitUntil (mirrors setItem/kvSetSegment).
+      if (totalTtl < 60) return;
+
+      const staleAt = Date.now() + ttl * 1000;
+      const taggedAt =
+        Array.isArray(tags) && tags.length > 0 ? Date.now() : undefined;
+
+      const kvKey = this.toKVKey(`shell:${key}`);
+      // A key over the KV limit makes kv.put reject deep inside waitUntil; report
+      // and skip the doomed write (mirrors kvSetSegment).
+      const kvKeyBytes = kvKeyByteLength(kvKey);
+      if (kvKeyBytes > KV_MAX_KEY_BYTES) {
+        reportCacheError(
+          new Error(
+            `shell cache key produces a ${kvKeyBytes}-byte KV key, over the ` +
+              `${KV_MAX_KEY_BYTES}-byte limit; the shell was not persisted.`,
+          ),
+          "cache-write",
+          "[CFCacheStore] putShell",
+        );
+        return;
+      }
+
+      this.waitUntil(() =>
+        reportingAsync(
+          () => {
+            const envelope: KVShellEnvelope = {
+              p: entry.prelude,
+              po: entry.postponed,
+              rv: entry.reactVersion,
+              bv: entry.buildVersion,
+              c: entry.createdAt,
+              s: staleAt,
+              e: staleAt + swrWindow * 1000,
+              t: tags,
+              ta: taggedAt,
+              i: entry.initialTheme,
+              sn: entry.snapshot,
+              lh: entry.handlerLiveHoles,
+            };
+            return this.kv!.put(kvKey, JSON.stringify(envelope), {
+              expirationTtl: totalTtl,
+            });
+          },
+          "cache-write",
+          "[CFCacheStore] putShell",
+        ),
+      );
+    } catch (error) {
+      reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
+    }
+  }
+
+  // ============================================================================
   // Key Helpers
   // ============================================================================
 
@@ -2075,6 +2269,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * silently reporting success while other requests/colos serve stale data. The
    * eager purge still fires for the whole batch first (it is additive).
    */
+  /**
+   * Build-shell read-through gate (SegmentCacheStore.isTagsInvalidatedSince):
+   * a baked shell entry is immutable in the build manifest, so eviction is
+   * answered by the SAME KV tag markers updateTag() writes, compared against
+   * the entry's build-time createdAt. Thin public wrapper over the private
+   * envelope check (identical semantics: marker >= since, fail open).
+   */
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
+    return this.isGloballyInvalidated(tags, sinceMs);
+  }
+
   async invalidateTags(tags: string[]): Promise<void> {
     if (tags.length === 0) return;
     const invalidatedAt = Date.now();
@@ -2091,6 +2299,22 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const failedTags = new Set<string>();
     const errors: unknown[] = [];
     if (this.kv) {
+      // Markers written with no expiry (tagInvalidationTtl unset) never expire,
+      // so high-cardinality tags accumulate KV keys unboundedly with no reaper.
+      // Warn once per namespace at the batch entry point (not per marker write,
+      // which would fire once per tag). Kept separate from the floor warning:
+      // that path only fires for a positive below-floor value, never the unset
+      // default sanitizeTagInvalidationTtl passes through as undefined.
+      if (!this.tagInvalidationTtl) {
+        this.warnOncePerNamespace(
+          warnedNoTagInvalidationTtl,
+          `[CFCacheStore] invalidateTags is writing KV markers with no expiry ` +
+            `(tagInvalidationTtl is unset): high-cardinality tags accumulate KV ` +
+            `keys unboundedly (storage + list-scan cost) with no reaper. Set ` +
+            `tagInvalidationTtl above your largest entry TTL+SWR to bound marker ` +
+            `growth; setting it too small resurrects invalidated entries.`,
+        );
+      }
       await Promise.all(
         tags.map(async (tag) => {
           const markerKey = this.tagMarkerKey(tag);
@@ -2267,6 +2491,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv || !this.waitUntil || totalTtl < 60) return;
 
     const kvKey = this.toKVKey(key);
+
+    // Reject an oversized data-segment KV key the same way tag-marker keys are
+    // rejected in invalidateTags(). A key over KV_MAX_KEY_BYTES makes kv.put()
+    // fail, so the segment silently never lands in L2 (KV) and every cold-colo
+    // or TTL-expired read re-renders instead of serving stale. Segment keys can
+    // grow with user-controlled inputs (e.g. a route's search params), so report
+    // a clear, actionable error and skip the doomed write rather than letting it
+    // reject deep inside waitUntil as an opaque cache-write failure.
+    const kvKeyBytes = kvKeyByteLength(kvKey);
+    if (kvKeyBytes > KV_MAX_KEY_BYTES) {
+      reportCacheError(
+        new Error(
+          `cache segment key produces a ${kvKeyBytes}-byte KV key, over the ` +
+            `${KV_MAX_KEY_BYTES}-byte limit; the segment was not persisted to KV (L2). ` +
+            `Reduce the cache-key inputs (e.g. large search params on this route).`,
+        ),
+        "cache-write",
+        "[CFCacheStore] kvSetSegment",
+      );
+      return;
+    }
+
     const expiresAt = staleAt + swrWindow * 1000;
 
     this.waitUntil(() =>

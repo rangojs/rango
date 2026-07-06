@@ -34,6 +34,13 @@ The three verbs a consumer touches:
 | `updateTag(...tags)`     | server actions                  | **read-your-own-writes** — awaitable, immediate                    |
 | `revalidateTag(...tags)` | route handlers / webhooks       | background (non-blocking) — hard-purge, next read re-renders fresh |
 
+`cacheTag(...tags)` has a second, render-callable form: called during a request
+render **outside** any `"use cache"` function, it records onto the request's
+`_requestTags` instead of throwing. PPR shell capture and the document cache union
+that set onto their entry, so a plain server component can tag the shell/full-page
+artifact it renders into — `revalidateTag` then evicts it. On a route that is
+neither PPR nor document-cached the tag records where nothing reads it (a no-op).
+
 ---
 
 ## ① WRITE — caching a tagged entry

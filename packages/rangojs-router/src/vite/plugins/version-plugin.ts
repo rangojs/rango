@@ -142,6 +142,14 @@ export function createVersionPlugin(): Plugin {
     name: "@rangojs/router:version",
     enforce: "pre",
 
+    // The build-time shell capture phase (producer B, #699) stamps entries
+    // with THIS instance's version — the value folded into the shipped worker
+    // — never the discovery temp server's own version-plugin value (a
+    // different Date.now() stamp that would fail the serve-side gate).
+    api: {
+      getBuildVersion: (): string => currentVersion,
+    },
+
     configResolved(config) {
       isDev = config.command === "serve";
       resolvedCacheDir = config.cacheDir
