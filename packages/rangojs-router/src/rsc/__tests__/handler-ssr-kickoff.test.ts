@@ -187,11 +187,14 @@ describe("handler SSR kickoff placement", () => {
     expect(startSSRSetupSpy).toHaveBeenCalledOnce();
   });
 
-  // D7: a full-document request with NO Accept header renders RSC at render
-  // time (isRscRequest treats missing Accept as RSC), so the early SSR setup
-  // is wasted and its unconsumed Promise.all can reject (orphan rejection).
-  // The handler must NOT kick off SSR setup for it.
-  it("does NOT start SSR setup for a no-Accept request that returns RSC", async () => {
+  // A full-document request with NO Accept header is a generic client
+  // (missing Accept ≡ */* per RFC 9110) and renders the HTML document —
+  // flight is explicit-opt-in only (acceptsFlightExplicitly, ssr-setup.ts).
+  // SSR setup must kick off for it. (This flipped with the opt-in rule: the
+  // old Accept heuristic treated a missing Accept as RSC, so the D7
+  // orphan-rejection concern — a wasted, unconsumed SSR Promise.all — applied
+  // here. It now applies only to explicit flight requests, below.)
+  it("starts SSR setup for a no-Accept request (renders HTML)", async () => {
     const router = createMockRouter();
 
     const handler = createRSCHandler({ router });
@@ -202,14 +205,15 @@ describe("handler SSR kickoff placement", () => {
     } catch {
       // Expected — downstream rendering isn't fully mocked
     }
-    // Settle microtasks so an orphaned SSR setup promise (if any) would surface.
-    await Promise.resolve();
 
     expect(router.findMatch).toHaveBeenCalled();
-    expect(startSSRSetupSpy).not.toHaveBeenCalled();
+    expect(startSSRSetupSpy).toHaveBeenCalledOnce();
   });
 
-  it("does NOT start SSR setup for RSC-only requests (Accept without text/html)", async () => {
+  // D7: an explicit flight request renders RSC at render time, so an early
+  // SSR setup would be wasted and its unconsumed Promise.all can reject
+  // (orphan rejection). The handler must NOT kick off SSR setup for it.
+  it("does NOT start SSR setup for RSC-only requests (explicit Accept: text/x-component)", async () => {
     const router = createMockRouter();
 
     const handler = createRSCHandler({ router });
