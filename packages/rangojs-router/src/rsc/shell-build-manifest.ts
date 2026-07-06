@@ -108,8 +108,12 @@ export interface DevShellLookup {
  * Bound like the dev prerender store fetch (see #697): inside a workerd
  * waitUntil an unsettled fetch pends forever instead of rejecting; on
  * timeout this degrades to a MISS and the runtime capture path takes over.
+ * 20s (not the store fetch's 10s): the endpoint's response IS an inline
+ * capture — up to ~5s attempt + 400ms + ~5s cold-graph retry — and this
+ * fetch blocks a foreground document request, so it must outlast a full
+ * cold capture cycle rather than abort into a MISS at 10s.
  */
-const DEV_SHELL_FETCH_TIMEOUT_MS = 10_000;
+const DEV_SHELL_FETCH_TIMEOUT_MS = 20_000;
 
 async function fetchDevShellEntry(
   pathname: string,

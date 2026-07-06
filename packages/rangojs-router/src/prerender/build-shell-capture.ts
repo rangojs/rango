@@ -109,6 +109,8 @@ export interface BuildShellCaptureResult {
   entry?: ShellCacheEntry;
   /** The putShell-barrier tag union (static ppr.tags + render-recorded). */
   tags?: string[];
+  /** On route-mismatch: what this router's match actually landed on. */
+  matchedRouteName?: string;
 }
 
 /** Sleep `ms`, unref'd so the build process is never kept alive by the timer. */
@@ -194,9 +196,13 @@ async function attemptBuildCapture(
     debug: opts.debug,
   };
 
+  let mismatchedRouteName: string | undefined;
   const outcome = await runWithRequestContext(derivedCtx, async () => {
     const match = await router.match(request, { env: opts.buildEnv ?? {} });
-    if (match.routeName !== opts.routeName) return "route-mismatch" as const;
+    if (match.routeName !== opts.routeName) {
+      mismatchedRouteName = match.routeName;
+      return "route-mismatch" as const;
+    }
     if (match.redirect) return "redirect" as const;
 
     setRequestContextParams(match.params, match.routeName);
@@ -232,6 +238,9 @@ async function attemptBuildCapture(
   if (outcome === "stored" && collected !== null) {
     const hit: { entry: ShellCacheEntry; tags?: string[] } = collected;
     return { outcome, entry: hit.entry, tags: hit.tags };
+  }
+  if (outcome === "route-mismatch") {
+    return { outcome, matchedRouteName: mismatchedRouteName };
   }
   return { outcome };
 }

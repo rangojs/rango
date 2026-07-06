@@ -88,6 +88,80 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(seq2).toBe(seq1 + 1);
   });
 
+  // ---------------------------------------------------------------------
+  // Producer B (#699): the shell entry is produced at BUILD time (dev: on
+  // demand via /__rsc_shell), so the FIRST request already HITs. Build
+  // entries cover the BARE pathname only — the ?probe= URLs above carry a
+  // search string and keep exercising the runtime-capture lanes untouched.
+  // Bare-path usage is partitioned across tests (fullyParallel-safe):
+  // beta = first-request assertion, alpha = liveness; eviction has its own
+  // route + tag (/pp-evict/gamma) so its updateTag cannot blast these; the
+  // "warm" slug below absorbs the cold-graph cost (dev: the on-demand
+  // capture compiles the temp SSR graph on first use) so the strict
+  // first-request assertions never race CI cold-start physics.
+  // ---------------------------------------------------------------------
+
+  test.beforeAll(async ({ playwright }) => {
+    const ctx = await playwright.request.newContext();
+    try {
+      await warmToHit(ctx as unknown as Page["request"], f.url("/pp/warm"));
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  test("build-time shell: the FIRST request serves x-rango-shell: HIT with the frozen prelude", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/pp/beta"), {
+      headers: HTML_HEADERS,
+    });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const { prelude, resumed } = splitPrelude(await res.text());
+    expect(prelude).toContain("Prerendered shell content for beta");
+    expect(prelude).toContain("Loading pp seq...");
+    expect(prelude).not.toContain("pp-seq:");
+    expect(resumed).toContain("pp-seq:");
+  });
+
+  test("build-time shell: loaders stay live across baked-entry HITs (seq advances)", async ({
+    request,
+  }) => {
+    const url = f.url("/pp/alpha");
+    const first = await request.get(url, { headers: HTML_HEADERS });
+    expect(first.headers()["x-rango-shell"]).toBe("HIT");
+    const seq1 = readSeq(await first.text());
+
+    const second = await request.get(url, { headers: HTML_HEADERS });
+    expect(second.headers()["x-rango-shell"]).toBe("HIT");
+    expect(readSeq(await second.text())).toBe(seq1 + 1);
+  });
+
+  test("updateTag evicts the build-time shell; the runtime capture then owns the route", async ({
+    request,
+  }) => {
+    const url = f.url("/pp-evict/gamma");
+    const baked = await request.get(url, { headers: HTML_HEADERS });
+    expect(baked.headers()["x-rango-shell"]).toBe("HIT");
+    expect(await baked.text()).toContain("Evictable shell content for gamma");
+
+    // Awaitable invalidation (cache-tag fixture endpoint): the tag marker
+    // lands before the response, so the next read is deterministically MISS —
+    // the baked entry is immutable, but the marker comparison rejects it.
+    const invalidate = await request.get(
+      f.url("/cache-tag-test/invalidate/pp-evict-shell"),
+    );
+    expect(invalidate.status()).toBe(200);
+
+    const evicted = await request.get(url, { headers: HTML_HEADERS });
+    expect(evicted.headers()["x-rango-shell"]).toBe("MISS");
+
+    // Producer A takes over: the MISS scheduled a runtime capture that
+    // stores a runtime entry (the runtime store is read before the manifest).
+    await warmToHit(request, url);
+  });
+
   test("per-param shells: both prerendered slugs HIT independently with their own content", async ({
     request,
   }) => {

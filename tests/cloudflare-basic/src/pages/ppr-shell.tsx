@@ -150,13 +150,37 @@ export function PprExecPage() {
 // slot-hole playbook) masks at capture and re-runs fresh per HIT. The
 // Prerender handler never executes at serve (production evicts it to a stub).
 export const PprPrerenderedArticle = Prerender(
-  async () => [{ slug: "alpha" }, { slug: "beta" }],
+  // "warm" is the e2e warm-up slug: the suite's beforeAll polls its bare path
+  // to HIT so producer B's machinery (dev: the /__rsc_shell on-demand capture
+  // graph on the temp Node server) is hot before the strict first-request
+  // assertions run on the virgin alpha/beta bare paths.
+  async () => [{ slug: "alpha" }, { slug: "beta" }, { slug: "warm" }],
   async (ctx) => {
     return (
       <div data-testid="ppr-pp-article">
         <h1 data-testid="ppr-pp-article-title">{`PPR-PP ${ctx.params.slug}`}</h1>
         <p data-testid="ppr-pp-article-content">
           {`Prerendered shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppSeq" />
+      </div>
+    );
+  },
+);
+
+/**
+ * Dedicated fixture for the build-shell EVICTION e2e (#699): its own route +
+ * tag so updateTag("ppr-pp-evict-shell") cannot blast the sibling
+ * /ppr-shell/prerendered/:slug entries a concurrently-running test asserts on
+ * (dev runs fullyParallel). Same slot-hole shape as PprPrerenderedArticle.
+ */
+export const PprPrerenderedEvictArticle = Prerender(
+  async () => [{ slug: "gamma" }],
+  async (ctx) => {
+    return (
+      <div data-testid="ppr-pp-evict-article">
+        <p data-testid="ppr-pp-evict-article-content">
+          {`Evictable shell content for ${ctx.params.slug}`}
         </p>
         <ParallelOutlet name="@ppSeq" />
       </div>

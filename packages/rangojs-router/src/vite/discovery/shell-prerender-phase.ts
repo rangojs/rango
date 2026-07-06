@@ -235,6 +235,7 @@ export async function runShellPrerenderPhase(
       const policy = captureMod.resolveBuildPprConfig(cand.ppr);
       const mainKey = `${cand.routeName}/${cand.paramHash}`;
       let handled = false;
+      const mismatches: string[] = [];
       for (const [, routerInstance] of registry) {
         if (typeof routerInstance.match !== "function") continue;
         try {
@@ -251,7 +252,10 @@ export async function runShellPrerenderPhase(
             captureShellHTML,
             debug: !!debug,
           });
-          if (res.outcome === "route-mismatch") continue;
+          if (res.outcome === "route-mismatch") {
+            mismatches.push(res.matchedRouteName ?? "(no match)");
+            continue;
+          }
           handled = true;
           const elapsed = (performance.now() - startUrl).toFixed(0);
           if (res.outcome !== "stored" || !res.entry) {
@@ -299,7 +303,11 @@ export async function runShellPrerenderPhase(
       }
       if (!handled) {
         console.warn(
-          `[rango]   SHELL SKIP ${cand.urlPath.padEnd(34)} - no router matched; route keeps runtime capture`,
+          `[rango]   SHELL SKIP ${cand.urlPath.padEnd(34)} - no router matched "${cand.routeName}"` +
+            (mismatches.length > 0
+              ? ` (matched: ${mismatches.join(", ")})`
+              : "") +
+            "; route keeps runtime capture",
         );
         skipCount++;
       }

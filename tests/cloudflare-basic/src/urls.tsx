@@ -28,6 +28,7 @@ import {
   PprExecBadgeSlot,
   PprExecPage,
   PprPrerenderedArticle,
+  PprPrerenderedEvictArticle,
   PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
@@ -478,6 +479,33 @@ export const urlpatterns = urls(
           "/ppr-shell/prerendered/:slug",
           PprPrerenderedArticle,
           { name: "pprShellPrerendered", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            parallel({
+              "@ppSeq": {
+                handler: PprPrerenderSeqSlot,
+                use: () => [
+                  loader(PprPrerenderSeqLoader),
+                  loading(
+                    <span data-testid="ppr-pp-seq-fallback">
+                      Loading pp seq...
+                    </span>,
+                  ),
+                ],
+              },
+            }),
+          ],
+        ),
+        // Build-shell eviction fixture (#699): its own route + tag so the
+        // eviction e2e's updateTag cannot blast the sibling prerendered
+        // entries (baked manifest entries are immutable — eviction is a tag
+        // MARKER comparison in the store, not a deletion).
+        path(
+          "/ppr-shell/prerendered-evict/:slug",
+          PprPrerenderedEvictArticle,
+          {
+            name: "pprShellPrerenderedEvict",
+            ppr: { ttl: 300, swr: 120, tags: ["ppr-pp-evict-shell"] },
+          },
           () => [
             parallel({
               "@ppSeq": {
