@@ -25,6 +25,7 @@ import { observePhase, PHASES } from "../router/instrument.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
+  wireRenderBarrier,
   UNTRACKED_BACKGROUND_TASK,
   type RequestContext,
 } from "../server/request-context.js";
@@ -744,6 +745,9 @@ function handlerLayerIsLive(
  *   - _shellCaptureRun: true — the switch loaders/cookies/headers guards read.
  *   - _metricsStore: undefined so the capture never appends to the foreground's
  *     (already-finalized) metrics.
+ *   - _renderBarrier family: an own barrier wired to the fresh handle store
+ *     (wireRenderBarrier), plus _treeHasStreaming/deadlock-guard resets — the
+ *     capture's rendered() lifecycle is its own, not the foreground's.
  *
  * The capture is MIXED-CHAIN: its match() behaves like a normal render with
  * respect to the segment cache — cache()'d segments replay from ring 3, UNCACHED
@@ -914,6 +918,15 @@ export function deriveShellCaptureContext(
 
   const derivedCtx: RequestContext = Object.create(reqCtx);
   derivedCtx._handleStore = freshHandleStore;
+  // Own render barrier, closure-bound to the derived ctx and the fresh store
+  // (issue #684, plan 009). Without this every _renderBarrier* read fell
+  // through the prototype to the foreground's ALREADY-RESOLVED barrier: a
+  // bake-lane loader's `await ctx.rendered()` resolved instantly and
+  // ctx.use(handle) read the FOREGROUND handle snapshot — foreground
+  // per-request handle data could bake into the shared shell. wireRenderBarrier
+  // also resets _treeHasStreaming (recomputed for the capture's tree) and the
+  // deadlock-guard fields as own properties.
+  wireRenderBarrier(derivedCtx, freshHandleStore);
   derivedCtx._shellCaptureLoaderHandleValues = loaderScopedPushValues;
   derivedCtx._requestTags = new Set<string>();
   // Own explicit-store registry: cache-store resolutions during the capture
