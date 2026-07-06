@@ -87,13 +87,35 @@ setup("warmup ppr capture path", async ({ request }) => {
   // first serialized CI run). Interleaving gives each route's capture an
   // empty queue and its full budget; later routes get faster as the shared
   // pipeline warms.
+  // TEMP INSTRUMENTATION (remove before merge): discriminate WHY the
+  // composition route's capture never lands on GH runners. Times the dev
+  // /__rsc_prerender endpoint directly (memo header + latency) and each HIT
+  // poll's shell state. Read from the CI job log.
+  for (let i = 0; i < 3; i++) {
+    const t0 = Date.now();
+    const r = await request.get(
+      `/__rsc_prerender?pathname=${encodeURIComponent("/ppr-shell/prerendered/alpha")}&routeName=pprShellPrerendered`,
+    );
+    console.log(
+      `[instrument] __rsc_prerender ${i}: status=${r.status()} cache=${r.headers()["x-rango-prerender-cache"]} len=${(await r.body()).length} ${Date.now() - t0}ms`,
+    );
+  }
+
   for (const route of PPR_WARMUP_HIT_ROUTES) {
+    const routeStart = Date.now();
+    let attempts = 0;
     await expect(async () => {
+      attempts++;
+      const t0 = Date.now();
       const res = await request.get(`${route}?probe=warmup`, {
         headers: { Accept: "text/html" },
       });
+      const shell = res.headers()["x-rango-shell"];
+      console.log(
+        `[instrument] poll ${route} #${attempts}: ${res.status()} shell=${shell} ${Date.now() - t0}ms (route total ${Date.now() - routeStart}ms)`,
+      );
       expect(res.status()).toBe(200);
-      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      expect(shell).toBe("HIT");
     }).toPass({ timeout: 60_000 });
   }
 
