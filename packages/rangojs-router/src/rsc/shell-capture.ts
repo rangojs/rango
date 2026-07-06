@@ -775,6 +775,74 @@ async function attemptCapture(
   // attempt (the retry re-checks; already-settled promises are free).
   await settleTrackedBackgroundTasks(reqCtx, SHELL_CAPTURE_WRITE_BARRIER_MS);
 
+  const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(
+    reqCtx,
+    descriptor,
+  );
+
+  return runWithRequestContext(derivedCtx, async () => {
+    const match = await ctx.router.match(request, { env });
+    // A route that redirects has no shell to capture — bail (no store write, no
+    // retry: a redirect is deterministic).
+    if (match.redirect) return "redirect";
+
+    setRequestContextParams(match.params, match.routeName);
+
+    const payload = buildFullPayload(
+      match,
+      ctx,
+      url,
+      derivedCtx,
+      freshHandleStore,
+    );
+    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+      onError: (error: unknown) => {
+        ctx.callOnError(error, "rendering", { request, url, env });
+      },
+    });
+
+    // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
+    // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
+    // captureAndStoreShell, not here: a tag recorded AFTER an await in async shell
+    // content (and tags propagated by async cache()/"use cache" reads) lands after
+    // this synchronous construction point, so snapshotting here dropped it — the
+    // shell-tag snapshot must sit behind the quiesce gate (issue #676).
+    return captureAndStoreShell(
+      ssrModule,
+      rscStream,
+      freshHandleStore,
+      derivedCtx,
+      descriptor,
+    );
+  });
+}
+
+/**
+ * The derived capture context and its fresh (mask-funneled) handle store,
+ * shared by BOTH shell producers: the runtime background capture
+ * (attemptCapture, producer A) and the build-time prerender shell capture
+ * (prerender/build-shell-capture.ts, producer B — issue #699). One
+ * implementation so the capture semantics — the nested-thenable mask funnel,
+ * handler-liveness bookkeeping, snapshot recording, the implicit doc-cache
+ * scope — cannot drift between producers.
+ */
+export interface CaptureContextDerivation {
+  derivedCtx: RequestContext;
+  freshHandleStore: HandleStore;
+}
+
+/**
+ * Derive the capture request context from a base context. Producer A passes
+ * the foreground request's post-middleware context (the derived context
+ * inherits its variables/env/cookie machinery through the prototype);
+ * producer B passes a synthetic build-request context created by
+ * createRequestContext over the build env, with a fresh MemorySegmentCacheStore
+ * as `_cacheStore` so the recording/snapshot machinery arms identically.
+ */
+export function deriveShellCaptureContext(
+  reqCtx: RequestContext<any>,
+  descriptor: Pick<ShellCaptureDescriptor, "ttl" | "swr">,
+): CaptureContextDerivation {
   const freshHandleStore = createHandleStore();
   freshHandleStore.onError = reqCtx._handleStore.onError;
   // Shape = liveness for handles, exactly as for bake-lane loader containers
@@ -911,41 +979,7 @@ async function attemptCapture(
     };
   }
 
-  return runWithRequestContext(derivedCtx, async () => {
-    const match = await ctx.router.match(request, { env });
-    // A route that redirects has no shell to capture — bail (no store write, no
-    // retry: a redirect is deterministic).
-    if (match.redirect) return "redirect";
-
-    setRequestContextParams(match.params, match.routeName);
-
-    const payload = buildFullPayload(
-      match,
-      ctx,
-      url,
-      derivedCtx,
-      freshHandleStore,
-    );
-    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
-      onError: (error: unknown) => {
-        ctx.callOnError(error, "rendering", { request, url, env });
-      },
-    });
-
-    // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
-    // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
-    // captureAndStoreShell, not here: a tag recorded AFTER an await in async shell
-    // content (and tags propagated by async cache()/"use cache" reads) lands after
-    // this synchronous construction point, so snapshotting here dropped it — the
-    // shell-tag snapshot must sit behind the quiesce gate (issue #676).
-    return captureAndStoreShell(
-      ssrModule,
-      rscStream,
-      freshHandleStore,
-      derivedCtx,
-      descriptor,
-    );
-  });
+  return { derivedCtx, freshHandleStore };
 }
 
 /**
@@ -1269,8 +1303,15 @@ async function captureAndStoreShell(
   }
 }
 
-// Exported for unit tests that drive the capture core directly.
-export { runShellCapture, captureAndStoreShell };
+// Exported for unit tests that drive the capture core directly, and — with the
+// cold-graph retry pieces — for producer B (prerender/build-shell-capture.ts),
+// which mirrors the runtime capture's retry-in-place with the same delay.
+export {
+  runShellCapture,
+  captureAndStoreShell,
+  delay,
+  SHELL_CAPTURE_RETRY_DELAY_MS,
+};
 
 // Exported for unit tests that pin the refused-capture backoff policy directly
 // (dev cap vs production exponential growth, stored-clears, cold-start re-probe).

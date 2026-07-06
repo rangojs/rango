@@ -181,11 +181,18 @@ consumer:
 
 - **Producer A (runtime)**: the background capture, triggered by traffic,
   TTL-bound.
-- **Producer B (build time)**: Prerender runs the same capture under
-  `BuildContext`. Build-time production is the SAFER producer: there is no
-  ambient user identity at build, so the identity guard is trivially
-  satisfied and the capture-credential defense-in-depth concern vanishes for
-  build-time entries.
+- **Producer B (build time)**: SHIPPED (#699). The build's shell prerender
+  phase (`vite/discovery/shell-prerender-phase.ts`, buildApp post) runs the
+  SAME capture core (`deriveShellCaptureContext` + `captureAndStoreShell`,
+  driven by `prerender/build-shell-capture.ts`) over the just-collected
+  prerender payloads, and the serve path reads the resulting manifest through
+  `rsc/shell-build-manifest.ts` on a store MISS — first request after deploy
+  is a HIT. Build-time production is the SAFER producer: there is no ambient
+  user identity at build, so the identity guard is trivially satisfied and
+  the capture-credential defense-in-depth concern vanishes for build-time
+  entries. In dev the same producer runs on demand via `/__rsc_shell`.
+  Details: `packages/rangojs-router/docs/prerender-api-design.md`
+  ("Build-time PPR shells").
 - **Consumer**: the fast path above. The worker cannot tell whether an entry
   came from a capture or from the build — extending the existing hard rule
   ("the browser can't tell a route was pre-rendered") one layer deeper, into
@@ -242,9 +249,9 @@ basket badge still streams live; the homepage is a runtime capture with a
   (their records already fast-path the covered subtree today).
 - **Prefetch renders and partial navigations** — unchanged; the fast path is
   document-HIT-tail only. The PDP-prefetch starvation lever is follow-up.
-- **Prerender unification (producer B)** — the entry format now carries
-  everything a build-time producer needs; wiring `matchForPrerender` to emit
-  shell entries is its own PR.
+- **Prerender unification (producer B)** — shipped since as #699 (see the
+  Unification section above); it was out of the v1 scope this section
+  records.
 - **Loader-pushed plain handle values consumed in shell content** drift on
   HITs (fresh push vs frozen prelude) exactly as they do today — the shape
   rule is the contract; not a fast-path regression.

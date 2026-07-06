@@ -189,6 +189,33 @@ describe("VercelCacheStore", () => {
       await expect(s.invalidateTags(["x"])).rejects.toThrow("expireTag boom");
     });
 
+    // The build-shell read-through's eviction gate (#699): the platform's
+    // expireTag DELETES entries and keeps no history, so invalidateTags writes
+    // its own tm-family markers and isTagsInvalidatedSince compares them
+    // against a baked entry's build-time createdAt (>= — same-ms wins).
+    it("isTagsInvalidatedSince: marker at or after `since` wins; absent tags are false", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const t0 = Date.now();
+      await s.invalidateTags(["home"]);
+      expect(await s.isTagsInvalidatedSince(["home"], t0)).toBe(true);
+      expect(await s.isTagsInvalidatedSince(["home"], t0 + 1)).toBe(false);
+      expect(await s.isTagsInvalidatedSince(["absent"], 0)).toBe(false);
+      expect(await s.isTagsInvalidatedSince(["absent", "home"], t0)).toBe(true);
+    });
+
+    it("tag markers survive expireTag (untagged) and live in the tm family", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.invalidateTags(["home"]);
+      const markerKey = [...store.keys()].find((k) => k.includes(":tm:"));
+      expect(markerKey).toBeTruthy();
+      expect(store.get(markerKey!)!.tags).toEqual([]);
+      // Invalidating another tag must not delete the first marker.
+      await s.invalidateTags(["other"]);
+      expect(store.has(markerKey!)).toBe(true);
+    });
+
     it("drops comma-bearing and over-length tags but keeps valid ones", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
@@ -494,6 +521,17 @@ describe("VercelCacheStore", () => {
       const hit = await s.getShell("k");
       expect(hit?.entry.initialTheme).toBe("dark");
       expect(hit?.entry.snapshot).toEqual(entry.snapshot);
+    });
+
+    // The serve side arms the handler-free fast path on `!entry.handlerLiveHoles`,
+    // so the flag must survive the store round trip: dropped, a handler-live
+    // entry read back silently replays the handler layer and its holes (which
+    // only a handler re-run can fill) never fill on a HIT.
+    it("round-trips handlerLiveHoles", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry({ handlerLiveHoles: true }), 60, 300);
+      expect((await s.getShell("k"))?.entry.handlerLiveHoles).toBe(true);
     });
 
     it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {

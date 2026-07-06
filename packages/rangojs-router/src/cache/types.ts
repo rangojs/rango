@@ -196,6 +196,20 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param tags - The cache tags to invalidate
    */
   invalidateTags?(tags: string[]): Promise<void>;
+
+  /**
+   * True when ANY of `tags` was invalidated (invalidateTags/updateTag) at or
+   * after `sinceMs` (>= so a same-millisecond invalidation wins, favouring
+   * freshness). Consulted by the build-time shell read-through
+   * (rsc/shell-build-manifest.ts): a baked shell entry is immutable in the
+   * build manifest, so "was it evicted" is answered by the store's tag
+   * markers against the entry's createdAt rather than by deleting anything.
+   * Optional: without it, TAGGED build entries are not served (untagged ones
+   * are unaffected — they are evictable only by deploy/buildVersion anyway).
+   * Fail open to `false` on marker-read errors: a transient store fault must
+   * degrade to "still valid", the same posture as the envelope tag checks.
+   */
+  isTagsInvalidatedSince?(tags: string[], sinceMs: number): Promise<boolean>;
 }
 
 /**

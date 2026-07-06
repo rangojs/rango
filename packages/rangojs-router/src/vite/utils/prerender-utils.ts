@@ -207,26 +207,45 @@ export function resetStagedBuildAssets(projectRoot: string): void {
   rmSync(getStagedAssetDir(projectRoot), { recursive: true, force: true });
 }
 
-export function stageBuildAssetModule(
-  projectRoot: string,
-  prefix: "__pr" | "__st",
+/**
+ * Write one content-hashed `export default <value>;` asset module into `dir`
+ * (created if needed) and return its file name. Identical payloads dedupe to
+ * one file (the hash is the content). Shared by the staged prerender/static
+ * flow (stageBuildAssetModule below) and the shell prerender phase, which
+ * writes directly into the final RSC assets dir — it runs after buildApp,
+ * past the staging/copy window.
+ */
+export function writeBuildAssetModule(
+  dir: string,
+  prefix: "__pr" | "__st" | "__ps",
   exportValue: string,
 ): string {
-  const stagedDir = getStagedAssetDir(projectRoot);
-  mkdirSync(stagedDir, { recursive: true });
+  mkdirSync(dir, { recursive: true });
 
   const contentHash = createHash("sha256")
     .update(exportValue)
     .digest("hex")
     .slice(0, 8);
   const fileName = `${prefix}-${contentHash}.js`;
-  const filePath = resolve(stagedDir, fileName);
+  const filePath = resolve(dir, fileName);
 
   if (!existsSync(filePath)) {
     writeFileSync(filePath, `export default ${exportValue};\n`);
   }
 
   return fileName;
+}
+
+export function stageBuildAssetModule(
+  projectRoot: string,
+  prefix: "__pr" | "__st",
+  exportValue: string,
+): string {
+  return writeBuildAssetModule(
+    getStagedAssetDir(projectRoot),
+    prefix,
+    exportValue,
+  );
 }
 
 export function copyStagedBuildAssets(

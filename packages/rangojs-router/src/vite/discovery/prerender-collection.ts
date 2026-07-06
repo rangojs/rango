@@ -281,6 +281,22 @@ export async function expandPrerenderRoutes(
               "__pr",
               mainValue,
             );
+            // Prerender + ppr composition: flag the URL as a build-time shell
+            // candidate for the post-build capture phase (producer B, #699).
+            // The payload JSON is retained in memory so that phase can seed an
+            // in-realm prerender store the capture's match() will HIT.
+            if (result.ppr !== undefined && result.ppr !== false) {
+              (state.shellCandidates ??= []).push({
+                urlPath: entry.urlPath,
+                routeName: result.routeName,
+                paramHash,
+                ppr: result.ppr === true ? true : result.ppr,
+              });
+              (state.prerenderPayloadValues ??= new Map()).set(
+                mainKey,
+                mainValue,
+              );
+            }
             if (result.interceptSegments?.length) {
               const interceptKey = `${result.routeName}/${paramHash}/i`;
               const interceptValue = JSON.stringify({

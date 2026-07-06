@@ -178,13 +178,37 @@ function PrerenderPprSeqSlot() {
 }
 
 export const PrerenderPprArticle = Prerender(
-  async () => [{ slug: "alpha" }, { slug: "beta" }],
+  // "warm" is the e2e warm-up slug: the suite's beforeAll polls its bare path
+  // to HIT so the producer-B machinery (dev: the /__rsc_shell on-demand
+  // capture graph) is hot before the strict first-request assertions run on
+  // the virgin alpha/beta bare paths.
+  async () => [{ slug: "alpha" }, { slug: "beta" }, { slug: "warm" }],
   async (ctx) => {
     return (
       <div data-testid="pp-article">
         <h1 data-testid="pp-article-title">{`PP ${ctx.params.slug}`}</h1>
         <p data-testid="pp-article-content">
           {`Prerendered shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppseq" />
+      </div>
+    );
+  },
+);
+
+/**
+ * Dedicated fixture for the build-shell EVICTION e2e (#699): its own route +
+ * tag so updateTag("pp-evict-shell") cannot blast the sibling /pp/:slug
+ * entries a concurrently-running test is asserting on (dev runs
+ * fullyParallel). Same slot-hole shape as /pp/:slug.
+ */
+export const PrerenderPprEvictArticle = Prerender(
+  async () => [{ slug: "gamma" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-evict-article">
+        <p data-testid="pp-evict-article-content">
+          {`Evictable shell content for ${ctx.params.slug}`}
         </p>
         <ParallelOutlet name="@ppseq" />
       </div>
@@ -202,6 +226,30 @@ export const prerenderPatterns = urls(
       "/pp/:slug",
       PrerenderPprArticle,
       { name: "pp.article", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        parallel({
+          "@ppseq": {
+            handler: PrerenderPprSeqSlot,
+            use: () => [
+              loader(PrerenderPprSeqLoader),
+              loading(
+                <span data-testid="pp-seq-fallback">Loading pp seq...</span>,
+              ),
+            ],
+          },
+        }),
+      ],
+    ),
+    // Build-shell eviction fixture (#699): tagged so updateTag can reject the
+    // baked entry via the store's tag markers (manifest entries are immutable
+    // — eviction is a marker comparison, not a deletion).
+    path(
+      "/pp-evict/:slug",
+      PrerenderPprEvictArticle,
+      {
+        name: "pp.evict",
+        ppr: { ttl: 300, swr: 120, tags: ["pp-evict-shell"] },
+      },
       () => [
         parallel({
           "@ppseq": {

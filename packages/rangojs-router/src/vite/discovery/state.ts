@@ -38,6 +38,12 @@ export interface PluginOptions {
    * (`clientChunks: true`/default); undefined for `false` or a custom function.
    */
   clientChunkCtx?: import("../utils/client-chunks.js").ClientChunkContext;
+  /**
+   * rango({ headScripts }) — threaded so the dev temp server can serve the
+   * REAL virtual SSR entry (getVirtualEntrySSR) for the on-demand shell
+   * capture endpoint with the app's configured head-script strategy.
+   */
+  headScripts?: import("../plugin-types.js").HeadScriptsOption;
 }
 
 export interface PrecomputedEntry {
@@ -56,6 +62,18 @@ export interface PerRouterManifestEntry {
   routeSearchSchemas?: Record<string, Record<string, string>>;
   sourceFile?: string;
   factoryOnlyPrefixes?: Set<string>;
+}
+
+/**
+ * One Prerender+ppr URL the build must additionally produce a PPR shell entry
+ * for (issue #699 producer B). `ppr` is the route's raw path option, already
+ * filtered to truthy by the collector.
+ */
+export interface ShellPrerenderCandidate {
+  urlPath: string;
+  routeName: string;
+  paramHash: string;
+  ppr: true | { ttl?: number; swr?: number; tags?: string[] };
 }
 
 export interface DiscoveryState {
@@ -93,6 +111,27 @@ export interface DiscoveryState {
 
   prerenderManifestEntries: Record<string, string> | null;
   staticManifestEntries: Record<string, string> | null;
+  /**
+   * Build-time PPR shell candidates: prerender routes that ALSO declare the
+   * `ppr` path option (issue #699 producer B). Collected by
+   * expandPrerenderRoutes; consumed by the post-build shell capture phase.
+   */
+  shellCandidates: ShellPrerenderCandidate[] | null;
+  /**
+   * Raw prerender payload JSON strings keyed by manifest key, retained in
+   * memory so the shell capture phase can seed an in-realm prerender store
+   * without re-reading staged asset files.
+   */
+  prerenderPayloadValues: Map<string, string> | null;
+  /**
+   * The buildStart temp RSC server, kept alive past discovery when shell
+   * candidates exist: the shell capture phase (buildApp post) reuses its
+   * realm — tries installed, registry populated — after the client build has
+   * produced the asset URLs the prelude must embed. Deferred as a PAIR with
+   * the buildEnv; closed by the buildApp post hook's finally (success) or
+   * buildEnd (aborted build).
+   */
+  shellPhaseTempServer: import("vite").ViteDevServer | null;
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;
@@ -145,6 +184,9 @@ export function createDiscoveryState(
 
     prerenderManifestEntries: null,
     staticManifestEntries: null,
+    shellCandidates: null,
+    prerenderPayloadValues: null,
+    shellPhaseTempServer: null,
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: null,

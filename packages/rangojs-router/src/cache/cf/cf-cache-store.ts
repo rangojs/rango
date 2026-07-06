@@ -227,6 +227,13 @@ interface KVShellEnvelope {
   i?: string;
   /** Capture data snapshot: recorded cache-store hits/writes for HIT parity */
   sn?: import("../types.js").ShellSnapshotRecord[];
+  /**
+   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
+   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
+   * here silently fast-pathed handler-live entries after a KV round trip —
+   * their holes only a handler re-run can fill.
+   */
+  lh?: boolean;
 }
 
 /**
@@ -1678,6 +1685,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           buildVersion: envelope.bv,
           initialTheme: envelope.i,
           snapshot: envelope.sn,
+          handlerLiveHoles: envelope.lh,
           createdAt: envelope.c,
         },
         shouldRevalidate,
@@ -1745,6 +1753,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               ta: taggedAt,
               i: entry.initialTheme,
               sn: entry.snapshot,
+              lh: entry.handlerLiveHoles,
             };
             return this.kv!.put(kvKey, JSON.stringify(envelope), {
               expirationTtl: totalTtl,
@@ -2260,6 +2269,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * silently reporting success while other requests/colos serve stale data. The
    * eager purge still fires for the whole batch first (it is additive).
    */
+  /**
+   * Build-shell read-through gate (SegmentCacheStore.isTagsInvalidatedSince):
+   * a baked shell entry is immutable in the build manifest, so eviction is
+   * answered by the SAME KV tag markers updateTag() writes, compared against
+   * the entry's build-time createdAt. Thin public wrapper over the private
+   * envelope check (identical semantics: marker >= since, fail open).
+   */
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
+    return this.isGloballyInvalidated(tags, sinceMs);
+  }
+
   async invalidateTags(tags: string[]): Promise<void> {
     if (tags.length === 0) return;
     const invalidatedAt = Date.now();

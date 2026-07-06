@@ -44,6 +44,7 @@ import {
   warnShellStoreMissingOnce,
   warnPprNonceActiveOnce,
 } from "./shell-serve.js";
+import { lookupBuildShell } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
 import {
   resolveSameOriginRedirect,
@@ -172,6 +173,36 @@ async function handleRscRenderingInner<TEnv>(
             store,
             debug: INTERNAL_RANGO_DEBUG,
           };
+          // One serve funnel for BOTH entry sources (runtime store hit below,
+          // build-manifest hit further down): schedule the background
+          // recapture when asked, then commit the composed response.
+          const serveHit = (
+            entry: ShellCacheEntry,
+            revalidate: boolean | undefined,
+          ): Response => {
+            if (revalidate) {
+              scheduleShellCapture(
+                ctx,
+                request,
+                env,
+                url,
+                reqCtx,
+                ssrModule,
+                descriptor,
+              );
+            }
+            return serveShellHit(
+              ctx,
+              request,
+              env,
+              url,
+              reqCtx,
+              handleStore,
+              ssrModule,
+              entry,
+              descriptor,
+            );
+          };
           let cached: Awaited<ReturnType<typeof store.getShell>> = null;
           try {
             cached = await store.getShell(key);
@@ -196,29 +227,42 @@ async function handleRscRenderingInner<TEnv>(
             } else {
               // Stale (SWR) hit: serve the stale shell now, recapture in the
               // background (stampede-guarded + backoff inside scheduleShellCapture).
-              if (cached.shouldRevalidate) {
-                scheduleShellCapture(
-                  ctx,
-                  request,
-                  env,
-                  url,
-                  reqCtx,
-                  ssrModule,
-                  descriptor,
-                );
-              }
-              return serveShellHit(
-                ctx,
-                request,
-                env,
-                url,
-                reqCtx,
-                handleStore,
-                ssrModule,
-                cached.entry,
-                descriptor,
-              );
+              return serveHit(cached.entry, cached.shouldRevalidate);
             }
+          }
+          // Build-time shell read-through (producer B, #699): on a runtime
+          // store MISS (or an invalid/corrupt runtime entry), a Prerender+ppr
+          // route's shell was already produced at `vite build` — serve it
+          // through the SAME serveShellHit, so the first-ever request after a
+          // deploy is a HIT with zero runtime capture. lookupBuildShell owns
+          // every gate (search-less request, versions, integrity, tag
+          // markers) and fails to null — the ordinary MISS path below takes
+          // over. Past ppr.ttl the baked entry still serves but a runtime
+          // recapture is scheduled: SWR is the UPGRADE path from build entry
+          // to fresher runtime entry (the runtime store read above wins once
+          // the capture lands).
+          const buildHit = await lookupBuildShell(
+            url,
+            ctx.version,
+            store,
+            // Dev: no build manifest exists; producer B runs on demand via
+            // the dev server's /__rsc_shell endpoint for PRERENDERED routes
+            // only (production's exact candidate set). Folded away in
+            // production builds (NODE_ENV is a compile-time constant).
+            process.env.NODE_ENV !== "production"
+              ? {
+                  isPrerenderRoute:
+                    reqCtx._classifiedRoute?.matched?.pr === true,
+                  routeName: reqCtx._classifiedRoute?.routeKey,
+                  ttl: pprConfig.ttl,
+                  swr: pprConfig.swr,
+                  tags: pprConfig.tags,
+                }
+              : undefined,
+          );
+          if (buildHit) {
+            // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
+            return serveHit(buildHit.entry, buildHit.stale);
           }
           // MISS (no entry, invalid reactVersion, or store read failure): axis 1
           // + a background capture scheduled once the response is known servable.
