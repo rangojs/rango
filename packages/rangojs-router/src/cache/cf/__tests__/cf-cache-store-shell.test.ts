@@ -142,6 +142,19 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect((await store.getShell("k"))?.entry.handlerLiveHoles).toBe(true);
   });
 
+  // The build-shell read-through's eviction gate (#699): a baked manifest
+  // entry is immutable, so updateTag reaches it by comparing the SAME KV tag
+  // markers invalidateTags writes against the entry's build-time createdAt.
+  it("isTagsInvalidatedSince: marker at or after `since` wins; absent tags are false", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const t0 = Date.now();
+    await store.invalidateTags(["home"]);
+    await drain(mockCtx);
+    expect(await store.isTagsInvalidatedSince(["home"], t0)).toBe(true);
+    expect(await store.isTagsInvalidatedSince(["home"], t0 + 1)).toBe(false);
+    expect(await store.isTagsInvalidatedSince(["absent"], t0)).toBe(false);
+  });
+
   it("no-ops getShell/putShell when no KV namespace is configured", async () => {
     const store = new CFCacheStore({ ctx: mockCtx }); // no kv
     await store.putShell("k", shellEntry(), 300, 30);
