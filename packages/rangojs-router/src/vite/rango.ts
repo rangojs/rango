@@ -544,6 +544,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       prerenderOnError: options?.prerender?.onError,
       discovery: options?.discovery,
       clientChunkCtx,
+      headScripts: resolvedOptions.headScripts,
     }),
   );
 

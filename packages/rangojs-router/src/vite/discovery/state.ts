@@ -38,6 +38,12 @@ export interface PluginOptions {
    * (`clientChunks: true`/default); undefined for `false` or a custom function.
    */
   clientChunkCtx?: import("../utils/client-chunks.js").ClientChunkContext;
+  /**
+   * rango({ headScripts }) — threaded so the dev temp server can serve the
+   * REAL virtual SSR entry (getVirtualEntrySSR) for the on-demand shell
+   * capture endpoint with the app's configured head-script strategy.
+   */
+  headScripts?: import("../plugin-types.js").HeadScriptsOption;
 }
 
 export interface PrecomputedEntry {

@@ -232,7 +232,25 @@ async function handleRscRenderingInner<TEnv>(
           // recapture is scheduled: SWR is the UPGRADE path from build entry
           // to fresher runtime entry (the runtime store read above wins once
           // the capture lands).
-          const buildHit = await lookupBuildShell(url, ctx.version, store);
+          const buildHit = await lookupBuildShell(
+            url,
+            ctx.version,
+            store,
+            // Dev: no build manifest exists; producer B runs on demand via
+            // the dev server's /__rsc_shell endpoint for PRERENDERED routes
+            // only (production's exact candidate set). Folded away in
+            // production builds (NODE_ENV is a compile-time constant).
+            process.env.NODE_ENV !== "production"
+              ? {
+                  isPrerenderRoute:
+                    reqCtx._classifiedRoute?.matched?.pr === true,
+                  routeName: reqCtx._classifiedRoute?.routeKey,
+                  ttl: pprConfig.ttl,
+                  swr: pprConfig.swr,
+                  tags: pprConfig.tags,
+                }
+              : undefined,
+          );
           if (buildHit) {
             if (buildHit.stale) {
               scheduleShellCapture(

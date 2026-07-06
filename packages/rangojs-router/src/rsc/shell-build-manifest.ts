@@ -87,6 +87,58 @@ export interface BuildShellHit {
 }
 
 /**
+ * Dev-mode lookup context: there is no build manifest in dev, so producer B
+ * runs ON DEMAND through the Vite dev server's /__rsc_shell endpoint
+ * (memoized per router HMR generation), mirroring the dev prerender store's
+ * /__rsc_prerender flow. Only armed for PRERENDERED routes (matched.pr) —
+ * exactly production's candidate set; everything else keeps runtime capture.
+ */
+export interface DevShellLookup {
+  /** True when the classified route is trie-flagged pr (Prerender-backed). */
+  isPrerenderRoute: boolean;
+  /** Canonical route key of the classified route (endpoint verification). */
+  routeName: string | undefined;
+  /** Resolved ppr policy from the serve gate (the endpoint is policy-free). */
+  ttl: number;
+  swr?: number;
+  tags?: string[];
+}
+
+/**
+ * Bound like the dev prerender store fetch (see #697): inside a workerd
+ * waitUntil an unsettled fetch pends forever instead of rejecting; on
+ * timeout this degrades to a MISS and the runtime capture path takes over.
+ */
+const DEV_SHELL_FETCH_TIMEOUT_MS = 10_000;
+
+async function fetchDevShellEntry(
+  pathname: string,
+  buildVersion: string,
+  dev: DevShellLookup,
+): Promise<BuildShellEntry | undefined> {
+  if (!dev.isPrerenderRoute || !dev.routeName) return undefined;
+  const devUrl = globalThis.__PRERENDER_DEV_URL;
+  if (!devUrl) return undefined;
+  const params = new URLSearchParams({
+    pathname,
+    routeName: dev.routeName,
+    ttl: String(dev.ttl),
+    version: buildVersion,
+  });
+  if (dev.swr !== undefined) params.set("swr", String(dev.swr));
+  if (dev.tags && dev.tags.length > 0) params.set("tags", dev.tags.join(","));
+  try {
+    const res = await fetch(`${devUrl}/__rsc_shell?${params}`, {
+      signal: AbortSignal.timeout(DEV_SHELL_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return undefined;
+    return (await res.json()) as BuildShellEntry;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Look up the baked shell entry for a request, applying every serve gate:
  * search-less requests only (the build captured the bare pathname; a
  * search-bearing URL has its own shell identity owned by runtime capture),
@@ -98,15 +150,21 @@ export async function lookupBuildShell(
   url: URL,
   buildVersion: string,
   store: SegmentCacheStore,
+  dev?: DevShellLookup,
 ): Promise<BuildShellHit | null> {
   try {
-    if (globalThis.__loadShellManifestModule === undefined) return null;
     if (sortedSearchString(url.searchParams) !== "") return null;
-    const mod = await loadManifest();
-    if (!mod) return null;
-    const spec = mod.default[buildShellManifestKey(url.pathname)];
-    if (!spec) return null;
-    const record = (await mod.loadShellAsset(spec)).default;
+    let record: BuildShellEntry | undefined;
+    if (globalThis.__loadShellManifestModule !== undefined) {
+      const mod = await loadManifest();
+      if (!mod) return null;
+      const spec = mod.default[buildShellManifestKey(url.pathname)];
+      if (!spec) return null;
+      record = (await mod.loadShellAsset(spec)).default;
+    } else if (dev) {
+      record = await fetchDevShellEntry(url.pathname, buildVersion, dev);
+    }
+    if (!record) return null;
     const entry = record.entry;
     if (!isValidShellHit(entry, buildVersion)) return null;
     if (!hasIntactShellPayload(entry)) return null;

@@ -24,6 +24,7 @@ import {
   internalDebugNoCacheMiddleware,
 } from "./inject-client-debug.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
+import { getVirtualEntrySSR, VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
   BUILD_ENV_GLOBAL_KEY,
@@ -139,7 +140,21 @@ function ensureCloudflareProtocolLoaderRegistered(): void {
  */
 async function createTempRscServer(
   state: DiscoveryState,
-  options: { forceBuild?: boolean; cacheDir?: string } = {},
+  options: {
+    forceBuild?: boolean;
+    cacheDir?: string;
+    /**
+     * Serve the REAL rango SSR entry (getVirtualEntrySSR) for
+     * "virtual:entry-ssr" instead of the discovery stub, so the dev
+     * /__rsc_shell endpoint can drive captureShellHTML in this server's SSR
+     * realm. Dev-correct by construction: the entry's bootstrap resolves to
+     * plugin-rsc's stable virtual browser-entry URL, which the MAIN dev
+     * server serves to the browser. Loaded lazily — discovery never imports
+     * the SSR entry, so the temp server stays as light as before until a
+     * shell capture actually runs.
+     */
+    realSsrEntry?: boolean;
+  } = {},
 ) {
   // Install the Node ESM loader hook before any module evaluation so
   // `cloudflare:*` specifiers in externalized/loader-delegated modules
@@ -179,6 +194,26 @@ async function createTempRscServer(
       // hashClientRefs only in build mode — production bundles need hashed refs
       ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
       createVersionPlugin(),
+      // Before the stub plugin, so "virtual:entry-ssr" resolves to the real
+      // SSR entry when the shell endpoint needs it (see the option doc).
+      ...(options.realSsrEntry
+        ? [
+            {
+              name: "@rangojs/router:temp-real-ssr-entry",
+              enforce: "pre" as const,
+              resolveId(id: string) {
+                return id === "virtual:entry-ssr"
+                  ? "\0rango-temp-real-ssr-entry"
+                  : null;
+              },
+              load(id: string) {
+                return id === "\0rango-temp-real-ssr-entry"
+                  ? getVirtualEntrySSR(state.opts?.headScripts)
+                  : null;
+              },
+            } satisfies import("vite").Plugin,
+          ]
+        : []),
       createVirtualStubPlugin(),
       createCloudflareProtocolStubPlugin(),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
@@ -555,6 +590,10 @@ export function createRouterDiscoveryPlugin(
         try {
           prerenderTempServer = await createTempRscServer(s, {
             cacheDir: "node_modules/.vite_prerender",
+            // The dev /__rsc_shell endpoint drives captureShellHTML in this
+            // server's SSR realm; the entry is only imported when a shell
+            // capture runs, so discovery cost is unchanged.
+            realSsrEntry: true,
           });
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
@@ -1069,6 +1108,177 @@ export function createRouterDiscoveryPlugin(
         res.statusCode = 404;
         res.end("No prerender match");
         logResult(404, "no match");
+      });
+
+      // Dev on-demand PPR shell production (producer B, #699). There is no
+      // build manifest in dev, so the serve path's read-through
+      // (rsc/shell-build-manifest.ts) fetches the shell entry from here on a
+      // Prerender+ppr route's first request — dev serves x-rango-shell: HIT
+      // from request one, mirroring production. Memoized per router HMR
+      // generation AND per caller version (a client-module edit bumps the
+      // version without rotating the router instance; the stale entry would
+      // fail the serve gate forever). The endpoint is policy-free: the caller
+      // (the serve gate, which resolved the route's ppr option) sends
+      // ttl/swr/tags/version. Only prerender-backed routes produce entries —
+      // the /__rsc_prerender pre-flight below both warms the payload memo the
+      // capture's dev store fetch will hit AND refuses non-prerenderable
+      // routes (a live-handler render must never be served as a baked shell).
+      server.middlewares.use("/__rsc_shell", async (req: any, res: any) => {
+        await s.discoveryDone;
+        const url = new URL(req.url ?? "", "http://localhost");
+        const pathname = url.searchParams.get("pathname");
+        const routeName = url.searchParams.get("routeName");
+        const version = url.searchParams.get("version");
+        if (!pathname || !routeName || !version) {
+          res.statusCode = 400;
+          res.end("Missing pathname/routeName/version");
+          return;
+        }
+        const ttl = Number(url.searchParams.get("ttl") ?? "300");
+        const swrRaw = url.searchParams.get("swr");
+        const swr = swrRaw === null ? undefined : Number(swrRaw);
+        const tagsRaw = url.searchParams.get("tags");
+        const tags = tagsRaw ? tagsRaw.split(",") : undefined;
+
+        // Resolve the capture realms: main-server envs (Node preset) or the
+        // shared temp Node server (Cloudflare preset — no main RSC runner).
+        // Entry re-import per request picks up HMR edits, exactly like the
+        // prerender endpoint above.
+        const rscEnvMain = (server.environments as any)?.rsc;
+        let rscRealm: any = null;
+        let ssrRealm: any = null;
+        let ssrEntryId: string;
+        if (rscEnvMain?.runner && s.resolvedEntryPath) {
+          try {
+            await rscEnvMain.runner.import(s.resolvedEntryPath);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.end(`Shell capture module refresh failed: ${err.message}`);
+            return;
+          }
+          rscRealm = rscEnvMain;
+          ssrRealm = (server.environments as any)?.ssr;
+          ssrEntryId =
+            (server.environments as any)?.ssr?.config?.build?.rollupOptions
+              ?.input?.index ?? VIRTUAL_IDS.ssr;
+        } else {
+          const tempRscEnv = await getOrCreateTempServer();
+          if (tempRscEnv) {
+            try {
+              await importEntryAndRegistry(tempRscEnv);
+            } catch (err: any) {
+              res.statusCode = 500;
+              res.end(`Shell capture module refresh failed: ${err.message}`);
+              return;
+            }
+          }
+          rscRealm = tempRscEnv;
+          ssrRealm = (prerenderTempServer?.environments as any)?.ssr;
+          ssrEntryId = "virtual:entry-ssr";
+        }
+        if (!rscRealm?.runner || !ssrRealm?.runner) {
+          res.statusCode = 503;
+          res.end("Shell capture runners not available");
+          return;
+        }
+        let registry: Map<string, any> | null = null;
+        try {
+          const serverMod = await rscRealm.runner.import(
+            "@rangojs/router/server",
+          );
+          registry = serverMod.RouterRegistry ?? null;
+        } catch {
+          registry = null;
+        }
+        if (!registry || registry.size === 0) {
+          res.statusCode = 503;
+          res.end("Shell capture registry not available");
+          return;
+        }
+
+        // Pre-flight: the route must be prerender-backed. Warms the payload
+        // memo the capture's dev prerender store will fetch, and closes the
+        // live-handler-bake hole (a non-pr route 404s here).
+        if (s.devServerOrigin) {
+          try {
+            const probe = await fetch(
+              `${s.devServerOrigin}/__rsc_prerender?pathname=${encodeURIComponent(pathname)}&routeName=${encodeURIComponent(routeName)}`,
+              { signal: AbortSignal.timeout(10_000) },
+            );
+            if (!probe.ok) {
+              res.statusCode = 404;
+              res.end("Route is not prerenderable");
+              return;
+            }
+          } catch {
+            res.statusCode = 404;
+            res.end("Prerender pre-flight failed");
+            return;
+          }
+        }
+
+        const cacheKey = `shell|${pathname}|r=${routeName}|t=${ttl}|s=${swr ?? ""}|g=${(tags ?? []).join("+")}|v=${version}`;
+        for (const [, routerInstance] of registry) {
+          if (typeof routerInstance.match !== "function") continue;
+          const cached = devPrerenderCache.get(routerInstance, cacheKey);
+          if (cached !== undefined) {
+            res.setHeader("content-type", "application/json");
+            res.setHeader("x-rango-shell-dev", "HIT");
+            res.end(cached);
+            return;
+          }
+          try {
+            const ssrModule = await ssrRealm.runner.import(ssrEntryId);
+            if (typeof ssrModule?.captureShellHTML !== "function") {
+              res.statusCode = 404;
+              res.end("SSR entry has no captureShellHTML");
+              return;
+            }
+            const captureMod = await rscRealm.runner.import(
+              "@rangojs/router/build/shell-capture",
+            );
+            const result = await captureMod.captureShellForBuild({
+              router: routerInstance,
+              urlPath: pathname,
+              routeName,
+              key: `${pathname}:shell`,
+              ttl,
+              swr,
+              tags,
+              buildEnv: s.resolvedBuildEnv,
+              buildVersion: version,
+              captureShellHTML: ssrModule.captureShellHTML,
+              debug: !!debugDiscovery,
+            });
+            if (result.outcome === "route-mismatch") continue;
+            if (result.outcome !== "stored" || !result.entry) {
+              res.statusCode = 404;
+              res.end(`Shell capture ${result.outcome}`);
+              return;
+            }
+            const body = JSON.stringify({
+              entry: result.entry,
+              ttl,
+              swr,
+              tags: result.tags,
+              routeName,
+            });
+            devPrerenderCache.set(routerInstance, cacheKey, body);
+            res.setHeader("content-type", "application/json");
+            res.setHeader("x-rango-shell-dev", "MISS");
+            res.end(body);
+            return;
+          } catch (err: any) {
+            console.warn(
+              `[rango] Dev shell capture error for ${pathname} (route keeps runtime capture): ${err.message}`,
+            );
+            res.statusCode = 404;
+            res.end(`Shell capture error: ${err.message}`);
+            return;
+          }
+        }
+        res.statusCode = 404;
+        res.end("No router matched");
       });
 
       // Watch url module and router files for changes and regenerate named-routes.gen.ts.
