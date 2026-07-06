@@ -191,6 +191,13 @@ interface VercelShellEnvelope {
   i?: string;
   /** Capture data snapshot: recorded cache-store hits/writes for HIT parity. */
   sn?: ShellSnapshotRecord[];
+  /**
+   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
+   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
+   * here silently fast-pathed handler-live entries after a store round trip —
+   * their holes only a handler re-run can fill.
+   */
+  lh?: boolean;
 }
 
 /** Read-path outcome for the debug sink. */
@@ -781,6 +788,7 @@ export class VercelCacheStore<
         buildVersion: env.bv,
         initialTheme: env.i,
         snapshot: env.sn,
+        handlerLiveHoles: env.lh,
         createdAt: env.c,
       },
       shouldRevalidate,
@@ -815,6 +823,7 @@ export class VercelCacheStore<
         t: safeTags.length > 0 ? safeTags : undefined,
         i: entry.initialTheme,
         sn: entry.snapshot,
+        lh: entry.handlerLiveHoles,
       };
       // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
       // oversized shell prelude is reported and skipped (fail-open to a full
@@ -1095,7 +1104,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, sn } = raw;
+    const { p, po, rv, bv, c, s, e, t, i, sn, lh } = raw;
     if (typeof p !== "string" || typeof rv !== "string") return null;
     if (po !== null && typeof po !== "string") return null;
     if (typeof c !== "number") return null;
@@ -1111,6 +1120,7 @@ export class VercelCacheStore<
       t: Array.isArray(t) ? (t as string[]) : undefined,
       i: typeof i === "string" ? i : undefined,
       sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
+      lh: lh === true ? true : undefined,
     };
   }
 

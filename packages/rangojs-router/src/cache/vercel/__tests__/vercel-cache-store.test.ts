@@ -496,6 +496,17 @@ describe("VercelCacheStore", () => {
       expect(hit?.entry.snapshot).toEqual(entry.snapshot);
     });
 
+    // The serve side arms the handler-free fast path on `!entry.handlerLiveHoles`,
+    // so the flag must survive the store round trip: dropped, a handler-live
+    // entry read back silently replays the handler layer and its holes (which
+    // only a handler re-run can fill) never fill on a HIT.
+    it("round-trips handlerLiveHoles", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry({ handlerLiveHoles: true }), 60, 300);
+      expect((await s.getShell("k"))?.entry.handlerLiveHoles).toBe(true);
+    });
+
     it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });

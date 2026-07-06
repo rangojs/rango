@@ -130,6 +130,18 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(hit?.entry.buildVersion).toBe("build-abc");
   });
 
+  // The serve side arms the handler-free fast path on `!entry.handlerLiveHoles`,
+  // so the flag must survive the KV round trip: dropped, a handler-live entry
+  // read back from KV silently replays the handler layer and its holes (which
+  // only a handler re-run can fill) never fill on a HIT.
+  it("round-trips handlerLiveHoles through KV", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    await store.putShell("k", shellEntry({ handlerLiveHoles: true }), 300, 30);
+    await drain(mockCtx);
+
+    expect((await store.getShell("k"))?.entry.handlerLiveHoles).toBe(true);
+  });
+
   it("no-ops getShell/putShell when no KV namespace is configured", async () => {
     const store = new CFCacheStore({ ctx: mockCtx }); // no kv
     await store.putShell("k", shellEntry(), 300, 30);

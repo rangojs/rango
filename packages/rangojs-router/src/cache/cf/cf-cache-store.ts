@@ -227,6 +227,13 @@ interface KVShellEnvelope {
   i?: string;
   /** Capture data snapshot: recorded cache-store hits/writes for HIT parity */
   sn?: import("../types.js").ShellSnapshotRecord[];
+  /**
+   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
+   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
+   * here silently fast-pathed handler-live entries after a KV round trip —
+   * their holes only a handler re-run can fill.
+   */
+  lh?: boolean;
 }
 
 /**
@@ -1678,6 +1685,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           buildVersion: envelope.bv,
           initialTheme: envelope.i,
           snapshot: envelope.sn,
+          handlerLiveHoles: envelope.lh,
           createdAt: envelope.c,
         },
         shouldRevalidate,
@@ -1745,6 +1753,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               ta: taggedAt,
               i: entry.initialTheme,
               sn: entry.snapshot,
+              lh: entry.handlerLiveHoles,
             };
             return this.kv!.put(kvKey, JSON.stringify(envelope), {
               expirationTtl: totalTtl,
