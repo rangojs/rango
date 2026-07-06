@@ -31,6 +31,9 @@ import { gateTransitions } from "./transition-gate.js";
 import { buildFullPayload } from "./full-payload.js";
 import {
   scheduleShellCapture,
+  resolveShellCaptureDebugSink,
+  takeCaptureDebugEventForTiming,
+  describeShellCaptureEvent,
   type ShellCaptureDescriptor,
 } from "./shell-capture.js";
 import {
@@ -140,6 +143,29 @@ async function handleRscRenderingInner<TEnv>(
       const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
       const store = reqCtx._cacheStore;
       const key = buildShellKey(url);
+      // Dev Server-Timing mirror (issue #651): a capture runs AFTER its
+      // triggering response committed, so its outcome can only ride a LATER
+      // response's header. When the metrics surface is active
+      // (debugPerformance), fold the buffered terminal capture event for this
+      // key into THIS request's Server-Timing as `ppr-capture;dur=<attempt
+      // ms>;desc="<outcome + sizes + waits>"`. Consuming (read-and-clear)
+      // keeps one capture = one report. Dev-only: the buffer is only written
+      // in dev (see takeCaptureDebugEventForTiming), and production folds the
+      // whole branch away.
+      if (process.env.NODE_ENV !== "production" && reqCtx._metricsStore) {
+        const lastCapture = takeCaptureDebugEventForTiming(key);
+        if (lastCapture) {
+          appendMetric(
+            reqCtx._metricsStore,
+            "ppr:capture",
+            performance.now(),
+            lastCapture.attemptMs ?? 0,
+            undefined,
+            // attemptMs already rides as this entry's dur — drop it from desc.
+            describeShellCaptureEvent({ ...lastCapture, attemptMs: undefined }),
+          );
+        }
+      }
       if (activeNonce !== undefined) {
         // Declared intent that cannot be honored deserves a diagnostic (unlike an
         // undeclared route, which is silent): a ppr route gated off by an active
@@ -172,6 +198,13 @@ async function handleRscRenderingInner<TEnv>(
             tags: pprConfig.tags,
             store,
             debug: INTERNAL_RANGO_DEBUG,
+            maxSnapshotBytes: pprConfig.maxSnapshotBytes,
+            // The resolver owns the whole policy: option wins, the
+            // INTERNAL_RANGO_DEBUG env flag lights the events up when no
+            // option is set, an explicit `false` stays off.
+            debugSink: resolveShellCaptureDebugSink(
+              ctx.router.debugShellCapture,
+            ),
           };
           // One serve funnel for BOTH entry sources (runtime store hit below,
           // build-manifest hit further down): schedule the background
@@ -204,11 +237,24 @@ async function handleRscRenderingInner<TEnv>(
             );
           };
           let cached: Awaited<ReturnType<typeof store.getShell>> = null;
+          const shellReadStart = reqCtx._metricsStore ? performance.now() : 0;
           try {
             cached = await store.getShell(key);
           } catch (error) {
             // A failing store read degrades to axis 1 (MISS), never a 500.
             reportCacheError(error, "cache-read", "[ShellServe] getShell");
+          }
+          if (reqCtx._metricsStore) {
+            // Raw store outcome (pre-validity-gates), so a version-mismatch
+            // lifecycle miss is still distinguishable from a store miss.
+            appendMetric(
+              reqCtx._metricsStore,
+              "ppr:shell-read",
+              shellReadStart,
+              performance.now() - shellReadStart,
+              undefined,
+              cached ? "hit" : "miss",
+            );
           }
           if (cached && isValidShellHit(cached.entry, ctx.version)) {
             if (!hasIntactShellPayload(cached.entry)) {
@@ -257,6 +303,7 @@ async function handleRscRenderingInner<TEnv>(
                   ttl: pprConfig.ttl,
                   swr: pprConfig.swr,
                   tags: pprConfig.tags,
+                  maxSnapshotBytes: pprConfig.maxSnapshotBytes,
                 }
               : undefined,
           );

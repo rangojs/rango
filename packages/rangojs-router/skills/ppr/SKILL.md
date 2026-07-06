@@ -192,6 +192,16 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
 - A ppr-declared route that CANNOT be honored (missing shell store family,
   per-request nonce) serves plain axis 1 with NO header and warns once per
   key — no header + a declared `ppr` means look for that warning.
+- On Cloudflare, `CFCacheStore` WITHOUT a KV namespace has an inert shell
+  family (the shell tier is KV-only): every ppr route stays `MISS` forever.
+  The store warns once per isolate — bind KV
+  (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use another store.
+- Structured capture diagnostics: `createRouter({ debugShellCapture: true })`
+  logs one line per capture attempt/skip (outcome, durations, prelude and
+  snapshot bytes, backoff state); pass a function to receive each
+  `ShellCaptureDebugEvent` instead. In dev, with `debugPerformance` on, the
+  last capture outcome for a key also rides the next document GET's
+  `Server-Timing` as `ppr-capture;desc="…"`.
 
 ## The hole doctrine (encode this in your head)
 
@@ -504,11 +514,12 @@ path(
 );
 ```
 
-| Field  | Default | Notes                                                                                              |
-| ------ | ------- | -------------------------------------------------------------------------------------------------- |
-| `ttl`  | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                   |
-| `swr`  | —       | stale window: serve the stale shell + background recapture                                         |
-| `tags` | —       | operational tags UNIONED with the tags the capture render auto-collects — see "Invalidation" below |
+| Field              | Default | Notes                                                                                                                                                     |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                          |
+| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                |
+| `tags`             | —       | operational tags UNIONED with the tags the capture render auto-collects — see "Invalidation" below                                                        |
+| `maxSnapshotBytes` | 8 MiB   | cap on the entry's capture data snapshot; over it the snapshot is skipped (shell still stored, warned once per key) so the entry stays under store limits |
 
 The shell store is always the app-level `createRouter({ cache })` store; the
 default key is `${host}${pathname}${sortedSearch}:shell` (host-scoped so

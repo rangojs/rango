@@ -1144,6 +1144,11 @@ export function createRouterDiscoveryPlugin(
         const swr = swrRaw === null ? undefined : Number(swrRaw);
         const tagsRaw = url.searchParams.get("tags");
         const tags = tagsRaw ? tagsRaw.split(",") : undefined;
+        const maxSnapshotBytesRaw = url.searchParams.get("maxSnapshotBytes");
+        const maxSnapshotBytes =
+          maxSnapshotBytesRaw === null
+            ? undefined
+            : Number(maxSnapshotBytesRaw);
 
         // Resolve the capture realms: main-server envs (Node preset) or the
         // shared temp Node server (Cloudflare preset — no main RSC runner).
@@ -1258,6 +1263,7 @@ export function createRouterDiscoveryPlugin(
               ttl,
               swr,
               tags,
+              maxSnapshotBytes,
               buildEnv: s.resolvedBuildEnv,
               buildVersion: version,
               captureShellHTML: ssrModule.captureShellHTML,

@@ -930,6 +930,50 @@ The Build Output API `chain` mechanism (platform-appended streaming, shell
 served from the PoP cache) exists but is undocumented and Next-only in
 practice — deliberately out of scope; revisit with Vercel directly.
 
+## Operability (issue #651)
+
+Three surfaces make the capture pipeline observable and bounded; all are
+diagnostics-only — none changes what a consumer's page renders.
+
+**Snapshot size cap.** The capture data snapshot duplicates every pinned
+cache value inside the shell entry, so a page over a large `cache()` segment
+could push the stored envelope toward store value limits (Cloudflare KV caps
+a value at 25 MiB) — and the failure was invisible: `kv.put` rejects deep
+inside `waitUntil`. `PartialPrerenderProps.maxSnapshotBytes` (default 8 MiB,
+`DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) bounds the serialized snapshot; over the
+cap `captureAndStoreShell` stores the shell WITHOUT it and warns once per
+key. The trade is documented drift: un-pinned reads fall back to the live
+store on a HIT, so content that drifted between capture and HIT
+hydration-mismatches and React repairs it client-side — the pre-snapshot
+behavior, and strictly better than losing the entire entry to a rejected
+write. Both producers apply the cap (producer B receives it via
+`BuildShellCaptureOptions` / the dev `/__rsc_shell` `maxSnapshotBytes`
+param).
+
+**Capture debug sink.** `createRouter({ debugShellCapture })` mirrors the
+`CFCacheDebug` pattern: `true` logs one structured line per event, a
+function receives each `ShellCaptureDebugEvent` — outcome per attempt
+(`stored`/`redirect`/`no-shell`/`refused`/`error`), skip events
+(`skip-in-flight`/`skip-backoff`) and backoff escalation (`backoff`), plus
+attempt/barrier/write-settle durations and prelude/snapshot byte sizes.
+`INTERNAL_RANGO_DEBUG` lights the console sink without the option; an
+explicit `debugShellCapture: false` stays off. In dev the terminal event per
+key is buffered and, when `debugPerformance` metrics are active, rides the
+NEXT ppr GET's Server-Timing as `ppr-capture;dur=<attempt ms>;desc="…"`
+(consumed on read — one capture, one report), alongside a `ppr:shell-read`
+hit/miss metric for the serve-side store read. The capture runs AFTER its
+triggering response commits, which is why its outcome can only ride a later
+response's header.
+
+**Inert shell family.** The shell family is KV-only on `CFCacheStore`; with
+no KV namespace bound, `getShell`/`putShell` no-op and every ppr route is a
+permanent MISS — the correctness-first fail-open of v1, previously with zero
+diagnostics. The store now warns once per isolate, from inside
+`getShell`/`putShell` (only ppr routes call them, so a KV-less store in a
+non-PPR app stays silent), naming the fix: bind a KV namespace
+(`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use a shell-capable
+store.
+
 ## Dead ideas (do not re-propose)
 
 The design was settled after a long exploration. These alternatives were

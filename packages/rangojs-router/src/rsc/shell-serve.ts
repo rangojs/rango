@@ -35,6 +35,13 @@ export interface ResolvedPprConfig {
   ttl: number;
   swr?: number;
   tags?: string[];
+  /**
+   * Snapshot size cap, passed through undefaulted (like swr/tags): the single
+   * defaulting site is captureAndStoreShell (DEFAULT_PPR_MAX_SNAPSHOT_BYTES in
+   * shell-capture.ts), so direct descriptor callers and resolved configs
+   * cannot drift.
+   */
+  maxSnapshotBytes?: number;
 }
 
 /**
@@ -56,6 +63,7 @@ export function resolvePprConfig(
     ttl: ppr.ttl ?? DEFAULT_PPR_TTL_SECONDS,
     swr: ppr.swr,
     tags: ppr.tags,
+    maxSnapshotBytes: ppr.maxSnapshotBytes,
   };
 }
 

@@ -8,8 +8,11 @@ import {
   isCaptureBackedOff,
   markCaptureBackoff,
   clearCaptureBackoff,
+  takeCaptureDebugEventForTiming,
   REFUSED_CAPTURE_DEV_MAX_MS,
+  type ShellCaptureDebugEvent,
 } from "../shell-capture.js";
+import { RecordingShellStore } from "../../cache/shell-snapshot.js";
 import { createHandleStore } from "../../server/handle-store.js";
 import {
   createRequestContext,
@@ -352,6 +355,89 @@ describe("captureAndStoreShell", () => {
     expect(loaderRecords).toHaveLength(0);
   });
 
+  // Snapshot size cap (issue #651): the snapshot duplicates pinned ring data
+  // inside the shell entry, so an over-cap snapshot is SKIPPED — the shell
+  // still stores and serves (pinned reads drift, the pre-snapshot behavior) —
+  // and the skip is reported once per key.
+  it("skips an over-cap snapshot, still stores the shell, and reports once per key", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const runOnce = async () => {
+        // Fresh recording store per capture (mirrors the per-capture derived
+        // context); one recorded item-family value well over the 1 KiB cap.
+        const recording = new RecordingShellStore(
+          new MemorySegmentCacheStore(),
+        );
+        await recording.setItem("big-key", "x".repeat(4096));
+        const reqCtx = makeReqCtx();
+        reqCtx._cacheStore = recording;
+        return captureAndStoreShell(
+          makeShellSsrModule(),
+          emptyStream(),
+          createHandleStore(),
+          reqCtx,
+          {
+            key: "/over-cap:shell",
+            buildVersion: "test-build",
+            ttl: 300,
+            maxSnapshotBytes: 1024,
+            store: { putShell } as any,
+          },
+        );
+      };
+
+      // First capture: over cap → snapshot skipped, shell still stored.
+      expect(await runOnce()).toBe("stored");
+      // Recapture (TTL roll): still stores, still skips, does NOT re-warn.
+      expect(await runOnce()).toBe("stored");
+
+      expect(putShell).toHaveBeenCalledTimes(2);
+      for (const call of putShell.mock.calls) {
+        expect((call[1] as { snapshot?: unknown[] }).snapshot).toBeUndefined();
+      }
+      const warnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes("/over-cap:shell"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("1024-byte cap");
+      expect(warnings[0][0]).toContain("maxSnapshotBytes");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("keeps an under-cap snapshot intact (default cap)", async () => {
+    const putShell = makePutShell();
+    const recording = new RecordingShellStore(new MemorySegmentCacheStore());
+    await recording.setItem("small-key", "hello");
+    const reqCtx = makeReqCtx();
+    reqCtx._cacheStore = recording;
+
+    const outcome = await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      {
+        key: "/under-cap:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+      },
+    );
+
+    expect(outcome).toBe("stored");
+    const entry = putShell.mock.calls[0]![1] as {
+      snapshot?: { family: string; key: string }[];
+    };
+    expect(
+      (entry.snapshot ?? []).some(
+        (r) => r.family === "item" && r.key === "small-key",
+      ),
+    ).toBe(true);
+  });
+
   it("stores the base64 prelude + postponed + reactVersion into the flag's store", async () => {
     const putShell = makePutShell();
     const preludeBytes = enc("<html><body>shell</body></html>");
@@ -660,6 +746,91 @@ describe("runShellCapture", () => {
     expect(putShell.mock.calls[0]![0]).toBe("/p:shell");
     // The foreground store was untouched (the derived context isolates it).
     expect(reqCtx._handleStore).toBeDefined();
+  });
+
+  // Capture-pipeline debug sink (issue #651): one structured event per
+  // attempt, with the observability fields the console breadcrumbs never
+  // carried (attempt duration, barrier wait, prelude bytes).
+  it("emits one debug event per attempt (stored: outcome, sizes, waits)", async () => {
+    const events: ShellCaptureDebugEvent[] = [];
+    const putShell = makePutShell();
+    const preludeHtml = "<html><body>captured</body></html>";
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({ prelude: enc(preludeHtml), postponed: null })),
+    );
+
+    await runShellCapture(
+      ctx,
+      new Request("http://localhost/p"),
+      {},
+      new URL("http://localhost/p"),
+      makeReqCtx(),
+      ssrModule,
+      {
+        key: "/debug-stored:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+        debugSink: (e) => events.push(e),
+      },
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      key: "/debug-stored:shell",
+      outcome: "stored",
+      attempt: 1,
+      preludeBytes: enc(preludeHtml).length,
+    });
+    expect(typeof events[0].attemptMs).toBe("number");
+    expect(typeof events[0].barrierWaitMs).toBe("number");
+
+    // Dev Server-Timing mirror: the terminal event is buffered per key and
+    // CONSUMED on read (one capture = one later Server-Timing entry).
+    const taken = takeCaptureDebugEventForTiming("/debug-stored:shell");
+    expect(taken?.outcome).toBe("stored");
+    expect(takeCaptureDebugEventForTiming("/debug-stored:shell")).toBe(
+      undefined,
+    );
+  });
+
+  it("emits an event per retry attempt and never fails the capture on a throwing sink", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const events: ShellCaptureDebugEvent[] = [];
+      const { ctx, ssrModule } = makeCtx(
+        okMatch,
+        vi.fn(async () => null), // both attempts: no usable shell
+      );
+
+      const outcome = await runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        {
+          key: "/debug-retry:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          debugSink: (e) => {
+            events.push(e);
+            throw new Error("sink boom");
+          },
+        },
+        0, // retryDelayMs=0
+      );
+
+      expect(outcome).toBe("no-shell");
+      expect(events.map((e) => [e.attempt, e.outcome])).toEqual([
+        [1, "no-shell"],
+        [2, "no-shell"],
+      ]);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("aborts without storing when the matched route redirects", async () => {
@@ -1650,6 +1821,40 @@ describe("runShellCapture", () => {
 // NODE_ENV under the unit vitest config defaults to "test" (dev mode) — so the
 // dev-cap tests need no override; the production-growth test sets it explicitly.
 describe("refused-capture backoff policy", () => {
+  // Backoff state is part of the debug-sink surface (issue #651): a request
+  // that skips the capture because the key is inside its window emits a
+  // skip-backoff event carrying the failure count and remaining window.
+  it("scheduleShellCapture emits a skip-backoff debug event with the backoff state", () => {
+    const key = "/skip-backoff-event:shell";
+    clearCaptureBackoff(key);
+    try {
+      markCaptureBackoff(key);
+      const events: ShellCaptureDebugEvent[] = [];
+      scheduleShellCapture(
+        {} as any,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        {} as any,
+        {} as any,
+        {
+          key,
+          buildVersion: "test-build",
+          debugSink: (e) => events.push(e),
+        },
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0].outcome).toBe("skip-backoff");
+      expect(events[0].backoffFailures).toBe(1);
+      expect(events[0].backoffRemainingMs).toBeGreaterThan(0);
+      expect(events[0].backoffRemainingMs).toBeLessThanOrEqual(
+        REFUSED_CAPTURE_DEV_MAX_MS,
+      );
+    } finally {
+      clearCaptureBackoff(key);
+    }
+  });
+
   it("dev cap: the window never exceeds REFUSED_CAPTURE_DEV_MAX_MS however high the failure count climbs", () => {
     vi.useFakeTimers();
     try {

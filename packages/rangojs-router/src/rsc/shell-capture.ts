@@ -21,6 +21,7 @@ import { bufferToBase64 } from "../cache/cf/cf-base64.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
 import { enqueueSerializedCapture } from "./capture-queue.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   runWithRequestContext,
@@ -369,6 +370,254 @@ function warnUntaggedShellBakeOnce(key: string): void {
   );
 }
 
+/**
+ * Default cap (serialized UTF-8 bytes) on the capture data snapshot riding
+ * inside a shell entry, when the route's `ppr` option does not set
+ * `maxSnapshotBytes`. 8 MiB: the snapshot shares the stored envelope with the
+ * base64 prelude and the postponed blob, and the tightest store value limit is
+ * Cloudflare KV's 25 MiB — 8 MiB of snapshot leaves the envelope well under it
+ * while still fitting any sane pinned-ring payload. Applied ONLY in
+ * captureAndStoreShell (the single defaulting site — resolvePprConfig passes
+ * the option through undefaulted), so every producer and direct caller gets
+ * the same policy. Over the cap the snapshot is skipped (shell still stored;
+ * pinned reads drift — see PartialPrerenderProps.maxSnapshotBytes).
+ */
+export const DEFAULT_PPR_MAX_SNAPSHOT_BYTES: number = 8 * 1024 * 1024;
+
+/** Cached encoder for the snapshot byte measurement (one per module, not per capture). */
+const SNAPSHOT_BYTE_ENCODER = new TextEncoder();
+
+/** Keys already warned about an over-cap snapshot (once per key per isolate). */
+const warnedOverCapSnapshots = new Set<string>();
+
+/**
+ * Warn once per key that the capture data snapshot exceeded the route's
+ * `maxSnapshotBytes` cap and was skipped. The shell entry is still stored and
+ * served — only the pinned-read replay is lost, so shell-baked cached content
+ * can drift from the frozen prelude between capture and HIT and hydration
+ * repairs it client-side (the pre-snapshot behavior). Once per key: the same
+ * page recaptures on every TTL roll and would otherwise re-warn forever.
+ */
+function warnSnapshotOverCapOnce(
+  key: string,
+  snapshotBytes: number,
+  capBytes: number,
+): void {
+  if (warnedOverCapSnapshots.has(key)) return;
+  warnedOverCapSnapshots.add(key);
+  console.warn(
+    `[rango] Shell capture for "${key}" recorded a ${snapshotBytes}-byte data ` +
+      `snapshot, over the ${capBytes}-byte cap — the snapshot was skipped and ` +
+      "the shell was stored without it. The page keeps serving, but cached " +
+      "content baked into the shell is no longer pinned: if it drifts before " +
+      "the shell's TTL, hydration repairs the mismatch client-side. Raise the " +
+      "cap via the route's ppr option ({ maxSnapshotBytes }) if the entry " +
+      "still fits your store's value limit (Cloudflare KV: 25 MiB per value), " +
+      "or shrink the cache()'d data the shell bakes.",
+  );
+}
+
+/**
+ * One structured event from the background capture pipeline, mirroring the
+ * CFCacheReadDebugEvent pattern (cache/cf/cf-cache-types.ts): typed fields an
+ * operator can assert against, emitted per attempt and per skip, so the
+ * stored / no-shell / refused / backed-off lifecycle is observable outside
+ * dev console warnings. Configured via `createRouter({ debugShellCapture })`.
+ */
+export interface ShellCaptureDebugEvent {
+  /** Shell cache key the event is about. */
+  key: string;
+  /**
+   * What happened:
+   * - stored / redirect / no-shell / refused: one capture ATTEMPT's outcome
+   *   (see CaptureAttemptOutcome for the semantics of each)
+   * - error: the capture task failed with a genuine error (also routed through
+   *   reportCacheError; the key is backed off)
+   * - skip-in-flight: scheduleShellCapture found a capture already running for
+   *   the key (stampede guard) and scheduled nothing
+   * - skip-backoff: the key is inside its refused-capture backoff window and
+   *   the capture was not attempted
+   * - backoff: the key entered (or escalated) backoff after a terminal
+   *   no-shell — carries the new backoff state
+   */
+  outcome:
+    | "stored"
+    | "redirect"
+    | "no-shell"
+    | "refused"
+    | "error"
+    | "skip-in-flight"
+    | "skip-backoff"
+    | "backoff";
+  /** Attempt number (1 = first, 2 = in-place retry). Absent on skips. */
+  attempt?: number;
+  /** Wall-clock ms of the whole attempt (barrier + render + drain + put). */
+  attemptMs?: number;
+  /**
+   * Wall-clock ms the pre-render WRITE BARRIER waited on the foreground
+   * request's deferred cache writes (bounded by SHELL_CAPTURE_WRITE_BARRIER_MS).
+   */
+  barrierWaitMs?: number;
+  /**
+   * Wall-clock ms spent awaiting the capture's own deferred cache writes
+   * before the snapshot drain (bounded by SHELL_SNAPSHOT_WRITE_SETTLE_MS).
+   */
+  writeSettleMs?: number;
+  /** Stored prelude size in bytes (pre-base64). */
+  preludeBytes?: number;
+  /** Serialized snapshot size in UTF-8 bytes. Absent when nothing was recorded. */
+  snapshotBytes?: number;
+  /** True when the snapshot exceeded maxSnapshotBytes and was dropped. */
+  snapshotSkipped?: boolean;
+  /** Consecutive failure count in the key's backoff entry, when one exists. */
+  backoffFailures?: number;
+  /** Ms remaining in the key's backoff window, when one exists. */
+  backoffRemainingMs?: number;
+}
+
+/**
+ * Debug sink for the capture pipeline, mirroring {@link CFCacheDebug}: `true`
+ * logs each event to console (visible via `wrangler tail`), a function
+ * receives the events for programmatic capture. Off by default.
+ */
+export type ShellCaptureDebug =
+  | boolean
+  | ((event: ShellCaptureDebugEvent) => void);
+
+/**
+ * Compact single-line form of an event's fields, shared by the console sink
+ * and the dev Server-Timing mirror's `desc` (rsc-rendering). Plain
+ * alphanumerics/`=`/`-`/`()` only, so it needs no quoted-string escaping.
+ */
+export function describeShellCaptureEvent(
+  event: ShellCaptureDebugEvent,
+): string {
+  const parts: string[] = [event.outcome];
+  if (event.attempt !== undefined) parts.push(`attempt=${event.attempt}`);
+  if (event.attemptMs !== undefined) parts.push(`${event.attemptMs}ms`);
+  if (event.barrierWaitMs !== undefined) {
+    parts.push(`barrier=${event.barrierWaitMs}ms`);
+  }
+  if (event.writeSettleMs !== undefined) {
+    parts.push(`write-settle=${event.writeSettleMs}ms`);
+  }
+  if (event.preludeBytes !== undefined) {
+    parts.push(`prelude=${event.preludeBytes}b`);
+  }
+  if (event.snapshotBytes !== undefined) {
+    parts.push(
+      `snapshot=${event.snapshotBytes}b${event.snapshotSkipped ? " (over cap, skipped)" : ""}`,
+    );
+  }
+  if (event.backoffFailures !== undefined) {
+    parts.push(`backoff-failures=${event.backoffFailures}`);
+  }
+  if (event.backoffRemainingMs !== undefined) {
+    parts.push(`backoff-remaining=${event.backoffRemainingMs}ms`);
+  }
+  return parts.join(" ");
+}
+
+/** The `debugShellCapture: true` console sink: one compact line per event. */
+function consoleCaptureDebugSink(event: ShellCaptureDebugEvent): void {
+  console.log(
+    `[ShellCache][debug] ${event.key} ${describeShellCaptureEvent(event)}`,
+  );
+}
+
+/**
+ * Resolve the `debugShellCapture` router option to a callable sink, or
+ * undefined when off. The INTERNAL_RANGO_DEBUG env-flag fallback lives HERE
+ * (not at a call site) so every producer that resolves a sink inherits it;
+ * an explicit `false` wins over the env flag.
+ */
+export function resolveShellCaptureDebugSink(
+  option: ShellCaptureDebug | undefined,
+): ((event: ShellCaptureDebugEvent) => void) | undefined {
+  if (option === false) return undefined;
+  if (option === true) return consoleCaptureDebugSink;
+  if (typeof option === "function") return option;
+  return INTERNAL_RANGO_DEBUG ? consoleCaptureDebugSink : undefined;
+}
+
+/**
+ * Attempt-terminal outcomes recorded for the dev Server-Timing mirror. Skip
+ * events are excluded so a later request's skip cannot overwrite the
+ * interesting terminal event before a metrics-enabled request reads it.
+ */
+const TIMING_RECORDED_OUTCOMES = new Set<ShellCaptureDebugEvent["outcome"]>([
+  "stored",
+  "redirect",
+  "no-shell",
+  "refused",
+  "error",
+]);
+
+/**
+ * Dev-only last-terminal-event-per-key buffer backing the Server-Timing
+ * mirror: the capture runs AFTER its triggering response is committed, so its
+ * outcome can only ride a LATER response's header. rsc-rendering consumes this
+ * on the next ppr GET for the key when the metrics store is active
+ * (debugPerformance) and appends a `ppr:capture` Server-Timing entry. Dev-only
+ * (isDevMode) so production isolates never grow the map; FIFO-capped because
+ * with debugPerformance OFF nothing ever drains it, and a long dev session
+ * sweeping many URLs would otherwise accumulate one entry per shell key
+ * forever.
+ */
+const lastCaptureEventsForTiming = new Map<string, ShellCaptureDebugEvent>();
+const MAX_TIMING_EVENT_KEYS = 100;
+
+/**
+ * Consume (read-and-clear) the buffered terminal capture event for `key`, so
+ * one capture reports into exactly one later response's Server-Timing.
+ */
+export function takeCaptureDebugEventForTiming(
+  key: string,
+): ShellCaptureDebugEvent | undefined {
+  const event = lastCaptureEventsForTiming.get(key);
+  if (event) lastCaptureEventsForTiming.delete(key);
+  return event;
+}
+
+/**
+ * Publish one capture debug event: buffer terminal outcomes for the dev
+ * Server-Timing mirror, then hand the event to the configured sink. A
+ * throwing sink is swallowed — diagnostics must never fail a capture.
+ */
+function publishCaptureDebugEvent(
+  descriptor: Pick<ShellCaptureDescriptor, "debugSink">,
+  event: ShellCaptureDebugEvent,
+): void {
+  if (isDevMode() && TIMING_RECORDED_OUTCOMES.has(event.outcome)) {
+    // Refresh insertion order for the FIFO cap, then evict the oldest key.
+    lastCaptureEventsForTiming.delete(event.key);
+    if (lastCaptureEventsForTiming.size >= MAX_TIMING_EVENT_KEYS) {
+      const oldest = lastCaptureEventsForTiming.keys().next().value;
+      if (oldest !== undefined) lastCaptureEventsForTiming.delete(oldest);
+    }
+    lastCaptureEventsForTiming.set(event.key, event);
+  }
+  const sink = descriptor.debugSink;
+  if (!sink) return;
+  try {
+    sink(event);
+  } catch {
+    // Diagnostics only: a throwing consumer sink must never fail the capture.
+  }
+}
+
+/** Current backoff state fields for `key` (empty when no backoff entry). */
+function backoffFields(
+  key: string,
+): Pick<ShellCaptureDebugEvent, "backoffFailures" | "backoffRemainingMs"> {
+  const entry = refusedCaptures.get(key);
+  if (!entry) return {};
+  return {
+    backoffFailures: entry.failures,
+    backoffRemainingMs: Math.max(0, entry.until - Date.now()),
+  };
+}
+
 export interface FlightCaptureGate {
   /** Identity passthrough of the source stream; feed this to captureShellHTML. */
   stream: ReadableStream<Uint8Array>;
@@ -551,6 +800,20 @@ export interface ShellCaptureDescriptor {
   store?: SegmentCacheStore<any>;
   /** Gates the concise per-attempt capture breadcrumbs (INTERNAL_RANGO_DEBUG). */
   debug?: boolean;
+  /**
+   * Cap (serialized UTF-8 bytes) on the entry's capture data snapshot; over it
+   * the snapshot is skipped and the shell stored without it (reported once per
+   * key). Absent = DEFAULT_PPR_MAX_SNAPSHOT_BYTES, applied in
+   * captureAndStoreShell — the single defaulting site.
+   */
+  maxSnapshotBytes?: number;
+  /**
+   * Structured capture-pipeline debug sink, resolved from
+   * `createRouter({ debugShellCapture })` (or INTERNAL_RANGO_DEBUG) via
+   * {@link resolveShellCaptureDebugSink}. Receives one
+   * {@link ShellCaptureDebugEvent} per attempt/skip.
+   */
+  debugSink?: (event: ShellCaptureDebugEvent) => void;
 }
 
 /**
@@ -574,10 +837,20 @@ export function scheduleShellCapture(
   descriptor: ShellCaptureDescriptor,
 ): void {
   const key = descriptor.key;
-  if (inFlightCaptures.has(key)) return;
+  if (inFlightCaptures.has(key)) {
+    publishCaptureDebugEvent(descriptor, { key, outcome: "skip-in-flight" });
+    return;
+  }
   // Refused/failed within the window → skip the doomed re-render (one probe per
   // key per window per isolate). Expired entries self-evict inside the check.
-  if (isCaptureBackedOff(key)) return;
+  if (isCaptureBackedOff(key)) {
+    publishCaptureDebugEvent(descriptor, {
+      key,
+      outcome: "skip-backoff",
+      ...backoffFields(key),
+    });
+    return;
+  }
   inFlightCaptures.add(key);
   const captureTask = async () => {
     try {
@@ -595,12 +868,24 @@ export function scheduleShellCapture(
       // off so the next requests don't re-probe it. A `redirect` has no shell but
       // is not a doomed render — leave the backoff untouched.
       if (outcome === "stored") clearCaptureBackoff(key);
-      else if (outcome === "no-shell") markCaptureBackoff(key);
+      else if (outcome === "no-shell") {
+        markCaptureBackoff(key);
+        publishCaptureDebugEvent(descriptor, {
+          key,
+          outcome: "backoff",
+          ...backoffFields(key),
+        });
+      }
     } catch (error) {
       // Detached background task — pass reqCtx so onError still fires when the ALS
       // context is gone. A genuine failure recurs, so back it off too (re-probe
       // once per window, not every request) and report it once.
       markCaptureBackoff(key);
+      publishCaptureDebugEvent(descriptor, {
+        key,
+        outcome: "error",
+        ...backoffFields(key),
+      });
       reportCacheError(error, "cache-write", "[ShellCache] capture", reqCtx);
     } finally {
       inFlightCaptures.delete(key);
@@ -634,6 +919,21 @@ export function scheduleShellCapture(
 type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
 
 /**
+ * Per-attempt observability fields, filled along the capture path (barrier in
+ * attemptCapture, the rest in captureAndStoreShell) and folded into the
+ * attempt's {@link ShellCaptureDebugEvent} by runShellCapture. A plain mutable
+ * bag, not a return value: captureAndStoreShell's outcome type stays a string
+ * union its existing callers (producer B, tests) consume unchanged.
+ */
+interface CaptureAttemptStats {
+  barrierWaitMs?: number;
+  writeSettleMs?: number;
+  preludeBytes?: number;
+  snapshotBytes?: number;
+  snapshotSkipped?: boolean;
+}
+
+/**
  * Run the shell capture with a single in-place retry, then store the result.
  *
  * Each attempt re-derives EVERYTHING (fresh context, fresh router.match, fresh
@@ -665,15 +965,37 @@ async function runShellCapture(
     ? (message: string) => console.log(message)
     : () => {};
 
-  const first = await attemptCapture(
-    ctx,
-    request,
-    env,
-    url,
-    reqCtx,
-    ssrModule,
-    descriptor,
-  );
+  // One attempt + its structured debug event: the stats object rides through
+  // attemptCapture/captureAndStoreShell collecting the observability fields
+  // (barrier wait, write-settle wait, prelude/snapshot bytes), and the event
+  // folds them with the outcome. A genuine render error skips the attempt
+  // event — scheduleShellCapture's catch publishes the terminal `error` event.
+  const timedAttempt = async (
+    attempt: number,
+  ): Promise<CaptureAttemptOutcome> => {
+    const stats: CaptureAttemptStats = {};
+    const start = performance.now();
+    const outcome = await attemptCapture(
+      ctx,
+      request,
+      env,
+      url,
+      reqCtx,
+      ssrModule,
+      descriptor,
+      stats,
+    );
+    publishCaptureDebugEvent(descriptor, {
+      key: descriptor.key,
+      outcome,
+      attempt,
+      attemptMs: Math.round(performance.now() - start),
+      ...stats,
+    });
+    return outcome;
+  };
+
+  const first = await timedAttempt(1);
   // "refused" is deterministic (identity guard / rejected bake-lane loader —
   // its own warning already fired): no retry, and the caller backs the key off
   // exactly like a structural no-shell.
@@ -690,15 +1012,7 @@ async function runShellCapture(
     `[ShellCache] capture attempt 1/2 for ${descriptor.key} aborted before shell completed (cold modules?) — retrying`,
   );
   await delay(retryDelayMs);
-  const second = await attemptCapture(
-    ctx,
-    request,
-    env,
-    url,
-    reqCtx,
-    ssrModule,
-    descriptor,
-  );
+  const second = await timedAttempt(2);
   if (second === "refused") return "no-shell";
   if (second !== "no-shell") return second;
 
@@ -767,6 +1081,7 @@ async function attemptCapture(
   reqCtx: RequestContext<any>,
   ssrModule: SSRModule,
   descriptor: ShellCaptureDescriptor,
+  stats: CaptureAttemptStats,
 ): Promise<CaptureAttemptOutcome> {
   // WRITE BARRIER (ordering edge, not a narrower race): settle the foreground's
   // already-scheduled background tasks — its deferred ring-3/ring-1 cache writes —
@@ -777,7 +1092,9 @@ async function attemptCapture(
   // skipped, cache-store middleware's write path gated off by state.cacheHit), so
   // prelude, snapshot, and ring-3 agree on the foreground's generation. Runs per
   // attempt (the retry re-checks; already-settled promises are free).
+  const barrierStart = performance.now();
   await settleTrackedBackgroundTasks(reqCtx, SHELL_CAPTURE_WRITE_BARRIER_MS);
+  stats.barrierWaitMs = Math.round(performance.now() - barrierStart);
 
   const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(
     reqCtx,
@@ -817,6 +1134,7 @@ async function attemptCapture(
       freshHandleStore,
       derivedCtx,
       descriptor,
+      stats,
     );
   });
 }
@@ -1014,6 +1332,7 @@ async function captureAndStoreShell(
   handleStore: HandleStore,
   reqCtx: RequestContext<any>,
   capture: ShellCaptureDescriptor,
+  stats?: CaptureAttemptStats,
 ): Promise<Exclude<CaptureAttemptOutcome, "redirect">> {
   const captureShellHTML = ssrModule.captureShellHTML!;
 
@@ -1141,6 +1460,7 @@ async function captureAndStoreShell(
     if (result === null) {
       return "no-shell";
     }
+    if (stats) stats.preludeBytes = result.prelude.length;
 
     // Store per the flag's key/ttl/swr/tags, into the flag's store: the middleware
     // threads the SAME store it resolved for its getShell read (options.store ??
@@ -1180,7 +1500,11 @@ async function captureAndStoreShell(
     const recording = getRecordingStore(reqCtx._cacheStore);
     let snapshot: ShellSnapshotRecord[] | undefined;
     if (recording) {
+      const settleStart = performance.now();
       await recording.settleWrites(SHELL_SNAPSHOT_WRITE_SETTLE_MS);
+      if (stats) {
+        stats.writeSettleMs = Math.round(performance.now() - settleStart);
+      }
       snapshot = recording.drainSnapshot();
     }
 
@@ -1236,6 +1560,29 @@ async function captureAndStoreShell(
           // Non-serializable container: leave it unpinned (it drifts on a HIT,
           // the pre-snapshot behavior) rather than failing the capture.
         }
+      }
+    }
+
+    // Snapshot size guard (issue #651): the snapshot duplicates every pinned
+    // cache value inside the shell entry, so a page over a large cache()
+    // segment can push the stored envelope toward store value limits (KV caps
+    // a value at 25 MiB) with no signal — the kv.put rejects deep inside
+    // waitUntil. Measure the serialized snapshot (UTF-8 bytes of the JSON that
+    // rides in the envelope) AFTER the loader family is appended, and over the
+    // cap store the shell WITHOUT it: pinned reads then fall back to the live
+    // store on a HIT (documented drift — hydration repairs a mismatch
+    // client-side, the pre-snapshot behavior), which beats losing the whole
+    // entry to a store-side write rejection. Reported once per key.
+    if (snapshot && snapshot.length > 0) {
+      const snapshotBytes = SNAPSHOT_BYTE_ENCODER.encode(
+        JSON.stringify(snapshot),
+      ).length;
+      if (stats) stats.snapshotBytes = snapshotBytes;
+      const cap = capture.maxSnapshotBytes ?? DEFAULT_PPR_MAX_SNAPSHOT_BYTES;
+      if (snapshotBytes > cap) {
+        warnSnapshotOverCapOnce(capture.key, snapshotBytes, cap);
+        snapshot = undefined;
+        if (stats) stats.snapshotSkipped = true;
       }
     }
 

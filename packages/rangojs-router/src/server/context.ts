@@ -27,6 +27,7 @@ export interface PerformanceMetric {
   duration: number; // milliseconds
   startTime: number; // relative to request start
   depth?: number; // nesting level for hierarchical display (0 = top-level)
+  desc?: string; // free-form outcome detail, emitted as Server-Timing desc="..."
 }
 
 /**
