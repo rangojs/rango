@@ -46,6 +46,7 @@ import {
   peekSelfGenWrite,
 } from "./discovery/self-gen-tracking.js";
 import { discoverRouters } from "./discovery/discover-routers.js";
+import { runShellPrerenderPhase } from "./discovery/shell-prerender-phase.js";
 import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
 import {
   createDevPrerenderCache,

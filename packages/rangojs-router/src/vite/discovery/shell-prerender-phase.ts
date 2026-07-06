@@ -69,11 +69,56 @@ export async function runShellPrerenderPhase(
     const bootstrapContent = entryFile ? `import("/assets/${entryFile}")` : "";
     console.log(`[rango][spike] bootstrap: ${bootstrapContent}`);
 
+    // The Flight payloads carry PRODUCTION-HASHED client reference ids
+    // (hashClientRefs, forceBuild) — resolvable only in the built bundles.
+    // The temp server's SSR loader receives those hashes and can neither
+    // validate nor import them (dev refKeys are module URLs). Bridge: wrap
+    // the SSR realm's late-bound client require with a hash -> dev-refKey
+    // reverse map computed from plugin-rsc's manager with the SAME hashing
+    // (computeProductionHash). Lazy rebuild on miss: a client module first
+    // transformed during capture registers after the map was built.
+    const minimalPlugin = (tempServer.config?.plugins ?? []).find(
+      (p: any) => p?.name === "rsc:minimal",
+    );
+    const rscManager = minimalPlugin?.api?.manager;
+    const { computeProductionHash } =
+      await import("../plugins/client-ref-hashing.js");
+    let hashToDevKey = new Map<string, string>();
+    const rebuildHashMap = (): void => {
+      hashToDevKey = new Map();
+      const metaMap = rscManager?.clientReferenceMetaMap ?? {};
+      for (const meta of Object.values(metaMap) as Array<{
+        referenceKey: string;
+      }>) {
+        hashToDevKey.set(
+          computeProductionHash(s.projectRoot, meta.referenceKey),
+          meta.referenceKey,
+        );
+      }
+    };
+    const origClientRequire = (globalThis as any).__vite_rsc_client_require__;
+    if (typeof origClientRequire === "function") {
+      (globalThis as any).__vite_rsc_client_require__ = (id: string) => {
+        const base = id.split("$$cache=")[0]!;
+        let mapped = hashToDevKey.get(base);
+        if (mapped === undefined) {
+          rebuildHashMap();
+          mapped = hashToDevKey.get(base);
+        }
+        return origClientRequire(mapped ?? id);
+      };
+    }
+    console.log(
+      `[rango][spike] require wrapper installed=${String(typeof origClientRequire === "function")} ` +
+        `metaMapSize=${Object.keys(rscManager?.clientReferenceMetaMap ?? {}).length}`,
+    );
     const captureShellHTML = ssrPkg.createShellCaptureHandler({
       createFromReadableStream: ssrDeps.createFromReadableStream,
-      renderToReadableStream: reactDomServer.renderToReadableStream,
-      resume: reactDomServer.resume,
-      prerender: reactDomStatic.prerender,
+      renderToReadableStream:
+        reactDomServer.renderToReadableStream ??
+        reactDomServer.default?.renderToReadableStream,
+      resume: reactDomServer.resume ?? reactDomServer.default?.resume,
+      prerender: reactDomStatic.prerender ?? reactDomStatic.default?.prerender,
       injectRSCPayload: htmlStream.injectRSCPayload,
       headScripts: "preinit",
       loadBootstrapScriptContent: async () => bootstrapContent,
