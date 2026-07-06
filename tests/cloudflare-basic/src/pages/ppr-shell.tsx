@@ -1,4 +1,4 @@
-import { Meta } from "@rangojs/router";
+import { Meta, Prerender } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -6,6 +6,7 @@ import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
 import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
 import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
+import { PprPrerenderSeqLoader } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
@@ -13,6 +14,7 @@ import { PprShellSettled } from "../components/PprShellSettled.js";
 import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
 import { PprShellExecMatrix } from "../components/PprShellExecMatrix.js";
+import { PprPrerenderSeq } from "../components/PprPrerenderSeq.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -140,4 +142,28 @@ export function PprExecBadgeSlot() {
 export function PprExecPage() {
   pprExecCounters.path += 1;
   return <PprShellExecMatrix loader={PprShellExecLoader} />;
+}
+
+// Prerender + ppr composition (docs/design/shell-fast-path.md): build-time
+// segments — the article content AND the slot handler element — bake into the
+// frozen prelude; the SLOT-owned loader (loader()+loading() on @ppSeq, the
+// slot-hole playbook) masks at capture and re-runs fresh per HIT. The
+// Prerender handler never executes at serve (production evicts it to a stub).
+export const PprPrerenderedArticle = Prerender(
+  async () => [{ slug: "alpha" }, { slug: "beta" }],
+  async (ctx) => {
+    return (
+      <div data-testid="ppr-pp-article">
+        <h1 data-testid="ppr-pp-article-title">{`PPR-PP ${ctx.params.slug}`}</h1>
+        <p data-testid="ppr-pp-article-content">
+          {`Prerendered shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppSeq" />
+      </div>
+    );
+  },
+);
+
+export function PprPrerenderSeqSlot() {
+  return <PprPrerenderSeq loader={PprPrerenderSeqLoader} />;
 }

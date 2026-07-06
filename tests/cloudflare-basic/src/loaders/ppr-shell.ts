@@ -165,3 +165,17 @@ export const PprShellExecLoader = createLoader(
     return { ...pprExecCounters };
   },
 );
+
+// Prerender + ppr composition fixture (docs/design/shell-fast-path.md): the
+// live loader owned by the @ppSeq slot on the prerendered ppr route. seq
+// advances per execution to pin slot-hole liveness while the build-time
+// segments replay as the frozen shell.
+let pprPrerenderSeq = 0;
+
+export const PprPrerenderSeqLoader = createLoader(
+  async (): Promise<{ seq: number }> => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    pprPrerenderSeq += 1;
+    return { seq: pprPrerenderSeq };
+  },
+);

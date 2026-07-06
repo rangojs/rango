@@ -27,6 +27,8 @@ import {
   PprExecLayout,
   PprExecBadgeSlot,
   PprExecPage,
+  PprPrerenderedArticle,
+  PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
 import {
@@ -35,6 +37,7 @@ import {
   PprShellSettledLoader,
   PprShellExecLoader,
   pprExecCounters,
+  PprPrerenderSeqLoader,
   PprChromeLoader,
   PprBadgeLoader,
 } from "./loaders/ppr-shell.js";
@@ -466,6 +469,29 @@ export const urlpatterns = urls(
                 ],
               ),
             ]),
+          ],
+        ),
+        // Prerender + ppr composition (docs/design/shell-fast-path.md):
+        // build-time segments are the frozen prelude; the slot-owned loader
+        // is the badge-sized streaming hole. See pages/ppr-shell.tsx.
+        path(
+          "/ppr-shell/prerendered/:slug",
+          PprPrerenderedArticle,
+          { name: "pprShellPrerendered", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            parallel({
+              "@ppSeq": {
+                handler: PprPrerenderSeqSlot,
+                use: () => [
+                  loader(PprPrerenderSeqLoader),
+                  loading(
+                    <span data-testid="ppr-pp-seq-fallback">
+                      Loading pp seq...
+                    </span>,
+                  ),
+                ],
+              },
+            }),
           ],
         ),
         // LAYOUT-LOADER shapes (the storefront): the layout registers a
