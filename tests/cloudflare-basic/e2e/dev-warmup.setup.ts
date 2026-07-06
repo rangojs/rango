@@ -41,16 +41,12 @@ const PPR_WARMUP_ROUTES = [
   "/ppr-shell",
   "/ppr-shell/stream",
   "/ppr-shell/no-hole",
-  // The prerender+ppr composition route (/ppr-shell/prerendered/:slug) is
-  // deliberately NOT warmed on CI: its background capture round-trips the dev
-  // /__rsc_prerender endpoint, whose per-request app-graph re-import grinds a
-  // GH runner's CPU long enough to starve SIBLING captures' 5s quiet windows —
-  // observed as a rotating eternal-MISS victim across CI runs (warmup itself,
-  // the composition test, then /ppr-shell?probe=stream once the others were
-  // quiet). Locally the re-import is fast and everything runs. The composition
-  // test is CI-dev-skipped for the same reason; the tracked follow-up
-  // (dev-endpoint capture hardening) lifts both.
-  ...(process.env.CI ? [] : ["/ppr-shell/prerendered/alpha"]),
+  // Prerender + ppr composition: its capture additionally round-trips the dev
+  // /__rsc_prerender endpoint (temp-server on-demand render) — the heaviest
+  // capture in the suite. Safe to warm since capture execution is serialized
+  // per isolate (capture-queue.ts): it can no longer starve sibling captures'
+  // quiet windows (the GH-runner rotating eternal-MISS class).
+  "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
   "/ppr-blog",
   "/ppr-blog/getting-started-with-rsc",
@@ -64,6 +60,7 @@ const PPR_WARMUP_ROUTES = [
 const PPR_WARMUP_HIT_ROUTES = [
   "/ppr-shell",
   "/ppr-shell/stream",
+  "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
   "/ppr-blog",
 ];

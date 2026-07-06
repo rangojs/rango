@@ -702,19 +702,6 @@ function describePprShell(mode: "dev" | "build") {
     test("prerender + ppr compose: build-time segments are the frozen prelude, the slot loader streams fresh per HIT", async ({
       request,
     }) => {
-      // CI-dev quarantine (runs locally + full composition in production CI):
-      // this route's capture is the only one that round-trips /__rsc_prerender
-      // inside the capture window, and on GH runners those capture cycles are
-      // nondeterministic-to-never — observed MISS 3x20s mid-suite across three
-      // runs AND a warmup-owned 60s window at t=0 hard-failing on another
-      // shard, while every local configuration (incl. CI=true, same shard
-      // split) passes. Lift condition: the tracked dev-endpoint capture
-      // hardening follow-up; until then dev composition coverage on CI lives
-      // in test-app's prerender-ppr suite.
-      test.skip(
-        mode === "dev" && !!process.env.CI,
-        "GH-runner dev capture for /__rsc_prerender-backed routes is nondeterministic; see follow-up",
-      );
       const url = f.url("/ppr-shell/prerendered/alpha?probe=pp");
       const miss = await request.get(url, { headers: HTML_HEADERS });
       expect(miss.status()).toBe(200);

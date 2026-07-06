@@ -20,6 +20,7 @@ import React from "react";
 import { bufferToBase64 } from "../cache/cf/cf-base64.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
+import { enqueueSerializedCapture } from "./capture-queue.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   runWithRequestContext,
@@ -604,14 +605,20 @@ export function scheduleShellCapture(
       inFlightCaptures.delete(key);
     }
   };
+  // Serialize capture EXECUTION per isolate (capture-queue.ts): concurrent
+  // captures starve each other's task-quantized quiet windows — one grinding
+  // capture makes the sibling freeze a trivial prelude and store nothing
+  // (rotating eternal-MISS victims on GH runners). The stampede guard above
+  // stays per-key (dedupe while queued); the queue is cross-key.
+  const serializedTask = () => enqueueSerializedCapture(captureTask);
   // The capture's own task must NOT enter reqCtx._pendingBackgroundTasks: the
   // capture drains that list before rendering (the write-barrier ordering edge),
   // and awaiting its own still-running promise would burn the whole barrier
   // deadline on every capture.
-  (captureTask as { [UNTRACKED_BACKGROUND_TASK]?: boolean })[
+  (serializedTask as { [UNTRACKED_BACKGROUND_TASK]?: boolean })[
     UNTRACKED_BACKGROUND_TASK
   ] = true;
-  runBackground(reqCtx, captureTask);
+  runBackground(reqCtx, serializedTask);
 }
 
 /**
