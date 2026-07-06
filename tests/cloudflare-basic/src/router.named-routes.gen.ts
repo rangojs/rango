@@ -62,6 +62,8 @@ export const NamedRoutes = {
   pprShellSettled: "/ppr-shell/settled",
   pprShellSlotHole: "/ppr-shell/slot-hole",
   pprShellStream: "/ppr-shell/stream",
+  pprShortMeta: "/ppr-short-meta",
+  pprSlowMeta: "/ppr-slow-meta",
   "prerenderCtx.detail": "/prerender-ctx/:slug",
   proactiveCache: "/proactive-cache",
   proactiveCacheItemA: "/proactive-cache/item-a",

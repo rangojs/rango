@@ -55,12 +55,78 @@ path("/products/:id", PricePage, { name: "product", ppr: { ttl: 600, swr: 120 } 
 ```
 
 `ppr: true` uses the default policy (`DEFAULT_PPR_TTL_SECONDS` = 300);
-`PartialPrerenderProps { ttl?, swr?, tags? }` sets it explicitly
-(`src/urls/pattern-types.ts`; stored on the route `EntryData` by
+`PartialPrerenderProps { ttl?, swr?, tags?, captureTimeout? }` sets it
+explicitly (`src/urls/pattern-types.ts`; stored on the route `EntryData` by
 `src/urls/path-helper.ts`; normalized by `resolvePprConfig` in
 `src/rsc/shell-serve.ts`). There is NO subtree inheritance in v1 — declaring
 `ppr` on a layout is not supported (a possible follow-up). A route without the
 option is pure axis 1: no store read, no capture, no logs, zero cost.
+
+The route's NAME is orthogonal to all of this (issue #714): a nameless
+`path()` registers its `EntryData` under a synthesized `$path_*` manifest key
+with the `ppr` option intact, so it captures and serves exactly like a named
+route — pinned by the nameless-ppr e2e in both apps and the
+`shell-serve-ppr-config` unit round-trip. (The issue's observed "silent
+ignore" was the pre-#705 Accept rule: a document GET without `text/html` in
+Accept — curl's default `*/*` — negotiated to the Flight wire format and
+bypassed the shell lane for named and nameless routes alike.)
+
+### `captureTimeout`: the capture settle budget (issue #715)
+
+The background capture is bounded by ONE deadline — `captureShellHTML`'s
+`maxWaitMs` — hard-coded to 5s until #715. Deferred shell material (a handler
+pushing `ctx.use(Meta)(dataPromise.then(...))`, top-level handle pushes
+carrying promises) is AWAITED by the capture and its settled values bake into
+the stored shell; material that settles slower than the budget made the route
+uncapturable forever (eternal MISS + backoff + the no-usable-shell warning).
+`ppr.captureTimeout` (ms, default 5000) declares the budget per route:
+
+```ts
+path("/pdp/:id", ProductPage, {
+  name: "product",
+  ppr: { ttl: 600, swr: 120, captureTimeout: 10_000 },
+});
+```
+
+Semantics, in dependency order:
+
+- **One knob, one deadline.** The resolved value flows
+  `resolvePprConfig -> ShellCaptureDescriptor.captureTimeout ->
+captureShellHTML({ maxWaitMs })`, so it bounds BOTH the fizz prerender and
+  the deferred-material settle window — the `holdUntil` gate and the quiesce
+  race are inputs to the same deadline. There is no second timer to drift.
+- **Ordering is the contract, the budget only bounds it.** The capture gate
+  never freezes while a tracked top-level push is pending
+  (`gateFlightForCapture`'s `holdUntil`), and `SsrRoot` suspends at the ROOT
+  until the handles snapshot fully settles (`resolvedHandleStream` yields
+  once, after EVERY push — including promises chained off other pushes —
+  resolves). A partial prefix of the settlement sequence is therefore
+  unrepresentable in a stored shell.
+- **Expiry with pushes pending REFUSES.** If the budget elapses first, the
+  handles row never emitted, the prerender is still root-suspended, the
+  prelude has no `<body>`, and the sanity gate returns null — no-shell, the
+  existing retry/backoff/warning path. A shell with missing or unsettled head
+  material is never stored, at any budget.
+- **Cost model.** Capture is background work (`waitUntil`): a longer budget
+  costs latency-to-HIT only, never a served response. The platform's
+  `waitUntil` lifetime is the physical ceiling — on workerd, ~30s past
+  response completion — so a `captureTimeout` near or past that ceiling gets
+  killed by the platform, not by rango (see Platform notes).
+- **Producer B parity.** Build-time captures (Prerender+ppr,
+  `src/prerender/build-shell-capture.ts`) and the dev `/__rsc_shell` endpoint
+  honor the same knob (`resolveBuildPprConfig` resolves it; the dev
+  read-through threads it as a query param and sizes its own fetch bound —
+  `devShellFetchTimeoutMs` — to the endpoint's full sequential envelope:
+  pre-flight probe + two attempts + retry margin). Build has no `waitUntil`
+  bound, so there the option is the only ceiling.
+- **Validation.** Non-finite or sub-1ms values normalize to undefined (the
+  capture default applies); the default's single owner stays
+  `SHELL_CAPTURE_MAX_WAIT_MS` in `src/rsc/shell-capture.ts`.
+
+Deliberately unchanged: `SHELL_CAPTURE_WRITE_BARRIER_MS` (1.5s pre-render
+write barrier), `SHELL_SNAPSHOT_WRITE_SETTLE_MS` (1s deferred-write settle),
+the retry-in-place delay, and the refused-capture backoff windows — those
+bound store I/O and scheduling, not shell-material settlement.
 
 Serving is INTEGRAL to the router — `createShellCacheMiddleware` and
 `ShellCacheOptions` were removed from the public surface entirely (pre-release
@@ -921,9 +987,14 @@ per-request data in loaders (holes); keep handles on the replay path.
 
 Cloudflare Workers: the in-worker pattern is the endgame — the worker always
 runs (~5 ms cold starts); the win is skipping shell-render CPU and its
-upstream reads. `waitUntil` (via `runBackground`) covers capture. Chunked
-encoding and edge compression of the composite are automatic; never store
-compressed bytes.
+upstream reads. `waitUntil` (via `runBackground`) covers capture. The
+`waitUntil` lifetime — workerd allows roughly 30s of work past response
+completion — is the PHYSICAL ceiling on `ppr.captureTimeout`: a budget at or
+past it gets the capture killed by the platform mid-flight (nothing stored,
+same self-healing MISS as any refused capture; rango cannot warn because the
+isolate is gone). Keep per-route budgets comfortably under it; build-time
+captures (producer B) have no such bound. Chunked encoding and edge
+compression of the composite are automatic; never store compressed bytes.
 
 Vercel: identical in-function pattern on Fluid Compute via the Vercel store.
 The Build Output API `chain` mechanism (platform-appended streaming, shell

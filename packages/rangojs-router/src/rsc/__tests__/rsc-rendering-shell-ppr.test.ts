@@ -208,6 +208,29 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     expect(descriptor.ttl).toBe(600);
     expect(descriptor.swr).toBe(120);
     expect(descriptor.tags).toEqual(["op:x"]);
+    // No captureTimeout declared: the descriptor carries none, so the capture
+    // uses its own default (SHELL_CAPTURE_MAX_WAIT_MS) — single owner.
+    expect(descriptor.captureTimeout).toBeUndefined();
+  });
+
+  it("ppr: { captureTimeout } — the settle budget flows onto the capture descriptor (issue #715)", async () => {
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      ppr: { ttl: 600, captureTimeout: 12_000 },
+    });
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    expect(descriptor.captureTimeout).toBe(12_000);
+  });
+
+  it("ppr: { captureTimeout: <invalid> } — normalized away so the capture default applies", async () => {
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      ppr: { ttl: 600, captureTimeout: Number.NaN },
+    });
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    expect(descriptor.captureTimeout).toBeUndefined();
   });
 
   it("treats a reactVersion-mismatched entry as a MISS and schedules a recapture", async () => {

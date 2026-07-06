@@ -15,14 +15,17 @@ import {
   ShellOutlinedBadgeLoader,
   shellExecCounters,
   ShellHandles,
+  SlowMetaHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
   makeNestedFastHandlePush,
+  makeSlowMetaParts,
   makePhysicsPromise,
   getDriftStamp,
   getCapStamp,
   outlinedRenderCounter,
 } from "./shell-cache.defs.js";
+import { SlowMetaView } from "../components/SlowMetaView.js";
 import { ShellBadge } from "../components/ShellBadge.js";
 import { ShellSettledValue } from "../components/ShellSettledValue.js";
 import { ShellGuardValue } from "../components/ShellGuardValue.js";
@@ -370,6 +373,29 @@ function ShellSettledPage() {
   return <ShellSettledValue loader={ShellSettledLoader} />;
 }
 
+// Slow deferred-shell-material layout (issue #715, the storefront meta
+// pattern): three TOP-LEVEL pushes settling in parts — immediate, ~5.5s slow,
+// and a Meta title CHAINED off the slow promise (+1s, ~6.5s total). The
+// capture must ride the COMPLETE settlement sequence (never a partial prefix)
+// and bake the final values; under the default 5s budget the sequence
+// outlasts the deadline and the capture REFUSES. Shared by the
+// captureTimeout-declaring route (captures at ~6.5s) and the no-knob negative
+// (eternal MISS) so the two differ ONLY in the ppr option.
+function ShellSlowMetaLayout(ctx: HandlerContext) {
+  const parts = makeSlowMetaParts();
+  const pushPart = ctx.use(SlowMetaHandles);
+  pushPart(parts.immediate);
+  pushPart(parts.slow);
+  ctx.use(Meta)(parts.chainedTitle.then((title) => ({ title })));
+  return (
+    <main data-testid="shell-slow-meta-page">
+      <p data-testid="shell-slow-meta-static">Slow meta static shell</p>
+      <SlowMetaView />
+      <Outlet />
+    </main>
+  );
+}
+
 export const shellCachePatterns = urls(
   ({ path, layout, loader, loading, middleware, parallel }) => [
     layout(ShellCacheLayout, () => [
@@ -567,6 +593,57 @@ export const shellCachePatterns = urls(
       { name: "shellCacheSettled", ppr: true },
       () => [loader(ShellSettledLoader)],
     ),
+    // NAMELESS ppr route (issue #714): `name` is orthogonal to shell caching —
+    // the DSL registers the entry under a synthesized $path_* manifest key with
+    // the ppr option intact, so this route must engage (MISS -> HIT) exactly
+    // like its named siblings. The param mirrors the issue's repro shape.
+    path(
+      "/shell-cache/nameless/:probe",
+      ShellCachePricePage,
+      { ppr: { ttl: 300, swr: 120 } },
+      () => [
+        loader(ShellPriceLoader),
+        loading(
+          <div data-testid="shell-nameless-fallback">Loading price...</div>,
+        ),
+      ],
+    ),
+    // Slow deferred shell material (issue #715): see ShellSlowMetaLayout. The
+    // declared 10s budget admits the ~6.5s staged settlement; the sibling
+    // without the knob refuses under the default 5s deadline. TTL long past
+    // the test window so no SWR recapture re-runs the slow pushes mid-test.
+    layout(ShellSlowMetaLayout, () => [
+      path(
+        "/shell-cache/slow-meta",
+        ShellCachePricePage,
+        {
+          name: "shellCacheSlowMeta",
+          ppr: { ttl: 300, swr: 120, captureTimeout: 10000 },
+        },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="slow-meta-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+      // Negative: identical material, NO captureTimeout — the default 5s
+      // budget expires with pushes pending, the capture refuses (no partial
+      // bake), and the route stays MISS with the once-per-key warning.
+      path(
+        "/shell-cache/slow-meta-default",
+        ShellCachePricePage,
+        { name: "shellCacheSlowMetaDefault", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="slow-meta-default-price-fallback">
+              Loading price...
+            </div>,
+          ),
+        ],
+      ),
+    ]),
     // Identity-guard negative: a bake-lane loader (no loading()) that reads
     // cookies(). Capture refuses deterministically (guard flag) — MISS forever
     // — while axis 1 serves the per-user value normally.

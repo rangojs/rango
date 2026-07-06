@@ -43,6 +43,10 @@ import {
   PprBadgeLoader,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
+import {
+  PprSlowMetaLayout,
+  PprShortMetaLayout,
+} from "./pages/ppr-slow-meta.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
@@ -438,6 +442,69 @@ export const urlpatterns = urls(
             PprShellSettledPage,
             { name: "pprShellSettled", ppr: true },
             () => [loader(PprShellSettledLoader)],
+          ),
+          // NAMELESS ppr route (issue #714): `name` is orthogonal to shell
+          // caching — the entry registers under a synthesized $path_* manifest
+          // key with the ppr option intact, so it must engage (MISS -> HIT)
+          // exactly like the named siblings above. Param mirrors the issue's
+          // repro shape. NOT in PPR_WARMUP_HIT_ROUTES: its e2e owns the full
+          // MISS -> capture -> HIT round-trip.
+          path(
+            "/ppr-nameless/:probe",
+            PprShellPricePage,
+            { ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-nameless-fallback">Loading price...</div>,
+              ),
+            ],
+          ),
+        ]),
+        // Deferred shell material settling in parts (issue #715): see
+        // pages/ppr-slow-meta.tsx. The declared 10s budget admits the ~6.5s
+        // staged settlement; the short-budget sibling refuses. NOT in
+        // PPR_WARMUP_HIT_ROUTES — a ~6.5s capture must never park the shared
+        // warmup path; the e2e owns the round-trip.
+        layout(PprSlowMetaLayout, () => [
+          path(
+            "/ppr-slow-meta",
+            PprShellPricePage,
+            {
+              name: "pprSlowMeta",
+              ppr: { ttl: 300, swr: 120, captureTimeout: 10000 },
+            },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-slow-meta-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+        ]),
+        // Refusal semantics under a too-short budget (issue #715 negative):
+        // ~3.5s material against an explicit 1500ms budget — the capture
+        // refuses (stays MISS, no partial bake). Short tempo keeps the
+        // worker's serialized capture queue clear for the sibling ppr tests;
+        // the no-knob default-budget negative runs in the router test-app.
+        layout(PprShortMetaLayout, () => [
+          path(
+            "/ppr-short-meta",
+            PprShellPricePage,
+            {
+              name: "pprShortMeta",
+              ppr: { ttl: 300, swr: 120, captureTimeout: 1500 },
+            },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-short-meta-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
           ),
         ]),
         // Shell fast-path execution matrix (docs/design/shell-fast-path.md):

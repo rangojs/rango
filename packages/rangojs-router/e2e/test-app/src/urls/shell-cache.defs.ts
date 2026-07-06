@@ -310,6 +310,54 @@ export const ShellExecLoader = createLoader(
   },
 );
 
+// Slow deferred-shell-material fixture (issue #715, the storefront meta
+// pattern): the layout pushes THREE top-level handle values that settle IN
+// PARTS — immediate, slow (~5.5s), and a Meta CHAINED off the slow promise
+// (+1s, ~6.5s total). All three are TOP-LEVEL pushes, so the capture awaits
+// the COMPLETE settlement sequence (resolvedHandleStream converges only after
+// every push resolves — a partial prefix is unrepresentable) and bakes the
+// final values. Under the DEFAULT 5s budget the sequence outlasts the
+// deadline, the handles row never emits, SsrRoot stays suspended at the root,
+// and the capture REFUSES (trivial prelude — eternal MISS + once-per-key
+// warning). With `ppr.captureTimeout: 10000` the same route captures and the
+// stored prelude carries all three resolved parts. A per-capture seq rides in
+// each value so consecutive HITs pin frozenness (the prelude keeps the
+// capture-time seq while axis-1/misses would advance it).
+const SLOW_META_SLOW_DELAY_MS = 5_500;
+const SLOW_META_CHAIN_EXTRA_MS = 1_000;
+
+export interface SlowMetaParts {
+  immediate: Promise<string>;
+  slow: Promise<string>;
+  chainedTitle: Promise<string>;
+}
+
+let slowMetaSeq = 0;
+
+export function makeSlowMetaParts(): SlowMetaParts {
+  slowMetaSeq += 1;
+  const seq = slowMetaSeq;
+  const immediate = Promise.resolve(`slow-meta-immediate-${seq}`);
+  const slow = new Promise<string>((resolve) =>
+    setTimeout(() => resolve(`slow-meta-slow-${seq}`), SLOW_META_SLOW_DELAY_MS),
+  );
+  // The Meta value is CHAINED off the slow push's promise with additional
+  // latency — the staged-resolution shape (data -> derived meta) the capture
+  // must ride to full convergence, not to the first settle.
+  const chainedTitle = slow.then(
+    (v) =>
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve(`${v}-chained`), SLOW_META_CHAIN_EXTRA_MS),
+      ),
+  );
+  return { immediate, slow, chainedTitle };
+}
+
+/** Handle collecting the slow fixture's non-Meta pushes for shell render. */
+export const SlowMetaHandles = createHandle<string, string[]>((values) =>
+  values.flat(),
+);
+
 /**
  * Render counter for the /shell-cache/outlined fixture. Fizz OUTLINES any
  * Suspense boundary over ~500 bytes (fallback written inline first, content

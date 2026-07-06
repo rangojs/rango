@@ -73,7 +73,9 @@ export interface ShellPrerenderCandidate {
   urlPath: string;
   routeName: string;
   paramHash: string;
-  ppr: true | { ttl?: number; swr?: number; tags?: string[] };
+  ppr:
+    | true
+    | { ttl?: number; swr?: number; tags?: string[]; captureTimeout?: number };
 }
 
 export interface DiscoveryState {

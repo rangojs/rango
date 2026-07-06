@@ -262,6 +262,40 @@ describe("captureAndStoreShell", () => {
     } as unknown as SSRModule;
   }
 
+  // Capture settle budget (issue #715): descriptor.captureTimeout is THE
+  // deadline handed to captureShellHTML — one bound covering the fizz
+  // prerender AND the deferred-material settle window (the holdUntil gate).
+  it("passes descriptor.captureTimeout to captureShellHTML as maxWaitMs", async () => {
+    const ssrModule = makeShellSsrModule();
+    await captureAndStoreShell(
+      ssrModule,
+      emptyStream(),
+      createHandleStore(),
+      makeReqCtx(makePutShell()),
+      {
+        key: "/budget:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        captureTimeout: 10_000,
+      },
+    );
+    const opts = vi.mocked(ssrModule.captureShellHTML!).mock.calls[0]![1];
+    expect(opts.maxWaitMs).toBe(10_000);
+  });
+
+  it("defaults maxWaitMs to 5000 when no captureTimeout is declared", async () => {
+    const ssrModule = makeShellSsrModule();
+    await captureAndStoreShell(
+      ssrModule,
+      emptyStream(),
+      createHandleStore(),
+      makeReqCtx(makePutShell()),
+      { key: "/budget-default:shell", buildVersion: "test-build", ttl: 300 },
+    );
+    const opts = vi.mocked(ssrModule.captureShellHTML!).mock.calls[0]![1];
+    expect(opts.maxWaitMs).toBe(5_000);
+  });
+
   // Identity guard (loader-container-bake): the cookies()/headers() capture
   // guard flags the capture context before throwing, because a throw inside an
   // executing bake-lane loader is swallowed into per-loader error UI. The

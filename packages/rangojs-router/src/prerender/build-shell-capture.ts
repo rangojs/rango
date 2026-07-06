@@ -49,7 +49,9 @@ import {
  * drift from the serve-side one.
  */
 export function resolveBuildPprConfig(
-  ppr: true | { ttl?: number; swr?: number; tags?: string[] },
+  ppr:
+    | true
+    | { ttl?: number; swr?: number; tags?: string[]; captureTimeout?: number },
 ): ResolvedPprConfig {
   const resolved = resolvePprConfig({ type: "route", ppr } as any);
   // resolvePprConfig returns null only for undefined/false ppr; the collector
@@ -82,6 +84,12 @@ export interface BuildShellCaptureOptions {
    * raised per-route cap behaves identically across both producers.
    */
   maxSnapshotBytes?: number;
+  /**
+   * The route's `ppr.captureTimeout` (ms) — producer B honors the same settle
+   * budget as the runtime capture. Build has no waitUntil lifetime bound, so
+   * the option is the only ceiling here.
+   */
+  captureTimeout?: number;
   /** Build-time env bindings (rango plugin buildEnv), if configured. */
   buildEnv?: unknown;
   /**
@@ -189,6 +197,7 @@ async function attemptBuildCapture(
     ttl: opts.ttl,
     swr: opts.swr,
     tags: opts.tags,
+    captureTimeout: opts.captureTimeout,
     store: collector as any,
     debug: opts.debug,
     maxSnapshotBytes: opts.maxSnapshotBytes,
