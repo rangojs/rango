@@ -2269,6 +2269,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * silently reporting success while other requests/colos serve stale data. The
    * eager purge still fires for the whole batch first (it is additive).
    */
+  /**
+   * Build-shell read-through gate (SegmentCacheStore.isTagsInvalidatedSince):
+   * a baked shell entry is immutable in the build manifest, so eviction is
+   * answered by the SAME KV tag markers updateTag() writes, compared against
+   * the entry's build-time createdAt. Thin public wrapper over the private
+   * envelope check (identical semantics: marker >= since, fail open).
+   */
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
+    return this.isGloballyInvalidated(tags, sinceMs);
+  }
+
   async invalidateTags(tags: string[]): Promise<void> {
     if (tags.length === 0) return;
     const invalidatedAt = Date.now();

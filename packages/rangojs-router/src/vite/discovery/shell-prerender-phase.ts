@@ -1,57 +1,124 @@
 /**
- * Post-build PPR shell capture phase (producer B, issue #699) — SPIKE.
+ * Post-build PPR shell capture phase (producer B, issue #699).
  *
- * Runs from the buildApp post hook, after every environment bundle is
- * written. Reuses the buildStart temp server kept alive on DiscoveryState
- * (realm already has tries installed and routers registered), seeds an
- * in-realm prerender store from the retained phase-A Flight payloads, and
- * drives the shared capture core (build-shell-capture.ts) per candidate with
- * an SSR half composed from the temp server's SSR environment runner — the
- * bootstrap script content overridden to the BUILT client entry URL.
+ * Runs from the buildApp post hook, AFTER every environment bundle is written
+ * — the shell prelude embeds built client asset URLs (the bootstrap entry),
+ * which do not exist during buildStart discovery. Reuses the buildStart temp
+ * server kept alive on DiscoveryState (its realm already has tries installed
+ * and routers registered), seeds an in-realm prerender store from the
+ * retained phase-A Flight payloads, and drives the shared capture core
+ * (prerender/build-shell-capture.ts) once per Prerender+ppr candidate. The
+ * SSR half is composed from the temp server's SSR environment runner with
+ * the BUILT client entry as bootstrap.
+ *
+ * Stored entries are staged as __ps-*.js asset modules under the RSC out
+ * dir with a lazy __shell-manifest.js (mirroring the prerender manifest);
+ * the runtime read-through (rsc/shell-build-manifest.ts) serves them on a
+ * shell-store MISS. A candidate whose capture is refused, produces no shell,
+ * or never consulted the prerender store is SKIPPED loudly — the route keeps
+ * producer A (runtime capture) semantics, never a wrong-lane bake.
  */
 
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import type { DiscoveryState } from "./state.js";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join, resolve } from "node:path";
+import { jsonParseExpression } from "../utils/manifest-utils.js";
+import { buildShellManifestKey } from "../../prerender/shell-manifest-key.js";
+import type { DiscoveryState, ShellPrerenderCandidate } from "./state.js";
+import { createRangoDebugger, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.prerender);
+
+/** The serve-side shape of one baked shell manifest entry (asset module). */
+interface ShellManifestValue {
+  entry: unknown;
+  ttl: number;
+  swr?: number;
+  tags?: string[];
+  routeName: string;
+}
+
+/**
+ * Minimal builder surface the phase reads: resolved plugins (for the main
+ * build's version plugin) and per-environment outDirs.
+ */
+interface BuilderLike {
+  config?: {
+    base?: string;
+    plugins?: readonly unknown[];
+  };
+  environments?: Record<
+    string,
+    { config?: { build?: { outDir?: string } } } | undefined
+  >;
+}
 
 export async function runShellPrerenderPhase(
   s: DiscoveryState,
-  builderConfig: { plugins?: readonly unknown[] } | undefined,
+  builder: BuilderLike | undefined,
 ): Promise<void> {
-  if (!s.isBuildMode || !s.shellCandidates?.length) return;
   const tempServer = s.shellPhaseTempServer;
+  if (!s.isBuildMode || !s.shellCandidates?.length) {
+    // Defensive: candidates gate the keep-alive, so a kept server without
+    // candidates should not happen; never leak it if it does.
+    if (tempServer) {
+      s.shellPhaseTempServer = null;
+      await tempServer.close();
+    }
+    return;
+  }
   if (!tempServer) return;
+
+  const candidates: ShellPrerenderCandidate[] = s.shellCandidates;
+  const startTotal = performance.now();
+  console.log(`[rango] Shell-prerendering ${candidates.length} URL(s)...`);
+
   try {
     const rscEnv = tempServer.environments?.rsc;
     const ssrEnv = tempServer.environments?.ssr;
-    console.log(
-      `[rango][spike] shell phase: candidates=${s.shellCandidates.length} rscRunner=${String(
-        !!rscEnv?.runner,
-      )} ssrRunner=${String(!!ssrEnv?.runner)}`,
-    );
-    if (!rscEnv?.runner || !ssrEnv?.runner) return;
+    if (!rscEnv?.runner || !ssrEnv?.runner) {
+      console.warn(
+        "[rango] shell prerender: temp server runners unavailable " +
+          `(rsc=${String(!!rscEnv?.runner)}, ssr=${String(!!ssrEnv?.runner)}); ` +
+          "skipping — routes keep runtime shell capture.",
+      );
+      return;
+    }
 
-    // The MAIN build's version (folded into the shipped worker) — never the
-    // temp server's own version-plugin stamp.
-    const versionPlugin = (builderConfig?.plugins ?? []).find(
+    // The MAIN build's version (the value folded into the shipped worker) —
+    // never the temp server's own version-plugin stamp, which is a different
+    // Date.now() and would fail the serve-side isValidShellHit gate forever.
+    const versionPlugin = (builder?.config?.plugins ?? []).find(
       (p: any) => p?.name === "@rangojs/router:version",
     ) as { api?: { getBuildVersion?: () => string } } | undefined;
     const buildVersion = versionPlugin?.api?.getBuildVersion?.();
-    console.log(`[rango][spike] main buildVersion: ${buildVersion}`);
+    if (!buildVersion) {
+      console.warn(
+        "[rango] shell prerender: main build version unavailable; skipping — " +
+          "routes keep runtime shell capture.",
+      );
+      return;
+    }
 
     // In-realm prerender store over the retained phase-A payloads, so the
-    // capture's match() re-enters withCacheLookup and replays the build-time
+    // capture's match() re-enters withCacheLookup and REPLAYS the build-time
     // segments (globalThis is shared between the plugin process and the temp
-    // server's module-runner realm).
-    const payloads = s.prerenderPayloadValues!;
+    // server's module-runner realms). `fetchedKeys` doubles as the replay
+    // assertion: a capture whose candidate key was never fetched rendered
+    // something else (live handler, wrong route) and must not be baked.
+    const payloads = s.prerenderPayloadValues ?? new Map<string, string>();
+    const fetchedKeys = new Set<string>();
     (globalThis as any).__loadPrerenderManifestModule = async () => ({
       default: Object.fromEntries([...payloads.keys()].map((k) => [k, k])),
-      loadPrerenderAsset: async (spec: string) => ({
-        default: JSON.parse(payloads.get(spec)!),
-      }),
+      loadPrerenderAsset: async (spec: string) => {
+        fetchedKeys.add(spec);
+        return { default: JSON.parse(payloads.get(spec)!) };
+      },
     });
 
-    // SSR half from the temp server's SSR environment runner.
+    // SSR half from the temp server's SSR environment runner. react-dom's
+    // edge builds surface as default-only namespaces through the runner.
     const ssrRunner = ssrEnv.runner;
     const ssrPkg = await ssrRunner.import("@rangojs/router/ssr");
     const ssrDeps = await ssrRunner.import("@rangojs/router/internal/deps/ssr");
@@ -62,21 +129,36 @@ export async function runShellPrerenderPhase(
     );
 
     // Built client bootstrap: the prelude must embed the BUILT entry URL.
-    const assetsDir = join(s.projectRoot, "dist", "client", "assets");
-    const entryFile = existsSync(assetsDir)
-      ? readdirSync(assetsDir).find((f) => /^index-.*\.js$/.test(f))
+    const clientOutDir =
+      builder?.environments?.client?.config?.build?.outDir ??
+      resolve(s.projectRoot, "dist/client");
+    const clientAssetsDir = join(clientOutDir, "assets");
+    const entryFile = existsSync(clientAssetsDir)
+      ? readdirSync(clientAssetsDir).find((f) => /^index-.*\.js$/.test(f))
       : undefined;
-    const bootstrapContent = entryFile ? `import("/assets/${entryFile}")` : "";
-    console.log(`[rango][spike] bootstrap: ${bootstrapContent}`);
+    if (!entryFile) {
+      console.warn(
+        `[rango] shell prerender: built client entry not found under ${clientAssetsDir}; ` +
+          "skipping — routes keep runtime shell capture.",
+      );
+      return;
+    }
+    const base = builder?.config?.base ?? "/";
+    const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+    const bootstrapContent = `import("${normalizedBase}assets/${entryFile}")`;
+    debug?.("shell prerender bootstrap: %s", bootstrapContent);
 
     // The Flight payloads carry PRODUCTION-HASHED client reference ids
     // (hashClientRefs, forceBuild) — resolvable only in the built bundles.
     // The temp server's SSR loader receives those hashes and can neither
     // validate nor import them (dev refKeys are module URLs). Bridge: wrap
-    // the SSR realm's late-bound client require with a hash -> dev-refKey
-    // reverse map computed from plugin-rsc's manager with the SAME hashing
-    // (computeProductionHash). Lazy rebuild on miss: a client module first
-    // transformed during capture registers after the map was built.
+    // the SSR realm's late-bound client require (__vite_rsc_client_require__,
+    // read per call by plugin-rsc's __vite_rsc_require__) with a hash ->
+    // dev-refKey reverse map computed from plugin-rsc's manager using the
+    // SAME hashing (computeProductionHash). Lazy rebuild on miss: a client
+    // module first transformed DURING capture registers after the map was
+    // built. The RSC realm needs no bridge — its $$decode-client lane
+    // re-registers references by id without loading modules.
     const minimalPlugin = (tempServer.config?.plugins ?? []).find(
       (p: any) => p?.name === "rsc:minimal",
     );
@@ -108,10 +190,7 @@ export async function runShellPrerenderPhase(
         return origClientRequire(mapped ?? id);
       };
     }
-    console.log(
-      `[rango][spike] require wrapper installed=${String(typeof origClientRequire === "function")} ` +
-        `metaMapSize=${Object.keys(rscManager?.clientReferenceMetaMap ?? {}).length}`,
-    );
+
     const captureShellHTML = ssrPkg.createShellCaptureHandler({
       createFromReadableStream: ssrDeps.createFromReadableStream,
       renderToReadableStream:
@@ -132,44 +211,185 @@ export async function runShellPrerenderPhase(
     const serverMod = await rscRunner.import("@rangojs/router/server");
     const registry: Map<string, any> = serverMod.RouterRegistry;
 
-    for (const cand of s.shellCandidates) {
-      const ppr = cand.ppr === true ? {} : cand.ppr;
+    const staged: Array<{ key: string; value: string }> = [];
+    let skipCount = 0;
+
+    // Manifest keys are pathname-only (see shell-manifest-key.ts): two
+    // candidates on one pathname (two routers prerendering the same path)
+    // would be ambiguous at serve time — decline ALL of that pathname's
+    // entries rather than bake a wrong-router shell.
+    const pathCounts = new Map<string, number>();
+    for (const cand of candidates) {
+      pathCounts.set(cand.urlPath, (pathCounts.get(cand.urlPath) ?? 0) + 1);
+    }
+
+    for (const cand of candidates) {
+      if ((pathCounts.get(cand.urlPath) ?? 0) > 1) {
+        console.warn(
+          `[rango]   SHELL SKIP ${cand.urlPath.padEnd(34)} - pathname claimed by multiple prerender routes; routes keep runtime capture`,
+        );
+        skipCount++;
+        continue;
+      }
+      const startUrl = performance.now();
+      const policy = captureMod.resolveBuildPprConfig(cand.ppr);
+      const mainKey = `${cand.routeName}/${cand.paramHash}`;
+      let handled = false;
       for (const [, routerInstance] of registry) {
         if (typeof routerInstance.match !== "function") continue;
-        const res = await captureMod.captureShellForBuild({
-          router: routerInstance,
-          urlPath: cand.urlPath,
-          key: `${cand.urlPath}:shell`,
-          ttl: ppr.ttl,
-          swr: ppr.swr,
-          tags: ppr.tags,
-          buildEnv: s.resolvedBuildEnv,
-          buildVersion: buildVersion ?? "unknown",
-          captureShellHTML,
-          debug: true,
-        });
-        if (res.outcome === "stored" && res.entry) {
-          const preludeBytes = Buffer.from(res.entry.prelude, "base64");
-          const html = preludeBytes.toString("utf8");
+        try {
+          const res = await captureMod.captureShellForBuild({
+            router: routerInstance,
+            urlPath: cand.urlPath,
+            routeName: cand.routeName,
+            key: `${cand.urlPath}:shell`,
+            ttl: policy.ttl,
+            swr: policy.swr,
+            tags: policy.tags,
+            buildEnv: s.resolvedBuildEnv,
+            buildVersion,
+            captureShellHTML,
+            debug: !!debug,
+          });
+          if (res.outcome === "route-mismatch") continue;
+          handled = true;
+          const elapsed = (performance.now() - startUrl).toFixed(0);
+          if (res.outcome !== "stored" || !res.entry) {
+            console.warn(
+              `[rango]   SHELL SKIP ${cand.urlPath.padEnd(34)} (${elapsed}ms) - capture ${res.outcome}; route keeps runtime capture`,
+            );
+            skipCount++;
+            break;
+          }
+          // Replay assertion: the capture must have fetched THIS candidate's
+          // prerender payload — otherwise it rendered outside the store
+          // (live handler in the source realm) and baking it would encode a
+          // lane production never serves.
+          if (!fetchedKeys.has(mainKey)) {
+            console.warn(
+              `[rango]   SHELL SKIP ${cand.urlPath.padEnd(34)} (${elapsed}ms) - capture did not replay the prerender store; route keeps runtime capture`,
+            );
+            skipCount++;
+            break;
+          }
+          const value: ShellManifestValue = {
+            entry: res.entry,
+            ttl: policy.ttl,
+            swr: policy.swr,
+            tags: res.tags,
+            routeName: cand.routeName,
+          };
+          staged.push({
+            key: buildShellManifestKey(cand.urlPath),
+            value: JSON.stringify(value),
+          });
           console.log(
-            `[rango][spike] ${cand.urlPath}: STORED prelude=${preludeBytes.length}b ` +
-              `postponed=${res.entry.postponed === null ? "none" : `${res.entry.postponed.length}b`} ` +
-              `liveHoles=${String(res.entry.handlerLiveHoles)} snapshot=${res.entry.snapshot?.length ?? 0} ` +
-              `tags=${JSON.stringify(res.tags)}`,
+            `[rango]   SHELL OK   ${cand.urlPath.padEnd(34)} (${elapsed}ms)`,
           );
-          console.log(
-            `[rango][spike]   article=${String(html.includes("Prerendered shell content"))} ` +
-              `fallback=${String(html.includes("Loading pp seq"))} ` +
-              `bootstrap=${entryFile ? String(html.includes(entryFile)) : "?"}`,
+          break;
+        } catch (err: any) {
+          handled = true;
+          const elapsed = (performance.now() - startUrl).toFixed(0);
+          console.warn(
+            `[rango]   SHELL SKIP ${cand.urlPath.padEnd(34)} (${elapsed}ms) - ${err?.message ?? err}; route keeps runtime capture`,
           );
-        } else {
-          console.log(`[rango][spike] ${cand.urlPath}: ${res.outcome}`);
+          skipCount++;
+          break;
         }
-        break;
+      }
+      if (!handled) {
+        console.warn(
+          `[rango]   SHELL SKIP ${cand.urlPath.padEnd(34)} - no router matched; route keeps runtime capture`,
+        );
+        skipCount++;
       }
     }
+
+    if (staged.length > 0) {
+      const rscOutDir =
+        builder?.environments?.rsc?.config?.build?.outDir ??
+        resolve(s.projectRoot, "dist/rsc");
+      writeShellManifest(s, rscOutDir, staged);
+    }
+
+    const totalElapsed = (performance.now() - startTotal).toFixed(0);
+    const parts = [`${staged.length} done`];
+    if (skipCount > 0) parts.push(`${skipCount} skipped`);
+    console.log(
+      `[rango] Shell prerender complete: ${parts.join(", ")} (${totalElapsed}ms total)`,
+    );
+  } catch (err: any) {
+    // The shell phase is an optimization over runtime capture — a failure
+    // must never fail an otherwise-good build. Loud, so a first-request-HIT
+    // expectation is never silently degraded.
+    console.warn(
+      `[rango] shell prerender phase failed: ${err?.message ?? err}; ` +
+        "routes keep runtime shell capture.",
+    );
   } finally {
+    delete (globalThis as any).__loadPrerenderManifestModule;
     s.shellPhaseTempServer = null;
     await tempServer.close();
   }
+}
+
+/**
+ * Write staged shell entries as content-hashed asset modules + the lazy
+ * manifest, and inject the loader global into the built RSC entry. Mirrors
+ * postprocessBundle's prerender manifest mechanics, but runs POST-buildApp
+ * (the RSC entry on disk was already postprocessed — read-modify-write with
+ * an idempotence guard).
+ */
+function writeShellManifest(
+  s: DiscoveryState,
+  rscOutDir: string,
+  staged: Array<{ key: string; value: string }>,
+): void {
+  const rscEntryPath = resolve(rscOutDir, s.rscEntryFileName ?? "index.js");
+  if (!existsSync(rscEntryPath)) {
+    console.warn(
+      `[rango] shell prerender: RSC entry not found at ${rscEntryPath}; ` +
+        "entries not persisted — routes keep runtime capture.",
+    );
+    return;
+  }
+  const assetsDir = resolve(rscOutDir, "assets");
+  mkdirSync(assetsDir, { recursive: true });
+
+  let totalBytes = 0;
+  const manifestMap: Record<string, string> = {};
+  for (const { key, value } of staged) {
+    const contentHash = createHash("sha256")
+      .update(value)
+      .digest("hex")
+      .slice(0, 8);
+    const fileName = `__ps-${contentHash}.js`;
+    const filePath = resolve(assetsDir, fileName);
+    if (!existsSync(filePath)) {
+      const code = `export default ${value};\n`;
+      writeFileSync(filePath, code);
+      totalBytes += Buffer.byteLength(code);
+    }
+    manifestMap[key] = `./assets/${fileName}`;
+  }
+
+  const manifestCode = [
+    `const m=${jsonParseExpression(manifestMap)};`,
+    `export function loadShellAsset(s){return import(s)}`,
+    `export default m;`,
+    "",
+  ].join("\n");
+  writeFileSync(resolve(rscOutDir, "__shell-manifest.js"), manifestCode);
+  totalBytes += Buffer.byteLength(manifestCode);
+
+  const rscCode = readFileSync(rscEntryPath, "utf-8");
+  if (!rscCode.includes("__shell-manifest.js")) {
+    const injection = `globalThis.__loadShellManifestModule = () => import("./__shell-manifest.js");\n`;
+    writeFileSync(rscEntryPath, injection + rscCode);
+  }
+
+  const totalKB = (totalBytes / 1024).toFixed(1);
+  console.log(
+    `[rango] Wrote shell assets (${totalKB} KB total, ${staged.length} entries)`,
+  );
 }

@@ -44,6 +44,7 @@ import {
   warnShellStoreMissingOnce,
   warnPprNonceActiveOnce,
 } from "./shell-serve.js";
+import { lookupBuildShell } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
 import {
   resolveSameOriginRedirect,
@@ -219,6 +220,42 @@ async function handleRscRenderingInner<TEnv>(
                 descriptor,
               );
             }
+          }
+          // Build-time shell read-through (producer B, #699): on a runtime
+          // store MISS (or an invalid/corrupt runtime entry), a Prerender+ppr
+          // route's shell was already produced at `vite build` — serve it
+          // through the SAME serveShellHit, so the first-ever request after a
+          // deploy is a HIT with zero runtime capture. lookupBuildShell owns
+          // every gate (search-less request, versions, integrity, tag
+          // markers) and fails to null — the ordinary MISS path below takes
+          // over. Past ppr.ttl the baked entry still serves but a runtime
+          // recapture is scheduled: SWR is the UPGRADE path from build entry
+          // to fresher runtime entry (the runtime store read above wins once
+          // the capture lands).
+          const buildHit = await lookupBuildShell(url, ctx.version, store);
+          if (buildHit) {
+            if (buildHit.stale) {
+              scheduleShellCapture(
+                ctx,
+                request,
+                env,
+                url,
+                reqCtx,
+                ssrModule,
+                descriptor,
+              );
+            }
+            return serveShellHit(
+              ctx,
+              request,
+              env,
+              url,
+              reqCtx,
+              handleStore,
+              ssrModule,
+              buildHit.entry,
+              descriptor,
+            );
           }
           // MISS (no entry, invalid reactVersion, or store read failure): axis 1
           // + a background capture scheduled once the response is known servable.

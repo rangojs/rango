@@ -30,6 +30,8 @@ const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
 const SHELL_CACHE_REGISTRY_KEY = "__rsc_router_shell_cache_registry__";
 const TAG_INDEX_REGISTRY_KEY = "__rsc_router_tag_index_registry__";
 const KEY_TAGS_REGISTRY_KEY = "__rsc_router_key_tags_registry__";
+const TAG_INVALIDATED_AT_REGISTRY_KEY =
+  "__rsc_router_tag_invalidated_at_registry__";
 
 /**
  * Get or create a named Map from a globalThis-backed registry.
@@ -194,6 +196,14 @@ export class MemorySegmentCacheStore<
   private tagIndex: Map<string, Set<string>>;
   /** prefixed cache key -> set of tags (reverse index for O(tags) unregister) */
   private keyTags: Map<string, Set<string>>;
+  /**
+   * tag -> epoch ms of its latest invalidateTags() call. The build-shell
+   * read-through's isTagsInvalidatedSince gate: baked shell entries are
+   * immutable in the build manifest, so eviction is answered by comparing
+   * these markers against the entry's build-time createdAt. Per-isolate,
+   * like every other map here — matching this store's tag semantics.
+   */
+  private tagInvalidatedAt: Map<string, number>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -228,6 +238,10 @@ export class MemorySegmentCacheStore<
         KEY_TAGS_REGISTRY_KEY,
         options.name,
       );
+      this.tagInvalidatedAt = getNamedMap<number>(
+        TAG_INVALIDATED_AT_REGISTRY_KEY,
+        options.name,
+      );
     } else {
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
@@ -235,6 +249,7 @@ export class MemorySegmentCacheStore<
       this.shellCache = new Map<string, CachedShellEntry>();
       this.tagIndex = new Map<string, Set<string>>();
       this.keyTags = new Map<string, Set<string>>();
+      this.tagInvalidatedAt = new Map<string, number>();
     }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
@@ -457,8 +472,25 @@ export class MemorySegmentCacheStore<
     }
   }
 
-  async invalidateTags(tags: string[]): Promise<void> {
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
     for (const tag of tags) {
+      const at = this.tagInvalidatedAt.get(tag);
+      // >= so a same-millisecond invalidation wins (freshness over staleness),
+      // matching the CF marker comparison.
+      if (at !== undefined && at >= sinceMs) return true;
+    }
+    return false;
+  }
+
+  async invalidateTags(tags: string[]): Promise<void> {
+    const invalidatedAt = Date.now();
+    for (const tag of tags) {
+      // Marker first: build-shell entries evict by marker comparison even when
+      // no runtime entry currently carries the tag (tagIndex miss below).
+      this.tagInvalidatedAt.set(tag, invalidatedAt);
       const keys = this.tagIndex.get(tag);
       if (!keys || keys.size === 0) continue;
 

@@ -35,15 +35,42 @@ import { buildFullPayload } from "../rsc/full-payload.js";
 import type { RscPayload, SSRModule } from "../rsc/types.js";
 import type { HandlerContext } from "../rsc/handler-context.js";
 import { renderToReadableStream } from "../deps/rsc.js";
+import {
+  resolvePprConfig,
+  type ResolvedPprConfig,
+} from "../rsc/shell-serve.js";
 
 /** Delay before the single in-place retry of a cold-graph build capture. */
 const BUILD_CAPTURE_RETRY_DELAY_MS = 400;
+
+/**
+ * Normalize a collected truthy `ppr` path option into the SAME concrete
+ * policy the runtime serve path derives — through resolvePprConfig itself,
+ * over a synthetic route entry — so the build-stamped ttl default can never
+ * drift from the serve-side one.
+ */
+export function resolveBuildPprConfig(
+  ppr: true | { ttl?: number; swr?: number; tags?: string[] },
+): ResolvedPprConfig {
+  const resolved = resolvePprConfig({ type: "route", ppr } as any);
+  // resolvePprConfig returns null only for undefined/false ppr; the collector
+  // filtered those out. Guard for the type only.
+  if (!resolved) throw new Error("[rango] unreachable: ppr option was falsy");
+  return resolved;
+}
 
 export interface BuildShellCaptureOptions {
   /** The router instance (from RouterRegistry in the same realm). */
   router: any;
   /** Concrete URL path to capture (e.g. "/pp/alpha"). */
   urlPath: string;
+  /**
+   * The candidate's trie route key. The capture's match() must land on THIS
+   * route: the phase sweeps every registered router, and a router that does
+   * not own the URL matches something else (its catch-all, a 404 shape) —
+   * that capture must not be baked.
+   */
+  routeName: string;
   /** Shell store key to stamp into the descriptor (host-free at build). */
   key: string;
   ttl?: number;
@@ -71,7 +98,13 @@ export interface BuildShellCaptureOptions {
 }
 
 export interface BuildShellCaptureResult {
-  outcome: "stored" | "no-shell" | "redirect" | "refused";
+  outcome:
+    | "stored"
+    | "no-shell"
+    | "redirect"
+    | "refused"
+    /** The router swept does not own this URL — try the next one. */
+    | "route-mismatch";
   /** Present iff outcome === "stored". */
   entry?: ShellCacheEntry;
   /** The putShell-barrier tag union (static ppr.tags + render-recorded). */
@@ -163,6 +196,7 @@ async function attemptBuildCapture(
 
   const outcome = await runWithRequestContext(derivedCtx, async () => {
     const match = await router.match(request, { env: opts.buildEnv ?? {} });
+    if (match.routeName !== opts.routeName) return "route-mismatch" as const;
     if (match.redirect) return "redirect" as const;
 
     setRequestContextParams(match.params, match.routeName);

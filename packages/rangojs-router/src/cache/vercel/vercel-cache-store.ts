@@ -127,7 +127,18 @@ const REVALIDATION_LOCK_MS = 30_000;
 /** Family prefixes that keep the value tiers from colliding in the single Vercel
  *  keyspace. The router's own semantic prefixes (doc:/partial:/use-cache:) become
  *  the suffix; `rg:` namespaces every Rango entry. `h` is the PPR shell tier. */
-type CacheFamily = "s" | "i" | "r" | "h";
+type CacheFamily = "s" | "i" | "r" | "h" | "tm";
+
+/**
+ * TTL for tag-invalidation marker entries ("tm" family), written by
+ * invalidateTags for the build-shell read-through's isTagsInvalidatedSince
+ * gate. The platform's expireTag() DELETES tagged entries (no queryable
+ * history), so the markers are rango's own record of "tag X was invalidated
+ * at T". One year: markers must outlive any build's shell entries (which the
+ * buildVersion gate retires on the next deploy anyway); an expired marker
+ * would silently resurrect an updateTag()-evicted build shell.
+ */
+const TAG_MARKER_TTL_SECONDS = 365 * 24 * 60 * 60;
 
 /** Stored envelope for a segment-tree entry (get/set). */
 interface VercelSegmentEnvelope {
@@ -842,6 +853,40 @@ export class VercelCacheStore<
 
   // --- Tags ---
 
+  /**
+   * Build-shell read-through gate (SegmentCacheStore.isTagsInvalidatedSince).
+   * The platform's expireTag() DELETES tagged entries and keeps no queryable
+   * history, so invalidateTags() below writes its own "tm" marker entries and
+   * this compares them against the baked entry's build-time createdAt
+   * (>= so a same-millisecond invalidation wins). Fails open to `false` on
+   * read errors — the same posture as the CF marker check.
+   */
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
+    try {
+      const markers = await Promise.all(
+        tags.map((tag) => this.cache.get(this.toStoreKey(tag, "tm"))),
+      );
+      for (const raw of markers) {
+        if (raw == null) continue;
+        const decoded = this.decodeRaw(raw) as { at?: unknown } | null;
+        const at =
+          decoded && typeof decoded.at === "number" ? decoded.at : null;
+        if (at !== null && at >= sinceMs) return true;
+      }
+      return false;
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-read",
+        "[VercelCacheStore] tag invalidation check",
+      );
+      return false;
+    }
+  }
+
   async invalidateTags(tags: string[]): Promise<void> {
     if (!tags || tags.length === 0) return;
     // No per-item cap here: an invalidation must reach every requested tag.
@@ -851,6 +896,20 @@ export class VercelCacheStore<
       "cache-invalidate",
     );
     if (safe.length === 0) return;
+    // Marker writes FIRST, and strict: isTagsInvalidatedSince() is how an
+    // updateTag() reaches a build-time shell entry (expireTag cannot delete
+    // what lives in the build manifest), so a failed marker write must reject
+    // like a failed expireTag — silently resolving would report success while
+    // the baked shell keeps serving.
+    await Promise.all(
+      safe.map((tag) =>
+        this.cache.set(
+          this.toStoreKey(tag, "tm"),
+          JSON.stringify({ at: Date.now() }),
+          { ttl: TAG_MARKER_TTL_SECONDS },
+        ),
+      ),
+    );
     try {
       await this.cache.expireTag(safe);
     } catch (error) {

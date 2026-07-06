@@ -283,6 +283,19 @@ async function acquireBuildEnv(
 }
 
 /**
+ * Reset the per-build prerender collection state. A helper (not inline
+ * assignments in buildStart) so TS's property narrowing does not pin
+ * `s.shellCandidates` to `null` across the discovery call that repopulates
+ * it — the finally block re-reads it to decide the temp-server keep-alive.
+ */
+function resetPrerenderCollection(s: DiscoveryState): void {
+  s.prerenderManifestEntries = null;
+  s.staticManifestEntries = null;
+  s.shellCandidates = null;
+  s.prerenderPayloadValues = null;
+}
+
+/**
  * Release build-time env resources and clear state.
  */
 async function releaseBuildEnv(s: DiscoveryState): Promise<void> {
@@ -1431,10 +1444,7 @@ export function createRouterDiscoveryPlugin(
       const buildStartTime = performance.now();
       debugDiscovery?.("build: start (env=%s)", this.environment?.name ?? "?");
       resetStagedBuildAssets(s.projectRoot);
-      s.prerenderManifestEntries = null;
-      s.staticManifestEntries = null;
-      s.shellCandidates = null;
-      s.prerenderPayloadValues = null;
+      resetPrerenderCollection(s);
 
       // Acquire build-time env bindings if configured
       await timed(debugDiscovery, "build acquireBuildEnv", () =>
@@ -1505,21 +1515,23 @@ export function createRouterDiscoveryPlugin(
         );
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
-        if (tempServer) {
-          if (s.shellCandidates?.length) {
-            // Prerender+ppr candidates exist: keep the temp server (and its
-            // realm — tries installed, registry populated) alive for the
-            // post-build shell capture phase (buildApp post, producer B #699).
-            // The prelude embeds built client asset URLs, so the capture can
-            // only run after the client build; that phase closes the server.
-            s.shellPhaseTempServer = tempServer;
-          } else {
+        if (tempServer && s.shellCandidates?.length) {
+          // Prerender+ppr candidates exist: keep the temp server (and its
+          // realm — tries installed, registry populated) alive for the
+          // post-build shell capture phase (buildApp post, producer B #699).
+          // The prelude embeds built client asset URLs, so the capture can
+          // only run after the client build; that phase closes the server.
+          // buildEnv release is deferred with it — a bake-lane loader
+          // executing during the capture may read ctx.env.
+          s.shellPhaseTempServer = tempServer;
+        } else {
+          if (tempServer) {
             await timed(debugDiscovery, "build tempServer.close", () =>
               tempServer.close(),
             );
           }
+          await releaseBuildEnv(s);
         }
-        await releaseBuildEnv(s);
         debugDiscovery?.(
           "build discovery done (%sms)",
           (performance.now() - buildStartTime).toFixed(1),
@@ -1530,11 +1542,31 @@ export function createRouterDiscoveryPlugin(
     // Post-build PPR shell capture (producer B, #699): runs after EVERY
     // environment bundle is written — the shell prelude embeds built client
     // asset URLs (bootstrap entry), which do not exist at buildStart.
+    // buildEnv release was deferred with the kept temp server (buildStart's
+    // finally); release it here whether or not the phase ran or succeeded.
     buildApp: {
       order: "post",
       async handler(builder) {
-        await runShellPrerenderPhase(s, builder?.config as any);
+        try {
+          await runShellPrerenderPhase(s, builder as any);
+        } finally {
+          if (s.isBuildMode) await releaseBuildEnv(s);
+        }
       },
+    },
+
+    // An environment build failure aborts the builder before the buildApp
+    // post hook — never leak the kept temp server (open handles hang the CLI)
+    // or the deferred buildEnv (a live miniflare proxy).
+    async buildEnd(error) {
+      if (!error || !s.shellPhaseTempServer) return;
+      const tempServer = s.shellPhaseTempServer;
+      s.shellPhaseTempServer = null;
+      try {
+        await tempServer.close();
+      } finally {
+        await releaseBuildEnv(s);
+      }
     },
 
     // Suppress vite's HMR cascade for our own gen-file writes.
