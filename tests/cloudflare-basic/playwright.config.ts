@@ -1,12 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
+import { checkoutPortOffset } from "@shared/e2e";
 
 const isUIMode = process.argv.includes("--ui");
 
-// Per-checkout port isolation — same knob as packages/rangojs-router's
-// playwright.config.ts: parallel clones running e2e collide on fixed ports
-// (reuseExistingServer silently serves the other checkout's code). Set
-// RANGO_E2E_PORT_OFFSET per clone to shift all fixture ports uniformly.
-const PORT_OFFSET = Number(process.env.RANGO_E2E_PORT_OFFSET ?? 0);
+// Per-checkout port isolation, automatic — same derivation as
+// packages/rangojs-router's playwright.config.ts (parallel clones running e2e
+// collide on fixed ports; reuseExistingServer silently serves the other
+// checkout's code). RANGO_E2E_PORT_OFFSET overrides; CI pins 0. See
+// checkoutPortOffset in tests/shared-e2e for the full why.
+const PORT_OFFSET = checkoutPortOffset();
 
 const DEV_PORT = 5199 + PORT_OFFSET;
 const PREVIEW_PORT = 5198 + PORT_OFFSET;

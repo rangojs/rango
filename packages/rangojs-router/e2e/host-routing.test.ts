@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { checkoutPortOffset } from "@shared/e2e";
 import { waitForHydration } from "./helper";
 
 // Proves a node/vercel host-router app renders AND hydrates through rango's
@@ -11,11 +12,11 @@ import { waitForHydration } from "./helper";
 // host-dev-warmup project primes the dev server's dep optimizer first, so dev
 // client boot is fast (no cold-import noise). Real Host-header routing of the
 // Vercel Build Output is covered separately by examples/vercel-multi-router's smoke.
-// Keep in sync with the HOST_*_PORT constants in playwright.config.ts. Chosen to
-// not collide with tests/cloudflare-basic (5198/5199). RANGO_E2E_PORT_OFFSET
-// (per-checkout port isolation, see playwright.config.ts) applies here too —
-// this file builds absolute URLs, so it must shift with the config.
-const PORT_OFFSET = Number(process.env.RANGO_E2E_PORT_OFFSET ?? 0);
+// Keep the 5296/5297 bases in sync with the HOST_*_PORT constants in
+// playwright.config.ts. Chosen to not collide with tests/cloudflare-basic
+// (5198/5199). This file builds absolute URLs, so it applies the same
+// checkoutPortOffset() the config does — one derivation, no drift.
+const PORT_OFFSET = checkoutPortOffset();
 const HOST_DEV_PORT = 5296 + PORT_OFFSET;
 const HOST_PREVIEW_PORT = 5297 + PORT_OFFSET;
 

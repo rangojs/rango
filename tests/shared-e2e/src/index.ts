@@ -1,5 +1,7 @@
 import { expect, type ConsoleMessage, type Page } from "@playwright/test";
 import { utimesSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
@@ -10,6 +12,45 @@ import { utimesSync, writeFileSync } from "node:fs";
  * identical. Keeping one implementation here avoids the two apps drifting onto
  * different (and differently flaky) await strategies.
  */
+
+/**
+ * Per-checkout e2e port offset — automatic isolation for the shared Playwright
+ * webServers (rangojs-router 5188/5189 + host 5296/5297, cloudflare-basic
+ * 5198/5199).
+ *
+ * Why: two clones of this repo running e2e at the same time collide on those
+ * fixed ports. Under `reuseExistingServer` the second run silently reuses the
+ * FIRST checkout's server — tests execute against the wrong code with no
+ * error — and each run's stale-server cleanup kills the other clone's servers
+ * mid-flight (scar tissue: PR #705 verification).
+ *
+ * How: the offset is a hash of this checkout's absolute path. The function
+ * lives in @shared/e2e and resolves the path from ITS OWN location (the
+ * workspace symlink is resolved to the real file), so every importer in the
+ * same clone — both playwright configs and test files that build absolute
+ * URLs (host-routing.test.ts) — derives the identical value by construction.
+ * Same clone, same ports across runs: `reuseExistingServer` still reuses your
+ * own servers. Applied uniformly, so the deliberate cross-suite port spacing
+ * is preserved at any offset.
+ *
+ * Bounds: 150 buckets x 200 stride = offsets 0..29800, keeping ports well
+ * under the OS ephemeral range. Two clones can still collide (~1-2% for a few
+ * clones); RANGO_E2E_PORT_OFFSET overrides explicitly (0 forces the canonical
+ * ports). CI pins 0: one checkout per runner, canonical ports in logs.
+ */
+export function checkoutPortOffset(): number {
+  const override = process.env.RANGO_E2E_PORT_OFFSET;
+  if (override !== undefined && override !== "") return Number(override);
+  if (process.env.CI) return 0;
+  const repoRoot = path.resolve(
+    fileURLToPath(new URL("../../..", import.meta.url)),
+  );
+  let h = 0;
+  for (let i = 0; i < repoRoot.length; i++) {
+    h = (h * 31 + repoRoot.charCodeAt(i)) | 0;
+  }
+  return ((h >>> 0) % 150) * 200;
+}
 
 /**
  * Server-output marker emitted once per route re-discovery pass by the Rango
