@@ -911,8 +911,19 @@ async function attemptCapture(
     };
   }
 
+  // TEMP CI INSTRUMENTATION (remove before merge): per-phase breadcrumbs to
+  // localize where the composition route's capture dies on GH runners.
+  const phaseLog = descriptor.debug
+    ? (m: string) => console.log(`[ShellCache][phase] ${descriptor.key} ${m}`)
+    : () => {};
+  const tPhase = Date.now();
+
   return runWithRequestContext(derivedCtx, async () => {
+    phaseLog(`match start +${Date.now() - tPhase}ms`);
     const match = await ctx.router.match(request, { env });
+    phaseLog(
+      `match done +${Date.now() - tPhase}ms cacheHit=${String((match as any).cacheHit ?? "?")} segments=${match.segments?.length ?? "?"}`,
+    );
     // A route that redirects has no shell to capture — bail (no store write, no
     // retry: a redirect is deterministic).
     if (match.redirect) return "redirect";
@@ -926,6 +937,7 @@ async function attemptCapture(
       derivedCtx,
       freshHandleStore,
     );
+    phaseLog(`payload built +${Date.now() - tPhase}ms`);
     const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
       onError: (error: unknown) => {
         ctx.callOnError(error, "rendering", { request, url, env });
@@ -1090,6 +1102,19 @@ async function captureAndStoreShell(
     // a shared page.
     const refused = refuseOnGuardTrip();
     if (refused) return refused;
+
+    // TEMP CI INSTRUMENTATION (remove before merge): what did the prerender
+    // actually produce? Distinguishes "trivial prelude / no <body>" (render
+    // pinned above body) from partial progress.
+    if (capture.debug) {
+      console.log(
+        `[ShellCache][phase] ${capture.key} prerender result: ${
+          result === null
+            ? "NULL (trivial/no-body)"
+            : `prelude=${result.prelude.length}b postponed=${result.postponed === null ? "none(DATA)" : `${result.postponed.length}b`}`
+        }`,
+      );
+    }
 
     if (result === null) {
       return "no-shell";
