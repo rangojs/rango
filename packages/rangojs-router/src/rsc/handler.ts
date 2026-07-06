@@ -885,8 +885,10 @@ export function createRSCHandler<
     // submissions always render HTML (handleProgressiveEnhancement renders via
     // getSSRSetup regardless of Accept). For full/partial-render and action,
     // the render-time HTML decision is exactly !isRscRequest — mayNeedSSR is
-    // the coarse transport pre-filter, isRscRequest is the precise Accept call
-    // (it, unlike mayNeedSSR, treats a MISSING Accept as RSC). Both must pass.
+    // the coarse transport pre-filter, isRscRequest adds the partial/__rsc
+    // flags; both share the same Accept rule (acceptsFlightExplicitly in
+    // ssr-setup.ts), so the Accept call cannot drift between them. Both must
+    // pass.
     const willRenderHtml =
       plan.mode === "pe-render" ||
       (mayNeedSSR(request, url) &&

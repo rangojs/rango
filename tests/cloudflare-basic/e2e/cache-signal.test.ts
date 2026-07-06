@@ -37,8 +37,13 @@ function runCacheSignalSpec(f: Fixture): void {
     const probe = `sig-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     const url = f.url(`${CACHED_ROUTE}?probe=${probe}`);
 
-    const res1 = await page.request.get(url); // cold key -> miss (renders)
-    const res2 = await page.request.get(url); // same key -> hit (cached)
+    // The miss -> hit signal is a flight-transport contract: HTML document
+    // requests re-render (miss) on every fetch regardless of the store. */*
+    // used to negotiate to flight implicitly; flight is now explicit opt-in,
+    // so pin the transport with the wire-format Accept.
+    const flightHeaders = { Accept: "text/x-component" };
+    const res1 = await page.request.get(url, { headers: flightHeaders }); // cold key -> miss (renders)
+    const res2 = await page.request.get(url, { headers: flightHeaders }); // same key -> hit (cached)
 
     const h1 = res1.headers()["x-rango-cache"];
     const h2 = res2.headers()["x-rango-cache"];

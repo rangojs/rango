@@ -123,18 +123,24 @@ test.describe("content-negotiation", () => {
     });
   });
 
-  // /negotiate-test has RSC defined first → */* returns RSC
-  // /negotiate-test-json-first has JSON defined first → */* returns JSON
+  // /negotiate-test has RSC defined first → */* picks RSC (definition order);
+  // the RSC page is served as its canonical representation: the HTML document.
+  // The flight wire format is explicit-opt-in only (Accept: text/x-component
+  // or the _rsc_*/__rsc transport params) — a generic client (curl, monitor,
+  // link unfurler) must never receive the internal wire format.
+  // /negotiate-test-json-first has JSON defined first → */* returns JSON.
   test.describe("wildcard fallback follows definition order", () => {
-    test("Accept: */* returns RSC when RSC is defined first", async ({
+    test("Accept: */* serves the HTML document when RSC is defined first", async ({
       request,
     }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "*/*" },
       });
       expect(res.status()).toBe(200);
-      // RSC defined first → RSC wins for */*
-      expect(res.headers()["content-type"]).toContain("text/x-component");
+      // RSC defined first → RSC wins for */* and renders as HTML
+      expect(res.headers()["content-type"]).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("Negotiate Test RSC");
     });
 
     test("Accept: */* returns JSON when JSON is defined first", async ({
@@ -150,14 +156,16 @@ test.describe("content-negotiation", () => {
       expect(body.source).toBe("json");
     });
 
-    test("no Accept header returns first defined (RSC)", async ({
+    test("no Accept header serves the HTML document when RSC is defined first", async ({
       request,
     }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "" },
       });
       expect(res.status()).toBe(200);
-      expect(res.headers()["content-type"]).toContain("text/x-component");
+      expect(res.headers()["content-type"]).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("Negotiate Test RSC");
     });
 
     test("no Accept header returns first defined (JSON)", async ({
@@ -172,6 +180,78 @@ test.describe("content-negotiation", () => {
         expect(res.status()).toBe(200);
         expect(res.headers()["content-type"]).toContain("application/json");
       }).toPass({ timeout: 10000 });
+    });
+  });
+
+  // The RSC candidate serves two representations: text/html (the document)
+  // and text/x-component (the flight wire format). An explicit wire-format
+  // Accept must select RSC deterministically — including on routes where a
+  // response variant is defined first, where the */* fallback would pick the
+  // variant.
+  test.describe("explicit wire-format opt-in (text/x-component)", () => {
+    test("Accept: text/x-component returns the flight stream (RSC first)", async ({
+      request,
+    }) => {
+      const res = await request.get(f.url("/negotiate-test"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/x-component");
+    });
+
+    test("Accept: text/x-component returns the flight stream (JSON first)", async ({
+      request,
+    }) => {
+      const res = await request.get(f.url("/negotiate-test-json-first"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/x-component");
+    });
+  });
+
+  // A plain RSC route (no negotiate variants) never runs the variant picker;
+  // the render layer alone decides the representation. Anything that is not
+  // an explicit flight opt-in serves the HTML document — bare curl (*/*),
+  // clients sending no Accept at all, and mismatched types like
+  // application/json all get HTML.
+  test.describe("plain RSC route (no negotiate variants)", () => {
+    test("Accept: */* serves the HTML document", async ({ request }) => {
+      const res = await request.get(f.url("/"), {
+        headers: { Accept: "*/*" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain('data-testid="index-page"');
+    });
+
+    test("no Accept header serves the HTML document", async ({ request }) => {
+      const res = await request.get(f.url("/"), {
+        headers: { Accept: "" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+    });
+
+    test("Accept: application/json serves the HTML document (no JSON variant)", async ({
+      request,
+    }) => {
+      const res = await request.get(f.url("/"), {
+        headers: { Accept: "application/json" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+    });
+
+    test("Accept: text/x-component serves the flight stream", async ({
+      request,
+    }) => {
+      const res = await request.get(f.url("/"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/x-component");
     });
   });
 
@@ -286,14 +366,16 @@ test.describe("content-negotiation (production)", () => {
   });
 
   test.describe("wildcard fallback follows definition order", () => {
-    test("Accept: */* returns RSC when RSC is defined first", async ({
+    test("Accept: */* serves the HTML document when RSC is defined first", async ({
       request,
     }) => {
       const res = await request.get(fProd.url("/negotiate-test"), {
         headers: { Accept: "*/*" },
       });
       expect(res.status()).toBe(200);
-      expect(res.headers()["content-type"]).toContain("text/x-component");
+      expect(res.headers()["content-type"]).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("Negotiate Test RSC");
     });
 
     test("Accept: */* returns JSON when JSON is defined first", async ({
@@ -306,6 +388,90 @@ test.describe("content-negotiation (production)", () => {
       expect(res.headers()["content-type"]).toContain("application/json");
       const body = await res.json();
       expect(body.source).toBe("json");
+    });
+
+    test("no Accept header serves the HTML document when RSC is defined first", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("Negotiate Test RSC");
+    });
+
+    test("no Accept header returns first defined (JSON)", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test-json-first"), {
+        headers: { Accept: "" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("application/json");
+    });
+  });
+
+  test.describe("explicit wire-format opt-in (text/x-component)", () => {
+    test("Accept: text/x-component returns the flight stream (RSC first)", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/x-component");
+    });
+
+    test("Accept: text/x-component returns the flight stream (JSON first)", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test-json-first"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/x-component");
+    });
+  });
+
+  test.describe("plain RSC route (no negotiate variants)", () => {
+    test("Accept: */* serves the HTML document", async ({ request }) => {
+      const res = await request.get(fProd.url("/"), {
+        headers: { Accept: "*/*" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain('data-testid="index-page"');
+    });
+
+    test("no Accept header serves the HTML document", async ({ request }) => {
+      const res = await request.get(fProd.url("/"), {
+        headers: { Accept: "" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+    });
+
+    test("Accept: application/json serves the HTML document (no JSON variant)", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/"), {
+        headers: { Accept: "application/json" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+    });
+
+    test("Accept: text/x-component serves the flight stream", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/"), {
+        headers: { Accept: "text/x-component" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/x-component");
     });
   });
 

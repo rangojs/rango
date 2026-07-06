@@ -171,13 +171,12 @@ auth middleware anywhere (global or route DSL) and it guards PPR for free.
 
 ## Verifying it works
 
-The header exists on DOCUMENT responses only. A bare `curl` (no `Accept`)
-content-negotiates a Flight payload (`text/x-component`) with NO
-`x-rango-shell` header at all — which reads as "PPR is off" but is only the
-wrong request shape:
+The header exists on DOCUMENT responses only. A bare `curl` gets the HTML
+document (Flight is explicit-opt-in via `Accept: text/x-component`), so it
+sees the header directly; only an explicit Flight request shape lacks it:
 
 ```
-curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/products/1 | grep -i x-rango-shell
+curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-shell
 ```
 
 - First document GET: `MISS`, plus a background capture.

@@ -76,6 +76,46 @@ export function parseAcceptTypes(accept: string): AcceptEntry[] {
 
 export const RSC_RESPONSE_TYPE = "__rsc__";
 
+/** RSC wire-format MIME type; explicit-opt-in flight transport. */
+export const RSC_WIRE_MIME = "text/x-component";
+
+/**
+ * The two representations an RSC route serves, in canonical-first order:
+ * text/html (the document) and text/x-component (the flight wire format).
+ * Both register as negotiation candidates in pickNegotiateVariant; without
+ * the wire-format entry, an explicit Accept: text/x-component fell through
+ * to the definition-order fallback — a JSON-first route answered a
+ * wire-format request with JSON. Which representation an RSC win actually
+ * renders is decided by prefersFlightRepresentation below, from the same
+ * Accept header (wired in via isRscRequest, rsc/ssr-setup.ts).
+ */
+const RSC_MIMES: readonly string[] = ["text/html", RSC_WIRE_MIME];
+
+/**
+ * Rank the RSC route's two representations against a parsed Accept list:
+ * true when the flight wire format outranks the HTML document. Wildcard
+ * entries count for the HTML side — they express "anything", and the
+ * canonical representation of anything is the document. Co-located with
+ * RSC_MIMES so the candidate registration and the representation choice
+ * cannot drift.
+ */
+export function prefersFlightRepresentation(
+  acceptEntries: AcceptEntry[],
+): boolean {
+  for (const entry of acceptEntries) {
+    if (entry.q === 0) continue;
+    if (entry.mime === RSC_WIRE_MIME) return true;
+    if (
+      entry.mime === "text/html" ||
+      entry.mime === "text/*" ||
+      entry.mime === "*/*"
+    ) {
+      return false;
+    }
+  }
+  return false;
+}
+
 /**
  * Pick the best negotiate variant by walking the client's sorted Accept list.
  * For each accepted MIME type (in q-value/order priority), check if any
@@ -87,12 +127,14 @@ export function pickNegotiateVariant<
 >(acceptEntries: AcceptEntry[], candidates: T[]): T {
   const byCandidateMime = new Map<string, T>();
   for (const c of candidates) {
-    const mime =
+    const mimes =
       c.responseType === RSC_RESPONSE_TYPE
-        ? "text/html"
-        : RESPONSE_TYPE_MIME[c.responseType];
-    if (mime && !byCandidateMime.has(mime)) {
-      byCandidateMime.set(mime, c);
+        ? RSC_MIMES
+        : [RESPONSE_TYPE_MIME[c.responseType]];
+    for (const mime of mimes) {
+      if (mime && !byCandidateMime.has(mime)) {
+        byCandidateMime.set(mime, c);
+      }
     }
   }
 

@@ -113,8 +113,11 @@ function runShellCacheSpec(f: Fixture): void {
   test("bypasses non-document (RSC) requests — no shell header", async ({
     request,
   }) => {
+    // Explicit flight opt-in: */* now negotiates to the HTML document (which
+    // engages the shell), so the RSC bypass is pinned via the wire-format
+    // Accept the flight transport actually sends.
     const res = await request.get(f.url("/shell-cache?probe=rsc"), {
-      headers: { Accept: "*/*" },
+      headers: { Accept: "text/x-component" },
     });
     expect(res.status()).toBe(200);
     expect(res.headers()["x-rango-shell"]).toBeUndefined();

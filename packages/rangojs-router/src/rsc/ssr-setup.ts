@@ -11,6 +11,11 @@ import type { SSRModule } from "./types.js";
 import type { SSRStreamMode } from "../router/router-options.js";
 import type { MetricsStore } from "../server/context.js";
 import { appendMetric } from "../router/metrics.js";
+import {
+  parseAcceptTypes,
+  prefersFlightRepresentation,
+  RSC_WIRE_MIME,
+} from "../router/content-negotiation.js";
 import { _getRequestContext } from "../server/request-context.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
@@ -91,11 +96,41 @@ export function getSSRSetup<TEnv>(
 }
 
 /**
+ * Accept-based flight opt-in: the client explicitly listed the RSC wire
+ * format (text/x-component) in Accept, ranked above the HTML document, and
+ * did not override with __html.
+ *
+ * The flight stream is an internal transport representation — it is served
+ * ONLY on explicit opt-in (this Accept value, or the _rsc_ / __rsc transport
+ * params). Everything else (missing Accept, wildcards, application/json,
+ * browser Accept strings) gets the HTML document, per RFC 9110: a missing
+ * Accept is equivalent to a full wildcard, and a wildcard gets the server's
+ * canonical representation. The old rule ("no text/html substring → flight")
+ * handed the wire format to every generic client — curl, health checks,
+ * link unfurlers.
+ *
+ * The includes() guard is a parse-skipping fast path: the bulk of traffic
+ * (browsers, curl, monitors) never mentions the wire format and pays no
+ * parseAcceptTypes allocation. Ranking lives in prefersFlightRepresentation
+ * (router/content-negotiation.ts), co-located with the candidate MIME set.
+ */
+function acceptsFlightExplicitly(request: Request, url: URL): boolean {
+  if (url.searchParams.has("__html")) return false;
+  const accept = request.headers.get("accept");
+  if (accept === null || !accept.includes(RSC_WIRE_MIME)) return false;
+  return prefersFlightRepresentation(parseAcceptTypes(accept));
+}
+
+/**
  * Classify whether a request may require SSR (HTML rendering).
  *
- * Returns false for requests that are definitively RSC-only, loader fetches,
- * prerender collection, or Accept-based RSC (no text/html). This mirrors
- * the isRscRequest decision in rsc-rendering.ts.
+ * Returns false for requests that are definitively RSC-only: transport
+ * params (partial/action/loader/__rsc), prerender collection, or an explicit
+ * Accept: text/x-component. Must never return false for a request whose
+ * render-time decision (isRscRequest) will be HTML — the two share
+ * acceptsFlightExplicitly so the Accept rule cannot drift. document-cache.ts
+ * keys its HTML/RSC response slots off this function, so any divergence from
+ * the render decision poisons a cache slot with the wrong representation.
  *
  * Note: response/mime routes are excluded by the caller — this function
  * runs after classifyRequest() determines the request mode.
@@ -112,24 +147,21 @@ export function mayNeedSSR(request: Request, url: URL): boolean {
     return false;
   }
 
-  // Mirror the Accept-based RSC decision from rsc-rendering.ts:
-  // if Accept is present and does not include text/html (and no __html override),
-  // the response will be RSC, not HTML.
-  const accept = request.headers.get("accept");
-  if (
-    accept &&
-    !accept.includes("text/html") &&
-    !url.searchParams.has("__html")
-  ) {
-    return false;
-  }
-
-  return true;
+  return !acceptsFlightExplicitly(request, url);
 }
 
-// Final render-time decision: is the response an RSC stream (vs HTML)? Distinct
-// from mayNeedSSR, which is a conservative pre-classifier (it treats a missing
-// Accept header as needing SSR; this treats it as RSC).
+// Final render-time decision: is the response an RSC stream (vs HTML)?
+// Flight requires explicit opt-in: the partial transport param, __rsc, or
+// Accept: text/x-component. mayNeedSSR is the coarse pre-filter over the
+// transport params; both delegate the Accept call to acceptsFlightExplicitly.
+//
+// _rsc_partial is read from the URL in addition to the plan-derived isPartial
+// flag: the 404 fallback plan hardcodes mode "full-render" even for partial
+// navigations (handler.ts RouteNotFoundError catch), so a partial 404 reaches
+// this decision with isPartial=false. The old Accept rule masked that by
+// classifying */* as flight; without the URL check a client-side navigation
+// to a missing route received an HTML 404 it cannot apply, and the
+// navigation never committed (multi-router soft-404, popstate not-found).
 export function isRscRequest(
   request: Request,
   url: URL,
@@ -137,8 +169,8 @@ export function isRscRequest(
 ): boolean {
   return (
     isPartial ||
-    (!request.headers.get("accept")?.includes("text/html") &&
-      !url.searchParams.has("__html")) ||
-    url.searchParams.has("__rsc")
+    url.searchParams.has("_rsc_partial") ||
+    url.searchParams.has("__rsc") ||
+    acceptsFlightExplicitly(request, url)
   );
 }

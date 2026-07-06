@@ -123,8 +123,10 @@ function describePprShell(mode: "dev" | "build") {
     }) => {
       // Accept omits text/html: mayNeedSSR() is false, so the middleware bypasses
       // to axis 1 and never tags the response (the Flight path is untouched by PPR).
+      // Explicit flight opt-in: */* now negotiates to the HTML document (which
+      // engages the shell), so the bypass is pinned via the wire-format Accept.
       const res = await request.get(f.url("/ppr-shell?probe=rsc"), {
-        headers: { Accept: "*/*" },
+        headers: { Accept: "text/x-component" },
       });
       expect(res.status()).toBe(200);
       expect(res.headers()["x-rango-shell"]).toBeUndefined();
