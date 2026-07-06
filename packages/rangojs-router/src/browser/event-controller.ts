@@ -615,8 +615,22 @@ export function createEventController(
     const arbitration = arb;
     arbitration.inflight++;
 
-    // Track if this action started while others were pending (concurrent)
-    const hadConcurrent = inflightActions.size > 0;
+    // Track if this action started while another was genuinely in-flight.
+    // Completed entries don't count: complete()/fail() ran, so the prior
+    // action's response was fully processed and applied — a request dispatched
+    // after that point is strictly ordered behind the prior action's server
+    // execution, and there is no skipped render or order uncertainty for
+    // consolidation to repair. Completed entries still linger in the map for
+    // the 100ms doSettle window (useAction reads) and, on a slow connection,
+    // while the Flight stream drains its EOF after complete(). Counting them
+    // latched hadAnyConcurrentActions for back-to-back sequential actions,
+    // which made the LAST action classify as consolidation-needed; the
+    // consolidation refetch omits every concurrently-revalidated segment id
+    // from _rsc_segments, so the server re-ran gated loaders as "new-segment"
+    // — bypassing revalidate(({ isAction }) => ...) on a plain GET (#675).
+    const hadConcurrent = [...inflightActions.values()].some(
+      (a) => !a.completed,
+    );
     if (hadConcurrent) {
       hadAnyConcurrentActions = true;
     }
