@@ -80,6 +80,7 @@ Match the surrounding code first; repo-wide conventions:
 ## Environment gotchas
 
 - `pnpm <script>` can fail locally (verifyDepsBeforeRun → install → lefthook). Run binaries directly instead: `./node_modules/.bin/vitest run`, `./node_modules/.bin/playwright test …` — or reuse running Playwright servers. Don't debug the pnpm wrapper.
+- **Parallel checkouts fight over e2e ports.** The shared Playwright webServers bind fixed localhost ports (rangojs-router 5188/5189 + host 5296/5297, cloudflare-basic 5198/5199); with `reuseExistingServer` a second clone running e2e silently tests the OTHER checkout's code, and each run's cleanup kills the other's servers (scar tissue: PR #705 verification chased phantom failures for an hour). If another clone of this repo may be running tests, export `RANGO_E2E_PORT_OFFSET=<unique per clone, e.g. 100>` before any playwright command — it shifts every fixture port uniformly.
 - Full suite output is massive: `pnpm test 2>&1 | tail -80` from the repo root.
 - Format-fix commits go AFTER CI passes on the substantive commit, with `[skip ci]`.
 - Lefthook pre-commit runs formatting and `check:e2e-bucketing`; if your harness bypasses hooks, run `pnpm run format` and `pnpm check:e2e-bucketing` manually.

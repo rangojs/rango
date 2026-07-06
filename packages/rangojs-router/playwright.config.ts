@@ -10,15 +10,23 @@ const webkitConfig = {
   ...devices["Desktop Safari"],
 };
 
-const DEV_SERVER_PORT = 5188;
-const PREVIEW_SERVER_PORT = 5189;
+// Per-checkout port isolation: two clones of this repo running e2e at the same
+// time collide on these fixed ports — `reuseExistingServer` silently reuses the
+// OTHER checkout's server, so tests run against the wrong code with no error
+// (and each run's cleanup kills the other's servers mid-flight). Set
+// RANGO_E2E_PORT_OFFSET (e.g. 100) in one clone's shell to shift every fixture
+// port uniformly; relative spacing between suites is preserved. Default 0.
+const PORT_OFFSET = Number(process.env.RANGO_E2E_PORT_OFFSET ?? 0);
+
+const DEV_SERVER_PORT = 5188 + PORT_OFFSET;
+const PREVIEW_SERVER_PORT = 5189 + PORT_OFFSET;
 // Host-router fixture servers (e2e/test-app/.host-fixture) for host-routing.test.ts.
 // Repo-unique ports: 5198/5199 collide with tests/cloudflare-basic (dev 5199 /
 // preview 5198), which under `reuseExistingServer` would silently run the host
 // tests against the cloudflare-basic app. Keep these in sync with the same
-// constants in e2e/host-routing.test.ts.
-const HOST_DEV_PORT = 5296;
-const HOST_PREVIEW_PORT = 5297;
+// constants in e2e/host-routing.test.ts (it applies the same offset).
+const HOST_DEV_PORT = 5296 + PORT_OFFSET;
+const HOST_PREVIEW_PORT = 5297 + PORT_OFFSET;
 
 const isUIMode = process.argv.includes("--ui");
 const isCI = !!process.env.CI;
