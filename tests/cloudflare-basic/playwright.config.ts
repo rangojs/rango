@@ -34,9 +34,17 @@ export default defineConfig({
       // Build first so dist/ is ready for production tests and deps_ssr is
       // populated before the dev server starts (wrangler's module runner does
       // not recover from ERR_OUTDATED_OPTIMIZED_DEP if the build runs later).
+      //
+      // RANGO_MANIFEST_TEXT=1 forces the route manifest through the workerd
+      // Text-module channel (issue #665) even though this app's manifest is
+      // below the size threshold that would trigger it automatically. That
+      // makes the whole production suite dogfood the Text channel on real
+      // workerd, and lets manifest-text-module.test.ts assert the artifact
+      // deterministically. Dev is unaffected (the channel is build-only).
       command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
       port: DEV_PORT,
       reuseExistingServer: true,
+      env: { ...process.env, RANGO_MANIFEST_TEXT: "1" },
     },
     {
       // Shared preview server for all production tests. Started after the dev

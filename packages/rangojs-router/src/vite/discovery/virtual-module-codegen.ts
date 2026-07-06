@@ -5,10 +5,24 @@
  * per-router virtual modules used by the load() hook.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, basename, join } from "node:path";
 import { jsonParseExpression } from "../utils/manifest-utils.js";
 import { VIRTUAL_ROUTES_MANIFEST_ID } from "./state.js";
 import type { DiscoveryState } from "./state.js";
+
+/**
+ * Serialized-payload size (bytes) at or above which the trie/precomputedEntries
+ * are shipped through a runtime channel (Text module / `?raw` import) instead of
+ * an inline `JSON.parse` literal (issue #665). 512KB is ~2500 routes — the
+ * crossover where the channel's benefit (removing the JS compile on cloudflare,
+ * reclaiming ~19% escaping bloat everywhere) clears the cost of an extra
+ * artifact. Below it the inline literal wins (sub-millisecond compile, ~0 gain),
+ * so the whole long tail of normal apps stays byte-identical. The compile/parse
+ * cost tracks bytes, not route count, so this stays a byte threshold.
+ * RANGO_MANIFEST_TEXT=1 bypasses it.
+ */
+const MANIFEST_EXTERNALIZE_THRESHOLD = 512 * 1024;
 
 /**
  * Generate the code for the main virtual:rsc-router/routes-manifest module.
@@ -138,6 +152,22 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
 }
 
 /**
+ * Deterministic short hash (FNV-1a, base36) used to disambiguate staged
+ * manifest filenames. The sanitized `safeId` alone collapses distinct router
+ * ids — e.g. "a/b" and "a.b" both sanitize to "a_b" — which in a multi-router
+ * build would overwrite one router's staged manifest with another's. Appending
+ * a hash of the ORIGINAL id keeps them distinct.
+ */
+function shortHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
  * Generate the code for a per-router virtual module.
  */
 export function generatePerRouterModule(
@@ -171,13 +201,93 @@ export function generatePerRouterModule(
       lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
     }
   }
-  if (trie) {
+  const hasTrie = !!trie;
+  const hasEntries = !!entries && entries.length > 0;
+
+  // The trie + precomputedEntries are the largest generated data. Inlined as a
+  // `JSON.parse('<literal>')` in the JS chunk, the isolate/process must LEX and
+  // compile that multi-MB source literal on first request before JSON.parse even
+  // runs — pure overhead, since it is data, not logic (issue #665). It also
+  // ships bloated: the build minifier re-quotes the literal to double quotes,
+  // escaping every JSON `"` as `\"` (measured 5.71MB vs 4.64MB un-escaped at 26k
+  // routes).
+  //
+  // The ONLY way to fix both is to keep the JSON out of JavaScript source — as a
+  // raw asset file that never passes through the JS minifier/compiler. On
+  // cloudflare that is a workerd Text module: import the staged `.txt` and the
+  // isolate gets the raw un-escaped bytes as a string with no compile pass
+  // (measured ~17% / ~88ms cold first-hit on a real edge deploy at 26k, and it
+  // shrinks the worker upload). The CF vite plugin types `.txt` as Text;
+  // wrangler's default rules type **/*.txt as Text for deploy and dev.
+  //
+  // Scoped to cloudflare deliberately. A Text module is the only no-JS byte
+  // channel that needs no filesystem, and cloudflare is where it pays: edge cold
+  // isolates spin up per-request under load and on every deploy, and Workers
+  // have a hard upload-size limit. node/vercel fall through to the inline
+  // literal below — an efficient runtime channel there needs `fs` (a raw asset
+  // read), whose fragility (asset co-location, runtime ENOENT) is not worth a
+  // large-app-only win that Fluid Compute amortizes and that essentially no real
+  // app reaches. `?raw` is NOT an option: in this build it inlines the JSON as a
+  // (double-quoted, compiled) JS string literal — same bloat, same compile as
+  // the inline form, plus a staged file for nothing.
+  //
+  // Build mode only (dev rebuilds the manifest per HMR; parse cost is
+  // irrelevant). Below MANIFEST_EXTERNALIZE_THRESHOLD the inline literal wins.
+  // RANGO_MANIFEST_TEXT overrides: "0" forces inline, "1" forces the Text module
+  // and bypasses the threshold (used by the cloudflare-basic dogfood e2e, whose
+  // real manifest is below the threshold).
+  const preset = state.opts?.preset ?? "node";
+  const override = process.env.RANGO_MANIFEST_TEXT;
+  const payload = manifestPayload(trie, hasTrie, entries, hasEntries);
+  const payloadJson = hasTrie || hasEntries ? JSON.stringify(payload) : "";
+  const useTextModule =
+    state.isBuildMode &&
+    preset === "cloudflare" &&
+    override !== "0" &&
+    (hasTrie || hasEntries) &&
+    (override === "1" || payloadJson.length >= MANIFEST_EXTERNALIZE_THRESHOLD);
+
+  if (useTextModule) {
+    const dir = join(state.projectRoot, "node_modules", ".rango");
+    mkdirSync(dir, { recursive: true });
+    const safeId = `${routerId.replace(/[^a-zA-Z0-9_-]/g, "_")}-${shortHash(routerId)}`;
+    const filePath = join(dir, `manifest-${safeId}.txt`).replaceAll("\\", "/");
+    writeFileSync(filePath, payloadJson);
+    lines.push(`import __manifestJson from ${JSON.stringify(filePath)};`);
+    lines.push(`const __manifestData = JSON.parse(__manifestJson);`);
+    emitManifestExports(lines, hasTrie, hasEntries);
+    return lines.join("\n");
+  }
+
+  if (hasTrie) {
     lines.push(`export const trie = ${jsonParseExpression(trie)};`);
   }
-  if (entries && entries.length > 0) {
+  if (hasEntries) {
     lines.push(
       `export const precomputedEntries = ${jsonParseExpression(entries)};`,
     );
   }
   return lines.join("\n") || "";
+}
+
+function manifestPayload(
+  trie: unknown,
+  hasTrie: boolean,
+  entries: unknown,
+  hasEntries: boolean,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  if (hasTrie) payload.t = trie;
+  if (hasEntries) payload.p = entries;
+  return payload;
+}
+
+function emitManifestExports(
+  lines: string[],
+  hasTrie: boolean,
+  hasEntries: boolean,
+): void {
+  if (hasTrie) lines.push(`export const trie = __manifestData.t;`);
+  if (hasEntries)
+    lines.push(`export const precomputedEntries = __manifestData.p;`);
 }
