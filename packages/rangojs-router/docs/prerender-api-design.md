@@ -40,7 +40,8 @@ route was pre-rendered.
 ### Remaining
 
 - **Revalidation with Passthrough** - Background re-render of stale prerender data
-- **ISR-style revalidation** - Time-based or on-demand re-rendering without full rebuild
+- **ISR-style revalidation** - Time-based or on-demand re-rendering without full
+  rebuild. Target design: [On-demand prerender](./design/ondemand-prerender.md).
 
 ---
 
