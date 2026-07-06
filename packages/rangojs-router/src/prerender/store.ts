@@ -73,7 +73,16 @@ export function createDevPrerenderStore(devUrl: string): PrerenderStore {
       if (isIntercept) url += "&intercept=1";
       if (meta.isPassthroughRoute) url += "&passthrough=1";
       try {
-        const res = await fetch(url);
+        // Bounded: this fetch also runs inside the PPR shell capture (a
+        // workerd waitUntil task), where an unsettled fetch does not reject —
+        // it pends until the task is torn down. Unbounded, one pending fetch
+        // wedged the per-isolate capture queue on GH runners (rotating dev
+        // capture failures; endpoint instrumentation showed 3-4ms memo HITs,
+        // so latency was never the issue — settlement was). On timeout the
+        // catch degrades to a store miss and the pipeline falls through to
+        // the live handler render (the documented dev fall-through), so the
+        // capture still lands with live content.
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
         if (!res.ok) return null;
         return res.json();
       } catch {
