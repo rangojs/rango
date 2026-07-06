@@ -128,6 +128,18 @@ export interface SsrRootOptions {
   rscStream: ReadableStream<Uint8Array>;
   /** Nonce for CSP; propagated to NonceContext. */
   nonce?: string;
+  /**
+   * Fires once when the Flight payload root settles (resolve OR reject) — the
+   * signal that every client-module load the payload references completed and
+   * fizz can start emitting the tree. The capture pass gates its abort on
+   * this: a fully REPLAYED (prerendered) route's Flight stream goes
+   * byte-quiet in ~1-3ms, but fizz cannot render even <html> until the
+   * module loads finish (real module-runner I/O in dev; 100ms+ on a cold
+   * graph), so an abort gated on Flight quiet alone fires first and freezes
+   * a zero-byte prelude. Masked-loader holes do NOT block this signal —
+   * they postpone below the root.
+   */
+  onPayloadSettled?: () => void;
 }
 
 /**
@@ -148,7 +160,7 @@ export interface SsrRootOptions {
  * re-running the whole segment-tree build unless the promise is memoized.
  */
 export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
-  const { createFromReadableStream, rscStream, nonce } = opts;
+  const { createFromReadableStream, rscStream, nonce, onPayloadSettled } = opts;
 
   let payload: Promise<RscPayload> | undefined;
   let handlesPromise: Promise<HandleData> | undefined;
@@ -156,7 +168,10 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
   let rootPromise: Promise<React.ReactNode> | undefined;
 
   return function SsrRoot() {
-    payload ??= createFromReadableStream<RscPayload>(rscStream);
+    if (payload === undefined) {
+      payload = createFromReadableStream<RscPayload>(rscStream);
+      if (onPayloadSettled) payload.then(onPayloadSettled, onPayloadSettled);
+    }
     const resolved = React.use(payload);
 
     const themeConfig = resolved.metadata?.themeConfig ?? null;

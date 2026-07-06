@@ -336,8 +336,13 @@ describe("createShellCaptureHandler", () => {
       Promise.resolve(makeTree(new Promise(() => {}), "cap")),
     );
     const capture = createShellCaptureHandler(deps);
+    // Short maxWaitMs: this mock's prerender settles ONLY on abort, and the
+    // abort now waits for payload/prerender settlement OR the deadline — so
+    // the deadline is the intended path here (a payload that never settles
+    // degrades at maxWaitMs). The default 5s would race vitest's own timeout.
     const result = await capture(makeRscStream("ABORT_FLIGHT"), {
       quiesce: Promise.resolve(),
+      maxWaitMs: 50,
     });
     expect(result).toBeNull();
   });

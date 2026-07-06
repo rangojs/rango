@@ -201,13 +201,16 @@ const DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS = 5000;
  * cached segments that are ALREADY serialized, so it emits the whole shell payload
  * in the first tick and the gate declares quiesce almost immediately (~a few ms).
  * On the old fresh-execution path the Flight dribbled out as handlers ran, so
- * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed. Under
- * replay, Flight-quiet fires BEFORE the fizz side has consumed the instant payload
- * and rendered the shell to `<body>`, so the fizz needs a real buffer of turns after
- * quiesce — otherwise the abort lands on an unrendered tree (empty prelude, root
- * postpone) and the sanity gate refuses. Still task-based (masked loaders never
- * emit, so more hops never lets a hole settle); a cold worker whose first
- * attempt still under-renders heals on the in-place retry. Bounded by maxWaitMs.
+ * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed.
+ *
+ * Hops alone are NOT render-readiness: fizz cannot emit even <html> until the
+ * payload root settles, which waits on every referenced client-module LOAD —
+ * real module-runner I/O in dev (100ms+ cold), which no fixed count of near-
+ * zero-cost task hops can buy. captureShellHTML therefore awaits the payload-
+ * settled signal (SsrRootOptions.onPayloadSettled, deadline-bounded) between
+ * quiesce and these hops; the hops then only flush the settled tree and mark
+ * pending boundaries POSTPONED. Still task-based (masked loaders never emit,
+ * so more hops never lets a hole settle). Bounded by maxWaitMs end to end.
  */
 const POST_QUIESCE_TASK_HOPS = 16;
 
@@ -517,9 +520,18 @@ export function createShellCaptureHandler<TEnv = unknown>(
     const deadline = createCancelableTimeout(maxWaitMs);
     try {
       // No nonce (nonce'd requests never reach capture); no formState.
+      // payloadSettled: fires when the Flight payload root settles — i.e.
+      // every client-module load the payload references completed and fizz
+      // can actually emit the tree. The abort below gates on it (bounded by
+      // the same deadline): Flight byte-quiet alone is NOT render-readiness.
+      let settlePayload!: () => void;
+      const payloadSettled = new Promise<void>((resolve) => {
+        settlePayload = resolve;
+      });
       const SsrRoot = createSsrRootComponent({
         createFromReadableStream,
         rscStream,
+        onPayloadSettled: settlePayload,
       });
 
       // Bootstrap load raced against the deadline. A load that never resolves
@@ -588,10 +600,31 @@ export function createShellCaptureHandler<TEnv = unknown>(
       // wall-clock debounce here — maxWaitMs is only the pathological guard for a
       // shell that never goes quiet (a root postpone / hung handle).
       await Promise.race([opts.quiesce, deadline.promise]);
+      // Then wait for fizz RENDER-READINESS, bounded by the same deadline:
+      // the payload root settles only after every client-module load the
+      // payload references completed (real module-runner I/O in dev; 100ms+
+      // on a cold graph). Flight byte-quiet does NOT imply this — a fully
+      // REPLAYED (prerendered) route's Flight stream finishes in ~1-3ms and
+      // an abort taken on quiet-plus-task-hops alone landed BEFORE fizz could
+      // emit <html>, freezing a zero-byte prelude: the eternal-MISS shape
+      // this route class showed on every cold graph (dev cold boots, GH
+      // runners) while ordinary routes — whose live handler execution keeps
+      // Flight noisy long enough — never hit it. Masked-loader holes do not
+      // block payload settlement (they postpone below the root), so this
+      // await costs a genuinely hole-y shell nothing; a payload that NEVER
+      // settles (hung handles) degrades at the deadline exactly as before.
+      // A prerender that SETTLES first (early success or a hard rejection)
+      // ends the wait immediately — fizz is already done either way.
+      const prerenderSettled = prerenderPromise.then(
+        () => {},
+        () => {},
+      );
+      await Promise.race([payloadSettled, prerenderSettled, deadline.promise]);
       // Fixed task hops before the abort: give React's fizz worker turns to flush
       // the now-complete shell and mark the still-pending boundaries as POSTPONED
-      // rather than errored. Deterministic (the byte set is already frozen), so a
-      // fixed count of turns suffices — no wall-clock.
+      // rather than errored. Deterministic (the byte set is already frozen and
+      // the payload is settled), so a fixed count of turns suffices — no
+      // wall-clock.
       for (let i = 0; i < POST_QUIESCE_TASK_HOPS; i++) {
         await macrotask();
       }

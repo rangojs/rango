@@ -584,10 +584,6 @@ jobs:
       - name: Run cloudflare-basic e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         env:
           TEST_DEBUG: "1"
-          # TEMP CI INSTRUMENTATION (remove before merge): surfaces the
-          # [ShellCache][phase] capture breadcrumbs for the composition-route
-          # dev-capture investigation.
-          INTERNAL_RANGO_DEBUG: "1"
         run: |
           SHARD_FLAG=""
           if [ -n "${{ matrix.shard }}" ]; then
