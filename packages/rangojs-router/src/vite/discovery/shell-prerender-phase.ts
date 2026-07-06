@@ -20,24 +20,19 @@
  */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdirSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { jsonParseExpression } from "../utils/manifest-utils.js";
+import { writeBuildAssetModule } from "../utils/prerender-utils.js";
 import { buildShellManifestKey } from "../../prerender/shell-manifest-key.js";
+// Type-only: the producer stages exactly the record shape the runtime
+// read-through consumes, so the contract cannot drift (the KEY half of that
+// contract is shell-manifest-key.ts). No runtime coupling — the RSC-runtime
+// module is never imported by plugin code.
+import type { BuildShellEntry } from "../../rsc/shell-build-manifest.js";
 import type { DiscoveryState, ShellPrerenderCandidate } from "./state.js";
 import { createRangoDebugger, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.prerender);
-
-/** The serve-side shape of one baked shell manifest entry (asset module). */
-interface ShellManifestValue {
-  entry: unknown;
-  ttl: number;
-  swr?: number;
-  tags?: string[];
-  routeName: string;
-}
 
 /**
  * Minimal builder surface the phase reads: resolved plugins (for the main
@@ -58,25 +53,23 @@ export async function runShellPrerenderPhase(
   s: DiscoveryState,
   builder: BuilderLike | undefined,
 ): Promise<void> {
+  // The kept temp server (and the buildEnv deferred with it) is OWNED by the
+  // callers — the buildApp post hook's finally on success, buildEnd on an
+  // aborted build — so this function stays a pure producer: it only tears
+  // down the globals it installs itself.
   const tempServer = s.shellPhaseTempServer;
-  if (!s.isBuildMode || !s.shellCandidates?.length) {
-    // Defensive: candidates gate the keep-alive, so a kept server without
-    // candidates should not happen; never leak it if it does.
-    if (tempServer) {
-      s.shellPhaseTempServer = null;
-      await tempServer.close();
-    }
-    return;
-  }
-  if (!tempServer) return;
+  if (!s.isBuildMode || !s.shellCandidates?.length || !tempServer) return;
 
   const candidates: ShellPrerenderCandidate[] = s.shellCandidates;
   const startTotal = performance.now();
   console.log(`[rango] Shell-prerendering ${candidates.length} URL(s)...`);
 
+  let restoreClientRequire: (() => void) | undefined;
   try {
-    const rscEnv = tempServer.environments?.rsc;
-    const ssrEnv = tempServer.environments?.ssr;
+    // Runner access needs the RunnableDevEnvironment surface; the environments
+    // map types as DevEnvironment (same cast the dev endpoints use).
+    const rscEnv = (tempServer.environments as any)?.rsc;
+    const ssrEnv = (tempServer.environments as any)?.ssr;
     if (!rscEnv?.runner || !ssrEnv?.runner) {
       console.warn(
         "[rango] shell prerender: temp server runners unavailable " +
@@ -180,6 +173,9 @@ export async function runShellPrerenderPhase(
     };
     const origClientRequire = (globalThis as any).__vite_rsc_client_require__;
     if (typeof origClientRequire === "function") {
+      restoreClientRequire = () => {
+        (globalThis as any).__vite_rsc_client_require__ = origClientRequire;
+      };
       (globalThis as any).__vite_rsc_client_require__ = (id: string) => {
         const base = id.split("$$cache=")[0]!;
         let mapped = hashToDevKey.get(base);
@@ -276,7 +272,7 @@ export async function runShellPrerenderPhase(
             skipCount++;
             break;
           }
-          const value: ShellManifestValue = {
+          const value: BuildShellEntry = {
             entry: res.entry,
             ttl: policy.ttl,
             swr: policy.swr,
@@ -335,9 +331,11 @@ export async function runShellPrerenderPhase(
         "routes keep runtime shell capture.",
     );
   } finally {
+    // Tear down only what THIS function installed (its globals). The kept
+    // temp server + deferred buildEnv pair is owned by the callers: the
+    // buildApp post hook's finally on success, buildEnd on an aborted build.
     delete (globalThis as any).__loadPrerenderManifestModule;
-    s.shellPhaseTempServer = null;
-    await tempServer.close();
+    restoreClientRequire?.();
   }
 }
 
@@ -362,21 +360,15 @@ function writeShellManifest(
     return;
   }
   const assetsDir = resolve(rscOutDir, "assets");
-  mkdirSync(assetsDir, { recursive: true });
 
   let totalBytes = 0;
   const manifestMap: Record<string, string> = {};
+  const countedFiles = new Set<string>();
   for (const { key, value } of staged) {
-    const contentHash = createHash("sha256")
-      .update(value)
-      .digest("hex")
-      .slice(0, 8);
-    const fileName = `__ps-${contentHash}.js`;
-    const filePath = resolve(assetsDir, fileName);
-    if (!existsSync(filePath)) {
-      const code = `export default ${value};\n`;
-      writeFileSync(filePath, code);
-      totalBytes += Buffer.byteLength(code);
+    const fileName = writeBuildAssetModule(assetsDir, "__ps", value);
+    if (!countedFiles.has(fileName)) {
+      countedFiles.add(fileName);
+      totalBytes += Buffer.byteLength(value) + "export default ;\n".length;
     }
     manifestMap[key] = `./assets/${fileName}`;
   }

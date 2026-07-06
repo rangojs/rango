@@ -1129,12 +1129,17 @@ export function createRouterDiscoveryPlugin(
         const pathname = url.searchParams.get("pathname");
         const routeName = url.searchParams.get("routeName");
         const version = url.searchParams.get("version");
-        if (!pathname || !routeName || !version) {
+        // ttl is required like the identifiers: the endpoint is policy-free
+        // (the serve gate resolved the route's ppr option and always sends
+        // it), so there is deliberately no default to drift from
+        // resolvePprConfig's.
+        const ttlRaw = url.searchParams.get("ttl");
+        if (!pathname || !routeName || !version || !ttlRaw) {
           res.statusCode = 400;
-          res.end("Missing pathname/routeName/version");
+          res.end("Missing pathname/routeName/version/ttl");
           return;
         }
-        const ttl = Number(url.searchParams.get("ttl") ?? "300");
+        const ttl = Number(ttlRaw);
         const swrRaw = url.searchParams.get("swr");
         const swr = swrRaw === null ? undefined : Number(swrRaw);
         const tagsRaw = url.searchParams.get("tags");
@@ -1196,6 +1201,22 @@ export function createRouterDiscoveryPlugin(
           return;
         }
 
+        // Memo sweep FIRST: after request one the common case is a memo HIT
+        // (this fetch blocks a foreground document request), and the memoized
+        // body needs neither the pre-flight round-trip nor a capture. Keyed
+        // per router instance (= HMR generation) like the prerender memo.
+        const cacheKey = `shell|${pathname}|r=${routeName}|t=${ttl}|s=${swr ?? ""}|g=${(tags ?? []).join("+")}|v=${version}`;
+        for (const [, routerInstance] of registry) {
+          if (typeof routerInstance.match !== "function") continue;
+          const cached = devPrerenderCache.get(routerInstance, cacheKey);
+          if (cached !== undefined) {
+            res.setHeader("content-type", "application/json");
+            res.setHeader("x-rango-shell-dev", "HIT");
+            res.end(cached);
+            return;
+          }
+        }
+
         // Pre-flight: the route must be prerender-backed. Warms the payload
         // memo the capture's dev prerender store will fetch, and closes the
         // live-handler-bake hole (a non-pr route 404s here).
@@ -1217,16 +1238,8 @@ export function createRouterDiscoveryPlugin(
           }
         }
 
-        const cacheKey = `shell|${pathname}|r=${routeName}|t=${ttl}|s=${swr ?? ""}|g=${(tags ?? []).join("+")}|v=${version}`;
         for (const [, routerInstance] of registry) {
           if (typeof routerInstance.match !== "function") continue;
-          const cached = devPrerenderCache.get(routerInstance, cacheKey);
-          if (cached !== undefined) {
-            res.setHeader("content-type", "application/json");
-            res.setHeader("x-rango-shell-dev", "HIT");
-            res.end(cached);
-            return;
-          }
           try {
             const ssrModule = await ssrRealm.runner.import(ssrEntryId);
             if (typeof ssrModule?.captureShellHTML !== "function") {
@@ -1751,16 +1764,23 @@ export function createRouterDiscoveryPlugin(
 
     // Post-build PPR shell capture (producer B, #699): runs after EVERY
     // environment bundle is written — the shell prelude embeds built client
-    // asset URLs (bootstrap entry), which do not exist at buildStart.
-    // buildEnv release was deferred with the kept temp server (buildStart's
-    // finally); release it here whether or not the phase ran or succeeded.
+    // asset URLs (bootstrap entry), which do not exist at buildStart. The
+    // kept temp server and the buildEnv were deferred AS A PAIR in
+    // buildStart's finally; this finally is the pair's success-path owner
+    // (buildEnd below owns the aborted-build path) — the phase itself is a
+    // pure producer and tears down only the globals it installs.
     buildApp: {
       order: "post",
       async handler(builder) {
         try {
           await runShellPrerenderPhase(s, builder as any);
         } finally {
-          if (s.isBuildMode) await releaseBuildEnv(s);
+          if (s.isBuildMode) {
+            const tempServer = s.shellPhaseTempServer;
+            s.shellPhaseTempServer = null;
+            if (tempServer) await tempServer.close();
+            await releaseBuildEnv(s);
+          }
         }
       },
     },

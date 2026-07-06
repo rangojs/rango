@@ -29,6 +29,8 @@ import {
 import {
   deriveShellCaptureContext,
   captureAndStoreShell,
+  delay,
+  SHELL_CAPTURE_RETRY_DELAY_MS,
   type ShellCaptureDescriptor,
 } from "../rsc/shell-capture.js";
 import { buildFullPayload } from "../rsc/full-payload.js";
@@ -39,9 +41,6 @@ import {
   resolvePprConfig,
   type ResolvedPprConfig,
 } from "../rsc/shell-serve.js";
-
-/** Delay before the single in-place retry of a cold-graph build capture. */
-const BUILD_CAPTURE_RETRY_DELAY_MS = 400;
 
 /**
  * Normalize a collected truthy `ppr` path option into the SAME concrete
@@ -113,18 +112,10 @@ export interface BuildShellCaptureResult {
   matchedRouteName?: string;
 }
 
-/** Sleep `ms`, unref'd so the build process is never kept alive by the timer. */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
-    (t as { unref?: () => void }).unref?.();
-  });
-}
-
 /**
  * Capture the PPR shell for one prerendered URL at build time. Retries once
  * in place on `no-shell` (the first attempt warms the temp server's SSR/Flight
- * transform graph, mirroring producer A's cold-start retry).
+ * transform graph, mirroring producer A's cold-start retry — same delay).
  */
 export async function captureShellForBuild(
   opts: BuildShellCaptureOptions,
@@ -136,7 +127,7 @@ export async function captureShellForBuild(
       `[rango] shell capture attempt 1/2 for ${opts.urlPath} produced no shell (cold graph?) — retrying`,
     );
   }
-  await delay(BUILD_CAPTURE_RETRY_DELAY_MS);
+  await delay(SHELL_CAPTURE_RETRY_DELAY_MS);
   return attemptBuildCapture(opts);
 }
 

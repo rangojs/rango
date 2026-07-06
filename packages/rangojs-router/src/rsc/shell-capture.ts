@@ -1303,8 +1303,15 @@ async function captureAndStoreShell(
   }
 }
 
-// Exported for unit tests that drive the capture core directly.
-export { runShellCapture, captureAndStoreShell };
+// Exported for unit tests that drive the capture core directly, and — with the
+// cold-graph retry pieces — for producer B (prerender/build-shell-capture.ts),
+// which mirrors the runtime capture's retry-in-place with the same delay.
+export {
+  runShellCapture,
+  captureAndStoreShell,
+  delay,
+  SHELL_CAPTURE_RETRY_DELAY_MS,
+};
 
 // Exported for unit tests that pin the refused-capture backoff policy directly
 // (dev cap vs production exponential growth, stored-clears, cold-start re-probe).

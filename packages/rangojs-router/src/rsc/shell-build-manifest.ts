@@ -30,8 +30,6 @@ import { sortedSearchString } from "../cache/cache-key-utils.js";
 import { hasIntactShellPayload, isValidShellHit } from "./shell-serve.js";
 import { buildShellManifestKey } from "../prerender/shell-manifest-key.js";
 
-export { buildShellManifestKey };
-
 /** One baked manifest record (the __ps asset module's default export). */
 export interface BuildShellEntry {
   entry: ShellCacheEntry;
@@ -72,9 +70,42 @@ function loadManifest(): Promise<ShellManifestModule | null> {
   return manifestPromise;
 }
 
+/**
+ * Per-spec verdict memo for the version + integrity gates. A manifest record
+ * is immutable for the process lifetime (content-hashed asset module), so its
+ * gate verdict is constant — without this, EVERY request to a baked ppr route
+ * re-decodes the full prelude base64 (hasIntactShellPayload) on the hot path:
+ * a fresh build hit never populates the runtime store, so the store MISS +
+ * read-through is the steady state, not a warm-up. Only the per-request
+ * gates (tag markers, staleness) stay outside the memo. `null` memoizes a
+ * failed verdict — deterministically invalid, don't re-pay the decode.
+ * Spec-only keying is sound because buildVersion is process-constant on the
+ * manifest path (folded into the shipped worker; dev never loads a manifest).
+ */
+const validatedSpecs = new Map<string, BuildShellEntry | null>();
+
+async function validatedManifestRecord(
+  mod: ShellManifestModule,
+  spec: string,
+  buildVersion: string,
+): Promise<BuildShellEntry | undefined> {
+  let verdict = validatedSpecs.get(spec);
+  if (verdict === undefined) {
+    const record = (await mod.loadShellAsset(spec)).default;
+    verdict =
+      isValidShellHit(record.entry, buildVersion) &&
+      hasIntactShellPayload(record.entry)
+        ? record
+        : null;
+    validatedSpecs.set(spec, verdict);
+  }
+  return verdict ?? undefined;
+}
+
 /** Reset the memoized manifest (unit tests swap the global loader). */
 export function resetBuildShellManifestForTests(): void {
   manifestPromise = null;
+  validatedSpecs.clear();
 }
 
 /** Keys already warned about a tag-check-incapable store (once per key). */
@@ -157,21 +188,30 @@ export async function lookupBuildShell(
   dev?: DevShellLookup,
 ): Promise<BuildShellHit | null> {
   try {
+    // Source-presence first: with no manifest and no dev context this is the
+    // steady-state MISS shape for every non-baked ppr route — return before
+    // the searchParams sort/allocation below.
+    const hasManifest = globalThis.__loadShellManifestModule !== undefined;
+    if (!hasManifest && !dev) return null;
     if (sortedSearchString(url.searchParams) !== "") return null;
     let record: BuildShellEntry | undefined;
-    if (globalThis.__loadShellManifestModule !== undefined) {
+    if (hasManifest) {
       const mod = await loadManifest();
       if (!mod) return null;
       const spec = mod.default[buildShellManifestKey(url.pathname)];
       if (!spec) return null;
-      record = (await mod.loadShellAsset(spec)).default;
+      record = await validatedManifestRecord(mod, spec, buildVersion);
     } else if (dev) {
-      record = await fetchDevShellEntry(url.pathname, buildVersion, dev);
+      const fetched = await fetchDevShellEntry(url.pathname, buildVersion, dev);
+      record =
+        fetched !== undefined &&
+        isValidShellHit(fetched.entry, buildVersion) &&
+        hasIntactShellPayload(fetched.entry)
+          ? fetched
+          : undefined;
     }
     if (!record) return null;
     const entry = record.entry;
-    if (!isValidShellHit(entry, buildVersion)) return null;
-    if (!hasIntactShellPayload(entry)) return null;
     if (record.tags && record.tags.length > 0) {
       const check = store.isTagsInvalidatedSince;
       if (typeof check !== "function") {

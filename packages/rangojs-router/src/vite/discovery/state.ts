@@ -127,9 +127,11 @@ export interface DiscoveryState {
    * The buildStart temp RSC server, kept alive past discovery when shell
    * candidates exist: the shell capture phase (buildApp post) reuses its
    * realm — tries installed, registry populated — after the client build has
-   * produced the asset URLs the prelude must embed. Closed by that phase.
+   * produced the asset URLs the prelude must embed. Deferred as a PAIR with
+   * the buildEnv; closed by the buildApp post hook's finally (success) or
+   * buildEnd (aborted build).
    */
-  shellPhaseTempServer: any;
+  shellPhaseTempServer: import("vite").ViteDevServer | null;
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;

@@ -780,16 +780,18 @@ function describePprShell(mode: "dev" | "build") {
     test("build-time shell: loaders stay live across baked-entry HITs (seq advances)", async ({
       request,
     }) => {
+      const readSeq = (html: string): number => {
+        const match = html.match(/ppr-pp-seq: (\d+)/);
+        expect(match, "live seq present in the document").toBeTruthy();
+        return Number(match![1]);
+      };
       const url = f.url("/ppr-shell/prerendered/alpha");
       const first = await request.get(url, { headers: HTML_HEADERS });
       expect(first.headers()["x-rango-shell"]).toBe("HIT");
-      const seq1 = Number((await first.text()).match(/ppr-pp-seq: (\d+)/)?.[1]);
+      const seq1 = readSeq(await first.text());
       const second = await request.get(url, { headers: HTML_HEADERS });
       expect(second.headers()["x-rango-shell"]).toBe("HIT");
-      const seq2 = Number(
-        (await second.text()).match(/ppr-pp-seq: (\d+)/)?.[1],
-      );
-      expect(seq2).toBe(seq1 + 1);
+      expect(readSeq(await second.text())).toBe(seq1 + 1);
     });
 
     test("updateTag evicts the build-time shell; the runtime capture then owns the route", async ({
