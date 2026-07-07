@@ -220,5 +220,71 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
         }),
       ).toBeNull();
     });
+
+    // Boot-race readiness (issue #719): a Prerender+ppr route's FIRST request
+    // can beat the endpoint standing up its capture realm (temp server /
+    // registry import / Vite dep re-optimization). The endpoint marks those
+    // TRANSIENT states 503 + x-rango-shell-dev: NOT-READY; the read-through
+    // must re-poll ONLY that signal so the first request still HITs, rather
+    // than mapping the boot window to a hard MISS that heals on a later poll.
+    it("re-polls a NOT-READY boot-race signal, then serves once ready (first-request HIT holds)", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response("booting", {
+            status: 503,
+            headers: { "x-rango-shell-dev": "NOT-READY" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(DEV_RECORD), { status: 200 }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      const p = lookupBuildShell(url("/pp/a"), BUILD_VERSION, store, {
+        isPrerenderRoute: true,
+        routeName: "pp",
+        ttl: 300,
+      });
+      // Fire the ~150ms readiness re-poll delay (fake timers).
+      await vi.advanceTimersByTimeAsync(200);
+      const hit = await p;
+      expect(hit).not.toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("does NOT re-poll a genuine 404 negative (a non-baked route never stalls the foreground)", async () => {
+      const fetchMock = vi.fn(
+        async () => new Response("nope", { status: 404 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      expect(
+        await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store, {
+          isPrerenderRoute: true,
+          routeName: "pp",
+          ttl: 300,
+        }),
+      ).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("concedes a MISS when NOT-READY never clears (readiness wait is bounded)", async () => {
+      const fetchMock = vi.fn(
+        async () =>
+          new Response("booting", {
+            status: 503,
+            headers: { "x-rango-shell-dev": "NOT-READY" },
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const p = lookupBuildShell(url("/pp/a"), BUILD_VERSION, store, {
+        isPrerenderRoute: true,
+        routeName: "pp",
+        ttl: 300,
+      });
+      // Advance past the readiness deadline: the bounded loop must exit, not spin.
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(await p).toBeNull();
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    });
   });
 });

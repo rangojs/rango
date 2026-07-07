@@ -1143,6 +1143,47 @@ export function createRouterDiscoveryPlugin(
           res.end("Missing pathname/routeName/version/ttl");
           return;
         }
+
+        // Boot-race readiness signal (issue #719): the capture realm is stood
+        // up lazily on the first hit (temp server, registry import, and a Vite
+        // dep re-optimization the first shell-capture import can trigger). All
+        // are TRANSIENT — a retry seconds later succeeds. Tagging them 503 +
+        // x-rango-shell-dev: NOT-READY lets the read-through re-poll ONLY these
+        // (a bounded await of readiness) instead of mapping the boot window to
+        // a hard first-request MISS. Genuine negatives (404) stay untagged so a
+        // non-baked route never stalls the foreground.
+        const sendNotReady = (detail: string): void => {
+          res.statusCode = 503;
+          res.setHeader("x-rango-shell-dev", "NOT-READY");
+          res.end(detail);
+        };
+        // A Vite dependency re-optimization surfaces as ERR_OUTDATED_OPTIMIZED_DEP
+        // (import throws once, then re-imports clean) — retryable, unlike a real
+        // module fault (syntax error, missing export), which stays a hard 500.
+        // The message-regex fallback is NOT gratuitous: err.code is stripped when
+        // the error serializes across the module-runner/workerd RPC boundary (the
+        // message survives), so under the Cloudflare preset .code alone misses it.
+        const isReoptimizing = (err: any): boolean =>
+          err?.code === "ERR_OUTDATED_OPTIMIZED_DEP" ||
+          /Outdated Optimize Dep|optimized dependency|new dependencies optimized/i.test(
+            String(err?.message ?? ""),
+          );
+        // Fold the reoptimize-guard pasted at all three import/capture catch
+        // sites: emit NOT-READY + report handled for a transient re-optimization,
+        // else leave the caller to send its own terminal (500 for an entry
+        // import, 404 for a mid-capture failure that keeps runtime capture).
+        const handledAsReoptimizing = (err: any): boolean => {
+          if (!isReoptimizing(err)) return false;
+          sendNotReady(`Shell capture re-optimizing: ${err.message}`);
+          return true;
+        };
+        // Both entry-import sites (main-server rsc env, temp Node server) fail
+        // identically: reoptimize → NOT-READY, else → hard 500.
+        const handleShellImportError = (err: any): void => {
+          if (handledAsReoptimizing(err)) return;
+          res.statusCode = 500;
+          res.end(`Shell capture module refresh failed: ${err.message}`);
+        };
         const ttl = Number(ttlRaw);
         const swrRaw = url.searchParams.get("swr");
         const swr = swrRaw === null ? undefined : Number(swrRaw);
@@ -1173,8 +1214,7 @@ export function createRouterDiscoveryPlugin(
           try {
             await rscEnvMain.runner.import(s.resolvedEntryPath);
           } catch (err: any) {
-            res.statusCode = 500;
-            res.end(`Shell capture module refresh failed: ${err.message}`);
+            handleShellImportError(err);
             return;
           }
           rscRealm = rscEnvMain;
@@ -1188,8 +1228,7 @@ export function createRouterDiscoveryPlugin(
             try {
               await importEntryAndRegistry(tempRscEnv);
             } catch (err: any) {
-              res.statusCode = 500;
-              res.end(`Shell capture module refresh failed: ${err.message}`);
+              handleShellImportError(err);
               return;
             }
           }
@@ -1198,8 +1237,7 @@ export function createRouterDiscoveryPlugin(
           ssrEntryId = "virtual:entry-ssr";
         }
         if (!rscRealm?.runner || !ssrRealm?.runner) {
-          res.statusCode = 503;
-          res.end("Shell capture runners not available");
+          sendNotReady("Shell capture runners not available");
           return;
         }
         let registry: Map<string, any> | null = null;
@@ -1212,8 +1250,7 @@ export function createRouterDiscoveryPlugin(
           registry = null;
         }
         if (!registry || registry.size === 0) {
-          res.statusCode = 503;
-          res.end("Shell capture registry not available");
+          sendNotReady("Shell capture registry not available");
           return;
         }
 
@@ -1300,6 +1337,10 @@ export function createRouterDiscoveryPlugin(
             res.end(body);
             return;
           } catch (err: any) {
+            // A dep re-optimization mid-capture is a boot-race, not a capture
+            // failure: signal NOT-READY so the read-through re-polls instead of
+            // conceding a first-request MISS (issue #719).
+            if (handledAsReoptimizing(err)) return;
             console.warn(
               `[rango] Dev shell capture error for ${pathname} (route keeps runtime capture): ${err.message}`,
             );
