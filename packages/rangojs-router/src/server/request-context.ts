@@ -57,7 +57,10 @@ import {
 } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
-import { isInsideCacheScope } from "./context.js";
+import {
+  assertCachedHeaderWriteAllowed,
+  isInsideCacheScope,
+} from "./context.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -817,6 +820,50 @@ export function createRequestContext<TEnv>(
       })
     : new Response(null, { status: 200 });
 
+  // The #713 choke point: `rawStubHeaders` is the stub's REAL Headers; the
+  // proxy below is the only view reachable from consumer code, and its
+  // mutating methods consult the cached-scope guard first. shadowStubHeaders
+  // shadows `headers` on the stub Response INSTANCE (a real Response, not a
+  // facade — safe to hand to the platform), so every surface that ends in a
+  // stub-header mutation — ctx.header/setCookie/deleteCookie, ctx.setTheme,
+  // the handler ctx.headers proxy, and raw `ctx.res.headers.set(...)` — is
+  // guarded at the mutation itself, not per enumerated wrapper. Guard-exempt
+  // internal writers (_rotateStateCookie, _setKeepCacheDirective — serve
+  // machinery, documented callable from loaders/during capture) write to
+  // rawStubHeaders directly. The serve/commit path's stub reads and its
+  // Set-Cookie drain (rsc/helpers.ts) run outside any latched funnel scope,
+  // where assertCachedHeaderWriteAllowed is a no-op.
+  let rawStubHeaders = stubResponse.headers;
+  const guardedStubHeaders: Headers = new Proxy(new Headers(), {
+    get(_target, prop) {
+      const raw = rawStubHeaders;
+      const value = Reflect.get(raw, prop) as unknown;
+      if (typeof value !== "function") return value;
+      if (prop === "set" || prop === "append" || prop === "delete") {
+        return (...args: unknown[]) => {
+          assertCachedHeaderWriteAllowed("response headers", prop);
+          return (value as (...a: unknown[]) => unknown).apply(raw, args);
+        };
+      }
+      return (value as (...a: unknown[]) => unknown).bind(raw);
+    },
+  });
+  const shadowStubHeaders = (res: Response): void => {
+    Object.defineProperty(res, "headers", {
+      value: guardedStubHeaders,
+      enumerable: true,
+      configurable: true,
+    });
+  };
+  shadowStubHeaders(stubResponse);
+  // Rebuild the stub with a new status, re-shadowing the fresh instance
+  // (the Response constructor copies rawStubHeaders into new raw Headers).
+  const replaceStubStatus = (status: number): void => {
+    stubResponse = new Response(null, { status, headers: rawStubHeaders });
+    rawStubHeaders = stubResponse.headers;
+    shadowStubHeaders(stubResponse);
+  };
+
   const handleStore = createHandleStore();
   const loaderPromises = new Map<string, Promise<any>>();
 
@@ -838,14 +885,12 @@ export function createRequestContext<TEnv>(
     responseCookieCache = null;
   };
 
-  function assertNotInsideCacheScopeALS(methodName: string): void {
-    if (isInsideCacheScope()) {
-      throw new Error(
-        `ctx.${methodName}() cannot be called inside a cache() boundary. ` +
-          `On cache hit the handler is skipped, so this side effect would be lost. ` +
-          `Move ctx.${methodName}() to a middleware or layout outside the cache() scope.`,
-      );
-    }
+  // Guard for the two response-write surfaces that are NOT Headers mutations
+  // (setStatus rebuilds the stub Response, onResponse registers a callback) —
+  // these can't ride the guarded-headers choke point above, so they stay
+  // enumerated. Same unified #713 guard, same message family.
+  function assertResponseWriteAllowed(methodName: string): void {
+    assertCachedHeaderWriteAllowed("ctx", methodName);
   }
 
   // Response stub Set-Cookie wins, then original header (source of truth for mutations).
@@ -956,7 +1001,6 @@ export function createRequestContext<TEnv>(
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
       assertNotInsideCacheExec(ctx, "setCookie");
-      assertNotInsideCacheScopeALS("setCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, value, options),
@@ -969,7 +1013,6 @@ export function createRequestContext<TEnv>(
       options?: Pick<CookieOptions, "domain" | "path">,
     ): void {
       assertNotInsideCacheExec(ctx, "deleteCookie");
-      assertNotInsideCacheScopeALS("deleteCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, "", { ...options, maxAge: 0 }),
@@ -979,7 +1022,6 @@ export function createRequestContext<TEnv>(
 
     header(name: string, value: string): void {
       assertNotInsideCacheExec(ctx, "header");
-      assertNotInsideCacheScopeALS("header");
       stubResponse.headers.set(name, value);
     },
 
@@ -1008,7 +1050,9 @@ export function createRequestContext<TEnv>(
         (request.headers.get("x-rango-state") || null) ??
         getRawCookieValue(cookieHeader, stateCookieName);
       const value = mintStateValue(stateVersion ?? "0", prevRaw);
-      stubResponse.headers.append(
+      // rawStubHeaders: guard-exempt internal writer — invalidateClientCache()
+      // is documented callable from loaders and during shell capture.
+      rawStubHeaders.append(
         "Set-Cookie",
         serializeStateCookie(stateCookieName, value, url.protocol === "https:"),
       );
@@ -1017,25 +1061,20 @@ export function createRequestContext<TEnv>(
 
     // Set the keepClientCache() directive header. The action bridge reads it on
     // the response and suppresses its automatic invalidation. `.set` makes this
-    // idempotent (one header regardless of call count).
+    // idempotent (one header regardless of call count). rawStubHeaders:
+    // guard-exempt internal writer.
     _setKeepCacheDirective(): void {
-      stubResponse.headers.set(KEEP_CACHE_HEADER, "1");
+      rawStubHeaders.set(KEEP_CACHE_HEADER, "1");
     },
 
     setStatus(status: number): void {
       assertNotInsideCacheExec(ctx, "setStatus");
-      assertNotInsideCacheScopeALS("setStatus");
-      stubResponse = new Response(null, {
-        status,
-        headers: stubResponse.headers,
-      });
+      assertResponseWriteAllowed("setStatus");
+      replaceStubStatus(status);
     },
 
     _setStatus(status: number): void {
-      stubResponse = new Response(null, {
-        status,
-        headers: stubResponse.headers,
-      });
+      replaceStubStatus(status);
     },
 
     use: null as any,
@@ -1084,7 +1123,7 @@ export function createRequestContext<TEnv>(
 
     onResponse(callback: (response: Response) => Response): void {
       assertNotInsideCacheExec(ctx, "onResponse");
-      assertNotInsideCacheScopeALS("onResponse");
+      assertResponseWriteAllowed("onResponse");
       this._onResponseCallbacks.push(callback);
     },
 

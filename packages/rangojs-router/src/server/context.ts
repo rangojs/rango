@@ -278,6 +278,17 @@ export interface TrackedInclude {
 }
 
 /**
+ * Cached response-header write scope (issue #713). `kind` selects the error
+ * wording; `routeKey` names the route in the error.
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export type CachedHeaderScope = {
+  kind: "cache" | "ppr";
+  routeKey?: string;
+};
+
+/**
  * Context stored in AsyncLocalStorage
  */
 interface HelperContext {
@@ -317,6 +328,13 @@ interface HelperContext {
   /** True when resolving handlers inside a cache() DSL boundary.
    *  Read by ctx.get() to guard non-cacheable variable reads. */
   insideCacheScope?: boolean;
+  /**
+   * RULE (issue #713): in any cached scenario ONLY MIDDLEWARE writes response
+   * headers. Latched by the segment funnels, consulted by
+   * assertCachedHeaderWriteAllowed(); full doctrine in
+   * docs/design/ppr-shell-resume.md "The header doctrine".
+   */
+  cachedHeaderScope?: CachedHeaderScope;
   /**
    * Include scope string applied to direct-descendant shortCodes.
    *
@@ -484,6 +502,9 @@ export const getContext = (): {
           trackedIncludes: store.trackedIncludes,
           cacheProfiles: store.cacheProfiles,
           includeScope: store.includeScope,
+          // cachedHeaderScope (and insideCacheScope) deliberately NOT copied —
+          // the header guard's middleware exemption depends on the latch dying
+          // with the funnel scope (see assertCachedHeaderWriteAllowed).
         },
         callback,
       );
@@ -797,13 +818,9 @@ const loaderBodyScopeALS: AsyncLocalStorage<{
 export function isInsideCacheScope(): boolean {
   if (RangoContext.getStore()?.insideCacheScope !== true) return false;
   // Loaders are always fresh — even inside a cache() boundary, the loader
-  // function re-executes on every request. Skip the guard when running
-  // inside a loader.
-  if (loaderScopeALS.getStore()?.active) return false;
-  // Also exempt handler-invoked loaders: their bodies run in a loader-body
-  // scope (not the DSL loader scope above), so request-scoped reads inside any
-  // loader — however invoked — are safe (loaders always re-run fresh).
-  if (loaderBodyScopeALS.getStore()?.active) return false;
+  // function re-executes on every request (DSL loaders AND handler-invoked
+  // loader bodies alike), so request-scoped reads inside any loader are safe.
+  if (isInsideAnyLoaderScope()) return false;
   return true;
 }
 
@@ -814,6 +831,107 @@ export function isInsideCacheScope(): boolean {
  */
 export function isInsideLoaderScope(): boolean {
   return loaderScopeALS.getStore()?.active === true;
+}
+
+/**
+ * Latch the cached header-write scope for the current request. First latch
+ * wins: a ppr route latched at the funnel top is not downgraded by a nested
+ * cache() entry (the document-scoped wording is the more useful one).
+ * Takes scalars so the already-latched path allocates nothing.
+ */
+export function latchCachedHeaderScope(
+  kind: CachedHeaderScope["kind"],
+  routeKey?: string,
+): void {
+  const store = RangoContext.getStore();
+  if (store && !store.cachedHeaderScope) {
+    store.cachedHeaderScope = { kind, routeKey };
+  }
+}
+
+/** True inside ANY loader execution — DSL loader scope or a loader body
+ *  (however invoked). The "loaders always re-run fresh" exemptions key off
+ *  this. */
+function isInsideAnyLoaderScope(): boolean {
+  return (
+    loaderScopeALS.getStore()?.active === true ||
+    loaderBodyScopeALS.getStore()?.active === true
+  );
+}
+
+/**
+ * The one ppr opt-in predicate: a page route entry that DECLARED `ppr`
+ * (`false` and undefined mean plain axis 1). Shared by the serve path
+ * (rsc/shell-serve.ts resolvePprConfig) and the header-write latch below so
+ * the two layers can never drift on what counts as a ppr route.
+ */
+export function isPprEntry(entry: EntryData): entry is EntryData & {
+  type: "route";
+  ppr: true | import("../urls/pattern-types.js").PartialPrerenderProps;
+} {
+  return (
+    entry.type === "route" && entry.ppr !== undefined && entry.ppr !== false
+  );
+}
+
+/**
+ * Latch the ppr header-write scope when the entry chain about to resolve is a
+ * `ppr` page route's. Called at the TOP of every segment funnel — unlike
+ * cache() (positional: ancestors before the boundary stay writable), ppr is
+ * document-scoped: the root layout down to the page bakes into the shared
+ * shell, so the whole funnel is cached territory.
+ *
+ * Checks the LEAF entry only: `entries` is the traverseBack chain
+ * [root, ..., manifestEntry], and the serve path reads `ppr` off the same
+ * leaf (rsc-rendering.ts: resolvePprConfig(manifestEntry)) — guard and serve
+ * share the predicate (isPprEntry) AND the input, so they cannot drift.
+ */
+export function latchPprHeaderScopeForEntries(
+  entries: EntryData[],
+  routeKey?: string,
+): void {
+  const store = RangoContext.getStore();
+  if (!store || store.cachedHeaderScope) return;
+  const leaf = entries[entries.length - 1];
+  if (leaf !== undefined && isPprEntry(leaf)) {
+    store.cachedHeaderScope = { kind: "ppr", routeKey };
+  }
+}
+
+/**
+ * RULE (issue #713): in any cached scenario ONLY MIDDLEWARE writes response
+ * headers — handler and loader writes throw while a scope is latched; the one
+ * exemption is loaders under plain cache(). Full layer rules and rationale:
+ * docs/design/ppr-shell-resume.md "The header doctrine".
+ */
+export function assertCachedHeaderWriteAllowed(
+  surface: string,
+  surfaceProp?: string | symbol,
+): void {
+  const scope = RangoContext.getStore()?.cachedHeaderScope;
+  if (!scope) return;
+  const insideLoader = isInsideAnyLoaderScope();
+  if (scope.kind === "cache" && insideLoader) return;
+  // Everything below runs only on the throw path — `surfaceProp` exists so
+  // callers pass constants and the success path allocates nothing (the full
+  // surface, e.g. "ctx.headers.set()", is assembled here).
+  const fullSurface =
+    surfaceProp === undefined ? surface : `${surface}.${String(surfaceProp)}()`;
+  const layer = insideLoader ? "loader" : "handler";
+  const route = scope.routeKey ? ` (route "${scope.routeKey}")` : "";
+  const where =
+    scope.kind === "ppr"
+      ? `on a ppr route${route} — the document shell is cached and replayed`
+      : `inside a cache() boundary${route}`;
+  const why =
+    layer === "loader"
+      ? "The response headers flush with the shell before loaders settle, so this write is dropped on cache hits."
+      : "On a cache hit the handler is skipped, so this write would silently vanish.";
+  throw new Error(
+    `${fullSurface} cannot be called from a ${layer} ${where}. ${why} ` +
+      "Set response headers in route middleware instead — middleware runs " +
+      "on every request, including cache hits.",
+  );
 }
 
 /**

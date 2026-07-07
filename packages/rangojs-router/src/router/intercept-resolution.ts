@@ -28,7 +28,32 @@ import {
 } from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
-import { runInsideLoaderScope } from "../server/context.js";
+import {
+  RangoContext,
+  latchPprHeaderScopeForEntries,
+  runInsideLoaderScope,
+} from "../server/context.js";
+
+/**
+ * Header-guard latch for the intercept funnels (issue #713). ppr and
+ * intercepts do not compose on the shell path — shells are captured/served
+ * only for document requests and withInterceptResolution skips intercepts on
+ * full matches — so this is defense in depth: a partial nav CAN render an
+ * intercept over a ppr-declared target route, in its own store scope where
+ * the main funnel's latch does not apply. Latch by declaration, off the
+ * target route's manifest entry (same leaf input as the segment funnels).
+ * Called AFTER intercept middleware runs — middleware stays the live lane.
+ */
+function latchPprHeaderScopeForInterceptTarget(
+  interceptEntry: InterceptEntry,
+): void {
+  const targetEntry = RangoContext.getStore()?.manifest.get(
+    interceptEntry.routeName,
+  );
+  if (targetEntry) {
+    latchPprHeaderScopeForEntries([targetEntry], interceptEntry.routeName);
+  }
+}
 
 /**
  * Check if an intercept's when conditions are satisfied.
@@ -149,6 +174,8 @@ export async function resolveInterceptEntry<TEnv>(
     );
     if (middlewareResponse) throw middlewareResponse;
   }
+
+  latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
@@ -327,6 +354,8 @@ export async function resolveInterceptLoadersOnly<TEnv>(
   if (interceptEntry.loader.length === 0) {
     return null;
   }
+
+  latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];

@@ -17,7 +17,7 @@
  */
 
 import React from "react";
-import type { EntryData } from "../server/context.js";
+import { isPprEntry, type EntryData } from "../server/context.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
 
@@ -90,9 +90,10 @@ export function normalizeCaptureTimeout(value: unknown): number | undefined {
 export function resolvePprConfig(
   entry: EntryData | undefined | null,
 ): ResolvedPprConfig | null {
-  if (!entry || entry.type !== "route") return null;
+  // isPprEntry (server/context.ts) is the ONE opt-in predicate — shared with
+  // the header-write latch so serve and guard can never drift.
+  if (!entry || !isPprEntry(entry)) return null;
   const ppr = entry.ppr;
-  if (ppr === undefined || ppr === false) return null;
   if (ppr === true) return { ttl: DEFAULT_PPR_TTL_SECONDS };
   return {
     ttl: ppr.ttl ?? DEFAULT_PPR_TTL_SECONDS,
