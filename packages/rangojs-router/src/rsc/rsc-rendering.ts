@@ -469,6 +469,10 @@ async function handleRscRenderingInner<TEnv>(
     init: {
       headers: rscHeaders,
     },
+    tracking: {
+      mode: isPartial ? "partial" : "full",
+      routeKey: reqCtx._routeName,
+    },
   });
 
   const flightStage = await readRscFlightStage(renderStages);

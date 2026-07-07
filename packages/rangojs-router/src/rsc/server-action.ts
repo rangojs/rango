@@ -428,6 +428,11 @@ async function revalidateAfterActionInner<TEnv>(
             "X-RSC-Router-Id": ctx.router.id,
           },
         },
+        tracking: {
+          mode: "action-revalidation",
+          routeKey: reqCtx._routeName,
+          actionId: actionContext?.actionId,
+        },
       }),
     );
   }
@@ -509,6 +514,11 @@ async function revalidateAfterActionInner<TEnv>(
           // action apply path has no post-decode guard). See response-adapter.
           "X-RSC-Router-Id": ctx.router.id,
         },
+      },
+      tracking: {
+        mode: "action-revalidation",
+        routeKey: reqCtx._routeName,
+        actionId: actionContext?.actionId,
       },
     }),
   );

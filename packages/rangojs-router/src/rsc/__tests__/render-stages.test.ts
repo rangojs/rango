@@ -12,6 +12,7 @@ import {
 } from "../helpers.js";
 import type { RscPayload } from "../types.js";
 import type { HandlerContext } from "../handler-context.js";
+import type { RscRenderStageEvent } from "../helpers.js";
 
 function payload(pathname: string): RscPayload {
   return {
@@ -193,6 +194,102 @@ describe("RSC render stages", () => {
     expect(await response.text()).toBe("html");
   });
 
+  it("emits context-rich progress events across delegated stages", async () => {
+    const request = new Request("http://localhost/events");
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    });
+    const events: RscRenderStageEvent[] = [];
+    const ctx = makeCtx(vi.fn(() => new ReadableStream<Uint8Array>()));
+
+    await runWithRequestContext(reqCtx, () =>
+      runRscRenderStages(
+        createRscRenderStages({
+          ctx,
+          request,
+          env: {},
+          url,
+          payload: payload("/events"),
+          init: { status: 200 },
+          tracking: {
+            mode: "action-revalidation",
+            routeKey: "routes/events",
+            actionId: "save",
+            onEvent: (event) => events.push(event),
+          },
+        }),
+      ),
+    );
+
+    expect(
+      events.map((event) => `${event.type}:${event.context.phase}`),
+    ).toEqual([
+      "stage:yield:payload",
+      "stage:start:flight",
+      "stage:complete:flight",
+      "stage:yield:flight",
+      "stage:start:response",
+      "stage:complete:response",
+    ]);
+    expect(events.map((event) => event.context.progress.completed)).toEqual([
+      1, 2, 2, 2, 3, 3,
+    ]);
+    expect(events.every((event) => event.context.progress.total === 3)).toBe(
+      true,
+    );
+    expect(
+      events.every(
+        (event) =>
+          event.context.mode === "action-revalidation" &&
+          event.context.routeKey === "routes/events" &&
+          event.context.actionId === "save" &&
+          event.context.pathname === "/events",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not let stage analytics sink failures break rendering", async () => {
+    const request = new Request("http://localhost/sink-fail");
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    });
+    const ctx = makeCtx(vi.fn(() => new ReadableStream<Uint8Array>()));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const response = await runWithRequestContext(reqCtx, () =>
+        runRscRenderStages(
+          createRscRenderStages({
+            ctx,
+            request,
+            env: {},
+            url,
+            payload: payload("/sink-fail"),
+            init: { status: 200 },
+            tracking: {
+              onEvent: () => {
+                throw new Error("sink failed");
+              },
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(consoleSpy).toHaveBeenCalled();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
   it("surfaces synchronous Flight serialization failures at the Flight step", async () => {
     const request = new Request("http://localhost/fail");
     const url = new URL(request.url);
@@ -207,6 +304,7 @@ describe("RSC render stages", () => {
         throw new Error("serialize failed");
       }),
     );
+    const events: RscRenderStageEvent[] = [];
 
     await runWithRequestContext(reqCtx, async () => {
       const stages = createRscRenderStages({
@@ -216,6 +314,10 @@ describe("RSC render stages", () => {
         url,
         payload: payload("/fail"),
         init: { status: 200 },
+        tracking: {
+          mode: "partial",
+          onEvent: (event) => events.push(event),
+        },
       });
 
       const payloadStage = await stages.next();
@@ -223,5 +325,12 @@ describe("RSC render stages", () => {
       expect(payloadStage.value.type).toBe("payload");
       await expect(stages.next()).rejects.toThrow("serialize failed");
     });
+
+    const errorEvent = events.find((event) => event.type === "stage:error");
+    expect(errorEvent?.context.phase).toBe("flight");
+    expect(errorEvent?.context.mode).toBe("partial");
+    expect(events.map((event) => event.context.phase)).not.toContain(
+      "response",
+    );
   });
 });

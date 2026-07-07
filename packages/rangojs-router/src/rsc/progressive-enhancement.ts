@@ -346,6 +346,11 @@ export async function handleProgressiveEnhancement<TEnv>(
           : {}),
         headers: { "content-type": "text/html;charset=utf-8" },
       },
+      tracking: {
+        mode: "progressive-enhancement",
+        routeKey: getRequestContext()._routeName,
+        actionId: directActionId ?? undefined,
+      },
     });
     const flightStage = await readRscFlightStage(renderStages);
     // metricsStore=undefined is safe: the handler already stashed the early
@@ -493,6 +498,11 @@ async function renderPeErrorBoundary<TEnv>(
     init: {
       status: 500,
       headers: { "content-type": "text/html;charset=utf-8" },
+    },
+    tracking: {
+      mode: "progressive-enhancement-error",
+      routeKey: getRequestContext()._routeName,
+      actionId: actionId ?? undefined,
     },
   });
   const flightStage = await readRscFlightStage(renderStages);
