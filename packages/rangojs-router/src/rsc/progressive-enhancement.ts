@@ -18,6 +18,7 @@ import { gateTransitions } from "./transition-gate.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
+  RSC_RENDER_HTML_RESPONSE_PHASES,
   createResponseWithMergedHeaders,
   finalizeResponse,
   buildRouteMiddlewareEntries,
@@ -335,7 +336,7 @@ export async function handleProgressiveEnhancement<TEnv>(
       mode: "progressive-enhancement" as const,
       routeKey: getRequestContext()._routeName,
       actionId: directActionId ?? undefined,
-      totalStages: 4,
+      phases: RSC_RENDER_HTML_RESPONSE_PHASES,
     };
     const renderStages = createRscRenderStages({
       ctx,
@@ -500,7 +501,7 @@ async function renderPeErrorBoundary<TEnv>(
     mode: "progressive-enhancement-error" as const,
     routeKey: getRequestContext()._routeName,
     actionId: actionId ?? undefined,
-    totalStages: 4,
+    phases: RSC_RENDER_HTML_RESPONSE_PHASES,
   };
   const renderStages = createRscRenderStages({
     ctx,

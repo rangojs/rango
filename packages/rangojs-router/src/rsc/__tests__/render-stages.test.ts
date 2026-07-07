@@ -5,6 +5,9 @@ import {
 } from "../../server/request-context.js";
 import { createMetricsStore } from "../../router/metrics.js";
 import {
+  RSC_FLIGHT_HTML_PHASES,
+  RSC_FLIGHT_ONLY_PHASES,
+  RSC_RENDER_HTML_RESPONSE_PHASES,
   createRscStageDebugSink,
   createRscRenderStages,
   finishRscRenderStages,
@@ -220,7 +223,7 @@ describe("RSC render stages", () => {
           payload: payload("/flight-only"),
           tracking: {
             mode: "full",
-            totalStages: 1,
+            phases: RSC_FLIGHT_ONLY_PHASES,
             onEvent: (event) => events.push(event),
           },
         },
@@ -237,6 +240,110 @@ describe("RSC render stages", () => {
     ]);
   });
 
+  it("records Flight serialize metrics only when direct callers opt in", async () => {
+    const request = new Request("http://localhost/flight-metrics");
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    });
+    reqCtx._metricsStore = createMetricsStore(true);
+    const ctx = makeCtx(vi.fn(() => new ReadableStream<Uint8Array>()));
+
+    await runWithRequestContext(reqCtx, () => {
+      renderRscFlightStage(
+        {
+          ctx,
+          request,
+          env: {},
+          url,
+          payload: payload("/flight-metrics"),
+          tracking: {
+            mode: "full",
+            phases: RSC_FLIGHT_ONLY_PHASES,
+          },
+        },
+        performance.now(),
+      );
+
+      expect(reqCtx._metricsStore!.metrics.map((m) => m.label)).not.toContain(
+        "rsc-serialize",
+      );
+
+      renderRscFlightStage(
+        {
+          ctx,
+          request,
+          env: {},
+          url,
+          payload: payload("/flight-metrics"),
+          recordSerializeMetric: true,
+          tracking: {
+            mode: "full",
+            phases: RSC_FLIGHT_ONLY_PHASES,
+          },
+        },
+        performance.now(),
+      );
+
+      expect(reqCtx._metricsStore!.metrics.map((m) => m.label)).toEqual([
+        "rsc-serialize",
+      ]);
+    });
+  });
+
+  it("tracks Flight then HTML progress for direct 404-style renders", async () => {
+    const request = new Request("http://localhost/not-found");
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    });
+    const events: RscRenderStageEvent[] = [];
+    const tracking = {
+      mode: "full" as const,
+      phases: RSC_FLIGHT_HTML_PHASES,
+      onEvent: (event: RscRenderStageEvent) => events.push(event),
+    };
+    const ctx = makeCtx(vi.fn(() => new ReadableStream<Uint8Array>()));
+
+    await runWithRequestContext(reqCtx, async () => {
+      const stage = renderRscFlightStage(
+        {
+          ctx,
+          request,
+          env: {},
+          url,
+          payload: payload("/not-found"),
+          tracking,
+        },
+        performance.now(),
+      );
+      expect(stage.context.progress).toEqual({ completed: 1, total: 2 });
+
+      await observeRscHtmlStage({ url, tracking }, async () => "html");
+    });
+
+    expect(
+      events.map((event) => `${event.type}:${event.context.phase}`),
+    ).toEqual([
+      "stage:start:flight",
+      "stage:complete:flight",
+      "stage:start:html",
+      "stage:complete:html",
+    ]);
+    expect(events.map((event) => event.context.progress)).toEqual([
+      { completed: 1, total: 2 },
+      { completed: 1, total: 2 },
+      { completed: 2, total: 2 },
+      { completed: 2, total: 2 },
+    ]);
+  });
+
   it("emits HTML progress events without owning SSR rendering", async () => {
     const request = new Request("http://localhost/html-events");
     const url = new URL(request.url);
@@ -249,7 +356,7 @@ describe("RSC render stages", () => {
     const events: RscRenderStageEvent[] = [];
     const tracking = {
       mode: "full" as const,
-      totalStages: 4,
+      phases: RSC_RENDER_HTML_RESPONSE_PHASES,
       onEvent: (event: RscRenderStageEvent) => events.push(event),
     };
     const ctx = makeCtx(vi.fn(() => new ReadableStream<Uint8Array>()));

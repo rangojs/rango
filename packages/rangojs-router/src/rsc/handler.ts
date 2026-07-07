@@ -25,6 +25,8 @@ import type {
   SSRModule,
 } from "./types.js";
 import {
+  RSC_FLIGHT_HTML_PHASES,
+  RSC_FLIGHT_ONLY_PHASES,
   createResponseWithMergedHeaders,
   finalizeResponse,
   interceptRedirectForPartial,
@@ -315,7 +317,7 @@ export function createRSCHandler<
                 ? "action-revalidation"
                 : "partial",
               routeKey: reqCtx._routeName,
-              totalStages: 1,
+              phases: RSC_FLIGHT_ONLY_PHASES,
             },
           },
           performance.now(),
@@ -1159,7 +1161,9 @@ export function createRSCHandler<
           const notFoundStageTracking = {
             mode: isPartial ? ("partial" as const) : ("full" as const),
             routeKey,
-            totalStages: isNotFoundFlightResponse ? 1 : 2,
+            phases: isNotFoundFlightResponse
+              ? RSC_FLIGHT_ONLY_PHASES
+              : RSC_FLIGHT_HTML_PHASES,
           };
           const rscStream = renderRscFlightStage(
             {

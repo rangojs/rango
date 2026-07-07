@@ -22,6 +22,9 @@ import type { RscPayload } from "./types.js";
 import type { SSRModule } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 import {
+  RSC_FLIGHT_ONLY_PHASES,
+  RSC_RENDER_FLIGHT_RESPONSE_PHASES,
+  RSC_RENDER_HTML_RESPONSE_PHASES,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
@@ -466,7 +469,9 @@ async function handleRscRenderingInner<TEnv>(
   const stageTracking = {
     mode: isPartial ? ("partial" as const) : ("full" as const),
     routeKey: reqCtx._routeName,
-    totalStages: isFlightResponse ? 3 : 4,
+    phases: isFlightResponse
+      ? RSC_RENDER_FLIGHT_RESPONSE_PHASES
+      : RSC_RENDER_HTML_RESPONSE_PHASES,
   };
   const renderStages = createRscRenderStages({
     ctx,
@@ -638,7 +643,7 @@ function serveShellHit(
         tracking: {
           mode: "full",
           routeKey: activeCtx._routeName,
-          totalStages: 1,
+          phases: RSC_FLIGHT_ONLY_PHASES,
         },
       },
       performance.now(),

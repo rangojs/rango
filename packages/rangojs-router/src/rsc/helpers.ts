@@ -30,6 +30,7 @@ export interface RscRenderStageInput<TEnv> {
   payload: RscPayload;
   init: ResponseInit;
   temporaryReferences?: unknown;
+  recordSerializeMetric?: boolean;
   tracking?: RscRenderStageTracking;
 }
 
@@ -42,6 +43,26 @@ export type RscRenderMode =
   | "progressive-enhancement-error";
 
 export type RscRenderPhase = "payload" | "flight" | "html" | "response";
+
+export const RSC_RENDER_FLIGHT_RESPONSE_PHASES: readonly RscRenderPhase[] = [
+  "payload",
+  "flight",
+  "response",
+];
+
+export const RSC_RENDER_HTML_RESPONSE_PHASES: readonly RscRenderPhase[] = [
+  "payload",
+  "flight",
+  "html",
+  "response",
+];
+
+export const RSC_FLIGHT_ONLY_PHASES: readonly RscRenderPhase[] = ["flight"];
+
+export const RSC_FLIGHT_HTML_PHASES: readonly RscRenderPhase[] = [
+  "flight",
+  "html",
+];
 
 export interface RscRenderStageProgress {
   completed: number;
@@ -84,6 +105,7 @@ export interface RscRenderStageTracking {
   mode?: RscRenderMode;
   routeKey?: string;
   actionId?: string;
+  phases?: readonly RscRenderPhase[];
   totalStages?: number;
   onEvent?: (event: RscRenderStageEvent) => void;
 }
@@ -95,6 +117,7 @@ export interface RscFlightStageInput<TEnv> {
   env: TEnv;
   payload: RscPayload;
   temporaryReferences?: unknown;
+  recordSerializeMetric?: boolean;
   tracking?: RscRenderStageTracking;
 }
 
@@ -132,28 +155,35 @@ interface RscFlightStageResult {
   control: RscRenderStageControl | undefined;
 }
 
-const RSC_RENDER_STAGE_TOTAL = 3;
+type RscRenderStageSink = NonNullable<RscRenderStageTracking["onEvent"]>;
 
-function rscStageTotal(tracking: RscRenderStageTracking | undefined): number {
+function rscStagePhases(
+  tracking: RscRenderStageTracking | undefined,
+): readonly RscRenderPhase[] {
+  const phases = tracking?.phases;
+  if (phases && phases.length > 0) return phases;
   const total = tracking?.totalStages;
-  return total && Number.isFinite(total) && total > 0
-    ? total
-    : RSC_RENDER_STAGE_TOTAL;
+  if (total === 1) return RSC_FLIGHT_ONLY_PHASES;
+  if (total === 2) return RSC_FLIGHT_HTML_PHASES;
+  if (total === 4) return RSC_RENDER_HTML_RESPONSE_PHASES;
+  return RSC_RENDER_FLIGHT_RESPONSE_PHASES;
 }
 
 function createRscStageContext(
   input: { url: URL; tracking?: RscRenderStageTracking },
   phase: RscRenderPhase,
-  completed: number,
   startedAt: number,
   phaseStartedAt: number,
 ): RscRenderStageContext {
-  const total = rscStageTotal(input.tracking);
+  const phases = rscStagePhases(input.tracking);
+  const phaseIndex = phases.indexOf(phase);
+  const total = phases.length;
+  const completed = phaseIndex >= 0 ? phaseIndex + 1 : total;
   return {
     mode: input.tracking?.mode ?? "unknown",
     phase,
     pathname: input.url.pathname,
-    progress: { completed: Math.min(completed, total), total },
+    progress: { completed, total },
     startedAt,
     phaseStartedAt,
     ...(input.tracking?.routeKey && { routeKey: input.tracking.routeKey }),
@@ -161,14 +191,19 @@ function createRscStageContext(
   };
 }
 
+function getRscStageSink(input: {
+  tracking?: RscRenderStageTracking;
+}): RscRenderStageSink | undefined {
+  return input.tracking?.onEvent;
+}
+
 function emitRscStageEvent(
-  input: { tracking?: RscRenderStageTracking },
-  event: RscRenderStageEvent,
+  sink: RscRenderStageSink | undefined,
+  createEvent: () => RscRenderStageEvent,
 ): void {
-  const sink = input.tracking?.onEvent;
   if (!sink) return;
   try {
-    sink(event);
+    sink(createEvent());
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.error("[RSC] render stage event sink failed:", error);
@@ -185,11 +220,11 @@ export function renderRscFlightStage<TEnv>(
   const context = createRscStageContext(
     input,
     "flight",
-    2,
     startedAt,
     phaseStartedAt,
   );
-  emitRscStageEvent(input, { type: "stage:start", context });
+  const sink = getRscStageSink(input);
+  emitRscStageEvent(sink, () => ({ type: "stage:start", context }));
 
   try {
     const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
@@ -203,17 +238,19 @@ export function renderRscFlightStage<TEnv>(
       },
     });
     const durationMs = performance.now() - phaseStartedAt;
-    appendMetric(
-      _getRequestContext()?._metricsStore,
-      "rsc-serialize",
-      phaseStartedAt,
-      durationMs,
-    );
-    emitRscStageEvent(input, {
+    if (input.recordSerializeMetric === true) {
+      appendMetric(
+        _getRequestContext()?._metricsStore,
+        "rsc-serialize",
+        phaseStartedAt,
+        durationMs,
+      );
+    }
+    emitRscStageEvent(sink, () => ({
       type: "stage:complete",
       context,
       durationMs,
-    });
+    }));
 
     return {
       type: "flight" as const,
@@ -224,12 +261,12 @@ export function renderRscFlightStage<TEnv>(
       context,
     };
   } catch (error) {
-    emitRscStageEvent(input, {
+    emitRscStageEvent(sink, () => ({
       type: "stage:error",
       context,
       durationMs: performance.now() - phaseStartedAt,
       error,
-    });
+    }));
     throw error;
   }
 }
@@ -252,12 +289,17 @@ async function* createRscFlightStages<TEnv>(
       env: input.env,
       payload,
       temporaryReferences: input.temporaryReferences,
+      recordSerializeMetric: input.recordSerializeMetric ?? true,
       tracking: input.tracking,
     },
     startedAt,
     init,
   );
-  emitRscStageEvent(input, { type: "stage:yield", context: stage.context });
+  const sink = getRscStageSink(input);
+  emitRscStageEvent(sink, () => ({
+    type: "stage:yield",
+    context: stage.context,
+  }));
   const control = yield stage;
   return { stage, control };
 }
@@ -267,23 +309,29 @@ export async function observeRscHtmlStage<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const startedAt = performance.now();
-  const context = createRscStageContext(input, "html", 3, startedAt, startedAt);
-  emitRscStageEvent(input, { type: "stage:start", context });
+  const sink = getRscStageSink(input);
+  const context = sink
+    ? createRscStageContext(input, "html", startedAt, startedAt)
+    : undefined;
+  emitRscStageEvent(sink, () => ({
+    type: "stage:start",
+    context: context!,
+  }));
   try {
     const result = await fn();
-    emitRscStageEvent(input, {
+    emitRscStageEvent(sink, () => ({
       type: "stage:complete",
-      context,
+      context: context!,
       durationMs: performance.now() - startedAt,
-    });
+    }));
     return result;
   } catch (error) {
-    emitRscStageEvent(input, {
+    emitRscStageEvent(sink, () => ({
       type: "stage:error",
-      context,
+      context: context!,
       durationMs: performance.now() - startedAt,
       error,
-    });
+    }));
     throw error;
   }
 }
@@ -324,11 +372,14 @@ export async function* createRscRenderStages<TEnv>(
   const payloadContext = createRscStageContext(
     input,
     "payload",
-    1,
     startedAt,
     startedAt,
   );
-  emitRscStageEvent(input, { type: "stage:yield", context: payloadContext });
+  const sink = getRscStageSink(input);
+  emitRscStageEvent(sink, () => ({
+    type: "stage:yield",
+    context: payloadContext,
+  }));
   const payloadControl = yield {
     type: "payload" as const,
     payload,
@@ -352,32 +403,31 @@ export async function* createRscRenderStages<TEnv>(
       : flightResult.stage.stream;
 
   const phaseStartedAt = performance.now();
-  const responseContext = createRscStageContext(
-    input,
-    "response",
-    rscStageTotal(input.tracking),
-    startedAt,
-    phaseStartedAt,
-  );
-  emitRscStageEvent(input, { type: "stage:start", context: responseContext });
+  const responseContext = sink
+    ? createRscStageContext(input, "response", startedAt, phaseStartedAt)
+    : undefined;
+  emitRscStageEvent(sink, () => ({
+    type: "stage:start",
+    context: responseContext!,
+  }));
   try {
     const response = createResponseWithMergedHeaders(body, {
       ...init,
       ...flightControl?.init,
     });
-    emitRscStageEvent(input, {
+    emitRscStageEvent(sink, () => ({
       type: "stage:complete",
-      context: responseContext,
+      context: responseContext!,
       durationMs: performance.now() - phaseStartedAt,
-    });
+    }));
     return response;
   } catch (error) {
-    emitRscStageEvent(input, {
+    emitRscStageEvent(sink, () => ({
       type: "stage:error",
-      context: responseContext,
+      context: responseContext!,
       durationMs: performance.now() - phaseStartedAt,
       error,
-    });
+    }));
     throw error;
   }
 }

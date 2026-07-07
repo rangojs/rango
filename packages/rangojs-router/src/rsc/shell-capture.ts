@@ -56,7 +56,7 @@ import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
-import { renderRscFlightStage } from "./helpers.js";
+import { RSC_FLIGHT_ONLY_PHASES, renderRscFlightStage } from "./helpers.js";
 
 /**
  * Task-quantized quiesce: the number of consecutive macrotask hops with zero new
@@ -1142,7 +1142,7 @@ async function attemptCapture(
         tracking: {
           mode: "full",
           routeKey: derivedCtx._routeName,
-          totalStages: 1,
+          phases: RSC_FLIGHT_ONLY_PHASES,
         },
       },
       performance.now(),
