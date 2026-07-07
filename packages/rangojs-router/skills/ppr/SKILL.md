@@ -318,8 +318,19 @@ The lane is decided PER TREE NODE, at the entry that REGISTERS the loaders —
 `loading()` on a CHILD route does not change a parent layout's lane, and
 `loading()` IS valid on layout and parallel entries, not just routes.
 
-Three hard edges (each e2e/unit-pinned):
+Four hard edges (each e2e/unit-pinned):
 
+- **Header writes throw (issue #713).** ppr is a document-scoped `cache()`:
+  in any cached scenario ONLY MIDDLEWARE writes response headers. A handler
+  or loader on a ppr route calling `ctx.headers.set()`, `cookies().set()`,
+  `ctx.header()`, `ctx.setTheme()`, or `setStatus()` throws on EVERY render —
+  dev and prod,
+  first render, same guard family as the `cache()` boundary guard. Handlers
+  are replayed on HITs (the write would silently differ between MISS and
+  HIT); loaders are live but settle AFTER the response headers flushed with
+  the shell (dead letters). Move the write into route middleware — it runs
+  on every request, including HITs, and its headers/cookies merge into every
+  response.
 - **Identity refuses.** `cookies()`/`headers()` inside a bake-lane loader
   throws during capture and the capture REFUSES (deterministic, once-per-key
   warned) — identity can never bake into the shared shell. Give that loader's

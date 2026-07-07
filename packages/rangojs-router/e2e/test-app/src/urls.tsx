@@ -24,6 +24,7 @@ import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { shellCachePatterns } from "./urls/shell-cache.js";
+import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
 import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
@@ -861,6 +862,12 @@ export const urlpatterns = urls(
       // middleware); the loader behind loading() is the live hole that resumes
       // into the frozen prelude on a HIT.
       include("/", shellCachePatterns, { name: "" }),
+      // ppr header-write guard fixtures (issue #713) — isolated routes; the
+      // guard routes error deterministically and are only fetched by their
+      // own tests (ppr-header-guard.test.ts).
+      include("/ppr-header-guard", pprHeaderGuardPatterns, {
+        name: "pprHeaderGuard",
+      }),
 
       // PPR action-correctness fixtures — /shell-cache-action.
       include("/", shellCacheActionPatterns, { name: "" }),

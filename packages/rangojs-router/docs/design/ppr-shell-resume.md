@@ -986,13 +986,91 @@ per-request data in loaders (holes); keep handles on the replay path.
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Shell content              | shared per host+URL key — personalization must live in loaders/holes (the shell-manifest pattern). ENFORCED: `cookies()`/`headers()` reads throw during a capture render (`assertNotInsideShellCapture`, cookie-store.ts), making cookie-reading shells PPR-ineligible by construction                                                                                                                                             |
 | Multi-tenant / host-router | the default key incorporates `url.host` so one tenant's shell can never compose into another tenant's page on a shared worker + store; custom `keyGenerator`s own host scoping themselves                                                                                                                                                                                                                                          |
-| Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries                                                                                                                                                                                                                                                        |
+| Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries. Handler/loader header WRITES on a ppr route throw — see "The header doctrine" below                                                                                                                                                                   |
 | Actions / PE / formState   | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Per-request nonce          | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | React/router upgrade       | shells invalidated via `reactVersion` check (treated as a miss on mismatch; recapture overwrites and TTL ages the entry out — v1 has no `deleteShell`)                                                                                                                                                                                                                                                                             |
 | App redeploy (same React)  | shells invalidated via the `buildVersion` check — a persistent shared store (KV/runtime-cache) survives deploys, and resuming an old build's postponed blob against the new build's tree would tree-mismatch AFTER the 200 + prelude committed. Pre-field entries miss the same way. Corrupt entries fail `hasIntactShellPayload` pre-commit and degrade identically; a tail failure on a served HIT schedules a healing recapture |
 | Dev server                 | works; shells are memory-store-scoped and cheap to recapture; HMR edits produce stale shells until TTL/recapture — documented, acceptable                                                                                                                                                                                                                                                                                          |
 | Composite response         | per-request; only the shell entry is cacheable. Note ordering with the document cache: if the document-cache middleware wraps a ppr route, it may cache the composite — correct output, but it makes shell caching redundant for that route. Pick one per route.                                                                                                                                                                   |
+
+### The header doctrine (issue #713)
+
+**`ppr` is a document-scoped `cache()`; in any cached scenario ONLY MIDDLEWARE
+writes response headers.** That is the entire rule.
+
+Handler and loader header writes (`ctx.headers.set/append/delete`, the
+RequestContext `header`/`setCookie`/`deleteCookie`/`setStatus`/`setTheme`
+lane, and raw `ctx.res.headers` mutations) THROW on a ppr route — on every
+render, dev and prod, MISS and HIT alike — through the same unified guard
+that already refuses them inside a `cache()` boundary
+(`assertCachedHeaderWriteAllowed`, `src/server/context.ts`; latched by the
+segment funnels via `latchPprHeaderScopeForEntries`). Deterministic: the first
+dev render fails loudly, so a MISS/HIT header divergence can never ship. Why a
+guard and not replay: a handler runs on MISS/capture but is replayed on HITs,
+so any header it writes silently differs between MISS and HIT (field evidence:
+a storefront session bug from exactly that cookie-shaped divergence). Loaders
+are live but POST-COMMIT — the response headers flush with the shell prelude
+at TTFB before any loader settles, so loader writes are dead letters on HITs
+by physics. Middleware is THE header lane: it wraps the commit point, runs on
+every request including HITs, and its stub-response writes merge into every
+response (`createResponseWithMergedHeaders` -> `applyStubHeaders`,
+`src/rsc/helpers.ts`). One deliberate asymmetry survives: loader writes inside
+a plain `cache()` boundary stay ALLOWED — those loaders re-run and merge into
+every response (no divergence exists; pinned by the cache-scope-guard e2e and
+vite-rsc-demo's shop cart), while ppr loader writes throw.
+
+Mechanics (the invariants the code comments point at):
+
+- **One choke point, not enumerated wrappers.** Every consumer-reachable
+  mutation of the stub response's Headers funnels through a guarded proxy
+  shadowed onto the stub `Response` instance
+  (`createRequestContext`, `src/server/request-context.ts`): `ctx.header`,
+  `setCookie`/`deleteCookie` (and `cookies().set`), `ctx.setTheme`, the
+  handler `ctx.headers` proxy, and raw `ctx.res.headers.set(...)` all hit the
+  guard at the mutation itself. `setStatus`/`onResponse` are not Headers
+  mutations and stay individually guarded. Internal serve machinery
+  (`_rotateStateCookie`, `_setKeepCacheDirective`) writes to the raw Headers —
+  `invalidateClientCache()`/`keepClientCache()` are documented callable from
+  loaders and during capture.
+- **Latch lifetime = funnel scope.** The latch is a field on the RangoContext
+  ALS store; each funnel runs inside its own `Store.run` scope and
+  `runWithStore` deliberately never copies `cachedHeaderScope`, so the latch
+  dies when the funnel scope unwinds. That is the whole middleware exemption:
+  pre-`next()` writes happen before any latch exists, post-`next()` writes
+  happen after the scope died — pinned by the `/ppr-header-guard/mw-post-next`
+  e2e (post-next header + cookie land on MISS and HIT). The serve/commit
+  path's stub reads and Set-Cookie drain (`rsc/helpers.ts`) run outside any
+  latched scope for the same reason.
+- **Guard and serve share predicate AND input.** The latch checks the LEAF
+  route entry (`entries[entries.length - 1]`, the `manifestEntry`) with the
+  same `isPprEntry` predicate the serve path feeds `resolvePprConfig` — a ppr
+  declaration on a non-leaf ancestor neither shell-serves nor latches.
+- **Intercept funnels carry a defense-in-depth latch.** ppr and intercepts do
+  not compose on the shell path (shells are captured/served only for document
+  requests; `withInterceptResolution` skips intercepts on full matches), but a
+  partial nav can render an intercept over a ppr-declared target in its own
+  store scope — `resolveInterceptEntry`/`resolveInterceptLoadersOnly` latch
+  off the target route's manifest entry, after intercept middleware runs.
+
+Six-framework survey (2026-07, issue #713): the ecosystem splits by SURFACE.
+Response-object endpoints (Next route handlers, Nitro, vinext handlers) replay
+captured headers — with Set-Cookie as an open wound (Nitro session-fixation
+issue #3468; Next silently caches Set-Cookie). Document/page surfaces — our
+surface — are doctrine-B unanimously: no framework replays page-code headers
+from a document cache entry (Next app pages expose no mutable header API and
+`cookies().set()` throws at render; SvelteKit and Astro silently drop, a
+self-acknowledged wart; React Router 7 makes it a build error when no live
+lane exists). Next's derived `revalidate -> Cache-Control` does not transfer:
+`ppr.ttl/swr` governs the WORKER-INTERNAL shell entry, never HTTP
+cacheability — ppr responses are dynamic by design (live holes, live
+middleware, per-request payload rows; the worker handles every request). The
+only "special" cached header in the ecosystem is Vercel's postponed-state
+transport for their CDN-split serving model — rango has no split, so no
+analog exists. NO replay machinery, NO derived headers, NO exclusion
+taxonomy. A someday-option (not built): RR7-style declarative per-route
+`headers()` use-item on the live lane, if a request-dependent need
+materializes.
 
 ## Platform notes
 

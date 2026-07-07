@@ -1,4 +1,11 @@
-import { urls, updateTag, revalidateTag, Meta, nonce } from "@rangojs/router";
+import {
+  urls,
+  updateTag,
+  revalidateTag,
+  Meta,
+  nonce,
+  cookies,
+} from "@rangojs/router";
 import { Suspense } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
@@ -32,6 +39,16 @@ import {
   PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
+import {
+  CfPhgHandlerPage,
+  CfPhgLoaderPage,
+  CfPhgMwLivePage,
+  CfPprBasketPage,
+} from "./pages/ppr-header-guard.js";
+import {
+  CfPhgCookieWriterLoader,
+  CfPhgHoleLoader,
+} from "./loaders/ppr-header-guard.js";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
@@ -129,6 +146,7 @@ export const urlpatterns = urls(
     include,
     middleware,
     transition,
+    errorBoundary,
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
@@ -508,6 +526,85 @@ export const urlpatterns = urls(
             ],
           ),
         ]),
+        // ppr header-write guard (issue #713): handler/loader header writes on
+        // a ppr route throw deterministically; middleware stays the live
+        // header lane. Guard routes carry their own errorBoundary and are only
+        // fetched by ppr-header-guard.test.ts. NOT in PPR_WARMUP_HIT_ROUTES:
+        // the guard routes never store a shell (they 500), and the mw-live/
+        // basket e2es own their MISS -> HIT round-trips.
+        layout(
+          () => (
+            <div>
+              <Outlet />
+            </div>
+          ),
+          () => [
+            errorBoundary((props) => (
+              <div data-testid="cf-phg-error-page">
+                <span data-testid="cf-phg-error-message">
+                  {props.error.message}
+                </span>
+              </div>
+            )),
+            path("/ppr-header-guard", CfPhgHandlerPage, {
+              name: "pprHeaderGuardHandler",
+              ppr: true,
+            }),
+            path(
+              "/ppr-header-guard/loader",
+              CfPhgLoaderPage,
+              { name: "pprHeaderGuardLoader", ppr: true },
+              () => [loader(CfPhgCookieWriterLoader)],
+            ),
+          ],
+        ),
+        // POSITIVE CONTROL (issue #713): middleware header + cookie on a ppr
+        // route ride MISS and HIT alike. Scoped to this subtree.
+        middleware(
+          async (ctx, next) => {
+            ctx.headers.set("X-CF-PHG-MW", "static-value");
+            ctx.headers.set("X-CF-PHG-MW-Req", crypto.randomUUID());
+            cookies().set("cf_phg_mw_session", "live-cookie", { path: "/" });
+            return next();
+          },
+          () => [
+            path(
+              "/ppr-mw-live",
+              CfPhgMwLivePage,
+              { name: "pprMwLive", ppr: { ttl: 300, swr: 120 } },
+              () => [
+                loader(CfPhgHoleLoader),
+                loading(
+                  <div data-testid="cf-phg-mw-live-fallback">Loading...</div>,
+                ),
+              ],
+            ),
+          ],
+        ),
+        // Storefront basket shape (issue #713): the action rotates the basket
+        // cookie; the following GET is a shell HIT whose middleware reads the
+        // cookie per request and reflects it as a response header — session
+        // continuity through action POST -> GET(HIT).
+        middleware(
+          async (ctx, next) => {
+            const basket = cookies().get("basket_count")?.value ?? "0";
+            ctx.headers.set("X-CF-Basket-Count", basket);
+            return next();
+          },
+          () => [
+            path(
+              "/ppr-basket",
+              CfPprBasketPage,
+              { name: "pprBasket", ppr: { ttl: 300, swr: 120 } },
+              () => [
+                loader(CfPhgHoleLoader),
+                loading(
+                  <div data-testid="cf-ppr-basket-fallback">Loading...</div>,
+                ),
+              ],
+            ),
+          ],
+        ),
         // Shell fast-path execution matrix (docs/design/shell-fast-path.md):
         // middleware + layout + parallel + path + loader counters, asserted
         // layer-by-layer across consecutive HITs on workerd/KV. The middleware
