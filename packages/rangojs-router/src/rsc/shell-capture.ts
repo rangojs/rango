@@ -79,8 +79,12 @@ import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
  */
 const FLIGHT_QUIET_HOPS = 2;
 
-/** Default upper bound on the capture prerender wait before forcing the abort. */
-const SHELL_CAPTURE_MAX_WAIT_MS = 5000;
+/**
+ * Default upper bound on the capture prerender wait before forcing the abort.
+ * Single owner of the default budget — shell-build-manifest.ts imports it so
+ * the dev fetch bound's envelope math cannot drift from the capture.
+ */
+export const SHELL_CAPTURE_MAX_WAIT_MS = 5000;
 
 /**
  * Upper bound on waiting for the capture's DEFERRED cache writes to settle before
@@ -797,6 +801,15 @@ export interface ShellCaptureDescriptor {
   ttl?: number;
   swr?: number;
   tags?: string[];
+  /**
+   * Per-route capture settle budget in ms (`ppr.captureTimeout`, resolved by
+   * resolvePprConfig). Feeds captureShellHTML's maxWaitMs — the ONE deadline
+   * bounding the whole capture, so it covers BOTH the fizz prerender AND the
+   * deferred-material settle window (the handlesBaked/loader-container
+   * holdUntil that keeps the gate from freezing while top-level pushes are
+   * pending). Undefined = SHELL_CAPTURE_MAX_WAIT_MS (5000).
+   */
+  captureTimeout?: number;
   store?: SegmentCacheStore<any>;
   /** Gates the concise per-attempt capture breadcrumbs (INTERNAL_RANGO_DEBUG). */
   debug?: boolean;
@@ -1421,10 +1434,12 @@ async function captureAndStoreShell(
     // captureShellHTML CONSUMES the (gated) stream — it is not also SSR'd.
     let result: Awaited<ReturnType<typeof captureShellHTML>>;
     try {
+      // One deadline for the whole capture — semantics spec'd on the option
+      // (PartialPrerenderProps.captureTimeout, urls/pattern-types.ts).
       result = await observePhase(PHASES.ssr, () =>
         captureShellHTML(gate.stream, {
           quiesce,
-          maxWaitMs: SHELL_CAPTURE_MAX_WAIT_MS,
+          maxWaitMs: capture.captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS,
         }),
       );
     } catch (error) {

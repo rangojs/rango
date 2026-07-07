@@ -196,6 +196,7 @@ async function handleRscRenderingInner<TEnv>(
             ttl: pprConfig.ttl,
             swr: pprConfig.swr,
             tags: pprConfig.tags,
+            captureTimeout: pprConfig.captureTimeout,
             store,
             debug: INTERNAL_RANGO_DEBUG,
             maxSnapshotBytes: pprConfig.maxSnapshotBytes,
@@ -304,6 +305,7 @@ async function handleRscRenderingInner<TEnv>(
                   swr: pprConfig.swr,
                   tags: pprConfig.tags,
                   maxSnapshotBytes: pprConfig.maxSnapshotBytes,
+                  captureTimeout: pprConfig.captureTimeout,
                 }
               : undefined,
           );

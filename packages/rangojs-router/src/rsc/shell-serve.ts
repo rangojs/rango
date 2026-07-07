@@ -30,6 +30,14 @@ export const SHELL_STATUS_HEADER = "x-rango-shell";
  */
 export const DEFAULT_PPR_TTL_SECONDS = 300;
 
+/**
+ * Timeout for the dev /__rsc_shell endpoint's sequential /__rsc_prerender
+ * pre-flight probe (vite/router-discovery.ts). Hoisted here so the client-side
+ * fetch bound (shell-build-manifest.ts devShellFetchTimeoutMs) enumerates the
+ * SAME term of the endpoint's worst-case envelope — the two cannot drift.
+ */
+export const DEV_SHELL_PROBE_TIMEOUT_MS: number = 10_000;
+
 /** The route's ppr option normalized to a concrete policy. */
 export interface ResolvedPprConfig {
   ttl: number;
@@ -42,12 +50,39 @@ export interface ResolvedPprConfig {
    * cannot drift.
    */
   maxSnapshotBytes?: number;
+  /**
+   * Capture settle budget in ms (`ppr.captureTimeout`). Undefined = the
+   * capture default (SHELL_CAPTURE_MAX_WAIT_MS, 5000) — the default's single
+   * owner stays shell-capture.ts so build/runtime producers cannot drift.
+   */
+  captureTimeout?: number;
+}
+
+/**
+ * Validate the raw `ppr.captureTimeout` option: a finite number >= 1ms passes
+ * through; anything else (including 0/negative/NaN/Infinity/non-number)
+ * resolves to undefined, which means "use the capture default" downstream.
+ * Mirrors the prefetch-limit option policy: invalid values silently fall back
+ * to the default rather than throwing at request time. Also the boundary
+ * re-normalizer for the dev /__rsc_shell endpoint (vite/router-discovery.ts),
+ * whose param crossed an HTTP query string.
+ */
+export function normalizeCaptureTimeout(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? value
+    : undefined;
 }
 
 /**
  * Normalize the matched page route's `ppr` path option. Returns null when the
  * route does not declare `ppr` (or declares `ppr: false`) — the caller then does
  * NOTHING: no store read, no capture, no logs. Pure axis 1, zero cost.
+ *
+ * The route's NAME is irrelevant here (and everywhere on the shell lane):
+ * nameless `path()` routes register their EntryData under a synthesized
+ * `$path_*` manifest key with the `ppr` option intact (urls/path-helper.ts),
+ * so a nameless entry resolves exactly like a named one — pinned by the
+ * nameless-ppr e2e in both apps (issue #714).
  *
  * PPR is a DOCUMENT-level property of the page route; there is no subtree
  * inheritance (declaring it on a layout is not supported — a follow-up).
@@ -64,6 +99,7 @@ export function resolvePprConfig(
     swr: ppr.swr,
     tags: ppr.tags,
     maxSnapshotBytes: ppr.maxSnapshotBytes,
+    captureTimeout: normalizeCaptureTimeout(ppr.captureTimeout),
   };
 }
 

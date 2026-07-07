@@ -338,6 +338,8 @@ export const NamedRoutes = {
   shellCacheSlotHole: "/shell-cache/slot-hole",
   shellCacheSlotUse: "/shell-cache/slot-use",
   shellCacheSlotUseOther: "/shell-cache/slot-use/other",
+  shellCacheSlowMeta: "/shell-cache/slow-meta",
+  shellCacheSlowMetaDefault: "/shell-cache/slow-meta-default",
   shellCacheSnapshotCap: "/shell-cache/snapshot-cap",
   shellCacheStream: "/shell-cache/stream",
   shellSecure: "/shell-secure",

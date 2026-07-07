@@ -20,6 +20,10 @@ import {
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
 import {
+  DEV_SHELL_PROBE_TIMEOUT_MS,
+  normalizeCaptureTimeout,
+} from "../rsc/shell-serve.js";
+import {
   injectClientDebugFlag,
   internalDebugNoCacheMiddleware,
 } from "./inject-client-debug.js";
@@ -1149,6 +1153,13 @@ export function createRouterDiscoveryPlugin(
           maxSnapshotBytesRaw === null
             ? undefined
             : Number(maxSnapshotBytesRaw);
+        // Boundary revalidation via the SHARED normalizer (shell-serve.ts):
+        // the param crossed an HTTP query string, and a garbage value must
+        // fall back to the capture default, never reach setTimeout as NaN
+        // (which Node clamps to ~1ms — an instant abort).
+        const captureTimeout = normalizeCaptureTimeout(
+          Number(url.searchParams.get("captureTimeout")),
+        );
 
         // Resolve the capture realms: main-server envs (Node preset) or the
         // shared temp Node server (Cloudflare preset — no main RSC runner).
@@ -1210,7 +1221,7 @@ export function createRouterDiscoveryPlugin(
         // (this fetch blocks a foreground document request), and the memoized
         // body needs neither the pre-flight round-trip nor a capture. Keyed
         // per router instance (= HMR generation) like the prerender memo.
-        const cacheKey = `shell|${pathname}|r=${routeName}|t=${ttl}|s=${swr ?? ""}|g=${(tags ?? []).join("+")}|v=${version}`;
+        const cacheKey = `shell|${pathname}|r=${routeName}|t=${ttl}|s=${swr ?? ""}|g=${(tags ?? []).join("+")}|c=${captureTimeout ?? ""}|v=${version}`;
         for (const [, routerInstance] of registry) {
           if (typeof routerInstance.match !== "function") continue;
           const cached = devPrerenderCache.get(routerInstance, cacheKey);
@@ -1229,7 +1240,7 @@ export function createRouterDiscoveryPlugin(
           try {
             const probe = await fetch(
               `${s.devServerOrigin}/__rsc_prerender?pathname=${encodeURIComponent(pathname)}&routeName=${encodeURIComponent(routeName)}`,
-              { signal: AbortSignal.timeout(10_000) },
+              { signal: AbortSignal.timeout(DEV_SHELL_PROBE_TIMEOUT_MS) },
             );
             if (!probe.ok) {
               res.statusCode = 404;
@@ -1264,6 +1275,7 @@ export function createRouterDiscoveryPlugin(
               swr,
               tags,
               maxSnapshotBytes,
+              captureTimeout,
               buildEnv: s.resolvedBuildEnv,
               buildVersion: version,
               captureShellHTML: ssrModule.captureShellHTML,

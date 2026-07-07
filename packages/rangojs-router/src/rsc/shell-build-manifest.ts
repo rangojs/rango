@@ -27,7 +27,12 @@
 
 import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
-import { hasIntactShellPayload, isValidShellHit } from "./shell-serve.js";
+import {
+  DEV_SHELL_PROBE_TIMEOUT_MS,
+  hasIntactShellPayload,
+  isValidShellHit,
+} from "./shell-serve.js";
+import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture.js";
 import { buildShellManifestKey } from "../prerender/shell-manifest-key.js";
 
 /** One baked manifest record (the __ps asset module's default export). */
@@ -134,18 +139,36 @@ export interface DevShellLookup {
   swr?: number;
   tags?: string[];
   maxSnapshotBytes?: number;
+  /** Resolved `ppr.captureTimeout` (ms) — the endpoint's capture honors it. */
+  captureTimeout?: number;
 }
 
+/** Retry delay (~400ms) plus quiesce/fizz/store headroom past the budgets. */
+const DEV_SHELL_RETRY_MARGIN_MS = 5_000;
+
 /**
- * Bound like the dev prerender store fetch (see #697): inside a workerd
- * waitUntil an unsettled fetch pends forever instead of rejecting; on
- * timeout this degrades to a MISS and the runtime capture path takes over.
- * 20s (not the store fetch's 10s): the endpoint's response IS an inline
- * capture — up to ~5s attempt + 400ms + ~5s cold-graph retry — and this
- * fetch blocks a foreground document request, so it must outlast a full
- * cold capture cycle rather than abort into a MISS at 10s.
+ * Timed out like the dev prerender store fetch (see #697): inside a workerd
+ * waitUntil an unsettled fetch pends forever instead of rejecting; on timeout
+ * this degrades to a MISS and the runtime capture path takes over. But this
+ * fetch blocks a foreground document request and its response IS an inline
+ * capture, so the bound must cover the endpoint's FULL sequential worst case
+ * — aborting a still-healthy capture turns it into a spurious MISS. The terms
+ * of the server envelope (dev /__rsc_shell, vite/router-discovery.ts):
+ * - DEV_SHELL_PROBE_TIMEOUT_MS: the sequential /__rsc_prerender pre-flight
+ *   probe (same constant on the endpoint side).
+ * - 2x the capture settle budget (`ppr.captureTimeout`, default
+ *   SHELL_CAPTURE_MAX_WAIT_MS): first attempt + one in-place cold-graph retry.
+ * - DEV_SHELL_RETRY_MARGIN_MS: the ~400ms retry delay plus headroom.
+ * Deeper fix (possible follow-up): the endpoint owns ONE total deadline and
+ * this bound becomes a plain liveness backstop instead of envelope math.
  */
-const DEV_SHELL_FETCH_TIMEOUT_MS = 20_000;
+function devShellFetchTimeoutMs(captureTimeout: number | undefined): number {
+  return (
+    DEV_SHELL_PROBE_TIMEOUT_MS +
+    2 * (captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS) +
+    DEV_SHELL_RETRY_MARGIN_MS
+  );
+}
 
 async function fetchDevShellEntry(
   pathname: string,
@@ -166,9 +189,12 @@ async function fetchDevShellEntry(
   if (dev.maxSnapshotBytes !== undefined) {
     params.set("maxSnapshotBytes", String(dev.maxSnapshotBytes));
   }
+  if (dev.captureTimeout !== undefined) {
+    params.set("captureTimeout", String(dev.captureTimeout));
+  }
   try {
     const res = await fetch(`${devUrl}/__rsc_shell?${params}`, {
-      signal: AbortSignal.timeout(DEV_SHELL_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(devShellFetchTimeoutMs(dev.captureTimeout)),
     });
     if (!res.ok) return undefined;
     return (await res.json()) as BuildShellEntry;
