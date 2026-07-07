@@ -23,7 +23,6 @@ const RESERVED_SEARCH_PARAMS = new Set([
   "__no_cache",
   "__rsc",
   "__html",
-  "__debug_manifest",
   "__prerender_collect",
 ]);
 

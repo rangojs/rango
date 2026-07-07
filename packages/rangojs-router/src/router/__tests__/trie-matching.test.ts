@@ -6,11 +6,9 @@ function buildTestTrie(
   routes: Record<string, string>,
   trailingSlash?: Record<string, string>,
 ) {
-  const ancestry: Record<string, string[]> = {};
   const staticPrefix: Record<string, string> = {};
 
   for (const [routeKey, pattern] of Object.entries(routes)) {
-    ancestry[routeKey] = [`A:${routeKey}`];
     const dynamicIdx = pattern.search(/[:*]/);
     if (dynamicIdx === -1) {
       staticPrefix[routeKey] = pattern === "/" ? "" : pattern;
@@ -23,7 +21,7 @@ function buildTestTrie(
       : prefix;
   }
 
-  return buildRouteTrie(routes, ancestry, staticPrefix, trailingSlash);
+  return buildRouteTrie(routes, staticPrefix, trailingSlash);
 }
 
 describe("tryTrieMatch", () => {
@@ -82,17 +80,12 @@ describe("tryTrieMatch", () => {
       "widgets.view": "/widgets/:id",
       "widgets.json": "/widgets/:file",
     };
-    const ancestry = {
-      "widgets.view": ["A:view"],
-      "widgets.json": ["A:json"],
-    };
     const staticPrefix = {
       "widgets.view": "/widgets",
       "widgets.json": "/widgets",
     };
     const trie = buildRouteTrie(
       routes,
-      ancestry,
       staticPrefix,
       undefined,
       undefined,

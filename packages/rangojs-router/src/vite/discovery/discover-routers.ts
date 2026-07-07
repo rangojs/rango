@@ -150,7 +150,6 @@ export async function discoverRouters(
   const newPerRouterManifestDataMap = new Map<string, any>();
   const newPerRouterPrecomputedMap = new Map<string, PrecomputedEntry[]>();
   const newPerRouterTrieMap = new Map<string, any>();
-  let mergedRouteAncestry: Record<string, string[]> = {};
   let mergedRouteTrailingSlash: Record<string, string> = {};
 
   let routerMountIndex = 0;
@@ -245,10 +244,6 @@ export async function discoverRouters(
       factoryOnlyPrefixes,
     });
 
-    // Merge ancestry (internal field, used only for trie building)
-    if (manifest._routeAncestry) {
-      Object.assign(mergedRouteAncestry, manifest._routeAncestry);
-    }
     // Merge trailing slash config
     if (manifest.routeTrailingSlash) {
       Object.assign(mergedRouteTrailingSlash, manifest.routeTrailingSlash);
@@ -303,64 +298,61 @@ export async function discoverRouters(
     (performance.now() - manifestGenStart).toFixed(1),
   );
 
-  // Build route trie from merged manifest + ancestry
+  // Build route trie from merged manifest
   let newMergedRouteTrie: any = null;
   const trieStart = debug ? performance.now() : 0;
   if (Object.keys(newMergedRouteManifest).length > 0) {
-    if (mergedRouteAncestry) {
-      // Build routeToStaticPrefix from saved manifests
-      const routeToStaticPrefix: Record<string, string> = {};
-      for (const { manifest } of allManifests) {
-        // Root-level routes have empty static prefix
-        for (const name of Object.keys(manifest.routeManifest)) {
-          if (!(name in routeToStaticPrefix)) {
-            routeToStaticPrefix[name] = "";
-          }
-        }
-        buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
-      }
-
-      // Collect prerender route names and response type routes from all manifests
-      const prerenderRouteNames = new Set<string>();
-      const passthroughRouteNames = new Set<string>();
-      const mergedResponseTypeRoutes: Record<string, string> = {};
-      for (const { manifest } of allManifests) {
-        if (manifest.prerenderRoutes) {
-          for (const name of manifest.prerenderRoutes) {
-            prerenderRouteNames.add(name);
-          }
-        }
-        if (manifest.passthroughRoutes) {
-          for (const name of manifest.passthroughRoutes) {
-            passthroughRouteNames.add(name);
-          }
-        }
-        if (manifest.responseTypeRoutes) {
-          Object.assign(mergedResponseTypeRoutes, manifest.responseTypeRoutes);
+    // Build routeToStaticPrefix from saved manifests
+    const routeToStaticPrefix: Record<string, string> = {};
+    for (const { manifest } of allManifests) {
+      // Root-level routes have empty static prefix
+      for (const name of Object.keys(manifest.routeManifest)) {
+        if (!(name in routeToStaticPrefix)) {
+          routeToStaticPrefix[name] = "";
         }
       }
+      buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
+    }
 
-      // buildRouteTrie reads these via ?.has / ?.[] — empty is observationally
-      // identical to undefined, so no empty->undefined coercion is needed.
-      newMergedRouteTrie = buildRouteTrie(
-        newMergedRouteManifest,
-        mergedRouteAncestry,
-        routeToStaticPrefix,
-        mergedRouteTrailingSlash,
-        prerenderRouteNames,
-        passthroughRouteNames,
-        mergedResponseTypeRoutes,
-      );
-
-      // Build per-router tries for multi-router isolation. Uses the single
-      // shared buildPerRouterTrie so the production serialized trie is built by
-      // exactly the same code as the dev/HMR runtime rebuild (manifest-init.ts).
-      // Returns null for route-less manifests (route-trie.ts).
-      for (const { id, manifest } of allManifests) {
-        const perRouterTrie = buildPerRouterTrie(manifest);
-        if (perRouterTrie) {
-          newPerRouterTrieMap.set(id, perRouterTrie);
+    // Collect prerender route names and response type routes from all manifests
+    const prerenderRouteNames = new Set<string>();
+    const passthroughRouteNames = new Set<string>();
+    const mergedResponseTypeRoutes: Record<string, string> = {};
+    for (const { manifest } of allManifests) {
+      if (manifest.prerenderRoutes) {
+        for (const name of manifest.prerenderRoutes) {
+          prerenderRouteNames.add(name);
         }
+      }
+      if (manifest.passthroughRoutes) {
+        for (const name of manifest.passthroughRoutes) {
+          passthroughRouteNames.add(name);
+        }
+      }
+      if (manifest.responseTypeRoutes) {
+        Object.assign(mergedResponseTypeRoutes, manifest.responseTypeRoutes);
+      }
+    }
+
+    // buildRouteTrie reads these via ?.has / ?.[] — empty is observationally
+    // identical to undefined, so no empty->undefined coercion is needed.
+    newMergedRouteTrie = buildRouteTrie(
+      newMergedRouteManifest,
+      routeToStaticPrefix,
+      mergedRouteTrailingSlash,
+      prerenderRouteNames,
+      passthroughRouteNames,
+      mergedResponseTypeRoutes,
+    );
+
+    // Build per-router tries for multi-router isolation. Uses the single
+    // shared buildPerRouterTrie so the production serialized trie is built by
+    // exactly the same code as the dev/HMR runtime rebuild (manifest-init.ts).
+    // Returns null for route-less manifests (route-trie.ts).
+    for (const { id, manifest } of allManifests) {
+      const perRouterTrie = buildPerRouterTrie(manifest);
+      if (perRouterTrie) {
+        newPerRouterTrieMap.set(id, perRouterTrie);
       }
     }
   }

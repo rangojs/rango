@@ -257,7 +257,6 @@ describe("precomputed prefix collision (shared staticPrefix across leaf includes
         routerId,
         buildRouteTrie(
           { "cat.page": "/shop/:cat/page", "brand.list": "/shop/:brand/list" },
-          { "cat.page": ["A"], "brand.list": ["A"] },
           { "cat.page": "/shop", "brand.list": "/shop" },
         ),
       );

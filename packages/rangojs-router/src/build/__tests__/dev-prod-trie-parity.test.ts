@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { urls } from "../../urls.js";
 import { generateManifestFull } from "../generate-manifest.js";
-import { buildPerRouterTrie, type TrieNode } from "../route-trie.js";
+import { buildPerRouterTrie } from "../route-trie.js";
 import { tryTrieMatch } from "../../router/trie-matching.js";
 
 // Regression (C12 / R1): production serializes the build-time trie while dev
@@ -38,37 +38,6 @@ function makePatterns() {
   ]);
 }
 
-// Recursively strip the debug-only `a` (ancestry) field from every leaf so two
-// tries built with different mount indices can be compared structurally.
-function stripAncestry(node: TrieNode | undefined): any {
-  if (!node) return node;
-  const out: any = {};
-  if (node.r) {
-    const { a: _a, ...rest } = node.r as any;
-    out.r = rest;
-  }
-  if (node.w) {
-    const { a: _a, ...rest } = node.w as any;
-    out.w = rest;
-  }
-  if (node.s) {
-    out.s = {};
-    for (const [k, child] of Object.entries(node.s)) {
-      out.s[k] = stripAncestry(child);
-    }
-  }
-  if (node.p) {
-    out.p = { n: node.p.n, c: stripAncestry(node.p.c) };
-  }
-  if (node.xp) {
-    out.xp = {};
-    for (const [k, child] of Object.entries(node.xp)) {
-      out.xp[k] = { n: child.n, c: stripAncestry(child.c) };
-    }
-  }
-  return out;
-}
-
 const PROBE_URLS = [
   "/",
   "/about",
@@ -96,7 +65,7 @@ describe("dev/prod per-router trie parity (buildPerRouterTrie)", () => {
     expect(devTrie).toEqual(prodTrie);
   });
 
-  it("a 2nd-router prod trie (mountIndex 1) differs only in leaf ancestry", async () => {
+  it("a 2nd-router prod trie (mountIndex 1) is byte-identical", async () => {
     const patterns = makePatterns();
     const devTrie = buildPerRouterTrie(
       await generateManifestFull(patterns, undefined),
@@ -104,10 +73,10 @@ describe("dev/prod per-router trie parity (buildPerRouterTrie)", () => {
     const prodR1Trie = buildPerRouterTrie(
       await generateManifestFull(patterns, 1),
     );
-    // Raw tries differ (leaf.a embeds the mount index)...
-    expect(devTrie).not.toEqual(prodR1Trie);
-    // ...but only in the debug-only ancestry: structurally identical otherwise.
-    expect(stripAncestry(devTrie!)).toEqual(stripAncestry(prodR1Trie!));
+    // The trie carries no mount-index-dependent data (the debug-only leaf
+    // ancestry that used to embed it was removed), so it is fully
+    // mount-index-independent — identical across every router slot.
+    expect(devTrie).toEqual(prodR1Trie);
   });
 
   it("match results are identical across mount indices for every probe URL", async () => {

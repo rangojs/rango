@@ -158,7 +158,6 @@ export function createRouter<TEnv = any>(
     prefetchConcurrency: prefetchConcurrencyOption,
     stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
-    allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
     tracing: tracingOption,
     ssr: ssrOption,
@@ -1020,9 +1019,6 @@ export function createRouter<TEnv = any>(
     // Raw (not the resolveSink no-op wrapper) so router.telemetry stays
     // undefined when unconfigured and call sites gate on truthiness.
     telemetry: telemetrySink,
-
-    // Expose debug manifest flag for handler
-    allowDebugManifest: allowDebugManifestOption,
 
     // Expose origin check configuration for handler (default: enabled)
     originCheck: originCheckOption ?? true,

@@ -19,10 +19,8 @@ const { buildRouteTrie } = await import("../../build/route-trie");
 const { tryTrieMatch } = await import("../trie-matching");
 
 function buildTestTrie(routes: Record<string, string>) {
-  const ancestry: Record<string, string[]> = {};
   const staticPrefix: Record<string, string> = {};
   for (const [routeKey, pattern] of Object.entries(routes)) {
-    ancestry[routeKey] = [`A:${routeKey}`];
     const dynamicIdx = pattern.search(/[:*]/);
     if (dynamicIdx === -1) {
       staticPrefix[routeKey] = pattern === "/" ? "" : pattern;
@@ -33,7 +31,7 @@ function buildTestTrie(routes: Record<string, string>) {
       ? prefix.slice(0, -1)
       : prefix;
   }
-  return buildRouteTrie(routes, ancestry, staticPrefix);
+  return buildRouteTrie(routes, staticPrefix);
 }
 
 describe("trie matching — constraint route decode (D4)", () => {

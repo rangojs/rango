@@ -367,12 +367,6 @@ export interface RangoInternal<
   readonly telemetry?: TelemetrySink;
 
   /**
-   * Whether ?__debug_manifest is allowed in production.
-   * Always enabled in development.
-   */
-  readonly allowDebugManifest: boolean;
-
-  /**
    * Resolved timeout configuration (merged from shorthand + structured).
    */
   readonly timeouts: ResolvedTimeouts;

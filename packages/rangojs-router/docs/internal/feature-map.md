@@ -167,7 +167,7 @@ Public API (`Rango` interface):
 Internal API (`RangoInternal`, not exported):
 
 - `.match()`, `.matchPartial()`, `.matchError()`, `.previewMatch()`, `.matchForPrerender()`, `.renderStaticSegment()`
-- `allowDebugManifest`, `debugManifest()`
+- `debugManifest()`
 
 ### URL Typing and Generation
 

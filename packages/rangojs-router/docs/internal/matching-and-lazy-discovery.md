@@ -86,14 +86,6 @@ are all in _where_ the data comes from, not _what_ it resolves to.
 | `routesEntries` (regex fallback) | `Rango.routes()` walk at init                              | `Rango.routes()` walk at init                            |
 | Regex fallback reachability      | reachable only in the HMR window before the trie rebuilds  | effectively unreachable (trie always present)            |
 
-There's one caveat worth knowing about so it doesn't spook you later:
-in a multi-router setup, the serialized trie carries per-leaf ancestry (`leaf.a`) computed
-from a build-time global `mountIndex`, which doesn't line up with the runtime
-per-router-local index for the second router onward. It looks scary but it isn't — that
-field only feeds the `__debug_manifest` endpoint. The real layout pruning happens by
-segment-ID prefix at render time and is self-consistent within each mode. (It's on the
-optional-cleanup list below.)
-
 ## Invariants & design decisions
 
 These are the load-bearing rules — the kind where "I'll just tweak this one line" quietly
@@ -249,9 +241,6 @@ is the list:
 None of these keep anyone up at night — they don't affect matching correctness or
 dev/prod parity — but they're real, so here they are:
 
-- **Stop serializing `leaf.a` (M2 / R9).** That build-time ancestry rides along in every
-  production per-router chunk and only feeds the debug endpoint; it could be recomputed on
-  demand. Best done alongside giving the runtime `mountIndex` a stable per-router key.
 - **Tidy the find-match cache mutation (M5 / R11).** `match-api` mutates the shared cached
   `matched.pt`. It's idempotent today so nothing's wrong, but reading
   `snapshot.isPassthrough` instead would be cleaner. (The part that _did_ matter — the
