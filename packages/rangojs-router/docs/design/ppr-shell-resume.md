@@ -1015,10 +1015,29 @@ at TTFB before any loader settles, so loader writes are dead letters on HITs
 by physics. Middleware is THE header lane: it wraps the commit point, runs on
 every request including HITs, and its stub-response writes merge into every
 response (`createResponseWithMergedHeaders` -> `applyStubHeaders`,
-`src/rsc/helpers.ts`). One deliberate asymmetry survives: loader writes inside
-a plain `cache()` boundary stay ALLOWED — those loaders re-run and merge into
-every response (no divergence exists; pinned by the cache-scope-guard e2e and
-vite-rsc-demo's shop cart), while ppr loader writes throw.
+`src/rsc/helpers.ts`). One deliberate asymmetry survives, and it is loader-KIND
+specific (#725): a DSL (registered) loader's writes inside a plain `cache()`
+boundary stay ALLOWED — a registered loader re-runs on every HIT
+(`runInsideLoaderScope` in `fresh.ts` -> `resolveLoadersOnly` on the cache-hit
+path) and merges into every response, so no divergence exists (pinned by the
+`/loader-cookie-allowed` cache-scope-guard e2e and vite-rsc-demo's shop cart).
+A **handler-invoked** loader body (`await ctx.use(Loader)` from a handler,
+never registered with `loader()`) does NOT get the exemption: on a HIT the
+handler is skipped, so that loader never re-runs and its Set-Cookie/header
+would land only on the MISS — it throws exactly like a handler write. The
+discriminator is `isInsideLoaderScope()` (DSL scope only, `loaderScopeALS`),
+not `isInsideAnyLoaderScope()` (which also sees the handler-invoked
+`loaderBodyScopeALS`); because the DSL scope ALS survives nested `ctx.use`
+bodies, a handler-invoked loader nested under a DSL loader stays exempt (its
+DSL parent re-invokes it every HIT). ppr loader writes throw regardless — the
+shell prelude flushes before any loader settles.
+
+Note this is a WRITE-only narrowing. The request-scoped READ guard
+(`isInsideCacheScope`, `src/server/context.ts`) deliberately stays on the
+BROAD predicate (`isInsideAnyLoaderScope()`): a handler-invoked loader's read
+under `cache()` bakes a shared copy into the cached artifact — the accepted
+consumption-lane tradeoff (#672/#674) — whereas a write has no baked-copy
+semantics on a HIT, so only writes narrow to DSL scope.
 
 Mechanics (the invariants the code comments point at):
 
