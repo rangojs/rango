@@ -107,7 +107,6 @@ async function buildPrefixTreeNode(
   namePrefix: string | undefined,
   patternsOrProvider: UrlPatterns<any> | IncludeProvider<any>,
   routeManifest: Record<string, string>,
-  routeAncestry: Record<string, string[]>, // internal: feeds trie building, not exported
   mountIndex: number,
   visited: Set<unknown> = new Set(),
   routeTrailingSlash?: Record<string, string>,
@@ -189,9 +188,6 @@ async function buildPrefixTreeNode(
       }
     }
 
-    // Capture ancestry from manifest entries' parent chains
-    captureAncestry(manifest, routeAncestry);
-
     // Collect prerender route names and handler definitions from manifest entries
     if (prerenderRoutes) {
       for (const [name, entry] of manifest) {
@@ -223,7 +219,6 @@ async function buildPrefixTreeNode(
         include.namePrefix,
         include.patterns as UrlPatterns<any> | IncludeProvider<any>,
         routeManifest,
-        routeAncestry,
         mountIndex,
         visited,
         routeTrailingSlash,
@@ -251,31 +246,10 @@ async function buildPrefixTreeNode(
 }
 
 /**
- * Walk parent chains of route entries to extract ancestry shortCodes.
- */
-function captureAncestry(
-  manifest: Map<string, EntryData>,
-  routeAncestry: Record<string, string[]>,
-): void {
-  for (const [routeName, entry] of manifest) {
-    if (entry.type === "route") {
-      const ancestry: string[] = [];
-      let current: EntryData | null = entry;
-      while (current) {
-        ancestry.unshift(current.shortCode);
-        current = current.parent;
-      }
-      routeAncestry[routeName] = ancestry;
-    }
-  }
-}
-
-/**
  * Internal manifest result including build-pipeline-only fields.
  * Not part of the public API — use generateManifest() for the public surface.
  */
 export interface FullManifest extends GeneratedManifest {
-  _routeAncestry: Record<string, string[]>;
   _prerenderDefs?: Record<string, any>;
 }
 
@@ -283,8 +257,7 @@ export interface FullManifest extends GeneratedManifest {
  * Generate manifest from UrlPatterns (public API).
  *
  * Returns only the public GeneratedManifest fields. Internal build pipeline
- * consumers that need _routeAncestry or _prerenderDefs should use
- * generateManifestFull() instead.
+ * consumers that need _prerenderDefs should use generateManifestFull() instead.
  *
  * @example
  * ```typescript
@@ -304,8 +277,10 @@ export async function generateManifest<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
 ): Promise<GeneratedManifest> {
-  const { _routeAncestry, _prerenderDefs, ...publicManifest } =
-    await generateManifestFull(urlpatterns, mountIndex);
+  const { _prerenderDefs, ...publicManifest } = await generateManifestFull(
+    urlpatterns,
+    mountIndex,
+  );
   return publicManifest;
 }
 
@@ -332,7 +307,6 @@ export async function generateManifestFull<TEnv>(
   },
 ): Promise<FullManifest> {
   const routeManifest: Record<string, string> = {};
-  const routeAncestry: Record<string, string[]> = {};
   const prefixTree: Record<string, PrefixTreeNode> = {};
 
   // Run the root patterns handler with tracking enabled
@@ -392,9 +366,6 @@ export async function generateManifestFull<TEnv>(
     Record<string, string>
   > = Object.fromEntries(searchSchemasMap);
 
-  // Capture ancestry from manifest entries' parent chains
-  captureAncestry(manifest, routeAncestry);
-
   // Collect prerender route names and handler definitions across all levels
   const prerenderRoutes: string[] = [];
   const prerenderDefs: Record<string, any> = {};
@@ -423,7 +394,6 @@ export async function generateManifestFull<TEnv>(
       include.namePrefix,
       include.patterns as UrlPatterns<any> | IncludeProvider<any>,
       routeManifest,
-      routeAncestry,
       mountIndex,
       visited,
       routeTrailingSlash,
@@ -453,7 +423,6 @@ export async function generateManifestFull<TEnv>(
       Object.keys(routeSearchSchemas).length > 0
         ? routeSearchSchemas
         : undefined,
-    _routeAncestry: routeAncestry,
     // Internal: prerender handler definitions for build-time getParams() access
     _prerenderDefs:
       Object.keys(prerenderDefs).length > 0 ? prerenderDefs : undefined,

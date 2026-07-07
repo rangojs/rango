@@ -127,14 +127,6 @@ export interface RangoOptions<TEnv = any> {
   debugPerformance?: boolean;
 
   /**
-   * Allow the `?__debug_manifest` query parameter to return route manifest data as JSON.
-   * In development mode this is always enabled regardless of this setting.
-   * Defaults to false. Set to true to enable in production.
-   * @internal
-   */
-  allowDebugManifest?: boolean;
-
-  /**
    * DEVELOPMENT/TEST ONLY. Emit an `X-Rango-Cache` response header describing
    * the cache status of the matched route, for use by testing primitives such
    * as `assertCacheStatus`.

@@ -52,8 +52,6 @@ import {
 import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
-  getRouteTrie,
-  getPrecomputedEntries,
   waitForManifestReady,
   getRouterManifest,
   getRouterTrie,
@@ -631,35 +629,6 @@ export function createRSCHandler<
     nonce: string | undefined,
   ): Promise<Response> {
     const handlerTiming: string[] = variables.__handlerTiming || [];
-
-    // Debug manifest endpoint: handled before classification since it
-    // doesn't need a route match and needs trie access from the closure.
-    const isDev = process.env.NODE_ENV !== "production";
-    if (
-      url.searchParams.has("__debug_manifest") &&
-      (isDev || router.allowDebugManifest)
-    ) {
-      const trie = getRouterTrie(router.id) ?? getRouteTrie();
-      const routeManifest = getRequiredRouteMap();
-      const { extractAncestryFromTrie } =
-        await import("../build/route-trie.js");
-      return new Response(
-        JSON.stringify(
-          {
-            routerId: router.id,
-            routeManifest,
-            routeAncestry: trie ? extractAncestryFromTrie(trie) : {},
-            routeTrie: trie,
-            precomputedEntries: getPrecomputedEntries(),
-          },
-          null,
-          2,
-        ),
-        {
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
 
     // ---- 1. Classify ----
     // classifyRequest may throw RouteNotFoundError for unknown routes.

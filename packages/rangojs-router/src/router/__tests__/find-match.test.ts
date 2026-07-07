@@ -85,11 +85,7 @@ describe("createFindMatch", () => {
     // trie-side entry-resolve misses and we fall through to Phase 2.
     setRouterTrie(
       "find-match-r3-suppress",
-      buildRouteTrie(
-        { "foo.show": "/foo/:id" },
-        { "foo.show": ["A:foo.show"] },
-        { "foo.show": "/foo" },
-      ),
+      buildRouteTrie({ "foo.show": "/foo/:id" }, { "foo.show": "/foo" }),
     );
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -110,11 +106,7 @@ describe("createFindMatch", () => {
     // the regex fallback resolves it — a real trie gap worth surfacing in dev.
     setRouterTrie(
       "find-match-r3-warn",
-      buildRouteTrie(
-        { "bar.index": "/bar" },
-        { "bar.index": ["A:bar.index"] },
-        { "bar.index": "/bar" },
-      ),
+      buildRouteTrie({ "bar.index": "/bar" }, { "bar.index": "/bar" }),
     );
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -185,11 +177,7 @@ describe("createFindMatch — authoritative trie miss (#664)", () => {
   function trieFor(routerId: string) {
     setRouterTrie(
       routerId,
-      buildRouteTrie(
-        { "bar.index": "/bar" },
-        { "bar.index": ["A:bar.index"] },
-        { "bar.index": "" },
-      ),
+      buildRouteTrie({ "bar.index": "/bar" }, { "bar.index": "" }),
     );
   }
 
@@ -243,7 +231,6 @@ describe("createFindMatch — authoritative trie miss (#664)", () => {
       routerId,
       buildRouteTrie(
         { "bar.index": "/bar" },
-        { "bar.index": ["A:bar.index"] },
         { "bar.index": "" },
         { "bar.index": "never" },
       ),
@@ -279,11 +266,7 @@ describe("createFindMatch — authoritative trie miss (#664)", () => {
     const routerId = "find-match-auth-loader";
     registerRouterManifestLoader(routerId, async () => ({
       manifest: { "bar.index": "/bar" },
-      trie: buildRouteTrie(
-        { "bar.index": "/bar" },
-        { "bar.index": ["A:bar.index"] },
-        { "bar.index": "" },
-      ),
+      trie: buildRouteTrie({ "bar.index": "/bar" }, { "bar.index": "" }),
     }));
     await ensureRouterManifest(routerId);
     expect(isRouterTrieAuthoritative(routerId)).toBe(true);
@@ -308,11 +291,7 @@ describe("createFindMatch — shared static-prefix async include candidate scan"
 
     setRouterTrie(
       "find-match-shared-happy",
-      buildRouteTrie(
-        { "shop.b": "/shop/b/:id" },
-        { "shop.b": ["A:shop.b"] },
-        { "shop.b": "/shop" },
-      ),
+      buildRouteTrie({ "shop.b": "/shop/b/:id" }, { "shop.b": "/shop" }),
     );
 
     const fm = createFindMatch({
@@ -337,11 +316,7 @@ describe("createFindMatch — shared static-prefix async include candidate scan"
 
     setRouterTrie(
       "find-match-shared-isolate",
-      buildRouteTrie(
-        { "shop.b": "/shop/b/:id" },
-        { "shop.b": ["A:shop.b"] },
-        { "shop.b": "/shop" },
-      ),
+      buildRouteTrie({ "shop.b": "/shop/b/:id" }, { "shop.b": "/shop" }),
     );
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

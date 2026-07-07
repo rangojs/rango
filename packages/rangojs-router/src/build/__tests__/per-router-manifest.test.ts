@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { generateManifestFull } from "../generate-manifest";
-import {
-  buildRouteTrie,
-  extractAncestryFromTrie,
-  type TrieNode,
-} from "../route-trie";
+import { buildRouteTrie, type TrieNode } from "../route-trie";
 import { urls } from "../../urls";
 import {
   setRouterManifest,
@@ -21,6 +17,24 @@ import {
   setRouteTrie,
   getRouteTrie,
 } from "../../route-map-builder";
+
+/**
+ * Collect the route names present in a built trie (keys only). Replaces the
+ * old extractAncestryFromTrie, which returned name->ancestry; these tests only
+ * ever asserted on the route-name key set (multi-router isolation).
+ */
+function trieRouteNames(node: TrieNode): Record<string, true> {
+  const names: Record<string, true> = {};
+  const visit = (n: TrieNode): void => {
+    if (n.r) names[n.r.n] = true;
+    if (n.w) names[n.w.n] = true;
+    if (n.s) for (const child of Object.values(n.s)) visit(child);
+    if (n.xp) for (const child of Object.values(n.xp)) visit(child.c);
+    if (n.p) visit(n.p.c);
+  };
+  visit(node);
+  return names;
+}
 
 // Simulate flattenLeafEntries from vite/index.ts (not exported, so replicate here)
 function flattenLeafEntries(
@@ -129,18 +143,16 @@ describe("per-router manifest generation", () => {
     // Build per-router tries
     const siteTrie = buildRouteTrie(
       siteManifest.routeManifest,
-      siteManifest._routeAncestry,
       siteStaticPrefix,
     );
     const adminTrie = buildRouteTrie(
       adminManifest.routeManifest,
-      adminManifest._routeAncestry,
       adminStaticPrefix,
     );
 
     // Extract route names from each trie
-    const siteTrieRoutes = extractAncestryFromTrie(siteTrie);
-    const adminTrieRoutes = extractAncestryFromTrie(adminTrie);
+    const siteTrieRoutes = trieRouteNames(siteTrie);
+    const adminTrieRoutes = trieRouteNames(adminTrie);
 
     // Site trie should only contain site routes
     expect(Object.keys(siteTrieRoutes)).toEqual(
@@ -220,21 +232,13 @@ describe("per-router manifest generation", () => {
     Object.assign(mergedManifest, siteManifest.routeManifest);
     Object.assign(mergedManifest, adminManifest.routeManifest);
 
-    const mergedAncestry: Record<string, string[]> = {};
-    Object.assign(mergedAncestry, siteManifest._routeAncestry);
-    Object.assign(mergedAncestry, adminManifest._routeAncestry);
-
     const mergedStaticPrefix: Record<string, string> = {};
     for (const name of Object.keys(mergedManifest)) {
       mergedStaticPrefix[name] = "";
     }
 
-    const mergedTrie = buildRouteTrie(
-      mergedManifest,
-      mergedAncestry,
-      mergedStaticPrefix,
-    );
-    const trieRoutes = extractAncestryFromTrie(mergedTrie);
+    const mergedTrie = buildRouteTrie(mergedManifest, mergedStaticPrefix);
+    const trieRoutes = trieRouteNames(mergedTrie);
 
     // Merged trie has all routes (but "/" collides: last writer wins)
     expect(Object.keys(trieRoutes)).toContain("about");
@@ -312,17 +316,15 @@ describe("per-router manifest with includes", () => {
 
     const siteTrie = buildRouteTrie(
       siteManifest.routeManifest,
-      siteManifest._routeAncestry,
       siteStaticPrefix,
     );
     const adminTrie = buildRouteTrie(
       adminManifest.routeManifest,
-      adminManifest._routeAncestry,
       adminStaticPrefix,
     );
 
-    const siteRoutes = extractAncestryFromTrie(siteTrie);
-    const adminRoutes = extractAncestryFromTrie(adminTrie);
+    const siteRoutes = trieRouteNames(siteTrie);
+    const adminRoutes = trieRouteNames(adminTrie);
 
     // Site trie should have blog.detail (dynamic param route)
     expect(siteRoutes).toHaveProperty("blog.detail");
@@ -355,8 +357,8 @@ describe("per-router storage isolation", () => {
   });
 
   it("should store and retrieve per-router tries independently", async () => {
-    const siteTrie: TrieNode = { r: { n: "home", sp: "", a: ["M0L0"] } };
-    const adminTrie: TrieNode = { r: { n: "dashboard", sp: "", a: ["M1L0"] } };
+    const siteTrie: TrieNode = { r: { n: "home", sp: "" } };
+    const adminTrie: TrieNode = { r: { n: "dashboard", sp: "" } };
 
     setRouterTrie("site", siteTrie);
     setRouterTrie("admin", adminTrie);
