@@ -2,6 +2,7 @@ import React from "react";
 import { createSsrRootComponent } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
 import { runWithPreinitNonce } from "./preinit-client-references.js";
+import { SHELL_CAPTURE_MAX_WAIT_MS } from "../rsc/shell-capture-constants.js";
 import type { ErrorPhase } from "../types.js";
 import type { HeadScriptsOption } from "../vite/plugin-types.js";
 
@@ -182,15 +183,6 @@ export interface SSRDependencies<TEnv = unknown> {
 }
 
 /**
- * Default guard for how long capture waits on the caller's `quiesce` signal
- * before forcing the abort that freezes the shell. This is the ONLY wall-clock
- * on the capture path and it is a pathological guard — it should never fire once
- * the caller's `quiesce` is a task-quantized, frozen-byte signal (the capture
- * gate in shell-capture.ts). See docs/design/ppr-shell-resume.md.
- */
-const DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS = 5000;
-
-/**
  * Fixed number of macrotask hops between `quiesce` resolving and the abort. These
  * give React's fizz worker turns to flush the settled shell into the prelude and
  * mark still-pending boundaries as POSTPONED (rather than errored) before
@@ -259,6 +251,38 @@ function createCancelableTimeout(ms: number): {
 }
 
 /**
+ * True when a debugger is attached outside a production build: a breakpoint
+ * pauses script execution but not wall-clock, so the capture deadline would
+ * expire mid-inspection and push the key into refusal/backoff while debugging.
+ * Next.js precedent (packages/next/src/export/worker.ts): its static-page
+ * timeout race is disabled when NODE_OPTIONS contains --inspect. The gate is
+ * the bare `process.env.NODE_ENV !== "production"` token — the build define
+ * folds exactly that token to a literal (same dev signal as shell-capture.ts's
+ * isDevMode), and it covers dev servers that never set NODE_ENV, the common
+ * debug case. A production worker launched with --inspect in NODE_OPTIONS
+ * keeps the capture's safety bound unconditionally. Every probe is guarded:
+ * `process` reads are optional-chained and the node:inspector import is
+ * try/caught, so non-Node runtimes (workerd) resolve to false instead of
+ * breaking.
+ */
+export async function isDebuggerAttached(): Promise<boolean> {
+  if (process.env.NODE_ENV === "production") return false;
+  try {
+    // Substring match also catches --inspect-brk / --inspect=PORT.
+    if (globalThis.process?.env?.NODE_OPTIONS?.includes("--inspect")) {
+      return true;
+    }
+    if (globalThis.process?.execArgv?.some((a) => a.startsWith("--inspect"))) {
+      return true;
+    }
+    const inspector = await import("node:inspector");
+    return inspector.url() !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Drain a ReadableStream fully into a single Uint8Array. Capture buffers the
  * whole prelude so it can be stored and later prepended byte-for-byte.
  */
@@ -321,7 +345,7 @@ function createDataVariantHtmlStream(): ReadableStream<Uint8Array> {
 interface ShellCaptureOptions {
   /** Caller-provided promise that resolves once the cached content settled. */
   quiesce: Promise<void>;
-  /** Upper bound on how long to wait for `quiesce`. Default 5000ms. */
+  /** Upper bound on how long to wait for `quiesce`. Default SHELL_CAPTURE_MAX_WAIT_MS. */
   maxWaitMs?: number;
 }
 
@@ -509,7 +533,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
     rscStream: ReadableStream<Uint8Array>,
     opts: ShellCaptureOptions,
   ): Promise<ShellCaptureResult | null> {
-    const maxWaitMs = opts.maxWaitMs ?? DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS;
+    const maxWaitMs = opts.maxWaitMs ?? SHELL_CAPTURE_MAX_WAIT_MS;
 
     // Arm the maxWaitMs deadline BEFORE the first await so it bounds the ENTIRE
     // capture, the bootstrap-script load included. loadBootstrapScriptContent()
@@ -517,7 +541,13 @@ export function createShellCaptureHandler<TEnv = unknown>(
     // captureShellHTML with no upper bound and held the background capture task
     // open. One deadline, shared by the bootstrap race below and the quiesce
     // race, keeps the whole path "bounded by maxWaitMs like every quiesce input".
-    const deadline = createCancelableTimeout(maxWaitMs);
+    // Debugger attached (non-production, see isDebuggerAttached): a paused process
+    // must not burn the budget, so the deadline becomes a never-resolving
+    // promise (the Next.js approach) — no timer, so it cannot hold the event
+    // loop open either.
+    const deadline = (await isDebuggerAttached())
+      ? { promise: new Promise<void>(() => {}), cancel: () => {} }
+      : createCancelableTimeout(maxWaitMs);
     try {
       // No nonce (nonce'd requests never reach capture); no formState.
       // payloadSettled: fires when the Flight payload root settles — i.e.

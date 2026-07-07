@@ -14,10 +14,13 @@ import { useFixture, type Fixture } from "./fixture";
 //   awaits the COMPLETE settlement sequence (the gate holds while top-level
 //   pushes are pending; SsrRoot suspends at the root until the final snapshot)
 //   and bakes the resolved values into the stored prelude.
-// - /shell-cache/slow-meta-default — the SAME material with NO captureTimeout:
-//   the default 5s budget expires with pushes pending and the capture REFUSES
-//   (eternal MISS + the once-per-key no-usable-shell warning). A partial-meta
-//   shell is never stored.
+// - /shell-cache/slow-meta-default — the SAME material against an EXPLICIT
+//   sub-settlement `captureTimeout: 1500`: the budget expires with pushes
+//   pending and the capture REFUSES (eternal MISS + the once-per-key
+//   no-usable-shell warning). A partial-meta shell is never stored. Explicit
+//   rather than no-knob: the 15s default ADMITS this ~6.5s material, and a
+//   no-knob refusal would need >15s material and ~30s waits — the default
+//   VALUE is pinned by the shell-capture unit test instead.
 //
 // Own file (not shell-cache.test.ts): the slow fixtures cost real wall-clock
 // per request (the live render also awaits the pushes), so they get their own
@@ -28,9 +31,10 @@ const HTML_HEADERS = { Accept: "text/html" };
 // Parts settle at ~5.5s (slow) and ~6.5s (chained Meta); the capture then
 // needs quiesce + fizz + store. A generous ceiling absorbs CI-runner noise.
 const HIT_POLL_TIMEOUT_MS = 45_000;
-// Two default-budget capture attempts (5s + 400ms retry + 5s) plus margin —
-// the window in which the no-knob route's capture deterministically refuses.
-const DEFAULT_BUDGET_REFUSAL_MS = 12_000;
+// Two short-budget capture attempts (1.5s + 400ms retry + 1.5s) plus margin —
+// the window in which the sub-settlement route's capture deterministically
+// refuses.
+const SHORT_BUDGET_REFUSAL_MS = 6_000;
 
 /**
  * Fetch a document and split it at the frozen-prelude boundary (the stored
@@ -61,6 +65,7 @@ function runSpec(f: Fixture): void {
   test("nameless ppr route engages: MISS then HIT (issue #714)", async ({
     request,
   }) => {
+    test.setTimeout(60_000);
     const url = f.url("/shell-cache/nameless/e2e?probe=nameless714");
     const first = await request.get(url, { headers: HTML_HEADERS });
     expect(first.status()).toBe(200);
@@ -68,11 +73,12 @@ function runSpec(f: Fixture): void {
     const html = await first.text();
     expect(html).toContain("Live price:");
 
+    // Window must fit attempt + in-place retry at the 15s default budget on a cold graph.
     await expect(async () => {
       const res = await request.get(url, { headers: HTML_HEADERS });
       expect(res.status()).toBe(200);
       expect(res.headers()["x-rango-shell"]).toBe("HIT");
-    }).toPass({ timeout: 15_000 });
+    }).toPass({ timeout: 40_000 });
 
     // The HIT composes: frozen prelude + live resumed hole.
     const hit = await fetchSplit(url);
@@ -136,7 +142,7 @@ function runSpec(f: Fixture): void {
     expect(second.prelude).toContain(`slow-meta-slow-${seq}-chained`);
   });
 
-  test("same material WITHOUT captureTimeout refuses: stays MISS, no partial bake, once-per-key warning (issue #715 negative)", async ({
+  test("budget shorter than the settlement sequence refuses: stays MISS, no partial bake, once-per-key warning (issue #715 negative)", async ({
     request,
   }) => {
     test.setTimeout(120_000);
@@ -148,10 +154,10 @@ function runSpec(f: Fixture): void {
     expect(first.status()).toBe(200);
     expect(first.headers()["x-rango-shell"]).toBe("MISS");
 
-    // Wait past two full default-budget attempts (5s + retry + 5s), then
+    // Wait past two full short-budget attempts (1.5s + retry + 1.5s), then
     // re-probe: still MISS — the capture refused rather than storing a shell
     // with unsettled meta. Two probes to also cover a backoff-window re-probe.
-    await new Promise((r) => setTimeout(r, DEFAULT_BUDGET_REFUSAL_MS));
+    await new Promise((r) => setTimeout(r, SHORT_BUDGET_REFUSAL_MS));
     for (let i = 0; i < 2; i++) {
       const res = await request.get(url, {
         headers: HTML_HEADERS,

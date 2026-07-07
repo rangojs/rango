@@ -283,7 +283,7 @@ describe("captureAndStoreShell", () => {
     expect(opts.maxWaitMs).toBe(10_000);
   });
 
-  it("defaults maxWaitMs to 5000 when no captureTimeout is declared", async () => {
+  it("defaults maxWaitMs to 15000 when no captureTimeout is declared", async () => {
     const ssrModule = makeShellSsrModule();
     await captureAndStoreShell(
       ssrModule,
@@ -293,7 +293,7 @@ describe("captureAndStoreShell", () => {
       { key: "/budget-default:shell", buildVersion: "test-build", ttl: 300 },
     );
     const opts = vi.mocked(ssrModule.captureShellHTML!).mock.calls[0]![1];
-    expect(opts.maxWaitMs).toBe(5_000);
+    expect(opts.maxWaitMs).toBe(15_000);
   });
 
   // Identity guard (loader-container-bake): the cookies()/headers() capture

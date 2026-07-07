@@ -52,7 +52,7 @@ export interface ResolvedPprConfig {
   maxSnapshotBytes?: number;
   /**
    * Capture settle budget in ms (`ppr.captureTimeout`). Undefined = the
-   * capture default (SHELL_CAPTURE_MAX_WAIT_MS, 5000) — the default's single
+   * capture default (SHELL_CAPTURE_MAX_WAIT_MS, 15_000) — the default's single
    * owner stays shell-capture.ts so build/runtime producers cannot drift.
    */
   captureTimeout?: number;
