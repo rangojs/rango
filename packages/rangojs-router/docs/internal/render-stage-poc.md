@@ -10,7 +10,8 @@ branching or duplication without changing the React tree.
 Use async generators only where they make the render flow easier to reason
 about:
 
-- step through observable phases (`payload` -> `flight` -> response)
+- step through observable phases (`payload` -> `flight` -> optional `html` ->
+  response)
 - let callers resume with controlled data (`next({ payload })`,
   `next({ body, init })`)
 - delegate subflows with `yield*` where a phase has its own work and evidence
@@ -46,14 +47,15 @@ about:
 
 ## Evidence checklist
 
-| Question                                    | Evidence to collect                                                                                                                                                                                             |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Did behavior stay the same?                 | Existing `rsc/__tests__/performance.test.ts`, `action-revalidate-trace.test.ts`, and `server-action.test.ts` stay green.                                                                                        |
-| Can we step and control flow?               | `rsc/__tests__/render-stages.test.ts` steps `payload -> flight -> response`, resumes with a replacement payload and HTML body, and pins thrown serialization at the Flight step.                                |
-| Can we collect phase context?               | `render-stages.test.ts` captures stage events and asserts ordered phases, dynamic progress counters, mode, route key, action id, pathname, Flight error events, and debug-sink output.                          |
-| Did complexity move in the right direction? | Compare repeated `renderToReadableStream` + `appendMetric` + response blocks before/after. Count touched LOC and remaining branch points in `rsc-rendering.ts` and `server-action.ts`.                          |
-| Did performance regress?                    | Micro-benchmark `runRscRenderStages(createRscRenderStages(...))` against the pre-refactor inline equivalent for synchronous stream creation overhead; treat this as a smoke signal, not a production benchmark. |
-| Is the abstraction balanced?                | Keep only if at least two render paths share it cleanly and stage guards make the flow more explicit. Revert or narrow if callers need path-specific escape hatches.                                            |
+| Question                                    | Evidence to collect                                                                                                                                                                                               |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Did behavior stay the same?                 | Existing `rsc/__tests__/performance.test.ts`, `action-revalidate-trace.test.ts`, and `server-action.test.ts` stay green.                                                                                          |
+| Can we step and control flow?               | `rsc/__tests__/render-stages.test.ts` steps `payload -> flight -> response`, resumes with a replacement payload and HTML body, and pins thrown serialization at the Flight step.                                  |
+| Can we collect phase context?               | `render-stages.test.ts` captures stage events and asserts ordered phases, dynamic progress counters, mode, route key, action id, pathname, Flight error events, and debug-sink output.                            |
+| Did complexity move in the right direction? | Compare repeated `renderToReadableStream` + `appendMetric` + response blocks before/after. Count touched LOC and remaining branch points in `rsc-rendering.ts` and `server-action.ts`.                            |
+| Did performance regress?                    | Micro-benchmark `runRscRenderStages(createRscRenderStages(...))` against the pre-refactor inline equivalent for synchronous stream creation overhead; treat this as a smoke signal, not a production benchmark.   |
+| Did debug/OTel stay correct?                | Keep `PHASES.render` and `PHASES.ssr` as the only phase-span owners. Stage events are progress/debug facts; they must not duplicate `rango.render`/`rango.ssr` spans or require `debugPerformance` to be enabled. |
+| Is the abstraction balanced?                | Keep only if at least two render paths share it cleanly and stage guards make the flow more explicit. Revert or narrow if callers need path-specific escape hatches.                                              |
 
 ## Current read
 
@@ -91,6 +93,28 @@ response`, replaces the payload with `next({ payload })`, resumes the HTML
   iterations averaged ~0.23us overhead per staged run versus the inline stream
   - `Response` path. That is small enough to keep evaluating, but not a reason
     to claim a speedup.
+
+## Telemetry guardrails
+
+The stage API is not a new tracing model. It sits underneath the existing
+`observePhase(PHASES.render)` and `observePhase(PHASES.ssr)` boundaries in
+`src/router/instrument.ts`, which still own both `debugPerformance` metrics and
+OTel/Cloudflare phase spans. That keeps the router's one-owner rule intact:
+`rango.render` and `rango.ssr` are callback-bound spans around real work, not
+reconstructed from after-the-fact start/end events.
+
+Stage events should stay opt-in facts for debugging and analytics. The current
+POC routes them through `tracking.onEvent`, and `createRscStageDebugSink()` is
+only an adapter from those facts to structured debug logs. A future telemetry
+adapter may map completed/error stage facts to the `TelemetrySink`, but it
+should remain a discrete-fact surface like cache decisions or timeouts, never a
+second phase-span source.
+
+This also protects the default performance path: if no `tracking.onEvent` is
+provided, stage event emission does only the local stage bookkeeping needed for
+the generator; it does not enable `debugPerformance`, allocate telemetry events,
+or touch OTel. Flight serialization still records the existing `rsc-serialize`
+metric through the request metrics store when that store exists.
 
 The next re-evaluation point is NOT a broad client-side generator. The
 partial-update/action bridge audit found that those branches are mostly semantic
