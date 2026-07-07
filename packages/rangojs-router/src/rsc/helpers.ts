@@ -18,7 +18,146 @@ import {
 } from "../redirect-origin.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
+import { appendMetric } from "../router/metrics.js";
 import type { RscPayload } from "./types.js";
+import type { HandlerContext } from "./handler-context.js";
+
+export interface RscRenderStageInput<TEnv> {
+  ctx: Pick<HandlerContext<TEnv>, "renderToReadableStream" | "callOnError">;
+  request: Request;
+  url: URL;
+  env: TEnv;
+  payload: RscPayload;
+  init: ResponseInit;
+  temporaryReferences?: unknown;
+}
+
+export type RscRenderStage =
+  | {
+      type: "payload";
+      payload: RscPayload;
+      init: ResponseInit;
+    }
+  | {
+      type: "flight";
+      payload: RscPayload;
+      stream: ReadableStream<Uint8Array>;
+      init: ResponseInit;
+      durationMs: number;
+    };
+
+export type RscFlightStage = Extract<RscRenderStage, { type: "flight" }>;
+
+export interface RscRenderStageControl {
+  payload?: RscPayload;
+  init?: ResponseInit;
+  body?: BodyInit | null;
+}
+
+/**
+ * Stage the common RSC render flow as a resumable async generator:
+ * payload inspection/mutation -> Flight stream creation -> response finalization.
+ * HTML callers pause at the Flight stage, render SSR from that stream, then
+ * resume with the HTML body/init so header merging still happens once.
+ */
+export async function* createRscRenderStages<TEnv>(
+  input: RscRenderStageInput<TEnv>,
+): AsyncGenerator<RscRenderStage, Response, RscRenderStageControl | undefined> {
+  let payload = input.payload;
+  let init = input.init;
+
+  const payloadControl = yield {
+    type: "payload",
+    payload,
+    init,
+  };
+  payload = payloadControl?.payload ?? payload;
+  init = payloadControl?.init ?? init;
+
+  const renderStart = performance.now();
+  const stream = input.ctx.renderToReadableStream<RscPayload>(payload, {
+    temporaryReferences: input.temporaryReferences,
+    onError: (error: unknown) => {
+      input.ctx.callOnError(error, "rendering", {
+        request: input.request,
+        url: input.url,
+        env: input.env,
+      });
+    },
+  });
+  const durationMs = performance.now() - renderStart;
+  appendMetric(
+    _getRequestContext()?._metricsStore,
+    "rsc-serialize",
+    renderStart,
+    durationMs,
+  );
+
+  const flightControl = yield {
+    type: "flight",
+    payload,
+    stream,
+    init,
+    durationMs,
+  };
+
+  const body =
+    flightControl && "body" in flightControl ? flightControl.body! : stream;
+
+  return createResponseWithMergedHeaders(body, {
+    ...init,
+    ...flightControl?.init,
+  });
+}
+
+export async function runRscRenderStages(
+  stages: AsyncGenerator<
+    RscRenderStage,
+    Response,
+    RscRenderStageControl | undefined
+  >,
+): Promise<Response> {
+  for (;;) {
+    const step = await stages.next();
+    if (step.done) return step.value;
+  }
+}
+
+export async function readRscFlightStage(
+  stages: AsyncGenerator<
+    RscRenderStage,
+    Response,
+    RscRenderStageControl | undefined
+  >,
+): Promise<RscFlightStage> {
+  const payloadStage = await stages.next();
+  if (payloadStage.done || payloadStage.value.type !== "payload") {
+    throw new Error("[RSC] render stage pipeline skipped payload stage");
+  }
+
+  const flightStage = await stages.next();
+  if (flightStage.done || flightStage.value.type !== "flight") {
+    throw new Error("[RSC] render stage pipeline skipped Flight stream");
+  }
+
+  return flightStage.value;
+}
+
+export async function finishRscRenderStages(
+  stages: AsyncGenerator<
+    RscRenderStage,
+    Response,
+    RscRenderStageControl | undefined
+  >,
+  control?: RscRenderStageControl,
+): Promise<Response> {
+  const responseStage = await stages.next(control);
+  if (!responseStage.done) {
+    throw new Error("[RSC] render stage pipeline did not finish response");
+  }
+
+  return responseStage.value;
+}
 
 /**
  * DEVELOPMENT/TEST ONLY. When the debug cache signal gate is on,

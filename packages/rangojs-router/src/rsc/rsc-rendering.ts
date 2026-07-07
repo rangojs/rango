@@ -25,6 +25,10 @@ import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
+  createRscRenderStages,
+  finishRscRenderStages,
+  readRscFlightStage,
+  runRscRenderStages,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
@@ -428,54 +432,51 @@ async function handleRscRenderingInner<TEnv>(
 
   const metricsStore = reqCtx._metricsStore;
 
-  // Serialize to RSC stream
-  const rscSerializeStart = performance.now();
-  const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
-    onError: (error: unknown) => {
-      ctx.callOnError(error, "rendering", { request, url, env });
+  const rscHeaders: Record<string, string> = {
+    "content-type": "text/x-component;charset=utf-8",
+    vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    // Router identity, so the client can verify pre-decode (before importing
+    // chunks) that this content payload belongs to its app and refuse a
+    // foreign one (cache/proxy/bug). Control-only reload/redirect responses
+    // are deliberately NOT stamped. See browser/response-adapter.ts.
+    "X-RSC-Router-Id": ctx.router.id,
+  };
+  // Tell the client's prefetch cache to scope this response to its source
+  // URL (instead of the default source-agnostic wildcard). Intercept
+  // responses depend on the source page matching an intercept rule, so
+  // they must not be reused for navigations from other sources.
+  if (hasInterceptSlots) {
+    rscHeaders["x-rsc-prefetch-scope"] = "source";
+  }
+  // Enable browser HTTP caching for prefetch responses only.
+  // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
+  // non-intercept context (intercept responses depend on source page),
+  // and a configured cache-control value (false disables caching).
+  const isPrefetch = request.headers.has("X-Rango-Prefetch");
+  if (isPrefetch && isPartial && !hasInterceptSlots) {
+    const cc = ctx.router.prefetchCacheControl;
+    if (cc) {
+      rscHeaders["cache-control"] = cc;
+    }
+  }
+
+  const renderStages = createRscRenderStages({
+    ctx,
+    request,
+    env,
+    url,
+    payload,
+    init: {
+      headers: rscHeaders,
     },
   });
-  const rscSerializeDur = performance.now() - rscSerializeStart;
-  // This measures synchronous stream creation, not end-to-end stream consumption.
-  appendMetric(
-    metricsStore,
-    "rsc-serialize",
-    rscSerializeStart,
-    rscSerializeDur,
-  );
+
+  const flightStage = await readRscFlightStage(renderStages);
+  const rscStream = flightStage.stream;
 
   if (isRscRequest(request, url, isPartial)) {
     // render:total is recorded by the observePhase wrapper around this function.
-    const rscHeaders: Record<string, string> = {
-      "content-type": "text/x-component;charset=utf-8",
-      vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
-      // Router identity, so the client can verify pre-decode (before importing
-      // chunks) that this content payload belongs to its app and refuse a
-      // foreign one (cache/proxy/bug). Control-only reload/redirect responses
-      // are deliberately NOT stamped. See browser/response-adapter.ts.
-      "X-RSC-Router-Id": ctx.router.id,
-    };
-    // Tell the client's prefetch cache to scope this response to its source
-    // URL (instead of the default source-agnostic wildcard). Intercept
-    // responses depend on the source page matching an intercept rule, so
-    // they must not be reused for navigations from other sources.
-    if (hasInterceptSlots) {
-      rscHeaders["x-rsc-prefetch-scope"] = "source";
-    }
-    // Enable browser HTTP caching for prefetch responses only.
-    // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
-    // non-intercept context (intercept responses depend on source page),
-    // and a configured cache-control value (false disables caching).
-    const isPrefetch = request.headers.has("X-Rango-Prefetch");
-    if (isPrefetch && isPartial && !hasInterceptSlots) {
-      const cc = ctx.router.prefetchCacheControl;
-      if (cc) {
-        rscHeaders["cache-control"] = cc;
-      }
-    }
-    return createResponseWithMergedHeaders(rscStream, {
-      headers: rscHeaders,
-    });
+    return runRscRenderStages(renderStages);
   }
 
   // Delegate to SSR for HTML response (reuse early setup if available)
@@ -495,8 +496,11 @@ async function handleRscRenderingInner<TEnv>(
       streamMode,
     }),
   );
-  const response = createResponseWithMergedHeaders(htmlStream, {
-    headers: { "content-type": "text/html;charset=utf-8" },
+  const response = await finishRscRenderStages(renderStages, {
+    body: htmlStream,
+    init: {
+      headers: { "content-type": "text/html;charset=utf-8" },
+    },
   });
 
   // --- Axis 2: PPR shell CAPTURE on MISS (background task; see design doc) ---

@@ -1,0 +1,77 @@
+# Async render stages POC
+
+This note maps the current render responsibilities to the async-generator POC.
+The goal is to make the refactor easy to evaluate: each stage should have a
+clear owner, a pause point you can step in tests, and evidence that it reduces
+branching or duplication without changing the React tree.
+
+## Objective
+
+Use async generators only where they make the render flow easier to reason
+about:
+
+- step through observable phases (`payload` -> `flight` -> response)
+- let callers resume with controlled data (`next({ payload })`,
+  `next({ body, init })`)
+- centralize repeated Flight serialization/error/metric plumbing
+- keep matching, segment resolution, and `renderSegments()` tree structure
+  unchanged
+
+## Mapping
+
+| Existing responsibility                     | Current owner                                                     | Stage mapping                                                                                                           | Status    |
+| ------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------- |
+| Route matching / partial matching           | `rsc-rendering.ts`, `server-action.ts`                            | Stays outside the generator. Matching still decides full vs partial payload shape before stages start.                  | Unchanged |
+| Transition gating                           | `gateTransitions()` at each payload builder                       | Stays before `payload`; the stage receives already-gated segments.                                                      | Unchanged |
+| Payload inspection / last-mile mutation     | Inline locals before `renderToReadableStream()`                   | `payload` yield from `createRscRenderStages()`. Tests can inspect or replace the `RscPayload` with `next({ payload })`. | POC       |
+| Flight serialization                        | Inline `ctx.renderToReadableStream()` blocks                      | `flight` stage owns `renderToReadableStream`, render `onError`, and `rsc-serialize` metric recording.                   | POC       |
+| Raw Flight response                         | Inline `createResponseWithMergedHeaders(rscStream, init)`         | `runRscRenderStages()` drains the generator to its final `Response`.                                                    | POC       |
+| HTML response                               | Inline Flight stream -> `ssrModule.renderHTML()` -> HTML response | Caller pauses at `flight`, renders HTML from `stage.stream`, then resumes with `next({ body: htmlStream, init })`.      | POC       |
+| Action temporary references                 | `server-action.ts` render options                                 | Passed through stage input to the shared Flight serialization point.                                                    | POC       |
+| PPR shell HIT/MISS policy                   | `rsc-rendering.ts` before normal render                           | Stays outside the generator for this POC; it has separate commit/capture semantics.                                     | Unchanged |
+| Progressive enhancement rerender/error HTML | `progressive-enhancement.ts`                                      | Same `flight` pause + HTML resume as the normal SSR path.                                                               | POC       |
+| Browser segment merge and commit            | `browser/partial-update.ts`, `server-action-bridge.ts`            | Not part of this POC. These paths protect client tree identity and have separate abort/transaction semantics.           | Unchanged |
+| React tree assembly                         | `segment-system.tsx`                                              | Not part of this POC. Wrapper/key rules from `docs/tree-structure.md` remain untouched.                                 | Unchanged |
+
+## Evidence checklist
+
+| Question                                    | Evidence to collect                                                                                                                                                                                             |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Did behavior stay the same?                 | Existing `rsc/__tests__/performance.test.ts`, `action-revalidate-trace.test.ts`, and `server-action.test.ts` stay green.                                                                                        |
+| Can we step and control flow?               | `rsc/__tests__/render-stages.test.ts` steps `payload -> flight -> response`, resumes with a replacement payload and HTML body, and pins thrown serialization at the Flight step.                                |
+| Did complexity move in the right direction? | Compare repeated `renderToReadableStream` + `appendMetric` + response blocks before/after. Count touched LOC and remaining branch points in `rsc-rendering.ts` and `server-action.ts`.                          |
+| Did performance regress?                    | Micro-benchmark `runRscRenderStages(createRscRenderStages(...))` against the pre-refactor inline equivalent for synchronous stream creation overhead; treat this as a smoke signal, not a production benchmark. |
+| Is the abstraction balanced?                | Keep only if at least two render paths share it cleanly and stage guards make the flow more explicit. Revert or narrow if callers need path-specific escape hatches.                                            |
+
+## Current read
+
+This POC deliberately starts below matching and above transport finalization.
+That is the smallest useful slice: it avoids the high-risk segment tree rules
+while still touching navigation/full rendering, action revalidation, and
+progressive-enhancement HTML rerenders.
+
+## Initial POC evidence
+
+- Behavior: `src/rsc/__tests__` passes after the refactor (32 files, 344 tests),
+  including PPR shell HIT/MISS and progressive-enhancement coverage.
+- Step control: `render-stages.test.ts` manually advances `payload -> flight ->
+response`, replaces the payload with `next({ payload })`, resumes the HTML
+  response with `next({ body, init })`, and proves synchronous Flight
+  serialization failures surface at the Flight step.
+- Duplication: `server-action.ts` dropped from four inline
+  `renderToReadableStream<RscPayload>` / `rsc-serialize` occurrences to zero,
+  and `progressive-enhancement.ts` dropped from two to zero. `rsc-rendering.ts`
+  dropped from three to one; the remaining occurrence is the PPR shell-tail
+  render, which this POC intentionally leaves outside the stage runner.
+- Diff shape: this is not yet a total LOC reduction. The helper adds the shared
+  stage API, `server-action.ts` gets smaller, and `rsc-rendering.ts` grows a
+  little because it now makes the Flight pause explicit before SSR.
+- Performance smoke signal: a Node control-flow micro-benchmark over 5 x 50,000
+  iterations averaged ~0.23us overhead per staged run versus the inline stream
+  - `Response` path. That is small enough to keep evaluating, but not a reason
+    to claim a speedup.
+
+The next re-evaluation point is the client-side partial-update/action merge
+flow. That path has stronger abort/transaction/tree-identity constraints, so it
+should only move to stages if the map shows fewer branches without hiding the
+current transaction semantics.

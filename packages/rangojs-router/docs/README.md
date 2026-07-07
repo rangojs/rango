@@ -37,6 +37,9 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   scope, propagation rules, and revalidation semantics
 - [Tree structure](./tree-structure.md) - React tree invariants that must stay
   stable across SSR, navigation, and action renders
+- [Async render stages POC](./internal/render-stage-poc.md) - maps the
+  payload/Flight/response stage refactor, what stayed outside the generator,
+  and the evidence gates for keeping or narrowing it
 - [Stability roadmap](./internal/stability-roadmap.md) - where the router is
   trying to get stricter and easier to reason about
 - [Matching & lazy-discovery](./internal/matching-and-lazy-discovery.md) -
