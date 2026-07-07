@@ -68,10 +68,12 @@ const PPR_WARMUP_HIT_ROUTES = [
 // Warm the PPR capture pipeline before the ppr-shell dev tests run.
 //
 // On a cold CI runner the dev module graph is compiled ON DEMAND during the
-// capture render, repeatedly blowing the capture's 5s budget
-// (SHELL_CAPTURE_MAX_WAIT_MS): one probe cycle is ~5s attempt + ~5s in-place
-// retry + backoff, so warmToHit's 20s window fits only ~2 cycles and the suite
-// hard-fails on runners that need more (#652 item 3 — the eternal-MISS shape
+// capture render, repeatedly blowing the capture budget
+// (SHELL_CAPTURE_MAX_WAIT_MS — 5s when #652 was diagnosed, 15s today): one
+// probe cycle is a full-budget attempt + in-place retry + backoff, so
+// warmToHit's 20s window fit only ~2 cycles at the old 5s budget (none at
+// 15s) and the suite hard-fails on runners that need more (#652 item 3 —
+// the eternal-MISS shape
 // survived the runtime-side dev backoff cap alone; see PR #659's first CI run,
 // `physics hole` 3x at ~20s). Warming here makes the first real capture attempt
 // run against a hot graph, so it completes inside its budget on attempt 1; the

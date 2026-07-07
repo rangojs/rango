@@ -12,7 +12,7 @@ import { PprSlowMetaView } from "../components/PprSlowMetaView.js";
 // settling in parts, the Meta title chained off the slow one. See
 // loaders/ppr-slow-meta.ts for the tempo split (slow vs short variant).
 
-/** ~6.5s total settlement — captures only under `captureTimeout: 10000`. */
+/** ~6.5s total settlement — the declared `captureTimeout: 10000` admits it. */
 export function PprSlowMetaLayout(ctx: HandlerContext) {
   const parts = makePprSlowMetaParts();
   const pushPart = ctx.use(PprSlowMetaHandles);

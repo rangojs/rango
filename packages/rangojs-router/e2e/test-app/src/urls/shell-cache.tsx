@@ -377,10 +377,10 @@ function ShellSettledPage() {
 // pattern): three TOP-LEVEL pushes settling in parts — immediate, ~5.5s slow,
 // and a Meta title CHAINED off the slow promise (+1s, ~6.5s total). The
 // capture must ride the COMPLETE settlement sequence (never a partial prefix)
-// and bake the final values; under the default 5s budget the sequence
-// outlasts the deadline and the capture REFUSES. Shared by the
-// captureTimeout-declaring route (captures at ~6.5s) and the no-knob negative
-// (eternal MISS) so the two differ ONLY in the ppr option.
+// and bake the final values; a budget that expires with pushes pending
+// REFUSES the capture. Shared by the 10s-budget route (captures at ~6.5s)
+// and the sub-settlement 1500ms-budget negative (eternal MISS) so the two
+// differ ONLY in the captureTimeout value.
 function ShellSlowMetaLayout(ctx: HandlerContext) {
   const parts = makeSlowMetaParts();
   const pushPart = ctx.use(SlowMetaHandles);
@@ -609,9 +609,9 @@ export const shellCachePatterns = urls(
       ],
     ),
     // Slow deferred shell material (issue #715): see ShellSlowMetaLayout. The
-    // declared 10s budget admits the ~6.5s staged settlement; the sibling
-    // without the knob refuses under the default 5s deadline. TTL long past
-    // the test window so no SWR recapture re-runs the slow pushes mid-test.
+    // declared 10s budget admits the ~6.5s staged settlement; the sibling's
+    // sub-settlement 1500ms budget refuses. TTL long past the test window so
+    // no SWR recapture re-runs the slow pushes mid-test.
     layout(ShellSlowMetaLayout, () => [
       path(
         "/shell-cache/slow-meta",
@@ -627,13 +627,21 @@ export const shellCachePatterns = urls(
           ),
         ],
       ),
-      // Negative: identical material, NO captureTimeout — the default 5s
-      // budget expires with pushes pending, the capture refuses (no partial
-      // bake), and the route stays MISS with the once-per-key warning.
+      // Negative: identical material against an EXPLICIT sub-settlement
+      // budget — 1500ms expires with pushes pending, the capture refuses (no
+      // partial bake), and the route stays MISS with the once-per-key
+      // warning. Explicit rather than no-knob since the default budget grew
+      // to 15s, which ADMITS this ~6.5s material — a no-knob refusal would
+      // need >15s material and ~30s test waits; the default VALUE is pinned
+      // by the shell-capture unit test. Path/name keep the historical
+      // "-default" suffix (stable warning regex + gen.ts).
       path(
         "/shell-cache/slow-meta-default",
         ShellCachePricePage,
-        { name: "shellCacheSlowMetaDefault", ppr: { ttl: 300, swr: 120 } },
+        {
+          name: "shellCacheSlowMetaDefault",
+          ppr: { ttl: 300, swr: 120, captureTimeout: 1500 },
+        },
         () => [
           loader(ShellPriceLoader),
           loading(

@@ -488,7 +488,8 @@ export const urlpatterns = urls(
         // ~3.5s material against an explicit 1500ms budget — the capture
         // refuses (stays MISS, no partial bake). Short tempo keeps the
         // worker's serialized capture queue clear for the sibling ppr tests;
-        // the no-knob default-budget negative runs in the router test-app.
+        // the router test-app's slow-meta-default negative is likewise
+        // explicit-budget (the 15s default admits both fixtures' material).
         layout(PprShortMetaLayout, () => [
           path(
             "/ppr-short-meta",

@@ -316,11 +316,12 @@ export const ShellExecLoader = createLoader(
 // (+1s, ~6.5s total). All three are TOP-LEVEL pushes, so the capture awaits
 // the COMPLETE settlement sequence (resolvedHandleStream converges only after
 // every push resolves — a partial prefix is unrepresentable) and bakes the
-// final values. Under the DEFAULT 5s budget the sequence outlasts the
-// deadline, the handles row never emits, SsrRoot stays suspended at the root,
-// and the capture REFUSES (trivial prelude — eternal MISS + once-per-key
-// warning). With `ppr.captureTimeout: 10000` the same route captures and the
-// stored prelude carries all three resolved parts. A per-capture seq rides in
+// final values. Under a sub-settlement budget (the negative's explicit
+// 1500ms) the sequence outlasts the deadline, the handles row never emits,
+// SsrRoot stays suspended at the root, and the capture REFUSES (trivial
+// prelude — eternal MISS + once-per-key warning). With `ppr.captureTimeout:
+// 10000` (or the 15s default) the same route captures and the stored prelude
+// carries all three resolved parts. A per-capture seq rides in
 // each value so consecutive HITs pin frozenness (the prelude keeps the
 // capture-time seq while axis-1/misses would advance it).
 const SLOW_META_SLOW_DELAY_MS = 5_500;

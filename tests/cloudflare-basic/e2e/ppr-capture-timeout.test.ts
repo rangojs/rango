@@ -14,11 +14,13 @@ import { useFixture } from "./fixture";
 //   settlement sequence and bakes ALL resolved parts into the stored prelude.
 // - /ppr-short-meta — ~3.5s material against an EXPLICIT 1500ms budget: the
 //   budget expires with pushes pending, the capture REFUSES, the route stays
-//   MISS and no partial-meta shell is ever stored. (The no-knob default-budget
-//   negative lives in the router test-app suite, where the server is isolated
-//   — two 5s default attempts would park this suite's shared serialized
-//   capture queue. The refusal warning is asserted there too: this suite's
-//   shared webServer exposes no process log handle.)
+//   MISS and no partial-meta shell is ever stored. (Both refusal negatives —
+//   here and the router test-app's slow-meta-default — use explicit
+//   sub-settlement budgets: the 15s default ADMITS this material, and a
+//   no-knob refusal would need >15s material and ~30s waits. The default
+//   VALUE is pinned by the router's shell-capture unit test. The refusal
+//   warning is asserted in the test-app suite, whose isolated server exposes
+//   process logs; this suite's shared webServer exposes no log handle.)
 //
 // None of these routes are in dev-warmup's PPR_WARMUP_HIT_ROUTES — a ~6.5s
 // capture must never park the shared warmup path; these tests own their full
@@ -60,6 +62,7 @@ function describePprCaptureTimeout(mode: "dev" | "build") {
     test("nameless ppr route engages: MISS then HIT (issue #714)", async ({
       request,
     }) => {
+      test.setTimeout(60_000);
       const url = f.url("/ppr-nameless/e2e?probe=nameless714");
       const first = await request.get(url, { headers: HTML_HEADERS });
       expect(first.status()).toBe(200);
@@ -67,11 +70,12 @@ function describePprCaptureTimeout(mode: "dev" | "build") {
       const html = await first.text();
       expect(html).toContain("Live price:");
 
+      // Window must fit attempt + in-place retry at the 15s default budget on a cold graph.
       await expect(async () => {
         const res = await request.get(url, { headers: HTML_HEADERS });
         expect(res.status()).toBe(200);
         expect(res.headers()["x-rango-shell"]).toBe("HIT");
-      }).toPass({ timeout: 20_000 });
+      }).toPass({ timeout: 40_000 });
 
       const hit = await fetchSplit(url);
       expect(hit.status).toBe("HIT");

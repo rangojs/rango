@@ -79,7 +79,8 @@ pushing `ctx.use(Meta)(dataPromise.then(...))`, top-level handle pushes
 carrying promises) is AWAITED by the capture and its settled values bake into
 the stored shell; material that settles slower than the budget made the route
 uncapturable forever (eternal MISS + backoff + the no-usable-shell warning).
-`ppr.captureTimeout` (ms, default 5000) declares the budget per route:
+`ppr.captureTimeout` (ms, default 15000 — raised from 5000, see the Cost
+model below) declares the budget per route:
 
 ```ts
 path("/pdp/:id", ProductPage, {
@@ -108,10 +109,20 @@ captureShellHTML({ maxWaitMs })`, so it bounds BOTH the fizz prerender and
   existing retry/backoff/warning path. A shell with missing or unsettled head
   material is never stored, at any budget.
 - **Cost model.** Capture is background work (`waitUntil`): a longer budget
-  costs latency-to-HIT only, never a served response. The platform's
-  `waitUntil` lifetime is the physical ceiling — on workerd, ~30s past
-  response completion — so a `captureTimeout` near or past that ceiling gets
-  killed by the platform, not by rango (see Platform notes).
+  costs latency-to-HIT only, never a served response — that is why 5s (which
+  spuriously refused a real storefront's ~7s meta chains) could be raised.
+  The platform's `waitUntil` lifetime is the physical ceiling — on workerd,
+  ~30s past response completion — so a `captureTimeout` near or past that
+  ceiling gets killed by the platform, not by rango (see Platform notes).
+  Ceiling math for the default: a guaranteed two-attempt envelope is
+  `2 x budget + the in-place retry delay + store I/O <= ~30s`, i.e. budget
+  <= ~14s. The 15s default deliberately sits just past that bound: attempt 1
+  always gets its full 15s; only when it consumed the whole budget can the
+  in-place retry be truncated by the platform kill on workerd, which degrades
+  to the existing best-effort contract (the key stays MISS and a later
+  request re-captures). Node/dev and build-time captures have no `waitUntil`
+  ceiling. Canonical in-code doc: `SHELL_CAPTURE_MAX_WAIT_MS` in
+  `src/rsc/shell-capture-constants.ts`.
 - **Producer B parity.** Build-time captures (Prerender+ppr,
   `src/prerender/build-shell-capture.ts`) and the dev `/__rsc_shell` endpoint
   honor the same knob (`resolveBuildPprConfig` resolves it; the dev
@@ -558,7 +569,7 @@ from `react-dom/server.edge`:
 createShellCaptureHandler(deps) =>
   captureShellHTML(rscStream, opts: {
     quiesce: Promise<void>;   // caller signals "cached content settled"
-    maxWaitMs?: number;       // guard, default 5000
+    maxWaitMs?: number;       // guard, default 15000
   }): Promise<{ prelude: Uint8Array; postponed: string | null } | null>
 
 createShellResumeHandler(deps) =>

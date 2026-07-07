@@ -8,14 +8,16 @@ import { createHandle } from "@rangojs/router";
 // snapshot) and bakes the final values into the stored prelude.
 //
 // Two variants share the shape and differ only in tempo, so the SLOW one
-// (~6.5s, needs `ppr.captureTimeout: 10000`) proves the budget admits staged
-// material past the 5s default, while the SHORT one (~3.5s against an
-// explicit 1500ms budget) pins the refusal semantics — budget expires with
-// pushes pending -> capture REFUSES, never a partial bake — without parking
-// the worker's serialized capture queue behind two 5s default-budget attempts
-// (this suite shares one worker across all ppr tests; see capture-queue.ts).
-// The no-knob default-budget negative runs in the router's own test-app suite
-// (isolated server), not here.
+// (~6.5s under `ppr.captureTimeout: 10000`) proves a declared budget admits
+// staged material, while the SHORT one (~3.5s against an explicit 1500ms
+// budget) pins the refusal semantics — budget expires with pushes pending ->
+// capture REFUSES, never a partial bake. The short tempo keeps the worker's
+// serialized capture queue clear (this suite shares one worker across all
+// ppr tests; see capture-queue.ts). No suite runs a no-knob refusal: the 15s
+// default ADMITS both tempos, and refusing it would need >15s material and
+// ~30s waits — the default VALUE is pinned by the router's shell-capture
+// unit test; refusal coverage is explicit-budget here and in the router
+// test-app's slow-meta-default.
 const SLOW_META_SLOW_DELAY_MS = 5_500;
 const SLOW_META_CHAIN_EXTRA_MS = 1_000;
 const SHORT_META_SLOW_DELAY_MS = 2_500;

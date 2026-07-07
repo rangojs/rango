@@ -21,6 +21,7 @@ import { bufferToBase64 } from "../cache/cf/cf-base64.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
 import { enqueueSerializedCapture } from "./capture-queue.js";
+import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
@@ -80,11 +81,12 @@ import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 const FLIGHT_QUIET_HOPS = 2;
 
 /**
- * Default upper bound on the capture prerender wait before forcing the abort.
- * Single owner of the default budget — shell-build-manifest.ts imports it so
- * the dev fetch bound's envelope math cannot drift from the capture.
+ * Default capture budget. Canonical value, raise rationale, and ceiling math
+ * live on the leaf module (shell-capture-constants.ts, importable from the ssr
+ * graph too). Re-exported here so shell-build-manifest.ts's envelope math
+ * keeps its existing import site and cannot drift from the capture.
  */
-export const SHELL_CAPTURE_MAX_WAIT_MS = 5000;
+export { SHELL_CAPTURE_MAX_WAIT_MS };
 
 /**
  * Upper bound on waiting for the capture's DEFERRED cache writes to settle before
@@ -807,7 +809,7 @@ export interface ShellCaptureDescriptor {
    * bounding the whole capture, so it covers BOTH the fizz prerender AND the
    * deferred-material settle window (the handlesBaked/loader-container
    * holdUntil that keeps the gate from freezing while top-level pushes are
-   * pending). Undefined = SHELL_CAPTURE_MAX_WAIT_MS (5000).
+   * pending). Undefined = SHELL_CAPTURE_MAX_WAIT_MS (15_000).
    */
   captureTimeout?: number;
   store?: SegmentCacheStore<any>;
