@@ -29,6 +29,8 @@ import {
   finalizeResponse,
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
+  observeRscHtmlStage,
+  renderRscFlightStage,
 } from "./helpers.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
@@ -299,17 +301,26 @@ export function createRSCHandler<
         ...(locationState && { locationState }),
       },
     };
-    const rscStream = renderToReadableStream<RscPayload>(redirectPayload, {
-      onError: (error: unknown) => {
-        const reqCtx = _getRequestContext<TEnv>();
-        if (!reqCtx) return;
-        callOnError(error, "rendering", {
-          request: reqCtx.request,
-          url: reqCtx.url,
-          env: reqCtx.env,
-        });
-      },
-    });
+    const reqCtx = _getRequestContext<TEnv>();
+    const rscStream = reqCtx
+      ? renderRscFlightStage(
+          {
+            ctx: { renderToReadableStream, callOnError },
+            request: reqCtx.request,
+            url: reqCtx.url,
+            env: reqCtx.env,
+            payload: redirectPayload,
+            tracking: {
+              mode: reqCtx.url.searchParams.has("_rsc_action")
+                ? "action-revalidation"
+                : "partial",
+              routeKey: reqCtx._routeName,
+              totalStages: 1,
+            },
+          },
+          performance.now(),
+        ).stream
+      : renderToReadableStream<RscPayload>(redirectPayload);
     return createResponseWithMergedHeaders(rscStream, {
       status: 200,
       headers: { "content-type": "text/x-component;charset=utf-8" },
@@ -1140,13 +1151,29 @@ export function createRSCHandler<
             },
           };
 
-          const rscStream = renderToReadableStream(payload, {
-            onError: (error: unknown) => {
-              callOnError(error, "rendering", { request, url, env });
+          const isNotFoundFlightResponse = isRscRequest(
+            request,
+            url,
+            isPartial,
+          );
+          const notFoundStageTracking = {
+            mode: isPartial ? ("partial" as const) : ("full" as const),
+            routeKey,
+            totalStages: isNotFoundFlightResponse ? 1 : 2,
+          };
+          const rscStream = renderRscFlightStage(
+            {
+              ctx: { renderToReadableStream, callOnError },
+              request,
+              url,
+              env,
+              payload,
+              tracking: notFoundStageTracking,
             },
-          });
+            performance.now(),
+          ).stream;
 
-          if (isRscRequest(request, url, isPartial)) {
+          if (isNotFoundFlightResponse) {
             return createResponseWithMergedHeaders(rscStream, {
               status: 404,
               headers: {
@@ -1165,10 +1192,14 @@ export function createRSCHandler<
             url,
             getRequestContext()._metricsStore,
           );
-          const htmlStream = await ssrModule.renderHTML(rscStream, {
-            nonce,
-            streamMode,
-          });
+          const htmlStream = await observeRscHtmlStage(
+            { url, tracking: notFoundStageTracking },
+            () =>
+              ssrModule.renderHTML(rscStream, {
+                nonce,
+                streamMode,
+              }),
+          );
 
           return createResponseWithMergedHeaders(htmlStream, {
             status: 404,

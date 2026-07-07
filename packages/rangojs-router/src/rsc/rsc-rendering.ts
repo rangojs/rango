@@ -27,7 +27,9 @@ import {
   attachLocationStateIfPresent,
   createRscRenderStages,
   finishRscRenderStages,
+  observeRscHtmlStage,
   readRscFlightStage,
+  renderRscFlightStage,
   runRscRenderStages,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -460,6 +462,12 @@ async function handleRscRenderingInner<TEnv>(
     }
   }
 
+  const isFlightResponse = isRscRequest(request, url, isPartial);
+  const stageTracking = {
+    mode: isPartial ? ("partial" as const) : ("full" as const),
+    routeKey: reqCtx._routeName,
+    totalStages: isFlightResponse ? 3 : 4,
+  };
   const renderStages = createRscRenderStages({
     ctx,
     request,
@@ -469,16 +477,13 @@ async function handleRscRenderingInner<TEnv>(
     init: {
       headers: rscHeaders,
     },
-    tracking: {
-      mode: isPartial ? "partial" : "full",
-      routeKey: reqCtx._routeName,
-    },
+    tracking: stageTracking,
   });
 
   const flightStage = await readRscFlightStage(renderStages);
   const rscStream = flightStage.stream;
 
-  if (isRscRequest(request, url, isPartial)) {
+  if (isFlightResponse) {
     // render:total is recorded by the observePhase wrapper around this function.
     return runRscRenderStages(renderStages);
   }
@@ -494,11 +499,15 @@ async function handleRscRenderingInner<TEnv>(
 
   // ssr-render-html metric + rango.ssr span from one boundary. render:total is
   // recorded by the observePhase wrapper around this function.
-  const htmlStream = await observePhase(PHASES.ssr, () =>
-    ssrModule.renderHTML(rscStream, {
-      nonce,
-      streamMode,
-    }),
+  const htmlStream = await observeRscHtmlStage(
+    { url, tracking: stageTracking },
+    () =>
+      observePhase(PHASES.ssr, () =>
+        ssrModule.renderHTML(rscStream, {
+          nonce,
+          streamMode,
+        }),
+      ),
   );
   const response = await finishRscRenderStages(renderStages, {
     body: htmlStream,
@@ -619,11 +628,22 @@ function serveShellHit(
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
-    let rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
-      onError: (error: unknown) => {
-        ctx.callOnError(error, "rendering", { request, url, env });
+    const flightStage = renderRscFlightStage(
+      {
+        ctx,
+        request,
+        env,
+        url,
+        payload,
+        tracking: {
+          mode: "full",
+          routeKey: activeCtx._routeName,
+          totalStages: 1,
+        },
       },
-    });
+      performance.now(),
+    );
+    let rscStream = flightStage.stream;
     // Timing tap: when does the Flight render produce its FIRST byte? Compared
     // with the eager-inject/first-tail logs this proves whether hydration-start
     // latency is genuine server work (loaders) or stream plumbing holding

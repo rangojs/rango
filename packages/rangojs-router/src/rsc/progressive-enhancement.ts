@@ -23,6 +23,7 @@ import {
   buildRouteMiddlewareEntries,
   createRscRenderStages,
   finishRscRenderStages,
+  observeRscHtmlStage,
   readRscFlightStage,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -330,6 +331,12 @@ export async function handleProgressiveEnhancement<TEnv>(
       },
     };
 
+    const stageTracking = {
+      mode: "progressive-enhancement" as const,
+      routeKey: getRequestContext()._routeName,
+      actionId: directActionId ?? undefined,
+      totalStages: 4,
+    };
     const renderStages = createRscRenderStages({
       ctx,
       request,
@@ -346,11 +353,7 @@ export async function handleProgressiveEnhancement<TEnv>(
           : {}),
         headers: { "content-type": "text/html;charset=utf-8" },
       },
-      tracking: {
-        mode: "progressive-enhancement",
-        routeKey: getRequestContext()._routeName,
-        actionId: directActionId ?? undefined,
-      },
+      tracking: stageTracking,
     });
     const flightStage = await readRscFlightStage(renderStages);
     // metricsStore=undefined is safe: the handler already stashed the early
@@ -365,11 +368,15 @@ export async function handleProgressiveEnhancement<TEnv>(
     );
     // reactFormState carries the useActionState payload via the SSR-option path
     // (renderToReadableStream({ formState })); it does NOT travel on RscPayload.
-    const htmlStream = await ssrModule.renderHTML(flightStage.stream, {
-      formState: reactFormState,
-      nonce,
-      streamMode,
-    });
+    const htmlStream = await observeRscHtmlStage(
+      { url, tracking: stageTracking },
+      () =>
+        ssrModule.renderHTML(flightStage.stream, {
+          formState: reactFormState,
+          nonce,
+          streamMode,
+        }),
+    );
 
     return finishRscRenderStages(renderStages, {
       body: htmlStream,
@@ -489,6 +496,12 @@ async function renderPeErrorBoundary<TEnv>(
     },
   };
 
+  const stageTracking = {
+    mode: "progressive-enhancement-error" as const,
+    routeKey: getRequestContext()._routeName,
+    actionId: actionId ?? undefined,
+    totalStages: 4,
+  };
   const renderStages = createRscRenderStages({
     ctx,
     request,
@@ -499,11 +512,7 @@ async function renderPeErrorBoundary<TEnv>(
       status: 500,
       headers: { "content-type": "text/html;charset=utf-8" },
     },
-    tracking: {
-      mode: "progressive-enhancement-error",
-      routeKey: getRequestContext()._routeName,
-      actionId: actionId ?? undefined,
-    },
+    tracking: stageTracking,
   });
   const flightStage = await readRscFlightStage(renderStages);
   // metricsStore=undefined is safe: the handler already stashed the early
@@ -516,10 +525,14 @@ async function renderPeErrorBoundary<TEnv>(
     url,
     undefined,
   );
-  const htmlStream = await ssrModule.renderHTML(flightStage.stream, {
-    nonce,
-    streamMode,
-  });
+  const htmlStream = await observeRscHtmlStage(
+    { url, tracking: stageTracking },
+    () =>
+      ssrModule.renderHTML(flightStage.stream, {
+        nonce,
+        streamMode,
+      }),
+  );
 
   return finishRscRenderStages(renderStages, {
     body: htmlStream,

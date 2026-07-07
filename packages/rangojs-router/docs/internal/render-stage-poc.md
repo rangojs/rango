@@ -17,6 +17,8 @@ about:
   hooks
 - carry explicit stage context (`mode`, route/action ids, progress, phase timing)
   so analytics can be collected without rediscovering where the render is
+- observe HTML/SSR progress without replacing the existing `PHASES.ssr` span
+  boundary or Server-Timing behavior
 - centralize repeated Flight serialization/error/metric plumbing
 - keep matching, segment resolution, and `renderSegments()` tree structure
   unchanged
@@ -30,9 +32,11 @@ about:
 | Payload inspection / last-mile mutation     | Inline locals before `renderToReadableStream()`                   | `payload` yield from `createRscRenderStages()`. Tests can inspect or replace the `RscPayload` with `next({ payload })`. | POC       |
 | Flight serialization                        | Inline `ctx.renderToReadableStream()` blocks                      | `flight` stage owns `renderToReadableStream`, render `onError`, and `rsc-serialize` metric recording.                   | POC       |
 | Flight subflow delegation                   | Implicit inline block                                             | `createRscRenderStages()` delegates to the Flight sub-generator with `yield*`, so Flight can own timing/error events.   | POC       |
+| Flight-only render sites                    | Redirect, 404, PPR tail, shell capture inline Flight calls        | `renderRscFlightStage()` shares Flight timing/error/metric plumbing without taking response or capture ownership.       | POC       |
 | Raw Flight response                         | Inline `createResponseWithMergedHeaders(rscStream, init)`         | `runRscRenderStages()` drains the generator to its final `Response`.                                                    | POC       |
-| HTML response                               | Inline Flight stream -> `ssrModule.renderHTML()` -> HTML response | Caller pauses at `flight`, renders HTML from `stage.stream`, then resumes with `next({ body: htmlStream, init })`.      | POC       |
+| HTML response                               | Inline Flight stream -> `ssrModule.renderHTML()` -> HTML response | Caller pauses at `flight`, observes HTML with `observeRscHtmlStage()`, then resumes with `next({ body, init })`.        | POC       |
 | Analytics/progress context                  | Scattered phase-local values                                      | `tracking` emits `stage:yield`, `stage:start`, `stage:complete`, and `stage:error` with phase/progress/context.         | POC       |
+| Debug stage logging                         | Ad hoc console/debug statements                                   | `createRscStageDebugSink()` adapts stage events to structured debug logs; callers opt in explicitly.                    | POC       |
 | Early SSR setup / parallel work             | `handler.ts` starts SSR setup before render consumption           | Stays outside the generator; stages can observe later render progress without owning the early parallel kickoff.        | Unchanged |
 | Action temporary references                 | `server-action.ts` render options                                 | Passed through stage input to the shared Flight serialization point.                                                    | POC       |
 | PPR shell HIT/MISS policy                   | `rsc-rendering.ts` before normal render                           | Stays outside the generator for this POC; it has separate commit/capture semantics.                                     | Unchanged |
@@ -46,7 +50,7 @@ about:
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Did behavior stay the same?                 | Existing `rsc/__tests__/performance.test.ts`, `action-revalidate-trace.test.ts`, and `server-action.test.ts` stay green.                                                                                        |
 | Can we step and control flow?               | `rsc/__tests__/render-stages.test.ts` steps `payload -> flight -> response`, resumes with a replacement payload and HTML body, and pins thrown serialization at the Flight step.                                |
-| Can we collect phase context?               | `render-stages.test.ts` captures stage events and asserts ordered phases, progress counters, mode, route key, action id, pathname, and Flight error events.                                                     |
+| Can we collect phase context?               | `render-stages.test.ts` captures stage events and asserts ordered phases, dynamic progress counters, mode, route key, action id, pathname, Flight error events, and debug-sink output.                          |
 | Did complexity move in the right direction? | Compare repeated `renderToReadableStream` + `appendMetric` + response blocks before/after. Count touched LOC and remaining branch points in `rsc-rendering.ts` and `server-action.ts`.                          |
 | Did performance regress?                    | Micro-benchmark `runRscRenderStages(createRscRenderStages(...))` against the pre-refactor inline equivalent for synchronous stream creation overhead; treat this as a smoke signal, not a production benchmark. |
 | Is the abstraction balanced?                | Keep only if at least two render paths share it cleanly and stage guards make the flow more explicit. Revert or narrow if callers need path-specific escape hatches.                                            |
@@ -60,7 +64,7 @@ progressive-enhancement HTML rerenders.
 
 ## Initial POC evidence
 
-- Behavior: `src/rsc/__tests__` passes after the refactor (32 files, 344 tests),
+- Behavior: `src/rsc/__tests__` passes after the refactor (32 files, 350 tests),
   including PPR shell HIT/MISS and progressive-enhancement coverage.
 - Step control: `render-stages.test.ts` manually advances `payload -> flight ->
 response`, replaces the payload with `next({ payload })`, resumes the HTML
@@ -70,11 +74,16 @@ response`, replaces the payload with `next({ payload })`, resumes the HTML
   mode, route key, action id, pathname, phase progress, timing, and synchronous
   Flight error records. The Flight phase is delegated with `yield*` so its timing
   and error events live with the work they describe.
+- HTML/debug: HTML renders are observed as additive events around the existing
+  SSR work, dynamic progress totals distinguish `payload -> flight -> response`
+  from `payload -> flight -> html -> response`, and the debug sink translates
+  events to structured logs without making analytics load-bearing.
 - Duplication: `server-action.ts` dropped from four inline
   `renderToReadableStream<RscPayload>` / `rsc-serialize` occurrences to zero,
   and `progressive-enhancement.ts` dropped from two to zero. `rsc-rendering.ts`
-  dropped from three to one; the remaining occurrence is the PPR shell-tail
-  render, which this POC intentionally leaves outside the stage runner.
+  and `shell-capture.ts` now share the Flight-only helper for PPR tail/capture
+  Flight construction. The only remaining direct `renderToReadableStream<RscPayload>`
+  is the defensive redirect fallback when no request context is available.
 - Diff shape: this is not yet a total LOC reduction. The helper adds the shared
   stage API, `server-action.ts` gets smaller, and `rsc-rendering.ts` grows a
   little because it now makes the Flight pause explicit before SSR.

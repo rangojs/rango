@@ -41,7 +41,7 @@ export type RscRenderMode =
   | "progressive-enhancement"
   | "progressive-enhancement-error";
 
-export type RscRenderPhase = "payload" | "flight" | "response";
+export type RscRenderPhase = "payload" | "flight" | "html" | "response";
 
 export interface RscRenderStageProgress {
   completed: number;
@@ -84,7 +84,23 @@ export interface RscRenderStageTracking {
   mode?: RscRenderMode;
   routeKey?: string;
   actionId?: string;
+  totalStages?: number;
   onEvent?: (event: RscRenderStageEvent) => void;
+}
+
+export interface RscFlightStageInput<TEnv> {
+  ctx: Pick<HandlerContext<TEnv>, "renderToReadableStream" | "callOnError">;
+  request: Request;
+  url: URL;
+  env: TEnv;
+  payload: RscPayload;
+  temporaryReferences?: unknown;
+  tracking?: RscRenderStageTracking;
+}
+
+export interface RscHtmlStageInput {
+  url: URL;
+  tracking?: RscRenderStageTracking;
 }
 
 export type RscRenderStage =
@@ -118,18 +134,26 @@ interface RscFlightStageResult {
 
 const RSC_RENDER_STAGE_TOTAL = 3;
 
-function createRscStageContext<TEnv>(
-  input: RscRenderStageInput<TEnv>,
+function rscStageTotal(tracking: RscRenderStageTracking | undefined): number {
+  const total = tracking?.totalStages;
+  return total && Number.isFinite(total) && total > 0
+    ? total
+    : RSC_RENDER_STAGE_TOTAL;
+}
+
+function createRscStageContext(
+  input: { url: URL; tracking?: RscRenderStageTracking },
   phase: RscRenderPhase,
   completed: number,
   startedAt: number,
   phaseStartedAt: number,
 ): RscRenderStageContext {
+  const total = rscStageTotal(input.tracking);
   return {
     mode: input.tracking?.mode ?? "unknown",
     phase,
     pathname: input.url.pathname,
-    progress: { completed, total: RSC_RENDER_STAGE_TOTAL },
+    progress: { completed: Math.min(completed, total), total },
     startedAt,
     phaseStartedAt,
     ...(input.tracking?.routeKey && { routeKey: input.tracking.routeKey }),
@@ -137,8 +161,8 @@ function createRscStageContext<TEnv>(
   };
 }
 
-function emitRscStageEvent<TEnv>(
-  input: RscRenderStageInput<TEnv>,
+function emitRscStageEvent(
+  input: { tracking?: RscRenderStageTracking },
   event: RscRenderStageEvent,
 ): void {
   const sink = input.tracking?.onEvent;
@@ -152,16 +176,11 @@ function emitRscStageEvent<TEnv>(
   }
 }
 
-async function* createRscFlightStages<TEnv>(
-  input: RscRenderStageInput<TEnv>,
-  payload: RscPayload,
-  init: ResponseInit,
+export function renderRscFlightStage<TEnv>(
+  input: RscFlightStageInput<TEnv>,
   startedAt: number,
-): AsyncGenerator<
-  RscFlightStage,
-  RscFlightStageResult,
-  RscRenderStageControl | undefined
-> {
+  init: ResponseInit = {},
+): RscFlightStage {
   const phaseStartedAt = performance.now();
   const context = createRscStageContext(
     input,
@@ -173,7 +192,7 @@ async function* createRscFlightStages<TEnv>(
   emitRscStageEvent(input, { type: "stage:start", context });
 
   try {
-    const stream = input.ctx.renderToReadableStream<RscPayload>(payload, {
+    const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
       temporaryReferences: input.temporaryReferences,
       onError: (error: unknown) => {
         input.ctx.callOnError(error, "rendering", {
@@ -196,17 +215,14 @@ async function* createRscFlightStages<TEnv>(
       durationMs,
     });
 
-    const stage = {
+    return {
       type: "flight" as const,
-      payload,
+      payload: input.payload,
       stream,
       init,
       durationMs,
       context,
     };
-    emitRscStageEvent(input, { type: "stage:yield", context });
-    const control = yield stage;
-    return { stage, control };
   } catch (error) {
     emitRscStageEvent(input, {
       type: "stage:error",
@@ -216,6 +232,80 @@ async function* createRscFlightStages<TEnv>(
     });
     throw error;
   }
+}
+
+async function* createRscFlightStages<TEnv>(
+  input: RscRenderStageInput<TEnv>,
+  payload: RscPayload,
+  init: ResponseInit,
+  startedAt: number,
+): AsyncGenerator<
+  RscFlightStage,
+  RscFlightStageResult,
+  RscRenderStageControl | undefined
+> {
+  const stage = renderRscFlightStage(
+    {
+      ctx: input.ctx,
+      request: input.request,
+      url: input.url,
+      env: input.env,
+      payload,
+      temporaryReferences: input.temporaryReferences,
+      tracking: input.tracking,
+    },
+    startedAt,
+    init,
+  );
+  emitRscStageEvent(input, { type: "stage:yield", context: stage.context });
+  const control = yield stage;
+  return { stage, control };
+}
+
+export async function observeRscHtmlStage<T>(
+  input: RscHtmlStageInput,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  const context = createRscStageContext(input, "html", 3, startedAt, startedAt);
+  emitRscStageEvent(input, { type: "stage:start", context });
+  try {
+    const result = await fn();
+    emitRscStageEvent(input, {
+      type: "stage:complete",
+      context,
+      durationMs: performance.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    emitRscStageEvent(input, {
+      type: "stage:error",
+      context,
+      durationMs: performance.now() - startedAt,
+      error,
+    });
+    throw error;
+  }
+}
+
+export function createRscStageDebugSink(
+  log: (message: string, details?: Record<string, unknown>) => void = (
+    message,
+    details,
+  ) => console.debug(message, details),
+): (event: RscRenderStageEvent) => void {
+  return (event) => {
+    const { context } = event;
+    log(`[RSC][stage] ${event.type} ${context.phase}`, {
+      mode: context.mode,
+      pathname: context.pathname,
+      routeKey: context.routeKey,
+      actionId: context.actionId,
+      progress: `${context.progress.completed}/${context.progress.total}`,
+      ...("durationMs" in event && { durationMs: event.durationMs }),
+      ...("error" in event && { error: event.error }),
+    });
+  };
 }
 
 /**
@@ -265,7 +355,7 @@ export async function* createRscRenderStages<TEnv>(
   const responseContext = createRscStageContext(
     input,
     "response",
-    3,
+    rscStageTotal(input.tracking),
     startedAt,
     phaseStartedAt,
   );

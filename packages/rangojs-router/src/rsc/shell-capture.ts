@@ -53,9 +53,10 @@ import {
   getRecordingStore,
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
-import type { RscPayload, SSRModule } from "./types.js";
+import type { SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
+import { renderRscFlightStage } from "./helpers.js";
 
 /**
  * Task-quantized quiesce: the number of consecutive macrotask hops with zero new
@@ -1131,11 +1132,21 @@ async function attemptCapture(
       derivedCtx,
       freshHandleStore,
     );
-    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
-      onError: (error: unknown) => {
-        ctx.callOnError(error, "rendering", { request, url, env });
+    const flightStage = renderRscFlightStage(
+      {
+        ctx,
+        request,
+        env,
+        url,
+        payload,
+        tracking: {
+          mode: "full",
+          routeKey: derivedCtx._routeName,
+          totalStages: 1,
+        },
       },
-    });
+      performance.now(),
+    );
 
     // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
     // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
@@ -1145,7 +1156,7 @@ async function attemptCapture(
     // shell-tag snapshot must sit behind the quiesce gate (issue #676).
     return captureAndStoreShell(
       ssrModule,
-      rscStream,
+      flightStage.stream,
       freshHandleStore,
       derivedCtx,
       descriptor,

@@ -5,9 +5,12 @@ import {
 } from "../../server/request-context.js";
 import { createMetricsStore } from "../../router/metrics.js";
 import {
+  createRscStageDebugSink,
   createRscRenderStages,
   finishRscRenderStages,
+  observeRscHtmlStage,
   readRscFlightStage,
+  renderRscFlightStage,
   runRscRenderStages,
 } from "../helpers.js";
 import type { RscPayload } from "../types.js";
@@ -194,6 +197,109 @@ describe("RSC render stages", () => {
     expect(await response.text()).toBe("html");
   });
 
+  it("can render a Flight-only stage without response ownership", async () => {
+    const request = new Request("http://localhost/flight-only");
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    });
+    const stream = new ReadableStream<Uint8Array>();
+    const ctx = makeCtx(vi.fn(() => stream));
+    const events: RscRenderStageEvent[] = [];
+
+    await runWithRequestContext(reqCtx, () => {
+      const stage = renderRscFlightStage(
+        {
+          ctx,
+          request,
+          env: {},
+          url,
+          payload: payload("/flight-only"),
+          tracking: {
+            mode: "full",
+            totalStages: 1,
+            onEvent: (event) => events.push(event),
+          },
+        },
+        performance.now(),
+      );
+
+      expect(stage.stream).toBe(stream);
+      expect(stage.context.progress).toEqual({ completed: 1, total: 1 });
+    });
+
+    expect(events.map((event) => event.type)).toEqual([
+      "stage:start",
+      "stage:complete",
+    ]);
+  });
+
+  it("emits HTML progress events without owning SSR rendering", async () => {
+    const request = new Request("http://localhost/html-events");
+    const url = new URL(request.url);
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url,
+      variables: {},
+    });
+    const events: RscRenderStageEvent[] = [];
+    const tracking = {
+      mode: "full" as const,
+      totalStages: 4,
+      onEvent: (event: RscRenderStageEvent) => events.push(event),
+    };
+    const ctx = makeCtx(vi.fn(() => new ReadableStream<Uint8Array>()));
+
+    await runWithRequestContext(reqCtx, async () => {
+      const stages = createRscRenderStages({
+        ctx,
+        request,
+        env: {},
+        url,
+        payload: payload("/html-events"),
+        init: { status: 200 },
+        tracking,
+      });
+      await readRscFlightStage(stages);
+
+      const html = await observeRscHtmlStage({ url, tracking }, async () => {
+        return "html";
+      });
+      expect(html).toBe("html");
+
+      await finishRscRenderStages(stages, {
+        body: html,
+      });
+    });
+
+    expect(
+      events.map((event) => `${event.type}:${event.context.phase}`),
+    ).toEqual([
+      "stage:yield:payload",
+      "stage:start:flight",
+      "stage:complete:flight",
+      "stage:yield:flight",
+      "stage:start:html",
+      "stage:complete:html",
+      "stage:start:response",
+      "stage:complete:response",
+    ]);
+    expect(events.map((event) => event.context.progress)).toEqual([
+      { completed: 1, total: 4 },
+      { completed: 2, total: 4 },
+      { completed: 2, total: 4 },
+      { completed: 2, total: 4 },
+      { completed: 3, total: 4 },
+      { completed: 3, total: 4 },
+      { completed: 4, total: 4 },
+      { completed: 4, total: 4 },
+    ]);
+  });
+
   it("emits context-rich progress events across delegated stages", async () => {
     const request = new Request("http://localhost/events");
     const url = new URL(request.url);
@@ -288,6 +394,34 @@ describe("RSC render stages", () => {
     } finally {
       consoleSpy.mockRestore();
     }
+  });
+
+  it("formats stage events for debug logging", () => {
+    const log = vi.fn();
+    const sink = createRscStageDebugSink(log);
+    sink({
+      type: "stage:complete",
+      durationMs: 1.25,
+      context: {
+        mode: "partial",
+        phase: "flight",
+        pathname: "/debug",
+        progress: { completed: 2, total: 3 },
+        startedAt: 10,
+        phaseStartedAt: 12,
+        routeKey: "routes/debug",
+        actionId: "save",
+      },
+    });
+
+    expect(log).toHaveBeenCalledWith("[RSC][stage] stage:complete flight", {
+      mode: "partial",
+      pathname: "/debug",
+      routeKey: "routes/debug",
+      actionId: "save",
+      progress: "2/3",
+      durationMs: 1.25,
+    });
   });
 
   it("surfaces synchronous Flight serialization failures at the Flight step", async () => {
