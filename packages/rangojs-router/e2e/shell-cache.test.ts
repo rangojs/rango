@@ -681,10 +681,22 @@ function runShellCacheSpec(f: Fixture): void {
     using __ = guardHydrationErrors(page);
     await page.goto(url);
     await waitForHydration(page);
-    await expect(testId(page, "shell-settled-label")).toHaveText(
+    // Scope to the ShellSettledValue container (data-testid="shell-settled").
+    // When the nested promise's Flight payload lands client-side before fizz's
+    // `$RC("B:0","S:0")` completeSegment script executes (a streaming race the
+    // #706 fragment splice widens — the baked payload is now a byte copy that
+    // finishes well ahead of the resume), React client-renders the dehydrated
+    // boundary in place and leaves fizz's HIDDEN segment container
+    // (`<div hidden id="S:0">`, a direct child of <body>) orphaned in the DOM.
+    // That orphan carries the `hidden` attribute — invisible, zero layout, out
+    // of the a11y tree — but it holds a second `shell-settled-fast` node, so a
+    // bare testid locator strict-mode-collides with it. The container scope
+    // keeps only the visible in-place copy (the orphan lives outside it).
+    const settled = testId(page, "shell-settled");
+    await expect(settled.getByTestId("shell-settled-label")).toHaveText(
       /Settled outer \d+/,
     );
-    await expect(testId(page, "shell-settled-fast")).toHaveText(
+    await expect(settled.getByTestId("shell-settled-fast")).toHaveText(
       /Settled fast \d+/,
     );
   });

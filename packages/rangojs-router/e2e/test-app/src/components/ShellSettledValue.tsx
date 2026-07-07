@@ -19,7 +19,7 @@ export function ShellSettledValue({
 }) {
   const { data } = useLoader(loader);
   return (
-    <div>
+    <div data-testid="shell-settled">
       <span data-testid="shell-settled-label">{data.label}</span>{" "}
       <Suspense
         fallback={
