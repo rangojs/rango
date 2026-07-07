@@ -116,6 +116,73 @@ the generator; it does not enable `debugPerformance`, allocate telemetry events,
 or touch OTel. Flight serialization still records the existing `rsc-serialize`
 metric through the request metrics store when that store exists.
 
+## External app validation
+
+The first real-app pass used two Cloudflare Workers apps that exercise different
+parts of the render pipeline:
+
+| App                      | Why it matters                                                                                                                      | Result                                                                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rsc-cloudflare-app`     | Multi-router Cloudflare app with `createCloudflareTracing()`, `ctx.debugPerformance()`, PPR store routes, `Prerender()` categories. | Branch-linked typecheck passed; branch-linked `vite build` passed and emitted stage code in `dist/rsc/assets/handler-D3loKVWi.js`.               |
+| `cloudflare-stress-demo` | 26k+ route Cloudflare stress app with SSR, Flight partials, cache segments, PE action POST, async includes, and benchmark routes.   | Typecheck passed; `vite build` passed; production e2e smoke passed; deployed version responds with document, dashboard, JSON, and Flight routes. |
+| `tests/cloudflare-basic` | Consumer dogfood for tracing, telemetry, dispatch, Flight serialization, and server-tree rendering.                                 | Focused unit/RSC tests passed: tracing/telemetry/dispatch `10` tests, Flight/server-tree `10` tests.                                             |
+
+Concrete commands run:
+
+```sh
+# rsc-cloudflare-app, first on installed router 0.0.0-experimental.146,
+# then with node_modules/@rangojs/router temporarily linked to this branch.
+./node_modules/.bin/tsc --noEmit
+./node_modules/.bin/tsc --noEmit -p src/apps/admin/tsconfig.json
+./node_modules/.bin/tsc --noEmit -p src/apps/site/tsconfig.json
+./node_modules/.bin/tsc --noEmit -p src/apps/site-database/tsconfig.json
+./node_modules/.bin/tsc --noEmit -p src/apps/store/tsconfig.json
+./node_modules/.bin/vite build
+
+# cloudflare-stress-demo
+./node_modules/.bin/tsc --noEmit
+./node_modules/.bin/tsc -p bench --noEmit
+./node_modules/.bin/vite build
+./node_modules/.bin/playwright test --project=production --no-deps --grep "app load surface \(production\)|async include routes \(production\)"
+
+# cloudflare-basic
+./node_modules/.bin/vitest run test/tracing.test.ts test/telemetry-emission.test.ts test/dispatch.test.ts
+./node_modules/.bin/vitest run --config vitest.rsc.config.ts test/flight.rsc-test.tsx test/server-tree.rsc-test.tsx
+```
+
+Deployment evidence:
+
+| App                      | URL                                                    | Version                                |
+| ------------------------ | ------------------------------------------------------ | -------------------------------------- |
+| `cloudflare-stress-demo` | `https://cloudflare-stress-demo.devcorner.workers.dev` | `658b20a5-5639-48b2-b2e3-d6520c1baf82` |
+| `rsc-cloudflare-app`     | `https://rsc-cloudflare-app.devcorner.workers.dev`     | `282afecf-436f-4907-a9e1-6a1280de0689` |
+| `rsc-cloudflare-app`     | `https://rsc.devcorner.com`                            | same deployed Worker version           |
+
+Live smoke after deploy:
+
+- `cloudflare-stress-demo` returned `200` for `/`, `/app/dashboard/main`,
+  `/api/bench/first`, and the Flight partial route
+  `/site/en/flat/1?_rsc_partial=true&_rsc_segments=` with
+  `content-type: text/x-component`.
+- `rsc-cloudflare-app` returned `200` for `/` and `/shop` on both workers.dev
+  and `rsc.devcorner.com`; `/shop` included `rsc-serialize`,
+  `ssr-render-html`, `render-total-home`, and `x-rango-shell: MISS` in the
+  response headers.
+
+Two caveats matter:
+
+- `rsc-cloudflare-app` was installed on `@rangojs/router@0.0.0-experimental.146`.
+  The branch-linked validation exercised this branch (`0.0.0-experimental.150`
+  plus the POC commits), so differences from the app's baseline include both
+  the version jump and the async-stage POC.
+- Branch-linked `rsc-cloudflare-app` build generated prerender assets
+  successfully (`6205.1 KB`, `282` entries), but shell prerender then reported
+  `0 done, 282 skipped` because generated `/shop/...` shell paths did not match
+  runtime routes. The installed-router baseline wrote prerender assets too
+  (`6284.4 KB`, `285` entries) and did not run that shell-prerender reporting
+  path, so this is a version-delta observation to investigate separately, not
+  evidence against async render stages.
+
 The next re-evaluation point is NOT a broad client-side generator. The
 partial-update/action bridge audit found that those branches are mostly semantic
 locks: repeated abort checks after awaits, transaction commit ordering,
