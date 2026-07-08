@@ -108,6 +108,27 @@ export interface RequestContext<
   /** @internal Stub response for collecting headers/cookies. Use ctx.headers or ctx.header() instead. */
   readonly res: Response;
 
+  /**
+   * True for build-time render/capture requests. Live requests use false.
+   * Build-time shell capture sets this while replaying middleware so apps can
+   * skip side-effectful runtime work.
+   */
+  readonly build: boolean;
+
+  /**
+   * Opt this request out of PPR shell serving/capture.
+   * Runtime middleware can call this before the PPR commit point; handlers can
+   * call it on a MISS to prevent the follow-up capture.
+   *
+   * Scope: the PPR SHELL axis only. It does NOT disable prerender B-segment
+   * (Prerender/Static) serving, and it is inert in the prerender-collect /
+   * static-render contexts (no live shell decision to influence there).
+   */
+  dynamic(): void;
+
+  /** @internal Request-local PPR opt-out marker set by ctx.dynamic(). */
+  _dynamic?: boolean;
+
   /** @internal Get a cookie value (effective: request + response mutations). Use cookies().get() instead. */
   cookie(name: string): string | undefined;
   /** @internal Get all cookies (effective merged view). Use cookies().getAll() instead. */
@@ -628,6 +649,7 @@ export type PublicRequestContext<
   | "_variables"
   | "_classifiedRoute"
   | "_cacheSignal"
+  | "_dynamic"
   | "res"
 >;
 
@@ -775,6 +797,8 @@ export interface CreateRequestContextOptions<TEnv> {
   >;
   /** Optional Cloudflare execution context for waitUntil support */
   executionContext?: ExecutionContext;
+  /** Build-time render/capture request marker. Defaults to false. */
+  build?: boolean;
   /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */
   themeConfig?: ResolvedThemeConfig | null;
   /** Resolved rango state cookie name, for the server seat of invalidateClientCache(). */
@@ -804,6 +828,7 @@ export function createRequestContext<TEnv>(
     explicitTaggedStores,
     cacheProfiles,
     executionContext,
+    build = false,
     themeConfig,
     stateCookieName,
     version: stateVersion,
@@ -951,6 +976,11 @@ export function createRequestContext<TEnv>(
     pathname: url.pathname,
     searchParams: cleanUrl.searchParams,
     _variables: variables,
+    build,
+    dynamic(): void {
+      ctx._dynamic = true;
+    },
+    _dynamic: false,
     get: ((keyOrVar: any) => {
       if (isNonCacheable(variables, keyOrVar) && isInsideCacheScope()) {
         throw new Error(
@@ -1089,6 +1119,7 @@ export function createRequestContext<TEnv>(
     _cacheProfiles: cacheProfiles,
 
     waitUntil(fn: () => Promise<void>): void {
+      if (ctx.build) return;
       // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
       // non-async callback becomes a rejected promise handed to the host's
       // waitUntil (logged as a background failure), instead of escaping into

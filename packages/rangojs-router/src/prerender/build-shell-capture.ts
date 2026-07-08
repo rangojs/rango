@@ -6,10 +6,11 @@
  * chunk preloads — that only exist post-client-build). The capture core is
  * producer A's, verbatim: deriveShellCaptureContext (mask funnel, liveness,
  * snapshot recording, implicit doc-cache scope) + captureAndStoreShell (gates,
- * quiesce, tags union, putShell barrier). The differences are only the base
- * context (a synthetic build request created via createRequestContext over the
- * build env — no ambient identity, so the identity guard is trivially
- * satisfied) and the sink (an entry collector instead of a runtime store).
+ * quiesce, tags union, putShell barrier). Build capture first replays global
+ * and route middleware with a synthetic build request context
+ * (`ctx.build === true`, inert `ctx.waitUntil()`); middleware can seed vars or
+ * call `ctx.dynamic()` to skip this URL. The sink is an entry collector instead
+ * of a runtime store.
  *
  * The capture's match() re-enters withCacheLookup, HITs the in-realm prerender
  * store seeded from the just-collected Flight payloads, and REPLAYS the
@@ -25,6 +26,7 @@ import {
   createRequestContext,
   runWithRequestContext,
   setRequestContextParams,
+  type RequestContext,
 } from "../server/request-context.js";
 import {
   deriveShellCaptureContext,
@@ -34,9 +36,15 @@ import {
   type ShellCaptureDescriptor,
 } from "../rsc/shell-capture.js";
 import { buildFullPayload } from "../rsc/full-payload.js";
+import { buildRouteMiddlewareEntries } from "../rsc/helpers.js";
 import type { RscPayload, SSRModule } from "../rsc/types.js";
 import type { HandlerContext } from "../rsc/handler-context.js";
 import { renderToReadableStream } from "../deps/rsc.js";
+import { isRouteNotFoundError } from "../errors.js";
+import { createReverseFunction } from "../router/handler-context.js";
+import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
+import type { MiddlewareEntry } from "../router/middleware.js";
+import { getGlobalRouteMap } from "../route-map-builder.js";
 import {
   resolvePprConfig,
   type ResolvedPprConfig,
@@ -116,6 +124,8 @@ export interface BuildShellCaptureResult {
     | "no-shell"
     | "redirect"
     | "refused"
+    /** Middleware/handler opted this URL out of PPR shell capture. */
+    | "dynamic"
     /** The router swept does not own this URL — try the next one. */
     | "route-mismatch";
   /** Present iff outcome === "stored". */
@@ -152,16 +162,19 @@ async function attemptBuildCapture(
   const router = opts.router;
   const url = new URL(opts.urlPath, "http://build.invalid");
   const request = new Request(url, { method: "GET" });
+  const env = (opts.buildEnv ?? {}) as any;
+  const variables: Record<string, any> = {};
 
   // Synthetic build request context: same factory the runtime handler uses,
   // so the capture's ALS surface (cookie machinery, variables, waitUntil,
   // theme resolution) is production-shaped. No cookie header → theme resolves
   // to the app default, exactly like a first anonymous visitor's capture.
   const baseCtx = createRequestContext({
-    env: (opts.buildEnv ?? {}) as any,
+    env,
     request,
     url,
-    variables: {},
+    variables,
+    build: true,
     // Fresh empty store per attempt: cache()/"use cache" reads MISS, execute,
     // and are recorded into the snapshot by the derivation's RecordingShell
     // wrapper — the entry pins its own generation, nothing preexisting leaks.
@@ -169,11 +182,6 @@ async function attemptBuildCapture(
     themeConfig: router.themeConfig ?? null,
     stateCookieName: router.resolvedStateCookieName,
     version: opts.buildVersion,
-  });
-
-  const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(baseCtx, {
-    ttl: opts.ttl,
-    swr: opts.swr,
   });
 
   // Entry collector: captureAndStoreShell's sink. putShell never fails here,
@@ -204,10 +212,177 @@ async function attemptBuildCapture(
   };
 
   let mismatchedRouteName: string | undefined;
+  const result = await runWithRequestContext(baseCtx, async () => {
+    const preview =
+      typeof router.previewMatch === "function"
+        ? await router.previewMatch(request, { env })
+        : undefined;
+    // These preview-based mismatches exit before any middleware/envelope runs,
+    // so nothing consumes a response — only result.outcome is read below.
+    if (preview === null) {
+      return { outcome: "route-mismatch" } as const;
+    }
+    if (preview?.routeKey && preview.routeKey !== opts.routeName) {
+      mismatchedRouteName = preview.routeKey;
+      return { outcome: "route-mismatch" } as const;
+    }
+
+    if (preview?.routeKey) {
+      setRequestContextParams(preview.params ?? {}, preview.routeKey);
+    }
+
+    const routeReverse = createReverseFunction(
+      getGlobalRouteMap(),
+      preview?.routeKey,
+      preview?.params ?? {},
+    );
+
+    const runCapture = () =>
+      runBuildCaptureFinal({
+        baseCtx,
+        descriptor,
+        env,
+        opts,
+        request,
+        router,
+        url,
+        setMismatchedRouteName: (routeName) => {
+          mismatchedRouteName = routeName;
+        },
+      });
+
+    const routeMiddleware =
+      preview?.routeMiddleware && preview.routeMiddleware.length > 0
+        ? buildRouteMiddlewareEntries(preview.routeMiddleware)
+        : [];
+    const runRouteMiddleware = () =>
+      runBuildMiddlewareEnvelope(
+        routeMiddleware,
+        request,
+        env,
+        variables,
+        runCapture,
+        routeReverse,
+        baseCtx,
+      );
+
+    const globalMiddleware = Array.isArray(router.middleware)
+      ? matchMiddleware(url.pathname, router.middleware)
+      : [];
+    return runBuildMiddlewareEnvelope(
+      globalMiddleware,
+      request,
+      env,
+      variables,
+      runRouteMiddleware,
+      routeReverse,
+      baseCtx,
+    );
+  });
+
+  const outcome = result.outcome;
+  if (outcome === "stored" && collected !== null) {
+    const hit: { entry: ShellCacheEntry; tags?: string[] } = collected;
+    return { outcome, entry: hit.entry, tags: hit.tags };
+  }
+  if (outcome === "route-mismatch") {
+    return { outcome, matchedRouteName: mismatchedRouteName };
+  }
+  return { outcome };
+}
+
+type BuildShellCaptureOutcome = BuildShellCaptureResult["outcome"];
+
+interface BuildCaptureRunResult {
+  outcome: BuildShellCaptureOutcome;
+  response: Response;
+}
+
+interface BuildCaptureFinalOptions {
+  baseCtx: RequestContext<any>;
+  descriptor: ShellCaptureDescriptor;
+  env: any;
+  opts: BuildShellCaptureOptions;
+  request: Request;
+  router: any;
+  url: URL;
+  setMismatchedRouteName(routeName: string | undefined): void;
+}
+
+async function runBuildMiddlewareEnvelope<TEnv>(
+  middlewares: Array<{
+    entry: MiddlewareEntry<TEnv>;
+    params: Record<string, string>;
+  }>,
+  request: Request,
+  env: TEnv,
+  variables: Record<string, any>,
+  finalHandler: () => Promise<BuildCaptureRunResult>,
+  reverse: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string,
+  baseCtx: RequestContext<any>,
+): Promise<BuildCaptureRunResult> {
+  let downstream: BuildCaptureRunResult | undefined;
+  const response = await executeMiddleware(
+    middlewares,
+    request,
+    env,
+    variables,
+    async () => {
+      downstream = baseCtx._dynamic
+        ? {
+            outcome: "dynamic",
+            response: responseForBuildCaptureOutcome("dynamic"),
+          }
+        : await finalHandler();
+      return downstream.response;
+    },
+    reverse,
+  );
+
+  if (baseCtx._dynamic) {
+    return { outcome: "dynamic", response };
+  }
+  if (response.status >= 300 && response.status < 400) {
+    return { outcome: "redirect", response };
+  }
+  return (
+    downstream ?? {
+      outcome: "no-shell",
+      response,
+    }
+  );
+}
+
+async function runBuildCaptureFinal(
+  options: BuildCaptureFinalOptions,
+): Promise<BuildCaptureRunResult> {
+  const { baseCtx, descriptor, env, opts, request, router, url } = options;
+  // No baseCtx._dynamic recheck here: the only caller is the route envelope's
+  // finalHandler wrapper, which already short-circuits to "dynamic" without
+  // invoking this when baseCtx._dynamic is set. A loader/handler opting out
+  // DURING the capture render is caught by the derivedCtx._dynamic check below.
+
+  const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(baseCtx, {
+    ttl: opts.ttl,
+    swr: opts.swr,
+  });
+
   const outcome = await runWithRequestContext(derivedCtx, async () => {
-    const match = await router.match(request, { env: opts.buildEnv ?? {} });
+    let match;
+    try {
+      match = await router.match(request, { env });
+    } catch (error) {
+      if (isPlainPathMiss(error, opts.urlPath)) {
+        return "route-mismatch" as const;
+      }
+      throw error;
+    }
     if (match.routeName !== opts.routeName) {
-      mismatchedRouteName = match.routeName;
+      options.setMismatchedRouteName(match.routeName);
       return "route-mismatch" as const;
     }
     if (match.redirect) return "redirect" as const;
@@ -233,21 +408,40 @@ async function attemptBuildCapture(
       },
     });
 
-    return captureAndStoreShell(
+    const captureOutcome = await captureAndStoreShell(
       { captureShellHTML: opts.captureShellHTML } as SSRModule,
       rscStream,
       freshHandleStore,
       derivedCtx,
       descriptor,
     );
+    return derivedCtx._dynamic ? "dynamic" : captureOutcome;
   });
 
-  if (outcome === "stored" && collected !== null) {
-    const hit: { entry: ShellCacheEntry; tags?: string[] } = collected;
-    return { outcome, entry: hit.entry, tags: hit.tags };
+  return {
+    outcome,
+    response: responseForBuildCaptureOutcome(outcome),
+  };
+}
+
+function responseForBuildCaptureOutcome(
+  outcome: BuildShellCaptureOutcome,
+): Response {
+  if (outcome === "redirect") {
+    return new Response(null, {
+      status: 302,
+      headers: { location: "http://build.invalid/" },
+    });
   }
-  if (outcome === "route-mismatch") {
-    return { outcome, matchedRouteName: mismatchedRouteName };
-  }
-  return { outcome };
+  return new Response(null, { status: 204 });
+}
+
+function isPlainPathMiss(error: unknown, pathname: string): boolean {
+  if (!isRouteNotFoundError(error)) return false;
+  const cause = (error as { cause?: unknown }).cause;
+  return (
+    cause !== null &&
+    typeof cause === "object" &&
+    (cause as { pathname?: unknown }).pathname === pathname
+  );
 }

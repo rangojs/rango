@@ -397,9 +397,11 @@ UNCACHED segments execute their handlers fresh. A capture render behaves like a
 normal render with respect to the segment cache, with ONE addition the capture
 data snapshot needs: it fires its own `onResponse` callbacks with a synthetic 200
 so the ring-3 segment write runs during capture and is recorded (see "the capture
-data snapshot" above). Middleware is NOT re-run: it
+data snapshot" above). Runtime background capture does NOT re-run middleware: it
 already ran for the triggering request, and the derived context inherits its
-post-middleware state; guarding is serve-time (the commit point above).
+post-middleware state; guarding is serve-time (the commit point above). Build
+producer B is different: it replays middleware once with `ctx.build === true`
+before deriving the capture context.
 
 > **(a) STRUCTURAL: the ENTIRE segment subtree under a `loading()`
 > registration** — loaders masked at capture, the boundary postpones, the
@@ -540,12 +542,13 @@ HIT  ──> committed composed response (x-rango-shell: HIT)
            (+ scheduleShellCapture on a stale/SWR hit)
 ```
 
-Why `router.match()` and not a pipeline re-run for capture: the middleware
-chain (auth, logging) must run exactly once per request. It already ran for the
-triggering request; the derived context inherits the post-middleware state
-(variables, cache store) while overriding the render-scoped accumulators (a
-fresh handle store, request-tag set, and transition list). No double middleware
-side effects, and the served response is never blocked on the capture
+Why `router.match()` and not a pipeline re-run for runtime capture: the
+middleware chain (auth, logging) must run exactly once per request. It already
+ran for the triggering request; the derived context inherits the
+post-middleware state (variables, cache store) while overriding the
+render-scoped accumulators (a fresh handle store, request-tag set, and
+transition list). No double middleware side effects, and the served response is
+never blocked on the capture
 (`runBackground` = `waitUntil` on workerd, fire-and-forget in Node dev).
 
 `_shellCaptureRun` on the derived context is the single ACTIVE marker: loader
@@ -1207,17 +1210,18 @@ are not revived.
   implicitly). Turning on caching for data must never silently change HTML
   serving; PPR requires the explicit `ppr` declaration. Silent axis 1
   otherwise.
-- **Full-pipeline capture dispatch** (re-run the whole middleware pipeline for
-  the capture instead of `router.match()` under a derived context). It would
-  double every middleware side effect (auth, logging) and re-trip the
-  single-use `next()` latch; the derived context inherits the post-middleware
-  state instead, and guarding is serve-time.
+- **Full-pipeline runtime capture dispatch** (re-run the whole middleware
+  pipeline for the background capture instead of `router.match()` under a
+  derived context). It would double every middleware side effect (auth,
+  logging) and re-trip the single-use `next()` latch; the derived context
+  inherits the post-middleware state instead, and guarding is serve-time.
+  Build-time producer B is allowed to replay middleware because there is no
+  live response, it exposes `ctx.build === true`, and `ctx.waitUntil()` is inert.
 
 ## Out of scope (v1)
 
-- Build-time capture in the prerender pipeline (B segments). Runtime capture
-  via background re-render covers the feature; build-time is an optimization
-  with the same storage contract.
+- Build-time capture in the prerender pipeline (B segments): SHIPPED as
+  producer B (#699), with middleware replay added under `ctx.build === true`.
 - CF Cache-API L1 tier for shell entries (KV only in v1).
 - Vercel BOA `chain` / streaming-lambda serving.
 - Render-recorded shell-tag union for shell entries: SHIPPED in #648 (originally

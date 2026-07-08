@@ -534,4 +534,25 @@ describe("renderHandler: ctx.use(Handle).defer()", () => {
     expect(hadSetter).toBe(false);
     expect(cookies.theme).toBeUndefined();
   });
+
+  test("ctx.build reflects opts.build and ctx.dynamic() surfaces on result.dynamic", async () => {
+    // A handler branching on ctx.build (the build-time PPR pass) and opting the
+    // request out of shell capture on a MISS must be unit-testable through the
+    // public primitive; result.dynamic surfaces the opt-out without reading the
+    // @internal ctx._dynamic.
+    let observedBuild: boolean | undefined;
+    function Page(ctx: HandlerContext) {
+      observedBuild = ctx.build;
+      if (ctx.build) ctx.dynamic();
+      return <main>ok</main>;
+    }
+
+    const built = await renderHandler(Page, { build: true });
+    expect(observedBuild).toBe(true);
+    expect(built.dynamic).toBe(true);
+
+    const live = await renderHandler(Page, {});
+    expect(observedBuild).toBe(false);
+    expect(live.dynamic).toBe(false);
+  });
 });

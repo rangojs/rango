@@ -319,6 +319,21 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     expect(response.headers.get("x-rango-shell")).toBe("MISS");
     expect(scheduleMock).not.toHaveBeenCalled();
   });
+
+  it("ctx.dynamic() during axis-1 render suppresses the follow-up shell capture", async () => {
+    const ssrModule = fullSsrModule();
+    (ssrModule.renderHTML as any).mockImplementation(async () => {
+      getRequestContext().dynamic();
+      return streamOf("<html>axis1</html>");
+    });
+
+    const { response } = await run({ ssrModule, ppr: true });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-rango-shell")).toBeNull();
+    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("handleRscRendering — integrated PPR serve: HIT", () => {
@@ -344,6 +359,29 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(opts.postponed).toBe(JSON.stringify({ hole: 1 }));
     expect(ssrModule.renderHTML).not.toHaveBeenCalled();
     // Fresh hit: no recapture.
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("ctx.dynamic() during the HIT tail render does NOT un-commit the shell (stays HIT, no recapture)", async () => {
+    // The commit already happened by the time the tail renders, so a dynamic()
+    // call there is a no-op: x-rango-shell stays HIT and nothing reschedules a
+    // capture. Pins the handler seat's "only affects a MISS" half of the
+    // dynamic() contract (types/handler-context.ts) — the mirror of the MISS
+    // case (dynamic() during axis-1 render suppresses the follow-up capture).
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry(), 300, 30);
+    const ssrModule = fullSsrModule();
+    (ssrModule.resumeShellHTML as any).mockImplementation(async () => {
+      getRequestContext().dynamic();
+      return streamOf("RESUMED-HOLE");
+    });
+
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    // Draining runs the tail (where dynamic() fired) behind the committed prelude.
+    const text = await readAll(response.body!);
+    expect(text).toBe(`${PRELUDE_HTML}RESUMED-HOLE`);
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
@@ -653,6 +691,29 @@ describe("handleRscRendering — integrated PPR serve: bypasses", () => {
     });
     expect(response.headers.has("x-rango-shell")).toBe(false);
     expect(getShell).not.toHaveBeenCalled();
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("ctx.dynamic() before the PPR commit point bypasses shell reads and serves axis 1", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry(), 300, 30);
+    const getShell = vi.spyOn(store, "getShell");
+    const ssrModule = fullSsrModule();
+
+    const { response } = await run({
+      ssrModule,
+      ppr: true,
+      store,
+      arm: (reqCtx) => {
+        reqCtx.dynamic();
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-rango-shell")).toBeNull();
+    expect(getShell).not.toHaveBeenCalled();
+    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 

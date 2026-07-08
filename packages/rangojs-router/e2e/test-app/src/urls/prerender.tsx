@@ -5,6 +5,7 @@ import {
   createLoader,
   getRequestContext,
   Breadcrumbs,
+  type Middleware,
 } from "@rangojs/router";
 import { Suspense } from "react";
 import { ParallelOutlet } from "@rangojs/router/client";
@@ -196,6 +197,48 @@ export const PrerenderPprArticle = Prerender(
   },
 );
 
+const prerenderPprBuildDynamicMiddleware: Middleware = async (ctx, next) => {
+  if (ctx.build) {
+    ctx.waitUntil(async () => {
+      throw new Error("build waitUntil should not run during shell capture");
+    });
+    ctx.dynamic();
+  }
+  return next();
+};
+
+export const PrerenderPprBuildDynamicArticle = Prerender(
+  async () => [{ slug: "delta" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-build-dynamic-article">
+        <p data-testid="pp-build-dynamic-article-content">
+          {`Build-dynamic shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppseq" />
+      </div>
+    );
+  },
+);
+
+const prerenderPprRuntimeDynamicMiddleware: Middleware = async (ctx, next) => {
+  ctx.dynamic();
+  return next();
+};
+
+export const PrerenderPprRuntimeDynamicArticle = Prerender(
+  async () => [{ slug: "omega" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-runtime-dynamic-article">
+        <p data-testid="pp-runtime-dynamic-article-content">
+          {`Runtime-dynamic shell content for ${ctx.params.slug}`}
+        </p>
+      </div>
+    );
+  },
+);
+
 /**
  * Dedicated fixture for the build-shell EVICTION e2e (#699): its own route +
  * tag so updateTag("pp-evict-shell") cannot blast the sibling /pp/:slug
@@ -217,7 +260,7 @@ export const PrerenderPprEvictArticle = Prerender(
 );
 
 export const prerenderPatterns = urls(
-  ({ path, loader, loading, parallel, notFoundBoundary }) => [
+  ({ path, loader, loading, parallel, middleware, notFoundBoundary }) => [
     path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
     path("/docs", DocsPage, { name: "docs" }),
     // Prerender + ppr on ONE route: build-time segments become the frozen
@@ -264,6 +307,32 @@ export const prerenderPatterns = urls(
         }),
       ],
     ),
+    middleware(prerenderPprBuildDynamicMiddleware, () => [
+      path(
+        "/pp-build-dynamic/:slug",
+        PrerenderPprBuildDynamicArticle,
+        { name: "pp.build-dynamic", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          parallel({
+            "@ppseq": {
+              handler: PrerenderPprSeqSlot,
+              use: () => [
+                loader(PrerenderPprSeqLoader),
+                loading(
+                  <span data-testid="pp-seq-fallback">Loading pp seq...</span>,
+                ),
+              ],
+            },
+          }),
+        ],
+      ),
+    ]),
+    middleware(prerenderPprRuntimeDynamicMiddleware, () => [
+      path("/pp-runtime-dynamic/:slug", PrerenderPprRuntimeDynamicArticle, {
+        name: "pp.runtime-dynamic",
+        ppr: { ttl: 300, swr: 120 },
+      }),
+    ]),
     path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
       loader(PrerenderTestLoader),
       notFoundBoundary(({ notFound: info }) => (
