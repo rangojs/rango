@@ -18,7 +18,468 @@ import {
 } from "../redirect-origin.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
+import { appendMetric } from "../router/metrics.js";
 import type { RscPayload } from "./types.js";
+import type { HandlerContext } from "./handler-context.js";
+
+export interface RscRenderStageInput<TEnv> {
+  ctx: Pick<HandlerContext<TEnv>, "renderToReadableStream" | "callOnError">;
+  request: Request;
+  url: URL;
+  env: TEnv;
+  payload: RscPayload;
+  init: ResponseInit;
+  temporaryReferences?: unknown;
+  recordSerializeMetric?: boolean;
+  tracking?: RscRenderStageTracking;
+}
+
+export type RscRenderMode =
+  | "unknown"
+  | "full"
+  | "partial"
+  | "action-revalidation"
+  | "progressive-enhancement"
+  | "progressive-enhancement-error";
+
+export type RscRenderPhase = "payload" | "flight" | "html" | "response";
+
+export const RSC_RENDER_FLIGHT_RESPONSE_PHASES: readonly RscRenderPhase[] = [
+  "payload",
+  "flight",
+  "response",
+];
+
+export const RSC_RENDER_HTML_RESPONSE_PHASES: readonly RscRenderPhase[] = [
+  "payload",
+  "flight",
+  "html",
+  "response",
+];
+
+export const RSC_FLIGHT_ONLY_PHASES: readonly RscRenderPhase[] = ["flight"];
+
+export const RSC_FLIGHT_HTML_PHASES: readonly RscRenderPhase[] = [
+  "flight",
+  "html",
+];
+
+export interface RscRenderStageProgress {
+  completed: number;
+  total: number;
+}
+
+export interface RscRenderStageContext {
+  mode: RscRenderMode;
+  phase: RscRenderPhase;
+  pathname: string;
+  progress: RscRenderStageProgress;
+  startedAt: number;
+  phaseStartedAt: number;
+  routeKey?: string;
+  actionId?: string;
+}
+
+export type RscRenderStageEvent =
+  | {
+      type: "stage:yield";
+      context: RscRenderStageContext;
+    }
+  | {
+      type: "stage:start";
+      context: RscRenderStageContext;
+    }
+  | {
+      type: "stage:complete";
+      context: RscRenderStageContext;
+      durationMs: number;
+    }
+  | {
+      type: "stage:error";
+      context: RscRenderStageContext;
+      durationMs: number;
+      error: unknown;
+    };
+
+export interface RscRenderStageTracking {
+  mode?: RscRenderMode;
+  routeKey?: string;
+  actionId?: string;
+  phases?: readonly RscRenderPhase[];
+  totalStages?: number;
+  onEvent?: (event: RscRenderStageEvent) => void;
+}
+
+export interface RscFlightStageInput<TEnv> {
+  ctx: Pick<HandlerContext<TEnv>, "renderToReadableStream" | "callOnError">;
+  request: Request;
+  url: URL;
+  env: TEnv;
+  payload: RscPayload;
+  temporaryReferences?: unknown;
+  recordSerializeMetric?: boolean;
+  tracking?: RscRenderStageTracking;
+}
+
+export interface RscHtmlStageInput {
+  url: URL;
+  tracking?: RscRenderStageTracking;
+}
+
+export type RscRenderStage =
+  | {
+      type: "payload";
+      payload: RscPayload;
+      init: ResponseInit;
+      context: RscRenderStageContext;
+    }
+  | {
+      type: "flight";
+      payload: RscPayload;
+      stream: ReadableStream<Uint8Array>;
+      init: ResponseInit;
+      durationMs: number;
+      context: RscRenderStageContext;
+    };
+
+export type RscFlightStage = Extract<RscRenderStage, { type: "flight" }>;
+
+export interface RscRenderStageControl {
+  payload?: RscPayload;
+  init?: ResponseInit;
+  body?: BodyInit | null;
+}
+
+interface RscFlightStageResult {
+  stage: RscFlightStage;
+  control: RscRenderStageControl | undefined;
+}
+
+type RscRenderStageSink = NonNullable<RscRenderStageTracking["onEvent"]>;
+
+function rscStagePhases(
+  tracking: RscRenderStageTracking | undefined,
+): readonly RscRenderPhase[] {
+  const phases = tracking?.phases;
+  if (phases && phases.length > 0) return phases;
+  const total = tracking?.totalStages;
+  if (total === 1) return RSC_FLIGHT_ONLY_PHASES;
+  if (total === 2) return RSC_FLIGHT_HTML_PHASES;
+  if (total === 4) return RSC_RENDER_HTML_RESPONSE_PHASES;
+  return RSC_RENDER_FLIGHT_RESPONSE_PHASES;
+}
+
+function createRscStageContext(
+  input: { url: URL; tracking?: RscRenderStageTracking },
+  phase: RscRenderPhase,
+  startedAt: number,
+  phaseStartedAt: number,
+): RscRenderStageContext {
+  const phases = rscStagePhases(input.tracking);
+  const phaseIndex = phases.indexOf(phase);
+  const total = phases.length;
+  const completed = phaseIndex >= 0 ? phaseIndex + 1 : total;
+  return {
+    mode: input.tracking?.mode ?? "unknown",
+    phase,
+    pathname: input.url.pathname,
+    progress: { completed, total },
+    startedAt,
+    phaseStartedAt,
+    ...(input.tracking?.routeKey && { routeKey: input.tracking.routeKey }),
+    ...(input.tracking?.actionId && { actionId: input.tracking.actionId }),
+  };
+}
+
+function getRscStageSink(input: {
+  tracking?: RscRenderStageTracking;
+}): RscRenderStageSink | undefined {
+  return input.tracking?.onEvent;
+}
+
+function emitRscStageEvent(
+  sink: RscRenderStageSink | undefined,
+  createEvent: () => RscRenderStageEvent,
+): void {
+  if (!sink) return;
+  try {
+    sink(createEvent());
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[RSC] render stage event sink failed:", error);
+    }
+  }
+}
+
+export function renderRscFlightStage<TEnv>(
+  input: RscFlightStageInput<TEnv>,
+  startedAt: number,
+  init: ResponseInit = {},
+): RscFlightStage {
+  const phaseStartedAt = performance.now();
+  const context = createRscStageContext(
+    input,
+    "flight",
+    startedAt,
+    phaseStartedAt,
+  );
+  const sink = getRscStageSink(input);
+  emitRscStageEvent(sink, () => ({ type: "stage:start", context }));
+
+  try {
+    const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
+      temporaryReferences: input.temporaryReferences,
+      onError: (error: unknown) => {
+        input.ctx.callOnError(error, "rendering", {
+          request: input.request,
+          url: input.url,
+          env: input.env,
+        });
+      },
+    });
+    const durationMs = performance.now() - phaseStartedAt;
+    if (input.recordSerializeMetric === true) {
+      appendMetric(
+        _getRequestContext()?._metricsStore,
+        "rsc-serialize",
+        phaseStartedAt,
+        durationMs,
+      );
+    }
+    emitRscStageEvent(sink, () => ({
+      type: "stage:complete",
+      context,
+      durationMs,
+    }));
+
+    return {
+      type: "flight" as const,
+      payload: input.payload,
+      stream,
+      init,
+      durationMs,
+      context,
+    };
+  } catch (error) {
+    emitRscStageEvent(sink, () => ({
+      type: "stage:error",
+      context,
+      durationMs: performance.now() - phaseStartedAt,
+      error,
+    }));
+    throw error;
+  }
+}
+
+async function* createRscFlightStages<TEnv>(
+  input: RscRenderStageInput<TEnv>,
+  payload: RscPayload,
+  init: ResponseInit,
+  startedAt: number,
+): AsyncGenerator<
+  RscFlightStage,
+  RscFlightStageResult,
+  RscRenderStageControl | undefined
+> {
+  const stage = renderRscFlightStage(
+    {
+      ctx: input.ctx,
+      request: input.request,
+      url: input.url,
+      env: input.env,
+      payload,
+      temporaryReferences: input.temporaryReferences,
+      recordSerializeMetric: input.recordSerializeMetric ?? true,
+      tracking: input.tracking,
+    },
+    startedAt,
+    init,
+  );
+  const sink = getRscStageSink(input);
+  emitRscStageEvent(sink, () => ({
+    type: "stage:yield",
+    context: stage.context,
+  }));
+  const control = yield stage;
+  return { stage, control };
+}
+
+export async function observeRscHtmlStage<T>(
+  input: RscHtmlStageInput,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  const sink = getRscStageSink(input);
+  const context = sink
+    ? createRscStageContext(input, "html", startedAt, startedAt)
+    : undefined;
+  emitRscStageEvent(sink, () => ({
+    type: "stage:start",
+    context: context!,
+  }));
+  try {
+    const result = await fn();
+    emitRscStageEvent(sink, () => ({
+      type: "stage:complete",
+      context: context!,
+      durationMs: performance.now() - startedAt,
+    }));
+    return result;
+  } catch (error) {
+    emitRscStageEvent(sink, () => ({
+      type: "stage:error",
+      context: context!,
+      durationMs: performance.now() - startedAt,
+      error,
+    }));
+    throw error;
+  }
+}
+
+export function createRscStageDebugSink(
+  log: (message: string, details?: Record<string, unknown>) => void = (
+    message,
+    details,
+  ) => console.debug(message, details),
+): (event: RscRenderStageEvent) => void {
+  return (event) => {
+    const { context } = event;
+    log(`[RSC][stage] ${event.type} ${context.phase}`, {
+      mode: context.mode,
+      pathname: context.pathname,
+      routeKey: context.routeKey,
+      actionId: context.actionId,
+      progress: `${context.progress.completed}/${context.progress.total}`,
+      ...("durationMs" in event && { durationMs: event.durationMs }),
+      ...("error" in event && { error: event.error }),
+    });
+  };
+}
+
+/**
+ * Stage the common RSC render flow as a resumable async generator:
+ * payload inspection/mutation -> Flight stream creation -> response finalization.
+ * HTML callers pause at the Flight stage, render SSR from that stream, then
+ * resume with the HTML body/init so header merging still happens once.
+ */
+export async function* createRscRenderStages<TEnv>(
+  input: RscRenderStageInput<TEnv>,
+): AsyncGenerator<RscRenderStage, Response, RscRenderStageControl | undefined> {
+  const startedAt = performance.now();
+  let payload = input.payload;
+  let init = input.init;
+
+  const payloadContext = createRscStageContext(
+    input,
+    "payload",
+    startedAt,
+    startedAt,
+  );
+  const sink = getRscStageSink(input);
+  emitRscStageEvent(sink, () => ({
+    type: "stage:yield",
+    context: payloadContext,
+  }));
+  const payloadControl = yield {
+    type: "payload" as const,
+    payload,
+    init,
+    context: payloadContext,
+  };
+  payload = payloadControl?.payload ?? payload;
+  init = payloadControl?.init ?? init;
+
+  const flightResult = yield* createRscFlightStages(
+    input,
+    payload,
+    init,
+    startedAt,
+  );
+  const flightControl = flightResult.control;
+
+  const body =
+    flightControl && "body" in flightControl
+      ? flightControl.body!
+      : flightResult.stage.stream;
+
+  const phaseStartedAt = performance.now();
+  const responseContext = sink
+    ? createRscStageContext(input, "response", startedAt, phaseStartedAt)
+    : undefined;
+  emitRscStageEvent(sink, () => ({
+    type: "stage:start",
+    context: responseContext!,
+  }));
+  try {
+    const response = createResponseWithMergedHeaders(body, {
+      ...init,
+      ...flightControl?.init,
+    });
+    emitRscStageEvent(sink, () => ({
+      type: "stage:complete",
+      context: responseContext!,
+      durationMs: performance.now() - phaseStartedAt,
+    }));
+    return response;
+  } catch (error) {
+    emitRscStageEvent(sink, () => ({
+      type: "stage:error",
+      context: responseContext!,
+      durationMs: performance.now() - phaseStartedAt,
+      error,
+    }));
+    throw error;
+  }
+}
+
+export async function runRscRenderStages(
+  stages: AsyncGenerator<
+    RscRenderStage,
+    Response,
+    RscRenderStageControl | undefined
+  >,
+): Promise<Response> {
+  for (;;) {
+    const step = await stages.next();
+    if (step.done) return step.value;
+  }
+}
+
+export async function readRscFlightStage(
+  stages: AsyncGenerator<
+    RscRenderStage,
+    Response,
+    RscRenderStageControl | undefined
+  >,
+): Promise<RscFlightStage> {
+  const payloadStage = await stages.next();
+  if (payloadStage.done || payloadStage.value.type !== "payload") {
+    throw new Error("[RSC] render stage pipeline skipped payload stage");
+  }
+
+  const flightStage = await stages.next();
+  if (flightStage.done || flightStage.value.type !== "flight") {
+    throw new Error("[RSC] render stage pipeline skipped Flight stream");
+  }
+
+  return flightStage.value;
+}
+
+export async function finishRscRenderStages(
+  stages: AsyncGenerator<
+    RscRenderStage,
+    Response,
+    RscRenderStageControl | undefined
+  >,
+  control?: RscRenderStageControl,
+): Promise<Response> {
+  const responseStage = await stages.next(control);
+  if (!responseStage.done) {
+    throw new Error("[RSC] render stage pipeline did not finish response");
+  }
+
+  return responseStage.value;
+}
 
 /**
  * DEVELOPMENT/TEST ONLY. When the debug cache signal gate is on,

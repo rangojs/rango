@@ -22,9 +22,18 @@ import type { RscPayload } from "./types.js";
 import type { SSRModule } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 import {
+  RSC_FLIGHT_ONLY_PHASES,
+  RSC_RENDER_FLIGHT_RESPONSE_PHASES,
+  RSC_RENDER_HTML_RESPONSE_PHASES,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
+  createRscRenderStages,
+  finishRscRenderStages,
+  observeRscHtmlStage,
+  readRscFlightStage,
+  renderRscFlightStage,
+  runRscRenderStages,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
@@ -428,54 +437,60 @@ async function handleRscRenderingInner<TEnv>(
 
   const metricsStore = reqCtx._metricsStore;
 
-  // Serialize to RSC stream
-  const rscSerializeStart = performance.now();
-  const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
-    onError: (error: unknown) => {
-      ctx.callOnError(error, "rendering", { request, url, env });
-    },
-  });
-  const rscSerializeDur = performance.now() - rscSerializeStart;
-  // This measures synchronous stream creation, not end-to-end stream consumption.
-  appendMetric(
-    metricsStore,
-    "rsc-serialize",
-    rscSerializeStart,
-    rscSerializeDur,
-  );
+  const rscHeaders: Record<string, string> = {
+    "content-type": "text/x-component;charset=utf-8",
+    vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    // Router identity, so the client can verify pre-decode (before importing
+    // chunks) that this content payload belongs to its app and refuse a
+    // foreign one (cache/proxy/bug). Control-only reload/redirect responses
+    // are deliberately NOT stamped. See browser/response-adapter.ts.
+    "X-RSC-Router-Id": ctx.router.id,
+  };
+  // Tell the client's prefetch cache to scope this response to its source
+  // URL (instead of the default source-agnostic wildcard). Intercept
+  // responses depend on the source page matching an intercept rule, so
+  // they must not be reused for navigations from other sources.
+  if (hasInterceptSlots) {
+    rscHeaders["x-rsc-prefetch-scope"] = "source";
+  }
+  // Enable browser HTTP caching for prefetch responses only.
+  // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
+  // non-intercept context (intercept responses depend on source page),
+  // and a configured cache-control value (false disables caching).
+  const isPrefetch = request.headers.has("X-Rango-Prefetch");
+  if (isPrefetch && isPartial && !hasInterceptSlots) {
+    const cc = ctx.router.prefetchCacheControl;
+    if (cc) {
+      rscHeaders["cache-control"] = cc;
+    }
+  }
 
-  if (isRscRequest(request, url, isPartial)) {
-    // render:total is recorded by the observePhase wrapper around this function.
-    const rscHeaders: Record<string, string> = {
-      "content-type": "text/x-component;charset=utf-8",
-      vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
-      // Router identity, so the client can verify pre-decode (before importing
-      // chunks) that this content payload belongs to its app and refuse a
-      // foreign one (cache/proxy/bug). Control-only reload/redirect responses
-      // are deliberately NOT stamped. See browser/response-adapter.ts.
-      "X-RSC-Router-Id": ctx.router.id,
-    };
-    // Tell the client's prefetch cache to scope this response to its source
-    // URL (instead of the default source-agnostic wildcard). Intercept
-    // responses depend on the source page matching an intercept rule, so
-    // they must not be reused for navigations from other sources.
-    if (hasInterceptSlots) {
-      rscHeaders["x-rsc-prefetch-scope"] = "source";
-    }
-    // Enable browser HTTP caching for prefetch responses only.
-    // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
-    // non-intercept context (intercept responses depend on source page),
-    // and a configured cache-control value (false disables caching).
-    const isPrefetch = request.headers.has("X-Rango-Prefetch");
-    if (isPrefetch && isPartial && !hasInterceptSlots) {
-      const cc = ctx.router.prefetchCacheControl;
-      if (cc) {
-        rscHeaders["cache-control"] = cc;
-      }
-    }
-    return createResponseWithMergedHeaders(rscStream, {
+  const isFlightResponse = isRscRequest(request, url, isPartial);
+  const stageTracking = {
+    mode: isPartial ? ("partial" as const) : ("full" as const),
+    routeKey: reqCtx._routeName,
+    phases: isFlightResponse
+      ? RSC_RENDER_FLIGHT_RESPONSE_PHASES
+      : RSC_RENDER_HTML_RESPONSE_PHASES,
+  };
+  const renderStages = createRscRenderStages({
+    ctx,
+    request,
+    env,
+    url,
+    payload,
+    init: {
       headers: rscHeaders,
-    });
+    },
+    tracking: stageTracking,
+  });
+
+  const flightStage = await readRscFlightStage(renderStages);
+  const rscStream = flightStage.stream;
+
+  if (isFlightResponse) {
+    // render:total is recorded by the observePhase wrapper around this function.
+    return runRscRenderStages(renderStages);
   }
 
   // Delegate to SSR for HTML response (reuse early setup if available)
@@ -489,14 +504,21 @@ async function handleRscRenderingInner<TEnv>(
 
   // ssr-render-html metric + rango.ssr span from one boundary. render:total is
   // recorded by the observePhase wrapper around this function.
-  const htmlStream = await observePhase(PHASES.ssr, () =>
-    ssrModule.renderHTML(rscStream, {
-      nonce,
-      streamMode,
-    }),
+  const htmlStream = await observeRscHtmlStage(
+    { url, tracking: stageTracking },
+    () =>
+      observePhase(PHASES.ssr, () =>
+        ssrModule.renderHTML(rscStream, {
+          nonce,
+          streamMode,
+        }),
+      ),
   );
-  const response = createResponseWithMergedHeaders(htmlStream, {
-    headers: { "content-type": "text/html;charset=utf-8" },
+  const response = await finishRscRenderStages(renderStages, {
+    body: htmlStream,
+    init: {
+      headers: { "content-type": "text/html;charset=utf-8" },
+    },
   });
 
   // --- Axis 2: PPR shell CAPTURE on MISS (background task; see design doc) ---
@@ -611,11 +633,22 @@ function serveShellHit(
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
-    let rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
-      onError: (error: unknown) => {
-        ctx.callOnError(error, "rendering", { request, url, env });
+    const flightStage = renderRscFlightStage(
+      {
+        ctx,
+        request,
+        env,
+        url,
+        payload,
+        tracking: {
+          mode: "full",
+          routeKey: activeCtx._routeName,
+          phases: RSC_FLIGHT_ONLY_PHASES,
+        },
       },
-    });
+      performance.now(),
+    );
+    let rscStream = flightStage.stream;
     // Timing tap: when does the Flight render produce its FIRST byte? Compared
     // with the eager-inject/first-tail logs this proves whether hydration-start
     // latency is genuine server work (loaders) or stream plumbing holding
