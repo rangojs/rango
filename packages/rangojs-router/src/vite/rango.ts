@@ -46,6 +46,31 @@ import { createRangoDebugger, NS } from "./debug.js";
 
 const debugConfig = createRangoDebugger(NS.config);
 
+/**
+ * Syntax target for the node/vercel server (`ssr` + `rsc`) build environments.
+ *
+ * Vite 8's build-target default is `baseline-widely-available`, which resolves
+ * to a BROWSER baseline (`chrome111`/`edge111`/…, ≈ES2022) and is applied
+ * per-environment with NO server carve-out: `resolveRolldownOptions` pipes it
+ * straight into rolldown/oxc's `transform.target` for `consumer:"server"` chunks
+ * too. So without an explicit server target our ssr/rsc bundles — which only run
+ * on Node or workerd — get compiled for browsers, needlessly rewriting modern
+ * syntax (e.g. Explicit Resource Management `using`/`await using`) into
+ * `_usingCtx()` runtime helpers. `esnext` emits server code at authored
+ * modernity: no helpers, marginally smaller/faster bundles, semantics that match
+ * reality. The `client` env is intentionally left at the browser baseline.
+ *
+ * The cloudflare preset does NOT use this: `@cloudflare/vite-plugin` hardcodes
+ * `es2024` on its server envs and its `config()` merges after ours, so anything
+ * we set there is a dead no-op (workerd runs es2024 fine).
+ *
+ * Caveat: `esnext` stops downleveling ERM `using`, which parses natively only on
+ * Node 24+ (workerd runs it). Ordinary ≤ES2022 server code still runs across the
+ * whole supported Node range; only an app that authors `using` AND deploys to
+ * Node < 24 would need to downlevel it itself. See issue #729.
+ */
+const SERVER_BUILD_TARGET = "esnext";
+
 // The leading-directive 'use client' sniff is shared with version-plugin's
 // getClientModuleSignature so the two cannot drift. Imported for local use by the
 // HMR transform below and re-exported because the E8 sniff test imports it from
@@ -409,6 +434,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             },
             ssr: {
               ...(vercelServerEnv ?? {}),
+              build: {
+                target: SERVER_BUILD_TARGET,
+              },
               optimizeDeps: {
                 entries: [VIRTUAL_IDS.ssr],
                 include: [
@@ -428,6 +456,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             },
             rsc: {
               ...(vercelServerEnv ?? {}),
+              build: {
+                target: SERVER_BUILD_TARGET,
+              },
               optimizeDeps: {
                 entries: [VIRTUAL_IDS.rsc],
                 include: [
