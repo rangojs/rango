@@ -147,6 +147,32 @@ export interface DevShellLookup {
 const DEV_SHELL_RETRY_MARGIN_MS = 5_000;
 
 /**
+ * Dev boot-race readiness (issue #719). The `/__rsc_shell` endpoint stands up
+ * the capture realm lazily on its first hit — the temp server (Cloudflare
+ * preset), the registry import, and, on either preset, a Vite dependency
+ * re-optimization that the first import of the shell-capture graph can trigger.
+ * All three are TRANSIENT: retrying the same request seconds later succeeds.
+ *
+ * Before this, the read-through fired ONCE and mapped any non-2xx to a hard
+ * MISS, so a Prerender+ppr route's FIRST request lost the race and served
+ * axis-1 (x-rango-shell: MISS) while a later poll HIT — the build-time
+ * first-request-HIT contract held only after a warm-up. A fast machine loses
+ * the race deterministically (the document request beats the boot infra);
+ * slow CI arrives after it settled, hence "0-flake on CI".
+ *
+ * Fix: the endpoint tags the transient not-ready branches with
+ * `x-rango-shell-dev: NOT-READY` (HTTP 503), and the read-through re-polls
+ * ONLY that signal — a bounded await of readiness, not a blind retry. A
+ * genuine negative (route not prerenderable, capture refused: 404) stays an
+ * immediate MISS, so a non-baked route never stalls the foreground. The window
+ * is capped by DEV_SHELL_READINESS_DEADLINE_MS; the boot infra normally
+ * settles well inside the first poll.
+ */
+const DEV_SHELL_NOT_READY = "NOT-READY";
+const DEV_SHELL_READINESS_DEADLINE_MS = 10_000;
+const DEV_SHELL_READINESS_POLL_MS = 150;
+
+/**
  * Timed out like the dev prerender store fetch (see #697): inside a workerd
  * waitUntil an unsettled fetch pends forever instead of rejecting; on timeout
  * this degrades to a MISS and the runtime capture path takes over. But this
@@ -192,14 +218,30 @@ async function fetchDevShellEntry(
   if (dev.captureTimeout !== undefined) {
     params.set("captureTimeout", String(dev.captureTimeout));
   }
-  try {
-    const res = await fetch(`${devUrl}/__rsc_shell?${params}`, {
-      signal: AbortSignal.timeout(devShellFetchTimeoutMs(dev.captureTimeout)),
-    });
-    if (!res.ok) return undefined;
-    return (await res.json()) as BuildShellEntry;
-  } catch {
-    return undefined;
+  const shellUrl = `${devUrl}/__rsc_shell?${params}`;
+  // Await the endpoint's boot readiness (issue #719): re-poll ONLY the
+  // NOT-READY signal, capped by DEV_SHELL_READINESS_DEADLINE_MS. Every other
+  // outcome — a served entry, a genuine negative (404), or a network fault —
+  // resolves on the first attempt, so a non-baked route never stalls here.
+  const readinessDeadline = Date.now() + DEV_SHELL_READINESS_DEADLINE_MS;
+  for (;;) {
+    try {
+      const res = await fetch(shellUrl, {
+        signal: AbortSignal.timeout(devShellFetchTimeoutMs(dev.captureTimeout)),
+      });
+      if (
+        res.status === 503 &&
+        res.headers.get("x-rango-shell-dev") === DEV_SHELL_NOT_READY &&
+        Date.now() < readinessDeadline
+      ) {
+        await new Promise((r) => setTimeout(r, DEV_SHELL_READINESS_POLL_MS));
+        continue;
+      }
+      if (!res.ok) return undefined;
+      return (await res.json()) as BuildShellEntry;
+    } catch {
+      return undefined;
+    }
   }
 }
 
