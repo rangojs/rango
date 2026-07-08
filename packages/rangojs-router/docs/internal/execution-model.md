@@ -108,11 +108,23 @@ global middleware
   prelude bytes flush first, and match/Flight/resume run behind them inside the
   response stream. Pinned by the `[PPR1]` semantic matrix row and
   `e2e/shell-secure.test.ts`.
-- **PPR capture is mixed-chain and never re-runs middleware.** The background
-  capture renders the page under a derived context that INHERITS the triggering
-  request's post-middleware state (so middleware-derived ctx values photograph
-  into the shell — scope fidelity) while the chain itself runs exactly once per
-  HTTP request (pinned by the middleware-run counter in `[PPR1]`). Within the
+  - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
+    middleware calls it BEFORE the commit point, so it forces the request onto
+    axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid
+    shell exists (`!reqCtx._dynamic` guards both the serve gate and the MISS
+    capture-schedule in `rsc-rendering.ts`). A handler runs AFTER the commit, so
+    it can only suppress the follow-up capture on a MISS. It gates the PPR SHELL
+    axis only — a `Prerender()` route's build-baked B-segments still replay.
+- **Runtime PPR capture is mixed-chain and never re-runs middleware.** The
+  background capture renders the page under a derived context that INHERITS the
+  triggering request's post-middleware state (so middleware-derived ctx values
+  photograph into the shell — scope fidelity) while the chain itself runs
+  exactly once per HTTP request (pinned by the middleware-run counter in
+  `[PPR1]`). Build-time producer B is the exception: it replays middleware
+  during shell capture with `ctx.build === true` (and `ctx.waitUntil()` inert,
+  so build replay fires no background work), before deriving the capture
+  context; middleware may `ctx.dynamic()` there to skip baking a URL's shell.
+  Within the
   capture, `cache()`d segments replay from the segment cache and UNCACHED
   segments execute their handlers fresh (the `cookies()`/`headers()` capture
   guard is load-bearing for handler/render code and bake-lane segment loaders;

@@ -206,6 +206,11 @@ export async function matchForPrerender<TEnv = any>(
       pathname,
       searchParams: new URLSearchParams(),
       _variables: variables,
+      build: true,
+      // Inert here: the prerender-collect / static-render pass has no live
+      // PPR-shell decision to gate; dynamic() reaches the shell axis only on a
+      // live request or a shell capture.
+      dynamic: () => {},
       get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
       set: ((keyOrVar: any, value: any) => {
         contextSet(variables, keyOrVar, value);
@@ -476,6 +481,8 @@ export async function renderStaticSegment<TEnv = any>(
     pathname: "/",
     searchParams: syntheticUrl.searchParams,
     _variables: {},
+    build: true,
+    dynamic: () => {},
     get: () => undefined as any,
     set: () => {},
     params: {},

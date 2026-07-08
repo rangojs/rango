@@ -133,7 +133,8 @@ async function handleRscRenderingInner<TEnv>(
     !isPartial &&
     request.method === "GET" &&
     !url.searchParams.has("__prerender_collect") &&
-    !isRscRequest(request, url, false)
+    !isRscRequest(request, url, false) &&
+    !reqCtx._dynamic
   ) {
     const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
     if (pprConfig) {
@@ -529,7 +530,7 @@ async function handleRscRenderingInner<TEnv>(
   // page via router.match() under a derived context (fresh handle store,
   // _shellCaptureRun: true) — middleware never re-runs; it already ran for this
   // request and guarding is serve-time.
-  if (pprMiss) {
+  if (pprMiss && !reqCtx._dynamic) {
     if (
       response.status === 200 &&
       (response.headers.get("content-type") ?? "").includes("text/html")

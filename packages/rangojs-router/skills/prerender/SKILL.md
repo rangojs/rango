@@ -138,6 +138,7 @@ interface BuildContext<TParams> {
     search?: Record<string, unknown>,
   ): string; // URL generation
   passthrough(): PrerenderPassthroughResult; // Skip local artifact (Passthrough routes only)
+  dynamic(): void; // No-op in Prerender/Static handlers; use middleware for PPR shell opt-out
   env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
   // NOT available: request, headers, cookies (always throw)
 }
@@ -257,13 +258,31 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 | `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                         |
 | `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                     |
 | `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                             |
-| `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                                                                                                                                                |
+| `middleware()` | Skipped while collecting build-time Flight payloads (no request). For `Prerender` + `ppr`, producer B replays global and route middleware during build-shell capture with `ctx.build === true`; `ctx.dynamic()` skips that shell. Runs at request time for loaders.      |
 | `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                   |
 | `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
 
 When Passthrough revalidation is enabled, remember that revalidation is
 still partial: opting a child segment into revalidation does not
 implicitly re-run outer prerender-derived handlers/layouts.
+
+## Prerender + PPR Build Shells
+
+A `Prerender` page may also declare `ppr` on the path option. The build still
+stores the Flight payload first. After that, producer B tries to bake the HTML
+shell for each generated URL so the first document request can be an
+`x-rango-shell: HIT`.
+
+That shell capture is request-shaped enough to run middleware safely:
+
+- global and route middleware run before shell capture;
+- middleware sees `ctx.build === true`;
+- `ctx.waitUntil()` is inert during build;
+- `ctx.dynamic()` skips the baked shell for that URL.
+
+Use `ctx.build` inside middleware to avoid runtime-only side effects during
+build shell capture, or call `ctx.dynamic()` to leave that route to runtime
+PPR. Runtime requests still run the normal middleware chain.
 
 ## Dev Mode
 

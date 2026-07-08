@@ -184,6 +184,56 @@ function runPrerenderPprSpec(f: Fixture): void {
     await warmToHit(request, url);
   });
 
+  test("build ctx.dynamic skips the baked shell; runtime capture can still own the route", async ({
+    request,
+  }) => {
+    const url = f.url("/pp-build-dynamic/delta");
+    const first = await request.get(url, { headers: HTML_HEADERS });
+    expect(first.status()).toBe(200);
+    expect(first.headers()["x-rango-shell"]).toBe("MISS");
+    expect(await first.text()).toContain(
+      "Build-dynamic shell content for delta",
+    );
+
+    await warmToHit(request, url);
+
+    const hit = await request.get(url, { headers: HTML_HEADERS });
+    expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+    const { prelude, resumed } = splitPrelude(await hit.text());
+    expect(prelude).toContain("Build-dynamic shell content for delta");
+    expect(prelude).toContain("Loading pp seq...");
+    expect(resumed).toContain("pp-seq:");
+  });
+
+  test("runtime ctx.dynamic keeps the route off the PPR shell axis (never captures/serves a shell)", async ({
+    request,
+  }) => {
+    // The route's middleware calls ctx.dynamic() unconditionally, so the request
+    // never takes the PPR shell axis: no x-rango-shell header on any request, and
+    // the 1s window between the two requests would have surfaced a HIT if a
+    // capture had been scheduled. dynamic() scopes to the SHELL only — because
+    // this is a Prerender() route, the body itself is the build-baked B-segment
+    // replayed at runtime (dynamic() does not disable that), which is the
+    // "normal" (non-shell) render path for a prerendered route.
+    const url = f.url("/pp-runtime-dynamic/omega");
+    const first = await request.get(url, { headers: HTML_HEADERS });
+    expect(first.status()).toBe(200);
+    expect(first.headers()["x-rango-shell"]).toBeUndefined();
+    expect(await first.text()).toContain(
+      "Runtime-dynamic shell content for omega",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const second = await request.get(url, { headers: HTML_HEADERS });
+    expect(second.status()).toBe(200);
+    // Still no shell after the capture window: dynamic() suppressed scheduling.
+    expect(second.headers()["x-rango-shell"]).toBeUndefined();
+    expect(await second.text()).toContain(
+      "Runtime-dynamic shell content for omega",
+    );
+  });
+
   test("per-param shells: both prerendered slugs HIT independently with their own content", async ({
     request,
   }) => {

@@ -329,14 +329,18 @@ where an entry came from. Design: `docs/design/shell-fast-path.md`.
    `buildApp` post hook) runs AFTER every environment bundle is written — the
    prelude embeds the BUILT client bootstrap URL, which does not exist at
    buildStart. It reuses the buildStart temp server (kept alive on discovery
-   state), seeds an in-realm prerender store from the retained payloads, and
-   runs producer A's capture core (`prerender/build-shell-capture.ts`, built on
-   `deriveShellCaptureContext` + `captureAndStoreShell`) per URL: the capture's
-   `match()` HITs the prerender store and REPLAYS the build-time segments — no
-   handler execution — with live-lane loaders masked into holes, identical to
-   runtime capture. The fizz half runs in the temp server's SSR environment
-   runner; production-hashed client references bridge to dev refKeys through a
-   wrapped `__vite_rsc_client_require__` (same `computeProductionHash`).
+   state), seeds an in-realm prerender store from the retained payloads, then
+   runs global and route middleware before producer A's capture core
+   (`prerender/build-shell-capture.ts`, built on `deriveShellCaptureContext` +
+   `captureAndStoreShell`) per URL. Middleware sees `ctx.build === true`;
+   `ctx.waitUntil()` is inert so build capture cannot enqueue live response
+   work, and `ctx.dynamic()` skips the shell for that URL. After middleware,
+   the capture's `match()` HITs the prerender store and REPLAYS the build-time
+   segments — no handler execution — with live-lane loaders masked into holes,
+   identical to runtime capture. The fizz half runs in the temp server's SSR
+   environment runner; production-hashed client references bridge to dev
+   refKeys through a wrapped `__vite_rsc_client_require__` (same
+   `computeProductionHash`).
 3. Entries are stamped with the MAIN build's version (the version plugin's
    value folded into the shipped worker) and staged as `__ps-*.js` asset
    modules under `dist/rsc/assets/`, with a lazy `__shell-manifest.js` and a
@@ -359,6 +363,13 @@ captured the bare pathname; a search-bearing URL has its own shell identity,
 owned by runtime capture), `reactVersion`/`buildVersion` validity, payload
 integrity, and tag markers (below). The runtime store is always read FIRST, so
 a captured entry supersedes the baked one as soon as it lands.
+
+`ctx.dynamic()` is the per-request opt-out. If middleware calls it, the PPR
+commit point does not read stored shells and the request stays on axis 1. If a
+handler calls it later during an axis-1 MISS render, the response is still axis 1
+and no follow-up shell capture is scheduled. Build shell capture uses the same
+flag: a build middleware call returns a `dynamic` shell outcome and the URL is
+left for runtime.
 
 ### Lifecycle semantics
 
@@ -592,14 +603,14 @@ At runtime, the cache-lookup middleware uses these flags:
 
 ## Key Files
 
-| File                                                                                                                                                                 | Role                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                              |
-| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                        |
-| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                   |
-| `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                            |
-| `src/cache/cache-scope.ts`                                                                                                                                           | RSC serialize/deserialize for segments                                                                                                                |
-| `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel) |
-| `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                |
-| `src/vite/discovery/shell-prerender-phase.ts` (buildApp post) + `src/prerender/build-shell-capture.ts` (`captureShellForBuild`)                                      | Producer B: build-time PPR shell capture + `__ps` asset/manifest staging (#699)                                                                       |
-| `src/rsc/shell-build-manifest.ts` (`lookupBuildShell`) + `src/prerender/shell-manifest-key.ts`                                                                       | Runtime read-through for baked shell entries (production manifest / dev `/__rsc_shell` on-demand)                                                     |
+| File                                                                                                                                                                 | Role                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                                 |
+| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                           |
+| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                      |
+| `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                               |
+| `src/cache/cache-scope.ts`                                                                                                                                           | RSC serialize/deserialize for segments                                                                                                                   |
+| `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel)    |
+| `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                   |
+| `src/vite/discovery/shell-prerender-phase.ts` (buildApp post) + `src/prerender/build-shell-capture.ts` (`captureShellForBuild`)                                      | Producer B: build-time PPR shell capture + `__ps` asset/manifest staging (#699); replays middleware with `ctx.build === true` and honors `ctx.dynamic()` |
+| `src/rsc/shell-build-manifest.ts` (`lookupBuildShell`) + `src/prerender/shell-manifest-key.ts`                                                                       | Runtime read-through for baked shell entries (production manifest / dev `/__rsc_shell` on-demand)                                                        |

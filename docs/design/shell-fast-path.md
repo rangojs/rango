@@ -233,15 +233,17 @@ consumer:
 - **Producer A (runtime)**: the background capture, triggered by traffic,
   TTL-bound.
 - **Producer B (build time)**: SHIPPED (#699). The build's shell prerender
-  phase (`vite/discovery/shell-prerender-phase.ts`, buildApp post) runs the
-  SAME capture core (`deriveShellCaptureContext` + `captureAndStoreShell`,
-  driven by `prerender/build-shell-capture.ts`) over the just-collected
-  prerender payloads, and the serve path reads the resulting manifest through
-  `rsc/shell-build-manifest.ts` on a store MISS — first request after deploy
-  is a HIT. Build-time production is the SAFER producer: there is no ambient
-  user identity at build, so the identity guard is trivially satisfied and
-  the capture-credential defense-in-depth concern vanishes for build-time
-  entries. In dev the same producer runs on demand via `/__rsc_shell`.
+  phase (`vite/discovery/shell-prerender-phase.ts`, buildApp post) replays
+  middleware with `ctx.build === true` and then runs the SAME capture core
+  (`deriveShellCaptureContext` + `captureAndStoreShell`, driven by
+  `prerender/build-shell-capture.ts`) over the just-collected prerender
+  payloads. Middleware can call `ctx.dynamic()` to leave that URL for runtime.
+  The serve path reads the resulting manifest through
+  `rsc/shell-build-manifest.ts` on a store MISS — first request after deploy is
+  a HIT. Build-time production is the SAFER producer: there is no ambient user
+  identity at build, so the identity guard is trivially satisfied and the
+  capture-credential defense-in-depth concern vanishes for build-time entries.
+  In dev the same producer runs on demand via `/__rsc_shell`.
   Details: `packages/rangojs-router/docs/prerender-api-design.md`
   ("Build-time PPR shells").
 - **Consumer**: the fast path above. The worker cannot tell whether an entry

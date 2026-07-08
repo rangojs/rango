@@ -238,6 +238,10 @@ export function createMiddlewareContext<TEnv>(
     searchParams: url.searchParams,
     env: env as MiddlewareContext<TEnv>["env"],
     params,
+    build: reqCtx?.build ?? false,
+    dynamic(): void {
+      reqCtx?.dynamic();
+    },
     executionContext: reqCtx?.executionContext,
     waitUntil: reqCtx ? reqCtx.waitUntil.bind(reqCtx) : fireAndForgetWaitUntil,
     // Getter: re-derives from request context on each access so that global

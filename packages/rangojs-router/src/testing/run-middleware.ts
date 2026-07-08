@@ -49,6 +49,13 @@ export interface RunMiddlewareOptions<TEnv = any> {
   env?: TEnv;
   /** Route params surfaced as `ctx.params`. */
   params?: Record<string, string>;
+  /**
+   * Seed `ctx.build` (default false) so a middleware that branches on the
+   * build-time PPR shell-capture pass (e.g. `if (ctx.build) ctx.dynamic()`) is
+   * unit-testable. With `build: true`, `ctx.waitUntil()` is inert, matching the
+   * build producer. Assert a `ctx.dynamic()` call via `result.dynamic`.
+   */
+  build?: boolean;
   /** Variables a prior middleware would have set (object or [key, value] list). */
   vars?: VarsInit;
   /** Route name -> pattern map enabling `ctx.reverse()`. */
@@ -103,6 +110,11 @@ export interface RunMiddlewareResult<TEnv = any> {
   /** Number of times the terminal handler ran (0 = short-circuited, 1 = passed through). */
   nextCalled: number;
   /**
+   * Whether the chain called `ctx.dynamic()` (the PPR shell opt-out). The public
+   * way to assert the opt-out without reading the `@internal` `ctx._dynamic`.
+   */
+  dynamic: boolean;
+  /**
    * The effective cookie view after the chain ran: request cookies merged with
    * anything the chain set or deleted (last-write-wins), as `{ name: value }`.
    * The public way to assert a cookie a middleware set, without casting through
@@ -146,6 +158,7 @@ export async function runMiddleware<TEnv = any>(
     routeMap: opts.routeMap,
     routeName: opts.routeName,
     params: opts.params,
+    build: opts.build,
     basename: opts.basename,
     theme: opts.theme,
     cacheStore: opts.cacheStore,
@@ -197,6 +210,7 @@ export async function runMiddleware<TEnv = any>(
     response,
     ctx,
     nextCalled,
+    dynamic: ctx._dynamic === true,
     cookies,
     headers,
     locationState,

@@ -243,7 +243,10 @@ export function createHandlerContext<TEnv>(
 
   ctx = {
     params,
-    build: false,
+    build: requestContext?.build ?? false,
+    dynamic(): void {
+      requestContext?.dynamic();
+    },
     dev: false,
     request,
     searchParams,
@@ -344,6 +347,9 @@ export function createPrerenderContext<TEnv>(
   return {
     params,
     build: true,
+    // Inert here: prerender/static contexts have no live PPR-shell decision to
+    // gate. dynamic() only reaches the shell axis on a live request or capture.
+    dynamic: () => {},
     dev: devMode ?? false,
     get request(): Request {
       return throwUnavailable("request");
@@ -429,6 +435,9 @@ export function createStaticContext<TEnv>(
       return throwUnavailable("params");
     },
     build: true,
+    // Inert here: prerender/static contexts have no live PPR-shell decision to
+    // gate. dynamic() only reaches the shell axis on a live request or capture.
+    dynamic: () => {},
     dev: devMode ?? false,
     get request(): Request {
       return throwUnavailable("request");

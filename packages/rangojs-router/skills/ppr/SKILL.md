@@ -21,11 +21,12 @@ shell is shared per host+URL, the holes are per request.
 
 - You want the WHOLE response frozen, loader output included — see
   `/document-cache`.
-- You want routes rendered at build time with `Static()`/`Prerender()` — the
-  `ppr` path option captures at runtime; see `/prerender`.
+- You want build-time Flight segment payloads from `Static()`/`Prerender()` —
+  see `/prerender`. A `Prerender` page may also declare `ppr`; then producer B
+  can bake the HTML shell at build time while loaders stay live.
 - You are unsure which cache layer you need — start at `/cache-guide`.
 
-## Setup: one path option, no middleware
+## Setup: one path option, no PPR middleware to mount
 
 PPR is a DOCUMENT-level property declared on the page route via the `ppr` path
 option. Serving is **integral to the router** — there is nothing to mount. The
@@ -168,6 +169,20 @@ On a document GET to a ppr route the router runs:
 `x-rango-shell: HIT | MISS` is the observability header. Because the commit
 point is after the chain, an unauthorized request NEVER sees shell bytes — put
 auth middleware anywhere (global or route DSL) and it guards PPR for free.
+
+### Opting out per request with `ctx.dynamic()`
+
+Middleware and handlers can call `ctx.dynamic()` to force this request back to
+axis 1. In middleware it runs before the PPR commit point, so the router skips
+shell lookup, HIT serving, and MISS capture for that request. In handlers it is
+too late to prevent a MISS render from already happening, but it still prevents
+the follow-up shell capture.
+
+During `Prerender` + `ppr` build-shell capture, middleware is replayed with
+`ctx.build === true`, `ctx.waitUntil()` inert, and the same `ctx.dynamic()`
+opt-out. Use that for routes where the shell depends on runtime-only auth,
+cookies, or side-effectful SDK calls. A skipped build shell can still be owned
+later by runtime capture when runtime middleware does not call `ctx.dynamic()`.
 
 ## Verifying it works
 
