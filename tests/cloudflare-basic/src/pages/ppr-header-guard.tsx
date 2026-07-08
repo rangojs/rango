@@ -24,6 +24,15 @@ export async function CfPhgLoaderPage(ctx: HandlerContext) {
   return <div data-testid="cf-phg-loader-page">Should not render</div>;
 }
 
+// DYNAMIC RE-PERMIT (#735): ctx.dynamic() opts this ppr route off the shell
+// (always live, never a HIT), so its handler header write is deterministic and
+// re-permitted — no guard throw, and the header rides every request.
+export function CfPhgDynamicPage(ctx: HandlerContext) {
+  ctx.dynamic();
+  ctx.headers.set("X-CF-PHG-Dynamic", "live-value");
+  return <main data-testid="cf-phg-dynamic-page">Dynamic live shell</main>;
+}
+
 // POSITIVE CONTROL shell: static text + a live loader hole.
 export function CfPhgMwLivePage() {
   return (

@@ -52,6 +52,7 @@ export const NamedRoutes = {
   pprBlog: "/ppr-blog",
   pprBlogPost: "/ppr-blog/:slug",
   pprDrift: "/ppr-drift",
+  pprHeaderGuardDynamic: "/ppr-header-guard/dynamic",
   pprHeaderGuardHandler: "/ppr-header-guard",
   pprHeaderGuardLoader: "/ppr-header-guard/loader",
   pprMwLive: "/ppr-mw-live",

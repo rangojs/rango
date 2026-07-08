@@ -71,6 +71,27 @@ function runPprHeaderGuardSpec(
     }
   });
 
+  test("dynamic() re-permits the handler header: it rides EVERY request; route never becomes a shell HIT", async ({
+    request,
+    page,
+  }) => {
+    const url = f.url("/ppr-header-guard/dynamic");
+
+    // Renders successfully (no guard throw) and shows the live shell.
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(page.getByTestId("phg-dynamic-page")).toBeVisible();
+
+    // The handler header is present on every request, and the route is never a
+    // shell HIT — dynamic() opts off the shell axis, so it is always live.
+    for (let i = 0; i < 3; i++) {
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["x-phg-dynamic"]).toBe("live-value");
+      expect(res.headers()["x-rango-shell"]).not.toBe("HIT");
+    }
+  });
+
   test("loader cookies().set on a ppr route errors deterministically with the loader wording", async ({
     page,
   }) => {

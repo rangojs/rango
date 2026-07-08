@@ -904,13 +904,46 @@ export function latchPprHeaderScopeForEntries(
 }
 
 /**
+ * Clear the ppr header-write latch for the remainder of this render (issue
+ * #735). Called by ctx.dynamic(): a dynamic() render opts off the SHELL axis
+ * (rsc-rendering.ts skips both the HIT commit and the MISS capture on
+ * `_dynamic`), so it is ALWAYS live — every request re-runs the handler and its
+ * header write lands identically each time. The guard's reason to forbid it
+ * (MISS/HIT divergence) evaporates, so the write is re-permitted.
+ *
+ * ONLY the ppr (shell) axis is dropped — dynamic() does NOT opt off the CACHE
+ * axis. Two cases:
+ * - Pure ppr funnel (no cache() boundary): clear the latch → writes re-permit.
+ * - ppr route nested under a cache() boundary: fresh.ts latches "ppr" at the
+ *   funnel top (first-wins), which MASKS the positional cache() latch, but the
+ *   handler still runs inside the cache scope (`insideCacheScope`). A cache()
+ *   HIT skips that handler, so the write is still non-deterministic — UNMASK to
+ *   "cache" instead of clearing, so the guard keeps throwing (accurate cache()
+ *   wording). This is why the check keys off `insideCacheScope`, not just kind.
+ *
+ * A subsequent cache() entered AFTER dynamic() on a pure-ppr funnel re-latches
+ * "cache" via latchCachedHeaderScope's `!store.cachedHeaderScope` guard (the
+ * field is undefined again once cleared). No-op when there is no funnel store or
+ * no ppr latch (dynamic() from middleware runs outside the funnel Store.run
+ * scope, so nothing is latched — the middleware exemption is unchanged).
+ */
+export function clearPprHeaderScope(): void {
+  const store = RangoContext.getStore();
+  if (store?.cachedHeaderScope?.kind !== "ppr") return;
+  store.cachedHeaderScope = store.insideCacheScope
+    ? { kind: "cache", routeKey: store.cachedHeaderScope.routeKey }
+    : undefined;
+}
+
+/**
  * RULE (issue #713): in any cached scenario ONLY MIDDLEWARE writes response
  * headers — handler and loader writes throw while a scope is latched; the one
  * exemption is DSL (registered) loaders under plain cache(). A handler-invoked
  * loader body (ctx.use from a handler, never registered with loader()) is
  * skipped with its handler on a HIT and throws like a handler write (#725).
- * Full layer rules and rationale: docs/design/ppr-shell-resume.md "The header
- * doctrine".
+ * A ctx.dynamic() render clears the ppr latch (clearPprHeaderScope, #735) so
+ * its always-live handler header writes are re-permitted. Full layer rules and
+ * rationale: docs/design/ppr-shell-resume.md "The header doctrine".
  */
 export function assertCachedHeaderWriteAllowed(
   surface: string,

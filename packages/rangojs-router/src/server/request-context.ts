@@ -59,6 +59,7 @@ import type { LocationStateEntry } from "../browser/react/location-state-shared.
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import {
   assertCachedHeaderWriteAllowed,
+  clearPprHeaderScope,
   isInsideCacheScope,
 } from "./context.js";
 import {
@@ -979,6 +980,11 @@ export function createRequestContext<TEnv>(
     build,
     dynamic(): void {
       ctx._dynamic = true;
+      // A dynamic() render is always live (never a shell HIT), so its handler
+      // header writes are deterministic — clear the ppr latch to re-permit them
+      // (#735). No-op from middleware (outside the funnel scope) or on non-ppr
+      // routes; cache() latches are left alone.
+      clearPprHeaderScope();
     },
     _dynamic: false,
     get: ((keyOrVar: any) => {

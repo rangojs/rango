@@ -49,6 +49,23 @@ describe("renderHandler", () => {
     expect(json).toContain("9");
   });
 
+  test("ctx.dynamic() + ctx.headers.set() compose in one handler (#735 markSfraProxy collapse)", async () => {
+    // The consumer collapse from issue #735: a dynamic() route can write its
+    // control-flow header straight from the handler (no middleware relay). Both
+    // effects are observable through the public primitive — result.dynamic AND
+    // the header on result.headers. (The ppr-latch re-permit itself is pinned at
+    // the unit seam + dev/prod e2e; renderHandler runs no funnel latch.)
+    function SfraProxyPage(ctx: HandlerContext) {
+      ctx.dynamic();
+      ctx.headers.set("x-rango-sfra-proxy", "catalog");
+      return <div>proxied</div>;
+    }
+
+    const { dynamic, headers } = await renderHandler(SfraProxyPage);
+    expect(dynamic).toBe(true);
+    expect(headers["x-rango-sfra-proxy"]).toBe("catalog");
+  });
+
   test("seeded ctx.use(Loader) returns a Promise (production parity)", async () => {
     // Production ctx.use(Loader) ALWAYS returns a Promise. The seeded harness
     // path must too, so a handler composing on the result (.then/Promise.race)
