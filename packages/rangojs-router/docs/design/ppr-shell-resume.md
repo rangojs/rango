@@ -1035,6 +1035,44 @@ bodies, a handler-invoked loader nested under a DSL loader stays exempt (its
 DSL parent re-invokes it every HIT). ppr loader writes throw regardless — the
 shell prelude flushes before any loader settles.
 
+**`ctx.dynamic()` re-permits the handler write (issue #735).** A handler that
+calls `ctx.dynamic()` opts this request off the shell axis — `rsc-rendering.ts`
+skips both the HIT commit and the MISS capture on `_dynamic`, so the route is
+ALWAYS live: every request re-runs the handler and its header write lands
+identically each time. The guard's reason to forbid it (MISS/HIT divergence)
+evaporates, so `ctx.dynamic()` clears the ppr latch
+(`clearPprHeaderScope`, `src/server/context.ts`) and the same-handler
+`ctx.headers.set()`/`cookies().set()` that would otherwise throw now lands on
+every response. Ordering is a contract: call `dynamic()` BEFORE the write — a
+write before it hits the still-live latch and throws (pinned dev+prod by the
+`/ppr-header-guard/dynamic` e2e in both apps). `dynamic()` drops only the SHELL
+axis, never the CACHE axis:
+
+- A `cache()` boundary entered AFTER `dynamic()` re-latches `"cache"` (the field
+  is undefined again, so `latchCachedHeaderScope`'s `!store.cachedHeaderScope`
+  guard sets), so a handler write inside that cache() still throws.
+- A ppr route NESTED under a `cache()` boundary latches `"ppr"` at the funnel
+  top (`fresh.ts`, first-wins), which masks the positional `cache()` latch — but
+  the handler still runs inside the cache scope (`insideCacheScope`). A
+  `cache()` HIT skips that handler, so the write is still non-deterministic:
+  `clearPprHeaderScope` UNMASKS to `"cache"` there instead of clearing, so the
+  guard keeps throwing (accurate cache() wording). Only a pure-ppr funnel
+  actually clears.
+
+And `dynamic()` from MIDDLEWARE is a no-op for the latch: middleware runs
+outside the funnel `Store.run` scope, so nothing is latched to clear — the
+middleware exemption is unchanged.
+
+The exhaustive write-site table (issue #726/#735):
+
+| Write site                      | Pre-commit?         | Same every request? | Verdict                 |
+| ------------------------------- | ------------------- | ------------------- | ----------------------- |
+| Middleware                      | yes                 | yes                 | legal                   |
+| Handler, shelled (ppr) route    | frozen, gone on HIT | no                  | guard throws            |
+| Handler, `ctx.dynamic()` route  | yes (always live)   | yes                 | **re-permitted (#735)** |
+| Loader behind `loading()`       | no (post-commit)    | —                   | forbidden               |
+| Loader in plain `cache()` (DSL) | buffered, re-runs   | yes                 | existing exemption      |
+
 Note this is a WRITE-only narrowing. The request-scoped READ guard
 (`isInsideCacheScope`, `src/server/context.ts`) deliberately stays on the
 BROAD predicate (`isInsideAnyLoaderScope()`): a handler-invoked loader's read

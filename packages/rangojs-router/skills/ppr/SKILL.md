@@ -184,6 +184,22 @@ opt-out. Use that for routes where the shell depends on runtime-only auth,
 cookies, or side-effectful SDK calls. A skipped build shell can still be owned
 later by runtime capture when runtime middleware does not call `ctx.dynamic()`.
 
+`ctx.dynamic()` also **re-permits handler header/cookie writes** (issue #735).
+The header doctrine below forbids handler writes on a ppr route because they
+ride MISSes and vanish on HITs — but a `dynamic()` render never HITs, so its
+write is deterministic. Calling `ctx.dynamic()` clears the header latch for the
+rest of the render, so the SAME handler can write its control-flow header
+directly (no middleware relay). Ordering is a contract: call `dynamic()` BEFORE
+the write — a write before it still throws.
+
+```ts
+function catalogPage(ctx) {
+  ctx.dynamic(); // declare live -> refuses capture AND clears the header latch
+  ctx.headers.set("x-rango-sfra-proxy", "catalog");
+  return <Catalog />;
+}
+```
+
 ## Verifying it works
 
 The header exists on DOCUMENT responses only. A bare `curl` gets the HTML
@@ -345,7 +361,9 @@ Four hard edges (each e2e/unit-pinned):
   HIT); loaders are live but settle AFTER the response headers flushed with
   the shell (dead letters). Move the write into route middleware — it runs
   on every request, including HITs, and its headers/cookies merge into every
-  response.
+  response. The one exception: a handler that calls `ctx.dynamic()` FIRST
+  re-permits its own header/cookie write (#735) — a dynamic() render never
+  HITs, so the write is deterministic (see "Opting out per request").
 - **Identity refuses.** `cookies()`/`headers()` inside a bake-lane loader
   throws during capture and the capture REFUSES (deterministic, once-per-key
   warned) — identity can never bake into the shared shell. Give that loader's

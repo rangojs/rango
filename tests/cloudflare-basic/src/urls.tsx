@@ -40,6 +40,7 @@ import {
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
 import {
+  CfPhgDynamicPage,
   CfPhgHandlerPage,
   CfPhgLoaderPage,
   CfPhgMwLivePage,
@@ -556,6 +557,13 @@ export const urlpatterns = urls(
               { name: "pprHeaderGuardLoader", ppr: true },
               () => [loader(CfPhgCookieWriterLoader)],
             ),
+            // DYNAMIC RE-PERMIT (#735): ctx.dynamic() opts off the shell and
+            // clears the ppr header latch, so the handler header write is
+            // re-permitted and rides EVERY request (route is always live).
+            path("/ppr-header-guard/dynamic", CfPhgDynamicPage, {
+              name: "pprHeaderGuardDynamic",
+              ppr: true,
+            }),
           ],
         ),
         // POSITIVE CONTROL (issue #713): middleware header + cookie on a ppr

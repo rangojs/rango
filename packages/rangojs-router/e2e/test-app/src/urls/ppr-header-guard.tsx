@@ -81,6 +81,19 @@ export const pprHeaderGuardPatterns = urls(
       { name: "loader", ppr: true },
       () => [loader(PhgCookieWriterLoader)],
     ),
+    // DYNAMIC RE-PERMIT (#735): a ppr route whose handler calls ctx.dynamic()
+    // opts off the shell (always live, never a HIT), so its handler header
+    // write is deterministic and re-permitted — no throw, and the header rides
+    // EVERY request. This is the header-re-permit half of the dynamic() design.
+    path(
+      "/dynamic",
+      (ctx) => {
+        ctx.dynamic();
+        ctx.headers.set("X-PHG-Dynamic", "live-value");
+        return <main data-testid="phg-dynamic-page">Dynamic live shell</main>;
+      },
+      { name: "dynamic", ppr: true },
+    ),
     // POSITIVE CONTROL: middleware headers + cookie stay live on MISS and HIT.
     middleware(
       async (ctx, next) => {

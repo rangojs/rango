@@ -24,6 +24,7 @@ import { describe, expect, it } from "vitest";
 import {
   RangoContext,
   assertCachedHeaderWriteAllowed,
+  clearPprHeaderScope,
   latchCachedHeaderScope,
   latchPprHeaderScopeForEntries,
   runInsideLoaderBodyScope,
@@ -221,6 +222,82 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
   });
 });
 
+// #735: ctx.dynamic() clears the ppr latch — a dynamic() render is always live
+// (never a shell HIT), so its handler header writes are deterministic and the
+// guard's reason to forbid them evaporates. Only the "ppr" kind is cleared; a
+// cache() boundary is a separate axis whose writes stay non-deterministic.
+describe("clearPprHeaderScope (issue #735 — dynamic() re-permit)", () => {
+  it("clears a ppr latch so a subsequent handler write is allowed; write-before still throws", () => {
+    RangoContext.run(makeStore() as never, () => {
+      latchCachedHeaderScope("ppr", "product");
+      // BEFORE dynamic(): the latch is live, the write throws (#725 pin).
+      expect(() =>
+        assertCachedHeaderWriteAllowed("ctx.headers.set()"),
+      ).toThrowError(FAMILY_RE);
+      clearPprHeaderScope();
+      // AFTER: latch cleared, the write is re-permitted.
+      expect(() =>
+        assertCachedHeaderWriteAllowed("ctx.headers.set()"),
+      ).not.toThrow();
+    });
+  });
+
+  it("does NOT clear a cache() latch (separate axis, writes stay non-deterministic)", () => {
+    RangoContext.run(makeStore() as never, () => {
+      latchCachedHeaderScope("cache", "cached.page");
+      clearPprHeaderScope();
+      expect(() =>
+        assertCachedHeaderWriteAllowed("ctx.headers.set()"),
+      ).toThrowError(FAMILY_RE);
+    });
+  });
+
+  it("composition: a cache() entry AFTER dynamic() re-latches 'cache' and re-guards the write", () => {
+    RangoContext.run(makeStore() as never, () => {
+      latchCachedHeaderScope("ppr", "product");
+      clearPprHeaderScope();
+      // A nested cache() boundary re-latches "cache" (the field is undefined
+      // again after the clear, so latchCachedHeaderScope's !latched guard sets).
+      latchCachedHeaderScope("cache", "product.cached");
+      const err = captureError(() =>
+        assertCachedHeaderWriteAllowed("ctx.headers.set()"),
+      );
+      expect(err.message).toContain("cache() boundary");
+      expect(err.message).toMatch(FAMILY_RE);
+    });
+  });
+
+  it("ppr route nested under a cache() boundary: dynamic() UNMASKS to 'cache', write still throws (cache axis not opted off)", () => {
+    // fresh.ts latches "ppr" at the funnel top (first-wins), masking the
+    // positional cache() latch, but the handler still runs inside the cache
+    // scope. A cache() HIT skips the handler, so the write stays
+    // non-deterministic — dynamic() opts off the SHELL axis, not the cache axis.
+    RangoContext.run(makeStore() as never, () => {
+      const store = RangoContext.getStore() as { insideCacheScope?: boolean };
+      store.insideCacheScope = true; // fresh.ts sets this when entering cache()
+      latchCachedHeaderScope("ppr", "product");
+      clearPprHeaderScope();
+      const err = captureError(() =>
+        assertCachedHeaderWriteAllowed("ctx.headers.set()"),
+      );
+      // Now guarded with the accurate cache() wording, not the ppr wording.
+      expect(err.message).toContain("cache() boundary");
+      expect(err.message).not.toContain("ppr route");
+      expect(err.message).toMatch(FAMILY_RE);
+    });
+  });
+
+  it("no-op when there is nothing to clear (non-ppr route, or middleware outside the funnel store)", () => {
+    // No ppr latch inside a funnel store (dynamic() on a non-ppr route)...
+    RangoContext.run(makeStore() as never, () => {
+      expect(() => clearPprHeaderScope()).not.toThrow();
+    });
+    // ...and no funnel store at all (dynamic() from middleware, before the
+    // render funnel's Store.run — getStore() is undefined). Neither throws.
+    expect(() => clearPprHeaderScope()).not.toThrow();
+  });
+});
+
 describe("latchPprHeaderScopeForEntries (the latch predicate)", () => {
   function latchedKind(entries: EntryData[]): string | undefined {
     const store = makeStore();
@@ -303,6 +380,23 @@ describe("guarded surfaces", () => {
         // Reads never trip the write guard.
         expect(ctx.headers.get("X-A")).toBeNull();
       });
+    });
+  });
+
+  it("ctx.dynamic() re-permits handler header/cookie writes on a ppr route (#735)", () => {
+    const reqCtx = makeReqCtx();
+    RangoContext.run(makeStore() as never, () => {
+      latchCachedHeaderScope("ppr", "p");
+      // Before dynamic(): the ppr latch forbids the write.
+      expect(() => reqCtx.header("X-A", "1")).toThrowError(FAMILY_RE);
+      // dynamic() clears the latch through the real ctx seam.
+      reqCtx.dynamic();
+      expect(reqCtx._dynamic).toBe(true);
+      // After: the same writes land on the stub.
+      reqCtx.header("X-A", "1");
+      reqCtx.setCookie("s", "v");
+      expect(reqCtx.res.headers.get("X-A")).toBe("1");
+      expect(reqCtx.res.headers.get("Set-Cookie")).toContain("s=v");
     });
   });
 

@@ -65,6 +65,25 @@ function describePprHeaderGuard(mode: "dev" | "build") {
       }
     });
 
+    test("dynamic() re-permits the handler header: rides EVERY request; route never becomes a HIT", async ({
+      page,
+      request,
+    }) => {
+      const url = f.url("/ppr-header-guard/dynamic");
+
+      // Renders successfully (no guard throw).
+      await page.goto(url);
+      await expect(page.getByTestId("cf-phg-dynamic-page")).toBeVisible();
+
+      // Header present on every request; never a shell HIT (always live).
+      for (let i = 0; i < 3; i++) {
+        const res = await request.get(url, { headers: HTML_HEADERS });
+        expect(res.status()).toBe(200);
+        expect(res.headers()["x-cf-phg-dynamic"]).toBe("live-value");
+        expect(res.headers()["x-rango-shell"]).not.toBe("HIT");
+      }
+    });
+
     test("loader cookies().set on a ppr route errors deterministically with the loader wording", async ({
       page,
       request,
