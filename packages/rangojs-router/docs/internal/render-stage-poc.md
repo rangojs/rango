@@ -132,33 +132,32 @@ because they share Flight construction.
 
 ## Performance comparison
 
-The current evidence says "small abstraction overhead, no demonstrated app
-speedup yet." That is still a useful answer: the POC is paying for itself in
+The current evidence says "small abstraction overhead, no reproduced app-level
+regression." That is still a useful answer: the POC is paying for itself in
 steppability and instrumentation consistency, not in raw request throughput.
 
-| Signal                   | Baseline / inline                                                     | Branch / staged                                                      | Read                                                                                                                                         |
-| ------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Synthetic render control | Inline stream -> response: `1.525us/op` median                        | Async stage pipeline: `3.008us/op` median                            | `+1.483us/op`; measurable in a tight loop, too small to matter beside React Flight/SSR but not zero.                                         |
-| Stress build size        | `e533fc83`, local production: total `8.5 MB`, RSC `8.2 MB`            | `e7f659e9` dirty branch: total `6.6 MB`, RSC `6.3 MB`                | Improved, but this includes version/chunking drift beyond the stage POC; do not attribute the size win to generators.                        |
-| Stress memory            | Peak RSS `3072 MB`, workerd peak `1943 MB`                            | Peak RSS `2842 MB`, workerd peak `1526 MB`                           | Improved in this run; again likely broader build/runtime drift, not stage-specific evidence.                                                 |
-| Stress throughput        | 3 runs x 2s local baseline from `bench-2026-07-04-e533fc83.json`      | 3 runs x 2s local branch from `bench-2026-07-07-e7f659e9-dirty.json` | Several unique scenarios dropped significantly; the drop also hit JSON/API and matching-heavy paths, so this is a same-day-baseline blocker. |
-| Server-Timing shape      | `rsc-serialize` present on common render paths, mostly `0.0ms` median | Same common-path shape; direct redirect/404 helper metric is opt-in  | The review's metric pollution concern is fixed; current timings do not show a visible serialize regression.                                  |
+| Signal                   | Baseline / inline                                                     | Branch / staged                                                     | Read                                                                                                                                               |
+| ------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Synthetic render control | Inline stream -> response: `1.525us/op` median                        | Async stage pipeline: `3.008us/op` median                           | `+1.483us/op`; measurable in a tight loop, too small to matter beside React Flight/SSR but not zero.                                               |
+| Clean stress throughput  | `95f5648c` (`origin/main`), `bench-2026-07-08-95f5648c.json`          | `75c34373`, `bench-2026-07-08-75c34373.json`                        | No reproduced drop. All render-heavy scenarios were within variance; `cached-hit` was the only significant change and it improved `176 -> 227`.    |
+| Clean cold starts        | Same July 8 run, 3 cold starts                                        | Same July 8 run, 3 cold starts                                      | Render-entry paths stayed flat: `/app/dashboard/main` `12.2ms -> 12.1ms`, `/` `6.3ms -> 6.1ms`, `/site/en/bench/first` `14.8ms -> 15.2ms`.         |
+| Clean stress memory      | Peak RSS `4109 MB`, workerd peak `2200 MB`                            | Peak RSS `4139 MB`, workerd peak `2195 MB`                          | Flat for this harness. The `30 MB` process-group RSS delta is below the noise floor of local wrangler/workerd runs.                                |
+| Server-Timing shape      | `rsc-serialize` present on common render paths, mostly `0.0ms` median | Same common-path shape; direct redirect/404 helper metric is opt-in | The review's metric pollution concern is fixed; current timings do not show a visible serialize regression.                                        |
+| Earlier stress run       | `e533fc83`, July 4 saved baseline                                     | `e7f659e9` dirty branch, July 7 saved run                           | Retired as regression evidence. It mixed dates, commits, and dirty-tree state; its drops also hit JSON/API paths outside the staged render change. |
 
-Commands used:
+Commands used for the clean A/B:
 
 ```sh
 ./node_modules/.bin/tsx bench/run.ts --runs 3 --duration 2 --cold-runs 3
 ./node_modules/.bin/tsx bench/compare.ts \
-  bench/results/bench-2026-07-04-e533fc83.json \
-  bench/results/bench-2026-07-07-e7f659e9-dirty.json
+  bench/results/bench-2026-07-08-95f5648c.json \
+  bench/results/bench-2026-07-08-75c34373.json
 ```
 
-The stress comparison is intentionally not called a regression verdict yet.
-The after side is a dirty local run on July 7, while the before side is a saved
-July 4 run. Before productizing, run a clean same-machine A/B: `main` and this
-branch, same date, same harness settings, then use `bench/compare.ts`. If the
-same significant drops remain, the stage abstraction should be narrowed to the
-paths where observability/stepping is valuable enough to justify it.
+The practical performance status is: keep the generator layer scoped to render
+work, keep event construction lazy, and treat the synthetic `+1.483us/op` as the
+cost to watch if this expands beyond RSC rendering. The stress-app drops from
+the older comparison did not reproduce against current `origin/main`.
 
 ## External app validation
 
