@@ -226,3 +226,61 @@ test.describe("prerender-ppr (production)", () => {
   });
   runPrerenderPprSpec(f);
 });
+
+// ---------------------------------------------------------------------
+// Dev boot-race readiness (#719 P2/P3). These exercise the dev /__rsc_shell
+// endpoint + client re-poll DIRECTLY, on their OWN isolated servers with no
+// warm-up slug (the warmToHit beforeAll above masks the boot window). There is
+// NO production sibling: production serves the first-request HIT from a build
+// manifest with no /__rsc_shell endpoint, no temp server, and no re-poll loop —
+// covered by the (production) describe above. A dev-only mechanism has no
+// production counterpart to add (hard-rule dev+prod pairing, N/A justified).
+// ---------------------------------------------------------------------
+
+test.describe("prerender-ppr dev readiness: injected boot-race (#719)", () => {
+  // Deterministic regression guard: RANGO_E2E_INJECT_SHELL_NOTREADY makes the
+  // endpoint emit ONE reopt-class NOT-READY per pathname through the REAL
+  // classifier before serving, so the read-through's re-poll runs end-to-end
+  // (a natural cold race settles too fast on quick machines to guard this). The
+  // FIRST request to a virgin slug must still recover to x-rango-shell: HIT.
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+    cliOptions: { env: { RANGO_E2E_INJECT_SHELL_NOTREADY: "1" } },
+  });
+
+  test("injected reopt NOT-READY: the FIRST request re-polls to HIT", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/pp/alpha"), {
+      headers: HTML_HEADERS,
+    });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+  });
+});
+
+test.describe("prerender-ppr dev readiness: cold first request (#719)", () => {
+  // Natural cold path (weak guard per #719: a fast machine can settle before the
+  // first servable request). A virgin Prerender+ppr URL as the literal FIRST
+  // request on a fresh server — HIT on request one, or a MISS that heals to HIT
+  // inside the readiness window. Proves the endpoint -> capture -> client path
+  // works cold end-to-end.
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("cold virgin route: first request HITs (or heals within the readiness window)", async ({
+    request,
+  }) => {
+    const url = f.url("/pp/beta");
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.status()).toBe(200);
+    if (res.headers()["x-rango-shell"] !== "HIT") {
+      await warmToHit(request, url);
+    }
+  });
+});

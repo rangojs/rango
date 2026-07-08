@@ -886,3 +886,58 @@ function describePprShell(mode: "dev" | "build") {
 // HIT composition are identical under DSL attachment. See docs/design/ppr-shell-resume.md.
 describePprShell("dev");
 describePprShell("build");
+
+// ---------------------------------------------------------------------
+// Dev boot-race readiness (#719 P2/P3) on the Cloudflare temp-server path — the
+// preset where getOrCreateTempServer stands up a temp Node server on the first
+// shell request and the runners/registry readiness sites fire. Own isolated dev
+// workers, no warm-up slug (the describePprShell beforeAll masks the boot
+// window). NO production sibling: production serves the first-request HIT from a
+// build manifest with no /__rsc_shell endpoint / temp server / re-poll loop
+// (covered by describePprShell("build")). A dev-only mechanism has no production
+// counterpart (hard-rule dev+prod pairing, N/A justified).
+// ---------------------------------------------------------------------
+
+test.describe("ppr-shell dev readiness: injected boot-race (#719)", () => {
+  // Deterministic regression guard: RANGO_E2E_INJECT_SHELL_NOTREADY makes the
+  // dev endpoint emit ONE reopt-class NOT-READY per pathname through the REAL
+  // classifier before serving, so the read-through's re-poll runs end-to-end
+  // (a natural cold race settles too fast to guard this). The FIRST request to a
+  // virgin slug must still recover to x-rango-shell: HIT.
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+    isolatedServer: true,
+    cliOptions: { env: { RANGO_E2E_INJECT_SHELL_NOTREADY: "1" } },
+  });
+
+  test("injected reopt NOT-READY: the FIRST request re-polls to HIT", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/ppr-shell/prerendered/alpha"), {
+      headers: HTML_HEADERS,
+    });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+  });
+});
+
+test.describe("ppr-shell dev readiness: cold first request (#719)", () => {
+  // Natural cold path (weak guard per #719: a fast machine can settle before the
+  // first servable request), but on Cloudflare the temp server is genuinely cold
+  // on the first shell request (the main-worker warmup does not create it). A
+  // virgin Prerender+ppr URL as the literal FIRST request on a fresh worker —
+  // HIT on request one, or a MISS that heals to HIT inside the readiness window.
+  const f = useFixture({ root: ".", mode: "dev", isolatedServer: true });
+
+  test("cold virgin route: first request HITs (or heals within the readiness window)", async ({
+    request,
+  }) => {
+    const url = f.url("/ppr-shell/prerendered/beta");
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.status()).toBe(200);
+    if (res.headers()["x-rango-shell"] !== "HIT") {
+      await warmToHit(request, url);
+    }
+  });
+});

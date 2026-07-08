@@ -132,6 +132,30 @@ function ensureCloudflareProtocolLoaderRegistered(): void {
 // ============================================================================
 
 /**
+ * Outcome of getOrCreateTempServer. `env` is the temp RSC environment on
+ * success, else null with `error` carrying WHY the create/import failed — or
+ * null when createServer resolved cleanly but attached no runner (terminal, but
+ * not an exception). The dev /__rsc_shell endpoint runs `error` through the
+ * SAME reoptimization classifier the import sites use: only a transient Vite
+ * re-optimization is signalled NOT-READY (client re-polls); every terminal
+ * failure fails fast so the read-through MISSes immediately instead of
+ * re-polling a permanently-broken realm for the full readiness deadline
+ * (issue #719 P2).
+ */
+type TempServerResult = { env: any; error: unknown };
+
+/**
+ * Test-only one-shot boot-race injection (issue #719 P3). When
+ * RANGO_E2E_INJECT_SHELL_NOTREADY=1, the dev /__rsc_shell endpoint emits a
+ * single reoptimization-class NOT-READY per pathname before serving, so an e2e
+ * can drive the REAL endpoint + real client re-poll deterministically — a
+ * natural cold race settles too fast on quick machines to guard the regression.
+ * Keyed per pathname so the read-through's re-poll finds it already fired and
+ * gets the HIT. Never engaged without the env flag.
+ */
+const injectedShellNotReadyPaths = new Set<string>();
+
+/**
  * Create a minimal Vite server for router discovery.
  *
  * Both dev-mode prerender and build-mode discovery need a temp RSC server
@@ -533,7 +557,7 @@ export function createRouterDiscoveryPlugin(
         }
       }
 
-      async function getOrCreateTempServer(): Promise<any | null> {
+      async function getOrCreateTempServer(): Promise<TempServerResult> {
         // Reuse path: if a temp server is already alive, prefer reusing
         // it over orphaning the existing instance and spinning up a new
         // one. This handles two cases:
@@ -554,7 +578,7 @@ export function createRouterDiscoveryPlugin(
               debugDiscovery?.(
                 "getOrCreateTempServer: cached temp runner reused",
               );
-              return existingEnv;
+              return { env: existingEnv, error: null };
             }
             // Server alive but registry missing — likely after a prior
             // refresh's invalidate + import threw. Try to re-import.
@@ -563,7 +587,7 @@ export function createRouterDiscoveryPlugin(
             );
             try {
               await importEntryAndRegistry(existingEnv);
-              return existingEnv;
+              return { env: existingEnv, error: null };
             } catch (err: any) {
               debugDiscovery?.(
                 "getOrCreateTempServer: reuse import failed (%s) — closing orphan and creating fresh",
@@ -591,6 +615,11 @@ export function createRouterDiscoveryPlugin(
           "getOrCreateTempServer: creating new temp server, entry=%s",
           s.resolvedEntryPath ?? "(unset)",
         );
+        // Surface the create/import cause to the caller (issue #719 P2): a
+        // transient re-optimization is re-pollable, a terminal fault is not. A
+        // clean createServer that yields no runner leaves this null — terminal,
+        // but not an exception.
+        let createError: unknown = null;
         try {
           prerenderTempServer = await createTempRscServer(s, {
             cacheDir: "node_modules/.vite_prerender",
@@ -603,12 +632,13 @@ export function createRouterDiscoveryPlugin(
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
             await importEntryAndRegistry(tempRscEnv);
-            return tempRscEnv;
+            return { env: tempRscEnv, error: null };
           }
           debugDiscovery?.(
             "getOrCreateTempServer: tempRscEnv.runner unavailable",
           );
         } catch (err: any) {
+          createError = err;
           debugDiscovery?.(
             "getOrCreateTempServer: FAILED message=%s",
             err.message,
@@ -623,7 +653,7 @@ export function createRouterDiscoveryPlugin(
         await prerenderTempServer?.close().catch(() => {});
         prerenderTempServer = null;
         prerenderNodeRegistry = null;
-        return null;
+        return { env: null, error: createError };
       }
 
       // Clear the package-level singleton registries that survive a Vite
@@ -676,7 +706,7 @@ export function createRouterDiscoveryPlugin(
       // versions / preset configurations may differ in which graph carries
       // the module-runner cache).
       async function refreshTempRscEnv(): Promise<any | null> {
-        let tempRscEnv = await getOrCreateTempServer();
+        const tempRscEnv = (await getOrCreateTempServer()).env;
         if (!tempRscEnv) return null;
 
         // Module-runner cache is on the per-environment graph in Vite 6+;
@@ -702,7 +732,7 @@ export function createRouterDiscoveryPlugin(
             prerenderTempServer = null;
             prerenderNodeRegistry = null;
           }
-          return await getOrCreateTempServer();
+          return (await getOrCreateTempServer()).env;
         }
 
         debugDiscovery?.(
@@ -775,11 +805,11 @@ export function createRouterDiscoveryPlugin(
               acquireBuildEnv(s, viteCommand, viteMode),
             );
 
-            tempRscEnv = await timed(
-              debugDiscovery,
-              "getOrCreateTempServer",
-              () => getOrCreateTempServer(),
-            );
+            tempRscEnv = (
+              await timed(debugDiscovery, "getOrCreateTempServer", () =>
+                getOrCreateTempServer(),
+              )
+            ).env;
             if (tempRscEnv) {
               optimizerHashBefore =
                 tempRscEnv.depsOptimizer?.metadata?.browserHash;
@@ -1006,7 +1036,7 @@ export function createRouterDiscoveryPlugin(
           // instances. Before #654 the cached registry was only refreshed on
           // route-file edits, so handler-only edits served stale prerender
           // content on this path. Warm-cache re-imports are module-cache hits.
-          const tempRscEnv = await getOrCreateTempServer();
+          const tempRscEnv = (await getOrCreateTempServer()).env;
           if (tempRscEnv) {
             try {
               await importEntryAndRegistry(tempRscEnv);
@@ -1184,6 +1214,22 @@ export function createRouterDiscoveryPlugin(
           res.statusCode = 500;
           res.end(`Shell capture module refresh failed: ${err.message}`);
         };
+        // Deterministic boot-race injection for e2e (issue #719 P3): fire ONE
+        // reopt-class NOT-READY per pathname through the REAL classifier so the
+        // read-through's re-poll path is exercised end-to-end (not just the
+        // unit-mocked fetch), then serve normally on the re-poll. Env-gated —
+        // inert in every non-test run.
+        if (
+          process.env.RANGO_E2E_INJECT_SHELL_NOTREADY === "1" &&
+          !injectedShellNotReadyPaths.has(pathname)
+        ) {
+          injectedShellNotReadyPaths.add(pathname);
+          const injected = Object.assign(
+            new Error("Outdated Optimize Dep (injected boot-race)"),
+            { code: "ERR_OUTDATED_OPTIMIZED_DEP" },
+          );
+          if (handledAsReoptimizing(injected)) return;
+        }
         const ttl = Number(ttlRaw);
         const swrRaw = url.searchParams.get("swr");
         const swr = swrRaw === null ? undefined : Number(swrRaw);
@@ -1210,6 +1256,11 @@ export function createRouterDiscoveryPlugin(
         let rscRealm: any = null;
         let ssrRealm: any = null;
         let ssrEntryId: string;
+        // Why the temp-server path returned no runner, if it did: a transient
+        // re-optimization is re-pollable (NOT-READY), a terminal create/import
+        // fault is not. Carried from getOrCreateTempServer to the readiness
+        // check below so only reopt re-polls (issue #719 P2).
+        let tempServerError: unknown = null;
         if (rscEnvMain?.runner && s.resolvedEntryPath) {
           try {
             await rscEnvMain.runner.import(s.resolvedEntryPath);
@@ -1223,34 +1274,51 @@ export function createRouterDiscoveryPlugin(
             (server.environments as any)?.ssr?.config?.build?.rollupOptions
               ?.input?.index ?? VIRTUAL_IDS.ssr;
         } else {
-          const tempRscEnv = await getOrCreateTempServer();
-          if (tempRscEnv) {
+          const tempResult = await getOrCreateTempServer();
+          if (tempResult.env) {
             try {
-              await importEntryAndRegistry(tempRscEnv);
+              await importEntryAndRegistry(tempResult.env);
             } catch (err: any) {
               handleShellImportError(err);
               return;
             }
+          } else {
+            tempServerError = tempResult.error;
           }
-          rscRealm = tempRscEnv;
+          rscRealm = tempResult.env;
           ssrRealm = (prerenderTempServer?.environments as any)?.ssr;
           ssrEntryId = "virtual:entry-ssr";
         }
         if (!rscRealm?.runner || !ssrRealm?.runner) {
-          sendNotReady("Shell capture runners not available");
+          // Reoptimization is the ONLY transient class: re-poll it (NOT-READY).
+          // A terminal temp-server create/import fault, or an SSR runner absent
+          // after a clean createServer, fails fast with a plain 503 (no
+          // NOT-READY header) so the read-through MISSes on its first attempt
+          // instead of re-polling a permanently-broken realm for the full
+          // readiness deadline (issue #719 P2).
+          if (tempServerError && handledAsReoptimizing(tempServerError)) return;
+          res.statusCode = 503;
+          res.end("Shell capture runners not available");
           return;
         }
         let registry: Map<string, any> | null = null;
+        let registryError: unknown = null;
         try {
           const serverMod = await rscRealm.runner.import(
             "@rangojs/router/server",
           );
           registry = serverMod.RouterRegistry ?? null;
-        } catch {
+        } catch (err: any) {
+          registryError = err;
           registry = null;
         }
         if (!registry || registry.size === 0) {
-          sendNotReady("Shell capture registry not available");
+          // Same rule as the runner check: a re-optimization mid-import is
+          // re-pollable (NOT-READY); a terminal import fault or a genuinely
+          // empty registry (no routers registered) fails fast (issue #719 P2).
+          if (registryError && handledAsReoptimizing(registryError)) return;
+          res.statusCode = 503;
+          res.end("Shell capture registry not available");
           return;
         }
 

@@ -267,6 +267,27 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    // Issue #719 P2: only 503 + NOT-READY (a transient re-optimization) is
+    // re-pollable. A terminal boot failure — a broken temp server or a faulted
+    // registry import — fails fast with a PLAIN 503 (no NOT-READY header). The
+    // read-through must MISS on the first attempt, never re-poll a permanently
+    // broken realm for the full 10s readiness deadline.
+    it("does NOT re-poll a plain 503 without the NOT-READY header (terminal boot failure MISSes fast)", async () => {
+      const fetchMock = vi.fn(
+        async () =>
+          new Response("Shell capture runners not available", { status: 503 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      expect(
+        await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store, {
+          isPrerenderRoute: true,
+          routeName: "pp",
+          ttl: 300,
+        }),
+      ).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("concedes a MISS when NOT-READY never clears (readiness wait is bounded)", async () => {
       const fetchMock = vi.fn(
         async () =>
