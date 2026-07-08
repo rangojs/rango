@@ -8,17 +8,9 @@ argument-hint:
 
 Inspect the route manifest to verify parent relationships, shortCodes, and route structure.
 
-## Quick Access
-
-In development, visit:
-
-```
-http://localhost:PORT/?__debug_manifest
-```
-
-Returns formatted JSON. The HTTP endpoint shape is `{ routerId, routeManifest, routeAncestry, routeTrie, precomputedEntries }` (see below for the programmatic API shape).
-
 ## Programmatic Access
+
+Call `router.debugManifest()` — an `async` method on the router instance:
 
 ```typescript
 import { router } from "./router.js";

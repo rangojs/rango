@@ -6,19 +6,9 @@ type: guide
 
 A path resolves to the wrong handler, a layout isn't wrapping its children, or an intercept never fires. The debug manifest shows you the route tree Rango actually built — parent relationships, shortCodes, and per-route flags — so you can verify structure instead of guessing.
 
-## Quick look in the browser
-
-In development, visit:
-
-```bash
-open "http://localhost:PORT/?__debug_manifest"
-```
-
-You get formatted JSON with the shape `{ routerId, routeManifest, routeAncestry, routeTrie, precomputedEntries }`.
-
 ## Programmatic access
 
-The programmatic API returns a different, summarized shape — `{ routes, layouts, totalRoutes, totalLayouts }`:
+Call `router.debugManifest()` in development — an `async` method that returns a summarized `{ routes, layouts, totalRoutes, totalLayouts }` shape:
 
 ```ts
 import { router } from "./router.js";

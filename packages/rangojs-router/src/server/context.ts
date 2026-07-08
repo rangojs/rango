@@ -817,9 +817,14 @@ const loaderBodyScopeALS: AsyncLocalStorage<{
  */
 export function isInsideCacheScope(): boolean {
   if (RangoContext.getStore()?.insideCacheScope !== true) return false;
-  // Loaders are always fresh — even inside a cache() boundary, the loader
-  // function re-executes on every request (DSL loaders AND handler-invoked
-  // loader bodies alike), so request-scoped reads inside any loader are safe.
+  // Request-scoped READS are exempt in any loader body — DSL loaders re-run on
+  // every request (including cache() HITs via resolveLoadersOnly), and a
+  // handler-invoked loader body, though skipped with its handler on a HIT,
+  // yields a BAKED shared copy in the cached artifact — an accepted
+  // consumption-lane tradeoff (#672/#674). This is deliberately BROADER than
+  // the WRITE guard (assertCachedHeaderWriteAllowed narrows the cache()
+  // exemption to DSL scope, #725): a read bakes-and-accepts, a Set-Cookie/header
+  // write drops-and-throws because it has no baked-copy semantics on a HIT.
   if (isInsideAnyLoaderScope()) return false;
   return true;
 }
@@ -901,8 +906,11 @@ export function latchPprHeaderScopeForEntries(
 /**
  * RULE (issue #713): in any cached scenario ONLY MIDDLEWARE writes response
  * headers — handler and loader writes throw while a scope is latched; the one
- * exemption is loaders under plain cache(). Full layer rules and rationale:
- * docs/design/ppr-shell-resume.md "The header doctrine".
+ * exemption is DSL (registered) loaders under plain cache(). A handler-invoked
+ * loader body (ctx.use from a handler, never registered with loader()) is
+ * skipped with its handler on a HIT and throws like a handler write (#725).
+ * Full layer rules and rationale: docs/design/ppr-shell-resume.md "The header
+ * doctrine".
  */
 export function assertCachedHeaderWriteAllowed(
   surface: string,
@@ -910,21 +918,37 @@ export function assertCachedHeaderWriteAllowed(
 ): void {
   const scope = RangoContext.getStore()?.cachedHeaderScope;
   if (!scope) return;
-  const insideLoader = isInsideAnyLoaderScope();
-  if (scope.kind === "cache" && insideLoader) return;
+  // Exempt DSL loaders (loaderScopeALS) ONLY. A registered loader re-runs on
+  // every cache HIT (fresh.ts runInsideLoaderScope -> cache-lookup.ts
+  // resolveLoadersOnly), so its header/cookie writes merge into every response
+  // with no MISS/HIT divergence. A handler-invoked loader body has
+  // loaderBodyScopeALS active but loaderScopeALS unset (loader-resolution.ts
+  // derives isDslLoader from isInsideLoaderScope()); on a HIT the handler is
+  // skipped so that loader never re-runs and its write would land only on the
+  // MISS — throw it. isInsideLoaderScope() (not isInsideAnyLoaderScope) is the
+  // discriminator; the DSL scope ALS survives nested ctx.use bodies, so a
+  // handler-invoked loader nested under a DSL loader stays exempt (its DSL
+  // parent re-invokes it on every HIT). This is the exempt fast path, so the
+  // broad predicate for the error label is deferred to the throw path below.
+  if (scope.kind === "cache" && isInsideLoaderScope()) return;
   // Everything below runs only on the throw path — `surfaceProp` exists so
   // callers pass constants and the success path allocates nothing (the full
-  // surface, e.g. "ctx.headers.set()", is assembled here).
+  // surface, e.g. "ctx.headers.set()", is assembled here). isInsideAnyLoaderScope
+  // (broad) labels a now-throwing handler-invoked loader body "loader".
   const fullSurface =
     surfaceProp === undefined ? surface : `${surface}.${String(surfaceProp)}()`;
-  const layer = insideLoader ? "loader" : "handler";
+  const layer = isInsideAnyLoaderScope() ? "loader" : "handler";
   const route = scope.routeKey ? ` (route "${scope.routeKey}")` : "";
   const where =
     scope.kind === "ppr"
       ? `on a ppr route${route} — the document shell is cached and replayed`
       : `inside a cache() boundary${route}`;
+  // ppr loader writes fail by physics (headers flush before loaders settle);
+  // every other throw — a handler, or a handler-invoked loader under cache() —
+  // fails because the handler is skipped on a HIT, so key the reason on the
+  // scope kind, not the layer.
   const why =
-    layer === "loader"
+    scope.kind === "ppr" && layer === "loader"
       ? "The response headers flush with the shell before loaders settle, so this write is dropped on cache hits."
       : "On a cache hit the handler is skipped, so this write would silently vanish.";
   throw new Error(

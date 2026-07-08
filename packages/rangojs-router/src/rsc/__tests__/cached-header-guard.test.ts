@@ -11,7 +11,11 @@
  *   escape, all via the guarded-stub-headers choke point; setStatus
  *   enumerated),
  * - PPR/cache() message-family EQUIVALENCE (same Error class, same family),
- * - the pinned cache()-loader write exemption (vite-rsc-demo shop cart),
+ * - the pinned cache()-loader write exemption — DSL (registered) loaders ONLY
+ *   (vite-rsc-demo shop cart); a handler-invoked loader body throws under
+ *   cache() because it is skipped with its handler on a hit (#725),
+ * - a handler-invoked loader nested under a DSL loader stays exempt (the DSL
+ *   parent re-runs it every hit),
  * - middleware merge order on the shell-HIT serve path
  *   (createResponseWithMergedHeaders: serve-owned headers win, middleware
  *   headers merge, Set-Cookie appends).
@@ -150,7 +154,7 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
     expect(cacheErr.message).toMatch(FAMILY_RE);
   });
 
-  it("cache() + loader: ALLOWED (pinned exemption — loaders re-run and merge per request)", () => {
+  it("cache() + DSL loader: ALLOWED (pinned exemption — DSL loaders re-run and merge per request)", () => {
     RangoContext.run(makeStore() as never, () => {
       latchCachedHeaderScope("cache", "shop");
       runInsideLoaderScope(() => {
@@ -158,15 +162,50 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
           assertCachedHeaderWriteAllowed("ctx.setCookie()"),
         ).not.toThrow();
       });
+    });
+  });
+
+  // #725 gap: a handler-invoked loader body (ctx.use from a handler, never
+  // registered with loader()) runs only on the MISS — on a HIT the handler and
+  // this loader are skipped, so its write would silently vanish. It must throw,
+  // NOT ride the DSL exemption. Regression pin (red before the guard narrowed to
+  // isInsideLoaderScope()).
+  it("cache() + handler-invoked loader body: THROWS (handler skipped on hit, write would vanish)", () => {
+    RangoContext.run(makeStore() as never, () => {
+      latchCachedHeaderScope("cache", "shop");
       runInsideLoaderBodyScope(
         () => {
-          expect(() =>
+          const err = captureError(() =>
             assertCachedHeaderWriteAllowed("ctx.setCookie()"),
-          ).not.toThrow();
+          );
+          expect(err.message).toContain("from a loader");
+          expect(err.message).toContain("cache() boundary");
+          expect(err.message).toContain("the handler is skipped");
+          expect(err.message).toMatch(FAMILY_RE);
         },
         "CartLoader",
         true,
       );
+    });
+  });
+
+  // The DSL scope ALS survives into nested ctx.use bodies, so a handler-invoked
+  // loader nested under a DSL loader stays exempt: the DSL parent re-runs on
+  // every hit and re-invokes it, so no MISS/HIT divergence exists.
+  it("cache() + handler-invoked loader body nested in a DSL loader: ALLOWED (DSL parent re-runs it every hit)", () => {
+    RangoContext.run(makeStore() as never, () => {
+      latchCachedHeaderScope("cache", "shop");
+      runInsideLoaderScope(() => {
+        runInsideLoaderBodyScope(
+          () => {
+            expect(() =>
+              assertCachedHeaderWriteAllowed("ctx.setCookie()"),
+            ).not.toThrow();
+          },
+          "NestedLoader",
+          true,
+        );
+      });
     });
   });
 

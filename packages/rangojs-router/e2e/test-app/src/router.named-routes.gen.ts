@@ -32,6 +32,7 @@ export const NamedRoutes = {
   "cacheIsolation.queryVariant": "/cache-isolation/query-variant",
   "cacheScopeGuard.asyncLoaderReadAllowed": "/cache-scope-guard/async-loader-read-allowed",
   "cacheScopeGuard.cookiesReadBlocked": "/cache-scope-guard/cookies-read-blocked",
+  "cacheScopeGuard.handlerLoaderCookieBlocked": "/cache-scope-guard/handler-loader-cookie-blocked",
   "cacheScopeGuard.headerBlocked": "/cache-scope-guard/header-blocked",
   "cacheScopeGuard.headersReadBlocked": "/cache-scope-guard/headers-read-blocked",
   "cacheScopeGuard.index": "/cache-scope-guard",
