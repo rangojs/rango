@@ -17,6 +17,12 @@ import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 
+declare global {
+  var __loadPrerenderManifestModule:
+    | (() => Promise<{ default: Record<string, string> }>)
+    | undefined;
+}
+
 // Page handlers
 import { HomePage } from "./pages/home.js";
 import { AboutPage } from "./pages/about.js";

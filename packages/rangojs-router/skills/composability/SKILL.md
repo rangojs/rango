@@ -171,6 +171,20 @@ import { shopPatterns } from "./shop-patterns";
 urls(({ include }) => [include("/shop", shopPatterns, { name: "shop" })]);
 ```
 
+The `name` option controls whether the child's named routes join the parent
+route map:
+
+| Form                                           | Name behavior                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `include("/shop", patterns)`                   | private module scope; child names stay out of the app-wide generated map |
+| `include("/shop", patterns, { name: "shop" })` | namespace children as `shop.index`, `shop.product`, ...                  |
+| `include("/shop", patterns, { name: "" })`     | flatten children into the parent namespace                               |
+
+Omission is intentional for reusable/local modules, not a missing default. Use
+`{ name: "" }` only when the child names are globally unique and meant to be
+reversed from elsewhere. Inside the module, dot-local reversal and
+`scopedReverse()` work without flattening.
+
 Async — the module is code-split behind a `() => import()` thunk. It becomes its
 own chunk that is NOT evaluated at startup; the router imports it on the first
 request that reaches the prefix, then caches it:

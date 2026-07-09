@@ -47,6 +47,24 @@ Common reasons to migrate:
 
 Work route-by-route, bottom-up. Start with leaf pages, then layouts, then middleware. Verify each route works before moving to the next.
 
+### Phase 0: choose the migration boundary
+
+Before changing routes, classify the project. This decides whether existing
+database/auth code can actually carry over:
+
+| Migration           | What stays                                               | Additional work                                                        |
+| ------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Framework only      | runtime, database, auth provider                         | Next-to-Rango surface mapping in this skill                            |
+| Host/runtime swap   | database and auth, but Node becomes Workers/another host | SDK/runtime compatibility, bindings, secrets, filesystem/crypto checks |
+| Datastore/auth swap | host may stay, database or identity provider changes     | schema/data migration, authorization replacement, session cutover      |
+| Both                | only the product behavior stays                          | all of the above, with staged parity and rollback                      |
+
+For Cloudflare Workers, read `/cloudflare` before scaffolding. For a host,
+datastore, or auth swap, also read
+[backend-host-swap.md](backend-host-swap.md). Do not treat RLS policies,
+database functions, provider callbacks, or secret management as incidental
+route work.
+
 ## Replace imports, never shim Next
 
 Do NOT create mock `next/*` modules, Vite aliases for `next/*`, or compatibility
@@ -200,6 +218,18 @@ export const marketingPatterns = urls(({ path }) => [
 include("/", marketingPatterns, { name: "marketing" }),
 ```
 
+The `include()` name has three deliberate modes:
+
+| Form                                            | Child route names                                                       |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `include("/", patterns)`                        | private to the included module; omitted from the app-wide generated map |
+| `include("/", patterns, { name: "marketing" })` | globally registered as `marketing.home`, `marketing.pricing`, ...       |
+| `include("/", patterns, { name: "" })`          | flattened into the parent map as `home`, `pricing`, ...                 |
+
+Use the empty-string form only when the child names are intentionally global
+and unique. Inside a private/namespaced module, prefer dot-local reversal or
+`scopedReverse()` rather than flattening solely for convenience.
+
 Next.js code-splits each route segment automatically. Rango's eager `include()`
 bundles the group into the entry chunk; to get Next-style per-section splitting,
 pass an async provider so the group loads on the first request under its prefix:
@@ -262,7 +292,10 @@ layout(<ShopLayout />, () => [
 
 ### Server component data fetching
 
-Inline `fetch()` or direct DB calls in server components work as-is — no migration needed:
+Inline `fetch()` or direct DB calls in server components keep the same Rango
+shape when the target runtime, database, driver, and authentication model remain
+compatible. A Node-to-Workers or Postgres-to-D1 move is a separate migration;
+run the Phase 0 audit before carrying those calls over unchanged.
 
 ```typescript
 // Next.js:
@@ -695,6 +728,21 @@ path.json("/api/users", async (ctx) => {
 path.text("/api/health", () => "ok", { name: "apiHealth" })
 ```
 
+Response routes treat returned responses as control-flow responses. A thrown
+`RouterError` becomes a structured API error. Do not assume every Next
+`NextResponse`/throw pattern maps identically:
+
+| In a response route             | Use                                                                  |
+| ------------------------------- | -------------------------------------------------------------------- |
+| custom status/body/headers      | `return new Response(...)`                                           |
+| structured thrown API error     | `throw new RouterError(...)`                                         |
+| intentional off-origin redirect | validate the target, then `return redirect(url, { external: true })` |
+
+Rango guards every browser-followed cross-origin `Location`. A raw unbranded
+cross-origin 3xx is rewritten to the app root; `{ external: true }` is the
+explicit, auditable opt-out for OAuth/SSO/payment callbacks. Never set it on an
+unvalidated user-provided URL.
+
 See `/response-routes` for full API.
 
 ## 10. Theme / Dark Mode
@@ -724,22 +772,23 @@ See `/theme` for full API including system detection and cookie persistence.
 
 ## Migration Checklist
 
-1. [ ] Set up Vite config with `rango()` plugin
-2. [ ] Create Document component (replaces root `<html>` layout)
-3. [ ] Create `router.tsx` with `createRouter()`
-4. [ ] Convert file-based routes to `urls()` DSL in `urls.tsx`
-5. [ ] Migrate layouts to `layout()` with `<Outlet />`
-6. [ ] Convert data fetching to `createLoader()` + `ctx.use()`
-7. [ ] Migrate `middleware.ts` to `router.use()` (auth, guards, logging)
-8. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`
-9. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
-10. [ ] Migrate API routes to `path.json()` / `path.text()`
-11. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
-12. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
-13. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
+1. [ ] Classify the migration boundary (framework, host/runtime, datastore/auth, or both)
+2. [ ] Set up Vite config with `rango()` plugin (and read `/cloudflare` for Workers)
+3. [ ] Create Document component (replaces root `<html>` layout)
+4. [ ] Create `router.tsx` with `createRouter()`
+5. [ ] Convert file-based routes to `urls()` DSL in `urls.tsx`
+6. [ ] Migrate layouts to `layout()` with `<Outlet />`
+7. [ ] Convert data fetching to `createLoader()` + `ctx.use()`
+8. [ ] Migrate `middleware.ts` to `router.use()` (auth, guards, logging)
+9. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`
+10. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
+11. [ ] Migrate API routes to `path.json()` / `path.text()`
+12. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
+13. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
+14. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
         `force-static` → `Static()`/`Prerender()`, `experimental_ppr` → the
         `ppr` path option (loader + `loading()` as the hole)
-14. [ ] Run `npx rango generate src/` to generate route types
-15. [ ] Verify no shims: `grep -rn "from ['\"]next" src/ app/` returns nothing,
+15. [ ] Run `npx rango generate src/` to generate route types
+16. [ ] Verify no shims: `grep -rn "from ['\"]next" src/ app/` returns nothing,
         no mock `next/*` modules or aliases exist, and `next` is out of
         `package.json`

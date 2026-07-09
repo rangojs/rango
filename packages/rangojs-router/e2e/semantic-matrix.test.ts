@@ -433,6 +433,26 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "RR1",
+    contract:
+      "a handler-thrown Response merges effects and follows normal response caching",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/response-cache/cached-json?throw-response=1",
+    assert: async ({ baseUrl, request }) => {
+      const url = baseUrl("/response-cache/cached-json?throw-response=1");
+      const first = await request.get(url);
+      expect(first.status()).toBe(200);
+      expect(first.headers()["x-thrown-response"]).toBe("merged");
+      const body1 = await first.json();
+      expect(body1.source).toBe("thrown-response");
+
+      const body2 = await (await request.get(url)).json();
+      expect(body2.ts).toBe(body1.ts);
+    },
+  },
+  {
     id: "SWR1",
     contract:
       "SWR returns stale data first, then a later request sees the background refresh",

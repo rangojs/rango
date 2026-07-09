@@ -13,7 +13,11 @@ export const responseCachePatterns = urls(({ path, cache, middleware }) => [
   cache({ ttl: 600 }, () => [
     path.json(
       "/cached-json",
-      () => {
+      (ctx) => {
+        if (ctx.url.searchParams.has("throw-response")) {
+          ctx.header("X-Thrown-Response", "merged");
+          throw Response.json({ source: "thrown-response", ts: Date.now() });
+        }
         return { source: "cached-json", ts: Date.now() };
       },
       { name: "responseCache.json" },

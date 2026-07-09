@@ -34,6 +34,12 @@
       "path": "skills/caching/SKILL.md"
     },
     {
+      "name": "cloudflare",
+      "description": "Deploy and operate @rangojs/router on Cloudflare Workers with the Cloudflare Vite plugin, typed D1/KV bindings, local migrations, secrets, streaming, preview parity, and built-worker deployment. Use when creating a Cloudflare Rango app, moving a Rango app to Workers, wiring D1 or KV, debugging dev/preview differences, or preparing a Worker deployment.",
+      "argumentHint": "",
+      "path": "skills/cloudflare/SKILL.md"
+    },
+    {
       "name": "comparison",
       "description": "Compare Rango with Next.js App Router, TanStack Start, and Waku. Use when evaluating React frameworks, explaining why Rango, writing positioning or adoption guidance, answering migration questions, or checking claims about Rango's routing, loaders, caching, rendering, prefetching, safety, testing, observability, and production behavior.",
       "argumentHint": "",

@@ -24,7 +24,11 @@ import type { RequestContext } from "../server/request-context.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { EntryCacheConfig, EntryData } from "../server/context.js";
 import { traverseBack } from "../router/pattern-matching.js";
-import { isCacheableStatus, finalizeResponse } from "./helpers.js";
+import {
+  applyOnResponseCallbacks,
+  isCacheableStatus,
+  finalizeResponse,
+} from "./helpers.js";
 import { reportCacheError } from "../cache/cache-error.js";
 
 /** Injected cache-scope builders (kept off this module's runtime import graph). */
@@ -151,13 +155,8 @@ export async function serveResponseRouteWithCache(
   // every path (hit + miss).
   const savedCallbacks = reqCtx._onResponseCallbacks;
   reqCtx._onResponseCallbacks = [];
-  const applyPreHandlerCallbacks = (response: Response): Response => {
-    let result = response;
-    for (const callback of savedCallbacks) {
-      result = callback(result) ?? result;
-    }
-    return result;
-  };
+  const applyPreHandlerCallbacks = (response: Response): Response =>
+    applyOnResponseCallbacks(savedCallbacks, response);
 
   const putFresh = (
     store2: SegmentCacheStore,

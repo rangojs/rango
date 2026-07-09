@@ -447,6 +447,31 @@ describe("Handler type with dot-prefix route name", () => {
   });
 });
 
+describe("Handler mixed async result", () => {
+  type LocalRoutes = { post: "/:slug" };
+
+  it("accepts an inferred Promise<ReactNode | Response> without weakening params", () => {
+    const handler: Handler<".post", LocalRoutes> = async (ctx) => {
+      const slug: string = ctx.params.slug;
+      // @ts-expect-error The local route declares slug, not id.
+      const id = ctx.params.id;
+      return slug === "redirect"
+        ? new Response(null, { status: 302 })
+        : `post:${slug}:${String(id)}`;
+    };
+
+    expectTypeOf(handler).toMatchTypeOf<Handler<".post", LocalRoutes>>();
+
+    urls(({ path }) => [
+      path("/post/:slug", async (ctx) =>
+        ctx.params.slug === "redirect"
+          ? new Response(null, { status: 302 })
+          : `post:${ctx.params.slug}`,
+      ),
+    ]);
+  });
+});
+
 // Compile-time type assertions using conditional types
 // These will cause compile errors if types are wrong
 

@@ -835,6 +835,35 @@ describe("dispatch", () => {
       expect(res.headers.get("x-rango-redirect-external")).toBeNull();
     });
 
+    it("treats a handler-thrown external redirect like a returned Response", async () => {
+      const onError = vi.fn();
+      const router = createRouter<{}>({ onError }).routes(
+        urls(({ path }) => [
+          path.json(
+            "/go",
+            (ctx) => {
+              ctx.header("X-Control-Flow", "thrown");
+              cookies().set("flow", "thrown", { path: "/" });
+              throw redirect("https://accounts.example.com/oauth", {
+                external: true,
+              });
+            },
+            { name: "go" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("X-Control-Flow")).toBe("thrown");
+      expect(res.headers.getSetCookie()).toContain("flow=thrown; Path=/");
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
     // Finding #1 regression (forgeable opt-in): the external opt-in is an
     // out-of-band brand on the Response object, NOT the wire header. A
     // proxy-style response route that returns an attacker-controlled upstream

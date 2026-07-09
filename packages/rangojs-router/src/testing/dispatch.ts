@@ -20,10 +20,10 @@
  * - Response routes (non-RSC)                         -> serialized Response
  *   - json:           JSON.stringify(result) (bare value) with application/json
  *   - text/html/xml/md: String(result) with the mapped MIME type
- *   - handler returning a Response:                     re-wrapped like
+ *   - handler returning or throwing a Response:         re-wrapped like
  *     handleResponseRoute (stub headers/cookies merged, Set-Cookie preserved,
  *     WebSocket upgrade passed through without reconstruction)
- *   - handler throwing an error:                        typed 500 / RouterError
+ *   - handler throwing a non-Response error:            typed 500 / RouterError
  *     status, matching handleResponseRoute (RFC 9457 problem+json body with
  *     application/problem+json for json routes, text/plain message otherwise)
  *   - content-negotiated route:                         Vary: Accept appended
@@ -53,7 +53,7 @@
  *   cache({ key })/cache({ tags }), or a custom store whose keyGenerator/
  *   getResponse/putResponse throws) fires onError with phase "cache" and
  *   metadata.category, while the request still degrades-to-miss exactly as before.
- *   (A thrown response-route HANDLER error is the one onError path NOT covered —
+ *   (A thrown non-Response route HANDLER error is the one onError path NOT covered —
  *   see "DOES NOT support" below.)
  * - createRouter({ telemetry }) match-transaction lifecycle: request.start opens
  *   the transaction before the global middleware chain, request.end closes it
@@ -70,7 +70,7 @@
  *   This includes partial requests that resolve to a component route.
  * - Server actions (?_rsc_action) — RSC protocol concerns handled by
  *   router.fetch().
- * - createRouter({ onError }) on a thrown response-route HANDLER error: the
+ * - createRouter({ onError }) on a thrown non-Response route HANDLER error: the
  *   error is serialized into the same typed 500 / RouterError Response as
  *   production, but onError is NOT invoked for that path here. Cover handler-error
  *   onError side effects with an e2e test. (This is the unchanged boundary; cache
@@ -129,15 +129,10 @@ import {
   createSimpleRedirectResponse,
   finalizeResponse,
   interceptRedirectForPartial,
-  mergeStubHeadersAndFinalize,
+  rewrapResponseRouteResponse,
 } from "../rsc/helpers.js";
 import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
 import { stringifyJsonRouteResult } from "../rsc/json-route-result.js";
-import {
-  EXTERNAL_REDIRECT_MARKER,
-  isExternalRedirect,
-  markExternalRedirect,
-} from "../redirect-origin.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import { invokeOnError } from "../router/error-handling.js";
 import type { OnErrorCallback } from "../types/error-types.js";
@@ -294,51 +289,6 @@ function serializeResponseRouteError(
     status,
     headers: { "content-type": "text/plain;charset=utf-8" },
   });
-}
-
-/**
- * Re-wrap a handler-returned Response, byte-identical to handleResponseRoute's
- * rewrapResponse:
- * - A WebSocket upgrade (status 101 or a `webSocket` property) is returned via
- *   mergeStubHeadersAndFinalize WITHOUT reconstruction — the Response
- *   constructor rejects status 101, and an upgrade response's headers/socket
- *   must not be rebuilt.
- * - Otherwise headers are copied into a fresh Headers (Set-Cookie appended to
- *   preserve duplicates, others set) and the Response is rebuilt through
- *   createResponseWithMergedHeaders so stub headers/cookies, the ctx.setStatus
- *   override, and onResponse callbacks merge exactly as in production. statusText
- *   is intentionally dropped (production does not carry it across the re-wrap).
- *
- * Must run inside runWithRequestContext (reads the ambient request context via
- * the helpers), which callHandler guarantees.
- */
-function rewrapHandlerResponse(result: Response): Response {
-  if (isWebSocketUpgradeResponse(result)) {
-    return mergeStubHeadersAndFinalize(result);
-  }
-  const headers = new Headers();
-  result.headers.forEach((value, key) => {
-    // Mirror production: never copy the reserved external-redirect marker off a
-    // handler result (it is not a trust signal; the opt-in is the out-of-band
-    // brand transferred below).
-    if (key.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
-    if (key.toLowerCase() === "set-cookie") {
-      headers.append(key, value);
-    } else {
-      headers.set(key, value);
-    }
-  });
-  const rewrapped = createResponseWithMergedHeaders(result.body, {
-    status: result.status,
-    headers,
-  });
-  // Mirror production's rewrapResponse: transfer the out-of-band external brand
-  // only from a genuinely branded result (a real redirect(url, { external:
-  // true })), never from a proxied upstream's forged header.
-  if (isExternalRedirect(result)) {
-    markExternalRedirect(rewrapped);
-  }
-  return rewrapped;
 }
 
 /**
@@ -539,13 +489,15 @@ export async function dispatch<TEnv = any>(
       const callHandler = async (): Promise<Response> => {
         let merged: Response;
         try {
-          const result = await (handler as Function)(responseHandlerCtx);
+          let result: unknown;
+          try {
+            result = await (handler as Function)(responseHandlerCtx);
+          } catch (error) {
+            if (!(error instanceof Response)) throw error;
+            result = error;
+          }
           if (result instanceof Response) {
-            // Handler returned a Response: mirror handleResponseRoute's
-            // rewrapResponse (WebSocket-upgrade bypass + Set-Cookie-preserving
-            // header rebuild, statusText dropped) rather than the generic
-            // createResponseWithMergedHeaders re-wrap below.
-            merged = rewrapHandlerResponse(result);
+            merged = rewrapResponseRouteResponse(result);
           } else {
             // Route the serialized (json/text/...) body through the SAME
             // production finalizer the RSC handler uses, so ctx.onResponse()

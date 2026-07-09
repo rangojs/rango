@@ -761,7 +761,8 @@ it("returns 404 for an unmatched path", async () => {
 `dispatch` also covers trailing-slash/redirect targets (`findMatch`) — a
 redirected path returns a 308 with the `Location` (query preserved). A JSON
 response route serializes the handler's return value verbatim (no envelope),
-and a thrown error becomes an RFC 9457 problem+json body
+and a returned or thrown `Response` uses the same control-flow path. Any other
+thrown error becomes an RFC 9457 problem+json body
 (`application/problem+json`). Cookies and `ctx.header(...)` set inside a
 response-route handler surface on the returned `Response`. Pass env via
 `{ env }`.

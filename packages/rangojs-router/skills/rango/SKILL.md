@@ -219,13 +219,12 @@ without leaving the call site?_ (type-safety), _what re-renders after this
 action?_ (partial rendering). If any answer needs another file, it isn't legible
 yet.
 
-**Reading Rango's own source.** Rango is consumed as raw TypeScript — the
-`exports` map resolves `@rangojs/router` and its subpaths to `./src/*.ts` for
-both types and runtime, so a consuming app bundles Rango straight from source.
-Only the `./vite` plugin entry and the CLI `bin` load from `dist/`. To confirm
-any runtime or type detail against an installed copy, read the resolved source
-under `node_modules/@rangojs/router/src/`, not `dist/` — the runtime does not
-resolve `dist/` outside `./vite`, and it may lag `src/`.
+**Reading Rango's own source.** Runtime exports resolve to `./src/*.ts`, so Vite
+bundles Rango straight from source; type conditions resolve to emitted
+`./dist/types/*.d.ts` so a consumer's standalone `tsc` does not check Rango's
+implementation. The `./vite` plugin and CLI also execute compiled files from
+`dist/`. Read `src/` to confirm runtime behavior and `dist/types/` to inspect
+the exact declarations consumers receive.
 
 ## Skills
 
@@ -296,9 +295,10 @@ Grouped by concern — read when you need to…
 
 **Deployment**:
 
-| Skill     | Description                                                                               |
-| --------- | ----------------------------------------------------------------------------------------- |
-| `/vercel` | Deploy to Vercel Functions (`preset: "vercel"`), Runtime Cache, and `createVercelTracing` |
+| Skill         | Description                                                                                                      |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `/cloudflare` | Deploy to Cloudflare Workers with the Vite plugin, typed D1/KV bindings, migrations, secrets, and preview parity |
+| `/vercel`     | Deploy to Vercel Functions (`preset: "vercel"`), Runtime Cache, and `createVercelTracing`                        |
 
 **Testing**:
 

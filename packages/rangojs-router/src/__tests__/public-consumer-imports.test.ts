@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -95,6 +101,16 @@ afterEach(() => {
 });
 
 describe("public consumer imports", () => {
+  it("publishes declaration files instead of raw TypeScript as type entries", () => {
+    for (const [subpath, entry] of Object.entries(packageJson.exports)) {
+      expect(entry.types, subpath).toMatch(/\.d\.ts$/);
+      expect(
+        existsSync(resolve(packageRoot, entry.types!)),
+        `${subpath} -> ${entry.types}`,
+      ).toBe(true);
+    }
+  });
+
   it("typechecks the canonical public import paths", () => {
     const result = runConsumerTypecheck({
       "root-consumer.ts": `

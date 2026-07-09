@@ -20,6 +20,27 @@ const Tenant = createVar<{ name: string }>();
 const ProductLoader = createLoader(async () => ({ name: "Wine", price: 9 }));
 
 describe("renderHandler", () => {
+  test("accepts one inferred async handler with React and Response branches", async () => {
+    const MixedPage = async (ctx: HandlerContext<{ slug: string }>) =>
+      ctx.params.slug === "redirect" ? (
+        redirect("/login")
+      ) : (
+        <main>{ctx.params.slug}</main>
+      );
+
+    const rendered = await renderHandler(MixedPage, {
+      params: { slug: "article" },
+    });
+    expect(JSON.stringify(rendered.tree)).toContain("article");
+
+    const redirected = await renderHandler(MixedPage, {
+      params: { slug: "redirect" },
+    });
+    expect(redirected.tree).toBeUndefined();
+    expect(redirected.response.status).toBe(302);
+    expect(redirected.response.headers.get("location")).toBe("/login");
+  });
+
   test("runs a real handler: params + ctx.use(Loader) + ctx.get + renders RSC", async () => {
     async function ProductPage(ctx: HandlerContext<{ slug: string }>) {
       const product = await ctx.use(ProductLoader);

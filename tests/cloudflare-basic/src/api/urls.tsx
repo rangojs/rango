@@ -20,9 +20,20 @@ const products = [
 ];
 
 export const apiPatterns = urls(({ path }) => [
-  path.json("/health", (ctx) => ({ status: "ok", timestamp: Date.now() }), {
-    name: "health",
-  }),
+  path.json(
+    "/health",
+    (ctx) => {
+      if (ctx.url.searchParams.has("throw-response")) {
+        ctx.header("X-Thrown-Response", "merged");
+        throw Response.json(
+          { status: "accepted", timestamp: Date.now() },
+          { status: 202 },
+        );
+      }
+      return { status: "ok", timestamp: Date.now() };
+    },
+    { name: "health" },
+  ),
 
   path.json("/products", (ctx) => products, { name: "products" }),
 

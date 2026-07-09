@@ -50,7 +50,15 @@
 - Architecture core: [router/manifest.ts](../../src/router/manifest.ts), [router.ts](../../src/router.ts), [router/router-options.ts](../../src/router/router-options.ts).
 - Client app entrypoint: [browser/rsc-router.tsx](../../src/browser/rsc-router.tsx), [browser/react/NavigationProvider.tsx](../../src/browser/react/NavigationProvider.tsx), [browser/index.ts](../../src/browser/index.ts).
 - Server entrypoint: [rsc/handler.ts](../../src/rsc/handler.ts), [ssr/index.tsx](../../src/ssr/index.tsx).
+- Response-route control flow: [rsc/response-route-handler.ts](../../src/rsc/response-route-handler.ts)
+  owns invocation and error classification; [rsc/helpers.ts](../../src/rsc/helpers.ts)
+  owns returned/thrown `Response` rewrapping and callback brand preservation;
+  [testing/dispatch.ts](../../src/testing/dispatch.ts) reuses both contracts.
 - Dev+build: [vite/rango.ts](../../src/vite/rango.ts), [build/route-types/\*](../../src/build/route-types/), [build/generate-route-types.ts](../../src/build/generate-route-types.ts).
+- Package type publishing: [package.json](../../package.json) maps public
+  type conditions to declarations emitted by
+  [tsconfig.types.json](../../tsconfig.types.json); runtime conditions remain
+  source-based.
 
 ### Status notes
 
