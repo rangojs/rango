@@ -432,6 +432,39 @@ describe("serializeCookie", () => {
     expect(result).not.toContain("HttpOnly");
     expect(result).not.toContain("Domain");
   });
+
+  it("rejects domain with forbidden characters", () => {
+    expect(() =>
+      serializeCookie("a", "b", { domain: "example.com;evil" }),
+    ).toThrow("invalid cookie domain");
+    expect(() =>
+      serializeCookie("a", "b", { domain: "example.com\nhost" }),
+    ).toThrow("invalid cookie domain");
+  });
+
+  it("rejects path with forbidden characters or missing leading slash", () => {
+    expect(() => serializeCookie("a", "b", { path: "/;evil" })).toThrow(
+      "invalid cookie path",
+    );
+    expect(() => serializeCookie("a", "b", { path: "relative" })).toThrow(
+      "invalid cookie path",
+    );
+  });
+
+  it("rejects sameSite outside the allowed set", () => {
+    expect(() =>
+      serializeCookie("a", "b", { sameSite: "invalid" as any }),
+    ).toThrow("invalid cookie sameSite");
+  });
+
+  it("rejects non-finite maxAge", () => {
+    expect(() => serializeCookie("a", "b", { maxAge: NaN })).toThrow(
+      "invalid cookie maxAge",
+    );
+    expect(() => serializeCookie("a", "b", { maxAge: Infinity })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
 });
 
 // ========================================================================
