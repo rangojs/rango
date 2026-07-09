@@ -258,6 +258,15 @@ export const urlpatterns = urls(
         },
         { name: "testCachedCookie" },
       ),
+      path.json(
+        "/test/cached-json-query",
+        (ctx) => ({
+          source: "cached-json-query",
+          q: ctx.url.searchParams.get("q") ?? "",
+          ts: Date.now(),
+        }),
+        { name: "testCachedJsonQuery" },
+      ),
     ]),
 
     // Uncached control route for comparison

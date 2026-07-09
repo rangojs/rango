@@ -100,6 +100,7 @@ export const NamedRoutes = {
   testCachedCookie: "/test/cached-cookie",
   testCachedHtml: "/test/cached-html",
   testCachedJson: "/test/cached-json",
+  testCachedJsonQuery: "/test/cached-json-query",
   testCachedText: "/test/cached-text",
   testCachedXml: "/test/cached-xml",
   testClearErrorLog: "/__test/clear-error-log",

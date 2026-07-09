@@ -231,7 +231,8 @@ test.describe("response-cache (dev)", () => {
   test("HEAD does not poison a subsequent GET cache entry", async ({
     request,
   }) => {
-    const url = f.url("/response-cache/cached-json");
+    // Unique query key so earlier suite GETs cannot leave a warm entry.
+    const url = f.url("/response-cache/cached-json-query?q=head-isolate-dev");
     const head = await request.fetch(url, { method: "HEAD" });
     expect(head.status()).toBe(200);
     await new Promise((r) => setTimeout(r, 100));
@@ -478,7 +479,7 @@ test.describe("response-cache (production)", () => {
   test("HEAD does not poison a subsequent GET cache entry", async ({
     request,
   }) => {
-    const url = f.url("/response-cache/cached-json");
+    const url = f.url("/response-cache/cached-json-query?q=head-isolate-prod");
     const head = await request.fetch(url, { method: "HEAD" });
     expect(head.status()).toBe(200);
     await new Promise((r) => setTimeout(r, 100));
