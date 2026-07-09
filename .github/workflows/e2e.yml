@@ -135,8 +135,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # No router build: typecheck resolves @rangojs/router types from src
-      # (the exports map `types` points at ./src/*), so dist/ is not needed.
+      # Package type conditions point at dist/types. Turbo's ^build dependency
+      # also builds the workspace router before consumer typechecks, but keep
+      # declaration generation explicit here so this CI contract cannot drift
+      # with a future task-graph change.
+      - name: Build rangojs-router declarations
+        run: pnpm --filter @rangojs/router build:types
+
       - name: Run typecheck
         run: pnpm typecheck
 

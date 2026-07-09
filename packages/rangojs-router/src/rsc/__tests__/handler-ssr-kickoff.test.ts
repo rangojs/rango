@@ -200,18 +200,24 @@ describe("handler SSR kickoff placement", () => {
   // here. It now applies only to explicit flight requests, below.)
   it("starts SSR setup for a no-Accept request (renders HTML)", async () => {
     const router = createMockRouter();
+    const waitUntil = vi.fn();
 
     const handler = createRSCHandler({ router });
     const request = new Request("https://example.com/");
 
     try {
-      await handler(request, { env: {} });
+      await handler(request, {
+        env: {},
+        ctx: { waitUntil } as any,
+      });
     } catch {
       // Expected — downstream rendering isn't fully mocked
     }
 
     expect(router.findMatch).toHaveBeenCalled();
     expect(startSSRSetupSpy).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });
 
   // D7: an explicit flight request renders RSC at render time, so an early
