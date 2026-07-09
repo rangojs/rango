@@ -155,7 +155,7 @@ export type Handler<
       : ExtractSearchFromEntry<DefaultHandlerRouteMap, T>,
     TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
-) => ReactNode | Promise<ReactNode> | Response | Promise<Response>) & {
+) => ReactNode | Response | Promise<ReactNode | Response>) & {
   /** Composable default DSL items merged when the handler is mounted. */
   use?: () => UseItems<HandlerUseItem>;
 };

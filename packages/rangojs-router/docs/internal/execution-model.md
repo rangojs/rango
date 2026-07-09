@@ -86,6 +86,10 @@ global middleware
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request
   and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.
+- A response-route handler can return or throw a `Response`; both forms are
+  response control flow. Request-context headers/cookies merge, `onError` is
+  skipped, and status-200 responses use the normal response-cache policy.
+  Pinned by the `[RR1]` semantic matrix row.
 - After a cached entry's SWR TTL expires, a request is served the stale value
   while a background refresh recomputes the entry; a later request sees the
   fresh value. Pinned by the `[SWR1]` semantic matrix row.

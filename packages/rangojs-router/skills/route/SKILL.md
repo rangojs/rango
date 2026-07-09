@@ -487,6 +487,12 @@ beat one giant one. Sizing rules and the numbers behind them:
 [skills/composability](../composability/SKILL.md) → "Sizing async include
 groups (measured)".
 
+`include()` has three name modes: omit `{ name }` for a private local route-name
+scope, pass a non-empty name to namespace children globally, or pass
+`{ name: "" }` to flatten globally unique child names into the parent map. URL
+matching works in all three modes; the option controls name visibility, not
+whether the routes mount.
+
 ## View Transitions
 
 A route can configure its own `transition()` — the wrap goes around the route's component itself (routes are leaves; they have no separate default outlet channel). If the route component renders a `<ParallelOutlet />` directly, that slot remains inside the route's VT subtree, so prefer mounting parallel slots in a layout when combining intercept modals with route-level transitions. See [skills/view-transitions](../view-transitions/SKILL.md) for examples and the wrap-location rules across layouts, routes, and slots.

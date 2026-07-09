@@ -12,9 +12,7 @@ vi.mock("../ssr-setup.js", async (importOriginal) => {
     ...actual,
     startSSRSetup: (...args: unknown[]) => {
       startSSRSetupSpy(...args);
-      return actual.startSSRSetup(
-        ...(args as Parameters<typeof actual.startSSRSetup>),
-      );
+      return Promise.resolve([{}, "stream"]);
     },
   };
 });
@@ -168,6 +166,7 @@ describe("handler SSR kickoff placement", () => {
 
   it("starts SSR setup for normal HTML page requests (text/html Accept)", async () => {
     const router = createMockRouter();
+    const waitUntil = vi.fn();
 
     // The handler will throw downstream because rendering isn't fully mocked,
     // but startSSRSetup runs before the error. Assert findMatch was reached
@@ -178,13 +177,18 @@ describe("handler SSR kickoff placement", () => {
     });
 
     try {
-      await handler(request, { env: {} });
+      await handler(request, {
+        env: {},
+        ctx: { waitUntil } as any,
+      });
     } catch {
       // Expected — downstream rendering isn't fully mocked
     }
 
     expect(router.findMatch).toHaveBeenCalled();
     expect(startSSRSetupSpy).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });
 
   // A full-document request with NO Accept header is a generic client

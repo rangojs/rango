@@ -97,12 +97,12 @@ nothing, and the packages are out of `package.json`.
 
 Each numbered step's full walkthrough lives in a companion file linked below.
 
-| Step                                                                                                                                           | File                                                   |
-| ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| §1 Project Setup, §2 Route Mapping                                                                                                             | [`./route-mapping.md`](./route-mapping.md)             |
-| §3 Data Fetching (loaders, actions, `useLoaderData`/`useActionData`, `clientLoader`/`clientAction`, `shouldRevalidate`)                        | [`./data-and-actions.md`](./data-and-actions.md)       |
-| §4 Middleware / Route Protection, §5 Loading & Error States, §6 Navigation, §7 Metadata / Head, §8 API / Resource Routes, §9 Theme / Dark Mode | [`./component-migration.md`](./component-migration.md) |
-| §10 Cloudflare Workers (streaming, dev tooling, deploy)                                                                                        | [`./cloudflare-workers.md`](./cloudflare-workers.md)   |
+| Step                                                                                                                                           | File                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| §1 Project Setup, §2 Route Mapping                                                                                                             | [`./route-mapping.md`](./route-mapping.md)                                                             |
+| §3 Data Fetching (loaders, actions, `useLoaderData`/`useActionData`, `clientLoader`/`clientAction`, `shouldRevalidate`)                        | [`./data-and-actions.md`](./data-and-actions.md)                                                       |
+| §4 Middleware / Route Protection, §5 Loading & Error States, §6 Navigation, §7 Metadata / Head, §8 API / Resource Routes, §9 Theme / Dark Mode | [`./component-migration.md`](./component-migration.md)                                                 |
+| §10 Cloudflare Workers (streaming, dev tooling, deploy)                                                                                        | [`../cloudflare/references/streaming-and-deploy.md`](../cloudflare/references/streaming-and-deploy.md) |
 
 ## 11. Key Conceptual Differences
 

@@ -8,6 +8,13 @@ import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
 import { clientSuspensePatterns } from "./urls/client-suspense.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
+
+declare global {
+  var __loadPrerenderManifestModule:
+    | (() => Promise<{ default: Record<string, string> }>)
+    | undefined;
+}
+
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,

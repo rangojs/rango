@@ -10,7 +10,10 @@ import {
 } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
-import { isRedirectResponse } from "../response-utils.js";
+import {
+  isRedirectResponse,
+  isWebSocketUpgradeResponse,
+} from "../response-utils.js";
 import {
   EXTERNAL_REDIRECT_MARKER,
   isExternalRedirect,
@@ -545,6 +548,14 @@ export function drainOnResponseCallbacks(
   // Response object identity). Preserve a redirect(url, { external: true })
   // opt-in across that rebuild so a callback can't silently neutralize the
   // off-host redirect at the guard chokepoint.
+  return applyOnResponseCallbacks(callbacks, response);
+}
+
+/** Apply a saved callback batch while preserving an external-redirect brand. */
+export function applyOnResponseCallbacks(
+  callbacks: Array<(response: Response) => Response>,
+  response: Response,
+): Response {
   const wasExternal = isExternalRedirect(response);
   let result = response;
   for (const callback of callbacks) {
@@ -602,6 +613,33 @@ export function createResponseWithMergedHeaders(
   });
 
   return drainOnResponseCallbacks(ctx, response);
+}
+
+/**
+ * Rebuild a Response returned or thrown by a response-route handler so request
+ * effects merge consistently in production and the public dispatch primitive.
+ */
+export function rewrapResponseRouteResponse(result: Response): Response {
+  if (isWebSocketUpgradeResponse(result)) {
+    return mergeStubHeadersAndFinalize(result);
+  }
+  const headers = new Headers();
+  result.headers.forEach((value, key) => {
+    if (key.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
+    if (key.toLowerCase() === "set-cookie") {
+      headers.append(key, value);
+    } else {
+      headers.set(key, value);
+    }
+  });
+  const rewrapped = createResponseWithMergedHeaders(result.body, {
+    status: result.status,
+    headers,
+  });
+  if (isExternalRedirect(result)) {
+    markExternalRedirect(rewrapped);
+  }
+  return rewrapped;
 }
 
 /**

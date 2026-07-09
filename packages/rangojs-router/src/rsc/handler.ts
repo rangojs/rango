@@ -876,7 +876,7 @@ export function createRSCHandler<
       (mayNeedSSR(request, url) &&
         !isRscRequest(request, url, plan.mode === "partial-render"));
     if (plan.mode !== "loader" && willRenderHtml) {
-      variables[SSR_SETUP_VAR] = startSSRSetup(
+      const ssrSetup = startSSRSetup(
         handlerCtx,
         request,
         env,
@@ -885,6 +885,15 @@ export function createRSCHandler<
           ? () => getRequestContext()._metricsStore
           : undefined,
       );
+      variables[SSR_SETUP_VAR] = ssrSetup;
+
+      // A handler can short-circuit before HTML rendering consumes this promise
+      // (for example, by returning a redirect). Workerd cancels untracked dynamic
+      // imports at the request boundary; retaining that cancelled promise in the
+      // production SSR module memo makes every later document request hang.
+      // Extending the request lifetime lets the shared setup settle without
+      // delaying the short-circuit response.
+      getRequestContext().executionContext?.waitUntil(ssrSetup);
     }
 
     // ---- Loader fetch ----

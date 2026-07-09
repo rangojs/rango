@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cloudflare deployment"
+  short_description: "Deploy Rango on Cloudflare Workers with D1 and KV"
+  default_prompt: "Use $cloudflare to configure and deploy a Rango app on Cloudflare Workers with typed bindings."

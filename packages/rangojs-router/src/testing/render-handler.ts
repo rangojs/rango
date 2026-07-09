@@ -62,7 +62,7 @@ const DEFAULT_URL = "http://localhost/";
 /** A route handler under test: the `(ctx) => RSC | Response` function you pass to `path(...)`. */
 export type TestableHandler<TEnv = any> = (
   ctx: HandlerContext<any, TEnv>,
-) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+) => ReactNode | Response | Promise<ReactNode | Response>;
 
 /** Options for {@link renderHandler}. */
 export interface RenderHandlerOptions<TEnv = any> {

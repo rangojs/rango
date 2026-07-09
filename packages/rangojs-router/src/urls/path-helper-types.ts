@@ -69,7 +69,7 @@ export type PathFn<TEnv> = <
     | ReactNode
     | ((
         ctx: HandlerContext<TParams, TEnv, TSearch>,
-      ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
+      ) => ReactNode | Response | Promise<ReactNode | Response>)
     | PrerenderHandlerDefinition<TParams>
     | PassthroughHandlerDefinition<TParams, TEnv>
     | StaticHandlerDefinition<TParams>,
