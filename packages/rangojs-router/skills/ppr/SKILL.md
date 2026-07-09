@@ -239,11 +239,11 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
 Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
 (Playwright):
 
-| Helper | Use for |
-| ------ | ------- |
-| `assertShellStatus(res, "HIT" \| "MISS")` | Document Response from a real RSC serve / e2e `page.request` |
-| `shellCacheKey(url)` | Production store key for `store.getShell` / custom stores |
-| `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT) |
+| Helper                                            | Use for                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| `assertShellStatus(res, "HIT" \| "MISS")`         | Document Response from a real RSC serve / e2e `page.request` |
+| `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
+| `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
 
 ```ts
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
@@ -256,10 +256,7 @@ const key = shellCacheKey("http://localhost/products/1");
 expect(await store.getShell(key)).not.toBeNull();
 
 // E2E: header on a real document GET
-assertShellStatus(
-  { headers: new Headers(res.headers()) },
-  "HIT",
-);
+assertShellStatus({ headers: new Headers(res.headers()) }, "HIT");
 ```
 
 **Out of unit scope** (stay e2e): live MISS → background capture → HIT,

@@ -117,20 +117,20 @@ expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 
 **DSL:** `ppr: true | PartialPrerenderProps` on a page route (see `/ppr`). **Not** the same header as `X-Rango-Cache` — shell is a second render axis.
 
-| Helper | Import | Role |
-| ------ | ------ | ---- |
-| `assertShellStatus(res, "HIT" \| "MISS")` | `@rangojs/router/testing` or `…/e2e` | Assert `x-rango-shell` on a **real document** Response |
-| `parseShellStatus(res)` | same | `"HIT" \| "MISS" \| null` (null = header absent / unrecognized) |
-| `shellCacheKey(url)` | same | Production shell store key (`host+pathname+sorted search+:shell`) for `store.getShell` / custom stores |
-| `SHELL_STATUS_HEADER` | same | `"x-rango-shell"` constant |
+| Helper                                    | Import                               | Role                                                                                                   |
+| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `assertShellStatus(res, "HIT" \| "MISS")` | `@rangojs/router/testing` or `…/e2e` | Assert `x-rango-shell` on a **real document** Response                                                 |
+| `parseShellStatus(res)`                   | same                                 | `"HIT" \| "MISS" \| null` (null = header absent / unrecognized)                                        |
+| `shellCacheKey(url)`                      | same                                 | Production shell store key (`host+pathname+sorted search+:shell`) for `store.getShell` / custom stores |
+| `SHELL_STATUS_HEADER`                     | same                                 | `"x-rango-shell"` constant                                                                             |
 
 ### What unit can prove vs e2e
 
-| Layer | What you assert | How |
-| ----- | --------------- | --- |
+| Layer    | What you assert             | How                                                                                                                                                                                              |
+| -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Unit** | store family + key identity | `MemorySegmentCacheStore` + `shellCacheKey(url)` + `putShell`/`getShell` / tag eviction — dogfood in `e2e/mini/test/shell-store-family.test.ts` and `src/testing/__tests__/shell-status.test.ts` |
-| **Unit** | header helper contract | `assertShellStatus` on a Response that already carries the header (characterizes the helper; **never** invent a HIT to claim capture worked) |
-| **E2E** | live MISS → capture → HIT | document GET, poll until `x-rango-shell: HIT` (background capture) — `e2e/shell-cache.test.ts` |
+| **Unit** | header helper contract      | `assertShellStatus` on a Response that already carries the header (characterizes the helper; **never** invent a HIT to claim capture worked)                                                     |
+| **E2E**  | live MISS → capture → HIT   | document GET, poll until `x-rango-shell: HIT` (background capture) — `e2e/shell-cache.test.ts`                                                                                                   |
 
 `dispatch` is RSC-free: it never runs shell serve/capture. `renderHandler` only surfaces `ctx.dynamic()` opt-out, not bake/serve.
 
@@ -142,16 +142,10 @@ import { assertShellStatus, shellCacheKey } from "@rangojs/router/testing/e2e";
 
 // Document GET (not Accept: text/x-component):
 const first = await page.request.get(f.url("/products/1"));
-assertShellStatus(
-  { headers: new Headers(first.headers()) },
-  "MISS",
-);
+assertShellStatus({ headers: new Headers(first.headers()) }, "MISS");
 // After capture flushes (poll — background putShell):
 const second = await page.request.get(f.url("/products/1"));
-assertShellStatus(
-  { headers: new Headers(second.headers()) },
-  "HIT",
-);
+assertShellStatus({ headers: new Headers(second.headers()) }, "HIT");
 
 // Custom store / unit: same key the serve path uses
 const key = shellCacheKey(new URL("http://localhost/products/1"));
