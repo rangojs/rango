@@ -49,6 +49,9 @@ jobs:
       - name: Check e2e dev/prod bucketing
         run: pnpm check:e2e-bucketing
 
+      - name: Check e2e dev/prod parity
+        run: node tools/check-e2e-parity.mjs --strict
+
       - name: Check internal doc links
         run: pnpm check:doc-links
 

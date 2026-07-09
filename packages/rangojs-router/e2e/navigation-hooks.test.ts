@@ -1,13 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
-test.describe("use-segments-hook", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function useSegmentsTests(f: Fixture) {
   test("should display segments on index and update on navigation", async ({
     page,
   }) => {
@@ -76,14 +71,9 @@ test.describe("use-segments-hook", () => {
     }
     expect(errors).toEqual([]);
   });
-});
+}
 
-test.describe("use-link-status-hook", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function useLinkStatusTests(f: Fixture) {
   test("should show pending state only on clicked link", async ({ page }) => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
@@ -183,9 +173,6 @@ test.describe("use-link-status-hook", () => {
     // Navigate to product page which has action buttons
     await page.goto(f.url("/product/product-a"));
     await waitForHydration(page);
-
-    // Get the back link badge on product page
-    const backLink = page.locator('[data-testid="back-link"]');
 
     // Note: the back link doesn't have a badge, but we can check navigation state
     // Click streaming action button (3s delay)
@@ -333,4 +320,38 @@ test.describe("use-link-status-hook", () => {
     // Badge should still be idle - no pending state from popstate
     await expect(productBadge).toHaveAttribute("data-pending", "false");
   });
+}
+
+test.describe("use-segments-hook", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  useSegmentsTests(f);
+});
+
+test.describe("use-segments-hook (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  test.setTimeout(120000);
+  useSegmentsTests(f);
+});
+
+test.describe("use-link-status-hook", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  useLinkStatusTests(f);
+});
+
+test.describe("use-link-status-hook (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  test.setTimeout(120000);
+  useLinkStatusTests(f);
 });

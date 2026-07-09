@@ -107,7 +107,7 @@ RULES:
 - Prefer the `prodDescribe(name, (f) => { ... })` helper (e.g. `tests/vite-rsc-demo/e2e/helper.ts`) — it generates the tag and wires the build fixture so the title can't drift. Use `f.url(...)`.
 - A helper taking a `mode` variable (e.g. `defineSpec(label, mode)`) must itself couple `mode: "build"` with a `(production)` title — the static check can't tie a variable mode to a title.
 
-Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (`(prod)`, `-build` — both have happened) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` reports dev describes lacking a `(production)` sibling and guard-blind variable-mode describes.
+Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (`(prod)`, `-build` — both have happened) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` (CI lint runs `--strict`) fails on any top-level fixture-owning describe without a `(production)` sibling unless it is listed in `tools/e2e-parity-allowlist.json` with a reason. Intentional dev-only (HMR, serve-only plugins) must be allowlisted — do not silence gaps by renaming titles.
 
 ## E2e: running a subset locally
 
