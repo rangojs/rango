@@ -465,6 +465,12 @@ describe("serializeCookie", () => {
       "invalid cookie maxAge",
     );
   });
+
+  it("rejects fractional maxAge", () => {
+    expect(() => serializeCookie("a", "b", { maxAge: 1.5 })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
 });
 
 // ========================================================================

@@ -1372,7 +1372,8 @@ export function serializeCookieValue(
   if (options.maxAge !== undefined) {
     if (
       typeof options.maxAge !== "number" ||
-      !Number.isFinite(options.maxAge)
+      !Number.isFinite(options.maxAge) ||
+      !Number.isInteger(options.maxAge)
     ) {
       throw new Error("invalid cookie maxAge");
     }
