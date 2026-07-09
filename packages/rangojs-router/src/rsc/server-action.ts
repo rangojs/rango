@@ -183,6 +183,7 @@ export async function executeServerAction<TEnv>(
       const intercepted = interceptRedirectForPartial(
         data,
         ctx.createRedirectFlightResponse,
+        { requestOrigin: url.origin, basename: ctx.router.basename },
       );
       if (intercepted) return intercepted;
 
@@ -204,6 +205,7 @@ export async function executeServerAction<TEnv>(
       const intercepted = interceptRedirectForPartial(
         error,
         ctx.createRedirectFlightResponse,
+        { requestOrigin: url.origin, basename: ctx.router.basename },
       );
       if (intercepted) return intercepted;
 
@@ -452,8 +454,11 @@ async function revalidateAfterActionInner<TEnv>(
     if (fullMatch.redirect) {
       // Action context is always partial — use X-RSC-Redirect header so
       // the client can perform SPA navigation instead of fetch auto-following
-      // a raw 308 to a URL that would render full HTML.
-      return createSimpleRedirectResponse(fullMatch.redirect);
+      // a raw 308 to a URL that would render full HTML. Resolve server-side.
+      return createSimpleRedirectResponse(fullMatch.redirect, {
+        requestOrigin: url.origin,
+        basename: ctx.router.basename,
+      });
     }
 
     // Non-redirect: this branch is only reachable when no previous URL could

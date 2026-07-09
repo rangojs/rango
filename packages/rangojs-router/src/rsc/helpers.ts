@@ -18,6 +18,7 @@ import {
   EXTERNAL_REDIRECT_MARKER,
   isExternalRedirect,
   markExternalRedirect,
+  resolveSoftRedirectUrl,
 } from "../redirect-origin.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
@@ -642,17 +643,36 @@ export function rewrapResponseRouteResponse(result: Response): Response {
   return rewrapped;
 }
 
+/** Origin/basename needed to resolve soft redirect targets server-side. */
+export type SoftRedirectResolveOpts = {
+  requestOrigin: string;
+  basename?: string;
+};
+
 /**
  * Create a 204 response with X-RSC-Redirect header for stateless redirects.
  * Used during partial/action requests where fetch would auto-follow a raw
  * 3xx to a URL that renders full HTML instead of Flight data. The 204 status
  * prevents auto-follow; the client reads the header and re-navigates via
  * the router.
+ *
+ * The header value is resolved with {@link resolveSoftRedirectUrl} so a
+ * cross-origin / unsafe-scheme target is neutralized before it leaves the
+ * server (defense-in-depth; client validators still run).
  */
-export function createSimpleRedirectResponse(redirectUrl: string): Response {
+export function createSimpleRedirectResponse(
+  redirectUrl: string,
+  opts: SoftRedirectResolveOpts & { external?: boolean },
+): Response {
+  const resolved = resolveSoftRedirectUrl(
+    redirectUrl,
+    opts.requestOrigin,
+    opts.basename,
+    opts.external,
+  );
   return createResponseWithMergedHeaders(null, {
     status: 204,
-    headers: { "X-RSC-Redirect": redirectUrl },
+    headers: { "X-RSC-Redirect": resolved },
   });
 }
 
@@ -697,6 +717,10 @@ export function carryOverRedirectHeaders(
  * intercept it and return a Flight-compatible redirect instead.
  * fetch() auto-follows 3xx which would hit a URL that renders full HTML
  * the client can't parse. Returns null if the response is not a redirect.
+ *
+ * Soft redirect targets are resolved server-side (same-origin / external
+ * scheme rules) via `opts` before they are written into X-RSC-Redirect or
+ * handed to the Flight factory.
  */
 export function interceptRedirectForPartial(
   response: Response,
@@ -705,6 +729,7 @@ export function interceptRedirectForPartial(
     locationState?: Record<string, unknown>,
     external?: boolean,
   ) => Response,
+  opts: SoftRedirectResolveOpts,
 ): Response | null {
   if (!isRedirectResponse(response)) {
     return null;
@@ -727,7 +752,7 @@ export function interceptRedirectForPartial(
   } else if (external) {
     intercepted = createRedirectFlightResponse(redirectUrl, undefined, true);
   } else {
-    intercepted = createSimpleRedirectResponse(redirectUrl);
+    intercepted = createSimpleRedirectResponse(redirectUrl, opts);
   }
 
   carryOverRedirectHeaders(response, intercepted);

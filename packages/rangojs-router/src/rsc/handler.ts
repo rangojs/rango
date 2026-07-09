@@ -35,6 +35,11 @@ import {
   renderRscFlightStage,
 } from "./helpers.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
+import {
+  resolveSoftRedirectUrl,
+  resolveExternalRedirect,
+  safeSameOriginLanding,
+} from "../redirect-origin.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import {
   isWebSocketUpgradeResponse,
@@ -289,21 +294,51 @@ export function createRSCHandler<
    * Build a 200 Flight response that carries a redirect URL and optional state.
    * Used when a partial/action request results in a redirect -- fetch
    * auto-follows 3xx so we send the redirect as payload metadata instead.
+   *
+   * The redirect URL is resolved with {@link resolveSoftRedirectUrl} against
+   * the current request origin so an unsafe target never leaves as Flight
+   * metadata (client validators remain defense-in-depth).
    */
   function createRedirectFlightResponse(
     redirectUrl: string,
     locationState?: Record<string, unknown>,
     external?: boolean,
   ): Response {
+    const reqCtx = _getRequestContext<TEnv>();
+    const requestOrigin =
+      reqCtx?.url.origin ?? new URL("http://localhost").origin;
+    // Resolve with the same policy as 3xx guardOutgoingRedirect. Keep
+    // external:true only when the external scheme check passed; a neutralized
+    // landing (javascript:/blocked) must not advertise external.
+    let resolvedUrl: string;
+    let resolvedExternal = false;
+    if (external) {
+      const ext = resolveExternalRedirect(redirectUrl, requestOrigin);
+      if (ext !== null) {
+        resolvedUrl = ext;
+        resolvedExternal = true;
+      } else {
+        resolvedUrl = safeSameOriginLanding(router.basename);
+      }
+    } else {
+      resolvedUrl = resolveSoftRedirectUrl(
+        redirectUrl,
+        requestOrigin,
+        router.basename,
+        false,
+      );
+    }
     const redirectPayload: RscPayload = {
       metadata: {
-        pathname: redirectUrl,
+        pathname: resolvedUrl,
         segments: [],
-        redirect: { url: redirectUrl, ...(external && { external: true }) },
+        redirect: {
+          url: resolvedUrl,
+          ...(resolvedExternal && { external: true }),
+        },
         ...(locationState && { locationState }),
       },
     };
-    const reqCtx = _getRequestContext<TEnv>();
     const rscStream = reqCtx
       ? renderRscFlightStage(
           {
@@ -565,6 +600,7 @@ export function createRSCHandler<
             const intercepted = interceptRedirectForPartial(
               mwResponse,
               createRedirectFlightResponse,
+              { requestOrigin: url.origin, basename: router.basename },
             );
             response = intercepted ?? finalizeResponse(mwResponse);
           } else {
@@ -1100,6 +1136,7 @@ export function createRSCHandler<
             const intercepted = interceptRedirectForPartial(
               error,
               createRedirectFlightResponse,
+              { requestOrigin: url.origin, basename: router.basename },
             );
             if (intercepted) return intercepted;
           }
@@ -1248,6 +1285,7 @@ export function createRSCHandler<
           const intercepted = interceptRedirectForPartial(
             mwResponse,
             createRedirectFlightResponse,
+            { requestOrigin: url.origin, basename: router.basename },
           );
           if (intercepted) return intercepted;
         }

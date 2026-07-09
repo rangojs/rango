@@ -1559,7 +1559,8 @@ describe("dispatch", () => {
         request: "/api/data?_rsc_partial=1",
       });
       expect(res.status).toBe(204);
-      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      // Soft redirect URL is origin-resolved server-side (dispatch default origin).
+      expect(res.headers.get("X-RSC-Redirect")).toBe("http://localhost/login");
       // The raw 3xx Location is replaced by the Flight-safe header.
       expect(res.headers.get("Location")).toBeNull();
     });
@@ -1583,7 +1584,7 @@ describe("dispatch", () => {
         request: "/api/data?_rsc_action=1",
       });
       expect(res.status).toBe(204);
-      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      expect(res.headers.get("X-RSC-Redirect")).toBe("http://localhost/login");
       expect(res.headers.get("Location")).toBeNull();
     });
 

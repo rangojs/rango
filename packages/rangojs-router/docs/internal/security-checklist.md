@@ -145,22 +145,28 @@ transfer is **fail-closed**: if a rebuild path ever drops it, the redirect is
 neutralized to root, never opened off-host.
 
 Soft SPA/Flight redirects are `200`/`204` responses (`X-RSC-Redirect` header /
-`metadata.redirect` payload), not 3xx, so they never reach the server guard —
-they stay validated client-side (`metadata.redirect.external` targets are
-scheme-validated by `validateExternalRedirect` before `location.assign`).
+`metadata.redirect` payload), not 3xx, so they never reach `guardOutgoingRedirect`.
+They are resolved **at construction** with the same shared rules
+(`resolveSoftRedirectUrl` → `resolveSameOriginRedirect` /
+`resolveExternalRedirect` / `safeSameOriginLanding`) before the URL is written
+into the header or Flight metadata. Client validators remain defense-in-depth
+(`metadata.redirect.external` targets are scheme-validated by
+`validateExternalRedirect` before `location.assign`).
 
 Two shared, runtime-neutral rules live in `src/redirect-origin.ts` and are
-imported by both the client validators and the server guard so the two sides
-cannot drift: `resolveSameOriginRedirect` (same-origin) and
-`resolveExternalRedirect` (off-origin but `http(s)`-only).
+imported by both the client validators and the server soft/3xx paths so the
+sides cannot drift: `resolveSameOriginRedirect` (same-origin) and
+`resolveExternalRedirect` (off-origin but `http(s)`-only). Soft construction
+also uses `resolveSoftRedirectUrl` / `safeSameOriginLanding`.
 
-Implementation: `src/redirect-origin.ts` (shared rules + brand),
-`src/rsc/redirect-guard.ts` (server guard), wired at the `handler.ts` chokepoint;
-`redirect()` opt-in brand in `src/route-definition/redirect.ts`; brand transfer
-in `src/router/middleware.ts` + `src/rsc/helpers.ts` +
-`src/rsc/response-route-handler.ts` (and the `dispatch` mirror in
-`src/testing/dispatch.ts`); SPA propagation in `src/rsc/helpers.ts`
-(`interceptRedirectForPartial`); client honoring + scheme validation in
+Implementation: `src/redirect-origin.ts` (shared rules + brand + soft resolve),
+`src/rsc/redirect-guard.ts` (server 3xx guard), wired at the `handler.ts`
+chokepoint; soft creators `createSimpleRedirectResponse` /
+`createRedirectFlightResponse` + `interceptRedirectForPartial` in
+`src/rsc/helpers.ts` / `handler.ts`; `redirect()` opt-in brand in
+`src/route-definition/redirect.ts`; brand transfer in `src/router/middleware.ts`
++ `src/rsc/helpers.ts` + `src/rsc/response-route-handler.ts` (and the `dispatch`
+mirror in `src/testing/dispatch.ts`); client honoring + scheme validation in
 `src/browser/validate-redirect-origin.ts` (`validateExternalRedirect`), consumed
 by `src/browser/server-action-bridge.ts` / `src/browser/partial-update.ts`. Two
 client init-window hard-nav fallbacks (`server-action-bridge.ts`,

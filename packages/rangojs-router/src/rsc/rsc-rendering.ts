@@ -343,8 +343,12 @@ async function handleRscRenderingInner<TEnv>(
       if (match.redirect) {
         // Partial request: use X-RSC-Redirect header so the client can
         // perform SPA navigation. A raw 308 would be auto-followed by
-        // fetch, hitting the target without _rsc_partial.
-        return createSimpleRedirectResponse(match.redirect);
+        // fetch, hitting the target without _rsc_partial. Resolve the
+        // target server-side (same open-redirect policy as 3xx).
+        return createSimpleRedirectResponse(match.redirect, {
+          requestOrigin: url.origin,
+          basename: ctx.router.basename,
+        });
       }
 
       payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
