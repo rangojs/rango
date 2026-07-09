@@ -96,6 +96,7 @@ describe("dispatch + VercelCacheStore (consumer dogfood)", () => {
     await dispatch(router, { request: "/vc-cached2" });
     await flushWrites();
 
+    // Default key: response:{type}: + cacheKeyBase(host, path, searchParams).
     const cached = await store.getResponse(
       "response:json:localhost/vc-cached2",
     );
