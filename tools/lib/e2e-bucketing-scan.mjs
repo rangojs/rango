@@ -266,7 +266,20 @@ export function scanFile(file, prodGrep) {
       const fullPath = stack.join(" > ");
       const fn = node.arguments[1];
       if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) {
-        const { build, dev, indeterminate } = classifyOwnBody(fn.body);
+        let { build, dev, indeterminate } = classifyOwnBody(fn.body);
+        // Module-scope fixtures (const f = useFixture(...)) are often used only
+        // via helpers (shopUrl → f.url). A top-level describe that never names
+        // `f` would otherwise look fixture-less and skip the parity gate.
+        // Inherit module mode for top-level describes with no own fixture.
+        if (
+          !build &&
+          !dev &&
+          !indeterminate &&
+          stack.length === 1
+        ) {
+          if (fixtureVars.dev.size > 0) dev = true;
+          if (fixtureVars.build.size > 0) build = true;
+        }
         records.push({
           title,
           fullPath,
