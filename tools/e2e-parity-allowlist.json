@@ -243,5 +243,15 @@
     "base": "prerender",
     "file": "tests/cloudflare-basic/e2e/prerender-dev.test.ts",
     "reason": "Dev-only title marker (dev mode); production twins live in prerender*.test.ts siblings under production describes"
+  },
+  {
+    "base": "shop-api-client",
+    "file": "packages/rangojs-router/e2e/api-client.test.ts",
+    "reason": "Module-scope dev fixture only; production twin deferred (API client contract covered by unit/dispatch elsewhere)"
+  },
+  {
+    "base": "shop-playground-ui",
+    "file": "packages/rangojs-router/e2e/api-client.test.ts",
+    "reason": "Module-scope dev fixture only; same file as shop-api-client; production twin deferred"
   }
 ]
