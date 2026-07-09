@@ -214,6 +214,55 @@ test.describe("response-cache (dev)", () => {
       expect(body2.ts).toBe(bodyTs1);
     }).toPass({ timeout: 5_000 });
   });
+
+  test("POST does not write or hit the response-route cache", async ({
+    request,
+  }) => {
+    const url = f.url("/response-cache/cached-json");
+    const res1 = await request.post(url);
+    expect(res1.status()).toBe(200);
+    const ts1 = (await res1.json()).ts;
+    await new Promise((r) => setTimeout(r, 50));
+    const res2 = await request.post(url);
+    expect(res2.status()).toBe(200);
+    expect((await res2.json()).ts).toBeGreaterThan(ts1);
+  });
+
+  test("HEAD does not poison a subsequent GET cache entry", async ({
+    request,
+  }) => {
+    const url = f.url("/response-cache/cached-json");
+    const head = await request.fetch(url, { method: "HEAD" });
+    expect(head.status()).toBe(200);
+    await new Promise((r) => setTimeout(r, 100));
+    const get1 = await request.get(url);
+    const ts1 = (await get1.json()).ts;
+    await expect(async () => {
+      const get2 = await request.get(url);
+      expect((await get2.json()).ts).toBe(ts1);
+    }).toPass({ timeout: 5_000 });
+  });
+
+  test("Set-Cookie response is live but not shared on a later GET", async ({
+    request,
+  }) => {
+    const url = f.url("/response-cache/cached-cookie");
+    const res1 = await request.get(url);
+    expect(res1.status()).toBe(200);
+    expect(
+      res1
+        .headersArray()
+        .some(
+          (h) =>
+            h.name.toLowerCase() === "set-cookie" &&
+            h.value.startsWith("session=tok"),
+        ),
+    ).toBe(true);
+    const ts1 = (await res1.json()).ts;
+    await new Promise((r) => setTimeout(r, 100));
+    const res2 = await request.get(url);
+    expect((await res2.json()).ts).toBeGreaterThan(ts1);
+  });
 });
 
 test.describe("response-cache (production)", () => {
@@ -411,5 +460,54 @@ test.describe("response-cache (production)", () => {
       const body2 = await res2.json();
       expect(body2.ts).toBe(bodyTs1);
     }).toPass({ timeout: 5_000 });
+  });
+
+  test("POST does not write or hit the response-route cache", async ({
+    request,
+  }) => {
+    const url = f.url("/response-cache/cached-json");
+    const res1 = await request.post(url);
+    expect(res1.status()).toBe(200);
+    const ts1 = (await res1.json()).ts;
+    await new Promise((r) => setTimeout(r, 50));
+    const res2 = await request.post(url);
+    expect(res2.status()).toBe(200);
+    expect((await res2.json()).ts).toBeGreaterThan(ts1);
+  });
+
+  test("HEAD does not poison a subsequent GET cache entry", async ({
+    request,
+  }) => {
+    const url = f.url("/response-cache/cached-json");
+    const head = await request.fetch(url, { method: "HEAD" });
+    expect(head.status()).toBe(200);
+    await new Promise((r) => setTimeout(r, 100));
+    const get1 = await request.get(url);
+    const ts1 = (await get1.json()).ts;
+    await expect(async () => {
+      const get2 = await request.get(url);
+      expect((await get2.json()).ts).toBe(ts1);
+    }).toPass({ timeout: 5_000 });
+  });
+
+  test("Set-Cookie response is live but not shared on a later GET", async ({
+    request,
+  }) => {
+    const url = f.url("/response-cache/cached-cookie");
+    const res1 = await request.get(url);
+    expect(res1.status()).toBe(200);
+    expect(
+      res1
+        .headersArray()
+        .some(
+          (h) =>
+            h.name.toLowerCase() === "set-cookie" &&
+            h.value.startsWith("session=tok"),
+        ),
+    ).toBe(true);
+    const ts1 = (await res1.json()).ts;
+    await new Promise((r) => setTimeout(r, 100));
+    const res2 = await request.get(url);
+    expect((await res2.json()).ts).toBeGreaterThan(ts1);
   });
 });

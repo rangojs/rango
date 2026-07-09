@@ -97,6 +97,7 @@ export const NamedRoutes = {
   swrAction: "/swr-action",
   swrCtx: "/swr-ctx",
   taggedDocument: "/tagged-document",
+  testCachedCookie: "/test/cached-cookie",
   testCachedHtml: "/test/cached-html",
   testCachedJson: "/test/cached-json",
   testCachedText: "/test/cached-text",

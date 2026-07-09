@@ -250,6 +250,14 @@ export const urlpatterns = urls(
         () => `<h1 data-ts="${Date.now()}">cached</h1>`,
         { name: "testCachedHtml" },
       ),
+      path.json(
+        "/test/cached-cookie",
+        () => {
+          cookies().set("session", "tok", { path: "/" });
+          return { source: "cached-cookie", ts: Date.now() };
+        },
+        { name: "testCachedCookie" },
+      ),
     ]),
 
     // Uncached control route for comparison
