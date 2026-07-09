@@ -86,15 +86,20 @@ function redirectGuardTests(f: Fixture) {
     expect(new URL(soft!).pathname).toBe("/");
   });
 
-  test("soft partial: external opt-in keeps absolute off-host X-RSC-Redirect", async ({
+  test("soft partial: external opt-in returns Flight redirect (not document Location)", async ({
     request,
   }) => {
+    // Production routes external soft redirects through createRedirectFlightResponse
+    // (200 text/x-component + metadata.redirect.external), not 204 X-RSC-Redirect.
     const res = await request.get(goUrl(EXTERNAL, true) + "&_rsc_partial=1", {
       maxRedirects: 0,
     });
-    expect(res.status()).toBe(204);
-    expect(res.headers()["x-rsc-redirect"]).toBe(EXTERNAL);
+    expect(res.status()).toBe(200);
+    expect(res.headers()["content-type"] ?? "").toContain("text/x-component");
+    expect(res.headers()["location"]).toBeUndefined();
     expect(res.headers()["x-rango-redirect-external"]).toBeUndefined();
+    const body = await res.text();
+    expect(body).toContain(EXTERNAL);
   });
 
   // No-JS PE: the browser natively follows the form POST's redirect, so the
