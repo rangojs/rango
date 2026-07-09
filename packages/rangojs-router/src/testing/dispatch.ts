@@ -690,9 +690,17 @@ export async function dispatch<TEnv = any>(
           requestOrigin: url.origin,
           basename: router.basename,
         };
+        // Pass `external` through: interceptRedirectForPartial forwards the
+        // out-of-band brand as the third callback arg (helpers.ts). Dropping it
+        // would neutralize redirect(url, { external: true }) to "/" in dispatch
+        // while production preserves it via createRedirectFlightResponse.
         const intercepted = interceptRedirectForPartial(
           mwResponse,
-          (redirectUrl) => createSimpleRedirectResponse(redirectUrl, softOpts),
+          (redirectUrl, _locationState, external) =>
+            createSimpleRedirectResponse(redirectUrl, {
+              ...softOpts,
+              external,
+            }),
           softOpts,
         );
         finalResponse = finalizeResponse(intercepted ?? mwResponse);

@@ -1588,6 +1588,30 @@ describe("dispatch", () => {
       expect(res.headers.get("Location")).toBeNull();
     });
 
+    it("preserves redirect({ external: true }) on a partial request as absolute X-RSC-Redirect", async () => {
+      // interceptRedirectForPartial passes external as the third callback arg;
+      // dispatch must forward it into createSimpleRedirectResponse or the
+      // off-host target is neutralized to "/".
+      const redirectMw: MiddlewareFn = async () =>
+        redirect("https://accounts.example.com/oauth", { external: true });
+      const router = createRouter<{}>({})
+        .use(redirectMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, {
+        request: "/api/data?_rsc_partial=1",
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("X-RSC-Redirect")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("Location")).toBeNull();
+    });
+
     it("fires ctx.onResponse() when global middleware short-circuits", async () => {
       // Production drains onResponse via finalizeResponse on every global-chain
       // exit (handler.ts:499-501). A middleware that registers an onResponse
