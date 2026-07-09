@@ -143,6 +143,8 @@ export function useFixture(options: {
   buildCommand?: string;
   cliOptions?: SpawnOptions;
   isolatedServer?: boolean;
+  /** Response-route readiness path; use this to avoid warming document SSR. */
+  readyPath?: string;
 }) {
   let cleanup: (() => Promise<void>) | undefined;
   let baseURL!: string;
@@ -164,7 +166,7 @@ export function useFixture(options: {
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
-        await waitForReady(baseURL);
+        await waitForReady(new URL(options.readyPath ?? "/", baseURL).href);
         cleanup = async () => {
           proc.kill();
           await proc.done;
@@ -195,6 +197,7 @@ export function useFixture(options: {
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
+        await waitForReady(new URL(options.readyPath ?? "/", baseURL).href);
         cleanup = async () => {
           proc.kill();
           await proc.done;
