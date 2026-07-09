@@ -169,8 +169,17 @@ export async function serveResponseRouteWithCache(
   // Never store a per-client signal into a SHARED response store. A Set-Cookie
   // (or x-rango-keep-cache) would be replayed to every client on a hit — same
   // Finding #3 as document-cache.ts shouldCacheResponse.
+  // Only store GET: HEAD may branch on method; sharing a write slot with GET
+  // can poison subsequent GET bodies. HEAD still reads the GET key below.
   const canStore = (response: Response): boolean =>
-    isCacheableStatus(response.status) && !hasPerClientSignal(response.headers);
+    method === "GET" &&
+    isCacheableStatus(response.status) &&
+    !hasPerClientSignal(response.headers);
+
+  // Reject unsafe persisted entries on read (pre-upgrade poison / store bugs).
+  const canServeCached = (response: Response): boolean =>
+    isCacheableStatus(response.status) &&
+    !hasPerClientSignal(response.headers);
 
   const putFresh = (
     store2: SegmentCacheStore,
@@ -186,7 +195,7 @@ export async function serveResponseRouteWithCache(
 
   try {
     const cached = await store.getResponse(cacheKey);
-    if (cached && isCacheableStatus(cached.response.status)) {
+    if (cached && canServeCached(cached.response)) {
       if (!cached.shouldRevalidate) {
         return applyPreHandlerCallbacks(cached.response);
       }

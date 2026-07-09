@@ -462,6 +462,68 @@ describe("dispatch", () => {
       putSpy.mockRestore();
     });
 
+    it("does not serve a persisted entry that carries Set-Cookie", async () => {
+      // Memory store strips Set-Cookie on write; a custom store can still
+      // return poison. Serve-side must refuse the hit and re-run the handler.
+      let n = 0;
+      const store: SegmentCacheStore = {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => false,
+        getResponse: async () => ({
+          response: new Response(JSON.stringify({ n: 99 }), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "Set-Cookie": "session=leaked; Path=/",
+            },
+          }),
+          shouldRevalidate: false,
+        }),
+        putResponse: async () => {},
+      };
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-poison",
+              () => ({ n: ++n }),
+              { name: "cached.poison" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const res = await dispatch(router, { request: "/cached-poison" });
+      expect(await res.json()).toEqual({ n: 1 });
+      expect(res.headers.get("Set-Cookie")).toBeNull();
+    });
+
+    it("does not write the cache from a HEAD request", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-head",
+              () => ({ ok: true }),
+              { name: "cached.head" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      await dispatch(router, {
+        request: new Request("http://localhost/cached-head", {
+          method: "HEAD",
+        }),
+      });
+      await flushWrites();
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
     it("shares a cache key across reordered query params", async () => {
       const store = new MemorySegmentCacheStore();
       const router = createRouter<{}>({ cache: { store } }).routes(
