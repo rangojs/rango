@@ -378,6 +378,34 @@ describe("createOTelSink", () => {
       expect(span.attributes["rango.action_id"]).toBe("submitOrder");
       expect(span.status?.code).toBe(2);
     });
+
+    it("adds the frozen foreground render cursor when available", () => {
+      const sink = createOTelSink(tracer);
+      sink.emit({
+        type: "request.timeout",
+        timestamp: 5,
+        phase: "render-start",
+        pathname: "/slow",
+        durationMs: 5000,
+        customHandler: false,
+        render: {
+          mode: "full",
+          phase: "html",
+          state: "running",
+          completed: 1,
+          total: 3,
+          phaseDurationMs: 4500,
+        },
+      });
+
+      const span = spans[0]!;
+      expect(span.attributes["rango.render.mode"]).toBe("full");
+      expect(span.attributes["rango.render.phase"]).toBe("html");
+      expect(span.attributes["rango.render.state"]).toBe("running");
+      expect(span.attributes["rango.render.completed"]).toBe(1);
+      expect(span.attributes["rango.render.total"]).toBe(3);
+      expect(span.attributes["rango.render.phase_duration_ms"]).toBe(4500);
+    });
   });
 
   describe("origin rejected", () => {

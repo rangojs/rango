@@ -17,24 +17,17 @@ import {
 } from "../cache/shell-snapshot.js";
 import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
-import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
+import type { TraceSpan } from "../router/tracing.js";
+import { getSSRSetup, createSsrHtmlStage, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { SSRModule } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 import {
-  RSC_FLIGHT_ONLY_PHASES,
-  RSC_RENDER_FLIGHT_RESPONSE_PHASES,
-  RSC_RENDER_HTML_RESPONSE_PHASES,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
-  createRscRenderStages,
-  finishRscRenderStages,
-  observeRscHtmlStage,
-  readRscFlightStage,
-  renderRscFlightStage,
-  runRscRenderStages,
 } from "./helpers.js";
+import { renderRscFlightStage, renderRscResponse } from "./render-pipeline.js";
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
 import { buildFullPayload } from "./full-payload.js";
@@ -81,7 +74,7 @@ export function handleRscRendering<TEnv>(
   // same boundary (match -> serialize -> SSR), so the two surfaces agree.
   // Loaders kicked off during matching nest under the span; the SSR HTML pass
   // below opens "rango.ssr" the same way.
-  return observePhase(PHASES.render, () =>
+  return observePhase(PHASES.render, (span) =>
     handleRscRenderingInner(
       ctx,
       request,
@@ -90,6 +83,7 @@ export function handleRscRendering<TEnv>(
       isPartial,
       handleStore,
       nonce,
+      span,
     ),
   );
 }
@@ -102,6 +96,7 @@ async function handleRscRenderingInner<TEnv>(
   isPartial: boolean,
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
+  renderSpan: TraceSpan,
 ): Promise<Response> {
   const reqCtx = getRequestContext();
 
@@ -470,57 +465,32 @@ async function handleRscRenderingInner<TEnv>(
   const stageTracking = {
     mode: isPartial ? ("partial" as const) : ("full" as const),
     routeKey: reqCtx._routeName,
-    phases: isFlightResponse
-      ? RSC_RENDER_FLIGHT_RESPONSE_PHASES
-      : RSC_RENDER_HTML_RESPONSE_PHASES,
+    span: renderSpan,
   };
-  const renderStages = createRscRenderStages({
-    ctx,
-    request,
-    env,
-    url,
-    payload,
-    init: {
-      headers: rscHeaders,
+  const response = await renderRscResponse(
+    {
+      ctx,
+      request,
+      env,
+      url,
+      payload,
+      init: { headers: rscHeaders },
+      tracking: stageTracking,
     },
-    tracking: stageTracking,
-  });
-
-  const flightStage = await readRscFlightStage(renderStages);
-  const rscStream = flightStage.stream;
-
-  if (isFlightResponse) {
-    // render:total is recorded by the observePhase wrapper around this function.
-    return runRscRenderStages(renderStages);
-  }
-
-  // Delegate to SSR for HTML response (reuse early setup if available)
-  const [ssrModule, streamMode] = await getSSRSetup(
-    ctx,
-    request,
-    env,
-    url,
-    metricsStore,
+    isFlightResponse
+      ? undefined
+      : {
+          html: createSsrHtmlStage({
+            ctx,
+            request,
+            env,
+            url,
+            metricsStore,
+            render: { nonce },
+            init: { headers: { "content-type": "text/html;charset=utf-8" } },
+          }),
+        },
   );
-
-  // ssr-render-html metric + rango.ssr span from one boundary. render:total is
-  // recorded by the observePhase wrapper around this function.
-  const htmlStream = await observeRscHtmlStage(
-    { url, tracking: stageTracking },
-    () =>
-      observePhase(PHASES.ssr, () =>
-        ssrModule.renderHTML(rscStream, {
-          nonce,
-          streamMode,
-        }),
-      ),
-  );
-  const response = await finishRscRenderStages(renderStages, {
-    body: htmlStream,
-    init: {
-      headers: { "content-type": "text/html;charset=utf-8" },
-    },
-  });
 
   // --- Axis 2: PPR shell CAPTURE on MISS (background task; see design doc) ---
   // The ppr route missed its shell above. Schedule the background capture only
@@ -634,21 +604,17 @@ function serveShellHit(
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
-    const flightStage = renderRscFlightStage(
-      {
-        ctx,
-        request,
-        env,
-        url,
-        payload,
-        tracking: {
-          mode: "full",
-          routeKey: activeCtx._routeName,
-          phases: RSC_FLIGHT_ONLY_PHASES,
-        },
+    const flightStage = renderRscFlightStage({
+      ctx,
+      request,
+      env,
+      url,
+      payload,
+      tracking: {
+        mode: "full",
+        routeKey: activeCtx._routeName,
       },
-      performance.now(),
-    );
+    });
     let rscStream = flightStage.stream;
     // Timing tap: when does the Flight render produce its FIRST byte? Compared
     // with the eager-inject/first-tail logs this proves whether hydration-start

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   resolveTimeouts,
   withTimeout,
+  isTimeoutEnabled,
   RouterTimeoutError,
   createDefaultTimeoutResponse,
 } from "../timeout.js";
@@ -59,6 +60,19 @@ describe("resolveTimeouts", () => {
     expect(result.actionMs).toBe(3000);
     expect(result.renderStartMs).toBe(8000);
     expect(result.streamIdleMs).toBeUndefined();
+  });
+});
+
+describe("isTimeoutEnabled", () => {
+  it("is disabled for undefined, 0, and negatives (pass-through)", () => {
+    expect(isTimeoutEnabled(undefined)).toBe(false);
+    expect(isTimeoutEnabled(0)).toBe(false);
+    expect(isTimeoutEnabled(-1)).toBe(false);
+  });
+
+  it("is enabled only for positive budgets", () => {
+    expect(isTimeoutEnabled(1)).toBe(true);
+    expect(isTimeoutEnabled(5000)).toBe(true);
   });
 });
 

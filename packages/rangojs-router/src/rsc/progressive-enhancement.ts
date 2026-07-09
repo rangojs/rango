@@ -10,7 +10,7 @@ import {
   getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
-import { getSSRSetup } from "./ssr-setup.js";
+import { createSsrHtmlStage } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -18,15 +18,11 @@ import { gateTransitions } from "./transition-gate.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
-  RSC_RENDER_HTML_RESPONSE_PHASES,
   createResponseWithMergedHeaders,
   finalizeResponse,
   buildRouteMiddlewareEntries,
-  createRscRenderStages,
-  finishRscRenderStages,
-  observeRscHtmlStage,
-  readRscFlightStage,
 } from "./helpers.js";
+import { renderRscResponse } from "./render-pipeline.js";
 import type { HandlerContext } from "./handler-context.js";
 import {
   extractRedirectResponse,
@@ -336,52 +332,40 @@ export async function handleProgressiveEnhancement<TEnv>(
       mode: "progressive-enhancement" as const,
       routeKey: getRequestContext()._routeName,
       actionId: directActionId ?? undefined,
-      phases: RSC_RENDER_HTML_RESPONSE_PHASES,
     };
-    const renderStages = createRscRenderStages({
-      ctx,
-      request,
-      env,
-      url,
-      payload,
-      init: {
-        // boundarylessErrorStatus is set only when the action threw and no error
-        // boundary matched; it makes the re-render carry 500 like the JS path.
-        // The redirect branch above returns before this, so a redirect re-render
-        // keeps its 308 and is never overridden.
-        ...(boundarylessErrorStatus !== undefined
-          ? { status: boundarylessErrorStatus }
-          : {}),
-        headers: { "content-type": "text/html;charset=utf-8" },
+    return renderRscResponse(
+      {
+        ctx,
+        request,
+        env,
+        url,
+        payload,
+        init: {
+          // boundarylessErrorStatus is set only when the action threw and no error
+          // boundary matched; it makes the re-render carry 500 like the JS path.
+          // The redirect branch above returns before this, so a redirect re-render
+          // keeps its 308 and is never overridden.
+          ...(boundarylessErrorStatus !== undefined
+            ? { status: boundarylessErrorStatus }
+            : {}),
+          headers: { "content-type": "text/html;charset=utf-8" },
+        },
+        tracking: stageTracking,
       },
-      tracking: stageTracking,
-    });
-    const flightStage = await readRscFlightStage(renderStages);
-    // metricsStore=undefined is safe: the handler already stashed the early
-    // SSR setup promise on request variables, so getSSRSetup returns it
-    // without falling back to a fresh startSSRSetup.
-    const [ssrModule, streamMode] = await getSSRSetup(
-      ctx,
-      request,
-      env,
-      url,
-      undefined,
-    );
-    // reactFormState carries the useActionState payload via the SSR-option path
-    // (renderToReadableStream({ formState })); it does NOT travel on RscPayload.
-    const htmlStream = await observeRscHtmlStage(
-      { url, tracking: stageTracking },
-      () =>
-        ssrModule.renderHTML(flightStage.stream, {
-          formState: reactFormState,
-          nonce,
-          streamMode,
+      {
+        // metricsStore=undefined is safe: the handler already stashed the early
+        // SSR setup promise, so this reuses it instead of starting setup again.
+        // reactFormState travels through the SSR option, not RscPayload.
+        html: createSsrHtmlStage({
+          ctx,
+          request,
+          env,
+          url,
+          metricsStore: undefined,
+          render: { formState: reactFormState, nonce },
         }),
+      },
     );
-
-    return finishRscRenderStages(renderStages, {
-      body: htmlStream,
-    });
   };
 
   // Execute route middleware wrapping the render, if any.
@@ -501,41 +485,30 @@ async function renderPeErrorBoundary<TEnv>(
     mode: "progressive-enhancement-error" as const,
     routeKey: getRequestContext()._routeName,
     actionId: actionId ?? undefined,
-    phases: RSC_RENDER_HTML_RESPONSE_PHASES,
   };
-  const renderStages = createRscRenderStages({
-    ctx,
-    request,
-    env,
-    url,
-    payload,
-    init: {
-      status: 500,
-      headers: { "content-type": "text/html;charset=utf-8" },
+  return renderRscResponse(
+    {
+      ctx,
+      request,
+      env,
+      url,
+      payload,
+      init: {
+        status: 500,
+        headers: { "content-type": "text/html;charset=utf-8" },
+      },
+      tracking: stageTracking,
     },
-    tracking: stageTracking,
-  });
-  const flightStage = await readRscFlightStage(renderStages);
-  // metricsStore=undefined is safe: the handler already stashed the early
-  // SSR setup promise on request variables, so getSSRSetup returns it
-  // without falling back to a fresh startSSRSetup.
-  const [ssrModule, streamMode] = await getSSRSetup(
-    ctx,
-    request,
-    env,
-    url,
-    undefined,
-  );
-  const htmlStream = await observeRscHtmlStage(
-    { url, tracking: stageTracking },
-    () =>
-      ssrModule.renderHTML(flightStage.stream, {
-        nonce,
-        streamMode,
+    {
+      // Reuse the early setup promise; the driver times only renderHTML.
+      html: createSsrHtmlStage({
+        ctx,
+        request,
+        env,
+        url,
+        metricsStore: undefined,
+        render: { nonce },
       }),
+    },
   );
-
-  return finishRscRenderStages(renderStages, {
-    body: htmlStream,
-  });
 }

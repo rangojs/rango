@@ -194,6 +194,19 @@ export const router = createRouter<AppEnv>({
   // reach the client payload metadata (defaults are size 100 / concurrency 2).
   prefetchCacheSize: 25,
   prefetchConcurrency: 3,
+  // Render-timeout diagnostics are opt-in per server. Only the render-timeout
+  // stage suite (an isolatedServer that sets RANGO_E2E_RENDER_TIMEOUT) exercises
+  // the 15s renderStartMs bound. Baking it unconditionally leaks onto the SHARED
+  // dev/preview webServer every other suite uses: a >15s cold render in an
+  // unrelated suite would then 504, and render diagnostics would flip on for
+  // every request. Read through globalThis so the bundler never statically folds
+  // it (only process.env.NODE_ENV is a build-time define) — the production build
+  // reuses the shared build output, and the isolated preview process supplies
+  // the env var at runtime. Mirrors the RANGO_STRICT gate above.
+  ...((globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env?.RANGO_E2E_RENDER_TIMEOUT
+    ? { timeouts: { renderStartMs: 15000 } }
+    : {}),
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],
@@ -203,7 +216,10 @@ export const router = createRouter<AppEnv>({
     enableColorScheme: true,
   },
   ssr: {
-    resolveStreaming: ({ request }) => {
+    resolveStreaming: async ({ request }) => {
+      if (new URL(request.url).searchParams.has("__render_timeout_stage")) {
+        await new Promise((resolve) => setTimeout(resolve, 20000));
+      }
       const ua = request.headers.get("user-agent") ?? "";
       if (ua.includes("StreamBot")) return "allReady";
       return "stream";
@@ -214,6 +230,7 @@ export const router = createRouter<AppEnv>({
       phase: context.phase,
       message: context.error.message,
       actionId: context.actionId,
+      metadata: context.metadata,
     });
   },
 })

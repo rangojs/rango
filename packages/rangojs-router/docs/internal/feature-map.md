@@ -317,8 +317,11 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - `onTimeout` router option — custom callback returning a `Response` for timed-out requests
 - `RouterTimeoutError` — custom error class with `phase` and `durationMs`
 - `withTimeout()` — `Promise.race` helper returning discriminated union
+- `isTimeoutEnabled(ms)` — a phase is active only when `ms` is a positive number (`undefined`/`<= 0` = pass-through); shared by `withTimeout` and the render-diagnostics gate so a `renderStartMs: 0` opt-out disables both together
 - Default 504 response with `X-Rango-Timeout-Phase` header
-- `onError` receives timeout errors with `metadata: { timeout: true, phase, durationMs }`
+- `onError` receives timeout errors with `metadata: { timeout: true, phase, durationMs, render? }`; `render` is the foreground Flight/HTML/response cursor when a render-start timeout interrupts the stage driver
+- `onTimeout`, `request.timeout`, and `onError` each receive their OWN shallow copy of the `render` snapshot (`RenderTimeoutContext`: mode, phase, running/paused state, completed/total, partial phase duration) — value-equal, independent by reference, so a consumer mutating one surface's copy cannot corrupt the others
+- `dispatch()` mirrors response-route `renderStartMs`/`onTimeout`/timeout telemetry through the public testing entry; its timeout context deliberately has no `render` snapshot because dispatch does not run Flight/HTML
 - Timeout phases: `"action"` (server action execution), `"render-start"` (RSC render / response routes)
 - `streamIdleMs` accepted but deferred (not enforced in PR 1)
 

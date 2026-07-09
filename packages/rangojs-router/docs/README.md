@@ -103,6 +103,10 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 
 ## Design Notes
 
+- [Render stage driver](./design/render-stage-driver.md) - the migration from
+  post-work async-generator checkpoints to a synchronous typed effect plan and
+  one async foreground driver, including streaming, diagnostics, observability,
+  performance gates, and the boundaries that remain concurrent
 - [SSR streaming policy](./design/ssr-streaming-policy.md) - controlling
   stream vs allReady mode per request
 - [PPR shell caching and resume](./design/ppr-shell-resume.md) - the opt-in

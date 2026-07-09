@@ -63,6 +63,10 @@
  *   (getRequestId). Emission is gated entirely on a configured sink; with none,
  *   dispatch does zero new work and stays byte-identical for existing callers.
  *   Lets a consumer unit-test their sink wiring in-process instead of only at e2e.
+ * - Response-route `renderStartMs` timeouts and `onTimeout`: dispatch races the
+ *   same terminal response work, reports the timeout through onError/telemetry,
+ *   and invokes the configured callback. `context.render` is absent because this
+ *   primitive deliberately does not run the Flight/HTML render driver.
  *
  * What dispatch DOES NOT support (and why):
  * - RSC component routes — rendering requires the Flight serializer + React
@@ -139,6 +143,12 @@ import type { OnErrorCallback } from "../types/error-types.js";
 import type { Rango } from "../router/router-interfaces.js";
 import { getRequestId, resolveSink, safeEmit } from "../router/telemetry.js";
 import type { TelemetrySink } from "../router/telemetry.js";
+import {
+  RouterTimeoutError,
+  createDefaultTimeoutResponse,
+  withTimeout,
+} from "../router/timeout.js";
+import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -159,6 +169,8 @@ interface DispatchableRouter<TEnv> {
    * byte-identical for every existing caller.
    */
   telemetry?: TelemetrySink;
+  timeouts?: ResolvedTimeouts;
+  onTimeout?: OnTimeoutCallback<TEnv>;
   findMatch(pathname: string): Promise<{
     redirectTo?: string;
     routeKey?: string;
@@ -623,6 +635,89 @@ export async function dispatch<TEnv = any>(
       return executeHandler().then(finalizeResponse);
     };
 
+    // The renderStartMs deadline wraps ONLY the response-route unit, mirroring
+    // handler.ts:845 where withTimeout(handleResponseRoute(...)) runs INSIDE
+    // coreRequestHandler — after the global middleware chain has already
+    // entered. Wrapping the outer chain (as an earlier version did) counted
+    // global middleware time toward the deadline, so a slow global auth
+    // middleware could 504 a request production serves. On timeout the 504/
+    // onTimeout Response is RETURNED from coreHandler so it flows back out
+    // through the global chain and finalizeResponse, identical to production
+    // (handler.ts:857 returns handleTimeoutResponse into the same next() path).
+    const runResponseRoute = async (): Promise<Response> => {
+      const responseWork = callResponseRoute();
+      const renderOutcome = await withTimeout(
+        responseWork,
+        router.timeouts?.renderStartMs,
+        "render-start",
+      );
+      if (!renderOutcome.timedOut) return renderOutcome.result;
+
+      // The race's losing side keeps executing after the timeout wins; its
+      // eventual Response is dropped. Swallow any rejection (no
+      // unhandled-rejection surfacing) and cancel the orphaned body stream so,
+      // under vitest, the abandoned handler cannot leak into the next test.
+      // Production abandons it too (handler.ts:845); this is a runner-scoped
+      // cleanup, not an observable-behavior change.
+      void responseWork
+        .then(
+          (orphan) => orphan.body?.cancel(),
+          () => {},
+        )
+        .catch(() => {});
+
+      const durationMs = renderOutcome.durationMs;
+      const timeoutError = new RouterTimeoutError("render-start", durationMs);
+      // Field-for-field parity with handleTimeoutResponse's callOnError
+      // (handler.ts:254): env is passed through (was previously dropped). render
+      // is always absent — dispatch runs no Flight/HTML driver, so there is no
+      // foreground cursor to snapshot.
+      invokeOnError(
+        router.onError,
+        timeoutError,
+        "handler",
+        {
+          request: req,
+          url,
+          env,
+          routeKey,
+          handledByBoundary: false,
+          metadata: { timeout: true, phase: "render-start", durationMs },
+        },
+        "RSC",
+      );
+      if (sink) {
+        safeEmit(resolveSink(sink), {
+          type: "request.timeout",
+          timestamp: performance.now(),
+          requestId: telemetryRequestId,
+          phase: "render-start",
+          pathname: url.pathname,
+          routeKey,
+          durationMs,
+          customHandler: router.onTimeout !== undefined,
+        });
+      }
+      if (router.onTimeout) {
+        try {
+          return await router.onTimeout({
+            phase: "render-start",
+            request: req,
+            url,
+            env,
+            routeKey,
+            durationMs,
+          });
+        } catch (error) {
+          if (process.env.NODE_ENV !== "production") {
+            console.error("[dispatch] onTimeout callback error:", error);
+          }
+          return createDefaultTimeoutResponse("render-start");
+        }
+      }
+      return createDefaultTimeoutResponse("render-start");
+    };
+
     // coreHandler is the single terminal the global middleware chain wraps,
     // mirroring production's coreHandler (handler.ts): a trailing-slash/redirect
     // 308, an unmatched-path 404, or the response route. Both the 308 and the
@@ -630,7 +725,9 @@ export async function dispatch<TEnv = any>(
     // cookies/headers merge onto them, identical to production's
     // rsc-rendering.ts redirect path — and because they sit inside the chain, a
     // global middleware that short-circuits (e.g. an auth 401) runs first and
-    // wins, never reaching the 308/404.
+    // wins, never reaching the 308/404. The renderStartMs deadline lives inside
+    // runResponseRoute (below the chain), never covering the 308/404 paths —
+    // production only wraps the response-route plan (handler.ts:834-856).
     const coreHandler = async (): Promise<Response> => {
       if (redirectTo) {
         return createResponseWithMergedHeaders(null, {
@@ -644,7 +741,7 @@ export async function dispatch<TEnv = any>(
           headers: { "content-type": "text/plain;charset=utf-8" },
         });
       }
-      return callResponseRoute();
+      return runResponseRoute();
     };
 
     // request.start opens the match transaction, mirroring match-handlers.ts.
@@ -664,7 +761,11 @@ export async function dispatch<TEnv = any>(
 
     try {
       // Global (pattern-matched) middleware wraps coreHandler, exactly as
-      // production wraps coreHandler with executeMiddleware (handler.ts).
+      // production wraps coreHandler with executeMiddleware (handler.ts:568).
+      // The renderStartMs deadline is deliberately NOT applied here — it wraps
+      // only the response-route unit inside coreHandler (see runResponseRoute),
+      // mirroring handler.ts:845 so global middleware time is never counted
+      // toward the deadline.
       const globalMatches = matchMiddleware(url.pathname, router.middleware);
       const mwResponse =
         globalMatches.length === 0

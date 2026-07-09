@@ -13,6 +13,7 @@
 export interface OnErrorRecord {
   phase: string;
   message: string;
+  metadata?: Record<string, unknown>;
 }
 
 export const onErrorLog: OnErrorRecord[] = [];

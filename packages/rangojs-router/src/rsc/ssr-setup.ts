@@ -7,9 +7,13 @@
  */
 
 import type { HandlerContext } from "./handler-context.js";
-import type { SSRModule } from "./types.js";
+import type { SSRModule, SSRRenderOptions } from "./types.js";
 import type { SSRStreamMode } from "../router/router-options.js";
 import type { MetricsStore } from "../server/context.js";
+import type {
+  RscFlightStage,
+  RscPreparedHtmlRender,
+} from "./render-pipeline.js";
 import { appendMetric } from "../router/metrics.js";
 import {
   parseAcceptTypes,
@@ -68,6 +72,49 @@ export function startSSRSetup<TEnv>(
       return mode;
     }),
   ]);
+}
+
+export interface SsrHtmlStageOptions<TEnv> {
+  ctx: HandlerContext<TEnv>;
+  request: Request;
+  env: TEnv;
+  url: URL;
+  /** Metrics store for ssr:module-load / ssr:stream-mode timing (per call site). */
+  metricsStore: MetricsStore | undefined;
+  /**
+   * renderHTML options minus streamMode (the stage resolves streamMode). Carries
+   * the per-site nonce and, for the PE action re-render, formState. Spread
+   * verbatim so each call site's exact key set is preserved.
+   */
+  render: Omit<SSRRenderOptions, "streamMode">;
+  /** ResponseInit merged into the prepared render (e.g. content-type). */
+  init?: ResponseInit;
+}
+
+/**
+ * Build the `html` stage callback renderRscResponse drives: await the (possibly
+ * early-kicked-off) SSR setup, then renderHTML over the Flight stream. The four
+ * render paths (rsc-rendering full/partial, 404, PE, PE-error) differ only in
+ * metricsStore, render options (nonce/formState), and init — threaded here so
+ * the getSSRSetup + renderHTML wiring lives in one place.
+ */
+export function createSsrHtmlStage<TEnv>(
+  options: SsrHtmlStageOptions<TEnv>,
+): (flight: RscFlightStage) => Promise<RscPreparedHtmlRender> {
+  return async (flight) => {
+    const [ssrModule, streamMode] = await getSSRSetup(
+      options.ctx,
+      options.request,
+      options.env,
+      options.url,
+      options.metricsStore,
+    );
+    return {
+      render: () =>
+        ssrModule.renderHTML(flight.stream, { ...options.render, streamMode }),
+      ...(options.init && { init: options.init }),
+    };
+  };
 }
 
 /**
