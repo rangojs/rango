@@ -49,7 +49,7 @@ tissue that still applies):
   `rangoState\0/target` and `rangoState\0sourceHref\0/target`;
 - the **browser's private HTTP cache**, via the `Vary` mechanism above.
   Prefetch responses carry `Cache-Control: private,
-  max-age={prefetchCacheTTL}` (default 300 seconds). Only prefetch responses:
+max-age={prefetchCacheTTL}` (default 300 seconds). Only prefetch responses:
   the header is gated on the `X-Rango-Prefetch` request header plus partial
   plus non-intercept — an ordinary navigation partial carries no
   `Cache-Control` at all;
@@ -62,14 +62,14 @@ tissue that still applies):
 
 Live paths that rotate / clear:
 
-| Trigger                     | Path                                                                                                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                                                                    |
-| Server action               | `server-action-bridge.ts` → deferred invalidate unless the action called `keepClientCache()`                                                                              |
-| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                                       |
-| Cross-tab broadcast receipt | a sibling tab's `BroadcastChannel` "invalidate" message → `markCacheAsStaleInternal`, gated on shared segment IDs                                                         |
-| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer                                                 |
-| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                                       |
+| Trigger                     | Path                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                    |
+| Server action               | `server-action-bridge.ts` → deferred invalidate unless the action called `keepClientCache()`                              |
+| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook       |
+| Cross-tab broadcast receipt | a sibling tab's `BroadcastChannel` "invalidate" message → `markCacheAsStaleInternal`, gated on shared segment IDs         |
+| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer |
+| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                       |
 
 Note that `clearPrefetchCache()` is the function that clears the in-memory map,
 discards in-flight prefetches, and calls `invalidateRangoState()`. The
