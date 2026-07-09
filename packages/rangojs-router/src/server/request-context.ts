@@ -1370,10 +1370,11 @@ export function serializeCookieValue(
     cookie += `; Path=${options.path}`;
   }
   if (options.maxAge !== undefined) {
+    // Safe integer: Number.isInteger(1e21) is true but stringifies as "1e+21",
+    // which is invalid Max-Age wire syntax. Number.isSafeInteger rejects that.
     if (
       typeof options.maxAge !== "number" ||
-      !Number.isFinite(options.maxAge) ||
-      !Number.isInteger(options.maxAge)
+      !Number.isSafeInteger(options.maxAge)
     ) {
       throw new Error("invalid cookie maxAge");
     }

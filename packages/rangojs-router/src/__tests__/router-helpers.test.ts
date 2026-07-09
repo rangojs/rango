@@ -471,6 +471,13 @@ describe("serializeCookie", () => {
       "invalid cookie maxAge",
     );
   });
+
+  it("rejects maxAge that would serialize in exponential notation", () => {
+    // Number.isInteger(1e21) is true; Max-Age=1e+21 is invalid wire syntax.
+    expect(() => serializeCookie("a", "b", { maxAge: 1e21 })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
 });
 
 // ========================================================================
