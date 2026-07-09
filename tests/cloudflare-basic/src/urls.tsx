@@ -5,6 +5,7 @@ import {
   Meta,
   nonce,
   cookies,
+  redirect,
 } from "@rangojs/router";
 import { Suspense } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
@@ -1022,6 +1023,25 @@ export const urlpatterns = urls(
         path("/action-location-state", ActionLocationStatePage, {
           name: "actionLocationState",
         }),
+
+        // Soft + document redirect guard fixture (mirrors test-app redirect-guard).
+        path(
+          "/redirect-guard/go",
+          () => (
+            <div data-testid="redirect-guard-page">
+              <h1 data-testid="redirect-guard-title">Redirect Guard</h1>
+            </div>
+          ),
+          { name: "redirectGuardGo" },
+          () => [
+            middleware((ctx, next) => {
+              const to = ctx.searchParams.get("to");
+              if (!to) return next();
+              const external = ctx.searchParams.get("ext") === "1";
+              return external ? redirect(to, { external: true }) : redirect(to);
+            }),
+          ],
+        ),
 
         // Slow routes for navigation progress demo
         // /slow/1 uses handler pattern (blocks) - for testing

@@ -80,6 +80,7 @@ export const NamedRoutes = {
   "releases.index": "/releases",
   "renderedBarrier.index": "/rendered-barrier",
   renderStability: "/render-stability/p/:id",
+  redirectGuardGo: "/redirect-guard/go",
   robots: "/robots.txt",
   scriptsDemo: "/scripts-demo",
   search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
