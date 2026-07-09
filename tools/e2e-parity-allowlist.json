@@ -238,5 +238,10 @@
     "base": "ppr-shell dev readiness: cold first request (#719)",
     "file": "tests/cloudflare-basic/e2e/ppr-shell.test.ts",
     "reason": "Dev-server cold-start readiness; intentional dev-only"
+  },
+  {
+    "base": "prerender",
+    "file": "tests/cloudflare-basic/e2e/prerender-dev.test.ts",
+    "reason": "Dev-only title marker (dev mode); production twins live in prerender*.test.ts siblings under production describes"
   }
 ]

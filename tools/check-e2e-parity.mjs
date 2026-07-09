@@ -42,6 +42,11 @@ function loadAllowlist() {
           "each allowlist entry needs string fields { base, reason }",
         );
       }
+      if (e.reason.trim() === "") {
+        throw new Error(
+          `allowlist entry for base "${e.base}" needs a non-empty reason`,
+        );
+      }
     }
     return raw;
   } catch (err) {
@@ -97,11 +102,14 @@ for (const suite of splitSuites()) {
   const root = path.join(suite.dir, suite.testDir);
   const files = walk(root, isTestFile);
 
-  const prodBases = new Set();
+  // Production bases are per-file so an unrelated twin title in another file
+  // cannot silently satisfy a missing production describe in this file.
+  /** @type {Map<string, Set<string>>} */
+  const prodBasesByFile = new Map();
   /** @type {{ base: string, title: string, file: string, line: number }[]} */
   const devOnly = [];
 
-  // First pass: collect every production-bucket base name across the suite.
+  // First pass: collect production-bucket base names per file.
   const topLevel = [];
   for (const file of files) {
     for (const d of scanFile(file, suite.prodGrep)) {
@@ -119,14 +127,23 @@ for (const suite of splitSuites()) {
       // already covered by the parent that owns the twin pair. Skip them.
       if (!d.dev && !d.build && !d.indeterminate) continue;
       topLevel.push({ ...d, file });
-      if (d.taggedProd) prodBases.add(baseName(d.title));
+      if (d.taggedProd) {
+        let set = prodBasesByFile.get(file);
+        if (!set) {
+          set = new Set();
+          prodBasesByFile.set(file, set);
+        }
+        set.add(baseName(d.title));
+      }
     }
   }
-  // Second pass: dev-bucket describes whose base has no production sibling.
+  // Second pass: dev-bucket describes whose base has no production sibling in
+  // the same file.
   for (const d of topLevel) {
     if (d.taggedProd) continue;
     const base = baseName(d.title);
-    if (!prodBases.has(base))
+    const prodBases = prodBasesByFile.get(d.file);
+    if (!prodBases || !prodBases.has(base))
       devOnly.push({ base, title: d.title, file: d.file, line: d.line });
   }
 
