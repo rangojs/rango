@@ -56,7 +56,11 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
     expect(res.status()).toBe(200);
     // Dogfood the public testing helper (same contract as production header).
     assertShellStatus(
-      { headers: new Headers({ "x-rango-shell": res.headers()["x-rango-shell"] ?? "" }) },
+      {
+        headers: new Headers({
+          "x-rango-shell": res.headers()["x-rango-shell"] ?? "",
+        }),
+      },
       "HIT",
     );
   }).toPass({ timeout: 10000 });
