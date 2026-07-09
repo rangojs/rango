@@ -22,12 +22,14 @@ lives.
 - **Per-route cache configuration** - `cache({ ttl, swr, store })` DSL for route definitions
 - **Store-level defaults** - `MemorySegmentCacheStore({ defaults: { ttl, swr } })`
 - **Per-section stores** - `cache({ store })` for dedicated stores per route section
+- **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) and `VercelCacheStore` (Vercel Runtime Cache via `getCache`) from `@rangojs/router/cache`
+- **Cache invalidation API** - `cache()` / cache profiles accept `tags`, and `cacheTag(...tags)` tags entries at runtime inside `"use cache"`. Built-in stores index by tag and invalidate via store-level `invalidateTags()`. Consumers call `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)` (background). Both hard-purge.
+- **Proactive caching** - Background re-resolve of null-component segments via `waitUntil` (`src/router/match-middleware/cache-store.ts`) so partial navigations get complete cache entries
 
 ### 🚧 Remaining
 
-- **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) is shipped from `@rangojs/router/cache`. Redis and other adapters are still future work.
-- **Cache invalidation API** - ✅ Shipped. `cache()` / cache profiles accept `tags`, and `cacheTag(...tags)` tags entries at runtime inside `"use cache"`. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag and invalidate via the store-level `invalidateTags()` primitive (it receives the whole tag batch in one call). Consumers call `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or `revalidateTag(...tags)` (background, non-blocking; for webhooks/route handlers). Both hard-purge — the only difference is awaitability; neither serves stale content. The CF store keeps its tag-invalidation markers in its own KV namespace (no separate store). A manual whole-store purge API is still future work.
-- **Proactive caching** - Render null-component segments in background for complete cache entries
+- **Redis (and other adapters)** - no first-party Redis `SegmentCacheStore` yet
+- **Manual whole-store purge API** - store-level wipe-all is still future work (`clear()` is optional / test-only on most backends)
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 
 ### Performance (Dev)

@@ -78,7 +78,7 @@ for the detailed design and capability comparison.
 ├── tests/                 # Demo + e2e apps (vite-rsc-demo, cloudflare-basic, ...)
 ├── examples/              # Cloudflare example apps (cloudflare-basic-nonce, cloudflare-multi-router)
 ├── apps/
-│   └── site/              # Documentation site
+│   └── docs/              # Documentation site
 ├── tools/                 # Repo tooling and bundle scripts
 └── docs/                  # Design documents
 ```
@@ -88,7 +88,7 @@ for the detailed design and capability comparison.
 ### Prerequisites
 
 - Node.js `^20.19.0 || >=22.12.0` (the `@rangojs/router` `engines` floor, matching Vite 8); CI tests on Node 24 (see `.nvmrc`)
-- pnpm 10+
+- pnpm 11+ (`packageManager` is `pnpm@11.9.0`)
 
 ### Installation
 

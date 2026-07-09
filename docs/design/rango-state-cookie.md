@@ -13,80 +13,85 @@ remembering. It also carries the hazards earlier drafts of this design walked
 straight into — they're called out inline as scar tissue so you don't
 rediscover them in production.
 
-Status: design, pre-implementation (decided 2026-06-11; revised 2026-06-12:
-single-API collapse, `useClientCache` removal, cross-tab no-regression
-invariant, action-side `keepClientCache()` with the fence-and-defer bridge
-change). Review pass 2026-06-12 folded in: the fence must also bypass the
-Vary-keyed HTTP cache and own an ephemeral popstate-stale signal; a refcount
-compose rule for mixed keep/invalidate; explicit server-seat idempotency and
-inert-outside-request behavior; the Finding #3 store inventory completed
-(`MemorySegmentCacheStore` + CF KV/L2) with the Cloudflare-platform claim
-demoted to an assumption; the cross-tab race narrative corrected for the
-existing post-commit broadcast; plus citation and docs-sync fixes. The open
-mechanism questions are tagged **[resolve before implementing]** inline.
+Status: **shipped** (PR #560). Cookie storage lives in
+`src/browser/rango-state.ts` (+ `src/browser/cookie-name.ts`); the public pair
+is `invalidateClientCache()` / `keepClientCache()` (server seat:
+`src/server/cookie-store.ts`; client seat: `src/browser/invalidate-client-cache.ts`).
+Sections below keep the design narrative and scar-tissue hazards that still
+apply; treat pre-implementation "today" language as historical where it
+contradicts the as-built model.
 
-## How rango state works today
+## As built (cookie model)
 
-The state is a per-client value of the form `{buildVersion}:{timestamp}`,
-stored in localStorage under `rango-state:{routerId}` (legacy fallback:
-`rango-state`) and managed by `src/browser/rango-state.ts`. The client sends it
-as the `X-Rango-State` request header on every prefetch and navigation fetch
-(`src/browser/prefetch/fetch.ts:155`, `src/browser/navigation-client.ts:212`),
-and the server answers with `Vary: accept, X-Rango-State,
-X-RSC-Router-Client-Path` (`src/rsc/rsc-rendering.ts:187`). The browser's HTTP
+The state is a per-client value of the form `{buildVersion}:{timestamp}`, stored
+in a **session cookie** named by the server-resolved name
+(`{prefix}_{routerId}`, default prefix `rango-state`) and managed by
+`src/browser/rango-state.ts`. An in-memory mirror is a write-through fallback
+only when `document.cookie` is unreadable; when the jar is readable, the
+per-request cookie read wins (that read is the cross-tab sync channel). Boot
+calls `cleanupLegacyStorage()` and drops any leftover `rango-state` /
+`rango-state:*` **localStorage** keys from the pre-cookie era (superseded;
+see History below).
+
+The client still sends the value as the `X-Rango-State` request header on every
+prefetch and navigation fetch, and the server answers with
+`Vary: accept, X-Rango-State, X-RSC-Router-Client-Path`. The browser's HTTP
 cache therefore keys responses by (URL, state value): rotate the value and
 every previously cached response misses cleanly.
 
 Three caches are in play — the state value keys the first two; the third is
-invalidated through a different door. You need all three in your head before
-the design makes sense, because the headline draft of this design only handled
-the first two and shipped a stale-back-button bug as a result:
+invalidated through a different door. The headline draft of this design only
+handled the first two and shipped a stale-back-button bug as a result (scar
+tissue that still applies):
 
 - the **in-memory prefetch map** (`src/browser/prefetch/cache.ts`), whose
   wildcard and source-scoped keys both embed the state value —
   `rangoState\0/target` and `rangoState\0sourceHref\0/target`;
 - the **browser's private HTTP cache**, via the `Vary` mechanism above.
   Prefetch responses carry `Cache-Control: private,
-max-age={prefetchCacheTTL}` (default 300 seconds, resolved in
-  `src/router.ts:215-222`). Only prefetch responses: the header is gated on
-  the `X-Rango-Prefetch` request header plus partial plus non-intercept
-  (`rsc-rendering.ts:205-206`) — an ordinary navigation partial carries no
+  max-age={prefetchCacheTTL}` (default 300 seconds). Only prefetch responses:
+  the header is gated on the `X-Rango-Prefetch` request header plus partial
+  plus non-intercept — an ordinary navigation partial carries no
   `Cache-Control` at all;
 - the **history segment cache** (`historyCache` in
-  `src/browser/navigation-store.ts:240`), which holds back/forward payloads.
+  `src/browser/navigation-store.ts`), which holds back/forward payloads.
   This one is **not** state-keyed — rotating the state value does nothing to
   it. It is invalidated only by going through the navigation store
-  (`clearCacheInternal` / `markCacheAsStaleInternal`,
-  `navigation-store.ts:332-345`). Forget this and your "data changed" signal
-  leaves a stale page one Back button away.
+  (`clearCacheInternal` / `markCacheAsStaleInternal`). Forget this and your
+  "data changed" signal leaves a stale page one Back button away.
 
-Rotation has more triggers than you'd guess, and an earlier version of this doc
-claimed "exactly two." For the record, every live path that reaches
-`invalidateRangoState()` today:
+Live paths that rotate / clear:
 
-| Trigger                     | Path                                                                                                                                                                                                      |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, called from `rsc-router.tsx:234`)                                                                                         |
-| Server action               | `server-action-bridge.ts` → `store.markCacheAsStaleAndBroadcast()` → `markCacheAsStaleInternal` → `clearPrefetchCache()`                                                                                  |
-| `useClientCache().clear()`  | the public hook (`client.tsx:362-365`) → `store.clearHistoryCache()` → `clearCacheAndBroadcast()` → `clearCacheInternal` → `clearPrefetchCache()`. **This design removes the hook** — see the API section |
-| Cross-tab broadcast receipt | a sibling tab's `BroadcastChannel` "invalidate" message → `markCacheAsStaleInternal` (`navigation-store.ts:405`), gated on shared segment IDs                                                             |
-| Dev HMR                     | a version change → `navigationBridge.updateVersion()` (`navigation-bridge.ts:669`) → `store.clearHistoryCache()`                                                                                          |
+| Trigger                     | Path                                                                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                                                                    |
+| Server action               | `server-action-bridge.ts` → deferred invalidate unless the action called `keepClientCache()`                                                                              |
+| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                                       |
+| Cross-tab broadcast receipt | a sibling tab's `BroadcastChannel` "invalidate" message → `markCacheAsStaleInternal`, gated on shared segment IDs                                                         |
+| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer                                                 |
+| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                                       |
 
-Note that `clearPrefetchCache()` (`prefetch/cache.ts:354-363`) is the function
-that clears the in-memory map, discards in-flight prefetches, and calls
-`invalidateRangoState()`. The navigation-store functions wrap it and add the
-history-cache handling and the cross-tab broadcast on top.
+Note that `clearPrefetchCache()` is the function that clears the in-memory map,
+discards in-flight prefetches, and calls `invalidateRangoState()`. The
+navigation-store functions wrap it and add the history-cache handling and the
+cross-tab broadcast on top.
 
-One property to internalize before you read further: the timestamp makes every
-client's value effectively unique, so `Vary: X-Rango-State` only ever helps
-each client's _private_ browser cache. A shared cache (CDN) would either refuse
-these responses outright — most CDNs treat a `Vary` on a custom request header
-as uncacheable, and these responses are `Cache-Control: private` anyway — or,
-if it ignored `Vary`, serve one client's variant to everyone. There is no
-cross-client-hit story here, and that's fine: it's what the mechanism is for.
-The load-bearing protection against a shared cache mishandling this is
-`Cache-Control: private` plus the never-a-shared-cache-key guardrail below, not
-`Vary` semantics.
+One property to internalize: the timestamp makes every client's value
+effectively unique, so `Vary: X-Rango-State` only ever helps each client's
+_private_ browser cache. A shared cache (CDN) would either refuse these
+responses outright — most CDNs treat a `Vary` on a custom request header as
+uncacheable, and these responses are `Cache-Control: private` anyway — or, if
+it ignored `Vary`, serve one client's variant to everyone. There is no
+cross-client-hit story here. The load-bearing protection against a shared cache
+mishandling this is `Cache-Control: private` plus the never-a-shared-cache-key
+guardrail below, not `Vary` semantics.
+
+### History / superseded
+
+Pre-cookie storage was **localStorage** under `rango-state:{routerId}` (legacy
+fallback `rango-state`). That model is gone; only the one-shot cleanup at
+`initRangoState` remains. The public `useClientCache()` hook was removed in
+favor of `invalidateClientCache()` / `keepClientCache()`.
 
 ## The gaps this design closes
 

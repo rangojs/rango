@@ -1,12 +1,12 @@
 # Shell Fast Path: the shell entry as a cache() of the handler layer
 
-Status: v1 IMPLEMENTED on `feat/shell-fast-path` (2026-07-05); the "v1 as
-built" section below is the authoritative record of what shipped and why it
-needed almost no new machinery. Prerequisite work (capture-time
-nested-thenable masking) shipped in PR #692; the instrumentation that produced
-the numbers below shipped in PR #691 and PR #693. The FRAGMENT SPLICE that v1
-deferred (the per-request Flight re-serialization of replayed segments)
-shipped as issue #700 — see "The fragment splice, as built" below.
+Status: **shipped** on main (v1 2026-07-05; fragment splice closed #700 / PR
+#706). The "v1 as built" section below is the authoritative record of what
+shipped and why it needed almost no new machinery. Prerequisite work
+(capture-time nested-thenable masking) shipped in PR #692; the instrumentation
+that produced the numbers below shipped in PR #691 and PR #693. The FRAGMENT
+SPLICE that v1 deferred (the per-request Flight re-serialization of replayed
+segments) shipped as issue #700 — see "The fragment splice, as built" below.
 
 ## Why (the measurements that motivated this)
 

@@ -420,16 +420,17 @@ Shipped:
 
 Deferred (the follow-up):
 
-- **Userland test coverage** through the `@rangojs/router/testing` primitives
-  (`renderHandler` / `dispatch` with a `VercelCacheStore`), in addition to the
-  white-box suite above.
-- **Docs-surface registration**: add the store to
-  `packages/rangojs-router/docs/internal/feature-map.md` and
-  `feature-file-map.md`, and move "Vercel / other adapters" out of the _Planned_
-  section of [`caching.md`](./caching.md).
 - **Real-Vercel e2e**: a `tests/vercel-basic` dev+prod suite, plus confirming
   `getCache`/`expireTag`/`waitUntil` runtime behavior and streaming under the
   actual Node launcher on a live deployment.
+
+Already done (no longer deferred):
+
+- **Userland test coverage** via `dispatch` + `VercelCacheStore`
+  (`src/testing/__tests__/dispatch-vercel-cache-store.test.ts`).
+- **Docs-surface registration**: `VercelCacheStore` is listed in
+  `packages/rangojs-router/docs/internal/feature-map.md` (`./cache` row) and
+  production backends are marked completed in [`caching.md`](./caching.md).
 
 ## Open questions to confirm against the installed `@vercel/functions`
 
