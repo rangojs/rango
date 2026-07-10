@@ -8,6 +8,7 @@ const {
   consumeInflightPrefetchMock,
   buildPrefetchKeyMock,
   buildSourceKeyMock,
+  cancelAllPrefetchesMock,
 } = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
   consumePrefetchMock: vi.fn((_key?: string): DecodedPrefetch | null => null),
@@ -22,6 +23,7 @@ const {
     (rangoState: string, sourceHref: string, target: URL) =>
       rangoState + "\0" + sourceHref + "\0" + target.pathname + target.search,
   ),
+  cancelAllPrefetchesMock: vi.fn(),
 }));
 
 /**
@@ -53,6 +55,10 @@ vi.mock("../browser/prefetch/cache", () => ({
   buildSourceKey: buildSourceKeyMock,
 }));
 
+vi.mock("../browser/prefetch/loader", () => ({
+  cancelAllPrefetches: cancelAllPrefetchesMock,
+}));
+
 import { createNavigationClient } from "../browser/navigation-client";
 import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
@@ -71,6 +77,7 @@ describe("navigation-client", () => {
     vi.unstubAllGlobals();
     consumePrefetchMock.mockReset().mockReturnValue(null);
     consumeInflightPrefetchMock.mockReset().mockReturnValue(null);
+    cancelAllPrefetchesMock.mockReset();
   });
 
   it("builds partial fetch URL and headers", async () => {
@@ -290,6 +297,30 @@ describe("navigation-client", () => {
   });
 
   describe("prefetch cache integration", () => {
+    it("cancels a pending lazy prefetch before checking the cache", async () => {
+      const fetchMock = vi.fn(
+        async () => new Response("fresh", { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: {} };
+        },
+      } as any);
+
+      await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(cancelAllPrefetchesMock).toHaveBeenCalledWith("/products");
+      expect(cancelAllPrefetchesMock.mock.invocationCallOrder[0]).toBeLessThan(
+        consumePrefetchMock.mock.invocationCallOrder[0]!,
+      );
+    });
+
     it("uses the completed cache entry without fetching or re-decoding", async () => {
       consumePrefetchMock.mockReturnValue(
         makeEntry({ metadata: { matched: [], diff: [] } }),

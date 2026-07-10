@@ -435,19 +435,6 @@ export type StateListener = () => void;
  * - SegmentState: Internal segment management for partial updates
  */
 export interface NavigationStore {
-  // Public state (for useNavigation hook)
-  getState(): NavigationState;
-  setState(partial: Partial<NavigationState>): void;
-  subscribe(listener: StateListener): () => void;
-
-  // Inflight action management
-  addInflightAction(action: InflightAction): void;
-  removeInflightAction(id: string): void;
-
-  // Action state (for controlling update behavior during server actions)
-  isActionInProgress(): boolean;
-  setActionInProgress(value: boolean): void;
-
   // Internal segment state (for bridges)
   getSegmentState(): SegmentState;
   setPath(path: string): void;
@@ -459,8 +446,6 @@ export interface NavigationStore {
   setHistoryKey(key: string): void;
   /** Monotonic token of the most recently committed navigation. */
   getNavInstance(): number;
-  /** Nav-instance token recorded on a cache entry (undefined if absent). */
-  getCacheEntryInstance(historyKey: string): number | undefined;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],
@@ -506,7 +491,6 @@ export interface NavigationStore {
     stale?: boolean,
     handlesPending?: boolean,
   ): void;
-  markCacheAsStale(): void;
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
@@ -525,14 +509,6 @@ export interface NavigationStore {
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;
-
-  // Action state tracking (for useAction hook)
-  getActionState(actionId: string): TrackedActionState;
-  setActionState(actionId: string, state: Partial<TrackedActionState>): void;
-  subscribeToAction(
-    actionId: string,
-    listener: ActionStateListener,
-  ): () => void;
 }
 
 // ============================================================================

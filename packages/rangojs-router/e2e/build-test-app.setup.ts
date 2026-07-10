@@ -128,6 +128,32 @@ test("build test-app", async () => {
       .join("\n")}`,
   ).toEqual([]);
 
+  // Optional prefetch machinery must stay off the eager startup path. The
+  // request header is a stable marker owned by browser/prefetch/fetch.ts.
+  const clientDir = path.join(cwd, "dist", "client");
+  const clientFiles = readJsFiles(clientDir);
+  const prefetchChunks = clientFiles.filter((f) =>
+    f.src.includes("X-Rango-Prefetch"),
+  );
+  expect(
+    prefetchChunks.map((f) => path.relative(cwd, f.file)),
+    "Prefetch fetch/queue code must land in exactly one lazy client chunk",
+  ).toHaveLength(1);
+  const prefetchChunk = prefetchChunks[0]!;
+  expect(
+    staticImportRefs(clientFiles, prefetchChunk.base).map((f) =>
+      path.relative(cwd, f),
+    ),
+    `The prefetch chunk ${prefetchChunk.base} must not be imported statically`,
+  ).toEqual([]);
+  const prefetchRefs = clientFiles.filter(
+    (f) => f.file !== prefetchChunk.file && f.src.includes(prefetchChunk.base),
+  );
+  expect(
+    prefetchRefs.length,
+    `The prefetch chunk ${prefetchChunk.base} must be wired through dynamic import()`,
+  ).toBeGreaterThan(0);
+
   // Bundle guard (Bundle Hygiene rule #1): serialized route data (trie +
   // precomputedEntries) lives in exactly ONE chunk, RSC-only, reachable only
   // via dynamic import(). Test-app is single-router, so exactly one data

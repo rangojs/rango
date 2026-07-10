@@ -26,8 +26,10 @@ import { expandSegmentFragments } from "../segment-fragments.js";
 import { initRangoState } from "./rango-state.js";
 import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
-import { setPrefetchConcurrency } from "./prefetch/queue.js";
-import { setPrefetchDecoder } from "./prefetch/fetch.js";
+import {
+  setPrefetchConcurrency,
+  setPrefetchDecoder,
+} from "./prefetch/loader.js";
 import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,

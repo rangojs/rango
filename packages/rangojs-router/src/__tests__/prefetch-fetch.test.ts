@@ -12,6 +12,7 @@ import {
 } from "../browser/prefetch/fetch";
 import { clearPrefetchCache, consumePrefetch } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
+import { abortAllPrefetches } from "../browser/prefetch/queue";
 import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
 // Prefetch eagerly decodes the fetched response (createFromFetch) to warm the
@@ -95,6 +96,7 @@ describe("prefetch fetch reduced-data behavior", () => {
 
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -275,6 +277,7 @@ describe("prefetch fetch reduced-data behavior", () => {
 describe("prefetch wildcard cache (default source-agnostic)", () => {
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -431,6 +434,7 @@ describe("prefetch wildcard cache (default source-agnostic)", () => {
 describe('prefetchKey=":source" opt-out', () => {
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -702,6 +706,7 @@ describe("prefetch fetch options (credentials + action fence)", () => {
 
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     __resetActionFence();
     vi.unstubAllGlobals();
@@ -750,6 +755,7 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
   afterEach(() => {
     vi.useRealTimers();
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -998,6 +1004,7 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
 describe("same-page cache poisoning regression", () => {
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -1162,6 +1169,7 @@ describe("prefetch entry.complete clean-EOF gating (#622 follow-up)", () => {
   afterEach(() => {
     vi.useRealTimers();
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
