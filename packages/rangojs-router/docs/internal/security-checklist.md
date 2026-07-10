@@ -33,6 +33,8 @@ transport behavior, or request/response ownership.
   redirect, error-boundary, and PE paths?
 - Could cookies or headers be duplicated, dropped, or overwritten by a later
   response owner?
+- Does `serializeCookieValue` reject Domain/Path/SameSite values that could
+  inject extra attributes (CR/LF/`;`/`,`, non-enum SameSite)?
 
 ## Request Context Isolation
 

@@ -1363,6 +1363,21 @@ function parseResponseCookies(response: Response): Map<string, string | null> {
 // dispatcher) can share it without pulling this module's request-context graph.
 export { parseCookiesFromHeader };
 
+/** Reject CR/LF/;/,/whitespace/control so raw attribute interpolation cannot inject. */
+function assertSafeCookieAttribute(
+  value: string,
+  label: "domain" | "path",
+): void {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x20 || code === 0x7f || value[i] === ";" || value[i] === ",") {
+      throw new Error(
+        label === "domain" ? "invalid cookie domain" : "invalid cookie path",
+      );
+    }
+  }
+}
+
 export function serializeCookieValue(
   name: string,
   value: string,
@@ -1370,13 +1385,41 @@ export function serializeCookieValue(
 ): string {
   let cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
 
-  if (options.domain) cookie += `; Domain=${options.domain}`;
-  if (options.path) cookie += `; Path=${options.path}`;
-  if (options.maxAge !== undefined) cookie += `; Max-Age=${options.maxAge}`;
+  if (options.domain) {
+    assertSafeCookieAttribute(options.domain, "domain");
+    cookie += `; Domain=${options.domain}`;
+  }
+  if (options.path) {
+    if (!options.path.startsWith("/")) {
+      throw new Error("invalid cookie path");
+    }
+    assertSafeCookieAttribute(options.path, "path");
+    cookie += `; Path=${options.path}`;
+  }
+  if (options.maxAge !== undefined) {
+    // Safe integer: Number.isInteger(1e21) is true but stringifies as "1e+21",
+    // which is invalid Max-Age wire syntax. Number.isSafeInteger rejects that.
+    if (
+      typeof options.maxAge !== "number" ||
+      !Number.isSafeInteger(options.maxAge)
+    ) {
+      throw new Error("invalid cookie maxAge");
+    }
+    cookie += `; Max-Age=${options.maxAge}`;
+  }
   if (options.expires) cookie += `; Expires=${options.expires.toUTCString()}`;
   if (options.httpOnly) cookie += "; HttpOnly";
   if (options.secure) cookie += "; Secure";
-  if (options.sameSite) cookie += `; SameSite=${options.sameSite}`;
+  if (options.sameSite) {
+    if (
+      options.sameSite !== "strict" &&
+      options.sameSite !== "lax" &&
+      options.sameSite !== "none"
+    ) {
+      throw new Error("invalid cookie sameSite");
+    }
+    cookie += `; SameSite=${options.sameSite}`;
+  }
 
   return cookie;
 }
