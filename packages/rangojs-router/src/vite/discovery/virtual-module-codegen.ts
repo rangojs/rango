@@ -39,11 +39,9 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     // module and re-evaluates it on the next request, calling
     // setCachedManifest() with fresh data. No manual sync needed.
     const genFileImports: string[] = [];
-    const genFileVars: string[] = [];
-    const routersWithoutGenFile: Array<{
-      id: string;
-      manifest: Record<string, string>;
-    }> = [];
+    // Per-entry NamedRoutes import var, aligned with perRouterManifests
+    // (null for routers without a gen file).
+    const genFileVarByEntry: Array<string | null> = [];
     let varIdx = 0;
 
     for (const entry of state.perRouterManifests) {
@@ -61,12 +59,9 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
         genFileImports.push(
           `import { NamedRoutes as ${varName} } from ${JSON.stringify(genPath)};`,
         );
-        genFileVars.push(varName);
+        genFileVarByEntry.push(varName);
       } else {
-        routersWithoutGenFile.push({
-          id: entry.id,
-          manifest: entry.routeManifest,
-        });
+        genFileVarByEntry.push(null);
       }
     }
 
@@ -87,44 +82,48 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       `clearAllRouterData();`,
     ];
 
-    if (genFileVars.length > 0) {
+    if (varIdx > 0) {
       lines.push(
         `function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`,
       );
     }
 
-    if (genFileVars.length === 1 && routersWithoutGenFile.length === 0) {
-      lines.push(`setCachedManifest(__flat(${genFileVars[0]}));`);
-    } else {
-      const parts: string[] = [];
-      for (const v of genFileVars) parts.push(`...__flat(${v})`);
-      for (const { manifest } of routersWithoutGenFile)
-        parts.push(`...${jsonParseExpression(manifest)}`);
-      lines.push(`setCachedManifest({ ${parts.join(", ")} });`);
+    // Each router's flattened map is materialized ONCE and the same object is
+    // shared between the global cachedManifest and the per-router map (a
+    // single-router app previously held two byte-identical maps, and __flat
+    // ran twice per router on cold start). Sharing is safe: every consumer
+    // reads these maps; lazy-include deltas mutate globalRouteMap, a different
+    // object (see registerRouteMap in route-map-builder.ts).
+    const routerMapVars: string[] = [];
+    for (const [i, entry] of state.perRouterManifests.entries()) {
+      const mapVar = `__m${i}`;
+      const genVar = genFileVarByEntry[i];
+      const init = genVar
+        ? `__flat(${genVar})`
+        : jsonParseExpression(entry.routeManifest);
+      lines.push(`const ${mapVar} = ${init};`);
+      routerMapVars.push(mapVar);
     }
 
-    let genVarIdx = 0;
-    for (const entry of state.perRouterManifests) {
-      if (entry.sourceFile) {
-        const varName = genFileVars[genVarIdx++];
-        lines.push(
-          `setRouterManifest(${JSON.stringify(entry.id)}, __flat(${varName}));`,
-        );
-      } else {
-        lines.push(
-          `setRouterManifest(${JSON.stringify(entry.id)}, ${jsonParseExpression(entry.routeManifest)});`,
-        );
-      }
+    if (routerMapVars.length === 1) {
+      lines.push(`setCachedManifest(${routerMapVars[0]});`);
+    } else {
+      lines.push(
+        `setCachedManifest({ ${routerMapVars.map((v) => `...${v}`).join(", ")} });`,
+      );
+    }
+
+    for (const [i, entry] of state.perRouterManifests.entries()) {
+      lines.push(
+        `setRouterManifest(${JSON.stringify(entry.id)}, ${routerMapVars[i]});`,
+      );
     }
 
     // Per-router trie and precomputedEntries are NOT inlined eagerly.
     // They live in the per-router lazy chunks (generatePerRouterModule) and
     // are loaded via ensureRouterManifest(routerId), which is awaited before
-    // every request in router.fetch() and before findMatch is reached.
-    // Inlining the merged versions here would duplicate the per-router data
-    // (the merged trie/precomputedEntries equal the per-router data for
-    // single-router apps; for multi-router, the merged trie is dead code
-    // because find-match.ts only consumes per-router tries).
+    // every request in router.fetch() and before findMatch is reached
+    // (Bundle Hygiene rule #1: route data in exactly one lazy chunk).
     //
     // In dev mode, the handler also falls back to Phase 2 regex matching
     // against live router.urlpatterns, which is always correct after a

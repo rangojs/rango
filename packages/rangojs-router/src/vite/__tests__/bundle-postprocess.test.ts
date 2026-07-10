@@ -23,8 +23,6 @@ function createMinimalState(
     opts: { enableBuildPrerender: true },
     mergedRouteManifest: null,
     perRouterManifests: [],
-    mergedPrecomputedEntries: null,
-    mergedRouteTrie: null,
     perRouterTrieMap: new Map(),
     perRouterPrecomputedMap: new Map(),
     perRouterManifestDataMap: new Map(),

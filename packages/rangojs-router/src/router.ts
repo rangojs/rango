@@ -8,7 +8,6 @@ import type { SerializedManifest } from "./debug.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
 import {
   registerRouteMap,
-  getPrecomputedEntries,
   getRouterManifest,
   getRouterPrecomputedEntries,
   ensureRouterManifest,
@@ -405,8 +404,7 @@ export function createRouter<TEnv = any>(
     string,
     Record<string, string>
   > | null {
-    const current =
-      getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
+    const current = getRouterPrecomputedEntries(routerId);
     if (current !== precomputedSource) {
       precomputedSource = current;
       // buildPrecomputedByPrefix drops any staticPrefix owned by more than one

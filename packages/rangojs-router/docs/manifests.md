@@ -106,7 +106,7 @@ The eager module carries only the flat route maps (for `reverse()`); the trie an
 precomputed match entries live in the lazy `virtual:rsc-router/routes-manifest/<routerId>`
 chunk, populated via `await ensureRouterManifest(routerId)` before any matching.
 Keeping that data in exactly one (lazy) chunk is a hard constraint — see CLAUDE.md
-"Bundle Hygiene" rule #1; do not add `setRouteTrie`/`setPrecomputedEntries` here.
+"Bundle Hygiene" rule #1; do not inline trie/precomputedEntries data here.
 The lazy chunk carries ONLY that derived match data — it does not re-export the
 name->path map (the eager module's `setRouterManifest()` is its sole source, and
 `ensureRouterManifest()` ignores any `manifest` field on the loaded module).

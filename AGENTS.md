@@ -170,7 +170,7 @@ Keep in sync in the same PR whenever exports, files, or features change:
 
 RULES:
 
-1. **Generated route data lives in exactly ONE chunk** — the contract is lazy-only (`virtual:rsc-router/routes-manifest/<routerId>`, populated via `await ensureRouterManifest(routerId)` before matching). Never add `setRouteTrie`/`setPrecomputedEntries` to the eager manifest.
+1. **Generated route data lives in exactly ONE chunk** — the contract is lazy-only (`virtual:rsc-router/routes-manifest/<routerId>`, populated via `await ensureRouterManifest(routerId)` before matching). Never inline the trie/precomputedEntries into the eager manifest (via `setRouterTrie`/`setRouterPrecomputedEntries` or otherwise).
 2. **Non-Cloudflare app vite configs MUST fold NODE_ENV for build**: `define: { "process.env.NODE_ENV": JSON.stringify("production") }`. Reference: `packages/rangojs-router/e2e/test-app/vite.config.ts`.
 
 Why (tree-shaking can't catch either; both caused large regressions — commits `d10a2470`, `e56f2ee2`): (1) inlined `JSON.parse('<huge string>')` data in both an eager and a lazy chunk stays live in BOTH — each is side-effectful; (2) unfolded NODE_ENV makes the minifier keep React's dev AND prod branches, doubling its footprint. The Cloudflare vite plugin folds automatically; vanilla `vite build` folds client only, not SSR/RSC.

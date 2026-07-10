@@ -25,8 +25,6 @@ export {
   clearAllRouterData,
   getGlobalRouteMap,
   getRouterManifest,
-  setPrecomputedEntries,
-  setRouteTrie,
   setManifestReadyPromise,
   setRouterManifest,
   setRouterTrie,

@@ -16,8 +16,6 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 // Mock route-map-builder so manifest is always available.
 vi.mock("../../route-map-builder.js", () => ({
   hasCachedManifest: () => true,
-  getRouteTrie: () => null,
-  getPrecomputedEntries: () => undefined,
   waitForManifestReady: () => null,
   getRouterManifest: () => ({ home: "/" }),
   getRouterTrie: () => null,
