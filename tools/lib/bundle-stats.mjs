@@ -1,5 +1,5 @@
 // Shared metafile parsing + server-in-client classification for
-// tools/bundle-report.mjs (Sections 2/2b) and tools/check-client-leaks.mjs.
+// tools/bundle-report.mjs (Sections 2/2b) and tools/check-bundle-guards.mjs.
 // The input is the raw-data JSON dump emitted per environment by
 // tools/bundle-analyze.ts (`RANGO_ANALYZE=1 pnpm exec vite build`).
 
