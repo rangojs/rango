@@ -234,6 +234,37 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   last capture outcome for a key also rides the next document GET's
   `Server-Timing` as `ppr-capture;desc="…"`.
 
+### Unit / integration testing (public primitives)
+
+Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
+(Playwright):
+
+| Helper                                            | Use for                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| `assertShellStatus(res, "HIT" \| "MISS")`         | Document Response from a real RSC serve / e2e `page.request` |
+| `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
+| `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
+
+```ts
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import { assertShellStatus, shellCacheKey } from "@rangojs/router/testing";
+
+// Unit: store + key (after a real putShell / capture flush in e2e)
+const store = new MemorySegmentCacheStore();
+const key = shellCacheKey("http://localhost/products/1");
+// ... after production putShell ...
+expect(await store.getShell(key)).not.toBeNull();
+
+// E2E: header on a real document GET
+assertShellStatus({ headers: new Headers(res.headers()) }, "HIT");
+```
+
+**Out of unit scope** (stay e2e): live MISS → background capture → HIT,
+browser resume of holes, build-time producer B. `dispatch` never runs PPR.
+`renderHandler` only exposes `ctx.dynamic()` / `build` for the opt-out path.
+Do not invent a HIT Response in unit tests. Full recipe: `/testing` skill →
+`cache-prerender.md` (PPR shell section).
+
 ## The hole doctrine (encode this in your head)
 
 Holes are **render-defined**, decided by the shape of the tree, on three rules:

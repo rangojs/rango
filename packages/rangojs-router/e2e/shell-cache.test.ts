@@ -9,6 +9,7 @@ import {
   goBack,
 } from "./helper";
 import { guardHydrationErrors } from "@shared/e2e";
+import { assertShellStatus } from "@rangojs/router/testing/e2e";
 
 // End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
 // option (test-app/src/urls/shell-cache.tsx) — serving is integral to the router
@@ -53,7 +54,15 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
   await expect(async () => {
     const res = await request.get(url, { headers: HTML_HEADERS });
     expect(res.status()).toBe(200);
-    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    // Dogfood the public testing helper (same contract as production header).
+    assertShellStatus(
+      {
+        headers: new Headers({
+          "x-rango-shell": res.headers()["x-rango-shell"] ?? "",
+        }),
+      },
+      "HIT",
+    );
   }).toPass({ timeout: 10000 });
 }
 
