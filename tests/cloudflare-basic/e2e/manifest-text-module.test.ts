@@ -12,6 +12,21 @@ const distAssets = path.join(
   "assets",
 );
 
+function walkFiles(dir: string): string[] {
+  const found: string[] = [];
+  if (!fs.existsSync(dir)) return found;
+  const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop()!;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile()) found.push(full);
+    }
+  }
+  return found;
+}
+
 /**
  * Cloudflare builds ship the route trie / precomputedEntries as a workerd
  * Text module (assets/manifest-<routerId>-*.txt) instead of a JSON.parse
@@ -75,5 +90,51 @@ test.describe("manifest text module (production)", () => {
           .includes(textModules[0]!),
       );
     expect(imported).toBe(true);
+  });
+
+  test("text-module hygiene: one txt per router, no dual channel, rsc-only", () => {
+    const distRoot = path.join(distAssets, "..", "..");
+    const assets = fs.readdirSync(distAssets);
+    const textModules = assets.filter(
+      (a) => a.startsWith("manifest-") && a.endsWith(".txt"),
+    );
+
+    // Single-router app: exactly ONE staged manifest. A second .txt means
+    // per-router staging collided or duplicated (Bundle Hygiene rule #1 for
+    // the Text channel).
+    expect(textModules).toHaveLength(1);
+
+    // No dual channel: the trie must not ALSO ship as an inline
+    // JSON.parse("<literal>") in any rsc chunk. That regression keeps every
+    // functional test green while paying both the compile cost the Text
+    // module exists to remove AND double route-data bytes.
+    const bigLiteralRe = /JSON\.parse\((["'])((?:\\.|(?!\1).){4096,})\1\)/;
+    const dualChannel = walkFiles(path.join(distRoot, "rsc"))
+      .filter((f) => f.endsWith(".js"))
+      .filter((f) => bigLiteralRe.test(fs.readFileSync(f, "utf8")))
+      .map((f) => path.relative(distRoot, f));
+    expect(
+      dualChannel,
+      "route data must ship through the Text module only, not also as an inline literal",
+    ).toEqual([]);
+
+    // RSC-only: the staged manifest (name or payload) must not reach the
+    // client bundle.
+    const payloadHead = fs
+      .readFileSync(path.join(distAssets, textModules[0]!), "utf8")
+      .slice(0, 200);
+    const clientLeaks = walkFiles(path.join(distRoot, "client"))
+      .filter((f) => {
+        const base = path.basename(f);
+        if (base.startsWith("manifest-") && base.endsWith(".txt")) return true;
+        if (!base.endsWith(".js")) return false;
+        const src = fs.readFileSync(f, "utf8");
+        return src.includes(textModules[0]!) || src.includes(payloadHead);
+      })
+      .map((f) => path.relative(distRoot, f));
+    expect(
+      clientLeaks,
+      "the manifest Text module must not reach the client bundle",
+    ).toEqual([]);
   });
 });
