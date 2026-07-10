@@ -70,8 +70,14 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       }
     }
 
+    const serverImports = [
+      "setCachedManifest",
+      "setRouterManifest",
+      ...(state.isBuildMode ? ["registerRouterManifestLoader"] : []),
+      "clearAllRouterData",
+    ];
     const lines = [
-      `import { setCachedManifest, setRouterManifest, registerRouterManifestLoader, clearAllRouterData } from "@rangojs/router/server";`,
+      `import { ${serverImports.join(", ")} } from "@rangojs/router/server";`,
       ...genFileImports,
       // Clear stale per-router cached data (manifest, trie, precomputed entries)
       // before re-populating. In Cloudflare dev mode, program reloads re-evaluate
@@ -124,10 +130,22 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     // against live router.urlpatterns, which is always correct after a
     // program reload.
 
-    for (const routerId of state.perRouterManifestDataMap.keys()) {
-      lines.push(
-        `registerRouterManifestLoader(${JSON.stringify(routerId)}, () => import(${JSON.stringify(VIRTUAL_ROUTES_MANIFEST_ID + "/" + routerId)}));`,
-      );
+    // Loaders are registered in BUILD only. ensureRouterManifest() marks a
+    // loader-supplied trie authoritative (misses are hard 404s), which is only
+    // valid for a build-time trie from complete discovery. In dev the loader
+    // would preempt the handler's buildRouterTrieFromUrlpatterns fallback
+    // (rsc/handler.ts) and can install a STALE trie after a Cloudflare program
+    // reload: the per-router virtual module's only invalidation edge is the
+    // gen-file import, which lags the urls.tsx edit by one reload cycle, so a
+    // browser full-reload landing in that window renders a removed route from
+    // the stale-but-authoritative trie and never converges. Dev must always
+    // rebuild from live router.urlpatterns instead.
+    if (state.isBuildMode) {
+      for (const routerId of state.perRouterManifestDataMap.keys()) {
+        lines.push(
+          `registerRouterManifestLoader(${JSON.stringify(routerId)}, () => import(${JSON.stringify(VIRTUAL_ROUTES_MANIFEST_ID + "/" + routerId)}));`,
+        );
+      }
     }
     if (!state.isBuildMode && state.devServerOrigin) {
       lines.push(

@@ -154,6 +154,10 @@ export function clearAllRouterData(): void {
   perRouterTrieMap.clear();
   perRouterPrecomputedEntriesMap.clear();
   authoritativeTrieRouters.clear();
+  // Clear the loader registry too: a loader that survives a clear closes over
+  // a module import whose data predates the clear, and re-running it would
+  // re-install that stale trie as authoritative.
+  routerManifestLoaders.clear();
 }
 
 export function setRouterManifest(

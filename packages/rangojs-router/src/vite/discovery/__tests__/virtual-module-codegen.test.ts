@@ -8,7 +8,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { generatePerRouterModule } from "../virtual-module-codegen";
+import {
+  generatePerRouterModule,
+  generateRoutesManifestModule,
+} from "../virtual-module-codegen";
 import { createDiscoveryState, type DiscoveryState } from "../state";
 
 // A trie whose serialized form clears MANIFEST_EXTERNALIZE_THRESHOLD (512KB).
@@ -108,6 +111,10 @@ describe("generatePerRouterModule — cloudflare Text module channel", () => {
     expect(existsSync(ragoDir(tmpRoot))).toBe(false);
   });
 
+  // Defensive pin: dev no longer registers per-router loaders (see the
+  // "loaders are build-only" describe), so generatePerRouterModule is never
+  // reached with isBuildMode:false in a real dev session. If dev loaders ever
+  // return, dev must still not stage .txt Text modules.
   it("dev keeps the inline literal even above the threshold", () => {
     const code = generatePerRouterModule(
       makeState("cloudflare", { isBuildMode: false }),
@@ -132,6 +139,28 @@ describe("generatePerRouterModule — cloudflare Text module channel", () => {
     const code = generatePerRouterModule(makeState("cloudflare"), "r1");
     expect(code).toContain("export const trie = JSON.parse(");
     expect(code).not.toContain(".txt");
+  });
+});
+
+describe("generateRoutesManifestModule — per-router loaders are build-only", () => {
+  function makeManifestState(isBuildMode: boolean): DiscoveryState {
+    const s = makeState("node", { isBuildMode, trie: SMALL });
+    s.mergedRouteManifest = { home: "/" };
+    return s;
+  }
+
+  it("build: registers the lazy per-router manifest loader", () => {
+    const code = generateRoutesManifestModule(makeManifestState(true));
+    expect(code).toContain('registerRouterManifestLoader("r1"');
+    expect(code).toContain("virtual:rsc-router/routes-manifest/r1");
+  });
+
+  it("dev: registers NO loader — a loader-supplied trie is marked authoritative, which only a build-time trie may be; dev rebuilds from live urlpatterns", () => {
+    const code = generateRoutesManifestModule(makeManifestState(false));
+    expect(code).not.toContain("registerRouterManifestLoader");
+    // The eager name->path wiring must still be emitted in dev.
+    expect(code).toContain("setCachedManifest");
+    expect(code).toContain('setRouterManifest("r1"');
   });
 });
 
