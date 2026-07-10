@@ -135,6 +135,32 @@ describe("generatePerRouterModule — cloudflare Text module channel", () => {
   });
 });
 
+describe("generatePerRouterModule — carries only derived match data", () => {
+  it("gen-file router: bare import for the HMR edge, no manifest re-export", () => {
+    const s = makeState("node", { trie: SMALL });
+    s.perRouterManifests[0]!.sourceFile = join(tmpRoot, "src", "router.ts");
+    const code = generatePerRouterModule(s, "r1");
+
+    // Edge-only import: gen-file changes must invalidate this module in dev.
+    expect(code).toContain("router.named-routes.gen.js");
+    expect(code).toMatch(/import "[^"]*router\.named-routes\.gen\.js";/);
+    // The name->path map lives solely in the eager module (setRouterManifest).
+    expect(code).not.toContain("export const manifest");
+    expect(code).not.toContain("__flat");
+    expect(code).toContain("export const trie = JSON.parse(");
+    expect(code).toContain("export const precomputedEntries = JSON.parse(");
+  });
+
+  it("router without gen file: no manifest export, data only", () => {
+    const code = generatePerRouterModule(
+      makeState("node", { trie: SMALL }),
+      "r1",
+    );
+    expect(code).not.toContain("export const manifest");
+    expect(code).toContain("export const trie = JSON.parse(");
+  });
+});
+
 describe("generatePerRouterModule — node/vercel keep the inline literal", () => {
   for (const preset of ["node", "vercel"] as const) {
     it(`${preset}: inline literal above the threshold (no channel off cloudflare)`, () => {

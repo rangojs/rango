@@ -174,32 +174,28 @@ export function generatePerRouterModule(
   state: DiscoveryState,
   routerId: string,
 ): string {
-  // Find the per-router entry to get the gen file path
-  const routerEntry = state.perRouterManifests.find((e) => e.id === routerId);
+  const sourceFile = state.perRouterManifests.find(
+    (e) => e.id === routerId,
+  )?.sourceFile;
   const trie = state.perRouterTrieMap.get(routerId);
   const entries = state.perRouterPrecomputedMap.get(routerId);
   const lines: string[] = [];
 
-  if (routerEntry?.sourceFile) {
-    const routerDir = dirname(routerEntry.sourceFile);
-    const routerBasename = basename(routerEntry.sourceFile).replace(
-      /\.(tsx?|jsx?)$/,
-      "",
-    );
+  // No name->path map here: the eager routes-manifest module already calls
+  // setRouterManifest() with __flat(NamedRoutes) for every router, so this
+  // module carries only the derived match data (trie + precomputedEntries).
+  // The bare gen-file import is load-bearing: it is the module-graph edge that
+  // invalidates this module when routes change in dev. Without it, a Cloudflare
+  // dev program reload re-imports the cached module and ensureRouterManifest()
+  // re-installs a stale authoritative trie (wrong 404s until full restart).
+  if (sourceFile) {
+    const routerDir = dirname(sourceFile);
+    const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
     const genPath = join(
       routerDir,
       `${routerBasename}.named-routes.gen.js`,
     ).replaceAll("\\", "/");
-    lines.push(`import { NamedRoutes as _r } from ${JSON.stringify(genPath)};`);
-    lines.push(
-      `function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`,
-    );
-    lines.push(`export const manifest = __flat(_r);`);
-  } else {
-    const manifest = state.perRouterManifestDataMap.get(routerId);
-    if (manifest) {
-      lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
-    }
+    lines.push(`import ${JSON.stringify(genPath)};`);
   }
   const hasTrie = !!trie;
   const hasEntries = !!entries && entries.length > 0;

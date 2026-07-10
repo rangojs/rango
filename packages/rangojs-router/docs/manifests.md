@@ -107,9 +107,15 @@ precomputed match entries live in the lazy `virtual:rsc-router/routes-manifest/<
 chunk, populated via `await ensureRouterManifest(routerId)` before any matching.
 Keeping that data in exactly one (lazy) chunk is a hard constraint — see CLAUDE.md
 "Bundle Hygiene" rule #1; do not add `setRouteTrie`/`setPrecomputedEntries` here.
+The lazy chunk carries ONLY that derived match data — it does not re-export the
+name->path map (the eager module's `setRouterManifest()` is its sole source, and
+`ensureRouterManifest()` ignores any `manifest` field on the loaded module).
 
 The `import` of the gen file creates a dependency in Vite's module graph.
 When the gen file changes, Vite invalidates the virtual module automatically.
+The lazy per-router module keeps a bare side-effect `import` of the gen file for
+the same reason: without that edge, a Cloudflare dev program reload re-imports
+the cached per-router module and re-installs a stale authoritative trie.
 
 ## HMR Flow (Dev Only)
 

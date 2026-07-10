@@ -396,9 +396,8 @@ describe("per-router storage isolation", () => {
 });
 
 describe("ensureRouterManifest lazy loading", () => {
-  it("should load manifest from registered loader on first call", async () => {
+  it("should load trie and precomputed entries from registered loader on first call", async () => {
     const mockModule = {
-      manifest: { home: "/", about: "/about" },
       trie: { r: { n: "home", sp: "", a: [] } } as TrieNode,
       precomputedEntries: [{ staticPrefix: "", routes: { home: "/" } }],
     };
@@ -408,17 +407,19 @@ describe("ensureRouterManifest lazy loading", () => {
     );
 
     // Before loading
-    expect(getRouterManifest("lazy-site")).toBeUndefined();
+    expect(getRouterTrie("lazy-site")).toBeUndefined();
 
     // Load
     await ensureRouterManifest("lazy-site");
 
     // After loading
-    expect(getRouterManifest("lazy-site")).toEqual(mockModule.manifest);
     expect(getRouterTrie("lazy-site")).toBe(mockModule.trie);
     expect(getRouterPrecomputedEntries("lazy-site")).toBe(
       mockModule.precomputedEntries,
     );
+    // The name->path map comes only from the eager module's
+    // setRouterManifest(); the lazy module does not carry it.
+    expect(getRouterManifest("lazy-site")).toBeUndefined();
   });
 
   it("should not re-load if manifest AND trie are already set", async () => {
@@ -455,33 +456,37 @@ describe("ensureRouterManifest lazy loading", () => {
     // Loader was called to load the missing trie
     expect(loadCount).toBe(1);
     expect(getRouterTrie("manifest-only")).toBe(mockTrie);
+    // A stray manifest field on the lazy module must not clobber the
+    // eagerly-set map.
+    expect(getRouterManifest("manifest-only")).toEqual({ y: "/y" });
   });
 
   it("should remove loader after successful load", async () => {
     let loadCount = 0;
     registerRouterManifestLoader("once", () => {
       loadCount++;
-      return Promise.resolve({ manifest: { z: "/z" } });
+      return Promise.resolve({ trie: { type: "root", children: {} } as any });
     });
 
     await ensureRouterManifest("once");
     expect(loadCount).toBe(1);
 
-    // Second call: manifest exists, loader removed
+    // Second call: loader removed, not re-invoked
     await ensureRouterManifest("once");
     expect(loadCount).toBe(1);
   });
 
   it("should handle loader with partial exports", async () => {
-    // Only manifest, no trie or precomputedEntries
+    // Only trie, no precomputedEntries
+    const mockTrie = { type: "root", children: {} } as any;
     registerRouterManifestLoader("partial", () =>
-      Promise.resolve({ manifest: { a: "/a" } }),
+      Promise.resolve({ trie: mockTrie }),
     );
 
     await ensureRouterManifest("partial");
 
-    expect(getRouterManifest("partial")).toEqual({ a: "/a" });
-    expect(getRouterTrie("partial")).toBeUndefined();
+    expect(getRouterTrie("partial")).toBe(mockTrie);
+    expect(getRouterManifest("partial")).toBeUndefined();
     expect(getRouterPrecomputedEntries("partial")).toBeUndefined();
   });
 
