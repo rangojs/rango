@@ -115,6 +115,7 @@ async function buildPrefixTreeNode(
   passthroughRoutes?: string[],
   responseTypeRoutes?: Record<string, string>,
   routeSearchSchemas?: Record<string, Record<string, string>>,
+  routerId?: string,
 ): Promise<PrefixTreeNode> {
   // Resolve an async include provider (`() => import("./routes")`) so its routes
   // are walked into the build-time manifest/types/href. Runtime matching still
@@ -156,6 +157,7 @@ async function buildPrefixTreeNode(
         parent: null,
         counters: {},
         mountIndex,
+        ...(routerId ? { routerId } : {}),
         trackedIncludes, // Enable nested include tracking
       },
       () => {
@@ -227,6 +229,7 @@ async function buildPrefixTreeNode(
         passthroughRoutes,
         responseTypeRoutes,
         routeSearchSchemas,
+        routerId,
       ),
     );
 
@@ -297,6 +300,12 @@ export async function generateManifestFull<TEnv>(
   options?: {
     urlPrefix?: string;
     /**
+     * Owning router id. Threaded into the evaluation store so path() scopes
+     * its search-schema/root-scope registrations per router — same-named
+     * routes in different routers must not clobber each other.
+     */
+    routerId?: string;
+    /**
      * Called once per `"use client"` component registered as an
      * errorBoundary/notFoundBoundary fallback, with its client-reference key
      * (`$$id`). Lets the build collect fallback module ids for dedicated
@@ -328,6 +337,7 @@ export async function generateManifestFull<TEnv>(
       parent: null,
       counters: {},
       mountIndex,
+      ...(options?.routerId ? { routerId: options.routerId } : {}),
       trackedIncludes, // Enable include tracking
       // basename sets the initial URL prefix for all path() registrations
       ...(options?.urlPrefix ? { urlPrefix: options.urlPrefix } : {}),
@@ -402,6 +412,7 @@ export async function generateManifestFull<TEnv>(
       passthroughRoutes,
       responseTypeRoutes,
       routeSearchSchemas,
+      options?.routerId,
     ),
   );
 

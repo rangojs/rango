@@ -96,7 +96,7 @@ function resolveRouteName(
     // Resolution order: explicit param > scope registry > heuristic.
     const isRootScoped =
       rootScoped ??
-      isRouteRootScoped(currentRoutePrefix) ??
+      isRouteRootScoped(currentRoutePrefix, _getRequestContext()?._routerId) ??
       !currentRoutePrefix.includes(".");
     if (isRootScoped) {
       if (routeMap[lookupName] !== undefined) {
@@ -208,7 +208,9 @@ export function createHandlerContext<TEnv>(
   const variables: any = requestContext?._variables ?? {};
 
   // If route has a search schema, parse URLSearchParams into typed object
-  const searchSchema = routeName ? getSearchSchema(routeName) : undefined;
+  const searchSchema = routeName
+    ? getSearchSchema(routeName, requestContext?._routerId)
+    : undefined;
   const resolvedSearchParams = searchSchema
     ? parseSearchParams(searchParams, searchSchema)
     : searchParams;
@@ -306,7 +308,9 @@ export function createHandlerContext<TEnv>(
       routeMap,
       routeName,
       params,
-      routeName ? isRouteRootScoped(routeName) : undefined,
+      routeName
+        ? isRouteRootScoped(routeName, requestContext?._routerId)
+        : undefined,
     ),
     passthrough: createPrerenderPassthroughFn(false, isPassthroughRoute),
     _responseType: responseType,
@@ -399,7 +403,9 @@ export function createPrerenderContext<TEnv>(
       routeMap,
       routeName,
       params,
-      routeName ? isRouteRootScoped(routeName) : undefined,
+      routeName
+        ? isRouteRootScoped(routeName, _getRequestContext()?._routerId)
+        : undefined,
     ),
     passthrough: createPrerenderPassthroughFn(
       true,
@@ -496,7 +502,9 @@ export function createStaticContext<TEnv>(
       routeMap,
       routeName,
       undefined,
-      routeName ? isRouteRootScoped(routeName) : undefined,
+      routeName
+        ? isRouteRootScoped(routeName, _getRequestContext()?._routerId)
+        : undefined,
     ),
     _routeName: routeName,
   } as InternalHandlerContext<any, TEnv>;

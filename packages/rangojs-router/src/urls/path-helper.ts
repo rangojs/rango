@@ -193,7 +193,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     ctx.manifest.set(routeName, entry);
 
-    registerRouteRootScope(routeName, getRootScoped());
+    registerRouteRootScope(routeName, getRootScoped(), ctx.routerId);
 
     if (ctx.patterns) {
       ctx.patterns.set(routeName, prefixedPattern);
@@ -215,7 +215,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       if (ctx.searchSchemas) {
         ctx.searchSchemas.set(routeName, options.search);
       }
-      registerSearchSchema(routeName, options.search);
+      registerSearchSchema(routeName, options.search, ctx.routerId);
     }
 
     if (mergedUse) {

@@ -298,6 +298,10 @@ interface HelperContext {
   counters: Record<string, number>;
   forRoute?: string;
   mountIndex?: number;
+  /** Owning router id, when known (threaded by generateManifestFull). Scopes
+   *  the search-schema/root-scope registries so same-named routes in
+   *  different routers don't clobber each other (route-map-builder.ts). */
+  routerId?: string;
   metrics?: MetricsStore;
   /** True when rendering for SSR (document requests) */
   isSSR?: boolean;
@@ -491,6 +495,7 @@ export const getContext = (): {
           counters: store.counters,
           forRoute: store.forRoute,
           mountIndex: store.mountIndex,
+          routerId: store.routerId,
           metrics: store.metrics,
           isSSR: store.isSSR,
           patterns: store.patterns,
@@ -533,6 +538,7 @@ export const getContext = (): {
           counters,
           forRoute: store?.forRoute,
           mountIndex: store?.mountIndex,
+          routerId: store?.routerId,
           metrics: store?.metrics,
           isSSR: store?.isSSR,
           patterns,
