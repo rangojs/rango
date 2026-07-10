@@ -15,8 +15,6 @@ import {
   clearCachedManifest,
   clearAllRouterData,
   getGlobalRouteMap,
-  setRouteTrie,
-  getRouteTrie,
 } from "../../route-map-builder";
 
 /**
@@ -342,7 +340,6 @@ describe("per-router storage isolation", () => {
   beforeEach(() => {
     // Clear global state before each test
     clearCachedManifest();
-    setRouteTrie(null);
   });
 
   it("should store and retrieve per-router manifests independently", async () => {

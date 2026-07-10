@@ -953,16 +953,6 @@ export function createRouterDiscoveryPlugin(
         if (s.mergedRouteManifest && serverMod.setCachedManifest) {
           serverMod.setCachedManifest(s.mergedRouteManifest);
         }
-        if (
-          s.mergedPrecomputedEntries &&
-          s.mergedPrecomputedEntries.length > 0 &&
-          serverMod.setPrecomputedEntries
-        ) {
-          serverMod.setPrecomputedEntries(s.mergedPrecomputedEntries);
-        }
-        if (s.mergedRouteTrie && serverMod.setRouteTrie) {
-          serverMod.setRouteTrie(s.mergedRouteTrie);
-        }
         const perRouterSetters: Array<[Map<string, any>, string]> = [
           [s.perRouterManifestDataMap, "setRouterManifest"],
           [s.perRouterTrieMap, "setRouterTrie"],

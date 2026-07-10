@@ -162,6 +162,22 @@ describe("generateRoutesManifestModule — per-router loaders are build-only", (
     expect(code).toContain("setCachedManifest");
     expect(code).toContain('setRouterManifest("r1"');
   });
+
+  it("materializes each router's map once and shares it between the global and per-router setters", () => {
+    const code = generateRoutesManifestModule(makeManifestState(true));
+    // Single-router: one const, both setters receive the same object.
+    expect(code).toContain("const __m0 = ");
+    expect(code).toContain("setCachedManifest(__m0);");
+    expect(code).toContain('setRouterManifest("r1", __m0);');
+    // The map is not re-materialized per setter.
+    expect(code.match(/JSON\.parse\(/g)?.length ?? 0).toBe(1);
+  });
+
+  it("does not emit merged trie/precomputed setters (per-router data only)", () => {
+    const code = generateRoutesManifestModule(makeManifestState(true));
+    expect(code).not.toContain("setRouteTrie");
+    expect(code).not.toContain("setPrecomputedEntries");
+  });
 });
 
 describe("generatePerRouterModule — carries only derived match data", () => {

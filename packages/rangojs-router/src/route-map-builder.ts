@@ -12,11 +12,6 @@ let globalRouteMap: Record<string, string> = {};
 
 let cachedManifest: Record<string, string> | null = null;
 
-let cachedPrecomputedEntries: Array<{
-  staticPrefix: string;
-  routes: Record<string, string>;
-}> | null = null;
-
 /**
  * Register routes into the global route map.
  * Routes are merged with any existing registered routes.
@@ -87,43 +82,6 @@ export function clearCachedManifest(): void {
   cachedManifest = null;
 }
 
-/**
- * Set pre-computed route entries from build-time data.
- *
- * Each entry corresponds to a leaf node in the prefix tree (no nested includes).
- * evaluateLazyEntry() checks these before running the handler, avoiding the
- * 5-50ms cost of handler evaluation for route matching on the first request.
- *
- * @param entries - Array of { staticPrefix, routes } from build-time prefix tree leaves
- */
-export function setPrecomputedEntries(
-  entries: Array<{
-    staticPrefix: string;
-    routes: Record<string, string>;
-  }> | null,
-): void {
-  cachedPrecomputedEntries = entries;
-}
-
-/**
- * Get pre-computed route entries (if available)
- */
-export function getPrecomputedEntries(): typeof cachedPrecomputedEntries {
-  return cachedPrecomputedEntries;
-}
-
-// Route trie for O(path_length) matching at runtime.
-// Built at build time from the route manifest and serialized into the virtual module.
-let cachedRouteTrie: import("./build/route-trie.js").TrieNode | null = null;
-
-export function setRouteTrie(trie: typeof cachedRouteTrie): void {
-  cachedRouteTrie = trie;
-}
-
-export function getRouteTrie(): typeof cachedRouteTrie {
-  return cachedRouteTrie;
-}
-
 // Per-router isolated data: each router gets its own manifest, trie, and
 // precomputed entries so multi-router setups (e.g. site + admin via
 // createHostRouter()) don't see each other's routes.
@@ -146,8 +104,6 @@ const perRouterPrecomputedEntriesMap: Map<
 export function clearAllRouterData(): void {
   globalRouteMap = {};
   cachedManifest = null;
-  cachedPrecomputedEntries = null;
-  cachedRouteTrie = null;
   rootScopeRoutes.clear();
   globalSearchSchemas.clear();
   perRouterManifestMap.clear();
@@ -233,9 +189,9 @@ export async function ensureRouterManifest(routerId: string): Promise<void> {
   // name->path map is pre-set by the eager virtual module's
   // setRouterManifest() and never comes from the loader). Gating on the
   // manifest instead would let the loader be skipped while the per-router
-  // trie is missing, and findMatch would fall back to the global merged
-  // trie — which contains routes from ALL routers and breaks multi-router
-  // setups.
+  // trie is missing, and findMatch would fall back to insertion-order regex
+  // matching — which mishandles wildcard priority (catch-alls match before
+  // specific routes).
   if (perRouterTrieMap.has(routerId)) return;
   const loader = routerManifestLoaders.get(routerId);
   if (loader) {

@@ -21,8 +21,6 @@ vi.mock("../ssr-setup.js", async (importOriginal) => {
 // Also provides getGlobalRouteMap/isRouteRootScoped used by request-context.
 vi.mock("../../route-map-builder.js", () => ({
   hasCachedManifest: () => true,
-  getRouteTrie: () => null,
-  getPrecomputedEntries: () => undefined,
   waitForManifestReady: () => null,
   getRouterManifest: () => ({ home: "/" }),
   getRouterTrie: () => null,

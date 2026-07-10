@@ -9,8 +9,6 @@ import {
   getGlobalRouteMap,
   hasCachedManifest,
   setCachedManifest,
-  getRouteTrie,
-  setRouteTrie,
   setRouterManifest,
   setRouterTrie,
   setRouterPrecomputedEntries,
@@ -45,10 +43,6 @@ export async function buildRouterTrieFromUrlpatterns(
   const trie = buildPerRouterTrie(generated);
   if (trie) {
     setRouterTrie(router.id, trie);
-    // Set global trie only if not already set by another router
-    if (!getRouteTrie()) {
-      setRouteTrie(trie);
-    }
   }
   setRouterManifest(router.id, generated.routeManifest);
 

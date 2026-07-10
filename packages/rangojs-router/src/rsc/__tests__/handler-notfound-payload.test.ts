@@ -27,8 +27,6 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 // Manifest is always "available" so the handler does not short-circuit.
 vi.mock("../../route-map-builder.js", () => ({
   hasCachedManifest: () => true,
-  getRouteTrie: () => null,
-  getPrecomputedEntries: () => undefined,
   waitForManifestReady: () => null,
   getRouterManifest: () => ({ home: "/" }),
   getRouterTrie: () => null,

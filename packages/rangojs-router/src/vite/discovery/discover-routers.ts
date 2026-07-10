@@ -19,12 +19,9 @@ import {
 // boundary tree regardless of which realm imported the walker. Only
 // generateManifestFull must stay on the runner (it invokes user handlers via
 // RangoContext from the runner realm) — see the runner.import below.
-import { buildRouteTrie, buildPerRouterTrie } from "../../build/route-trie.js";
+import { buildPerRouterTrie } from "../../build/route-trie.js";
 import { collectFallbackClientRefs } from "../../build/collect-fallback-refs.js";
-import {
-  flattenLeafEntries,
-  buildRouteToStaticPrefix,
-} from "../utils/manifest-utils.js";
+import { flattenLeafEntries } from "../utils/manifest-utils.js";
 import type { DiscoveryState, PrecomputedEntry } from "./state.js";
 import {
   expandPrerenderRoutes,
@@ -145,12 +142,10 @@ export async function discoverRouters(
   // full pass succeeds, so a failed re-discovery preserves the last
   // known-good state instead of leaving it partially wiped.
   const newMergedRouteManifest: Record<string, string> = {};
-  const newMergedPrecomputedEntries: PrecomputedEntry[] = [];
   const newPerRouterManifests: typeof state.perRouterManifests = [];
   const newPerRouterManifestDataMap = new Map<string, any>();
   const newPerRouterPrecomputedMap = new Map<string, PrecomputedEntry[]>();
   const newPerRouterTrieMap = new Map<string, any>();
-  let mergedRouteTrailingSlash: Record<string, string> = {};
 
   let routerMountIndex = 0;
   // Collect all manifests for trie building (avoid re-running generateManifest)
@@ -244,24 +239,15 @@ export async function discoverRouters(
       factoryOnlyPrefixes,
     });
 
-    // Merge trailing slash config
-    if (manifest.routeTrailingSlash) {
-      Object.assign(mergedRouteTrailingSlash, manifest.routeTrailingSlash);
-    }
-
     // Flatten prefix tree leaf nodes into precomputed entries.
     // Leaf nodes (no children) can have their routes used directly by
     // evaluateLazyEntry() without running the handler at runtime.
-    // Walk once into a per-router array, then fold it into the merged array;
-    // the merged and per-router entries are identical, so a second walk is
-    // redundant. Append order is preserved within and across routers.
     const routerPrecomputed: PrecomputedEntry[] = [];
     flattenLeafEntries(
       manifest.prefixTree,
       manifest.routeManifest,
       routerPrecomputed,
     );
-    newMergedPrecomputedEntries.push(...routerPrecomputed);
 
     // Store per-router manifest and precomputed entries for isolated virtual modules.
     newPerRouterManifestDataMap.set(id, manifest.routeManifest);
@@ -298,53 +284,11 @@ export async function discoverRouters(
     (performance.now() - manifestGenStart).toFixed(1),
   );
 
-  // Build route trie from merged manifest
-  let newMergedRouteTrie: any = null;
+  // No merged trie is built: find-match.ts consumes per-router tries only
+  // (getRouterTrie(routerId)), falling back to regex over live routes on a
+  // gap — the global merged trie was never read by any matcher.
   const trieStart = debug ? performance.now() : 0;
   if (Object.keys(newMergedRouteManifest).length > 0) {
-    // Build routeToStaticPrefix from saved manifests
-    const routeToStaticPrefix: Record<string, string> = {};
-    for (const { manifest } of allManifests) {
-      // Root-level routes have empty static prefix
-      for (const name of Object.keys(manifest.routeManifest)) {
-        if (!(name in routeToStaticPrefix)) {
-          routeToStaticPrefix[name] = "";
-        }
-      }
-      buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
-    }
-
-    // Collect prerender route names and response type routes from all manifests
-    const prerenderRouteNames = new Set<string>();
-    const passthroughRouteNames = new Set<string>();
-    const mergedResponseTypeRoutes: Record<string, string> = {};
-    for (const { manifest } of allManifests) {
-      if (manifest.prerenderRoutes) {
-        for (const name of manifest.prerenderRoutes) {
-          prerenderRouteNames.add(name);
-        }
-      }
-      if (manifest.passthroughRoutes) {
-        for (const name of manifest.passthroughRoutes) {
-          passthroughRouteNames.add(name);
-        }
-      }
-      if (manifest.responseTypeRoutes) {
-        Object.assign(mergedResponseTypeRoutes, manifest.responseTypeRoutes);
-      }
-    }
-
-    // buildRouteTrie reads these via ?.has / ?.[] — empty is observationally
-    // identical to undefined, so no empty->undefined coercion is needed.
-    newMergedRouteTrie = buildRouteTrie(
-      newMergedRouteManifest,
-      routeToStaticPrefix,
-      mergedRouteTrailingSlash,
-      prerenderRouteNames,
-      passthroughRouteNames,
-      mergedResponseTypeRoutes,
-    );
-
     // Build per-router tries for multi-router isolation. Uses the single
     // shared buildPerRouterTrie so the production serialized trie is built by
     // exactly the same code as the dev/HMR runtime rebuild (manifest-init.ts).
@@ -366,12 +310,10 @@ export async function discoverRouters(
   // This ensures a failed re-discovery (e.g. from a transient module
   // evaluation error) preserves the last known-good state.
   state.mergedRouteManifest = newMergedRouteManifest;
-  state.mergedPrecomputedEntries = newMergedPrecomputedEntries;
   state.perRouterManifests = newPerRouterManifests;
   state.perRouterManifestDataMap = newPerRouterManifestDataMap;
   state.perRouterPrecomputedMap = newPerRouterPrecomputedMap;
   state.perRouterTrieMap = newPerRouterTrieMap;
-  state.mergedRouteTrie = newMergedRouteTrie;
 
   // Install the route tries into the RSC realm BEFORE prerender collection.
   // matchForPrerender resolves each enumerated URL via findMatch, and without
@@ -386,9 +328,6 @@ export async function discoverRouters(
   // collection was the one findMatch consumer running trieless. Mirrors the
   // dev perRouterSetters loop; deliberately does NOT markRouterTrieAuthoritative
   // so a genuine trie gap keeps the regex fallback, exactly as in dev.
-  if (serverMod.setRouteTrie && newMergedRouteTrie) {
-    serverMod.setRouteTrie(newMergedRouteTrie);
-  }
   const perRouterSetters: Array<[Map<string, unknown>, string]> = [
     [newPerRouterManifestDataMap, "setRouterManifest"],
     [newPerRouterTrieMap, "setRouterTrie"],

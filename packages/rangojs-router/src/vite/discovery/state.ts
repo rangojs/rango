@@ -104,8 +104,6 @@ export interface DiscoveryState {
 
   mergedRouteManifest: Record<string, string> | null;
   perRouterManifests: PerRouterManifestEntry[];
-  mergedPrecomputedEntries: PrecomputedEntry[] | null;
-  mergedRouteTrie: any;
 
   perRouterTrieMap: Map<string, any>;
   perRouterPrecomputedMap: Map<string, PrecomputedEntry[]>;
@@ -177,8 +175,6 @@ export function createDiscoveryState(
 
     mergedRouteManifest: null,
     perRouterManifests: [],
-    mergedPrecomputedEntries: null,
-    mergedRouteTrie: null,
 
     perRouterTrieMap: new Map(),
     perRouterPrecomputedMap: new Map(),
