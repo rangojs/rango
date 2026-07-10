@@ -11,6 +11,11 @@ export const urlpatterns = urls(({ path }) => [
     () => <div data-testid="fast-render">Fast render</div>,
     { name: "timeout.fastRender" },
   ),
+  path(
+    "/timeout/slow-html-setup",
+    () => <div data-testid="slow-html-setup">Should not render</div>,
+    { name: "timeout.slowHtmlSetup" },
+  ),
   path.json("/timeout/fast-response", () => ({ ok: true }), {
     name: "timeout.fastResponse",
   }),

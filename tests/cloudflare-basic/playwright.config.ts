@@ -49,17 +49,30 @@ export default defineConfig({
       // makes the whole production suite dogfood the Text channel on real
       // workerd, and lets manifest-text-module.test.ts assert the artifact
       // deterministically. Dev is unaffected (the channel is build-only).
+      // RANGO_E2E_RENDER_TIMEOUT=1 arms the render-timeout diagnostics fixture
+      // in src/router.tsx (vite.config.ts inlines it via `define`). This
+      // webServer runs the build, so the flag is baked into dist/ that the
+      // production preview below serves — both dev and (production) describes of
+      // render-timeout-stage.test.ts get the 15s deadline + onTimeout. It is off
+      // on every non-e2e build.
       command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
       port: DEV_PORT,
       reuseExistingServer: true,
-      env: { ...process.env, RANGO_MANIFEST_TEXT: "1" },
+      env: {
+        ...process.env,
+        RANGO_MANIFEST_TEXT: "1",
+        RANGO_E2E_RENDER_TIMEOUT: "1",
+      },
     },
     {
       // Shared preview server for all production tests. Started after the dev
       // server (which includes the build step) so dist/ is guaranteed to exist.
+      // RANGO_E2E_RENDER_TIMEOUT=1 kept in sync with the dev webServer above so
+      // a preview-triggered rebuild bakes in the same render-timeout fixture.
       command: `pnpm preview --port ${PREVIEW_PORT}`,
       port: PREVIEW_PORT,
       reuseExistingServer: true,
+      env: { ...process.env, RANGO_E2E_RENDER_TIMEOUT: "1" },
     },
   ],
   // In UI mode, flatten projects to avoid the dependency chain that breaks

@@ -57,11 +57,20 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
   // The first cold request on CI can exceed the 2s timeout due to module
   // compilation. We warm each route until we get a response (not necessarily
   // 200 — slow-render and slow-response intentionally timeout with 504).
-  test.beforeAll(async () => {
+  test.beforeAll(async ({}, testInfo) => {
+    // Hooks default to the 60s project timeout (playwright.config.ts:50), NOT
+    // the describe-level 90s/120s test.setTimeout. This warm loop can block far
+    // longer: 3 routes (slow-render, slow-response, slow-html-setup) each hold
+    // the connection ~10s until the render timeout fires, plus cold Vite
+    // compile, and each of the 6 routes carries a 30s retry deadline (6 x 30s =
+    // 180s worst case). Raise the hook budget to that upper bound so a loaded CI
+    // runner doesn't time the hook out and fail every test in the describe.
+    testInfo.setTimeout(180_000);
     const routesToWarm = [
       "/",
       "/timeout/fast-render",
       "/timeout/slow-action",
+      "/timeout/slow-html-setup",
       "/timeout/slow-render",
       "/timeout/slow-response",
     ];
@@ -132,6 +141,29 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     expect(error.metadata).toBeDefined();
     expect(error.metadata!.timeout).toBe(true);
     expect(error.metadata!.phase).toBe("render-start");
+  });
+
+  test("HTML setup timeout reports the foreground render stage", async ({
+    page,
+  }) => {
+    await page.request.get(f.url("/__test/last-error"));
+
+    const response = await page.request.get(f.url("/timeout/slow-html-setup"));
+    expect(response.status()).toBe(504);
+
+    const error = await waitForOnError(
+      page,
+      f.url("/__test/last-error"),
+      "handler",
+      30000,
+    );
+    expect(error.metadata?.render).toMatchObject({
+      mode: "full",
+      phase: "html",
+      state: "running",
+      completed: 1,
+      total: 3,
+    });
   });
 
   test("slow action triggers onError with action phase", async ({ page }) => {

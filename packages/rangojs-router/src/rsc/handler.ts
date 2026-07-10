@@ -25,15 +25,12 @@ import type {
   SSRModule,
 } from "./types.js";
 import {
-  RSC_FLIGHT_HTML_PHASES,
-  RSC_FLIGHT_ONLY_PHASES,
   createResponseWithMergedHeaders,
   finalizeResponse,
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
-  observeRscHtmlStage,
-  renderRscFlightStage,
 } from "./helpers.js";
+import { renderRscFlightStage, renderRscResponse } from "./render-pipeline.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import {
@@ -78,9 +75,11 @@ import {
 import { handleRscRendering } from "./rsc-rendering.js";
 import {
   withTimeout,
+  isTimeoutEnabled,
   RouterTimeoutError,
   createDefaultTimeoutResponse,
   type TimeoutPhase,
+  type RenderTimeoutContext,
 } from "../router/timeout.js";
 import {
   createMetricsStore,
@@ -91,7 +90,7 @@ import { observePhase, PHASES } from "../router/instrument.js";
 import { safeEmit, resolveSink, getRequestId } from "../router/telemetry.js";
 import {
   startSSRSetup,
-  getSSRSetup,
+  createSsrHtmlStage,
   mayNeedSSR,
   isRscRequest,
   SSR_SETUP_VAR,
@@ -238,7 +237,25 @@ export function createRSCHandler<
     actionId?: string,
   ): Promise<Response> {
     const timeoutError = new RouterTimeoutError(phase, durationMs);
+    const cursor = _getRequestContext<TEnv>()?._renderForeground;
+    const render: RenderTimeoutContext | undefined =
+      phase === "render-start" && cursor
+        ? {
+            mode: cursor.mode,
+            phase: cursor.phase,
+            state: cursor.state,
+            completed: cursor.completed,
+            total: cursor.total,
+            ...(cursor.phaseStartedAt !== undefined && {
+              phaseDurationMs: performance.now() - cursor.phaseStartedAt,
+            }),
+          }
+        : undefined;
 
+    // Each surface gets its OWN shallow copy of the snapshot. onError, telemetry,
+    // and onTimeout are independent consumers; a consumer that mutates its
+    // `render` (e.g. an onError redacting metadata) must not corrupt what the
+    // other two observe.
     callOnError(timeoutError, phase === "action" ? "action" : "handler", {
       request,
       url,
@@ -246,7 +263,12 @@ export function createRSCHandler<
       routeKey,
       actionId,
       handledByBoundary: false,
-      metadata: { timeout: true, phase, durationMs },
+      metadata: {
+        timeout: true,
+        phase,
+        durationMs,
+        ...(render && { render: { ...render } }),
+      },
     });
 
     if (router.telemetry) {
@@ -260,6 +282,7 @@ export function createRSCHandler<
         actionId,
         durationMs,
         customHandler: !!router.onTimeout,
+        ...(render && { render: { ...render } }),
       });
     }
 
@@ -273,6 +296,7 @@ export function createRSCHandler<
           routeKey,
           actionId,
           durationMs,
+          ...(render && { render: { ...render } }),
         });
       } catch (e) {
         if (process.env.NODE_ENV !== "production") {
@@ -305,23 +329,19 @@ export function createRSCHandler<
     };
     const reqCtx = _getRequestContext<TEnv>();
     const rscStream = reqCtx
-      ? renderRscFlightStage(
-          {
-            ctx: { renderToReadableStream, callOnError },
-            request: reqCtx.request,
-            url: reqCtx.url,
-            env: reqCtx.env,
-            payload: redirectPayload,
-            tracking: {
-              mode: reqCtx.url.searchParams.has("_rsc_action")
-                ? "action-revalidation"
-                : "partial",
-              routeKey: reqCtx._routeName,
-              phases: RSC_FLIGHT_ONLY_PHASES,
-            },
+      ? renderRscFlightStage({
+          ctx: { renderToReadableStream, callOnError },
+          request: reqCtx.request,
+          url: reqCtx.url,
+          env: reqCtx.env,
+          payload: redirectPayload,
+          tracking: {
+            mode: reqCtx.url.searchParams.has("_rsc_action")
+              ? "action-revalidation"
+              : "partial",
+            routeKey: reqCtx._routeName,
           },
-          performance.now(),
-        ).stream
+        }).stream
       : renderToReadableStream<RscPayload>(redirectPayload);
     return createResponseWithMergedHeaders(rscStream, {
       status: 200,
@@ -477,6 +497,12 @@ export function createRSCHandler<
       stateCookieName: router.resolvedStateCookieName,
       version,
     });
+    // Gate on the SAME enabled-semantics withTimeout uses (isTimeoutEnabled):
+    // a `renderStartMs: 0` / negative opt-out disables the timeout, so the
+    // driver's cursor bookkeeping (which only the timeout reads) must be off too.
+    requestContext._renderDiagnosticsEnabled = isTimeoutEnabled(
+      router.timeouts.renderStartMs,
+    );
     // Thread the true request entry timestamp onto the context so a metrics
     // store created MID-request (ctx.debugPerformance() / getMetricsStore) anchors
     // to the real start, not the opt-in moment — phases that began earlier then
@@ -1170,54 +1196,49 @@ export function createRSCHandler<
           const notFoundStageTracking = {
             mode: isPartial ? ("partial" as const) : ("full" as const),
             routeKey,
-            phases: isNotFoundFlightResponse
-              ? RSC_FLIGHT_ONLY_PHASES
-              : RSC_FLIGHT_HTML_PHASES,
           };
-          const rscStream = renderRscFlightStage(
+          return renderRscResponse(
             {
               ctx: { renderToReadableStream, callOnError },
               request,
               url,
               env,
               payload,
+              // The 404 path historically records no rsc-serialize metric (it
+              // used the standalone Flight constructor, whose gate was opt-in);
+              // opt out explicitly since renderRscResponse defaults the gate on.
+              recordSerializeMetric: false,
+              init: isNotFoundFlightResponse
+                ? {
+                    status: 404,
+                    headers: {
+                      "content-type": "text/x-component;charset=utf-8",
+                      // Router identity for the client's pre-decode integrity
+                      // check; a same-app 404 applies in place.
+                      "X-RSC-Router-Id": router.id,
+                    },
+                  }
+                : {
+                    status: 404,
+                    headers: {
+                      "content-type": "text/html;charset=utf-8",
+                    },
+                  },
               tracking: notFoundStageTracking,
             },
-            performance.now(),
-          ).stream;
-
-          if (isNotFoundFlightResponse) {
-            return createResponseWithMergedHeaders(rscStream, {
-              status: 404,
-              headers: {
-                "content-type": "text/x-component;charset=utf-8",
-                // Router identity for the client's pre-decode integrity check; a
-                // same-app 404 matches and applies in place. See response-adapter.
-                "X-RSC-Router-Id": router.id,
-              },
-            });
-          }
-
-          const [ssrModule, streamMode] = await getSSRSetup(
-            handlerCtx,
-            request,
-            env,
-            url,
-            getRequestContext()._metricsStore,
+            isNotFoundFlightResponse
+              ? undefined
+              : {
+                  html: createSsrHtmlStage({
+                    ctx: handlerCtx,
+                    request,
+                    env,
+                    url,
+                    metricsStore: getRequestContext()._metricsStore,
+                    render: { nonce },
+                  }),
+                },
           );
-          const htmlStream = await observeRscHtmlStage(
-            { url, tracking: notFoundStageTracking },
-            () =>
-              ssrModule.renderHTML(rscStream, {
-                nonce,
-                streamMode,
-              }),
-          );
-
-          return createResponseWithMergedHeaders(htmlStream, {
-            status: 404,
-            headers: { "content-type": "text/html;charset=utf-8" },
-          });
         }
 
         // Report unhandled errors

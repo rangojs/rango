@@ -56,7 +56,7 @@ import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
-import { RSC_FLIGHT_ONLY_PHASES, renderRscFlightStage } from "./helpers.js";
+import { renderRscFlightStage } from "./render-pipeline.js";
 
 /**
  * Task-quantized quiesce: the number of consecutive macrotask hops with zero new
@@ -1132,21 +1132,17 @@ async function attemptCapture(
       derivedCtx,
       freshHandleStore,
     );
-    const flightStage = renderRscFlightStage(
-      {
-        ctx,
-        request,
-        env,
-        url,
-        payload,
-        tracking: {
-          mode: "full",
-          routeKey: derivedCtx._routeName,
-          phases: RSC_FLIGHT_ONLY_PHASES,
-        },
+    const flightStage = renderRscFlightStage({
+      ctx,
+      request,
+      env,
+      url,
+      payload,
+      tracking: {
+        mode: "full",
+        routeKey: derivedCtx._routeName,
       },
-      performance.now(),
-    );
+    });
 
     // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
     // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside

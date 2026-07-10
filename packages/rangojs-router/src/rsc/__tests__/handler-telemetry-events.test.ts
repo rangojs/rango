@@ -80,6 +80,7 @@ import { createRSCHandler } from "../handler.js";
 import { getRequestContext } from "../../server/request-context.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";
 import type { TelemetryEvent } from "../../router/telemetry.js";
+import type { TimeoutContext } from "../../router/timeout.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -138,6 +139,65 @@ describe("handler telemetry events reach the sink outside the match ALS", () => 
     expect(e.customHandler).toBe(false);
     expect(typeof e.durationMs).toBe("number");
     expect(typeof e.requestId).toBe("string");
+  });
+
+  it("gives each timeout surface its own render snapshot copy", async () => {
+    const events: TelemetryEvent[] = [];
+    const timeoutContexts: TimeoutContext[] = [];
+    const { handleResponseRoute } =
+      await import("../response-route-handler.js");
+    vi.mocked(handleResponseRoute).mockImplementationOnce(() => {
+      getRequestContext()._renderForeground = {
+        mode: "full",
+        phase: "html",
+        state: "running",
+        completed: 1,
+        total: 3,
+        pipelineStartedAt: performance.now() - 10,
+        phaseStartedAt: performance.now() - 5,
+      };
+      return new Promise<Response>(() => {});
+    });
+
+    const router = createMockRouter({
+      telemetry: { emit: (event: TelemetryEvent) => events.push(event) },
+      onTimeout: (ctx: TimeoutContext) => {
+        timeoutContexts.push(ctx);
+        return new Response("timed out", { status: 504 });
+      },
+      // onError runs BEFORE telemetry and onTimeout. Mutating its own copy must
+      // not corrupt what the other two observe (finding 2).
+      onError: (ctx: { metadata?: Record<string, unknown> }) => {
+        const render = ctx.metadata?.render as { state?: string } | undefined;
+        if (render) render.state = "leaked";
+      },
+    } as any);
+    const handler = createRSCHandler({ router });
+    const response = await handler(
+      new Request("https://example.com/api/data"),
+      { env: {} },
+    );
+
+    expect(response.status).toBe(504);
+    const timeoutEvent = events.find(
+      (event): event is Extract<TelemetryEvent, { type: "request.timeout" }> =>
+        event.type === "request.timeout",
+    );
+    expect(timeoutEvent?.render).toMatchObject({
+      mode: "full",
+      phase: "html",
+      state: "running",
+      completed: 1,
+      total: 3,
+    });
+    expect(timeoutEvent?.render?.phaseDurationMs).toBeGreaterThanOrEqual(0);
+    // Independent objects: onError's mutation did NOT leak into telemetry or
+    // onTimeout, both of which still see state "running".
+    expect(timeoutContexts[0]?.render).not.toBe(timeoutEvent?.render);
+    expect(timeoutEvent?.render?.state).toBe("running");
+    expect(timeoutContexts[0]?.render?.state).toBe("running");
+    // Same value across surfaces, differing only by reference.
+    expect(timeoutContexts[0]?.render).toEqual(timeoutEvent?.render);
   });
 
   it("case B: request.origin-rejected reaches the configured sink", async () => {
