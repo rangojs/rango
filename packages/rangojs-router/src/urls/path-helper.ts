@@ -6,6 +6,7 @@ import {
   getNamePrefix,
   getRootScoped,
   requireDslContext,
+  stampStaticDefScope,
 } from "../server/context";
 import { invariant, DataNotFoundError } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
@@ -182,8 +183,11 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
         : {}),
     };
 
-    if (isStaticHandler(handler) && handler.$$id && ctx.namePrefix) {
-      (handler as any).$$routePrefix = ctx.namePrefix;
+    if (isStaticHandler(handler) && handler.$$id) {
+      if (ctx.namePrefix) {
+        (handler as any).$$routePrefix = ctx.namePrefix;
+      }
+      stampStaticDefScope(handler, routeName);
     }
 
     invariant(

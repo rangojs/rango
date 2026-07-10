@@ -34,6 +34,9 @@ import type {
 import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface PrerenderMatchDeps<TEnv = any> {
+  /** Owning router id; scopes bake-time root-scope/search-schema lookups the
+   *  same way reqCtx._routerId does at runtime (issue #762). */
+  routerId?: string;
   findMatch: (
     pathname: string,
   ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
@@ -244,8 +247,13 @@ export async function matchForPrerender<TEnv = any>(
         deps.mergedRouteMap,
         matched.routeKey,
         matchedParams,
-        matched.routeKey ? isRouteRootScoped(matched.routeKey) : undefined,
+        matched.routeKey
+          ? isRouteRootScoped(matched.routeKey, deps.routerId)
+          : undefined,
       ),
+      // Scope the bake context's own lookups (createPrerenderContext reads it
+      // through the request ALS) per router as well.
+      _routerId: deps.routerId,
     };
 
     return runWithRequestContext(minimalRequestContext, async () => {
@@ -464,6 +472,8 @@ export async function renderStaticSegment<TEnv = any>(
   routeName?: string,
   buildEnv?: TEnv,
   devMode?: boolean,
+  routerId?: string,
+  rootScoped?: boolean,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -514,8 +524,15 @@ export async function renderStaticSegment<TEnv = any>(
       mergedRouteMap,
       routeName,
       {},
-      routeName ? isRouteRootScoped(routeName) : undefined,
+      // Def-stamped value first: the collector passes the mount-time
+      // root-scope captured on the Static definition (stampStaticDefScope),
+      // which needs no registry lookup and survives name-prefix arguments.
+      rootScoped ??
+        (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
     ),
+    // Scope the bake context's own lookups (createStaticContext reads it
+    // through the request ALS) per router as well.
+    _routerId: routerId,
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {

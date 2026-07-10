@@ -469,6 +469,7 @@ export interface RangoInternal<
     routeName?: string,
     buildEnv?: any,
     devMode?: boolean,
+    rootScoped?: boolean,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**

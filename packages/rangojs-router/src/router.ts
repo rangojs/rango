@@ -667,6 +667,7 @@ export function createRouter<TEnv = any>(
 
   // Prerender/static match deps (bind closure state for extracted functions)
   const prerenderDeps = {
+    routerId,
     findMatch,
     buildRouterContext,
     mergedRouteMap,
@@ -698,6 +699,7 @@ export function createRouter<TEnv = any>(
     routeName?: string,
     buildEnv?: TEnv,
     devMode?: boolean,
+    rootScoped?: boolean,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
@@ -706,6 +708,8 @@ export function createRouter<TEnv = any>(
       routeName,
       buildEnv,
       devMode,
+      routerId,
+      rootScoped,
     );
   }
 

@@ -672,6 +672,27 @@ export function getRootScoped(): boolean {
   return store?.rootScoped ?? true;
 }
 
+/**
+ * Stamp build-time scope identity onto a Static() definition at mount time.
+ * The bake collector (prerender-collection.ts) renders defs OUTSIDE any
+ * evaluation scope and used to iterate the registry first-non-null, so these
+ * are the ONLY reliable carriers of the def's owning router, root-scope, and
+ * full route name — a name-keyed registry lookup at bake time reproduces the
+ * cross-router collision #757/#762 fixed (and the collector's historical
+ * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
+ * never contains, silently degrading to the dot-heuristic).
+ */
+export function stampStaticDefScope(
+  handler: unknown,
+  routeName?: string,
+): void {
+  const store = RangoContext.getStore();
+  const def = handler as Record<string, unknown>;
+  if (routeName !== undefined) def.$$routeName = routeName;
+  def.$$rootScoped = getRootScoped();
+  if (store?.routerId !== undefined) def.$$routerId = store.routerId;
+}
+
 // Export HelperContext type for use in other modules
 export type { HelperContext };
 
