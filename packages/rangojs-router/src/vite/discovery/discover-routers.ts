@@ -184,6 +184,7 @@ export async function discoverRouters(
       router.urlpatterns,
       routerMountIndex,
       {
+        routerId: id,
         ...(router.__basename ? { urlPrefix: router.__basename } : {}),
         ...(collectClientFallbackRef ? { collectClientFallbackRef } : {}),
       },

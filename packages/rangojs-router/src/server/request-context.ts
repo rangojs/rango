@@ -606,6 +606,10 @@ export interface RequestContext<
   /** @internal Router basename for this request (used by redirect()) */
   _basename?: string;
 
+  /** @internal Owning router id; scopes the search-schema/root-scope registry
+   *  lookups per router (route-map-builder.ts) */
+  _routerId?: string;
+
   /**
    * @internal RouteSnapshot from classifyRequest, reused by match/matchPartial
    * to avoid a second resolveRoute call. Cleared on HMR invalidation.
@@ -674,6 +678,7 @@ export type PublicRequestContext<
   | "_renderDiagnosticsEnabled"
   | "_handlerStart"
   | "_basename"
+  | "_routerId"
   | "_setStatus"
   | "_rotateStateCookie"
   | "_setKeepCacheDirective"
@@ -765,7 +770,7 @@ export function setRequestContextParams(
       routeMap ?? getGlobalRouteMap(),
       routeName,
       params,
-      routeName ? isRouteRootScoped(routeName) : undefined,
+      routeName ? isRouteRootScoped(routeName, ctx._routerId) : undefined,
     );
   }
 }

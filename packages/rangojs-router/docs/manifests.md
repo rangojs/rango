@@ -181,6 +181,13 @@ Each `createRouter()` gets isolated data:
 
 `ctx.reverse()` resolves via `getRouterManifest(routerId) ?? getGlobalRouteMap()`.
 
+Search schemas and root-scope flags are per-router the same way: `path()` registers
+them under the evaluating router's id (threaded through the evaluation store by
+createRouter/generateManifestFull/lazy-include contexts), and lookups pass
+`reqCtx._routerId` so same-named routes in different routers keep their own
+schema. The name-keyed global tier remains as the fallback for contexts with no
+router identity (single-router apps, unit tests).
+
 Per-router virtual modules (`virtual:rsc-router/routes-manifest/<routerId>`) are loaded lazily
 via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request — in BUILD
 only. `ensureRouterManifest()` marks a loader-supplied trie authoritative (misses are hard

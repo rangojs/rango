@@ -171,6 +171,7 @@ function runExpansion<TEnv = any>(
       counters: lazyCounters,
       cacheProfiles: lazyContext?.cacheProfiles,
       rootScoped: lazyContext?.rootScoped,
+      routerId: lazyContext?.routerId,
       includeScope: lazyContext?.includeScope,
     },
     () => {

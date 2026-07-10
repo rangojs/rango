@@ -413,6 +413,7 @@ export async function dispatch<TEnv = any>(
   // with it. Mirror it so basename-redirect tests behave as they do in a real
   // mounted app instead of always seeing no prefix.
   requestContext._basename = router.basename;
+  requestContext._routerId = routerId;
 
   // Match production's response-route reverse EXACTLY: the real handler builds
   // it from the route map alone (response-route-handler.ts), with NO matched

@@ -105,7 +105,9 @@ export function clearAllRouterData(): void {
   globalRouteMap = {};
   cachedManifest = null;
   rootScopeRoutes.clear();
+  perRouterRootScopeRoutes.clear();
   globalSearchSchemas.clear();
+  perRouterSearchSchemas.clear();
   perRouterManifestMap.clear();
   perRouterTrieMap.clear();
   perRouterPrecomputedEntriesMap.clear();
@@ -225,7 +227,16 @@ export function waitForManifestReady(): Promise<void> | null {
 // Tracks whether each route is at root scope (no named include boundary above).
 // Used by dot-local reverse resolution to decide whether bare-name fallback
 // is allowed after scoped lookups are exhausted.
+//
+// Both this and the search-schema registry below are keyed by route NAME and
+// registered by path() at evaluation time. Two routers can legally declare the
+// same route name (per-router manifests keep them apart), so each registry has
+// a per-router tier consulted first; the global tier is the fallback for
+// contexts with no router identity (single-router apps, unit tests, evaluation
+// outside generateManifestFull). Without the per-router tier, the
+// last-evaluated router silently won for BOTH routers.
 const rootScopeRoutes: Map<string, boolean> = new Map();
+const perRouterRootScopeRoutes: Map<string, Map<string, boolean>> = new Map();
 
 /**
  * Register whether a route is at root scope.
@@ -234,29 +245,65 @@ const rootScopeRoutes: Map<string, boolean> = new Map();
 export function registerRouteRootScope(
   routeName: string,
   rootScoped: boolean,
+  routerId?: string,
 ): void {
   rootScopeRoutes.set(routeName, rootScoped);
+  if (routerId) {
+    let perRouter = perRouterRootScopeRoutes.get(routerId);
+    if (!perRouter) {
+      perRouter = new Map();
+      perRouterRootScopeRoutes.set(routerId, perRouter);
+    }
+    perRouter.set(routeName, rootScoped);
+  }
 }
 
 /**
  * Check if a route is at root scope.
  * Returns undefined if the route has not been registered (e.g. in unit tests).
  */
-export function isRouteRootScoped(routeName: string): boolean | undefined {
+export function isRouteRootScoped(
+  routeName: string,
+  routerId?: string,
+): boolean | undefined {
+  if (routerId) {
+    const scoped = perRouterRootScopeRoutes.get(routerId)?.get(routeName);
+    if (scoped !== undefined) return scoped;
+  }
   return rootScopeRoutes.get(routeName);
 }
 
 import type { SearchSchema } from "./search-params.js";
 
 const globalSearchSchemas: Map<string, SearchSchema> = new Map();
+const perRouterSearchSchemas: Map<
+  string,
+  Map<string, SearchSchema>
+> = new Map();
 
 export function registerSearchSchema(
   routeName: string,
   schema: SearchSchema,
+  routerId?: string,
 ): void {
   globalSearchSchemas.set(routeName, schema);
+  if (routerId) {
+    let perRouter = perRouterSearchSchemas.get(routerId);
+    if (!perRouter) {
+      perRouter = new Map();
+      perRouterSearchSchemas.set(routerId, perRouter);
+    }
+    perRouter.set(routeName, schema);
+  }
 }
 
-export function getSearchSchema(routeName: string): SearchSchema | undefined {
+export function getSearchSchema(
+  routeName: string,
+  routerId?: string,
+): SearchSchema | undefined {
+  if (routerId) {
+    const schema = perRouterSearchSchemas.get(routerId)?.get(routeName);
+    if (schema !== undefined) return schema;
+  }
   return globalSearchSchemas.get(routeName);
 }

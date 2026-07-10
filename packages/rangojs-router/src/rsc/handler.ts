@@ -583,6 +583,7 @@ export function createRSCHandler<
     // - Streaming
     // Store basename on request context (scoped per-request via existing ALS)
     requestContext._basename = router.basename;
+    requestContext._routerId = router.id;
 
     // Resolved span tracing for this request (read at each traced phase).
     requestContext._tracing = router.tracing;

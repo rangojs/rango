@@ -786,6 +786,7 @@ export function createRouter<TEnv = any>(
           parent: syntheticMapRoot,
           counters: {},
           mountIndex: currentMountIndex,
+          routerId,
           cacheProfiles: resolvedCacheProfiles,
           // basename sets the initial URL prefix so all path() patterns
           // are registered with the prefix (e.g. "/admin" + "/users" = "/admin/users").
