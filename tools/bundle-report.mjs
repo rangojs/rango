@@ -17,6 +17,14 @@
 import { readFileSync, globSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  APP_SERVER_PATTERNS,
+  ROUTER_SERVER_PATTERNS,
+  appOwnedFilter,
+  extractRows,
+  fmt,
+  matchLeakPatterns,
+} from "./lib/bundle-stats.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -44,21 +52,7 @@ const results = new Map();
 for (const r of reports.sort()) {
   const { app, env } = appEnv(r);
   const data = JSON.parse(readFileSync(r, "utf8"));
-  const rows = [];
-  for (const [, meta] of Object.entries(data.nodeMetas)) {
-    const path = meta.id ?? "";
-    let rendered = 0,
-      gzip = 0,
-      brotli = 0;
-    for (const [, partUid] of Object.entries(meta.moduleParts ?? {})) {
-      const part = data.nodeParts[partUid] ?? {};
-      rendered += part.renderedLength ?? 0;
-      gzip += part.gzipLength ?? 0;
-      brotli += part.brotliLength ?? 0;
-    }
-    if (rendered > 0 || gzip > 0) rows.push({ path, rendered, gzip, brotli });
-  }
-  results.set(`${app}/${env}`, rows);
+  results.set(`${app}/${env}`, extractRows(data));
 }
 
 const apps = [
@@ -74,11 +68,6 @@ function shorten(p) {
     .replace(/^node_modules\//, "nm/");
 }
 
-function fmt(n) {
-  if (n >= 1024) return `${(n / 1024).toFixed(1)}K`;
-  return `${n}B`;
-}
-
 console.log("# Bundle Analysis Report\n");
 console.log("## 1. Per-app per-env totals (gzip)\n");
 console.log("| App | Client | SSR | RSC |");
@@ -92,64 +81,6 @@ for (const app of apps) {
   }
   console.log(`| ${cells.join(" | ")} |`);
 }
-
-const ROUTER_SERVER_PATTERNS = [
-  { name: "src/server/", re: /\/packages\/rangojs-router\/src\/server\// },
-  { name: "src/host/", re: /\/packages\/rangojs-router\/src\/host\// },
-  { name: "src/handlers/", re: /\/packages\/rangojs-router\/src\/handlers\// },
-  { name: "src/build/", re: /\/packages\/rangojs-router\/src\/build\// },
-  { name: "src/vite/", re: /\/packages\/rangojs-router\/src\/vite\// },
-  {
-    name: "src/router/match-handlers.ts",
-    re: /\/src\/router\/match-handlers\.ts$/,
-  },
-  { name: "src/router/route-trie.ts", re: /\/src\/router\/route-trie\.ts$/ },
-  {
-    name: "src/router/route-discovery.ts",
-    re: /\/src\/router\/route-discovery\.ts$/,
-  },
-  {
-    name: "src/router/segment-resolution/",
-    re: /\/src\/router\/segment-resolution\//,
-  },
-  {
-    name: "src/router/handler-context.ts",
-    re: /\/src\/router\/handler-context\.ts$/,
-  },
-  { name: "src/router/middleware.ts", re: /\/src\/router\/middleware\.ts$/ },
-  { name: "src/router/telemetry.ts", re: /\/src\/router\/telemetry\.ts$/ },
-  {
-    name: "src/router/telemetry-otel.ts",
-    re: /\/src\/router\/telemetry-otel\.ts$/,
-  },
-  { name: "src/router/origin-guard", re: /\/src\/router\/origin-guard\// },
-  { name: "src/rsc/", re: /\/packages\/rangojs-router\/src\/rsc\// },
-];
-
-// Heuristic only — file naming is a signal, not a guarantee. Hits warrant
-// review; misses don't prove cleanliness.
-const APP_SERVER_PATTERNS = [
-  { name: "node: built-in imports", re: /^node:[a-z]/ },
-  { name: "cloudflare: imports", re: /^cloudflare:/ },
-  {
-    name: "*.server.{ts,tsx,js,jsx} convention",
-    re: /\.server\.(tsx?|jsx?|mjs|cjs)$/,
-  },
-  { name: "/db.* or /database/ paths", re: /\/(db|database)[./]/ },
-  {
-    name: "/secrets, /credentials, /keys",
-    re: /\/(secrets|credentials|keys?)\//,
-  },
-  {
-    name: "common DB clients",
-    re: /\/(pg|mysql2?|mongodb|mongoose|prisma|redis|ioredis|drizzle-orm)\//,
-  },
-  { name: "auth/server modules", re: /\/auth\.server\./ },
-  {
-    name: "node-only npm packages",
-    re: /\/(bcrypt|argon2|nodemailer|@sendgrid|googleapis|@aws-sdk)\//,
-  },
-];
 
 /**
  * Scan client bundles per-app for paths matching the given patterns and
@@ -170,21 +101,7 @@ function reportLeakSection({
   for (const app of apps) {
     const rows = results.get(`${app}/client`);
     if (!rows) continue;
-    const candidate = pathFilter ? rows.filter(pathFilter) : rows;
-    const found = [];
-    for (const pat of patterns) {
-      const matched = candidate.filter((r) => pat.re.test(r.path));
-      if (matched.length === 0) continue;
-      const totalGzip = matched.reduce((a, r) => a + r.gzip, 0);
-      const totalRendered = matched.reduce((a, r) => a + r.rendered, 0);
-      found.push({
-        pat: pat.name,
-        count: matched.length,
-        totalGzip,
-        totalRendered,
-        files: matched,
-      });
-    }
+    const found = matchLeakPatterns(rows, patterns, pathFilter);
     if (found.length === 0) continue;
     const reallyLeaking = found.filter(
       (f) => f.totalRendered > 0 || f.totalGzip > 0,
@@ -229,7 +146,7 @@ reportLeakSection({
   intro:
     "Heuristic check for app code that *looks* server-only: `node:` imports, `*.server.ts` convention, common server packages, db/auth/secrets paths. Hits are not guaranteed leaks — confirm by inspecting the file. Misses don't prove cleanliness; some leaks won't match these patterns.",
   patterns: APP_SERVER_PATTERNS,
-  pathFilter: (r) => !r.path.includes("/packages/rangojs-router/"),
+  pathFilter: appOwnedFilter,
   leakLabel: "⚠️ APP LEAK CANDIDATE",
   cleanVerdict:
     "**Verdict: no app-owned server-shaped modules detected in client bundles.** (Heuristic — does not cover every leak shape.)",
