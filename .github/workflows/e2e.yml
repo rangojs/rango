@@ -86,6 +86,36 @@ jobs:
       - name: Check formatting
         run: pnpm format
 
+  # Server-code-in-client-bundle guard: builds tests/cloudflare-basic with
+  # RANGO_ANALYZE=1 and fails on any server-only module contributing bytes to
+  # the client bundle beyond the allowlist in tools/check-client-leaks.mjs.
+  client-leaks:
+    needs: [debounce]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The check builds cloudflare-basic, whose vite config loads the
+      # workspace router's ./vite entry from dist/.
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Check for server code in client bundles
+        run: pnpm check:client-leaks
+
   install-playwright:
     needs: [debounce]
     runs-on: ubuntu-latest
