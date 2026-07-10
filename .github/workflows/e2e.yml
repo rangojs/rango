@@ -384,6 +384,62 @@ jobs:
           path: examples/vercel-basic/playwright-report/
           retention-days: 7
 
+  # Host-router coverage on the node/vercel preset: routing by Host header
+  # (a.localhost / b.localhost sub-apps) plus the generated entry's
+  # NoRouteMatchError -> 404 catch, in dev AND against the served
+  # .vercel/output. The deploy-shape bundling of the same output is covered
+  # by vercel-smoke above.
+  vercel-multi-router-e2e:
+    needs: [install-playwright]
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-
+
+      - name: Install Playwright system deps
+        run: pnpm --filter rangojs-vercel-multi-router exec playwright install-deps chromium
+
+      - name: Run vercel-multi-router e2e tests (dev + production)
+        run: pnpm --filter rangojs-vercel-multi-router test:e2e
+        env:
+          TEST_DEBUG: "1"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report-vercel-multi-router
+          path: examples/vercel-multi-router/playwright-report/
+          retention-days: 7
+
   rangojs-router-e2e:
     needs: [install-playwright]
     if: |
