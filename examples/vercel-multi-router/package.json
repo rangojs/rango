@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "smoke": "vite build && node ./scripts/smoke.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "preview:vercel": "node ./scripts/preview.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",
@@ -17,10 +19,12 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.1",
     "@types/node": "^24.10.0",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "tinyexec": "^0.3.2",
     "typescript": "^5.3.0",
     "vite": "catalog:"
   }
