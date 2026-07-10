@@ -30,6 +30,8 @@ import {
   finalizeResponse,
 } from "./helpers.js";
 import { reportCacheError } from "../cache/cache-error.js";
+import { cacheKeyBase } from "../cache/cache-key-utils.js";
+import { hasPerClientSignal } from "../browser/cookie-name.js";
 
 /** Injected cache-scope builders (kept off this module's runtime import graph). */
 export interface CacheScopeDeps {
@@ -67,6 +69,13 @@ export async function serveResponseRouteWithCache(
   const { reqCtx, manifestEntry, responseType, url, executeHandler, deps } =
     args;
 
+  // Only cache GET/HEAD — mutations and other methods must not be cached
+  // (parity with document-cache.ts GET-only gate; HEAD is read-only).
+  const method = reqCtx.request.method;
+  if (method !== "GET" && method !== "HEAD") {
+    return undefined;
+  }
+
   let cacheScope: CacheScope | null = null;
   for (const entry of traverseBack(manifestEntry)) {
     if (entry.cache) {
@@ -91,17 +100,16 @@ export async function serveResponseRouteWithCache(
     return undefined;
   }
 
-  // Build cache key with the response:{type}: prefix (avoids collision with
-  // segment keys); include host + url.search so query-driven and multi-host
-  // responses cache separately.
-  let cacheKey = `response:${responseType}:${url.host}${url.pathname}${url.search}`;
+  // Default key: response:{type}: + host-namespaced base (sorted search, reserved
+  // _rsc*/__* params excluded). Same composition as document/segment tiers so
+  // the host-namespacing and search-normalization rules cannot drift.
+  let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams)}`;
 
   // Priority 1: route-level key() (full override). Priority 2: store-level
   // keyGenerator (modifies the default key).
   //
   // A CONFIGURED key()/keyGenerator that THROWS must DEGRADE TO A MISS, not fall
-  // back to the broad default key. The default key
-  // `response:${type}:${host}${path}${search}` is intentionally broad; if the
+  // back to the broad default key. The default key is intentionally broad; if the
   // configured key encodes tenant/user/auth state, falling back to the broad key
   // would cache PERSONALIZED output under it and serve it cross-user (cache
   // poisoning). Mirrors the segment-cache behavior (cache-scope.ts lookupRoute):
@@ -158,6 +166,21 @@ export async function serveResponseRouteWithCache(
   const applyPreHandlerCallbacks = (response: Response): Response =>
     applyOnResponseCallbacks(savedCallbacks, response);
 
+  // Never store a per-client signal into a SHARED response store. A Set-Cookie
+  // (or x-rango-keep-cache) would be replayed to every client on a hit — same
+  // Finding #3 as document-cache.ts shouldCacheResponse.
+  // Only store GET: HEAD may branch on method; sharing a write slot with GET
+  // can poison subsequent GET bodies. HEAD still reads the GET key below.
+  const canStore = (response: Response): boolean =>
+    method === "GET" &&
+    isCacheableStatus(response.status) &&
+    !hasPerClientSignal(response.headers);
+
+  // Reject unsafe persisted entries on read (pre-upgrade poison / store bugs).
+  const canServeCached = (response: Response): boolean =>
+    isCacheableStatus(response.status) &&
+    !hasPerClientSignal(response.headers);
+
   const putFresh = (
     store2: SegmentCacheStore,
     fresh: Response,
@@ -172,7 +195,7 @@ export async function serveResponseRouteWithCache(
 
   try {
     const cached = await store.getResponse(cacheKey);
-    if (cached && isCacheableStatus(cached.response.status)) {
+    if (cached && canServeCached(cached.response)) {
       if (!cached.shouldRevalidate) {
         return applyPreHandlerCallbacks(cached.response);
       }
@@ -180,7 +203,7 @@ export async function serveResponseRouteWithCache(
       reqCtx.waitUntil(async () => {
         try {
           const fresh = finalizeResponse(await executeHandler());
-          if (isCacheableStatus(fresh.status)) await putFresh(store, fresh);
+          if (canStore(fresh)) await putFresh(store, fresh);
         } catch (error) {
           reportCacheError(
             error,
@@ -201,9 +224,9 @@ export async function serveResponseRouteWithCache(
     );
   }
 
-  // Cache miss: execute the handler and cache the result.
+  // Cache miss: execute the handler and cache the result when storeable.
   const response = finalizeResponse(await executeHandler());
-  if (isCacheableStatus(response.status)) {
+  if (canStore(response)) {
     // Clone SYNCHRONOUSLY here, before returning. The original `response` is
     // handed back to the middleware chain, where mergeResponse rebuilds it as
     // `new Response(response.body, ...)`. Deferring the clone into the waitUntil

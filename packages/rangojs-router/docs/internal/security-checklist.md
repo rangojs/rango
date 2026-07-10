@@ -252,3 +252,17 @@ shared cache stores (e.g. multiple custom domains on the same CF worker):
 - Host with port differentiates localhost:3000 from localhost:4000.
 - Response route cache keys include host (separate test in
   `response-route-handler.test.ts`).
+
+### Response-route cache parity (`response-cache-serve.ts`, `dispatch.test.ts`)
+
+`serveResponseRouteWithCache` matches document-cache safety:
+
+- **GET/HEAD only** — POST/PUT/etc. skip the cache (no read, no write).
+- **Per-client signals** — `Set-Cookie` / `x-rango-keep-cache` on the live
+  response skip `putResponse` (still return the live body).
+- **Default key** — `response:{type}:` + `cacheKeyBase(host, path, searchParams)`
+  (sorted search; reserved `_rsc*` / allowlisted `__*` params excluded).
+
+Userland pins in `dispatch.test.ts` (`cached response routes`): POST not
+cached; Set-Cookie not stored; reordered query params share a key; reserved
+`_rsc*` excluded from the key.

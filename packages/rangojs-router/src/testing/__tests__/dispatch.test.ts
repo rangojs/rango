@@ -392,10 +392,189 @@ describe("dispatch", () => {
       await dispatch(router, { request: "/cached2" });
       await flushWrites();
 
-      // The production key shape: response:{type}:{host}{path}{search}.
+      // Default key: response:{type}: + cacheKeyBase(host, path, searchParams).
       const cached = await store.getResponse("response:json:localhost/cached2");
       expect(cached).not.toBeNull();
       expect(cached?.response.status).toBe(200);
+    });
+
+    it("does not cache a non-GET/HEAD method (POST miss, no store write)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-post",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.post" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, {
+          request: new Request("http://localhost/cached-post", {
+            method: "POST",
+          }),
+        })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, {
+          request: new Request("http://localhost/cached-post", {
+            method: "POST",
+          }),
+        })
+      ).json();
+
+      expect(second).not.toEqual(first);
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("does not store a response carrying Set-Cookie (live body still returned)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-cookie",
+              () => {
+                cookies().set("session", "tok", { path: "/" });
+                return { ok: true };
+              },
+              { name: "cached.cookie" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const res = await dispatch(router, { request: "/cached-cookie" });
+      await flushWrites();
+      expect(await res.json()).toEqual({ ok: true });
+      expect(
+        res.headers.getSetCookie().some((c) => c.startsWith("session=tok")),
+      ).toBe(true);
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("does not serve a persisted entry that carries Set-Cookie", async () => {
+      // Memory store strips Set-Cookie on write; a custom store can still
+      // return poison. Serve-side must refuse the hit and re-run the handler.
+      let n = 0;
+      const store: SegmentCacheStore = {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => false,
+        getResponse: async () => ({
+          response: new Response(JSON.stringify({ n: 99 }), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "Set-Cookie": "session=leaked; Path=/",
+            },
+          }),
+          shouldRevalidate: false,
+        }),
+        putResponse: async () => {},
+      };
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-poison",
+              () => ({ n: ++n }),
+              { name: "cached.poison" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const res = await dispatch(router, { request: "/cached-poison" });
+      expect(await res.json()).toEqual({ n: 1 });
+      expect(res.headers.get("Set-Cookie")).toBeNull();
+    });
+
+    it("does not write the cache from a HEAD request", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-head",
+              () => ({ ok: true }),
+              { name: "cached.head" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      await dispatch(router, {
+        request: new Request("http://localhost/cached-head", {
+          method: "HEAD",
+        }),
+      });
+      await flushWrites();
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("shares a cache key across reordered query params", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-qs",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.qs" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-qs?b=2&a=1" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-qs?a=1&b=2" })
+      ).json();
+      expect(second).toEqual(first);
+    });
+
+    it("excludes reserved _rsc* params from the default cache key", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-rscparam",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.rscparam" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-rscparam?_rsc=1" })
+      ).json();
+      await flushWrites();
+      // Same path without the reserved param must HIT the same slot.
+      const second = await (
+        await dispatch(router, { request: "/cached-rscparam" })
+      ).json();
+      expect(second).toEqual(first);
+      const cached = await store.getResponse(
+        "response:json:localhost/cached-rscparam",
+      );
+      expect(cached).not.toBeNull();
     });
 
     it("re-runs an UNcached response route every call (different body)", async () => {

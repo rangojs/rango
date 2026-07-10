@@ -72,6 +72,7 @@ describe("dispatch cached response route (no plugin-rsc mock)", () => {
     await dispatch(router, { request: "/cached-nomock2" });
     await flushWrites();
 
+    // Default key: response:{type}: + cacheKeyBase(host, path, searchParams).
     const cached = await store.getResponse(
       "response:json:localhost/cached-nomock2",
     );
