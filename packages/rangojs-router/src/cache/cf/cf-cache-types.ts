@@ -198,6 +198,59 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   onRevalidateTag?: (cacheTags: string[]) => Promise<void>;
 
   /**
+   * Purge-based tag invalidation (purge mode). When configured, the store
+   * delegates L1 (Cache API) tag eviction to Cloudflare's purge-by-tag API
+   * instead of the per-read KV marker lookup:
+   *
+   * - Every tagged L1 entry carries a namespaced `Cache-Tag` header
+   *   (`rg:{namespace}:e:{encodedTag}`, plus the broader `rg:{namespace}` /
+   *   `rg:{namespace}:e` tiers for manual resets).
+   * - `updateTag()`/`revalidateTag()` AWAIT this hook with the exact Cache-Tags
+   *   to purge (one batched call per invalidation; entry tags, plus the lookup
+   *   Cache-Tags when `tagCacheTtl > 0`). Forward them to a purge-by-tag call —
+   *   see {@link createCloudflareZonePurge} for a ready-made implementation.
+   * - L1 hits then skip the per-read marker lookup entirely: a surviving entry
+   *   is trusted because an invalidated one would have been purged. Only the
+   *   per-request memo is consulted (synchronously, no KV read), so a request
+   *   that ran `updateTag()` still masks its own not-yet-purged entries
+   *   (read-your-own-writes).
+   * - The KV tier and PPR shells still use the KV markers — those are written
+   *   regardless, and purge cannot reach KV — so keep `kv` configured for L2.
+   *   Without `kv`, purge mode is the ONLY tag invalidation and the store is
+   *   L1-only: a supported configuration (previously tag invalidation without
+   *   KV had no read-side effect at all). One KV-less caveat: an entry whose
+   *   tag set overflows Cloudflare's 16 KB Cache-Tag header limit is NOT
+   *   cached (it would be un-invalidatable — no tokens for the purge, no
+   *   marker fallback); with `kv` such an entry caches and falls back to the
+   *   marker check.
+   *
+   * Consistency trade-off vs the default marker mode: invalidation latency for
+   * concurrent requests becomes the purge propagation time (Cloudflare quotes
+   * sub-second "Instant Purge") instead of read-time KV consistency, and a
+   * purge failure leaves L1 stale until TTL — which is why a rejected hook
+   * makes `updateTag()` reject (retry the invalidation; markers and purge are
+   * both idempotent).
+   *
+   * Zone scoping: purge-by-tag clears YOUR zone. workers.dev / pages.dev
+   * previews have an inert Cache API (nothing to purge — the KV tier still
+   * invalidates via markers there); a preview on a SEPARATE zone needs its own
+   * purge credentials.
+   *
+   * @example
+   * ```ts
+   * new CFCacheStore({
+   *   ctx,
+   *   kv: env.CACHE_KV,
+   *   tagPurge: createCloudflareZonePurge({
+   *     zoneId: env.CF_ZONE_ID,
+   *     apiToken: env.CF_PURGE_TOKEN,
+   *   }),
+   * })
+   * ```
+   */
+  tagPurge?: (cacheTags: string[]) => Promise<void>;
+
+  /**
    * Optional expiration (seconds) for tag-invalidation markers in KV. A marker
    * must outlive every entry tagged before the invalidation, so this MUST
    * exceed your largest entry TTL+SWR. Defaults to no expiration (markers

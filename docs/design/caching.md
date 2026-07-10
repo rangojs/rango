@@ -804,6 +804,8 @@ To invalidate on demand, call one of (both variadic, server-only, exported from 
 
 Both fan out across the app-level store (`ctx._cacheStore`) and any explicit `cache({ store })` stores the handler resolved, calling the store-level `invalidateTags()` primitive (passing the whole tag batch in one call). The CF store records tag-invalidation markers in its own KV namespace and compares each entry's `taggedAt` against them on read - there is no separate tag-invalidation store. Note that the separate `revalidate()` export is a client-update axis (which segments re-render on a navigation or action), not a cache bust.
 
+The CF store also has an opt-in **purge mode** (`tagPurge`, typically wired to `createCloudflareZonePurge({ zoneId, apiToken })`): tagged L1 entries carry namespaced `Cache-Tag` headers, `invalidateTags()` awaits one batched Cloudflare purge-by-tag call, and L1 hits skip the per-read marker lookup (KV L2 and PPR shells keep the marker check — purge cannot reach them). Semantics, trade-offs, and the environments/previews zone-scoping guide: [cache-tags-flow.md](./cache-tags-flow.md) "Purge mode".
+
 ---
 
 ## Open Problems
