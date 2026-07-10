@@ -180,6 +180,38 @@ describe("generateRoutesManifestModule — per-router loaders are build-only", (
   });
 });
 
+describe("generateRoutesManifestModule — Cloudflare dev discovery epoch", () => {
+  it("installs the epoch", () => {
+    const s = makeState("cloudflare", { isBuildMode: false, trie: SMALL });
+    s.mergedRouteManifest = { home: "/" };
+    s.devDiscoveryEpoch = 42;
+
+    const code = generateRoutesManifestModule(s);
+
+    expect(code).toContain("globalThis.__RANGO_DEV_DISCOVERY_EPOCH = 42;");
+  });
+
+  it("emits the epoch bootstrap before discovery has found a manifest", () => {
+    const s = createDiscoveryState(undefined, { preset: "cloudflare" });
+    s.isBuildMode = false;
+    s.devDiscoveryEpoch = 7;
+
+    const code = generateRoutesManifestModule(s);
+
+    expect(code).toContain("globalThis.__RANGO_DEV_DISCOVERY_EPOCH = 7;");
+  });
+
+  it("is absent from production builds", () => {
+    const s = makeState("cloudflare", { isBuildMode: true, trie: SMALL });
+    s.mergedRouteManifest = { home: "/" };
+    s.devDiscoveryEpoch = 42;
+
+    const code = generateRoutesManifestModule(s);
+
+    expect(code).not.toContain("__RANGO_DEV_DISCOVERY_EPOCH");
+  });
+});
+
 describe("generatePerRouterModule — carries only derived match data", () => {
   it("gen-file router: bare import for the HMR edge, no manifest re-export", () => {
     const s = makeState("node", { trie: SMALL });

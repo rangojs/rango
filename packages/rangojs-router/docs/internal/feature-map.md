@@ -56,6 +56,7 @@ These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. T
 | `./internal/deps/html-stream-client` | HTML stream client dependency bridge                                                       |
 | `./internal/deps/html-stream-server` | HTML stream server dependency bridge                                                       |
 | `./internal/rsc-handler`             | RSC handler internals                                                                      |
+| `./internal/browser/dev-discovery`   | Browser-only Cloudflare dev stale-document convergence helper                              |
 | `./cache-runtime`                    | Cache runtime dependencies                                                                 |
 | `./types`                            | Type declarations for the `@rangojs/router:version` virtual module                         |
 
@@ -343,7 +344,7 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 
 ### Dev and HMR
 
-`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. `poke()` — dev-only Vite plugin that triggers a full browser reload from terminal input: `Ctrl+R` when available, plus safe line-based shortcuts like `e + Enter`.
+`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. In Cloudflare dev, successful discovery advances a worker generation epoch only when the path, name, trailing-slash, or search-schema shape changes; after invalidating workerd, the plugin probes until the active router reports that epoch, then broadcasts readiness over the browser hot channel. Each document also queries the latest acknowledged epoch at startup and after reconnecting. Only an older document reloads, so content-only `rsc:update` keeps navigation and client state. `poke()` — dev-only Vite plugin that triggers a full browser reload from terminal input: `Ctrl+R` when available, plus safe line-based shortcuts like `e + Enter`.
 
 ---
 

@@ -100,6 +100,10 @@
       "react-server": "./src/rsc/handler.ts",
       "default": "./src/rsc/handler.ts"
     },
+    "./internal/browser/dev-discovery": {
+      "types": "./dist/types/browser/dev-discovery.d.ts",
+      "default": "./src/browser/dev-discovery.ts"
+    },
     "./cache": {
       "types": "./dist/types/cache/index.d.ts",
       "react-server": "./src/cache/index.ts",

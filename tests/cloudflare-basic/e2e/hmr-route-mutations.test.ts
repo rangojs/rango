@@ -52,7 +52,7 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     mode: "dev",
   });
 
-  test.setTimeout(60000);
+  test.setTimeout(90000);
 
   // Allow time for the file-change -> debounce -> discovery -> gen-write cycle
   // and the subsequent workerd full-reload to land.
@@ -222,7 +222,7 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     await expectServed("/about", "catch-all-page");
   });
 
-  test("converges the open page to the catch-all when the viewed route is removed", async ({
+  test("converges an open page and a stale document when the viewed route is removed", async ({
     page,
   }) => {
     // The prior test removes then restores /about; the gen file reconverges
@@ -230,8 +230,14 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     // serve /about again before driving the browser to it (otherwise the first
     // navigation can land on the catch-all).
     await expectServed("/about", "about-page");
-    await page.goto(f.url("/about"));
+    const initialResponse = await page.goto(f.url("/about"));
+    expect(initialResponse).not.toBeNull();
     await expect(page.getByTestId("about-page")).toBeVisible();
+    const staleBody = await initialResponse!.body();
+    const staleHeaders = { ...initialResponse!.headers() };
+    delete staleHeaders["content-encoding"];
+    delete staleHeaders["content-length"];
+    delete staleHeaders["transfer-encoding"];
     // Remove the route the page is currently displaying. Editing a route
     // definition (urls.tsx has no HMR boundary, unlike the component-content
     // edits in hmr.test.ts that update in-page without a reload) triggers a
@@ -245,12 +251,102 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
       ),
     );
     await expectGen('about: "/about"', false);
+    await expectServed("/about", "catch-all-page");
+    await expect(page.getByTestId("catch-all-page")).toBeVisible({
+      timeout: GEN_TIMEOUT,
+    });
+
+    // Model the race deterministically after the ready event has already fired:
+    // boot one captured pre-swap document, then let subsequent navigations hit
+    // the live worker. Its startup hot-channel query must notice that the
+    // document is stale and request exactly one fresh document.
+    let aboutDocumentRequests = 0;
+    let staleDocumentServed = false;
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      if (
+        !request.isNavigationRequest() ||
+        new URL(request.url()).pathname !== "/about"
+      ) {
+        await route.continue();
+        return;
+      }
+
+      aboutDocumentRequests++;
+      if (!staleDocumentServed) {
+        staleDocumentServed = true;
+        await route.fulfill({
+          status: initialResponse!.status(),
+          headers: staleHeaders,
+          body: staleBody,
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(f.url("/about")).catch(() => {
+      // The corrective reload may supersede this intentionally stale navigation.
+    });
+    expect(staleDocumentServed).toBe(true);
+    await expect
+      .poll(() => aboutDocumentRequests, { timeout: GEN_TIMEOUT })
+      .toBe(2);
     // /about now falls through to the wildcard catch-all, rendered in-page;
     // the stale About page must be gone.
     await expect(page.getByTestId("catch-all-page")).toBeVisible({
       timeout: GEN_TIMEOUT,
     });
     await expect(page.getByTestId("about-page")).toHaveCount(0);
+  });
+
+  test("converges an open 404 when its route is added", async ({ page }) => {
+    const response = await page.goto(f.url("/blog/hmr-stale-404"));
+    expect(response?.status()).toBe(404);
+    await expect(
+      page.getByRole("heading", { name: "Not Found" }),
+    ).toBeVisible();
+
+    mutateUrls(
+      readUrls().replace(
+        'path("/blog/:slug", BlogPostPage, {',
+        `path("/blog/hmr-stale-404", AboutPage, { name: "hmrStale404" }),
+            path("/blog/:slug", BlogPostPage, {`,
+      ),
+    );
+    await expectGen('hmrStale404: "/blog/hmr-stale-404"', true);
+    await expectServed("/blog/hmr-stale-404", "about-page");
+    await expect(page.getByTestId("about-page")).toBeVisible({
+      timeout: GEN_TIMEOUT,
+    });
+  });
+
+  test("preserves an open document when the route shape is unchanged", async ({
+    page,
+  }) => {
+    let aboutDocumentRequests = 0;
+    page.on("request", (request) => {
+      if (
+        request.isNavigationRequest() &&
+        new URL(request.url()).pathname === "/about"
+      ) {
+        aboutDocumentRequests++;
+      }
+    });
+
+    await page.goto(f.url("/about"));
+    await expect(page.getByTestId("about-page")).toBeVisible();
+    mutateUrls(
+      readUrls().replace(
+        "// Prefixed wildcard before the root catch-all",
+        "// Unchanged route-shape HMR test: prefixed wildcard before the root catch-all",
+      ),
+    );
+
+    // The watcher debounce + Cloudflare rediscovery normally settles in under
+    // one second; wait past it to prove no delayed readiness event reloads.
+    await page.waitForTimeout(3_000);
+    expect(aboutDocumentRequests).toBe(1);
+    await expect(page.getByTestId("about-page")).toBeVisible();
   });
 
   test("updates types and serves the new path when a route path is renamed", async () => {

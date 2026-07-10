@@ -53,8 +53,13 @@ export interface RscRenderStageTracking {
   span?: TraceSpan;
 }
 
+type RscRenderContext<TEnv> = Pick<
+  HandlerContext<TEnv>,
+  "renderToReadableStream" | "callOnError" | "devDiscoveryEpoch"
+>;
+
 export interface RscRenderInput<TEnv> {
-  ctx: Pick<HandlerContext<TEnv>, "renderToReadableStream" | "callOnError">;
+  ctx: RscRenderContext<TEnv>;
   request: Request;
   url: URL;
   env: TEnv;
@@ -66,7 +71,7 @@ export interface RscRenderInput<TEnv> {
 }
 
 export interface RscFlightStageInput<TEnv> {
-  ctx: Pick<HandlerContext<TEnv>, "renderToReadableStream" | "callOnError">;
+  ctx: RscRenderContext<TEnv>;
   request: Request;
   url: URL;
   env: TEnv;
@@ -146,6 +151,9 @@ function createFlightStage<TEnv>(
   input: RscFlightStageInput<TEnv>,
   init: ResponseInit,
 ): RscFlightStage {
+  if (input.ctx.devDiscoveryEpoch !== undefined && input.payload.metadata) {
+    input.payload.metadata.devDiscoveryEpoch = input.ctx.devDiscoveryEpoch;
+  }
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {

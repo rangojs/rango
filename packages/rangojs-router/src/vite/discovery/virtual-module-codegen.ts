@@ -24,6 +24,19 @@ import type { DiscoveryState } from "./state.js";
  */
 const MANIFEST_EXTERNALIZE_THRESHOLD = 512 * 1024;
 
+function devDiscoveryBootstrap(state: DiscoveryState): string[] {
+  if (
+    state.isBuildMode ||
+    state.opts?.preset !== "cloudflare" ||
+    state.devDiscoveryEpoch === undefined
+  ) {
+    return [];
+  }
+
+  const epoch = state.devDiscoveryEpoch;
+  return [`globalThis.__RANGO_DEV_DISCOVERY_EPOCH = ${epoch};`];
+}
+
 /**
  * Generate the code for the main virtual:rsc-router/routes-manifest module.
  */
@@ -151,9 +164,11 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
         `globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(state.devServerOrigin)};`,
       );
     }
+    lines.push(...devDiscoveryBootstrap(state));
     return lines.join("\n");
   }
 
+  const lines: string[] = [];
   if (!state.isBuildMode) {
     const origin =
       state.devServerOrigin ||
@@ -162,10 +177,11 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
         `http://localhost:${state.devServer.config.server.port || 5173}`);
     if (origin) {
       state.devServerOrigin = origin;
-      return `globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(origin)};`;
+      lines.push(`globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(origin)};`);
     }
   }
-  return `// Route manifest will be populated at runtime`;
+  lines.push(...devDiscoveryBootstrap(state));
+  return lines.join("\n") || `// Route manifest will be populated at runtime`;
 }
 
 /**

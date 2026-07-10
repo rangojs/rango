@@ -14,6 +14,10 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 
 import { Static } from "../static-handler.js";
 import { Prerender } from "../prerender.js";
+import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+} from "../dev-discovery-protocol.js";
 import { createRouter } from "../router.js";
 import { urls } from "../urls/urls-function.js";
 import { dispatch } from "../testing/dispatch.js";
@@ -80,5 +84,28 @@ describe("Static bare-test $$id fallback", () => {
     await expect(dispatch(router, { request: "/pre" })).rejects.toThrow(
       /does not render RSC routes/,
     );
+  });
+});
+
+describe("Cloudflare dev discovery probe", () => {
+  it("reports the epoch captured by the active router", async () => {
+    const globals = globalThis as typeof globalThis & {
+      __RANGO_DEV_DISCOVERY_EPOCH?: unknown;
+    };
+    const previousEpoch = globals.__RANGO_DEV_DISCOVERY_EPOCH;
+    globals.__RANGO_DEV_DISCOVERY_EPOCH = 23;
+
+    try {
+      const router = createRouter({ id: "dev-discovery-probe" });
+      const response = await router.fetch(
+        new Request("http://localhost/", {
+          headers: { [DEV_DISCOVERY_PROBE_HEADER]: "23" },
+        }),
+      );
+
+      expect(response.headers.get(DEV_DISCOVERY_EPOCH_HEADER)).toBe("23");
+    } finally {
+      globals.__RANGO_DEV_DISCOVERY_EPOCH = previousEpoch;
+    }
   });
 });

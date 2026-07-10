@@ -235,6 +235,7 @@ export async function discoverRouters(
     newPerRouterManifests.push({
       id,
       routeManifest: manifest.routeManifest,
+      routeTrailingSlash: manifest.routeTrailingSlash,
       routeSearchSchemas: manifest.routeSearchSchemas,
       sourceFile: router.__sourceFile,
       factoryOnlyPrefixes,

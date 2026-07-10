@@ -54,7 +54,6 @@ export function createVersionInjectorPlugin(
       const prepend: string[] = RSC_ENTRY_BOOTSTRAP_IMPORTS.map(
         (id) => `import "${id}";`,
       );
-
       let newCode = code;
       const needsVersion =
         code.includes("createRSCHandler") &&

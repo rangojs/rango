@@ -65,6 +65,8 @@ export interface RscMetadata {
    * Used to detect version mismatches after HMR/deployment.
    */
   version?: string;
+  /** Cloudflare dev worker generation used for stale-document convergence. */
+  devDiscoveryEpoch?: number;
   /**
    * TTL in milliseconds for the client-side in-memory prefetch cache.
    * Sent on initial render so the browser can configure its cache duration.
