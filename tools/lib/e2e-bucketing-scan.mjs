@@ -179,19 +179,20 @@ function useFixtureMode(node) {
   return null;
 }
 
-// Module-scope variable names initialized from useFixture({ mode: "build" }).
-function moduleBuildVars(sourceFile) {
-  const names = new Set();
+// Module-scope variable names initialized from useFixture({ mode }).
+// Build and dev are tracked separately so a describe that only references a
+// module-scope `const f = useFixture({ mode: "dev" })` is still classified as
+// a fixture-owning describe (parity must see the missing production twin).
+function moduleFixtureVars(sourceFile) {
+  /** @type {{ build: Set<string>, dev: Set<string> }} */
+  const names = { build: new Set(), dev: new Set() };
   for (const stmt of sourceFile.statements) {
     if (!ts.isVariableStatement(stmt)) continue;
     for (const decl of stmt.declarationList.declarations) {
-      if (
-        decl.initializer &&
-        useFixtureMode(decl.initializer) === "build" &&
-        ts.isIdentifier(decl.name)
-      ) {
-        names.add(decl.name.text);
-      }
+      if (!decl.initializer || !ts.isIdentifier(decl.name)) continue;
+      const mode = useFixtureMode(decl.initializer);
+      if (mode === "build") names.build.add(decl.name.text);
+      else if (mode === "dev") names.dev.add(decl.name.text);
     }
   }
   return names;
@@ -204,7 +205,7 @@ function moduleBuildVars(sourceFile) {
 // real production grep matches the full nested title path.
 export function scanFile(file, prodGrep) {
   const sf = parse(file);
-  const buildVars = moduleBuildVars(sf);
+  const fixtureVars = moduleFixtureVars(sf);
   const stack = [];
   const records = [];
 
@@ -225,7 +226,8 @@ export function scanFile(file, prodGrep) {
       ) {
         dev = true;
       }
-      if (ts.isIdentifier(n) && buildVars.has(n.text)) build = true;
+      if (ts.isIdentifier(n) && fixtureVars.build.has(n.text)) build = true;
+      if (ts.isIdentifier(n) && fixtureVars.dev.has(n.text)) dev = true;
       ts.forEachChild(n, visit);
     };
     ts.forEachChild(bodyNode, visit);
@@ -264,7 +266,20 @@ export function scanFile(file, prodGrep) {
       const fullPath = stack.join(" > ");
       const fn = node.arguments[1];
       if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) {
-        const { build, dev, indeterminate } = classifyOwnBody(fn.body);
+        let { build, dev, indeterminate } = classifyOwnBody(fn.body);
+        // Module-scope fixtures (const f = useFixture(...)) are often used only
+        // via helpers (shopUrl → f.url). A top-level describe that never names
+        // `f` would otherwise look fixture-less and skip the parity gate.
+        // Inherit module mode for top-level describes with no own fixture.
+        if (
+          !build &&
+          !dev &&
+          !indeterminate &&
+          stack.length === 1
+        ) {
+          if (fixtureVars.dev.size > 0) dev = true;
+          if (fixtureVars.build.size > 0) build = true;
+        }
         records.push({
           title,
           fullPath,

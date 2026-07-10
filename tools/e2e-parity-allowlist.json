@@ -1,0 +1,257 @@
+[
+  {
+    "base": "cookies-after-next",
+    "file": "packages/rangojs-router/e2e/app-middleware.test.ts",
+    "reason": "Historical debt: sibling suite under app-middleware (production); cookies-after-next itself has no dedicated production twin yet"
+  },
+  {
+    "base": "loader-hmr",
+    "file": "packages/rangojs-router/e2e/basename-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "basename-hmr",
+    "file": "packages/rangojs-router/e2e/basename-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "cache-status-behavior",
+    "file": "packages/rangojs-router/e2e/cache-status.test.ts",
+    "reason": "Historical debt: isolated-server log assertions; production twin deferred"
+  },
+  {
+    "base": "cache-server-logs",
+    "file": "packages/rangojs-router/e2e/cache.test.ts",
+    "reason": "Historical debt: dev-server stdout log window; production twin deferred"
+  },
+  {
+    "base": "cache-server-logs-partial",
+    "file": "packages/rangojs-router/e2e/cache.test.ts",
+    "reason": "Historical debt: dev-server stdout log window; production twin deferred"
+  },
+  {
+    "base": "proactive-caching",
+    "file": "packages/rangojs-router/e2e/cache.test.ts",
+    "reason": "Historical debt: production twin deferred (other cache.* describes already paired)"
+  },
+  {
+    "base": "client-component-hmr",
+    "file": "packages/rangojs-router/e2e/client-component-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "colocated-fast-refresh-hmr",
+    "file": "packages/rangojs-router/e2e/client-component-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "revalidate and cache mix",
+    "file": "packages/rangojs-router/e2e/handler-first.test.ts",
+    "reason": "Historical debt: production twin deferred (handler-first order is already paired)"
+  },
+  {
+    "base": "usenavigation during actions",
+    "file": "packages/rangojs-router/e2e/hooks.test.ts",
+    "reason": "Historical debt: production twin deferred (useNavigation / useAction already paired)"
+  },
+  {
+    "base": "hydration-error-detection",
+    "file": "packages/rangojs-router/e2e/hydration-detection.test.ts",
+    "reason": "Dev helper contract (waitForHydration mismatch detection); intentional dev-only"
+  },
+  {
+    "base": "intercept-hmr-transition",
+    "file": "packages/rangojs-router/e2e/intercept-hmr-transition.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "intercept-hmr",
+    "file": "packages/rangojs-router/e2e/intercept-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "internal_rango_debug off keeps fe debug silent",
+    "file": "packages/rangojs-router/e2e/internal-debug-fe.test.ts",
+    "reason": "Dev-only INTERNAL_RANGO_DEBUG FE injection; intentional no production twin"
+  },
+  {
+    "base": "loader-hmr",
+    "file": "packages/rangojs-router/e2e/loader-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "intercept-navigation",
+    "file": "packages/rangojs-router/e2e/navigation.test.ts",
+    "reason": "Historical: production coverage lives under navigation (production) umbrella describe"
+  },
+  {
+    "base": "action-cache-consistency",
+    "file": "packages/rangojs-router/e2e/navigation.test.ts",
+    "reason": "Historical: production coverage lives under navigation (production) umbrella describe"
+  },
+  {
+    "base": "stale-revalidation",
+    "file": "packages/rangojs-router/e2e/navigation.test.ts",
+    "reason": "Historical: production coverage lives under navigation (production) umbrella describe"
+  },
+  {
+    "base": "conditional-intercept-when",
+    "file": "packages/rangojs-router/e2e/navigation.test.ts",
+    "reason": "Historical: production coverage lives under navigation (production) umbrella describe"
+  },
+  {
+    "base": "prerender dev cache",
+    "file": "packages/rangojs-router/e2e/prerender-dev-cache.test.ts",
+    "reason": "Dev-server prerender cache behavior; intentional dev-only"
+  },
+  {
+    "base": "prerender-hmr",
+    "file": "packages/rangojs-router/e2e/prerender-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "prerender-ppr dev readiness: injected boot-race (#719)",
+    "file": "packages/rangojs-router/e2e/prerender-ppr.test.ts",
+    "reason": "Dev-server boot-race readiness; intentional dev-only"
+  },
+  {
+    "base": "prerender-ppr dev readiness: cold first request (#719)",
+    "file": "packages/rangojs-router/e2e/prerender-ppr.test.ts",
+    "reason": "Dev-server cold-start readiness; intentional dev-only"
+  },
+  {
+    "base": "prerender-handler",
+    "file": "packages/rangojs-router/e2e/prerender.test.ts",
+    "reason": "Historical debt: baseName strips '(dev mode)' but production twin uses a different title shape; production coverage exists elsewhere in file"
+  },
+  {
+    "base": "refresh-cmd",
+    "file": "packages/rangojs-router/e2e/refresh-cmd.test.ts",
+    "reason": "bindRefreshUtils Vite plugin is apply:serve only; no production path"
+  },
+  {
+    "base": "revalidation-precision",
+    "file": "packages/rangojs-router/e2e/revalidation.test.ts",
+    "reason": "Historical debt: production twin deferred"
+  },
+  {
+    "base": "revalidation-headers",
+    "file": "packages/rangojs-router/e2e/revalidation.test.ts",
+    "reason": "Historical debt: production twin deferred"
+  },
+  {
+    "base": "route-types-hmr",
+    "file": "packages/rangojs-router/e2e/route-types-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "useloader hook",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "usefetchloader hook - with pre-loaded data",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "usefetchloader hook - without pre-loaded data",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "navigation updates loader data",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "ssr behavior",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "refetch via load() for registered loaders",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "custom params via load()",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "error handling - throwonerror: false",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "error handling - throwonerror: true (default)",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "middleware security for fetchable loaders",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "fetched data resets on navigation",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "useloader throws when data missing",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "isloading state verification",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "server action form (useactionstate)",
+    "file": "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "reason": "Historical: production coverage lives under useLoader hooks (production) umbrella describe"
+  },
+  {
+    "base": "hmr burst save",
+    "file": "tests/cloudflare-basic/e2e/hmr-burst-save.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "hmr-route-mutations (types + live serving)",
+    "file": "tests/cloudflare-basic/e2e/hmr-route-mutations.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "hmr",
+    "file": "tests/cloudflare-basic/e2e/hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
+    "base": "ppr-shell dev readiness: injected boot-race (#719)",
+    "file": "tests/cloudflare-basic/e2e/ppr-shell.test.ts",
+    "reason": "Dev-server boot-race readiness; intentional dev-only"
+  },
+  {
+    "base": "ppr-shell dev readiness: cold first request (#719)",
+    "file": "tests/cloudflare-basic/e2e/ppr-shell.test.ts",
+    "reason": "Dev-server cold-start readiness; intentional dev-only"
+  },
+  {
+    "base": "prerender",
+    "file": "tests/cloudflare-basic/e2e/prerender-dev.test.ts",
+    "reason": "Dev-only title marker (dev mode); production twins live in prerender*.test.ts siblings under production describes"
+  },
+  {
+    "base": "shop-api-client",
+    "file": "packages/rangojs-router/e2e/api-client.test.ts",
+    "reason": "Module-scope dev fixture only; production twin deferred (API client contract covered by unit/dispatch elsewhere)"
+  },
+  {
+    "base": "shop-playground-ui",
+    "file": "packages/rangojs-router/e2e/api-client.test.ts",
+    "reason": "Module-scope dev fixture only; same file as shop-api-client; production twin deferred"
+  }
+]
