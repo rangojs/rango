@@ -31,6 +31,37 @@ function findDevReactArtifacts(dir: string): string[] {
   );
 }
 
+interface JsFile {
+  file: string;
+  base: string;
+  src: string;
+}
+
+/** Read every .js file under `dir` once; all guards filter over this list. */
+function readJsFiles(dir: string): JsFile[] {
+  return collectJsFiles(dir).map((file) => ({
+    file,
+    base: path.basename(file),
+    src: fs.readFileSync(file, "utf-8"),
+  }));
+}
+
+/**
+ * Files that statically import `base` (`import …"…<base>"` /
+ * `export … from "…<base>"`; `import.meta` and dynamic `import(` excluded).
+ * Matches the forbidden shape directly so bundler formatting changes
+ * false-negative instead of false-failing CI.
+ */
+function staticImportRefs(files: JsFile[], base: string): string[] {
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(
+    `\\b(?:import|export)(?!\\s*[.(])[^;"'()]*?["'][^"']*${escaped}["']`,
+  );
+  return files
+    .filter((f) => f.base !== base && f.src.includes(base) && re.test(f.src))
+    .map((f) => f.file);
+}
+
 /**
  * Chunks carrying serialized route data. The per-router codegen
  * (generatePerRouterModule) emits the trie/precomputedEntries as
@@ -40,16 +71,17 @@ function findDevReactArtifacts(dir: string): string[] {
  * literal size is a stable detector. If test-app ever shrinks below the
  * threshold this fails loudly (0 chunks found) rather than passing silently.
  */
-function findRouteDataChunks(dir: string): string[] {
+function findRouteDataChunks(files: JsFile[]): string[] {
   const literalRe = /JSON\.parse\((["'])((?:\\.|(?!\1).)*)\1\)/g;
   const minLiteral = 8 * 1024;
-  return collectJsFiles(dir).filter((file) => {
-    const src = fs.readFileSync(file, "utf-8");
-    for (const m of src.matchAll(literalRe)) {
-      if (m[2]!.length >= minLiteral) return true;
-    }
-    return false;
-  });
+  return files
+    .filter((f) => {
+      for (const m of f.src.matchAll(literalRe)) {
+        if (m[2]!.length >= minLiteral) return true;
+      }
+      return false;
+    })
+    .map((f) => f.file);
 }
 
 // Builds the test-app for production tests.
@@ -101,13 +133,17 @@ test("build test-app", async () => {
   // via dynamic import(). Test-app is single-router, so exactly one data
   // chunk; a second copy means the eager manifest is inlining route data
   // again (regression mode of commit d10a2470).
-  const rscDataChunks = findRouteDataChunks(path.join(cwd, "dist", "rsc"));
+  const rscDir = path.join(cwd, "dist", "rsc");
+  const rscFiles = readJsFiles(rscDir);
+  const rscDataChunks = findRouteDataChunks(rscFiles);
   expect(
     rscDataChunks.map((f) => path.relative(cwd, f)),
     "Serialized route data must land in exactly one RSC chunk",
   ).toHaveLength(1);
   for (const env of ["client", "ssr"]) {
-    const leaked = findRouteDataChunks(path.join(cwd, "dist", env));
+    const leaked = findRouteDataChunks(
+      readJsFiles(path.join(cwd, "dist", env)),
+    );
     expect(
       leaked.map((f) => path.relative(cwd, f)),
       `Serialized route data must not ship in the ${env} bundle`,
@@ -116,32 +152,80 @@ test("build test-app", async () => {
 
   // Lazy-only: no chunk may import the data chunk statically — that would
   // pull the trie onto the eager startup path (issue #665's cold-start cost)
-  // without changing chunk count. The regex matches the forbidden
-  // static-import shape directly (`import …"<base>"` / `export … "<base>"`,
-  // first string after the keyword, `import.meta`/`import(` excluded) rather
-  // than proving each reference sits inside `import(`, so bundler formatting
-  // changes false-negative instead of false-failing CI.
+  // without changing chunk count.
   const dataChunk = rscDataChunks[0]!;
   const dataBase = path.basename(dataChunk);
-  const escapedBase = dataBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const staticImportRe = new RegExp(
-    `\\b(?:import|export)(?!\\s*[.(])[^;"'()]*?["'][^"']*${escapedBase}["']`,
-  );
-  const staticRefs: string[] = [];
-  let referencingChunks = 0;
-  for (const file of collectJsFiles(path.join(cwd, "dist", "rsc"))) {
-    if (file === dataChunk) continue;
-    const src = fs.readFileSync(file, "utf-8");
-    if (!src.includes(dataBase)) continue;
-    referencingChunks++;
-    if (staticImportRe.test(src)) staticRefs.push(path.relative(cwd, file));
-  }
   expect(
-    staticRefs,
+    staticImportRefs(rscFiles, dataBase).map((f) => path.relative(cwd, f)),
     `The route-data chunk ${dataBase} must be referenced only via dynamic import()`,
   ).toEqual([]);
+  const referencingChunks = rscFiles.filter(
+    (f) => f.file !== dataChunk && f.src.includes(dataBase),
+  );
   expect(
-    referencingChunks,
+    referencingChunks.length,
     `The route-data chunk ${dataBase} must be wired via ensureRouterManifest's dynamic import`,
   ).toBeGreaterThan(0);
+
+  // Prerender/shell/static artifact discipline (prerender-api-design.md: the
+  // worker serves everything; payloads are lazy read-through). __pr-* (baked
+  // Flight), __ps-* (PPR shells), and __st-* (static handler payloads) are
+  // RSC-only data chunks reached through manifest thunk tables — never
+  // statically imported, never shipped to client/ssr. Their manifests
+  // (__prerender-manifest.js, __shell-manifest.js) load via globalThis
+  // thunks and must stay dynamic too.
+  const payloadRe = /^__(pr|ps|st)-/;
+  const rscPayloads = rscFiles
+    .map((f) => f.base)
+    .filter((b) => payloadRe.test(b));
+  expect(
+    rscPayloads.length,
+    "test-app must bake prerender/shell/static payload chunks — 0 means the guard lost its subject",
+  ).toBeGreaterThan(0);
+  for (const env of ["client", "ssr"]) {
+    const leaked = collectJsFiles(path.join(cwd, "dist", env))
+      .map((f) => path.basename(f))
+      .filter((b) => payloadRe.test(b));
+    expect(
+      leaked,
+      `Prerender/shell/static payloads must not ship in the ${env} bundle`,
+    ).toEqual([]);
+  }
+  const payloadStaticRefs: string[] = [];
+  for (const base of [
+    ...rscPayloads,
+    "__prerender-manifest.js",
+    "__shell-manifest.js",
+  ]) {
+    for (const f of staticImportRefs(rscFiles, base)) {
+      payloadStaticRefs.push(`${path.relative(cwd, f)} -> ${base}`);
+    }
+  }
+  expect(
+    payloadStaticRefs,
+    "Payload chunks and their manifests must be referenced only via dynamic import()",
+  ).toEqual([]);
+
+  // __static-manifest.js is the ONE eagerly-imported generated artifact: its
+  // global must exist before static-store.ts evaluates (a lazy import() there
+  // disrupts AsyncLocalStorage in workerd — see bundle-postprocess.ts). It
+  // must stay a thunk-only lookup table; a payload marker or multi-KB body
+  // means page data landed on the worker startup path. The size ceiling
+  // doubles as a tripwire for O(#Static handlers) eager growth.
+  const staticManifest = path.join(rscDir, "__static-manifest.js");
+  expect(
+    fs.existsSync(staticManifest),
+    "test-app has Static() handlers, so the build must emit __static-manifest.js",
+  ).toBe(true);
+  const staticManifestSrc = fs.readFileSync(staticManifest, "utf-8");
+  expect(
+    staticManifestSrc,
+    "__static-manifest.js must carry import thunks only, no payloads",
+  ).not.toMatch(/"segments"|"encoded"|"handles"/);
+  expect(staticManifestSrc.length).toBeLessThan(32 * 1024);
+  const rscEntry = fs.readFileSync(path.join(rscDir, "index.js"), "utf-8");
+  expect(
+    rscEntry,
+    "__static-manifest.js must be eagerly imported by the RSC entry (load-order requirement)",
+  ).toMatch(/import\s*["']\.\/__static-manifest\.js["']/);
 });
