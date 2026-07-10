@@ -43,6 +43,22 @@ export function createCloudflareZonePurge(
   options: CloudflareZonePurgeOptions,
 ): (cacheTags: string[]) => Promise<void> {
   const { zoneId, apiToken } = options;
+  // Fail at construction, not at the first updateTag(): a store wired with an
+  // unset env var would otherwise report the misconfig only when the first
+  // invalidation rejects — long after deploy.
+  if (typeof zoneId !== "string" || zoneId.length === 0) {
+    throw new Error(
+      "[createCloudflareZonePurge] zoneId is required (Cloudflare dashboard " +
+        "-> zone overview -> Zone ID). Check the env var/secret it is read from.",
+    );
+  }
+  if (typeof apiToken !== "string" || apiToken.length === 0) {
+    throw new Error(
+      "[createCloudflareZonePurge] apiToken is required (an API token with " +
+        "the Zone.Cache Purge permission for the zone). Check the secret it " +
+        "is read from.",
+    );
+  }
   const apiBase = options.apiBase ?? "https://api.cloudflare.com";
   const fetchImpl = options.fetch ?? fetch;
   const endpoint = `${apiBase}/client/v4/zones/${zoneId}/purge_cache`;

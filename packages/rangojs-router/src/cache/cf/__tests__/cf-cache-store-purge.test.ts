@@ -340,6 +340,74 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
     });
   });
 
+  describe("tagPurge credentials form", () => {
+    it("normalizes { zoneId, apiToken } through the built-in zone purge client", async () => {
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ success: true }), { status: 200 }),
+      );
+      const store = makeStore({
+        tagPurge: {
+          zoneId: "zone123",
+          apiToken: "tok",
+          fetch: fetchImpl as unknown as typeof fetch,
+        },
+      });
+
+      await store.invalidateTags(["products"]);
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchImpl.mock.calls[0] as unknown as [
+        string,
+        RequestInit,
+      ];
+      expect(url).toBe(
+        "https://api.cloudflare.com/client/v4/zones/zone123/purge_cache",
+      );
+      expect((init.headers as Record<string, string>).Authorization).toBe(
+        "Bearer tok",
+      );
+      expect(JSON.parse(String(init.body))).toEqual({
+        tags: ["rg:default:e:products"],
+      });
+    });
+
+    it("purge mode is active with the credentials form (L1 hit skips the marker read)", async () => {
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ success: true }), { status: 200 }),
+      );
+      const store = makeStore({
+        tagPurge: {
+          zoneId: "z",
+          apiToken: "t",
+          fetch: fetchImpl as unknown as typeof fetch,
+        },
+      });
+      await store.set("k", createTestData(["products"]), 300);
+      await ctx.flush();
+
+      const kvGet = vi.spyOn(kv, "get");
+      expect(
+        await runWithRequestContext(makeReqCtx(), () => store.get("k")),
+      ).not.toBeNull();
+      expect(
+        kvGet.mock.calls.filter(([key]) =>
+          String(key).includes(TAG_MARKER_PREFIX),
+        ),
+      ).toHaveLength(0);
+    });
+
+    it("rejects missing credentials at construction, not at the first updateTag", () => {
+      expect(() =>
+        makeStore({ tagPurge: { zoneId: "", apiToken: "t" } }),
+      ).toThrow(/zoneId is required/);
+      expect(() =>
+        makeStore({ tagPurge: { zoneId: "z", apiToken: undefined } }),
+      ).toThrow(/apiToken is required/);
+    });
+  });
+
   describe("invalidateTags purge call", () => {
     it("fires tagPurge once with the entry purge tags for the whole batch", async () => {
       const tagPurge = vi.fn(async (_tags: string[]) => {});

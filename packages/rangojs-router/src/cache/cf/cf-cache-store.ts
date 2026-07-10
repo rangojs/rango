@@ -65,6 +65,7 @@ import {
   getTagMarkerMemo,
   getTagMarkerInflight,
 } from "./cf-tag-marker-memo.js";
+import { createCloudflareZonePurge } from "./cf-zone-purge.js";
 
 // ============================================================================
 // Constants
@@ -394,7 +395,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
     this.onRevalidateTag = options.onRevalidateTag;
-    this.tagPurge = options.tagPurge;
+    // tagPurge accepts a ready purge function or a credentials object; the
+    // object form is normalized through the built-in zone purge client, which
+    // validates zoneId/apiToken eagerly so an unset env var fails at
+    // construction instead of on the first updateTag().
+    this.tagPurge =
+      typeof options.tagPurge === "function"
+        ? options.tagPurge
+        : options.tagPurge
+          ? createCloudflareZonePurge(options.tagPurge)
+          : undefined;
     // tagInvalidationTtl feeds KV's expirationTtl, which CF rejects below
     // KV_MIN_EXPIRATION_TTL (60s) -- a too-small finite value would make EVERY
     // marker write throw and break ALL invalidation. Floor it (and warn once);

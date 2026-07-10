@@ -183,13 +183,22 @@ Configure `tagPurge` and the store flips the L1 contract:
   tokens and no marker fallback it would be un-invalidatable, so it renders
   fresh instead.
 
-- `invalidateTags()` **awaits** `tagPurge(cacheTags)` with one batched call
-  (entry tags, plus the `rg:{ns}:lk:{tag}` lookup tags when `tagCacheTtl > 0`).
-  Wire it to Cloudflare's purge API — `createCloudflareZonePurge({ zoneId,
-apiToken })` is the ready-made client (chunked, rejects on API errors). A
-  purge failure makes `updateTag()` reject, exactly like a failed KV marker
-  write: with the read check gone, the purge IS the invalidation, so a dropped
-  one must not report success.
+- `invalidateTags()` **awaits** one batched purge call (entry tags, plus the
+  `rg:{ns}:lk:{tag}` lookup tags when `tagCacheTtl > 0`). Wire it with
+  credentials — `tagPurge: { zoneId, apiToken }` — and the store runs its
+  built-in zone purge client (chunked, rejects on API errors or an
+  unconfirmed 2xx; credentials are validated at construction). A function
+  `(cacheTags) => Promise<void>` is the escape hatch for proxies, custom
+  transports, and test stubs. A purge failure makes `updateTag()` reject,
+  exactly like a failed KV marker write: with the read check gone, the purge
+  IS the invalidation, so a dropped one must not report success.
+
+  Credentials: `zoneId` is on the zone's dashboard overview; create an API
+  token with the `Zone → Cache Purge → Purge` permission scoped to that zone
+  and store both as Worker secrets (`wrangler secret put`). Per-environment:
+  a preview on a separate zone needs its own pair, or leave `tagPurge` unset
+  there to run plain marker mode (no credentials needed).
+
 - **L1 hits stop reading markers.** A surviving entry is trusted — an
   invalidated one would have been purged. Only the per-request memo is checked
   (synchronously, no KV read), so a request that ran `updateTag()` still masks

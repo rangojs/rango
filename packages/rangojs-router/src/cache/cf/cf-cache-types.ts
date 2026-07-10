@@ -14,6 +14,7 @@
 import type { ExecutionContext } from "../../types/request-scope.js";
 import type { CacheDefaults } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
+import type { CloudflareZonePurgeOptions } from "./cf-zone-purge.js";
 
 /**
  * Minimal Cloudflare KV Namespace interface.
@@ -200,15 +201,28 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   /**
    * Purge-based tag invalidation (purge mode). When configured, the store
    * delegates L1 (Cache API) tag eviction to Cloudflare's purge-by-tag API
-   * instead of the per-read KV marker lookup:
+   * instead of the per-read KV marker lookup.
    *
+   * Two forms:
+   * - **Credentials object** (the normal wiring): `{ zoneId, apiToken }` — the
+   *   store builds the purge client itself (createCloudflareZonePurge).
+   *   `zoneId` is on the zone's dashboard overview; `apiToken` needs the
+   *   `Zone.Cache Purge` permission for that zone — store it as a Worker
+   *   secret. Validated at store construction (Workers run no code at deploy,
+   *   so with the usual per-request cache factory this means the first request
+   *   throws — loudly and on every request), rather than surfacing only when
+   *   the first invalidation quietly rejects much later.
+   * - **Function** `(cacheTags) => Promise<void>` — an escape hatch for
+   *   proxies, custom transports, or test stubs; receives the exact
+   *   Cache-Tags to purge.
+   *
+   * Semantics:
    * - Every tagged L1 entry carries a namespaced `Cache-Tag` header
    *   (`rg:{namespace}:e:{encodedTag}`, plus the broader `rg:{namespace}` /
    *   `rg:{namespace}:e` tiers for manual resets).
-   * - `updateTag()`/`revalidateTag()` AWAIT this hook with the exact Cache-Tags
-   *   to purge (one batched call per invalidation; entry tags, plus the lookup
-   *   Cache-Tags when `tagCacheTtl > 0`). Forward them to a purge-by-tag call —
-   *   see {@link createCloudflareZonePurge} for a ready-made implementation.
+   * - `updateTag()`/`revalidateTag()` AWAIT the purge with the exact Cache-Tags
+   *   (one batched call per invalidation; entry tags, plus the lookup
+   *   Cache-Tags when `tagCacheTtl > 0`).
    * - L1 hits then skip the per-read marker lookup entirely: a surviving entry
    *   is trusted because an invalidated one would have been purged. Only the
    *   per-request memo is consulted (synchronously, no KV read), so a request
@@ -241,14 +255,13 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * new CFCacheStore({
    *   ctx,
    *   kv: env.CACHE_KV,
-   *   tagPurge: createCloudflareZonePurge({
-   *     zoneId: env.CF_ZONE_ID,
-   *     apiToken: env.CF_PURGE_TOKEN,
-   *   }),
+   *   tagPurge: { zoneId: env.CF_ZONE_ID, apiToken: env.CF_PURGE_TOKEN },
    * })
    * ```
    */
-  tagPurge?: (cacheTags: string[]) => Promise<void>;
+  tagPurge?:
+    | CloudflareZonePurgeOptions
+    | ((cacheTags: string[]) => Promise<void>);
 
   /**
    * Optional expiration (seconds) for tag-invalidation markers in KV. A marker
