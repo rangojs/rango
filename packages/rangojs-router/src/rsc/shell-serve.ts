@@ -178,6 +178,91 @@ export function hasShellFamily(
   return !!store?.getShell && !!store?.putShell;
 }
 
+/**
+ * Per-stage timing of one shell-HIT tail, all offsets in ms from the response
+ * commit (prelude flush). The HIT commits its 200 + headers BEFORE the live
+ * tail runs, so Server-Timing on the HIT response structurally cannot carry
+ * these numbers — they ride the dev mirror below instead (same doctrine as
+ * the ppr:capture mirror in rsc-rendering.ts, issue #651).
+ */
+export interface ShellTailTiming {
+  key: string;
+  outcome: "complete" | "redirect" | "error";
+  /** Loader-family seed decode (only when the entry carried a snapshot). */
+  seedMs?: number;
+  /** Tail router.match() settled. */
+  matchMs?: number;
+  /** Tail stream (resume output) handed to the response stream. */
+  handoverMs?: number;
+  /** First resumed-HTML byte enqueued on the wire. */
+  firstHtmlMs?: number;
+  /** Tail fully drained (last hole settled and flushed). */
+  completeMs?: number;
+  /** Prelude size flushed at commit (decoded bytes). */
+  preludeBytes?: number;
+  /** Total tail bytes streamed behind the prelude. */
+  tailBytes?: number;
+}
+
+/**
+ * Compact single-line form for the console log and the dev Server-Timing
+ * mirror's `desc`. Plain alphanumerics/`=`/`-` only — no quoted-string
+ * escaping needed.
+ */
+export function describeShellTailTiming(timing: ShellTailTiming): string {
+  const parts: string[] = [timing.outcome];
+  if (timing.seedMs !== undefined) parts.push(`seed=${timing.seedMs}ms`);
+  if (timing.matchMs !== undefined) parts.push(`match=${timing.matchMs}ms`);
+  if (timing.handoverMs !== undefined) {
+    parts.push(`handover=${timing.handoverMs}ms`);
+  }
+  if (timing.firstHtmlMs !== undefined) {
+    parts.push(`first-html=${timing.firstHtmlMs}ms`);
+  }
+  if (timing.completeMs !== undefined) {
+    parts.push(`complete=${timing.completeMs}ms`);
+  }
+  if (timing.preludeBytes !== undefined) {
+    parts.push(`prelude=${timing.preludeBytes}b`);
+  }
+  if (timing.tailBytes !== undefined) parts.push(`tail=${timing.tailBytes}b`);
+  return parts.join(" ");
+}
+
+/**
+ * Dev-only last-tail-per-key buffer backing the `ppr:tail` Server-Timing
+ * mirror: a HIT's tail finishes after its own headers are long gone, so its
+ * per-stage numbers ride the NEXT ppr GET for the key when the metrics
+ * surface is active (debugPerformance). Same shape and FIFO cap as the
+ * capture mirror (shell-capture.ts lastCaptureEventsForTiming); dev-only so
+ * production isolates never grow the map.
+ */
+const lastTailTimingsForServerTiming = new Map<string, ShellTailTiming>();
+const MAX_TAIL_TIMING_KEYS = 100;
+
+/** Buffer one terminal tail timing for the dev Server-Timing mirror. */
+export function publishShellTailTiming(timing: ShellTailTiming): void {
+  if (process.env.NODE_ENV === "production") return;
+  lastTailTimingsForServerTiming.delete(timing.key);
+  if (lastTailTimingsForServerTiming.size >= MAX_TAIL_TIMING_KEYS) {
+    const oldest = lastTailTimingsForServerTiming.keys().next().value;
+    if (oldest !== undefined) lastTailTimingsForServerTiming.delete(oldest);
+  }
+  lastTailTimingsForServerTiming.set(timing.key, timing);
+}
+
+/**
+ * Consume (read-and-clear) the buffered tail timing for `key`, so one tail
+ * reports into exactly one later response's Server-Timing.
+ */
+export function takeShellTailTimingForServerTiming(
+  key: string,
+): ShellTailTiming | undefined {
+  const timing = lastTailTimingsForServerTiming.get(key);
+  if (timing) lastTailTimingsForServerTiming.delete(key);
+  return timing;
+}
+
 /** Keys already warned about a missing shell store family (once per key). */
 const warnedMissingStore = new Set<string>();
 

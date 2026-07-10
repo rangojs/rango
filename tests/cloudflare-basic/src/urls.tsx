@@ -39,6 +39,8 @@ import {
   PprBareHomePage,
   PprSlotChromeLayout,
   PprSlotHomePage,
+  PprBakeSlowLayout,
+  PprBakeSlowPage,
   PprExecLayout,
   PprExecBadgeSlot,
   PprExecPage,
@@ -67,6 +69,8 @@ import {
   PprPrerenderSeqLoader,
   PprChromeLoader,
   PprBadgeLoader,
+  PprBakeSlowLoader,
+  PprBakeHoleLoader,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import {
@@ -772,6 +776,29 @@ export const urlpatterns = urls(
             name: "pprShellLayoutLoaderBare",
             ppr: true,
           }),
+        ]),
+        // Pin-first bake lane (loader-cache.ts `if (!recorded.holes)`): see
+        // PprBakeSlowLayout. The layout's 600ms hole-free bake loader is
+        // snapshot-pinned; on a HIT the payload resolves it from the pin
+        // immediately instead of gating on the fresh 600ms run. Child keeps a
+        // fast live price hole behind loading() so a real shell captures. NOT in
+        // PPR_WARMUP_HIT_ROUTES — a 600ms capture must never park the shared
+        // warmup path; its e2e owns the MISS -> HIT round-trip.
+        layout(PprBakeSlowLayout, () => [
+          loader(PprBakeSlowLoader),
+          path(
+            "/ppr-shell/bake-slow",
+            PprBakeSlowPage,
+            { name: "pprBakeSlow", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprBakeHoleLoader),
+              loading(
+                <div data-testid="ppr-bake-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
         ]),
         // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"):
         // the same chrome data owned by a @badge parallel slot with its OWN

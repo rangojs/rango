@@ -48,6 +48,7 @@ export const NamedRoutes = {
   itemDetail: "/item/:itemId/detail",
   localeInfo: "/:locale(en|fr)/info",
   orphanFetch: "/orphan-fetch",
+  pprBakeSlow: "/ppr-shell/bake-slow",
   pprBasket: "/ppr-basket",
   pprBlog: "/ppr-blog",
   pprBlogPost: "/ppr-blog/:slug",

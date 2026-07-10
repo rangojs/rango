@@ -3,7 +3,19 @@ import {
   RecordingShellStore,
   SeededShellStore,
   getRecordingStore,
+  buildShellLoaderSeed,
 } from "../shell-snapshot.js";
+
+// buildShellLoaderSeed lazily imports the Flight codec; the real module pulls
+// the virtual @vitejs/plugin-rsc import that unit configs cannot resolve, so
+// pin it to JSON here (shape-faithful for the seed-mapping assertions).
+vi.mock("../segment-codec.js", () => ({
+  serializeResult: vi.fn(async (value: unknown) => JSON.stringify(value)),
+  deserializeResult: vi.fn(async (value: string) => {
+    if (value === "%broken%") throw new Error("decode boom");
+    return JSON.parse(value);
+  }),
+}));
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
 import type {
   SegmentCacheStore,
@@ -261,6 +273,53 @@ describe("SeededShellStore", () => {
       300,
     );
     expect(await seeded.getShell("sk")).not.toBeNull();
+  });
+});
+
+describe("buildShellLoaderSeed", () => {
+  it("maps the stored hole bit onto seed entries; a pre-bit record reads as hole-carrying", async () => {
+    const snapshot: ShellSnapshotRecord[] = [
+      {
+        family: "loader",
+        key: "K-full",
+        value: { value: JSON.stringify({ a: 1 }), holes: 0 },
+      },
+      {
+        family: "loader",
+        key: "K-holey",
+        value: { value: JSON.stringify({ a: 1 }), holes: 1 },
+      },
+      // Legacy record (stored before the hole bit existed): hole-ness is
+      // unknown, so the seed must keep the gated path.
+      { family: "loader", key: "K-legacy", value: { value: "{}" } },
+    ];
+
+    const seed = await buildShellLoaderSeed(snapshot);
+    expect(seed?.get("K-full")).toEqual({ container: { a: 1 }, holes: false });
+    expect(seed?.get("K-holey")?.holes).toBe(true);
+    expect(seed?.get("K-legacy")?.holes).toBe(true);
+  });
+
+  it("skips a record that fails to decode (that loader drifts, the pre-snapshot behavior)", async () => {
+    const snapshot: ShellSnapshotRecord[] = [
+      { family: "loader", key: "K-bad", value: { value: "%broken%" } },
+      {
+        family: "loader",
+        key: "K-good",
+        value: { value: JSON.stringify(7), holes: 0 },
+      },
+    ];
+
+    const seed = await buildShellLoaderSeed(snapshot);
+    expect(seed?.has("K-bad")).toBe(false);
+    expect(seed?.get("K-good")).toEqual({ container: 7, holes: false });
+  });
+
+  it("returns undefined when the snapshot carries no loader records", async () => {
+    const snapshot: ShellSnapshotRecord[] = [
+      { family: "segment", key: "S", value: segData("t") },
+    ];
+    expect(await buildShellLoaderSeed(snapshot)).toBeUndefined();
   });
 });
 

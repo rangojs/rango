@@ -332,6 +332,17 @@ export type ShellSnapshotFamily = "item" | "segment" | "response" | "loader";
 export interface ShellSnapshotLoaderValue {
   /** RSC-serialized elided container (see loader-snapshot.ts). */
   value: string;
+  /**
+   * Hole bit, capture-computed (elide already walks every node): 1 = the
+   * container carries hole markers, so a HIT must gate the overlay on the
+   * fresh run (only the loader body can mint the live nested promises);
+   * 0 = fully pinned, so a HIT resolves the payload promise immediately from
+   * the pin while the fresh run proceeds ungated (side effects and cache
+   * read-through writes preserved; its values were discarded either way —
+   * recorded paths win wholesale). Absent on pre-bit snapshots, which keep
+   * the gated path.
+   */
+  holes?: 0 | 1;
 }
 
 /** A serialized cached Response for the response family of a shell snapshot. */

@@ -166,6 +166,49 @@ export const PprShellExecLoader = createLoader(
   },
 );
 
+// Pin-first bake-lane fixture (loader-cache.ts `if (!recorded.holes)`), the
+// workerd/KV counterpart of test-app's bake-slow. A bake-lane loader (registered
+// on a layout with NO loading()) that sleeps a deliberately SLOW 600ms and
+// returns a plain, HOLE-FREE container ({ label } — no nested promises). At
+// capture it executes and its settled container bakes into the shell snapshot's
+// loader family, hole-free. On a shell HIT the record is hole-free, so the HIT
+// payload resolves the loaderData from the PIN immediately instead of gating on
+// the fresh 600ms run (which still runs ungated for its side effects). seq
+// advances per execution only to prove the served value is the pinned
+// capture-time one — frozen across HITs while the fresh run keeps incrementing.
+// 600ms is well above the e2e's 400ms HIT bound so a gated (unoptimized) HIT
+// visibly exceeds it while a pinned HIT clears it with a 200ms+ margin.
+const PPR_BAKE_SLOW_DELAY_MS = 600;
+
+let pprBakeSlowSeq = 0;
+
+export const PprBakeSlowLoader = createLoader(
+  async (): Promise<{ label: string }> => {
+    await new Promise((resolve) => setTimeout(resolve, PPR_BAKE_SLOW_DELAY_MS));
+    pprBakeSlowSeq += 1;
+    return { label: `bake-${pprBakeSlowSeq}` };
+  },
+);
+
+// The fast LIVE hole under the bake-slow layout: ~30ms behind loading() so the
+// route has a real hole and the shell actually captures (a route with no hole
+// anywhere can refuse capture). Kept far under the 600ms bake AND the 400ms HIT
+// bound so it never dominates the pinned HIT's tail. Returns the
+// PprShellPriceData shape so the shared PprBakeSlow view renders the same "Live
+// price:" content the other fixtures assert on; seq advances every request to
+// prove the hole stays live while the bake label is pinned.
+const PPR_BAKE_HOLE_DELAY_MS = 30;
+
+let pprBakeHoleSeq = 0;
+
+export const PprBakeHoleLoader = createLoader(
+  async (): Promise<PprShellPriceData> => {
+    await new Promise((resolve) => setTimeout(resolve, PPR_BAKE_HOLE_DELAY_MS));
+    pprBakeHoleSeq += 1;
+    return { price: 42, seq: pprBakeHoleSeq, loadedAt: Date.now() };
+  },
+);
+
 // Prerender + ppr composition fixture (docs/design/shell-fast-path.md): the
 // live loader owned by the @ppSeq slot on the prerendered ppr route. seq
 // advances per execution to pin slot-hole liveness while the build-time

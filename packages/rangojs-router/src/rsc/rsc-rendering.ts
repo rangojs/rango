@@ -48,6 +48,10 @@ import {
   hasShellFamily,
   warnShellStoreMissingOnce,
   warnPprNonceActiveOnce,
+  describeShellTailTiming,
+  publishShellTailTiming,
+  takeShellTailTimingForServerTiming,
+  type ShellTailTiming,
 } from "./shell-serve.js";
 import { lookupBuildShell } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
@@ -168,6 +172,22 @@ async function handleRscRenderingInner<TEnv>(
             undefined,
             // attemptMs already rides as this entry's dur — drop it from desc.
             describeShellCaptureEvent({ ...lastCapture, attemptMs: undefined }),
+          );
+        }
+        // Same mirror for the previous HIT's tail: its per-stage numbers
+        // (seed/match/handover/first-html/complete) finished after that
+        // response's headers were committed, so they ride THIS request's
+        // Server-Timing as `ppr:tail;dur=<complete ms>`.
+        const lastTail = takeShellTailTimingForServerTiming(key);
+        if (lastTail) {
+          appendMetric(
+            reqCtx._metricsStore,
+            "ppr:tail",
+            performance.now(),
+            lastTail.completeMs ?? 0,
+            undefined,
+            // completeMs already rides as this entry's dur — drop it from desc.
+            describeShellTailTiming({ ...lastTail, completeMs: undefined }),
           );
         }
       }
@@ -579,12 +599,27 @@ function serveShellHit(
   descriptor: ShellCaptureDescriptor,
 ): Response {
   const preludeBytes = base64ToBytes(entry.prelude);
+  // Per-stage tail timing for the dev `ppr:tail` Server-Timing mirror. Dev
+  // only (NODE_ENV folds the branch away in production builds); offsets are
+  // relative to this commit point.
+  const tailTiming: ShellTailTiming | null =
+    process.env.NODE_ENV !== "production"
+      ? {
+          key: descriptor.key,
+          outcome: "complete",
+          preludeBytes: preludeBytes.length,
+        }
+      : null;
+  const tailT0 = tailTiming ? performance.now() : 0;
 
   const renderTail = async (
     activeCtx: RequestContext<any>,
   ): Promise<ReadableStream<Uint8Array> | { redirect: string }> => {
     const matchStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
     const match = await ctx.router.match(request, { env });
+    if (tailTiming) {
+      tailTiming.matchMs = Math.round(performance.now() - tailT0);
+    }
     if (INTERNAL_RANGO_DEBUG) {
       console.log(
         `[Server][ppr] shell HIT: tail match done +${Math.round(performance.now() - matchStart)}ms (abs ${Math.round(performance.now())}, started ${Math.round(matchStart)})`,
@@ -676,6 +711,9 @@ function serveShellHit(
       // hole-marker paths keep the fresh run's live nested promises.
       const seedStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
       const loaderSeed = await buildShellLoaderSeed(entry.snapshot);
+      if (tailTiming) {
+        tailTiming.seedMs = Math.round(performance.now() - tailT0);
+      }
       if (INTERNAL_RANGO_DEBUG) {
         console.log(
           `[Server][ppr] shell HIT: loader seed built +${Math.round(performance.now() - seedStart)}ms (abs ${Math.round(performance.now())})`,
@@ -740,6 +778,9 @@ function serveShellHit(
       }
       try {
         const tail = await tailPromise;
+        if (tailTiming) {
+          tailTiming.handoverMs = Math.round(performance.now() - tailT0);
+        }
         if (INTERNAL_RANGO_DEBUG) {
           console.log(
             `[Server][ppr] shell HIT: tail stream handed over +${Math.round(performance.now() - serveStart)}ms (abs ${Math.round(performance.now())})`,
@@ -753,17 +794,30 @@ function serveShellHit(
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
-              if (INTERNAL_RANGO_DEBUG && firstTailChunk) {
+              if (firstTailChunk) {
                 firstTailChunk = false;
-                console.log(
-                  `[Server][ppr] shell HIT: first tail chunk on the wire +${Math.round(performance.now() - serveStart)}ms (abs ${Math.round(performance.now())})`,
-                );
+                if (tailTiming) {
+                  tailTiming.firstHtmlMs = Math.round(
+                    performance.now() - tailT0,
+                  );
+                }
+                if (INTERNAL_RANGO_DEBUG) {
+                  console.log(
+                    `[Server][ppr] shell HIT: first tail chunk on the wire +${Math.round(performance.now() - serveStart)}ms (abs ${Math.round(performance.now())})`,
+                  );
+                }
               }
-              if (INTERNAL_RANGO_DEBUG) tailBytes += value.length;
+              if (tailTiming || INTERNAL_RANGO_DEBUG) {
+                tailBytes += value.length;
+              }
               controller.enqueue(value);
             }
           } finally {
             reader.releaseLock();
+          }
+          if (tailTiming) {
+            tailTiming.completeMs = Math.round(performance.now() - tailT0);
+            tailTiming.tailBytes = tailBytes;
           }
           // Bounds the post-header work Server-Timing structurally cannot see:
           // the HIT commits headers at the flush, so ALL live-tail time (match,
@@ -791,7 +845,12 @@ function serveShellHit(
               `<script>location.replace(${JSON.stringify(safeTarget)})</script>`,
             ),
           );
+          if (tailTiming) {
+            tailTiming.outcome = "redirect";
+            tailTiming.completeMs = Math.round(performance.now() - tailT0);
+          }
         }
+        if (tailTiming) publishShellTailTiming(tailTiming);
         controller.close();
       } catch (error) {
         // Self-heal on a failed tail: the pre-commit gates (isValidShellHit +
@@ -812,6 +871,11 @@ function serveShellHit(
           ssrModule,
           descriptor,
         );
+        if (tailTiming) {
+          tailTiming.outcome = "error";
+          tailTiming.completeMs = Math.round(performance.now() - tailT0);
+          publishShellTailTiming(tailTiming);
+        }
         controller.error(error);
       }
     },

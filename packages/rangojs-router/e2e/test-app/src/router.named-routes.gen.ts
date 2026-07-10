@@ -334,6 +334,7 @@ export const NamedRoutes = {
   shellCache: "/shell-cache",
   shellCacheAction: "/shell-cache-action",
   shellCacheActionPe: "/shell-cache-action/pe",
+  shellCacheBakeSlow: "/shell-cache/bake-slow",
   shellCacheCorrupt: "/shell-cache/__corrupt",
   shellCacheDrift: "/shell-cache/drift",
   shellCacheExecMatrix: "/shell-cache/exec-matrix",

@@ -306,9 +306,21 @@ export class SnapshotOnlySegmentStore<
  * HIT). Returns undefined when the snapshot carries no loader records, without
  * touching the Flight codec (kept lazy for cold paths and non-RSC configs).
  */
+export interface ShellLoaderSeedEntry {
+  /** The Flight-deserialized elided container (recorded paths + markers). */
+  container: unknown;
+  /**
+   * True when the record carries hole markers (or predates the capture-side
+   * hole bit, where hole-ness is unknown): the HIT overlay must gate on the
+   * fresh run. False = fully pinned; the payload promise resolves immediately
+   * from the pin (loader-cache.ts pin-first path).
+   */
+  holes: boolean;
+}
+
 export async function buildShellLoaderSeed(
   snapshot: ShellSnapshotRecord[],
-): Promise<Map<string, unknown> | undefined> {
+): Promise<Map<string, ShellLoaderSeedEntry> | undefined> {
   const loaderRecords: ShellSnapshotRecord[] = [];
   for (const rec of snapshot) {
     if (rec.family === "loader") loaderRecords.push(rec);
@@ -317,20 +329,26 @@ export async function buildShellLoaderSeed(
 
   const { deserializeResult } = await import("./segment-codec.js");
   const entries = await Promise.all(
-    loaderRecords.map(async (rec): Promise<[string, unknown] | null> => {
-      try {
-        return [
-          rec.key,
-          await deserializeResult(
-            (rec.value as ShellSnapshotLoaderValue).value,
-          ),
-        ];
-      } catch {
-        return null;
-      }
-    }),
+    loaderRecords.map(
+      async (rec): Promise<[string, ShellLoaderSeedEntry] | null> => {
+        try {
+          const stored = rec.value as ShellSnapshotLoaderValue;
+          return [
+            rec.key,
+            {
+              container: await deserializeResult(stored.value),
+              // A record without the bit (pre-bit snapshot) reads as
+              // hole-carrying: unknown hole-ness must keep the gated path.
+              holes: stored.holes !== 0,
+            },
+          ];
+        } catch {
+          return null;
+        }
+      },
+    ),
   );
-  const seed = new Map<string, unknown>();
+  const seed = new Map<string, ShellLoaderSeedEntry>();
   for (const entry of entries) {
     if (entry) seed.set(entry[0], entry[1]);
   }
