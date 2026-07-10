@@ -23,6 +23,8 @@ export {
   EDGE_LOOKUP_TIMEOUT_MS,
   EDGE_READ_TIMEOUT_MS,
   KV_READ_TIMEOUT_MS,
+  createCloudflareZonePurge,
+  type CloudflareZonePurgeOptions,
 } from "./cf/index.js";
 
 export {

@@ -17,6 +17,7 @@ import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
+import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
 
 declare global {
   var __loadPrerenderManifestModule:
@@ -229,6 +230,30 @@ export const urlpatterns = urls(
         return { ok: true, tag: ctx.params.tag };
       },
       { name: "testRevalidateTag" },
+    ),
+
+    // Purge mode (tagPurge) against the real CFCacheStore in workerd, on a
+    // SEPARATE store so the marker-mode routes above keep their semantics.
+    // The tagPurge stub records the Cache-Tags (workerd cannot purge by tag);
+    // the e2e asserts the recorded tags and the delegation contract (a
+    // surviving L1 entry keeps serving after updateTag). See purge-store.ts.
+    cache({ ttl: 600, tags: ["cf-purge-items"], store: purgeModeStore }, () => [
+      path.json("/test/purge-tagged-json", () => ({ ts: Date.now() }), {
+        name: "testPurgeTaggedJson",
+      }),
+    ]),
+    // Test utils: read / clear the recorded purge calls (same module-state
+    // pattern as /__test/last-error).
+    path.json("/__test/purge-log", () => ({ calls: [...purgeLog] }), {
+      name: "testPurgeLog",
+    }),
+    path.json(
+      "/__test/clear-purge-log",
+      () => {
+        clearPurgeLog();
+        return { cleared: true };
+      },
+      { name: "testClearPurgeLog" },
     ),
 
     // Cached response routes: test cache() with CFCacheStore across MIME types

@@ -17,3 +17,8 @@ export {
   EDGE_READ_TIMEOUT_MS,
   KV_READ_TIMEOUT_MS,
 } from "./cf-cache-store.js";
+
+export {
+  createCloudflareZonePurge,
+  type CloudflareZonePurgeOptions,
+} from "./cf-zone-purge.js";
