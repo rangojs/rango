@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.0.0-experimental.152",
+  "version": "0.1.0",
   "description": "Django-inspired RSC router with composable URL patterns",
   "keywords": [
     "react",
@@ -170,7 +170,7 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "experimental"
+    "tag": "latest"
   },
   "scripts": {
     "build": "pnpm run build:types && pnpm exec esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm exec esbuild src/testing/vitest.ts --bundle --format=esm --outfile=dist/testing/vitest.js --platform=node --packages=external && pnpm exec esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js",
