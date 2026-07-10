@@ -109,21 +109,10 @@ async function handleRscRenderingInner<TEnv>(
 
   // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
   //
-  // COMMIT POINT. This function is the render pass executeRender wraps, so it runs
-  // strictly AFTER the whole middleware chain — the global router.use() chain AND
-  // route DSL middleware() both wrap it. Any middleware rejection/redirect/401 has
-  // already returned before this line, which is what makes a shared shell safe:
-  // not a single shell byte can precede a guard decision, on MISS or HIT.
-  //
-  // PPR is opt-in per PAGE ROUTE via the `ppr` path option (read off the classified
-  // route snapshot — the same matched entry match() will resolve). No `ppr` option
-  // means pure axis 1: no store read, no capture, no logs, zero cost.
-  //
-  // On a valid HIT the composed response is committed HERE — the stored prelude
-  // bytes flush immediately while match()/segment resolution/Flight render/resume
-  // run behind them inside the response stream (ring-3 reads and render setup hide
-  // behind wire bytes). On a MISS the request continues as plain axis 1 and a
-  // background capture is scheduled after the response is built.
+  // COMMIT POINT: this render pass runs strictly AFTER the whole middleware
+  // chain (executeRender wraps it), so no shell byte can precede a guard
+  // decision — that ordering is what makes a shared shell safe. Routes
+  // without the `ppr` option stay pure axis 1 at zero cost.
   let pprMiss: {
     descriptor: ShellCaptureDescriptor;
     ssrModule: SSRModule;
@@ -137,30 +126,18 @@ async function handleRscRenderingInner<TEnv>(
   ) {
     const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
     if (pprConfig) {
-      // A per-request CSP nonce pins the route to axis 1: useNonce() (and any app
-      // code reading the nonce) renders it into every nonced script/style/meta, so
-      // a shell shared per host+URL would freeze one request's nonce for every
-      // visitor and the browser's CSP would reject the frozen nonce for all but the
-      // capture request. The nonce arrives two ways and BOTH must gate: the
-      // createRouter({ nonce }) provider (threaded here as `nonce`), and a direct
-      // token write in middleware (ctx.set(nonce, value)). The token is only
-      // visible in the post-middleware request variables — and this commit point
-      // runs AFTER the whole middleware chain (see the block header), so it is
-      // present here. Reading it closes the gap the provider-only check left open
-      // (issue #656). The threaded-param check stays first: the provider path is
-      // resolved before any variable read and short-circuits cheaply.
+      // A per-request CSP nonce pins the route to axis 1: a shared shell would
+      // freeze the capture request's nonce and CSP would reject it for every
+      // other visitor. BOTH nonce sources must gate — the createRouter({ nonce })
+      // provider (`nonce` param) and a middleware ctx.set(nonce, …) token write;
+      // the provider-only check missed the latter (issue #656).
       const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
       const store = reqCtx._cacheStore;
       const key = buildShellKey(url);
-      // Dev Server-Timing mirror (issue #651): a capture runs AFTER its
+      // Dev Server-Timing mirror (issue #651): a capture completes AFTER its
       // triggering response committed, so its outcome can only ride a LATER
-      // response's header. When the metrics surface is active
-      // (debugPerformance), fold the buffered terminal capture event for this
-      // key into THIS request's Server-Timing as `ppr-capture;dur=<attempt
-      // ms>;desc="<outcome + sizes + waits>"`. Consuming (read-and-clear)
-      // keeps one capture = one report. Dev-only: the buffer is only written
-      // in dev (see takeCaptureDebugEventForTiming), and production folds the
-      // whole branch away.
+      // response's header. Read-and-clear keeps one capture = one report;
+      // dev-only (see takeCaptureDebugEventForTiming).
       if (process.env.NODE_ENV !== "production" && reqCtx._metricsStore) {
         const lastCapture = takeCaptureDebugEventForTiming(key);
         if (lastCapture) {
@@ -303,16 +280,11 @@ async function handleRscRenderingInner<TEnv>(
             }
           }
           // Build-time shell read-through (producer B, #699): on a runtime
-          // store MISS (or an invalid/corrupt runtime entry), a Prerender+ppr
-          // route's shell was already produced at `vite build` — serve it
-          // through the SAME serveShellHit, so the first-ever request after a
-          // deploy is a HIT with zero runtime capture. lookupBuildShell owns
-          // every gate (search-less request, versions, integrity, tag
-          // markers) and fails to null — the ordinary MISS path below takes
-          // over. Past ppr.ttl the baked entry still serves but a runtime
-          // recapture is scheduled: SWR is the UPGRADE path from build entry
-          // to fresher runtime entry (the runtime store read above wins once
-          // the capture lands).
+          // store MISS a Prerender+ppr route serves its `vite build`-baked
+          // shell through the SAME serveShellHit. lookupBuildShell owns every
+          // gate and fails to null (ordinary MISS path takes over); past
+          // ppr.ttl the baked entry still serves while SWR recaptures — the
+          // upgrade path from build entry to runtime entry.
           const buildHit = await lookupBuildShell(
             url,
             ctx.version,
@@ -517,13 +489,9 @@ async function handleRscRenderingInner<TEnv>(
   );
 
   // --- Axis 2: PPR shell CAPTURE on MISS (background task; see design doc) ---
-  // The ppr route missed its shell above. Schedule the background capture only
-  // when the served response is a 200 HTML document (a 404/error render is not a
-  // cacheable shell), and tag the response for observability either way. Capture
-  // does NOT flow through the HTTP pipeline: scheduleShellCapture re-derives the
-  // page via router.match() under a derived context (fresh handle store,
-  // _shellCaptureRun: true) — middleware never re-runs; it already ran for this
-  // request and guarding is serve-time.
+  // Capture only a 200 HTML document (a 404/error render is not a cacheable
+  // shell). Capture does not flow through the HTTP pipeline — middleware never
+  // re-runs (it already ran for this request; guarding is serve-time).
   if (pprMiss && !reqCtx._dynamic) {
     if (
       response.status === 200 &&
@@ -546,16 +514,11 @@ async function handleRscRenderingInner<TEnv>(
 }
 
 /**
- * Neutralize the shell-HIT degradation redirect target.
- *
- * The inline `location.replace` emitted by serveShellHit when a shell HIT lands
- * on a URL whose route became redirecting mid-TTL is a document-native redirect
- * exit that BYPASSES the 3xx chokepoint (guardOutgoingRedirect acts only on 3xx
- * + Location responses, never a committed 200 body). So it reuses the ONE
- * same-origin resolver directly: a cross-origin/unparseable/unsafe target
- * neutralizes to the same safe same-origin landing as redirect-guard.ts
- * (basename root, or "/" when unset) rather than navigating the user off-host.
- * A safe same-origin/relative target passes through as its normalized href.
+ * Neutralize the shell-HIT degradation redirect target. The inline
+ * `location.replace` in a committed 200 body bypasses the 3xx chokepoint
+ * (guardOutgoingRedirect only sees 3xx + Location), so this reuses the same
+ * same-origin resolver directly: unsafe targets neutralize to the
+ * redirect-guard.ts landing instead of navigating the user off-host.
  */
 export function resolveShellHitRedirectTarget(
   rawTarget: string,
@@ -569,23 +532,13 @@ export function resolveShellHitRedirectTarget(
 }
 
 /**
- * Serve a validated shell HIT: commit the composed response NOW — the stored
- * prelude bytes are the first thing on the wire — and run the live tail
- * (match(), fresh loaders, full Flight render for hydration, fizz resume of just
- * the holes) BEHIND them inside the response stream. React relies on HTML-parser
- * foster-parenting for content streamed after the prelude's closing
- * `</body></html>`, so plain byte concatenation is the correct composition.
- *
- * Status and headers are committed at the flush: middleware already ran (their
- * ctx.res headers merge in via createResponseWithMergedHeaders), and route
- * middleware code after its next() can still adjust headers on the returned
- * Response object. A failing hole cannot become a 500/redirect after this point —
- * error UI renders inline via Suspense/error boundaries, the documented PPR
- * constraint.
- *
- * The tail promise is kicked off SYNCHRONOUSLY so match/Flight/resume run inside
- * the current ALS request-context frame (the stream may be pulled by the server
- * adapter outside it).
+ * Serve a validated shell HIT: commit the stored prelude bytes NOW and run the
+ * live tail behind them inside the response stream. Plain byte concatenation is
+ * correct — React foster-parents content streamed after the prelude's closing
+ * `</body></html>`. After the flush a failing hole cannot become a 500/redirect
+ * (error UI renders inline — the documented PPR constraint). The tail promise
+ * is kicked off SYNCHRONOUSLY so it runs inside the current ALS request-context
+ * frame; the adapter may pull the stream outside it.
  */
 function serveShellHit(
   ctx: HandlerContext<any>,
@@ -628,14 +581,10 @@ function serveShellHit(
     if (match.redirect) return { redirect: match.redirect };
     setRequestContextParams(match.params, match.routeName);
     const payload = buildFullPayload(match, ctx, url, activeCtx, handleStore);
-    // Theme fidelity for resume: initialTheme is per-request METADATA (the
-    // visitor's cookie), but React resume requires the tree above the holes to
-    // match the frozen prelude, which was rendered with the CAPTURE's
-    // initialTheme. Replay the captured value into the payload (the SSR resume
-    // tree AND client hydration both read it) so the trees agree by
-    // construction. The visitor still sees THEIR theme: the FOUC script in the
-    // prelude applies it pre-paint from the cookie, and ThemeProvider re-syncs
-    // its state from the cookie post-mount.
+    // Theme fidelity for resume: replay the CAPTURE's initialTheme into the
+    // payload so the resume/hydration trees match the frozen prelude by
+    // construction. The visitor still sees THEIR theme — the prelude's FOUC
+    // script applies the cookie pre-paint and ThemeProvider re-syncs post-mount.
     if (payload.metadata) {
       payload.metadata.initialTheme = entry.initialTheme as
         | import("../theme/types.js").Theme
@@ -687,16 +636,11 @@ function serveShellHit(
   const tailPromise: Promise<
     ReadableStream<Uint8Array> | { redirect: string }
   > = (async () => {
-    // Capture data snapshot seeding (docs/design/ppr-shell-resume.md): the tail
-    // is a FULL FRESH render whose payload must match the frozen prelude. If the
-    // capture recorded a snapshot, run the tail through a SeededShellStore
-    // overlay so every cache-store read the capture pinned returns its
-    // capture-time value AS FRESH — the shell region reproduces byte-identically
-    // even after the underlying cache entries drifted (expired/recomputed/
-    // tag-invalidated). Everything not pinned (the holes — masked loaders were
-    // never recorded) falls through to the real store and stays LIVE. The
-    // overlay lives on a DERIVED context (own _cacheStore), so the shared reqCtx
-    // is untouched; an entry without a snapshot keeps the pre-snapshot behavior.
+    // Snapshot seeding (docs/design/ppr-shell-resume.md): the tail render must
+    // match the frozen prelude, so pinned cache reads replay their capture-time
+    // values via a SeededShellStore overlay while unpinned reads (the holes)
+    // stay live. The overlay lives on a DERIVED context so the shared reqCtx is
+    // untouched.
     if (entry.snapshot && entry.snapshot.length > 0) {
       const seededCtx: RequestContext<any> = Object.create(reqCtx);
       if (reqCtx._cacheStore) {
@@ -720,15 +664,11 @@ function serveShellHit(
         );
       }
       if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
-      // Shell fast path (serve side): when the capture recorded the implicit
-      // doc segment record and the handler layer declared no liveness, arm the
-      // implicit scope on the seeded context — the tail match's cache lookup
-      // then HITs the SeededShellStore's doc entry and the whole handler layer
-      // is REPLAYED, not re-executed (loaders still run fresh via
-      // resolveFreshLoadersAndYield; per-request payload metadata is rebuilt
-      // by buildFullPayload as always). A route with handler-live holes, a
-      // route-derived cache scope, or a missing/corrupt record degrades to
-      // the full tail (handler re-run — today's behavior) automatically.
+      // Shell fast path (serve side): if the capture recorded the implicit doc
+      // segment record and the handler layer declared no liveness, the tail's
+      // cache lookup HITs the seeded doc entry — the handler layer is REPLAYED,
+      // not re-executed (loaders still run fresh). Anything else degrades to
+      // the full tail automatically.
       if (!entry.handlerLiveHoles) {
         seededCtx._shellImplicitCache = {
           ttl: descriptor.ttl,
@@ -744,21 +684,17 @@ function serveShellHit(
           `[Server][ppr] shell HIT: fast path declined — handler-live holes; tail re-runs handlers (abs ${Math.round(performance.now())})`,
         );
       }
-      // Fragment splice (issue #700): cache/prerender-store hits inside THIS
-      // tail render emit their stored segment fragments verbatim into the
-      // payload; the SSR resume pass and browser hydration expand them
-      // (segment-fragments.ts). Tail-only: the flag lives on the derived
-      // context so it can never leak into a capture render (which serializes
-      // segments and must see real elements).
+      // Fragment splice (issue #700): store hits in THIS tail emit their stored
+      // segment fragments verbatim (expanded by segment-fragments.ts). The flag
+      // lives on the derived context so it can never leak into a capture render,
+      // which serializes segments and must see real elements.
       seededCtx._shellFragmentPayload = true;
       return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
     }
-    // No snapshot (e.g. a producer B entry whose capture hit only the
-    // prerender store): still a shell-HIT tail, so arm the fragment splice on
-    // a derived context — the tail's prerender-store/cache hits (if any) then
-    // splice; a route with neither serves exactly as before. Derived, never
-    // the shared reqCtx: scheduleShellCapture derives the capture context from
-    // reqCtx and the flag must not be inherited there.
+    // No snapshot (e.g. a producer B entry): still a shell-HIT tail, so arm the
+    // fragment splice on a derived context — never the shared reqCtx, from which
+    // scheduleShellCapture derives the capture context (the flag must not be
+    // inherited there).
     const fragmentCtx: RequestContext<any> = Object.create(reqCtx);
     fragmentCtx._shellFragmentPayload = true;
     return runWithRequestContext(fragmentCtx, () => renderTail(fragmentCtx));
@@ -853,15 +789,12 @@ function serveShellHit(
         if (tailTiming) publishShellTailTiming(tailTiming);
         controller.close();
       } catch (error) {
-        // Self-heal on a failed tail: the pre-commit gates (isValidShellHit +
-        // hasIntactShellPayload) cannot catch a parseable-but-mismatched
-        // postponed blob or a hard render error above the holes — those throw
-        // here, AFTER the 200 + prelude flushed, and would otherwise re-fail on
-        // every request until the entry ages out (nothing else evicts it).
-        // Recapturing overwrites the entry with one the current server
-        // produced. A client disconnect mid-stream also lands here and
-        // schedules a spurious-but-idempotent recapture — bounded by the
-        // stampede guard + backoff inside scheduleShellCapture.
+        // Self-heal on a failed tail: errors the pre-commit gates cannot catch
+        // (mismatched postponed blob, hard render error above the holes) throw
+        // here AFTER the 200 + prelude flushed and would re-fail on every
+        // request until the entry ages out — recapture overwrites the entry.
+        // Client disconnects land here too; the recapture is idempotent and
+        // bounded by scheduleShellCapture's stampede guard + backoff.
         scheduleShellCapture(
           ctx,
           request,

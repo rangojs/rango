@@ -550,20 +550,13 @@ export function createPartialUpdater(
           });
         });
       } else {
-        // Normal commit (cold/partial nav AND fully-prefetched nav). For a
-        // fully-prefetched nav, renderOptions.forceAwait (above) unwrapped the
-        // already-resolved ROUTER loader data AND route content during render, so
-        // the new tree carries it inline with no loading()/fallback frame — yet we
-        // still commit NORMALLY here rather than in a transition. A transition
-        // holds the OLD UI until ALL suspense in the new tree settles, including a
-        // CLIENT component that starts its own data request only when mounted
-        // (post-commit) under a persistent boundary; that would retain the
-        // previous page indefinitely with no feedback. A normal commit lets such
-        // client-initiated suspense reveal a fallback (correct) while the router
-        // data — genuinely ready — never flashes. Cold/partial navs
-        // (fullyPrefetched=false) do not forceAwait, so they stream their
-        // fallbacks. Explicit transition() routes keep the broader content-hold
-        // via the hasTransition branch above (the documented opt-in).
+        // Normal commit for ALL navs here, never a transition (see the
+        // forceAwait comment above for why prefetched router data lands
+        // without fallback frames). A transition would hold the OLD UI until
+        // every suspense in the new tree settles — including a client
+        // component that only starts fetching post-mount, retaining the
+        // previous page indefinitely. Explicit transition() routes keep the
+        // content-hold via the hasTransition branch above (the opt-in).
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,
