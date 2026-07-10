@@ -54,6 +54,11 @@ declare global {
   var __STATIC_MANIFEST:
     | Record<string, () => Promise<{ default: string | StaticEntry }>>
     | undefined;
+  // Injected by closeBundle post-processing: lazy loader for the static
+  // manifest module (which assigns __STATIC_MANIFEST on evaluation). Resolved
+  // by static-store.ts on the first Static() lookup — issue #760.
+  // eslint-disable-next-line no-var
+  var __loadStaticManifestModule: (() => Promise<unknown>) | undefined;
   // Injected by virtual module in dev mode for on-demand prerender
   // eslint-disable-next-line no-var
   var __PRERENDER_DEV_URL: string | undefined;

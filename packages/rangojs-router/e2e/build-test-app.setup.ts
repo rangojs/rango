@@ -196,6 +196,7 @@ test("build test-app", async () => {
     ...rscPayloads,
     "__prerender-manifest.js",
     "__shell-manifest.js",
+    "__static-manifest.js",
   ]) {
     for (const f of staticImportRefs(rscFiles, base)) {
       payloadStaticRefs.push(`${path.relative(cwd, f)} -> ${base}`);
@@ -206,12 +207,11 @@ test("build test-app", async () => {
     "Payload chunks and their manifests must be referenced only via dynamic import()",
   ).toEqual([]);
 
-  // __static-manifest.js is the ONE eagerly-imported generated artifact: its
-  // global must exist before static-store.ts evaluates (a lazy import() there
-  // disrupts AsyncLocalStorage in workerd — see bundle-postprocess.ts). It
-  // must stay a thunk-only lookup table; a payload marker or multi-KB body
-  // means page data landed on the worker startup path. The size ceiling
-  // doubles as a tripwire for O(#Static handlers) eager growth.
+  // __static-manifest.js loads lazily behind the __loadStaticManifestModule
+  // thunk (issue #760: the table grows O(#Static handlers) and must stay off
+  // the worker's eager cold-start path; static-store.ts resolves the thunk on
+  // the first Static() lookup). It must stay a thunk-only lookup table; a
+  // payload marker or multi-KB body means page data landed in the manifest.
   const staticManifest = path.join(rscDir, "__static-manifest.js");
   expect(
     fs.existsSync(staticManifest),
@@ -226,6 +226,8 @@ test("build test-app", async () => {
   const rscEntry = fs.readFileSync(path.join(rscDir, "index.js"), "utf-8");
   expect(
     rscEntry,
-    "__static-manifest.js must be eagerly imported by the RSC entry (load-order requirement)",
-  ).toMatch(/import\s*["']\.\/__static-manifest\.js["']/);
+    "the RSC entry must wire the lazy static-manifest loader thunk",
+  ).toContain(
+    '__loadStaticManifestModule = () => import("./__static-manifest.js")',
+  );
 });

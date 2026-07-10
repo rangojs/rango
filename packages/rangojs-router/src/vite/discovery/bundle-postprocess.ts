@@ -133,7 +133,7 @@ export function postprocessBundle(state: DiscoveryState): void {
   }
 
   // 3. Write static handler data as separate importable asset modules
-  // and inject a __STATIC_MANIFEST import into the RSC entry.
+  // and inject a lazy loader thunk into the RSC entry.
   if (hasStaticData && existsSync(rscEntryPath)) {
     const rscCode = readFileSync(rscEntryPath, "utf-8");
     if (!rscCode.includes("__static-manifest.js")) {
@@ -152,9 +152,10 @@ export function postprocessBundle(state: DiscoveryState): void {
           );
         }
 
-        // Set the global inside the manifest module so it is assigned
-        // during module evaluation (before dependent modules like
-        // segment-resolution.ts run their top-level initializers).
+        // The module assigns the global on evaluation; evaluation itself is
+        // DEFERRED behind the loader thunk below (mirroring the prerender and
+        // shell manifests), so the thunk table stays off the worker's eager
+        // cold-start path (issue #760) — it grows O(#Static handlers).
         const manifestCode = `const m={${manifestEntries.join(",")}};globalThis.__STATIC_MANIFEST=m;export default m;\n`;
         const manifestPath = resolve(
           state.projectRoot,
@@ -163,9 +164,11 @@ export function postprocessBundle(state: DiscoveryState): void {
         writeFileSync(manifestPath, manifestCode);
         totalBytes += Buffer.byteLength(manifestCode);
 
-        // The import ensures the manifest module is evaluated early.
-        // The global is already set inside the module itself.
-        const injection = `import "./__static-manifest.js";\n`;
+        // Lazy thunk, NOT an eager import: static-store.ts resolves it on the
+        // first Static() lookup (a first-call latch — the entry body assigning
+        // this global runs after hoisted imports, so an eval-time read in
+        // static-store.ts could never see it).
+        const injection = `globalThis.__loadStaticManifestModule = () => import("./__static-manifest.js");\n`;
         writeFileSync(rscEntryPath, injection + rscCode);
 
         const totalKB = (totalBytes / 1024).toFixed(1);
