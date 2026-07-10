@@ -485,11 +485,9 @@ describe("dispatch", () => {
       const router = createRouter<{}>({ cache: { store } }).routes(
         urls(({ path, cache }) => [
           cache({ ttl: 600 }, () => [
-            path.json(
-              "/cached-poison",
-              () => ({ n: ++n }),
-              { name: "cached.poison" },
-            ),
+            path.json("/cached-poison", () => ({ n: ++n }), {
+              name: "cached.poison",
+            }),
           ]),
         ]),
       ) as Parameters<typeof dispatch>[0];
@@ -505,11 +503,9 @@ describe("dispatch", () => {
       const router = createRouter<{}>({ cache: { store } }).routes(
         urls(({ path, cache }) => [
           cache({ ttl: 600 }, () => [
-            path.json(
-              "/cached-head",
-              () => ({ ok: true }),
-              { name: "cached.head" },
-            ),
+            path.json("/cached-head", () => ({ ok: true }), {
+              name: "cached.head",
+            }),
           ]),
         ]),
       ) as Parameters<typeof dispatch>[0];

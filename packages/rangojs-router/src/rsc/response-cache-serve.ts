@@ -178,8 +178,7 @@ export async function serveResponseRouteWithCache(
 
   // Reject unsafe persisted entries on read (pre-upgrade poison / store bugs).
   const canServeCached = (response: Response): boolean =>
-    isCacheableStatus(response.status) &&
-    !hasPerClientSignal(response.headers);
+    isCacheableStatus(response.status) && !hasPerClientSignal(response.headers);
 
   const putFresh = (
     store2: SegmentCacheStore,

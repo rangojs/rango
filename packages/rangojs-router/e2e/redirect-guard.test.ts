@@ -83,7 +83,7 @@ function redirectGuardTests(f: Fixture) {
     expect(res.status()).toBe(204);
     const soft = res.headers()["x-rsc-redirect"];
     expect(soft).toBeTruthy();
-    expect(new URL(soft!).pathname).toBe("/");
+    expect(soft).toBe("/");
   });
 
   test("soft partial: external opt-in returns Flight redirect (not document Location)", async ({

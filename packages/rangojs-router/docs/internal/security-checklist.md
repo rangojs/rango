@@ -167,12 +167,13 @@ chokepoint; soft creators `createSimpleRedirectResponse` /
 `createRedirectFlightResponse` + `interceptRedirectForPartial` in
 `src/rsc/helpers.ts` / `handler.ts`; `redirect()` opt-in brand in
 `src/route-definition/redirect.ts`; brand transfer in `src/router/middleware.ts`
-+ `src/rsc/helpers.ts` + `src/rsc/response-route-handler.ts` (and the `dispatch`
-mirror in `src/testing/dispatch.ts`); client honoring + scheme validation in
-`src/browser/validate-redirect-origin.ts` (`validateExternalRedirect`), consumed
-by `src/browser/server-action-bridge.ts` / `src/browser/partial-update.ts`. Two
-client init-window hard-nav fallbacks (`server-action-bridge.ts`,
-`rsc-router.tsx`) re-validate defensively.
+
+- `src/rsc/helpers.ts` + `src/rsc/response-route-handler.ts` (and the `dispatch`
+  mirror in `src/testing/dispatch.ts`); client honoring + scheme validation in
+  `src/browser/validate-redirect-origin.ts` (`validateExternalRedirect`), consumed
+  by `src/browser/server-action-bridge.ts` / `src/browser/partial-update.ts`. Two
+  client init-window hard-nav fallbacks (`server-action-bridge.ts`,
+  `rsc-router.tsx`) re-validate defensively.
 
 Covered by:
 
