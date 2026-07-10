@@ -86,13 +86,15 @@ jobs:
       - name: Check formatting
         run: pnpm format
 
-  # Server-code-in-client-bundle guard: builds tests/cloudflare-basic with
-  # RANGO_ANALYZE=1 and fails on any server-only module contributing bytes to
-  # the client bundle beyond the allowlist in tools/check-client-leaks.mjs.
-  client-leaks:
+  # Bundle guards (issue #761): builds cloudflare-basic, cloudflare-stress-demo
+  # and the e2e test-app with RANGO_ANALYZE=1, then asserts (1) no server-only
+  # module contributes bytes to any client bundle beyond the allowlist in
+  # tools/check-bundle-guards.mjs, (2) the client router chunk gzip ratchet,
+  # (3) the stress-demo eager routes-manifest ceiling.
+  bundle-guards:
     needs: [debounce]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -113,8 +115,8 @@ jobs:
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
 
-      - name: Check for server code in client bundles
-        run: pnpm check:client-leaks
+      - name: Run the bundle guards
+        run: pnpm check:bundle-guards
 
   install-playwright:
     needs: [debounce]
