@@ -10,11 +10,12 @@ test.describe.configure({ mode: "serial" });
  * workerd. The purge-mode store lives on a dedicated cache({ store }) boundary
  * (src/purge-store.ts) so the marker-mode cache-tag suite keeps its semantics.
  *
- * workerd has no purge-by-tag, so the wired tagPurge is a recording stub. That
- * makes exactly purge mode's contract observable end to end:
- * - updateTag() hands the hook the namespaced entry Cache-Tags (one batched
- *   call), which a real deployment forwards to Cloudflare's purge API
- *   (createCloudflareZonePurge).
+ * workerd has no purge-by-tag, so tagPurge is wired with the CREDENTIALS form
+ * plus a recording fetch stub — the store's built-in zone purge client runs
+ * for real (endpoint, auth, body shape) and only the network hop is stubbed.
+ * That makes exactly purge mode's contract observable end to end:
+ * - updateTag() sends the namespaced entry Cache-Tags in one batched purge
+ *   call, which a real deployment's fetch delivers to Cloudflare's purge API.
  * - An L1 entry that SURVIVES (here: because the stub purges nothing) keeps
  *   serving — the per-read KV marker lookup is skipped. Contrast with
  *   cache-tag.test.ts, where the same updateTag makes the next read fresh via

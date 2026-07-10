@@ -11,10 +11,12 @@
 // EXPLICIT_STORE_REGISTRY_CAP) — and delegates each call to a per-request
 // CFCacheStore resolved from the live request context.
 //
-// The tagPurge stub only RECORDS the Cache-Tags it is handed (same
-// module-state pattern as error-log.ts): workerd has no purge-by-tag, so the
-// e2e asserts (a) the hook received the namespaced tags and (b) the surviving
-// L1 entry keeps serving — purge mode's delegation contract.
+// tagPurge uses the CREDENTIALS form with a fetch stub, so the e2e exercises
+// the store's built-in zone purge client (endpoint, auth header, body shape)
+// inside workerd while only RECORDING the purged Cache-Tags (same module-state
+// pattern as error-log.ts) — workerd has no purge-by-tag, so the e2e asserts
+// (a) the client sent the namespaced tags and (b) the surviving L1 entry keeps
+// serving — purge mode's delegation contract.
 import { getRequestContext } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
 import type {
@@ -43,8 +45,14 @@ function resolveStore(): CFCacheStore {
       defaults: { ttl: 60, swr: 300 },
       ctx: ctx.executionContext!,
       kv: ctx.env.KV,
-      tagPurge: async (cacheTags) => {
-        purgeLog.push(cacheTags);
+      tagPurge: {
+        zoneId: "e2e-zone",
+        apiToken: "e2e-token",
+        fetch: (async (_url: string | URL | Request, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as { tags: string[] };
+          purgeLog.push(body.tags);
+          return Response.json({ success: true });
+        }) as typeof fetch,
       },
     });
     perRequest.set(ctx, store);
