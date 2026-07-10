@@ -14,7 +14,9 @@
  *
  * Soft (SPA/Flight) redirects are 200/204 responses (`X-RSC-Redirect` header or
  * `metadata.redirect` payload) and are NOT redirect Responses, so they never
- * reach this guard -- they stay validated client-side.
+ * reach this guard. They are resolved at construction time via
+ * `resolveSoftRedirectUrl` (same shared rules) so unsafe targets never leave
+ * the server; client validators remain defense-in-depth.
  *
  * Behavior on a `Location` header:
  * - same-origin / relative  -> passes through unchanged

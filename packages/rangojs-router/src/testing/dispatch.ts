@@ -787,9 +787,22 @@ export async function dispatch<TEnv = any>(
       // 204 + X-RSC-Redirect (see the location-state divergence in the header).
       let finalResponse: Response;
       if (isPartial || isAction) {
+        const softOpts = {
+          requestOrigin: url.origin,
+          basename: router.basename,
+        };
+        // Pass `external` through: interceptRedirectForPartial forwards the
+        // out-of-band brand as the third callback arg (helpers.ts). Dropping it
+        // would neutralize redirect(url, { external: true }) to "/" in dispatch
+        // while production preserves it via createRedirectFlightResponse.
         const intercepted = interceptRedirectForPartial(
           mwResponse,
-          (redirectUrl) => createSimpleRedirectResponse(redirectUrl),
+          (redirectUrl, _locationState, external) =>
+            createSimpleRedirectResponse(redirectUrl, {
+              ...softOpts,
+              external,
+            }),
+          softOpts,
         );
         finalResponse = finalizeResponse(intercepted ?? mwResponse);
       } else {
@@ -821,8 +834,7 @@ export async function dispatch<TEnv = any>(
       // browser-followed (3xx + Location) redirect is same-origin guarded before
       // it leaves -- a cross-origin Location is rewritten to the basename root
       // unless redirect(url, { external: true }) opted out. Soft partial/action
-      // redirects are 204 + X-RSC-Redirect and pass through untouched (the client
-      // validates them), so this is a no-op for them.
+      // redirects are already resolved at createSimpleRedirectResponse time.
       return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
     } catch (error) {
       if (sink) {

@@ -3,6 +3,7 @@ import { guardOutgoingRedirect } from "../redirect-guard.js";
 import {
   resolveSameOriginRedirect,
   resolveExternalRedirect,
+  resolveSoftRedirectUrl,
   markExternalRedirect,
   EXTERNAL_REDIRECT_MARKER,
 } from "../../redirect-origin.js";
@@ -48,6 +49,37 @@ describe("resolveSameOriginRedirect (shared rule)", () => {
 
   it("rejects unparseable input", () => {
     expect(resolveSameOriginRedirect("http://[bad", ORIGIN)).toBeNull();
+  });
+});
+
+describe("resolveSoftRedirectUrl (soft Flight / X-RSC-Redirect)", () => {
+  it("normalizes same-origin relative targets", () => {
+    expect(resolveSoftRedirectUrl("/dash", ORIGIN, undefined)).toBe(
+      "https://app.example.com/dash",
+    );
+  });
+
+  it("neutralizes cross-origin without external to basename root", () => {
+    expect(
+      resolveSoftRedirectUrl("https://evil.com/p", ORIGIN, undefined),
+    ).toBe("/");
+    expect(resolveSoftRedirectUrl("https://evil.com/p", ORIGIN, "/admin")).toBe(
+      "/admin",
+    );
+  });
+
+  it("allows external https and neutralizes javascript:", () => {
+    expect(
+      resolveSoftRedirectUrl(
+        "https://accounts.example.com/oauth",
+        ORIGIN,
+        undefined,
+        true,
+      ),
+    ).toBe("https://accounts.example.com/oauth");
+    expect(
+      resolveSoftRedirectUrl("javascript:alert(1)", ORIGIN, undefined, true),
+    ).toBe("/");
   });
 });
 

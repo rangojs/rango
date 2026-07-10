@@ -1738,7 +1738,8 @@ describe("dispatch", () => {
         request: "/api/data?_rsc_partial=1",
       });
       expect(res.status).toBe(204);
-      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      // Soft redirect URL is origin-resolved server-side (dispatch default origin).
+      expect(res.headers.get("X-RSC-Redirect")).toBe("http://localhost/login");
       // The raw 3xx Location is replaced by the Flight-safe header.
       expect(res.headers.get("Location")).toBeNull();
     });
@@ -1762,7 +1763,31 @@ describe("dispatch", () => {
         request: "/api/data?_rsc_action=1",
       });
       expect(res.status).toBe(204);
-      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      expect(res.headers.get("X-RSC-Redirect")).toBe("http://localhost/login");
+      expect(res.headers.get("Location")).toBeNull();
+    });
+
+    it("preserves redirect({ external: true }) on a partial request as absolute X-RSC-Redirect", async () => {
+      // interceptRedirectForPartial passes external as the third callback arg;
+      // dispatch must forward it into createSimpleRedirectResponse or the
+      // off-host target is neutralized to "/".
+      const redirectMw: MiddlewareFn = async () =>
+        redirect("https://accounts.example.com/oauth", { external: true });
+      const router = createRouter<{}>({})
+        .use(redirectMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, {
+        request: "/api/data?_rsc_partial=1",
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("X-RSC-Redirect")).toBe(
+        "https://accounts.example.com/oauth",
+      );
       expect(res.headers.get("Location")).toBeNull();
     });
 
