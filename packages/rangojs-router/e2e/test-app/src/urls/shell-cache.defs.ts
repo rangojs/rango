@@ -382,3 +382,50 @@ export const ShellOutlinedBadgeLoader = createLoader(
     return `outlined-badge-${outlinedBadgeSeq}`;
   },
 );
+
+// Pin-first bake-lane fixture (loader-cache.ts `if (!recorded.holes)`). A
+// bake-lane loader (registered on a layout with NO loading()) that sleeps a
+// deliberately SLOW 600ms and returns a plain, HOLE-FREE container ({ label }
+// — no nested promises). At capture it executes and its settled container bakes
+// into the shell snapshot's loader family, hole-free. On a shell HIT the record
+// is hole-free, so the HIT payload resolves the loaderData from the PIN
+// immediately instead of gating on the fresh 600ms run (which still runs
+// ungated for its side effects). The seq advances per execution ONLY to prove
+// the served value is the pinned capture-time one — it must stay frozen across
+// HITs while the fresh run keeps incrementing in the background. 600ms is well
+// above the e2e's 400ms HIT bound so a gated (unoptimized) HIT visibly exceeds
+// it while a pinned HIT clears it with a 200ms+ margin for CI noise.
+const SHELL_BAKE_SLOW_DELAY_MS = 600;
+
+let shellBakeSlowSeq = 0;
+
+export const ShellBakeSlowLoader = createLoader(
+  async (): Promise<{ label: string }> => {
+    await new Promise((resolve) =>
+      setTimeout(resolve, SHELL_BAKE_SLOW_DELAY_MS),
+    );
+    shellBakeSlowSeq += 1;
+    return { label: `bake-${shellBakeSlowSeq}` };
+  },
+);
+
+// The fast LIVE hole under the bake-slow layout: ~30ms behind loading() so the
+// route has a real hole and the shell actually captures (a route with no hole
+// anywhere can refuse capture). Kept far under the 600ms bake AND the 400ms HIT
+// bound so it never dominates the pinned HIT's tail. Returns the ShellPriceData
+// shape so the shared ShellBakeSlow component renders the same "Live price:"
+// content the other fixtures assert on. seq advances every request to prove the
+// hole stays live while the bake label is pinned.
+const SHELL_BAKE_HOLE_DELAY_MS = 30;
+
+let shellBakeHoleSeq = 0;
+
+export const ShellBakeHoleLoader = createLoader(
+  async (): Promise<ShellPriceData> => {
+    await new Promise((resolve) =>
+      setTimeout(resolve, SHELL_BAKE_HOLE_DELAY_MS),
+    );
+    shellBakeHoleSeq += 1;
+    return { price: 42, seq: shellBakeHoleSeq, loadedAt: Date.now() };
+  },
+);

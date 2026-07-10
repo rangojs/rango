@@ -7,10 +7,12 @@ import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
 import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
 import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
 import { PprPrerenderSeqLoader } from "../loaders/ppr-shell.js";
+import { PprBakeSlowLoader, PprBakeHoleLoader } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
 import { PprShellSettled } from "../components/PprShellSettled.js";
+import { PprBakeSlow } from "../components/PprBakeSlow.js";
 import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
 import { PprShellExecMatrix } from "../components/PprShellExecMatrix.js";
@@ -97,6 +99,32 @@ export function PprTrapChromeLayout() {
 
 export function PprBareHomePage() {
   return <p data-testid="ppr-bare-home">Bare home static content</p>;
+}
+
+// Pin-first bake-lane layout (loader-cache.ts `if (!recorded.holes)`), the
+// workerd/KV counterpart of test-app's ShellBakeSlowLayout. Registers
+// PprBakeSlowLoader — 600ms, NO loading() on the layout, so the BAKE lane (see
+// urls.tsx). Its plain hole-free container bakes into the shell snapshot's
+// loader family; on a HIT the record is hole-free, so the payload resolves the
+// loaderData from the PIN immediately rather than gating on the slow fresh run.
+// The child ppr route keeps a fast ~30ms price hole behind loading() so a real
+// shell captures.
+export function PprBakeSlowLayout() {
+  return (
+    <main data-testid="ppr-bake-slow-page">
+      <p data-testid="ppr-bake-chrome">Bake slow static chrome</p>
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprBakeSlowPage() {
+  return (
+    <PprBakeSlow
+      bakeLoader={PprBakeSlowLoader}
+      holeLoader={PprBakeHoleLoader}
+    />
+  );
 }
 
 // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"): the same

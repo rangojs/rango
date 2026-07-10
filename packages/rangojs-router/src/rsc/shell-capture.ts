@@ -1577,7 +1577,11 @@ async function captureAndStoreShell(
             (snapshot ??= []).push({
               family: "loader",
               key: segmentKey,
-              value: { value: serialized },
+              // The hole bit rides with the record so the HIT overlay knows
+              // without rescanning whether the pin can resolve immediately
+              // (holes: 0) or must wait for the fresh run's live promises
+              // (holes: 1). See ShellSnapshotLoaderValue.
+              value: { value: serialized, holes: elided.hasHole ? 1 : 0 },
             });
           }
         } catch {

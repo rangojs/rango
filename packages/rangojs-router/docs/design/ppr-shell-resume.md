@@ -1185,6 +1185,18 @@ hit/miss metric for the serve-side store read. The capture runs AFTER its
 triggering response commits, which is why its outcome can only ride a later
 response's header.
 
+**HIT-tail timing mirror.** The HIT commits its 200 + headers at the prelude
+flush, so Server-Timing on the HIT response structurally cannot carry the
+live tail's numbers — all of match/loaders/Flight/resume happens inside the
+response body. In dev, `serveShellHit` records per-stage offsets from the
+commit (`seed`/`match`/`handover`/`first-html`/`complete`, plus
+prelude/tail byte counts — `ShellTailTiming`, shell-serve.ts) and buffers
+the terminal timing per key; when `debugPerformance` metrics are active it
+rides the NEXT ppr GET's Server-Timing as `ppr-tail;dur=<complete
+ms>;desc="…"` — the same consume-on-read doctrine as the `ppr-capture`
+mirror above. Production folds the collection away (`NODE_ENV` literal);
+`INTERNAL_RANGO_DEBUG` remains the raw console narration of the same window.
+
 **Inert shell family.** The shell family is KV-only on `CFCacheStore`; with
 no KV namespace bound, `getShell`/`putShell` no-op and every ppr route is a
 permanent MISS — the correctness-first fail-open of v1, previously with zero

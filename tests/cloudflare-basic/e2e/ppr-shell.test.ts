@@ -671,6 +671,55 @@ function describePprShell(mode: "dev" | "build") {
       expect(prelude).toContain("Bare home static content");
     });
 
+    // /ppr-shell/bake-slow: the PIN-FIRST optimization (loader-cache.ts
+    // `if (!recorded.holes)`) on the real KV-backed CFCacheStore under workerd.
+    // The layout registers a 600ms bake-lane loader (no loading() on the
+    // layout) returning a plain HOLE-FREE container. Its container bakes into
+    // the snapshot's loader family hole-free, so on a HIT the payload resolves
+    // the loaderData from the PIN immediately instead of gating on the fresh
+    // 600ms run (which still executes ungated for side effects). The child keeps
+    // a fast ~30ms price hole behind loading() so a real shell captures. Two
+    // guarantees in one: the served label is pinned (frozen across HITs, not the
+    // advancing fresh seq) AND the pin makes the full HIT response beat the
+    // 600ms fresh run.
+    test("pin-first bake lane: a HIT serves the pinned 600ms container fast and frozen across HITs", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell/bake-slow?probe=bakeslow");
+      await warmToHit(request, url);
+
+      // request.get buffers the WHOLE body, so elapsed covers stream
+      // completion. Without pin-first the payload gates on the fresh 600ms bake
+      // run (elapsed >= 600ms); pinned, the recorded container resolves
+      // immediately and only the ~30ms live hole remains — the 400ms bound
+      // leaves a 200ms+ margin for CI noise either side.
+      const start = Date.now();
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      const elapsed = Date.now() - start;
+      expect(res.status()).toBe(200);
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const html = await res.text();
+
+      // The pinned bake label rides the HIT body beside the live hole content.
+      const captured = /bake-\d+/.exec(html)?.[0];
+      expect(captured, "the pinned bake label rides the HIT body").toBeTruthy();
+      expect(html).toContain("Live price:");
+
+      expect(
+        elapsed,
+        `HIT full-response ${elapsed}ms must beat the 600ms fresh bake run`,
+      ).toBeLessThan(400);
+
+      // Frozen: a second HIT serves the SAME captured label (the pin, not the
+      // fresh seq that keeps advancing in the background) while the price hole
+      // stays live.
+      const second = await request.get(url, { headers: HTML_HEADERS });
+      expect(second.headers()["x-rango-shell"]).toBe("HIT");
+      const secondHtml = await second.text();
+      expect(/bake-\d+/.exec(secondHtml)?.[0]).toBe(captured);
+      expect(secondHtml).toContain("Live price:");
+    });
+
     // /ppr-shell/slot-hole: the escape (skills/ppr "layout-with-loaders
     // playbook") on the real KV-backed CFCacheStore under workerd. The same
     // chrome data is owned by a @badge parallel slot with its OWN loading(), so

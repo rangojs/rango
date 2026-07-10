@@ -241,12 +241,17 @@ export interface RequestContext<
   /**
    * @internal Loader-family snapshot seed for a shell HIT's tail render:
    * segment-key -> the capture's elided container (already Flight-deserialized
-   * by serveShellHit). resolveLoaderData overlays it onto the fresh run's
-   * container (recorded paths pinned, hole-marker paths keep the fresh nested
-   * promises) so the payload's baked bytes match the frozen prelude. Own
-   * property of the HIT tail's derived context only.
+   * by serveShellHit) plus its capture-computed hole bit. resolveLoaderData
+   * overlays it onto the fresh run's container (recorded paths pinned,
+   * hole-marker paths keep the fresh nested promises) so the payload's baked
+   * bytes match the frozen prelude; a hole-free entry resolves pin-first
+   * without gating on the fresh run. Own property of the HIT tail's derived
+   * context only.
    */
-  _shellLoaderSeed?: Map<string, unknown>;
+  _shellLoaderSeed?: Map<
+    string,
+    import("../cache/shell-snapshot.js").ShellLoaderSeedEntry
+  >;
 
   /**
    * @internal Shell fast-path marker: makes the NEXT full match treat the whole

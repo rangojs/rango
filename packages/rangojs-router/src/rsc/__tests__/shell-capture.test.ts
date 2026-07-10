@@ -24,6 +24,15 @@ import { cacheTag, recordRequestTags } from "../../cache/cache-tag.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
 
+// The drain lazily imports the Flight codec only for SETTLED bake-lane
+// containers; the real module pulls the virtual @vitejs/plugin-rsc import that
+// unit configs cannot resolve, so pin it to JSON here (shape-faithful for the
+// hole-bit assertions below).
+vi.mock("../../cache/segment-codec.js", () => ({
+  serializeResult: vi.fn(async (value: unknown) => JSON.stringify(value)),
+  deserializeResult: vi.fn(async (value: string) => JSON.parse(value)),
+}));
+
 /** True iff the promise settles within `ms`. */
 function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
   return Promise.race([
@@ -359,6 +368,41 @@ describe("captureAndStoreShell", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  // The hole bit rides each pinned loader record (ShellSnapshotLoaderValue):
+  // holes: 0 = fully pinned, the HIT overlay resolves pin-first without
+  // gating on the fresh run; holes: 1 = hole markers present, the overlay
+  // must wait for the fresh run's live promises. Computed once at capture
+  // (elide already walks every node) so the per-HIT path never rescans.
+  it("pins settled bake-lane containers with the capture-computed hole bit", async () => {
+    const putShell = makePutShell();
+    const reqCtx = makeReqCtx(putShell);
+    const pending = new Promise(() => {});
+    reqCtx._shellCaptureLoaderRecords = new Map<string, Promise<unknown>>([
+      ["R0D0.app/x#Full", Promise.resolve({ price: 42 })],
+      ["R0D1.app/x#Holey", Promise.resolve({ price: 42, live: pending })],
+    ]);
+
+    const outcome = await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/bake-holes:shell", buildVersion: "test-build", ttl: 300 },
+    );
+
+    expect(outcome).toBe("stored");
+    const entry = putShell.mock.calls[0]![1] as {
+      snapshot?: { family: string; key: string; value: { holes?: 0 | 1 } }[];
+    };
+    const byKey = new Map(
+      (entry.snapshot ?? [])
+        .filter((r) => r.family === "loader")
+        .map((r) => [r.key, r.value]),
+    );
+    expect(byKey.get("R0D0.app/x#Full")?.holes).toBe(0);
+    expect(byKey.get("R0D1.app/x#Holey")?.holes).toBe(1);
   });
 
   // A container still PENDING at drain is a hole (or already hit the

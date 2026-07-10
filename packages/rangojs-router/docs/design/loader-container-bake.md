@@ -206,11 +206,42 @@ recorded family.
 container-with-promise-paths-elided)` into the same
   `ShellCacheEntry.snapshot` array (`shell-snapshot.ts`). Promise-valued paths
   are recorded as markers, not values — they are holes, not shell material.
-- **Seeding.** On a HIT the loader RUNS FRESH (it must — only the loader body
-  can mint the nested promises), then the recorded container is OVERLAID: every
-  recorded (non-promise) path takes the snapshot value; promise-valued paths
-  keep the fresh run's promises. The prelude's baked bytes and the payload's
-  container fields agree by construction; the holes stay live.
+- **Seeding.** On a HIT the loader RUNS FRESH, and the recorded container is
+  OVERLAID: every recorded (non-promise) path takes the snapshot value;
+  promise-valued paths keep the fresh run's promises. The prelude's baked
+  bytes and the payload's container fields agree by construction; the holes
+  stay live.
+- **Pin-first for hole-free records.** Each loader record carries a
+  capture-computed hole bit (`ShellSnapshotLoaderValue.holes`, from elide's
+  walk — no per-HIT rescan). A record WITH holes gates the overlay on the
+  fresh run, because only the loader body can mint the live nested promises
+  the markers re-slot. A hole-free record resolves the payload promise
+  IMMEDIATELY from the pin: the fresh values were discarded either way
+  (recorded paths win wholesale), so gating on them only stalled the HIT
+  tail for the loader body's full latency. The fresh run still executes —
+  side effects and cache read-through writes are preserved — but ungated and
+  lifetime-extended (`waitUntil`), and its REJECTION is swallowed: the pin
+  already matches the prelude, which an error value never could (the gated
+  path's fresh-rejection divergence remains only for hole-carrying records).
+  A record stored before the bit existed reads as hole-carrying and keeps the
+  gated path; TTL ages those out.
+- **Pin-first drops fresh-only keys — a deliberate contract divergence.** The
+  gated overlay passes fresh-only object keys through ("they cannot
+  contradict prelude bytes that never rendered them"). Pin-first does NOT: a
+  hole-free pin serves the pinned shape wholesale, so a key the fresh run
+  starts returning mid-TTL is absent from HIT payloads until recapture. Why
+  this is correct and not a loss: a fresh-only key on a hole-free record had
+  no postponed hole (nothing suspended there at capture), so the prelude
+  froze the consumer's without-that-field branch and the resume pass has
+  nothing to fill — under the old passthrough the field could only surface
+  as a payload/prelude hydration mismatch the client repaired (the exact
+  divergence class the snapshot exists to prevent), never as cleanly
+  streamed content. A field that varies per request belongs on the live
+  surface: promise-shaped at capture (masked → hole marker → `holes: 1` →
+  the gated path, where fresh-only passthrough still holds and live promises
+  re-slot) or behind `loading()`. A sometimes-present plain field on a
+  bake-lane loader is uncached nondeterminism in shell material — the
+  documented drift residual.
 - **Overlay rules for shape drift** (capture says sync, hit says promise, or
   vice versa): a recorded path always wins (pinned — it is what the prelude
   froze); a path that is a promise in BOTH runs stays the fresh promise; a NEW

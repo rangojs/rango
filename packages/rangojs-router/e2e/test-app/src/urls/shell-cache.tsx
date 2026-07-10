@@ -24,6 +24,8 @@ import {
   getDriftStamp,
   getCapStamp,
   outlinedRenderCounter,
+  ShellBakeSlowLoader,
+  ShellBakeHoleLoader,
 } from "./shell-cache.defs.js";
 import { SlowMetaView } from "../components/SlowMetaView.js";
 import { ShellBadge } from "../components/ShellBadge.js";
@@ -35,6 +37,7 @@ import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
 import { ShellHandleView } from "../components/ShellHandleView.js";
 import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
+import { ShellBakeSlow } from "../components/ShellBakeSlow.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
@@ -276,6 +279,30 @@ function ShellTrapChromeLayout() {
 // loaders get a per-slot LoaderBoundary — a badge-sized GUARANTEED-fresh hole —
 // where the bake lane would pin the value for the shell's lifetime. Chrome and
 // the static page bake; the route needs no loader or loading() of its own.
+// Pin-first bake-lane layout (loader-cache.ts `if (!recorded.holes)`): registers
+// ShellBakeSlowLoader — 600ms, NO loading() on the layout, so the BAKE lane. Its
+// plain hole-free container bakes into the shell snapshot's loader family; on a
+// HIT the record is hole-free, so the payload resolves the loaderData from the
+// PIN immediately rather than gating on the slow fresh run. The child ppr route
+// keeps a fast ~30ms price hole behind loading() so a real shell captures.
+function ShellBakeSlowLayout() {
+  return (
+    <main data-testid="shell-bake-slow-page">
+      <p data-testid="shell-bake-chrome">Bake slow static chrome</p>
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellBakeSlowPage() {
+  return (
+    <ShellBakeSlow
+      bakeLoader={ShellBakeSlowLoader}
+      holeLoader={ShellBakeHoleLoader}
+    />
+  );
+}
+
 function ShellSlotChromeLayout() {
   return (
     <main data-testid="shell-slot-page">
@@ -525,6 +552,25 @@ export const shellCachePatterns = urls(
         name: "shellCacheLayoutLoaderBare",
         ppr: true,
       }),
+    ]),
+    // Pin-first bake lane: see ShellBakeSlowLayout above. The layout's 600ms
+    // hole-free bake loader is snapshot-pinned; on a HIT the payload resolves
+    // it from the pin immediately (loader-cache.ts `if (!recorded.holes)`)
+    // instead of gating on the fresh 600ms run. Child keeps a fast live price
+    // hole behind loading() so a real shell captures.
+    layout(ShellBakeSlowLayout, () => [
+      loader(ShellBakeSlowLoader),
+      path(
+        "/shell-cache/bake-slow",
+        ShellBakeSlowPage,
+        { name: "shellCacheBakeSlow", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellBakeHoleLoader),
+          loading(
+            <div data-testid="shell-bake-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
     ]),
     // Shell fast-path execution matrix: middleware + layout + parallel + path
     // + loader counters, asserted layer-by-layer across consecutive HITs. The
