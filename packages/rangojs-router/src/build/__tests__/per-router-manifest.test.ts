@@ -13,6 +13,7 @@ import {
   ensureRouterManifest,
   setCachedManifest,
   clearCachedManifest,
+  clearAllRouterData,
   getGlobalRouteMap,
   setRouteTrie,
   getRouteTrie,
@@ -494,5 +495,21 @@ describe("ensureRouterManifest lazy loading", () => {
     // No loader, no manifest
     await ensureRouterManifest("nonexistent");
     expect(getRouterManifest("nonexistent")).toBeUndefined();
+  });
+
+  it("clearAllRouterData clears registered loaders", async () => {
+    // A loader surviving a clear closes over pre-clear data; re-running it
+    // would re-install a stale trie as authoritative.
+    let loadCount = 0;
+    registerRouterManifestLoader("cleared", () => {
+      loadCount++;
+      return Promise.resolve({ trie: { type: "root", children: {} } as any });
+    });
+
+    clearAllRouterData();
+
+    await ensureRouterManifest("cleared");
+    expect(loadCount).toBe(0);
+    expect(getRouterTrie("cleared")).toBeUndefined();
   });
 });

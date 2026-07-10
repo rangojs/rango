@@ -182,7 +182,12 @@ Each `createRouter()` gets isolated data:
 `ctx.reverse()` resolves via `getRouterManifest(routerId) ?? getGlobalRouteMap()`.
 
 Per-router virtual modules (`virtual:rsc-router/routes-manifest/<routerId>`) are loaded lazily
-via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request.
+via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request — in BUILD
+only. `ensureRouterManifest()` marks a loader-supplied trie authoritative (misses are hard
+404s), which is only valid for a trie serialized from complete build-time discovery. Dev
+never registers loaders: the handler rebuilds the trie from live `router.urlpatterns`
+(`buildRouterTrieFromUrlpatterns`, non-authoritative), so a Cloudflare program reload can
+never serve a removed route from a stale-but-authoritative discovery trie.
 
 Router roots must be sibling app roots. Nested router roots are not supported:
 if a router source file lives under another router's directory, Vite runtime
