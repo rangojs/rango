@@ -5,12 +5,21 @@ If you're wiring up a route that returns a `Response` instead of JSX — a JSON 
 and served, and why they get their own path through the pipeline instead of riding
 the RSC one.
 
-## Problem
+Status: **shipped.** Tag functions (`path.json` / `urls.json` / …),
+`responseType` on the trie + `previewMatch()`, and the
+`src/rsc/response-route-handler.ts` short-circuit are live. Skill:
+`skills/response-routes`. Sections below keep the design narrative; treat the
+problem statement and implementation plan as historical except where marked
+Remaining.
 
-Routes can return `Response` objects instead of JSX (JSON APIs, `robots.txt`, plain text). This works today via a throw/catch mechanism in `handleHandlerResult()`, but has two issues:
+## Problem (historical)
 
-1. **Client-side navigation breaks silently** -- the browser expects Flight data during partial renders. Fixed by `X-RSC-Reload` fallback (PR #140), but this adds a wasted round-trip.
-2. **No clean code path** -- Response-returning handlers enter the full RSC segment pipeline (route matching -> segment resolution -> handler execution -> throw Response -> catch). The handler runs inside `resolveSegments()`, which expects `ReactNode` returns.
+Before response routes, handlers that returned `Response` objects (JSON APIs,
+`robots.txt`, plain text) worked only via a throw/catch mechanism in
+`handleHandlerResult()`, with two issues:
+
+1. **Client-side navigation broke silently** -- the browser expects Flight data during partial renders. Mitigated by `X-RSC-Reload` fallback (PR #140), but that added a wasted round-trip.
+2. **No clean code path** -- Response-returning handlers entered the full RSC segment pipeline (route matching -> segment resolution -> handler execution -> throw Response -> catch). The handler ran inside `resolveSegments()`, which expects `ReactNode` returns.
 
 ## Motivation: Composable Mounting
 
@@ -666,9 +675,13 @@ The consumer can mount API patterns transparently:
 include("/api", apiPatterns, { name: "api" });
 ```
 
-## Implementation Plan
+## Implementation Plan (historical; core phases shipped)
 
-### Phase 1: Core — tag functions + server-side short-circuit
+Phases 1–3 and 5 below describe work that shipped. True remaining deltas are
+Phase 4/6 performance investigation, optional content-type validation, and
+response-route-specific `cache()` semantics (see Open Questions).
+
+### Phase 1: Core — tag functions + server-side short-circuit ✅
 
 1. **Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, and tag functions to `urls.ts`**
    - `path.json()`, `path.text()`, `path.html()`, `path.xml()`, `path.image()`, `path.stream()`, `path.any()` with `ResponseHandler` type
