@@ -1059,6 +1059,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         ? { ...data, taggedAt }
         : data;
 
+      // Serialize the segment payload exactly once: L1 stores the JSON body
+      // directly, and kvSetSegment embeds the same string as envelope.d so the
+      // (potentially large) Flight/segment tree is not walked a second time.
       const body = JSON.stringify(dataToStore);
       const response = new Response(body, {
         headers: {
@@ -1095,8 +1098,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         await putPromise;
       }
 
-      // L2: persist to KV
-      this.kvSetSegment(key, dataToStore, staleAt, totalTtl, swrWindow);
+      // L2: persist to KV (reuses `body` as envelope.d)
+      this.kvSetSegment(key, body, staleAt, totalTtl, swrWindow);
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] set");
     }
@@ -1581,7 +1584,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const taggedAt =
         Array.isArray(tags) && tags.length > 0 ? Date.now() : undefined;
 
-      const body = JSON.stringify({ value, handles: options?.handles });
+      // Serialize value/handles once; L1 body and KV envelope.v/h share the
+      // escaped strings so a large RSC payload is not re-escaped for L2.
+      const valueJson = JSON.stringify(value);
+      const handlesJson =
+        options?.handles !== undefined
+          ? JSON.stringify(options.handles)
+          : undefined;
+      const body =
+        handlesJson !== undefined
+          ? `{"value":${valueJson},"handles":${handlesJson}}`
+          : `{"value":${valueJson}}`;
       const response = new Response(body, {
         headers: {
           "Content-Type": "application/json",
@@ -1608,24 +1621,24 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         await putPromise;
       }
 
-      // L2: persist to KV (KV requires expirationTtl >= 60s)
+      // L2: persist to KV (KV requires expirationTtl >= 60s). Wire shape matches
+      // JSON.stringify(KVItemEnvelope); field names differ from L1 so we assemble
+      // from the pre-escaped value/handles pieces rather than re-stringifying.
       if (this.kv && this.waitUntil && totalTtl >= 60) {
         const kvKey = this.toKVKey(`fn:${key}`);
+        const expiresAt = staleAt + swrWindow * 1000;
+        let envelopeJson = `{"v":${valueJson}`;
+        if (handlesJson !== undefined) envelopeJson += `,"h":${handlesJson}`;
+        envelopeJson += `,"s":${staleAt},"e":${expiresAt}`;
+        if (tags !== undefined) envelopeJson += `,"t":${JSON.stringify(tags)}`;
+        if (taggedAt !== undefined) envelopeJson += `,"ta":${taggedAt}`;
+        envelopeJson += `}`;
         this.waitUntil(() =>
           reportingAsync(
-            () => {
-              const envelope: KVItemEnvelope = {
-                v: value,
-                h: options?.handles,
-                s: staleAt,
-                e: staleAt + swrWindow * 1000,
-                t: tags,
-                ta: taggedAt,
-              };
-              return this.kv!.put(kvKey, JSON.stringify(envelope), {
+            () =>
+              this.kv!.put(kvKey, envelopeJson, {
                 expirationTtl: totalTtl,
-              });
-            },
+              }),
             "cache-write",
             "[CFCacheStore] kvSetItem",
           ),
@@ -2513,11 +2526,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Write segment data to KV.
+   *
+   * `dataJson` is the already-serialized CachedEntryData body also stored in
+   * L1 — embedded as envelope.d without a second JSON.stringify walk.
    * @internal
    */
   private kvSetSegment(
     key: string,
-    data: CachedEntryData,
+    dataJson: string,
     staleAt: number,
     totalTtl: number,
     swrWindow: number,
@@ -2549,19 +2565,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
 
     const expiresAt = staleAt + swrWindow * 1000;
+    // Same wire shape as JSON.stringify({ d, s, e }) — dataJson is already
+    // valid JSON for CachedEntryData, so embedding it avoids re-walking the tree.
+    const envelopeJson = `{"d":${dataJson},"s":${staleAt},"e":${expiresAt}}`;
 
     this.waitUntil(() =>
       reportingAsync(
-        () => {
-          const envelope: KVSegmentEnvelope = {
-            d: data,
-            s: staleAt,
-            e: expiresAt,
-          };
-          return this.kv!.put(kvKey, JSON.stringify(envelope), {
+        () =>
+          this.kv!.put(kvKey, envelopeJson, {
             expirationTtl: totalTtl,
-          });
-        },
+          }),
         "cache-write",
         "[CFCacheStore] kvSetSegment",
       ),
