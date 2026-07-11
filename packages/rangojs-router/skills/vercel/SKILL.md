@@ -8,6 +8,25 @@ argument-hint:
 
 The `vercel` preset builds like the `node` preset (Vercel runs Node Functions, not Workers): rango owns the RSC entry, folds `process.env.NODE_ENV` for the SSR/RSC build, and after `vite build` assembles a `.vercel/output` directory (Build Output API v3) from `dist/` — a single streaming Node Function plus the static client assets.
 
+## Deployment boundary
+
+Only client JS, CSS, and public assets are emitted under
+`.vercel/output/static`. HTML, Flight, prerender payloads, and PPR shells are
+served from the streaming Node Function. `VercelCacheStore` is an in-function
+Runtime Cache backend; it is separate from Vercel's CDN/ISR cache.
+
+The preset does not emit `.prerender-config.json`, a response `chain`, or a
+CDN-stitched PPR resume function. Rango PPR intentionally runs the whole global
+and route middleware chain before committing shell bytes. A CDN-first shell
+cannot preserve that contract because the resume function is invoked after the
+shell starts streaming.
+
+For fully public responses, HTTP `s-maxage`/`stale-while-revalidate` can cache
+the completed response at Vercel's CDN and avoid the function on a hit. That is
+whole-response caching: it freezes loader output and bypasses all Rango
+middleware. Use `/deployment-caching` for the execution matrix and safety
+checklist before adding shared-cache headers.
+
 ## Setup
 
 ```bash
@@ -48,7 +67,9 @@ rango({
 
 ## Runtime Cache
 
-`VercelCacheStore` wraps the Vercel Runtime Cache. Locally (no `process.env.VERCEL`) fall back to an in-memory store so dev/preview work without the platform:
+`VercelCacheStore` wraps the Vercel Runtime Cache for segment, item, response,
+and PPR shell families. Locally (no `process.env.VERCEL`) fall back to an
+in-memory store so dev/preview work without the platform:
 
 ```typescript
 import {

@@ -38,7 +38,7 @@ Node setup.
 
 ## Using the skills with your coding agent
 
-This package ships 43 agent skills in `node_modules/@rangojs/router/skills/` —
+This package ships agent skills in `node_modules/@rangojs/router/skills/` —
 task-focused guides written for LLM coding agents. Start at
 `skills/rango/SKILL.md` (the mental model + catalog); a machine-readable index
 is at `skills/catalog.json`.
@@ -375,6 +375,7 @@ when the requirement appears:
 | test loaders, middleware, handlers, Flight      | [`/testing`](./skills/testing/SKILL.md)                                                      |
 | see where request time goes                     | [`/observability`](./skills/observability/SKILL.md)                                          |
 | deploy to Vercel (cache store, tracing, output) | [`/vercel`](./skills/vercel/SKILL.md)                                                        |
+| choose in-function vs CDN caching               | [`/deployment-caching`](./skills/deployment-caching/SKILL.md)                                |
 | compare Rango with Next.js / TanStack / Waku    | [`/comparison`](./skills/comparison/SKILL.md)                                                |
 
 The [`/rango` skill](./skills/rango/SKILL.md) is the full catalog and the

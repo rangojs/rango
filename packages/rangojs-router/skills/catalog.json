@@ -70,8 +70,14 @@
       "path": "skills/defer-hydration/SKILL.md"
     },
     {
+      "name": "deployment-caching",
+      "description": "Choose the deployment cache boundary for a Rango app: in-function segment/prerender/PPR caches, store-backed whole-response caching, or an external CDN cache. Use when comparing Cloudflare, Vercel, and Node deployments; deciding whether Cache-Control can reduce origin work; or reasoning about middleware, live loaders, PPR, and CDN behavior.",
+      "argumentHint": "[cloudflare|vercel|node]",
+      "path": "skills/deployment-caching/SKILL.md"
+    },
+    {
       "name": "document-cache",
-      "description": "Cache the whole HTTP response at the edge with Cache-Control headers. Use when caching an entire page or response at a CDN edge, setting Cache-Control headers, or cutting origin hits for public pages — not for caching a single segment or function.",
+      "description": "Cache complete HTTP responses in Rango's configured app store with createDocumentCacheMiddleware, using Cache-Control s-maxage as policy. Use when reusing a whole HTML/RSC response, comparing the store-backed middleware with a platform CDN cache, or deciding whether full-response caching is safe.",
       "argumentHint": "[setup]",
       "path": "skills/document-cache/SKILL.md"
     },

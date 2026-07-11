@@ -36,6 +36,25 @@ vercel deploy --prebuilt  # or deploy via Git integration
 
 Under the hood the preset builds like the `node` preset (Vercel runs Node Functions, not Workers): Rango owns the RSC entry, folds `process.env.NODE_ENV` for the SSR/RSC build, and assembles `.vercel/output` from `dist/` after `vite build`.
 
+## What runs where
+
+Only client JavaScript, CSS, and public assets are emitted as Vercel static
+assets. HTML, Flight responses, prerender payloads, and PPR shells are served
+from the streaming Node Function. `Prerender + ppr` can produce a shell during
+the build, but that shell is bundled into the function and still runs through
+Rango's global and route middleware before its bytes are committed.
+
+The preset does not emit Vercel Prerender Functions, a response `chain`, or a
+CDN-stitched PPR resume function. CDN-first shell delivery would start the
+response before Rango middleware could authorize, redirect, set headers, or
+call `ctx.dynamic()`.
+
+For a completely public and shared route, HTTP `s-maxage` and
+`stale-while-revalidate` can instead cache the completed response at Vercel's
+CDN. A CDN hit skips the function and all Rango middleware, and it freezes
+loader output and resumed PPR holes with the rest of the response. Use this only
+when that complete-response contract is intentional.
+
 ## Function configuration
 
 Per-function knobs go under `vercel` and are written into `.vc-config.json`:
@@ -55,7 +74,11 @@ rango({
 
 ## Runtime Cache
 
-`VercelCacheStore` wraps the Vercel Runtime Cache for the router's [segment cache](/docs/rango/features/caching). Locally there's no platform cache (no `process.env.VERCEL`), so fall back to an in-memory store and dev/preview keep working:
+`VercelCacheStore` wraps Vercel Runtime Cache for the router's segment, item,
+response, and PPR shell cache families. Runtime Cache is reached from inside the
+function and is separate from Vercel's CDN/ISR cache. Locally there's no
+platform cache (no `process.env.VERCEL`), so fall back to an in-memory store and
+dev/preview keep working:
 
 ```tsx
 import { createRouter } from "@rangojs/router";

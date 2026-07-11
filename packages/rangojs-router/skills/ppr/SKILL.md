@@ -7,15 +7,20 @@ argument-hint: "[setup]"
 # PPR Shell Caching
 
 Caches the rendered HTML **shell** of a page route (React `prerender` prelude
-bytes plus `postponed` state) and, on a later request, flushes those bytes
-before any render work happens, then resumes fizz for just the live holes. The
-browser sees one ordinary streamed document; loaders stay fresh on every
-request. This is the second render axis — the default axis-1 path is untouched,
-and every ineligible request falls open to it.
+bytes plus `postponed` state) and, on a later request, flushes those bytes after
+route classification and the complete middleware chain, but before downstream
+tail rendering. It then resumes fizz for just the live holes. The browser sees
+one ordinary streamed document; loaders stay fresh on every request. This is
+the second render axis — the default axis-1 path is untouched, and every
+ineligible request falls open to it.
 
 Compare `/document-cache`, which freezes the WHOLE response including loader
 output. Shell caching is for pages that mix a stable shell with live data: the
 shell is shared per host+URL, the holes are per request.
+
+This is in-function PPR on every deployment. The worker/function serves the
+prelude; it is not a CDN static file. See `/deployment-caching` before combining
+PPR with HTTP shared-cache headers.
 
 ## Not this skill if…
 
@@ -252,7 +257,11 @@ sees the header directly; only an explicit Flight request shape lacks it:
 curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-shell
 ```
 
-- First document GET: `MISS`, plus a background capture.
+- Runtime-captured route: first document GET is `MISS`, plus a background
+  capture; a later request becomes a `HIT`.
+- `Prerender + ppr` route: the shell is produced during `vite build`, so the
+  first production document request can already be a `HIT`. In dev, producer B
+  runs on demand and presents the successful request as a `HIT` too.
 - Production (workerd/node): the SECOND request is a `HIT`.
 - Dev: expect a few extra MISSes — cold module transforms abort the capture
   window (per-attempt breadcrumbs: start the server with
@@ -639,10 +648,17 @@ path(
 | `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                |
 | `tags`             | —       | operational tags UNIONED with the tags the capture render auto-collects — see "Invalidation" below                                                        |
 | `maxSnapshotBytes` | 8 MiB   | cap on the entry's capture data snapshot; over it the snapshot is skipped (shell still stored, warned once per key) so the entry stays under store limits |
+| `captureTimeout`   | 15000ms | capture settle budget; a timed-out capture is refused rather than storing a partial shell                                                                 |
 
 The shell store is always the app-level `createRouter({ cache })` store; the
 default key is `${host}${pathname}${sortedSearch}:shell` (host-scoped so
 multi-tenant shells never collide).
+
+These options control the in-function shell entry only. They do not emit HTTP
+`Cache-Control`. Adding `s-maxage` separately allows a platform CDN to cache the
+completed response, including the live-hole output, and CDN hits bypass Rango
+middleware entirely. Only do that for a fully public response whose complete
+output is shared; see `/deployment-caching`.
 
 ## Invalidation: tags vs revalidate()
 
@@ -676,8 +692,9 @@ evicted by tag at all — move always-fresh data under a `loading()` hole.
 - **A bake-lane container that must be fresh per document GET**: it is
   snapshot-pinned for the shell's lifetime by design. Use the live lane
   (`loading()`) or a nested promise instead.
-- **A bake-lane loader slower than the capture guard (~5s)**: the capture
-  cannot hold for it — eternal MISS with the once-per-key warning.
+- **A bake-lane loader slower than `ppr.captureTimeout` (15s by default)**: the
+  capture is refused rather than storing a partial shell. Increase the route's
+  budget only when the deployment can keep the background/build work alive.
 - **Per-user value in shell material**: baked into the shared shell —
   deterministically, not by race (handler promises deep-settle at the ring-3
   write on cached chains; awaited/resolved values bake everywhere). Put
@@ -728,8 +745,10 @@ cache"` value baked into the shell is PINNED at capture (the capture data
   prelude and detonate hydration. Wrap it in `cache()`/`"use cache"` (then it is
   pinned) or move it under a hole (`loading()`, or a pending-promise
   `<Suspense>` region).
-- **Stacking with `/document-cache`**: pick one per route — the document cache
-  would cache the composite.
+- **Stacking with `/document-cache` or HTTP CDN caching**: both cache the
+  completed composite, including live-hole output, so PPR becomes redundant on
+  a hit. A platform CDN also bypasses every Rango middleware. Restrict this to
+  fully public, shared responses; see `/deployment-caching`.
 - **Dev + HMR**: works, but edits produce stale shells until TTL/recapture.
 - **Dev cold-start cadence**: expect `MISS -> (in-place retry) -> HIT`. A
   refused capture is negatively cached with an exponential window (1s doubling

@@ -1,10 +1,15 @@
 ---
 title: Document Cache
-description: Cache complete HTTP responses at the edge with Cache-Control s-maxage — the outermost layer over segment and function caching.
+description: Cache complete HTTP responses in Rango's app store, and understand when Cache-Control also activates an external CDN cache.
 type: guide
 ---
 
-You have public pages — a blog, marketing pages, docs — where the whole response is the same for everyone, and you want to cut origin hits by serving it straight from the edge. The document cache stores complete HTTP responses (HTML and RSC payloads) and serves them on the next request; routes opt in by setting a `Cache-Control` header with `s-maxage`.
+You have public pages — a blog, marketing pages, docs — where the whole response is the same for everyone. `createDocumentCacheMiddleware()` stores complete HTTP responses (HTML and RSC payloads) in the app-level cache store and serves them on the next request; routes opt in by setting a `Cache-Control` header with `s-maxage`.
+
+This is store-backed middleware inside the worker or function, not itself a
+platform CDN. With `CFCacheStore` the response family can use Cloudflare's
+edge/KV tiers; with `VercelCacheStore` it uses Runtime Cache. The request reaches
+Rango before this middleware can return a hit.
 
 This is the coarsest cache layer, and it freezes the _whole_ response — loader output included. If loaders should stay live while rendered segments are reused, that's segment `cache()` ([Caching & Revalidation](/docs/rango/features/caching)). If you want a cached HTML shell with per-request live holes, that's [PPR](/docs/rango/guides/ppr).
 
@@ -61,6 +66,20 @@ function BlogPost(ctx) {
 // Dashboard sets no Cache-Control header, so it is never document-cached.
 ```
 
+### The same header may activate a platform CDN
+
+The deployment platform may independently interpret `s-maxage` and cache the
+completed response outside the app. On a CDN hit, the worker/function and every
+Rango middleware are skipped. The CDN stores the complete HTML response,
+including loader output, resumed PPR holes, and hydration payload — not only a
+stable shell.
+
+Use these shared-cache headers only when the complete response is public and
+identical for every request sharing the cache key. The document middleware's
+`skipPaths`, `isEnabled`, and `keyGenerator` cannot protect a response already
+served by an outer CDN. Do not use `Vary: Cookie` as a general workaround; it
+creates unbounded variants and makes the sharing contract difficult to audit.
+
 The route tree needs nothing special — opt-in lives entirely in the handlers:
 
 ```tsx
@@ -82,7 +101,13 @@ export const urlpatterns = urls(({ path, layout, loader }) => [
 
 ## Request flow
 
-On each request the middleware checks the store. A fresh hit returns immediately without touching your handlers. A stale hit (past `s-maxage`, within `stale-while-revalidate`) returns the stale response immediately and re-renders in the background. A miss runs the handler as normal, then caches the response only if it came back 200 with an `s-maxage` directive.
+After a request reaches the function, the middleware checks the store. A fresh
+hit returns immediately without touching its downstream handlers, loaders, or
+route middleware. Global middleware that wraps the document cache can still
+run. A stale hit (past `s-maxage`, within `stale-while-revalidate`) returns the
+stale response immediately and re-renders in the background. A miss runs the
+downstream pipeline normally, then caches the response only if it came back 200
+with an `s-maxage` directive.
 
 Every response carries an `x-document-cache-status` header so you can verify behavior from curl or the network tab:
 
@@ -93,6 +118,10 @@ Every response carries an `x-document-cache-status` header so you can verify beh
 | `MISS`  | Cache miss, response was generated fresh |
 
 With `debug: true`, the middleware also logs HIT / MISS / STALE / REVALIDATED.
+
+`x-document-cache-status` reports only this Rango store. A platform CDN may
+replay a previously cached status header, so use the platform's own cache header
+or logs to distinguish a CDN hit from a function/store hit.
 
 ## Options
 
@@ -135,7 +164,12 @@ So [server actions](/docs/rango/guides/server-actions) always reach the origin, 
 
 ## Layering with the router's own caching
 
-The document cache sits _outside_ the router: on a hit, handlers, loaders, segment `cache()`, and `"use cache"` functions don't run at all. On a miss, the response is produced by the normal pipeline — inner caches included — and then frozen whole. That's the trade: maximum cheapness, zero per-request variation.
+The document cache is global Rango middleware. On a hit it short-circuits its
+downstream handlers, route middleware, loaders, segment `cache()`, and `"use
+cache"` functions. On a miss, the response is produced by the normal downstream
+pipeline — inner caches included — and then frozen whole. An external CDN sits
+outside the router and skips even the wrapping global middleware because the
+function never runs.
 
 | Feature      | Document Cache             | Segment Cache         |
 | ------------ | -------------------------- | --------------------- |

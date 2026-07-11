@@ -1,4 +1,4 @@
-// Guard against docs-rot on the skills surface: the 43 published skills under
+// Guard against docs-rot on the published skills surface under
 // packages/rangojs-router/skills/ are the largest consumer-visible doc
 // surface but had zero mechanical protection (no frontmatter validation, no
 // check that cross-skill `/name` references resolve). A phantom reference

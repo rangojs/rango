@@ -1,7 +1,9 @@
 /**
  * Document-Level Cache Middleware
  *
- * Caches full HTTP responses at the edge based on Cache-Control headers.
+ * Caches full HTTP responses in the configured app store based on Cache-Control
+ * headers. A deployment CDN may independently consume the same shared-cache
+ * directives; this middleware itself runs inside the worker/function.
  * Routes opt-in to caching by setting s-maxage or stale-while-revalidate headers.
  *
  * Flow:
@@ -58,7 +60,7 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
 
   // RFC 7234: in a SHARED cache, `private` and `no-store` forbid storage and
   // MUST win over `s-maxage` even though `private, s-maxage` is contradictory.
-  // The document cache is a shared edge store, so refuse both regardless of any
+  // The document cache is a shared app store, so refuse both regardless of any
   // s-maxage / stale-while-revalidate also present. Match standalone directive
   // tokens (start/end, whitespace, comma, semicolon, or `=` bounded), not a
   // substring, so a value containing "private" cannot false-veto.
