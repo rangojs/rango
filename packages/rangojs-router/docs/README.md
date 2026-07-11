@@ -68,6 +68,9 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   the read-latency budgets
 - [Vercel cache store](../../../docs/design/vercel-cache-store.md) -
   `VercelCacheStore` and the `vercel` preset design
+- [Deployment caching skill](../skills/deployment-caching/SKILL.md) - choose
+  between in-function segment/prerender/PPR caches, Rango's store-backed
+  response middleware, and an external HTTP CDN cache
 
 ## Build Integrations
 
@@ -118,14 +121,12 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   contract), the `createShellCaptureHandler`/`createShellResumeHandler` SSR
   factories, the `getShell`/`putShell` store family, and the loader-masking /
   capture / resume contracts
-- [Vercel chain PPR adapter spec](./design/vercel-chain-ppr.md) - serving
-  build-time PPR shells via Vercel's CDN-stitched `chain` protocol (shell from
-  the PoP cache + `next-resume: 1` POST to the resume function). Source-derived
-  from the Vercel/Next builder internals: the `.prerender-config.json` `chain`
-  shape, the `application/x-nextjs-pre-render; state-length=N` fallback split,
-  the resume request contract, what is public vs undocumented vs Next-only, and
-  the Rango adapter spec (build-time capture prerequisite, the signed-blob resume
-  endpoint, and in-function fallback as the universal path)
+- [Vercel CDN-stitched PPR research](./design/vercel-chain-ppr.md) - rejected
+  adapter direction. Records the generic Build Output `chain` parser support,
+  undocumented Next/Vercel fallback framing, and the decisive incompatibility:
+  a CDN-first shell commits before Rango's global and route middleware. The
+  shipped Vercel preset keeps runtime and build-produced PPR shells inside its
+  streaming Node Function
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)
 - [`ctx.isAction()` API design](./design/is-action-api-design.md) - typed,
   rename-safe action matching for `revalidate()` (implemented)

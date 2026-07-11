@@ -6,7 +6,7 @@ type: guide
 
 You have pages whose content is mostly static — markdown docs, a marketing page, known product pages — and rendering them on every request is wasted work. `Prerender()` renders them once, at build time. This is **caching at build time**: same serialization format, same deserialization path, same segment system as the runtime `cache()` DSL. The worker handles every request — there are no static `.html` or `.rsc` files served from assets. At request time the worker reads the pre-computed Flight payload instead of executing handler code, and the browser cannot tell the difference.
 
-If you want a cached HTML shell captured at runtime with holes staying live, that is [PPR](/docs/rango/guides/ppr). For runtime segment caching with TTL/SWR, use the `cache()` DSL — see [Caching](/docs/rango/features/caching). Prerender is the same cache, filled during the build.
+If you want a cached HTML shell with holes staying live, that is [PPR](/docs/rango/guides/ppr). An ordinary `ppr` route captures at runtime; a `Prerender` route that also declares the `ppr` path option produces its HTML shell during the build. For runtime segment caching with TTL/SWR, use the `cache()` DSL — see [Caching](/docs/rango/features/caching). Prerender is the same cache, filled during the build.
 
 ## The shortest path
 
@@ -136,6 +136,25 @@ If a parallel slot or child layout uses node APIs, wrap it in `Prerender` too (s
 
 Two freshness facts that follow: handle values pushed via `ctx.use()` during pre-rendering are baked into the Flight payload and do not update at request time (the [Shell Manifest](/docs/rango/guides/shell-manifest) pattern turns this into a feature). And server actions work normally — they never re-render the pre-rendered segment; loaders stay live and can be revalidated by actions.
 
+### Combining Prerender with PPR
+
+Declare `ppr` on the same route to produce both the build-time Flight segments
+and the complete PPR shell:
+
+```tsx
+path("/blog/:slug", BlogPost, {
+  name: "blog.post",
+  ppr: { ttl: 600, swr: 120 },
+});
+```
+
+The build captures the shell after all environment bundles exist, reusing the
+just-produced Flight payload rather than executing the evicted handler. Global
+and route middleware run in the build capture with `ctx.build === true`;
+`ctx.waitUntil()` is inert, and `ctx.dynamic()` skips the build shell for that
+URL. At runtime middleware still runs before the shell is served. The shell is
+bundled into the worker/function — it is not emitted as a public HTML asset.
+
 ## Skipping and per-param fallback
 
 Two levers control individual param sets during the build:
@@ -163,15 +182,20 @@ A handler that throws a non-`Skip` error is surfaced to the build — never bake
 
 ## Build output
 
-The build logs per-URL timings (`OK`/`PASS`/`SKIP`/`FAIL`) and writes Flight payloads into the build output, keyed by route name and a hash of the params:
+The build logs per-URL timings (`OK`/`PASS`/`SKIP`/`FAIL`) and writes Flight
+payloads as content-hashed modules behind a lazy manifest in the RSC server
+bundle:
 
 ```
-dist/static/__<hash>/
-  prerender/
-    blog.post/
-      d4e5f6a7.flight    # hash of { slug: "hello-world" }
-    about/
-      _.flight           # static route, no params
+dist/rsc/
+  __prerender-manifest.js
+  assets/
+    __pr-<content-hash>.js
+
+# When a Prerender route also declares ppr:
+  __shell-manifest.js
+  assets/
+    __ps-<content-hash>.js
 ```
 
 Param sets render sequentially by default; pass `{ concurrency: 4 }` as the `Prerender` options to parallelize (only `Prerender` supports this — `Static` handlers always render sequentially). An empty `getParams` array writes nothing and is not an error.
@@ -185,8 +209,8 @@ There is no production-style build pass in dev, and no handler stubbing:
 
 <Cards>
   <Card href="/docs/rango/guides/ppr" title="PPR">
-    Runtime shell caching — instant HTML shell with live holes, captured on
-    demand instead of at build time.
+    HTML shell caching with live holes — captured on demand, or during the build
+    when combined with Prerender.
   </Card>
   <Card href="/docs/rango/guides/shell-manifest" title="Shell Manifest">
     Feed IDs from a pre-rendered shell to live loaders — batched fresh data that

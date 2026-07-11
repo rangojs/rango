@@ -1009,6 +1009,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "what-runs-where",
+        "text": "What runs where"
+      },
+      {
+        "depth": 2,
         "id": "function-configuration",
         "text": "Function configuration"
       },
@@ -1037,7 +1042,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/guides/deploy-vercel"
   },
   {
-    "description": "Cache complete HTTP responses at the edge with Cache-Control s-maxage — the outermost layer over segment and function caching.",
+    "description": "Cache complete HTTP responses in Rango's app store, and understand when Cache-Control also activates an external CDN cache.",
     "filePath": "/content/docs/rango/guides/document-cache.mdx",
     "slug": "rango/guides/document-cache",
     "title": "Document Cache",
@@ -1051,6 +1056,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "opting-routes-in",
         "text": "Opting routes in"
+      },
+      {
+        "depth": 3,
+        "id": "the-same-header-may-activate-a-platform-cdn",
+        "text": "The same header may activate a platform CDN"
       },
       {
         "depth": 2,
@@ -1816,6 +1826,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "how-the-dsl-items-behave",
         "text": "How the DSL items behave"
+      },
+      {
+        "depth": 3,
+        "id": "combining-prerender-with-ppr",
+        "text": "Combining Prerender with PPR"
       },
       {
         "depth": 2,

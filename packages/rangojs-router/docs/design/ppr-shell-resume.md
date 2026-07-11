@@ -28,11 +28,11 @@ holes. The browser sees one ordinary streamed document.
 
 The existing render path is untouched and stays the default:
 
-|                     | Axis 1 — HTML stream (default)     | Axis 2 — PPR (opt-in via `cache({ ppr: true })`)        |
+|                     | Axis 1 — HTML stream (default)     | Axis 2 — PPR (opt-in via the page route's `ppr` option) |
 | ------------------- | ---------------------------------- | ------------------------------------------------------- |
 | HTML production     | full fizz `renderToReadableStream` | stored prelude bytes + `resume(postponed)`              |
-| Shell definition    | n/a                                | everything that isn't a live loader hole                |
-| First byte waits on | Flight render + fizz shell pass    | one shell-store lookup                                  |
+| Shell definition    | n/a                                | everything that did not postpone during shell capture   |
+| First byte waits on | Flight render + fizz shell pass    | middleware + one shell-store lookup                     |
 | Request fizz cost   | O(whole tree)                      | O(paths to holes) — resume replays only postponed paths |
 
 Everything upstream is shared: matching, middleware, segment cache lookup and
@@ -1199,9 +1199,13 @@ captures (producer B) have no such bound. Chunked encoding and edge
 compression of the composite are automatic; never store compressed bytes.
 
 Vercel: identical in-function pattern on Fluid Compute via the Vercel store.
-The Build Output API `chain` mechanism (platform-appended streaming, shell
-served from the PoP cache) exists but is undocumented and Next-only in
-practice — deliberately out of scope; revisit with Vercel directly.
+Build producer B ships its `__shell-manifest.js` inside the Node Function; the
+preset emits no CDN prerender fallback or response chain. Vercel's open-source
+Build Output parser accepts generic `chain` metadata, but production stitching
+for non-Next output and the postponed-state framing are not documented
+third-party contracts. More importantly, CDN-first shell delivery would commit
+before Rango's global and route middleware, violating the serve path's security
+boundary. `docs/design/vercel-chain-ppr.md` records the rejected design.
 
 ## Operability (issue #651)
 

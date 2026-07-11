@@ -1,12 +1,18 @@
 ---
 name: document-cache
-description: Cache the whole HTTP response at the edge with Cache-Control headers. Use when caching an entire page or response at a CDN edge, setting Cache-Control headers, or cutting origin hits for public pages — not for caching a single segment or function.
+description: Cache complete HTTP responses in Rango's configured app store with createDocumentCacheMiddleware, using Cache-Control s-maxage as policy. Use when reusing a whole HTML/RSC response, comparing the store-backed middleware with a platform CDN cache, or deciding whether full-response caching is safe.
 argument-hint: [setup]
 ---
 
-# Document Cache
+# Store-backed Document Cache
 
-Caches complete HTTP responses (HTML/RSC) at the edge based on Cache-Control headers. Routes opt-in by setting `s-maxage`.
+Caches complete HTTP responses (HTML/RSC) in the app-level cache store based on
+`Cache-Control`. Routes opt in by setting `s-maxage`.
+
+This middleware runs **inside** the worker/function. It is not itself a platform
+CDN cache. With `CFCacheStore` the response family can use Cloudflare's edge/KV
+tiers; with `VercelCacheStore` it uses Vercel Runtime Cache. The request still
+reaches Rango before the middleware can return a store hit.
 
 ## Not this skill if…
 
@@ -15,6 +21,8 @@ Caches complete HTTP responses (HTML/RSC) at the edge based on Cache-Control hea
   is `cache()`: see `/caching`.
 - You want a cached HTML shell with per-request live holes — see `/ppr`.
 - You are unsure which cache layer you need — start at `/cache-guide`.
+- You mean a platform CDN that serves a complete response without invoking the
+  app — see `/deployment-caching` first.
 
 ## Setup
 
@@ -54,6 +62,13 @@ export default router;
 Routes opt-in to document caching by setting a `Cache-Control` response header
 with `s-maxage`. The middleware caches responses whose `Cache-Control` includes
 `s-maxage`; `stale-while-revalidate` enables background revalidation (SWR).
+
+The deployment platform may independently interpret the same `s-maxage` header
+and cache the completed response at its CDN. A CDN hit bypasses the function,
+all Rango middleware, handlers, and loaders. Therefore these headers are safe
+only when the **complete** response is public and identical for every request
+sharing the cache key. The middleware's `skipPaths`, `isEnabled`, and
+`keyGenerator` cannot protect a response once an outer CDN serves it.
 
 ```typescript
 // Cache full page for 5 min, serve stale for 1 hour
@@ -116,6 +131,11 @@ Request → Check Cache
   background (SWR)
 ```
 
+This diagram starts after the request reaches the Rango middleware. A store hit
+short-circuits the middleware's downstream pipeline; global middleware that
+wraps it can still run. Route middleware, handlers, and loaders below it do not.
+An external CDN hit is different: the function never runs at all.
+
 ## Cache Status Header
 
 Response includes `x-document-cache-status`:
@@ -123,6 +143,10 @@ Response includes `x-document-cache-status`:
 - `HIT` - Fresh cache hit
 - `STALE` - Served stale, revalidating in background
 - `MISS` - Cache miss, response was generated fresh
+
+This header reports the Rango store-backed middleware, not the platform CDN. A
+CDN may replay a previously cached status header, so use the platform's cache
+header or logs to identify an actual CDN hit.
 
 ## Cache Key Generation
 
@@ -211,3 +235,6 @@ function BlogPost(ctx) {
 | Key includes | URL + segment hash         | Route params          |
 
 Use document cache for mostly-static pages. Use segment cache when different parts of a page have different cache requirements.
+
+See `/deployment-caching` for the full in-function versus CDN execution matrix,
+middleware implications, and the shared-response safety checklist.

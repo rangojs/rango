@@ -1,8 +1,8 @@
 // Generates packages/rangojs-router/skills/catalog.json — a machine-readable
 // index (name/description/argument-hint/path) of every shipped skill.
 //
-// The package ships 43 agent skills but no way for a consumer's toolchain to
-// discover them short of scanning SKILL.md frontmatter across 43 directories.
+// The package ships many agent skills but no way for a consumer's toolchain to
+// discover them short of scanning SKILL.md frontmatter across every directory.
 // This catalog is that index. It is generated, not hand-maintained: source of
 // truth is the frontmatter block in each skills/<name>/SKILL.md.
 //
