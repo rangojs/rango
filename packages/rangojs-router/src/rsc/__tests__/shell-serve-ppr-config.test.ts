@@ -26,6 +26,12 @@ describe("resolvePprConfig — captureTimeout parsing (issue #715)", () => {
     });
   });
 
+  it("clamps values above the tightening-only default", () => {
+    expect(
+      resolvePprConfig(routeEntry({ captureTimeout: 60_000 }))?.captureTimeout,
+    ).toBe(15_000);
+  });
+
   it("keeps ttl/swr/tags alongside captureTimeout", () => {
     expect(
       resolvePprConfig(

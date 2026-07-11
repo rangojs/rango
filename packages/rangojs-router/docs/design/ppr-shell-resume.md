@@ -54,7 +54,10 @@ miss, the first request renders normally and schedules the existing shell
 capture with `navigationOnly: true`. Capture, rather than a direct segment write,
 is load-bearing: it records handler-live holes and the other eligibility flags
 that decide whether replay is safe. Later navigations and prefetches consume the
-snapshot when eligible.
+snapshot when eligible. The background capture strips transport parameters and
+rebinds the derived context's request identity to the target document URL; this
+keeps explicit `cache()` scopes and document completeness checks on document
+semantics.
 
 Only the snapshot's segment family is visible during navigation replay. Item,
 response, and loader-family pins exist to keep a document HIT byte-identical to
@@ -82,11 +85,19 @@ can also read a fresh local build-manifest entry. Dev never foreground-fetches
 `/__rsc_shell`; it uses the same local background capture. Custom stores opt in with
 `supportsPassiveShellReads: true`; without that declaration replay declines.
 
-The capture still produces a prelude/postponed pair, but marks the entry
-navigation-only. Document serving treats that prelude as a miss because it
-inherited `_rsc_partial`, prefetch headers, and partial-only middleware context;
-a real document request replaces it with a document-safe shell. Partial replay
-uses only the segment snapshot and eligibility flags.
+The capture still produces a prelude/postponed pair, but stores it under a
+navigation-only shell key. Document serving never reads that namespace, so a
+late navigation capture cannot downgrade a document-safe shell. Partial replay
+prefers the document shell and falls back to the navigation snapshot, using only
+its segment snapshot and eligibility flags. The `navigationOnly` entry marker is
+also preserved through memory, Cloudflare, and Vercel stores as defense in depth.
+
+SSR setup for a cold partial (module loading plus the document `allReady` policy)
+runs inside the guarded background task; the Flight response never waits for it
+and setup failure cannot turn the already-rendered navigation into a 500.
+Cross-key capture execution remains
+serialized and admits at most 32 queued/running captures per isolate; excess
+best-effort captures are dropped and may retry on a later request.
 
 The partial response reports the actual outcome in `x-rango-ppr-replay`:
 `HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. The matching

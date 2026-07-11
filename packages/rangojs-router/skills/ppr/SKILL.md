@@ -214,9 +214,11 @@ non-claiming read option.
 The first cold partial request reports `BYPASS; reason=no-entry` because no
 artifact could supply that response; its successful render schedules
 `scheduleShellCapture` with a navigation-only marker. The next request reports
-`HIT` when the capture produced an eligible snapshot. Document serving refuses
-that entry's prelude because it inherited partial-request middleware state; a
-real document request replaces it with a document-safe shell.
+`HIT` when the capture produced an eligible snapshot. Navigation snapshots use
+a separate shell key, so they cannot overwrite or be served as a document shell.
+The capture runs with the stripped target document URL and loads SSR support in
+the bounded background queue, outside the triggering partial response's latency.
+An `allReady` decision still declines capture.
 
 Partial responses expose the actual decision as `x-rango-ppr-replay`:
 `HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. With
@@ -300,7 +302,9 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
 - Structured capture diagnostics: `createRouter({ debugShellCapture: true })`
   logs one line per capture attempt/skip (outcome, durations, prelude and
   snapshot bytes, backoff state); pass a function to receive each
-  `ShellCaptureDebugEvent` instead. In dev, with `debugPerformance` on, the
+  `ShellCaptureDebugEvent` instead. `skip-capacity` means the isolate already
+  has 32 queued/running captures; the dropped best-effort capture can retry on a
+  later request. In dev, with `debugPerformance` on, the
   last capture outcome for a key also rides the next document GET's
   `Server-Timing` as `ppr-capture;desc="…"`.
 

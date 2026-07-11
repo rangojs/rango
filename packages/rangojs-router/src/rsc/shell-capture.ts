@@ -20,7 +20,10 @@ import React from "react";
 import { bufferToBase64 } from "../cache/cf/cf-base64.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
-import { enqueueSerializedCapture } from "./capture-queue.js";
+import {
+  CaptureQueueFullError,
+  enqueueSerializedCapture,
+} from "./capture-queue.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -57,6 +60,7 @@ import type { SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import { renderRscFlightStage } from "./render-pipeline.js";
+import { stripInternalParams } from "../router/handler-context.js";
 
 /**
  * Task-quantized quiesce: the number of consecutive macrotask hops with zero new
@@ -444,6 +448,7 @@ export interface ShellCaptureDebugEvent {
    *   the key (stampede guard) and scheduled nothing
    * - skip-backoff: the key is inside its refused-capture backoff window and
    *   the capture was not attempted
+   * - skip-capacity: the isolate capture queue is full; a later request may retry
    * - backoff: the key entered (or escalated) backoff after a terminal
    *   no-shell — carries the new backoff state
    */
@@ -455,6 +460,7 @@ export interface ShellCaptureDebugEvent {
     | "error"
     | "skip-in-flight"
     | "skip-backoff"
+    | "skip-capacity"
     | "backoff";
   /** Attempt number (1 = first, 2 = in-place retry). Absent on skips. */
   attempt?: number;
@@ -846,9 +852,9 @@ export interface ShellCaptureDescriptor {
  * error is routed through reportCacheError — capture is best-effort; a failure just
  * means the next request recaptures.
  *
- * Eligibility (nonce/allReady/partial/status/strategy) is decided by the caller
- * (rsc-rendering.ts maybeScheduleShellCapture); this function only owns the
- * stampede guard and the background dispatch.
+ * Eligibility (nonce/partial/status/strategy) is decided by the caller. An SSR
+ * module loader may be passed for cold partial requests; it runs only after the
+ * capture enters the guarded background queue, never on response latency.
  */
 export function scheduleShellCapture(
   ctx: HandlerContext<any>,
@@ -856,7 +862,9 @@ export function scheduleShellCapture(
   env: any,
   url: URL,
   reqCtx: RequestContext<any>,
-  ssrModule: SSRModule,
+  ssrModule:
+    | SSRModule
+    | ((request: Request, url: URL) => Promise<SSRModule | null>),
   descriptor: ShellCaptureDescriptor,
 ): void {
   const key = descriptor.key;
@@ -877,13 +885,30 @@ export function scheduleShellCapture(
   inFlightCaptures.add(key);
   const captureTask = async () => {
     try {
+      const setupUrl = descriptor.navigationOnly
+        ? stripInternalParams(url)
+        : url;
+      const setupRequest = descriptor.navigationOnly
+        ? createNavigationCaptureRequest(request, setupUrl)
+        : request;
+      const resolvedSsrModule =
+        typeof ssrModule === "function"
+          ? await ssrModule(setupRequest, setupUrl)
+          : ssrModule;
+      if (
+        !resolvedSsrModule ||
+        !resolvedSsrModule.resumeShellHTML ||
+        !resolvedSsrModule.captureShellHTML
+      ) {
+        return;
+      }
       const outcome = await runShellCapture(
         ctx,
         request,
         env,
         url,
         reqCtx,
-        ssrModule,
+        resolvedSsrModule,
         descriptor,
       );
       // Update the negative cache off the terminal outcome. A stored shell clears
@@ -919,7 +944,21 @@ export function scheduleShellCapture(
   // capture makes the sibling freeze a trivial prelude and store nothing
   // (rotating eternal-MISS victims on GH runners). The stampede guard above
   // stays per-key (dedupe while queued); the queue is cross-key.
-  const serializedTask = () => enqueueSerializedCapture(captureTask);
+  const serializedTask = async () => {
+    try {
+      await enqueueSerializedCapture(captureTask);
+    } catch (error) {
+      if (error instanceof CaptureQueueFullError) {
+        inFlightCaptures.delete(key);
+        publishCaptureDebugEvent(descriptor, {
+          key,
+          outcome: "skip-capacity",
+        });
+        return;
+      }
+      throw error;
+    }
+  };
   // The capture's own task must NOT enter reqCtx._pendingBackgroundTasks: the
   // capture drains that list before rendering (the write-barrier ordering edge),
   // and awaiting its own still-running promise would burn the whole barrier
@@ -940,6 +979,22 @@ export function scheduleShellCapture(
  *   rejected with our own abort. This is the only RETRYABLE outcome.
  */
 type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
+
+function createNavigationCaptureRequest(request: Request, url: URL): Request {
+  const headers = new Headers(request.headers);
+  headers.set("accept", "text/html");
+  for (const name of [
+    "rsc-action",
+    "x-rango-prefetch",
+    "x-rango-state",
+    "x-rsc-hmr",
+    "x-rsc-router-client-path",
+    "x-rsc-router-intercept-source",
+  ]) {
+    headers.delete(name);
+  }
+  return new Request(url, { method: request.method, headers });
+}
 
 /**
  * Per-attempt observability fields, filled along the capture path (barrier in
@@ -986,6 +1041,10 @@ async function runShellCapture(
   descriptor: ShellCaptureDescriptor,
   retryDelayMs: number = SHELL_CAPTURE_RETRY_DELAY_MS,
 ): Promise<CaptureAttemptOutcome> {
+  const captureUrl = descriptor.navigationOnly ? stripInternalParams(url) : url;
+  const captureRequest = descriptor.navigationOnly
+    ? createNavigationCaptureRequest(request, captureUrl)
+    : request;
   const log = descriptor.debug
     ? (message: string) => console.log(message)
     : () => {};
@@ -1002,9 +1061,9 @@ async function runShellCapture(
     const start = performance.now();
     const outcome = await attemptCapture(
       ctx,
-      request,
+      captureRequest,
       env,
-      url,
+      captureUrl,
       reqCtx,
       ssrModule,
       descriptor,
@@ -1124,6 +1183,7 @@ async function attemptCapture(
   const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(
     reqCtx,
     descriptor,
+    descriptor.navigationOnly ? { request, url } : undefined,
   );
   const captureStartedAt = Date.now();
 
@@ -1197,6 +1257,7 @@ export interface CaptureContextDerivation {
 export function deriveShellCaptureContext(
   reqCtx: RequestContext<any>,
   descriptor: Pick<ShellCaptureDescriptor, "ttl" | "swr">,
+  identity?: { request: Request; url: URL },
 ): CaptureContextDerivation {
   const freshHandleStore = createHandleStore();
   freshHandleStore.onError = reqCtx._handleStore.onError;
@@ -1268,6 +1329,13 @@ export function deriveShellCaptureContext(
   };
 
   const derivedCtx: RequestContext = Object.create(reqCtx);
+  if (identity) {
+    derivedCtx.request = identity.request;
+    derivedCtx.url = identity.url;
+    derivedCtx.originalUrl = new URL(identity.url);
+    derivedCtx.pathname = identity.url.pathname;
+    derivedCtx.searchParams = identity.url.searchParams;
+  }
   derivedCtx._handleStore = freshHandleStore;
   // Own render barrier, closure-bound to the derived ctx and the fresh store
   // (issue #684, plan 009). Without this every _renderBarrier* read fell

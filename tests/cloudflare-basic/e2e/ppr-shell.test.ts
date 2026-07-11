@@ -920,7 +920,7 @@ function describePprShell(mode: "dev" | "build") {
       request,
     }) => {
       using _ = expectNoPageError(page);
-      const probe = `cold-partial-${mode}`;
+      const probe = `cold-partial-${mode}-${crypto.randomUUID()}`;
       const targetPath = `/ppr-shell/slot-hole?probe=${probe}`;
       await page.goto(f.url("/"));
       await waitForHydration(page);
@@ -961,6 +961,12 @@ function describePprShell(mode: "dev" | "build") {
           { outcome: "HIT", freshness: "fresh" },
         );
       }).toPass({ timeout: 20000 });
+
+      const document = await request.get(f.url(targetPath), {
+        headers: HTML_HEADERS,
+      });
+      expect(document.status()).toBe(200);
+      assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
     });
 
     test("partial PPR replay applies a fresh transition({ when }) drop decision", async ({

@@ -111,8 +111,8 @@ function makeCtx(ssrModule: SSRModule, streamMode: string) {
       void payload;
       return new ReadableStream();
     },
-    loadSSRModule: async () => ssrModule,
-    resolveStreamMode: async () => streamMode,
+    loadSSRModule: vi.fn(async () => ssrModule),
+    resolveStreamMode: vi.fn(async () => streamMode),
   } as unknown as HandlerContext<unknown>;
   return { ctx };
 }
@@ -209,6 +209,7 @@ function fullSsrModule() {
 }
 
 const KEY = "localhost/p:shell";
+const NAVIGATION_KEY = `${KEY}:navigation`;
 
 beforeEach(() => {
   scheduleMock.mockClear();
@@ -1047,6 +1048,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
   async function expectReplayDeclined(
     options: Pick<RunOpts, "nonce" | "arm" | "store"> & {
       entryOverrides?: Partial<ShellCacheEntry>;
+      captureExpected?: boolean;
     },
     reason: string,
   ): Promise<void> {
@@ -1074,7 +1076,15 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(response.headers.get("x-rango-ppr-replay")).toBe(
       `BYPASS; reason=${reason}`,
     );
-    expect(scheduleMock).not.toHaveBeenCalled();
+    if (options.captureExpected) {
+      expect(scheduleMock).toHaveBeenCalledTimes(1);
+      expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+        key: NAVIGATION_KEY,
+        navigationOnly: true,
+      });
+    } else {
+      expect(scheduleMock).not.toHaveBeenCalled();
+    }
   }
 
   it("passively replays a stale shell without claiming revalidation ownership", async () => {
@@ -1181,7 +1191,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     const store = new MemorySegmentCacheStore();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const { response } = await run({
+    const { response, ctx } = await run({
       ssrModule: fullSsrModule(),
       partial: true,
       ppr: true,
@@ -1196,12 +1206,40 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       "BYPASS; reason=no-entry",
     );
     expect(scheduleMock).toHaveBeenCalledTimes(1);
+    expect(ctx.loadSSRModule).not.toHaveBeenCalled();
+    expect(scheduleMock.mock.calls[0]![5]).toEqual(expect.any(Function));
     expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
-      key: KEY,
+      key: NAVIGATION_KEY,
       store,
       navigationOnly: true,
     });
     fetchSpy.mockRestore();
+  });
+
+  it("resolves allReady policy lazily and declines background navigation capture", async () => {
+    const { response, ctx } = await run({
+      ssrModule: fullSsrModule(),
+      streamMode: "allReady",
+      partial: true,
+      ppr: true,
+    });
+
+    expect(response.status).toBe(200);
+    expect(ctx.loadSSRModule).not.toHaveBeenCalled();
+    expect(ctx.resolveStreamMode).not.toHaveBeenCalled();
+    const resolveModule = scheduleMock.mock.calls[0]![5] as (
+      request: Request,
+      url: URL,
+    ) => Promise<SSRModule | null>;
+    const captureUrl = new URL("http://localhost/p");
+    await expect(
+      resolveModule(
+        new Request(captureUrl, { headers: { accept: "text/html" } }),
+        captureUrl,
+      ),
+    ).resolves.toBeNull();
+    expect(ctx.loadSSRModule).toHaveBeenCalledTimes(1);
+    expect(ctx.resolveStreamMode).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1228,18 +1266,60 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       },
       "no-segment-snapshot",
     ],
-    [
-      "an invalid build version",
-      { buildVersion: "other-build" },
-      "invalid-version",
-    ],
-    ["a corrupt prelude", { prelude: "%%%" }, "corrupt-entry"],
   ] as const)("declines replay for %s", async (_label, overrides, reason) =>
     expectReplayDeclined(
       { entryOverrides: overrides as Partial<ShellCacheEntry> },
       reason,
     ),
   );
+
+  it.each([
+    [
+      "an invalid build version",
+      { buildVersion: "other-build" },
+      "invalid-version",
+    ],
+    ["a corrupt prelude", { prelude: "%%%" }, "corrupt-entry"],
+  ] as const)(
+    "heals %s with a navigation capture",
+    async (_label, overrides, reason) =>
+      expectReplayDeclined(
+        {
+          entryOverrides: overrides as Partial<ShellCacheEntry>,
+          captureExpected: true,
+        },
+        reason,
+      ),
+  );
+
+  it("falls back to the separate navigation snapshot when no document shell exists", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(
+      NAVIGATION_KEY,
+      shellEntry({ navigationOnly: true, snapshot: [segmentRecord] }),
+      300,
+    );
+    let replayArmed = false;
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      matchPartial: async () => {
+        const active = getRequestContext();
+        replayArmed = active._shellImplicitCache !== undefined;
+        active._shellImplicitCache?.onHit?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(replayArmed).toBe(true);
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["an active nonce", { nonce: "request-nonce" }, "nonce"],
@@ -1266,6 +1346,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     );
     expect(scheduleMock).toHaveBeenCalledTimes(1);
     expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+      key: NAVIGATION_KEY,
       navigationOnly: true,
     });
   });

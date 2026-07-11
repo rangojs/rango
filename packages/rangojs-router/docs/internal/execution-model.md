@@ -165,17 +165,21 @@ global middleware
   isolated from the real `doc:` namespace. Without a usable snapshot, a cold
   partial renders normally and schedules a navigation-only shell capture. The
   capture records handler-live holes and other replay eligibility flags before
-  storing the snapshot; a direct segment write cannot safely replace it.
+  storing the snapshot; a direct segment write cannot safely replace it. The
+  capture rebinds its request identity to the stripped target document URL, so
+  route-authored `cache()` scopes use `doc:` keys and document completeness
+  guards remain armed.
   Intercepts remain source-resolved,
   while handler-live holes re-run the ordinary handler path. Conditional
   transition predicates are evaluated from the matched manifest before replay,
   so they stay request-specific without re-running handlers. Production may use
   a fresh local build manifest; dev never blocks navigation on `/__rsc_shell`. Fresh
   and stale-within-SWR runtime generations replay via a non-claiming passive
-  read; partial requests never schedule shell recapture, and hard expiry still
-  schedules a navigation-only capture. Its HTML prelude is never document-served
-  because it inherited partial middleware state; a document request treats it as
-  a miss and replaces it with a document-safe shell.
+  read; those usable reads never schedule recapture. Missing, invalid-version,
+  corrupt, stale-build, and hard-expired artifacts schedule a navigation-only
+  capture. Navigation snapshots use a separate shell key, so they cannot replace
+  a document-safe shell when captures finish out of order. Document serving
+  never reads the navigation namespace.
   `x-rango-ppr-replay` distinguishes an actually consumed fresh/stale
   record from a bounded bypass reason. HIT is reported only after the seeded
   segment decodes and supplies the match; an explicit route `cache()` scope that

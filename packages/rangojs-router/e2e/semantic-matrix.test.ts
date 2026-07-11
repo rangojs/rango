@@ -6,7 +6,10 @@ import {
 } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
-import { assertPprReplayStatus } from "@rangojs/router/testing/e2e";
+import {
+  assertPprReplayStatus,
+  assertShellStatus,
+} from "@rangojs/router/testing/e2e";
 
 type BuildAxis = "dev" | "prod";
 type TransportAxis = "js" | "pe" | "request";
@@ -746,15 +749,15 @@ const matrixRows: SemanticMatrixRow[] = [
     execution: "partial-render",
     scope: "in-scope-child",
     assert: async ({ build, page, request, baseUrl }) => {
-      const targetPath = `/shell-cache/slot-hole?probe=matrix-cold-partial-${build}`;
+      const probe = `matrix-cold-partial-${build}-${crypto.randomUUID()}`;
+      const targetPath = `/shell-cache/slot-hole?probe=${probe}`;
       await openJsPage(page, baseUrl("/"));
 
       const firstResponsePromise = page.waitForResponse((response) => {
         const responseUrl = new URL(response.url());
         return (
           responseUrl.pathname === "/shell-cache/slot-hole" &&
-          responseUrl.searchParams.get("probe") ===
-            `matrix-cold-partial-${build}` &&
+          responseUrl.searchParams.get("probe") === probe &&
           responseUrl.searchParams.has("_rsc_partial")
         );
       });
@@ -785,6 +788,11 @@ const matrixRows: SemanticMatrixRow[] = [
           { outcome: "HIT", freshness: "fresh" },
         );
       }).toPass({ timeout: 10000 });
+
+      const document = await request.get(baseUrl(targetPath), {
+        headers: { Accept: "text/html" },
+      });
+      assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
     },
   },
 ];
