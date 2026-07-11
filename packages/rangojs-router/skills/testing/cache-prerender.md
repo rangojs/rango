@@ -113,7 +113,7 @@ expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 
 `events` accumulates across requests, so the FIRST matching segment for a `routeKey` wins — slice or recreate the sink between requests for the same route.
 
-## PPR shell (`x-rango-shell`)
+## PPR shell and navigation replay
 
 **DSL:** `ppr: true | PartialPrerenderProps` on a page route (see `/ppr`). **Not** the same header as `X-Rango-Cache` — shell is a second render axis.
 
@@ -123,6 +123,9 @@ expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 | `parseShellStatus(res)`                   | same                                 | `"HIT" \| "MISS" \| null` (null = header absent / unrecognized)                                        |
 | `shellCacheKey(url)`                      | same                                 | Production shell store key (`host+pathname+sorted search+:shell`) for `store.getShell` / custom stores |
 | `SHELL_STATUS_HEADER`                     | same                                 | `"x-rango-shell"` constant                                                                             |
+| `assertPprReplayStatus(res, "HIT")`       | same                                 | Assert that captured PPR segments actually supplied a partial navigation                               |
+| `parsePprReplayStatus(res)`               | same                                 | `"HIT" \| null` (null = no PPR segment replay)                                                         |
+| `PPR_REPLAY_STATUS_HEADER`                | same                                 | `"x-rango-ppr-replay"` constant                                                                        |
 
 ### What unit can prove vs e2e
 
@@ -131,6 +134,7 @@ expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 | **Unit** | store family + key identity | `MemorySegmentCacheStore` + `shellCacheKey(url)` + `putShell`/`getShell` / tag eviction — dogfood in `e2e/mini/test/shell-store-family.test.ts` and `src/testing/__tests__/shell-status.test.ts` |
 | **Unit** | header helper contract      | `assertShellStatus` on a Response that already carries the header (characterizes the helper; **never** invent a HIT to claim capture worked)                                                     |
 | **E2E**  | live MISS → capture → HIT   | document GET, poll until `x-rango-shell: HIT` (background capture) — `e2e/shell-cache.test.ts`                                                                                                   |
+| **E2E**  | partial replay HIT          | soft navigation to a warmed shell and `assertPprReplayStatus(response, "HIT")`                                                                                                                   |
 
 `dispatch` is RSC-free: it never runs shell serve/capture. `renderHandler` only surfaces `ctx.dynamic()` opt-out, not bake/serve.
 

@@ -9,7 +9,10 @@ import {
   goBack,
 } from "./helper";
 import { guardHydrationErrors } from "@shared/e2e";
-import { assertShellStatus } from "@rangojs/router/testing/e2e";
+import {
+  assertPprReplayStatus,
+  assertShellStatus,
+} from "@rangojs/router/testing/e2e";
 import type { ShellExecCounters } from "./test-app/src/urls/shell-cache.defs";
 
 // End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
@@ -1036,8 +1039,20 @@ function runShellCacheSpec(f: Fixture): void {
       await page.goto(f.url("/"));
       await waitForHydration(page);
       await using __ = await expectNoReload(page);
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/shell-cache/exec-matrix" &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
       await testId(page, "nav-ppr-exec").click();
+      const partialResponse = await partialResponsePromise;
       await waitForNavigation(page, /\/shell-cache\/exec-matrix$/);
+      assertPprReplayStatus(
+        { headers: new Headers(partialResponse.headers()) },
+        "HIT",
+      );
       await expect(testId(page, "shell-exec-chrome")).toHaveText(
         "Exec matrix static chrome",
       );

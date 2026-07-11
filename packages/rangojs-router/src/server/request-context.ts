@@ -276,6 +276,8 @@ export interface RequestContext<
      * segment record even when the triggering request is partial.
      */
     keyPrefix?: "doc";
+    /** @internal Called only after the implicit cache hit decodes successfully. */
+    onHit?: () => void;
   };
 
   /**

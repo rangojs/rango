@@ -1072,7 +1072,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     let marker: RequestContext["_shellImplicitCache"];
     let baseContext: RequestContext<unknown> | undefined;
 
-    const { reqCtx } = await run({
+    const { reqCtx, response } = await run({
       ssrModule: fullSsrModule(),
       partial: true,
       ppr: true,
@@ -1096,6 +1096,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
         expect(active).toBe(baseContext);
         expect(active._cacheStore).toBe(store);
         segmentHit = (await replayStore.get("doc:localhost/p")) !== null;
+        if (segmentHit) active._shellImplicitCache!.onHit?.();
         itemValue = (await replayStore.getItem!("loader-item"))?.value;
         marker = active._shellImplicitCache;
         active.setLocationState({
@@ -1113,6 +1114,24 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(reqCtx._locationState).toEqual([
       { __rsc_ls_key: "flash", __rsc_ls_value: "preserved" },
     ]);
+    expect(response.headers.get("x-rango-ppr-replay")).toBe("HIT");
+  });
+
+  it("does not report HIT when a usable snapshot is armed but supplies no segment", async () => {
+    let replayArmed = false;
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [segmentRecord] }),
+      matchPartial: async () => {
+        replayArmed = getRequestContext()._shellImplicitCache !== undefined;
+        return emptyMatchResult();
+      },
+    });
+
+    expect(replayArmed).toBe(true);
+    expect(response.headers.get("x-rango-ppr-replay")).toBeNull();
   });
 
   it("declines replay when a custom store does not opt into passive shell reads", async () => {

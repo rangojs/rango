@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("../segment-codec.js", () => ({
+  deserializeSegments: vi.fn(async () => []),
+}));
+
 import { CacheScope, resolveShellImplicitCacheScope } from "../cache-scope.js";
+import { deserializeSegments } from "../segment-codec.js";
 import {
   RecordingShellStore,
   SnapshotOnlySegmentStore,
@@ -127,6 +133,90 @@ describe("resolveShellImplicitCacheScope", () => {
     });
 
     expect(inner.gets).toEqual(["doc:localhost/p"]);
+  });
+
+  it("reports a replay hit only after the implicit entry decodes successfully", async () => {
+    const onHit = vi.fn();
+    const store: SegmentCacheStore = {
+      async get() {
+        return { data: ENTRY, shouldRevalidate: false };
+      },
+      async set() {},
+      async delete() {
+        return false;
+      },
+    };
+    const ctx = makeReqCtx({
+      url: new URL("http://localhost/p"),
+      originalUrl: new URL("http://localhost/p?_rsc_partial=true"),
+      _shellImplicitCache: {
+        ttl: 60,
+        store,
+        keyPrefix: "doc",
+        onHit,
+      },
+    });
+
+    await runWithRequestContext(ctx, async () => {
+      const scope = resolveShellImplicitCacheScope(null)!;
+      await expect(scope.lookupRoute("/p", {})).resolves.toEqual({
+        segments: [],
+        shouldRevalidate: false,
+      });
+    });
+
+    expect(onHit).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report PPR replay when a route-derived cache scope wins", async () => {
+    const onHit = vi.fn();
+    const appStore = makeInnerStore();
+    const routeScope = new CacheScope({ ttl: 7 });
+    const ctx = makeReqCtx({
+      url: new URL("http://localhost/p"),
+      originalUrl: new URL("http://localhost/p?_rsc_partial=true"),
+      _cacheStore: appStore,
+      _shellImplicitCache: { ttl: 60, onHit },
+    });
+
+    await runWithRequestContext(ctx, async () => {
+      const scope = resolveShellImplicitCacheScope(routeScope)!;
+      expect(scope).toBe(routeScope);
+      await expect(scope.lookupRoute("/p", {})).resolves.toBeNull();
+    });
+
+    expect(onHit).not.toHaveBeenCalled();
+  });
+
+  it("does not report PPR replay when the seeded segment fails to decode", async () => {
+    const onHit = vi.fn();
+    const store: SegmentCacheStore = {
+      async get() {
+        return { data: ENTRY, shouldRevalidate: false };
+      },
+      async set() {},
+      async delete() {
+        return true;
+      },
+    };
+    vi.mocked(deserializeSegments).mockRejectedValueOnce(new Error("corrupt"));
+    const ctx = makeReqCtx({
+      url: new URL("http://localhost/p"),
+      originalUrl: new URL("http://localhost/p?_rsc_partial=true"),
+      _shellImplicitCache: {
+        ttl: 60,
+        store,
+        keyPrefix: "doc",
+        onHit,
+      },
+    });
+
+    await runWithRequestContext(ctx, async () => {
+      const scope = resolveShellImplicitCacheScope(null)!;
+      await expect(scope.lookupRoute("/p", {})).resolves.toBeNull();
+    });
+
+    expect(onHit).not.toHaveBeenCalled();
   });
 });
 

@@ -2,7 +2,8 @@
  * PPR shell-status testing primitives for @rangojs/router consumers.
  *
  * Companion to `cache-status.ts` (segment/document cache): this module covers
- * the **shell axis** (`ppr` path option → `x-rango-shell: HIT | MISS`).
+ * the **shell axis** (`ppr` path option → `x-rango-shell: HIT | MISS`) and
+ * partial-navigation segment replay (`x-rango-ppr-replay: HIT`).
  *
  * ## Spike conclusions (plan 009)
  *
@@ -11,8 +12,9 @@
  *    + `ppr: true` on a response route is a no-op for shell serve/capture. The
  *    production path lives in `rsc/rsc-rendering.ts` + `rsc/shell-capture.ts`.
  *
- * 2. **Smallest HIT signal:** response header `x-rango-shell` (`HIT` | `MISS`),
- *    always on document GETs to a ppr route that the serve path considered.
+ * 2. **Smallest HIT signals:** `x-rango-shell` (`HIT` | `MISS`) on document
+ *    GETs, and `x-rango-ppr-replay: HIT` only when a partial navigation
+ *    actually consumes the captured segment record.
  *    Secondary unit signal: `store.getShell(shellCacheKey(url))` after a real
  *    capture flush (background `putShell`). There is no Flight flag for shell HIT.
  *
@@ -31,8 +33,14 @@ import { sortedSearchString } from "../cache/cache-key-utils.js";
 /** Production header name (`rsc/shell-serve.ts` `SHELL_STATUS_HEADER`). */
 export const SHELL_STATUS_HEADER: string = "x-rango-shell";
 
+/** Production header reporting that a partial navigation consumed PPR replay. */
+export const PPR_REPLAY_STATUS_HEADER: string = "x-rango-ppr-replay";
+
 /** Values the serve path writes on `x-rango-shell`. */
 export type ShellStatus = "HIT" | "MISS";
+
+/** Values currently written on `x-rango-ppr-replay`. */
+export type PprReplayStatus = "HIT";
 
 /** A target carrying response headers (a Response or a `{ headers }` object). */
 export type ShellStatusTarget = Response | { headers: Headers };
@@ -95,6 +103,34 @@ export function assertShellStatus(
   if (actual !== expected) {
     throw new Error(
       `assertShellStatus: expected "${expected}" but got "${actual}".`,
+    );
+  }
+}
+
+/** Read the partial-navigation PPR replay status, or null when replay did not supply segments. */
+export function parsePprReplayStatus(
+  target: ShellStatusTarget,
+): PprReplayStatus | null {
+  const raw = getHeaders(target).get(PPR_REPLAY_STATUS_HEADER);
+  return raw?.trim() === "HIT" ? "HIT" : null;
+}
+
+/** Assert that a partial-navigation response consumed the captured PPR segment record. */
+export function assertPprReplayStatus(
+  target: ShellStatusTarget,
+  expected: PprReplayStatus,
+): void {
+  const headerValue = getHeaders(target).get(PPR_REPLAY_STATUS_HEADER);
+  if (headerValue === null) {
+    throw new Error(
+      `assertPprReplayStatus: response has no ${PPR_REPLAY_STATUS_HEADER} header. ` +
+        `The header is only set when a partial navigation consumes a captured PPR segment record.`,
+    );
+  }
+  const actual = headerValue.trim();
+  if (actual !== expected) {
+    throw new Error(
+      `assertPprReplayStatus: expected "${expected}" but got "${actual}".`,
     );
   }
 }
