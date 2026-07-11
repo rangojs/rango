@@ -195,25 +195,27 @@ SWR, tags, and condition; only the implicit document scope sees the replay
 overlay, and fresh segment writes there stay request-local rather than polluting
 the canonical `doc:` namespace. Intercepts, handler-live holes,
 `transition({ when })`, an active nonce, and an absent/corrupt segment snapshot
-fall open to the ordinary partial path when encountered by the fresh shell
+fall open to the ordinary partial path when encountered by the shell
 capture. A transition already replayed from an explicit cache tier remains
 frozen by that tier's normal semantics.
 
-`x-rango-ppr-replay: HIT` confirms that the captured segment record actually
-supplied a partial navigation. Absence means the ordinary partial path or
-another cache tier supplied it. The signal is attached only after the seeded
-record is read, so merely finding a shell snapshot cannot produce a false HIT
-when an explicit `cache()` scope wins.
+Fresh and stale-within-SWR runtime shells replay. The stale read is passive: it
+uses `getShell(key, { claimRevalidation: false })`, does not claim SWR ownership,
+and cannot recapture HTML. A later document request owns the background
+recapture; hard-expired entries fall open. Production may also use a fresh local
+build manifest; development stays runtime-only because probing `/__rsc_shell`
+would block navigation on an on-demand capture. Custom `SegmentCacheStore`
+implementations must set `supportsPassiveShellReads: true` and honor the
+non-claiming read option.
 
-Only fresh shells replay. Production may use either a runtime entry or the
-local build manifest; development uses runtime entries only, because probing
-`/__rsc_shell` would block the foreground navigation on an on-demand capture.
-A passive stale read does not claim SWR ownership because partial requests
-cannot recapture the HTML shell. Custom `SegmentCacheStore` implementations
-must set `supportsPassiveShellReads: true` and honor
-`getShell(key, { claimRevalidation: false })` to opt into navigation replay.
-There is still no Flight resume API; this is segment replay followed by normal
-Flight streaming, not reuse of the HTML `prelude`/`postponed` bytes.
+Partial responses expose the actual decision as `x-rango-ppr-replay`:
+`HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. With
+performance metrics enabled, the same decision appears as
+`ppr-navigation-replay` in `Server-Timing`. `HIT` means matching consumed the
+seeded segment record after it decoded successfully, not merely that a snapshot
+existed. An explicit `cache()` scope that supplies the match cannot produce a
+false HIT. There is still no Flight resume API; this is segment replay followed
+by normal Flight streaming, not reuse of the HTML `prelude`/`postponed` bytes.
 
 ### Capture-generation invalidation
 
@@ -300,8 +302,8 @@ Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
 | Helper                                            | Use for                                                      |
 | ------------------------------------------------- | ------------------------------------------------------------ |
 | `assertShellStatus(res, "HIT" \| "MISS")`         | Document Response from a real RSC serve / e2e `page.request` |
-| `assertPprReplayStatus(res, "HIT")`               | Partial Response whose segments came from PPR replay         |
-| `parsePprReplayStatus(res)`                       | Read replay HIT or null without throwing                     |
+| `assertPprReplayStatus(res, expected)`            | Partial response fresh/stale replay or bounded bypass        |
+| `parsePprReplayStatus(res)`                       | Read structured replay/bypass status or null                 |
 | `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
 | `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
 

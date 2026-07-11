@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Meta, Prerender } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
@@ -9,6 +10,10 @@ import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
 import { PprPrerenderSeqLoader } from "../loaders/ppr-shell.js";
 import { PprBakeSlowLoader, PprBakeHoleLoader } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
+import {
+  makePprStaleReplayData,
+  PprStaleReplayHandle,
+} from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
 import { PprShellSettled } from "../components/PprShellSettled.js";
@@ -21,6 +26,7 @@ import {
   type PprInlineActionState,
 } from "../components/PprShellExecMatrix.js";
 import { PprPrerenderSeq } from "../components/PprPrerenderSeq.js";
+import { PprStaleReplay } from "../components/PprStaleReplay.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -86,6 +92,30 @@ export function PprShellStreamPage() {
 // its value; the HIT overlay must rehydrate a Promise for use().
 export function PprShellSettledPage() {
   return <PprShellSettled loader={PprShellSettledLoader} />;
+}
+
+export function PprStaleReplayPage(ctx: HandlerContext<{ id: string }>) {
+  const id = ctx.params.id;
+  const data = makePprStaleReplayData(id);
+  const push = ctx.use(PprStaleReplayHandle);
+  push({ yo: `yo-${id}` });
+  push(data.then((value) => ({ asd: value })));
+  ctx.use(Meta)(
+    data.then(async (value) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { title: `Stale replay ${id}: ${value}` };
+    }),
+  );
+
+  return (
+    <Suspense fallback={<div>Loading stale replay {id}...</div>}>
+      <PprStaleReplay
+        data={data}
+        handle={PprStaleReplayHandle}
+        search={ctx.url.search}
+      />
+    </Suspense>
+  );
 }
 
 // LAYOUT-LOADER bake-lane layout (the storefront shape): registers

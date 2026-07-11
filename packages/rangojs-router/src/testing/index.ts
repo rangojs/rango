@@ -86,6 +86,7 @@ export {
   SHELL_STATUS_HEADER,
 } from "./shell-status.js";
 export type {
+  PprReplayBypassReason,
   PprReplayStatus,
   ShellStatus,
   ShellStatusTarget,

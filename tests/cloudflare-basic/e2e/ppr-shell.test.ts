@@ -892,7 +892,7 @@ function describePprShell(mode: "dev" | "build") {
         await waitForNavigation(page, /\/ppr-shell\/exec-matrix$/);
         assertPprReplayStatus(
           { headers: new Headers(partialResponse.headers()) },
-          "HIT",
+          { outcome: "HIT", freshness: "fresh" },
         );
         await expect(testId(page, "ppr-exec-chrome")).toHaveText(
           "Exec matrix static chrome",
@@ -910,6 +910,124 @@ function describePprShell(mode: "dev" | "build") {
       expect(second.path).toBe(first.path);
       expect(second.layout).toBe(first.layout);
       expect(second.parallel).toBe(first.parallel);
+    });
+
+    test("stale SWR navigation replays the captured handler promise, top-level handles, and Meta", async ({
+      page,
+    }) => {
+      const probe = crypto.randomUUID();
+      const one = f.url(`/ppr-stale-replay/1?probe=${probe}`);
+      const two = f.url(`/ppr-stale-replay/2?probe=${probe}`);
+      const waitForPartialResponse = (pathname: string) =>
+        page.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            url.pathname === pathname && url.searchParams.has("_rsc_partial")
+          );
+        });
+      await warmToHit(page.request, one);
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      await page.evaluate((href) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.dataset.testid = "ppr-stale-replay-entry";
+        link.textContent = "Enter stale replay fixture";
+        document.body.append(link);
+      }, two);
+      const bypassResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/2",
+      );
+      await testId(page, "ppr-stale-replay-entry").click();
+      const bypassResponse = await bypassResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(bypassResponse.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toContainText(
+        /^ppr-stale-2-execution-\d+$/,
+      );
+
+      const freshResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/1",
+      );
+      await testId(page, "ppr-stale-replay-1").click();
+      const freshResponse = await freshResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(freshResponse.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+      const capturedData = await testId(
+        page,
+        "ppr-stale-replay-data",
+      ).textContent();
+      const capturedHandles = await testId(
+        page,
+        "ppr-stale-replay-handles",
+      ).textContent();
+      expect(capturedData).toMatch(/^ppr-stale-1-execution-\d+$/);
+      expect(JSON.parse(capturedHandles!).flat(Infinity)).toEqual([
+        { yo: "yo-1" },
+        { asd: capturedData },
+      ]);
+      await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
+
+      const returnToTwoPromise = waitForPartialResponse("/ppr-stale-replay/2");
+      await testId(page, "ppr-stale-replay-2").click();
+      const returnToTwo = await returnToTwoPromise;
+      assertPprReplayStatus(
+        { headers: new Headers(returnToTwo.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toContainText(
+        /^ppr-stale-2-execution-\d+$/,
+      );
+
+      const aged = await page.request.get(
+        f.url(`/__test/age-ppr-shell?target=${encodeURIComponent(one)}`),
+      );
+      expect(await aged.json()).toEqual({
+        ok: true,
+        found: true,
+        segmentKeys: [
+          `doc:${new URL(one).host}/ppr-stale-replay/1:id=1?probe=${probe}`,
+        ],
+      });
+      await page.waitForTimeout(1_200);
+
+      // A stale document HIT schedules recapture. Navigate while its handler
+      // promise is still pending so this covers the production race, not only
+      // a passive stale-store read.
+      const staleDocument = await page.request.get(one, {
+        headers: HTML_HEADERS,
+      });
+      assertShellStatus(
+        { headers: new Headers(staleDocument.headers()) },
+        "HIT",
+      );
+
+      const staleResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/1",
+      );
+      const startedAt = Date.now();
+      await testId(page, "ppr-stale-replay-1").click();
+      const staleResponse = await staleResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(staleResponse.headers()) },
+        { outcome: "HIT", freshness: "stale" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toHaveText(
+        capturedData!,
+      );
+      await expect(testId(page, "ppr-stale-replay-handles")).toHaveText(
+        capturedHandles!,
+      );
+      await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
+      expect(Date.now() - startedAt).toBeLessThan(1_200);
     });
 
     // Prerender + ppr COMPOSITION (docs/design/shell-fast-path.md): one route
