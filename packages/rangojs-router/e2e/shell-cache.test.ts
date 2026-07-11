@@ -10,6 +10,7 @@ import {
 } from "./helper";
 import { guardHydrationErrors } from "@shared/e2e";
 import { assertShellStatus } from "@rangojs/router/testing/e2e";
+import type { ShellExecCounters } from "./test-app/src/urls/shell-cache.defs";
 
 // End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
 // option (test-app/src/urls/shell-cache.tsx) — serving is integral to the router
@@ -1022,6 +1023,37 @@ function runShellCacheSpec(f: Fixture): void {
     // The replayed handler output still renders (structure intact, not blank).
     expect(second.html).toContain("Exec matrix static chrome");
     expect(second.html).toContain("exec badge");
+  });
+
+  test("partial navigation replays the PPR segment shell while middleware and loaders stay live", async ({
+    page,
+  }) => {
+    const target = f.url("/shell-cache/exec-matrix");
+    await warmToHit(page.request, target);
+
+    using _ = expectNoPageError(page);
+    const navigateFromFreshDocument = async () => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "nav-ppr-exec").click();
+      await waitForNavigation(page, /\/shell-cache\/exec-matrix$/);
+      await expect(testId(page, "shell-exec-chrome")).toHaveText(
+        "Exec matrix static chrome",
+      );
+      return JSON.parse(
+        (await testId(page, "shell-exec-counters").textContent())!,
+      ) as ShellExecCounters;
+    };
+
+    const first = await navigateFromFreshDocument();
+    const second = await navigateFromFreshDocument();
+
+    expect(second.middleware).toBe(first.middleware + 1);
+    expect(second.loader).toBe(first.loader + 1);
+    expect(second.path).toBe(first.path);
+    expect(second.layout).toBe(first.layout);
+    expect(second.parallel).toBe(first.parallel);
   });
 
   // Issue #702: fizz OUTLINES any Suspense boundary over ~500 bytes (fallback

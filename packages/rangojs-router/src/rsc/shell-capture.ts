@@ -476,6 +476,8 @@ export interface ShellCaptureDebugEvent {
   snapshotBytes?: number;
   /** True when the snapshot exceeded maxSnapshotBytes and was dropped. */
   snapshotSkipped?: boolean;
+  /** Outcome reported by a store that supports shell-write acknowledgements. */
+  storeWrite?: "stored" | "invalidated";
   /** Consecutive failure count in the key's backoff entry, when one exists. */
   backoffFailures?: number;
   /** Ms remaining in the key's backoff window, when one exists. */
@@ -515,6 +517,9 @@ export function describeShellCaptureEvent(
     parts.push(
       `snapshot=${event.snapshotBytes}b${event.snapshotSkipped ? " (over cap, skipped)" : ""}`,
     );
+  }
+  if (event.storeWrite !== undefined) {
+    parts.push(`store-write=${event.storeWrite}`);
   }
   if (event.backoffFailures !== undefined) {
     parts.push(`backoff-failures=${event.backoffFailures}`);
@@ -941,13 +946,15 @@ type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
  * bag, not a return value: captureAndStoreShell's outcome type stays a string
  * union its existing callers (producer B, tests) consume unchanged.
  */
-interface CaptureAttemptStats {
-  barrierWaitMs?: number;
-  writeSettleMs?: number;
-  preludeBytes?: number;
-  snapshotBytes?: number;
-  snapshotSkipped?: boolean;
-}
+type CaptureAttemptStats = Pick<
+  ShellCaptureDebugEvent,
+  | "barrierWaitMs"
+  | "writeSettleMs"
+  | "preludeBytes"
+  | "snapshotBytes"
+  | "snapshotSkipped"
+  | "storeWrite"
+>;
 
 /**
  * Run the shell capture with a single in-place retry, then store the result.
@@ -1116,6 +1123,7 @@ async function attemptCapture(
     reqCtx,
     descriptor,
   );
+  const captureStartedAt = Date.now();
 
   return runWithRequestContext(derivedCtx, async () => {
     const match = await ctx.router.match(request, { env });
@@ -1157,6 +1165,7 @@ async function attemptCapture(
       derivedCtx,
       descriptor,
       stats,
+      captureStartedAt,
     );
   });
 }
@@ -1329,6 +1338,7 @@ export function deriveShellCaptureContext(
       ttl: descriptor.ttl,
       swr: descriptor.swr,
       store: new SnapshotOnlySegmentStore(recordingStore),
+      keyPrefix: "doc",
     };
   }
 
@@ -1355,6 +1365,7 @@ async function captureAndStoreShell(
   reqCtx: RequestContext<any>,
   capture: ShellCaptureDescriptor,
   stats?: CaptureAttemptStats,
+  captureStartedAt: number = Date.now(),
 ): Promise<Exclude<CaptureAttemptOutcome, "redirect">> {
   const captureShellHTML = ssrModule.captureShellHTML!;
 
@@ -1661,15 +1672,26 @@ async function captureAndStoreShell(
           handlerLiveHoles: handlerLayerIsLive(
             reqCtx._shellCaptureHandleLiveness,
           ),
-          createdAt: Date.now(),
+          transitionWhen: reqCtx._transitionWhen?.length ? true : undefined,
+          createdAt: captureStartedAt,
         };
-        await store.putShell(
+        const storeWrite = await store.putShell(
           capture.key,
           entry,
           capture.ttl,
           capture.swr,
           shellTags,
         );
+        if (stats && storeWrite) stats.storeWrite = storeWrite;
+        if (storeWrite === "invalidated") {
+          warnCaptureRefusedOnce(
+            capture.key,
+            "one of the shell's tags was invalidated after this capture generation started, so the store rejected the write. " +
+              "If capture code deterministically calls updateTag() on its own shell tag, move that mutation out of the render; " +
+              "otherwise every generation is invalidated before it can be served.",
+          );
+          return "refused";
+        }
       } catch (error) {
         // Best-effort: a failed put must never throw out of the background task.
         reportCacheError(
@@ -1680,8 +1702,9 @@ async function captureAndStoreShell(
         );
       }
     }
-    // A shell was captured (the store I/O may have failed, but that is reported,
-    // not retried) — so this attempt is `stored` and the caller does not retry.
+    // A shell was captured (ordinary store I/O failure is reported, not retried).
+    // An acknowledged invalidation rejection returned `refused` above so the
+    // scheduler backs the key off instead of recapturing on every request.
     return "stored";
   } finally {
     // Stop the hop loop for the pathological never-quiets path (quiesce never

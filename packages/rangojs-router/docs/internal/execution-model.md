@@ -140,9 +140,30 @@ global middleware
   before SSR ("a promise nested inside your data is never baked; the container
   settles").
 - **Serve-time guarding is guaranteed on every serve.** Every serve — MISS and
-  HIT — runs the full chain (middleware + handlers + fresh loaders); only the
-  shell HTML is cached, so a HIT still runs the loader holes fresh. Pinned by
+  HIT — runs middleware and fresh loaders. Eligible shell snapshots replay the
+  captured handler segments instead of re-running those handlers; handler-live
+  holes and conditional transition gates decline that fast path. Pinned by
   the `[PPR2]` semantic matrix row.
+- **Partial navigations reuse the same captured segment shell without a client
+  protocol.** A normal-route partial request may seed the snapshot's canonical
+  `doc:` segment record into `matchPartial()`. Existing client segment ids,
+  revalidation rules, and diff collection decide what is returned; loaders run
+  fresh, and captured item/response/loader pins are excluded. The overlay is the
+  implicit scope's explicit store, not the request's app store, so route-authored
+  `cache()` scopes retain their freshness semantics and request effects stay on
+  the original render-barrier context. Overlay segment misses and mutations are
+  isolated from the real `doc:` namespace. Intercepts remain source-resolved,
+  while handler-live holes and `transition({ when })` re-run the ordinary handler
+  path. Production may use the local build manifest; dev never blocks navigation
+  on `/__rsc_shell`. The browser and prefetch lock see the same partial payload as
+  before. Pinned in both apps by the `partial navigation replays the PPR segment
+shell` dev+production e2e.
+- **Capture-generation invalidation is observable.** Built-in shell stores return
+  `invalidated` when a tag marker rejects a capture that started before the
+  invalidation. The capture emits a `refused` event with
+  `storeWrite: "invalidated"`, warns once, and enters normal refused-capture
+  backoff. A render that deterministically invalidates its own shell tag therefore
+  stays uncached, but it no longer fails silently or recaptures on every request.
 - **The consumption-lane rule.** For every shared-artifact capture — `cache()`,
   `"use cache"`, and the PPR shell — HOW a loader is consumed decides its lane:
   - Server-side handler consumption (`await ctx.use(loader)`) is the BAKED

@@ -96,6 +96,9 @@ export class RecordingShellStore<
   get keyGenerator(): SegmentCacheStore<TEnv>["keyGenerator"] {
     return this.inner.keyGenerator;
   }
+  get supportsPassiveShellReads(): true | undefined {
+    return this.inner.supportsPassiveShellReads;
+  }
 
   private record(
     family: ShellSnapshotRecord["family"],
@@ -232,8 +235,9 @@ export class RecordingShellStore<
 
   async getShell(
     key: string,
+    options?: { claimRevalidation?: boolean },
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    return this.inner.getShell ? this.inner.getShell(key) : null;
+    return this.inner.getShell ? this.inner.getShell(key, options) : null;
   }
 
   async putShell(
@@ -242,7 +246,7 @@ export class RecordingShellStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void> {
+  ): Promise<"stored" | "invalidated" | void> {
     return this.inner.putShell?.(key, entry, ttlSeconds, swrSeconds, tags);
   }
 
@@ -360,28 +364,42 @@ export async function buildShellLoaderSeed(
  * the snapshot it serves the recorded value AS FRESH (shouldRevalidate: false —
  * a pinned key must NOT kick SWR background revalidation) so the tail's payload
  * matches the frozen prelude. Every other read falls through to the real store
- * (the holes — masked loaders were never recorded — stay live). ALL writes pass
- * through unchanged: a live hole's loader may legitimately write. The shell
- * family always passes through.
+ * (the holes — masked loaders were never recorded — stay live). Writes pass
+ * through so a live hole may legitimately write, except that `segmentsOnly`
+ * fully isolates the segment family: misses do not fall through, and writes or
+ * deletes stay local to the navigation overlay. The shell family always passes
+ * through. With `segmentsOnly`, item and response reads also pass through so a
+ * partial navigation cannot freeze captured data or write a partial result into
+ * the canonical document namespace.
  */
 export class SeededShellStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
-  private readonly items = new Map<string, ShellSnapshotItemValue>();
+  private readonly items: Map<string, ShellSnapshotItemValue> | undefined;
   private readonly segments = new Map<string, CachedEntryData>();
-  private readonly responses = new Map<string, ShellSnapshotResponseValue>();
+  private readonly responses:
+    | Map<string, ShellSnapshotResponseValue>
+    | undefined;
+  private readonly segmentsOnly: boolean;
 
   constructor(
     private readonly inner: SegmentCacheStore<TEnv>,
     snapshot: ShellSnapshotRecord[],
+    options?: { segmentsOnly?: boolean },
   ) {
+    this.segmentsOnly = options?.segmentsOnly === true;
+    this.items = this.segmentsOnly ? undefined : new Map();
+    this.responses = this.segmentsOnly ? undefined : new Map();
     for (const rec of snapshot) {
-      if (rec.family === "item") {
-        this.items.set(rec.key, rec.value as ShellSnapshotItemValue);
-      } else if (rec.family === "segment") {
+      if (!rec || typeof rec !== "object") continue;
+      if (rec.family === "segment") {
         this.segments.set(rec.key, rec.value as CachedEntryData);
+      } else if (this.segmentsOnly) {
+        continue;
+      } else if (rec.family === "item") {
+        this.items?.set(rec.key, rec.value as ShellSnapshotItemValue);
       } else if (rec.family === "response") {
-        this.responses.set(rec.key, rec.value as ShellSnapshotResponseValue);
+        this.responses?.set(rec.key, rec.value as ShellSnapshotResponseValue);
       }
       // "loader" family records are not store reads — serveShellHit seeds them
       // onto the tail context (_shellLoaderSeed) for the resolveLoaderData
@@ -395,10 +413,14 @@ export class SeededShellStore<
   get keyGenerator(): SegmentCacheStore<TEnv>["keyGenerator"] {
     return this.inner.keyGenerator;
   }
+  get supportsPassiveShellReads(): true | undefined {
+    return this.inner.supportsPassiveShellReads;
+  }
 
   async get(key: string): Promise<CacheGetResult | null> {
     const seeded = this.segments.get(key);
     if (seeded) return { data: seeded, shouldRevalidate: false };
+    if (this.segmentsOnly) return null;
     return this.inner.get(key);
   }
 
@@ -408,10 +430,17 @@ export class SeededShellStore<
     ttl: number,
     swr?: number,
   ): Promise<void> {
+    if (this.segmentsOnly) {
+      this.segments.set(key, data);
+      return;
+    }
     return this.inner.set(key, data, ttl, swr);
   }
 
   async delete(key: string): Promise<boolean> {
+    if (this.segmentsOnly) {
+      return this.segments.delete(key);
+    }
     return this.inner.delete(key);
   }
 
@@ -422,7 +451,7 @@ export class SeededShellStore<
   async getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    const seeded = this.responses.get(key);
+    const seeded = this.responses?.get(key);
     if (seeded) {
       return { response: deserializeResponse(seeded), shouldRevalidate: false };
     }
@@ -440,7 +469,7 @@ export class SeededShellStore<
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
-    const seeded = this.items.get(key);
+    const seeded = this.items?.get(key);
     if (seeded) {
       return {
         value: seeded.value,
@@ -462,8 +491,9 @@ export class SeededShellStore<
 
   async getShell(
     key: string,
+    options?: { claimRevalidation?: boolean },
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    return this.inner.getShell ? this.inner.getShell(key) : null;
+    return this.inner.getShell ? this.inner.getShell(key, options) : null;
   }
 
   async putShell(
@@ -472,7 +502,7 @@ export class SeededShellStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void> {
+  ): Promise<"stored" | "invalidated" | void> {
     return this.inner.putShell?.(key, entry, ttlSeconds, swrSeconds, tags);
   }
 

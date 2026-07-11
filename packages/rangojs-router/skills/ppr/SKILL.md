@@ -170,6 +170,48 @@ On a document GET to a ppr route the router runs:
 point is after the chain, an unauthorized request NEVER sees shell bytes — put
 auth middleware anywhere (global or route DSL) and it guards PPR for free.
 
+### Soft navigation reuses the captured segment shell
+
+A usable shell snapshot also accelerates ordinary partial RSC navigations to
+the same URL. The capture records the canonical document segment tree alongside
+the HTML prelude. On a partial request the server replays only that segment
+record through the normal `matchPartial()` pipeline, which then:
+
+- preserves client-owned shared layouts by segment id;
+- returns only new or revalidating destination segments;
+- runs DSL loaders fresh with their normal `loading()` streaming behavior;
+- keeps the existing prefetch key, source scope, and in-flight lock unchanged.
+
+This is deliberately invisible to the browser: the response is the same
+`RscPayload` shape as any other partial navigation. Captured item/response values
+and loader-container pins are NOT replayed on this path, so loader reads stay
+live. A route's own `cache()` scope still resolves its normal store, key, TTL,
+SWR, tags, and condition; only the implicit document scope sees the replay
+overlay, and fresh segment writes there stay request-local rather than polluting
+the canonical `doc:` namespace. Intercepts, handler-live holes,
+`transition({ when })`, an active nonce, and an absent/corrupt segment snapshot
+fall open to the ordinary partial path when encountered by the fresh shell
+capture. A transition already replayed from an explicit cache tier remains
+frozen by that tier's normal semantics.
+
+Only fresh shells replay. Production may use either a runtime entry or the
+local build manifest; development uses runtime entries only, because probing
+`/__rsc_shell` would block the foreground navigation on an on-demand capture.
+A passive stale read does not claim SWR ownership because partial requests
+cannot recapture the HTML shell. Custom `SegmentCacheStore` implementations
+must set `supportsPassiveShellReads: true` and honor
+`getShell(key, { claimRevalidation: false })` to opt into navigation replay.
+There is still no Flight resume API; this is segment replay followed by normal
+Flight streaming, not reuse of the HTML `prelude`/`postponed` bytes.
+
+### Capture-generation invalidation
+
+If handler or bake-lane code calls `updateTag()` on one of the shell's own tags
+while capture is running, that generation is rejected. Built-in stores report it;
+Rango warns with the shell key and backs capture off instead of rendering the
+same doomed generation on every request. Move a deterministic self-invalidation
+out of render code if you want the shell to persist.
+
 ### Opting out per request with `ctx.dynamic()`
 
 Middleware and handlers can call `ctx.dynamic()` to force this request back to
@@ -405,7 +447,8 @@ Four hard edges (each e2e/unit-pinned):
   Pitfalls: the session-object bake trap).
 - **A rejecting bake-lane loader refuses.** Error UI never bakes.
 - **Baked containers show CAPTURE-time data** for the shell's lifetime on
-  document GETs (client navigations stay fresh — axis 1). That IS the bake
+  document GETs. Soft navigations may replay the captured handler segments, but
+  DSL loaders and their item/response reads remain fresh. That IS the bake
   lane's meaning; if a value must be fresh on every serve, it belongs on the
   live lane (`loading()`) or in a nested promise.
 
@@ -539,9 +582,10 @@ bake-lane container — or key per variant at the CDN tier.
 
 ## What always stays on axis 1
 
-Non-GET, RSC/partial/action/loader fetches, per-request CSP nonce,
-`streamMode: "allReady"`, redirects, 404s, error renders, routes without `ppr`,
-and any store without the shell family. A stored shell is invalidated when
+Non-GET, non-partial RSC/action/loader fetches, partial requests without an
+eligible captured segment snapshot, per-request CSP nonce, `streamMode:
+"allReady"`, redirects, 404s, error renders, routes without `ppr`, and any store
+without the shell family. A stored shell is invalidated when
 `React.version` changes (postponed state is build-coupled), so deploys
 self-heal via recapture.
 
