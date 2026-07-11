@@ -40,6 +40,7 @@ import {
   type ShellCaptureDescriptor,
 } from "./shell-capture.js";
 import {
+  PPR_REPLAY_STATUS_HEADER,
   SHELL_STATUS_HEADER,
   resolvePprConfig,
   buildShellKey,
@@ -68,8 +69,6 @@ import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type { ShellCacheEntry, ShellSnapshotRecord } from "../cache/types.js";
-
-const PPR_REPLAY_STATUS_HEADER = "x-rango-ppr-replay";
 
 type PprReplayBypassReason =
   | "method"
@@ -724,11 +723,11 @@ async function matchPartialWithPprReplay<TEnv>(
     swr: pprConfig.swr,
     store: new SeededShellStore(store, snapshot, {
       segmentsOnly: true,
-      onSegmentLookup: (hit) => {
-        segmentReplayHit ||= hit;
-      },
     }),
     keyPrefix: "doc",
+    onHit: () => {
+      segmentReplayHit = true;
+    },
   };
 
   try {

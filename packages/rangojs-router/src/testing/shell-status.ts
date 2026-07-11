@@ -2,7 +2,8 @@
  * PPR shell-status testing primitives for @rangojs/router consumers.
  *
  * Companion to `cache-status.ts` (segment/document cache): this module covers
- * the **shell axis** (`ppr` path option → `x-rango-shell: HIT | MISS`).
+ * the **shell axis** (`ppr` path option → `x-rango-shell: HIT | MISS`) and
+ * partial-navigation segment replay (`x-rango-ppr-replay: HIT`).
  *
  * ## Spike conclusions (plan 009)
  *
@@ -11,8 +12,9 @@
  *    + `ppr: true` on a response route is a no-op for shell serve/capture. The
  *    production path lives in `rsc/rsc-rendering.ts` + `rsc/shell-capture.ts`.
  *
- * 2. **Smallest HIT signal:** response header `x-rango-shell` (`HIT` | `MISS`),
- *    always on document GETs to a ppr route that the serve path considered.
+ * 2. **Smallest status signals:** `x-rango-shell` (`HIT` | `MISS`) on document
+ *    GETs, and `x-rango-ppr-replay` on partial requests to ppr routes. A replay
+ *    HIT is reported only when matching consumes the captured segment record.
  *    Secondary unit signal: `store.getShell(shellCacheKey(url))` after a real
  *    capture flush (background `putShell`). There is no Flight flag for shell HIT.
  *

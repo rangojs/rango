@@ -381,18 +381,13 @@ export class SeededShellStore<
     | Map<string, ShellSnapshotResponseValue>
     | undefined;
   private readonly segmentsOnly: boolean;
-  private readonly onSegmentLookup: ((hit: boolean) => void) | undefined;
 
   constructor(
     private readonly inner: SegmentCacheStore<TEnv>,
     snapshot: ShellSnapshotRecord[],
-    options?: {
-      segmentsOnly?: boolean;
-      onSegmentLookup?: (hit: boolean) => void;
-    },
+    options?: { segmentsOnly?: boolean },
   ) {
     this.segmentsOnly = options?.segmentsOnly === true;
-    this.onSegmentLookup = options?.onSegmentLookup;
     this.items = this.segmentsOnly ? undefined : new Map();
     this.responses = this.segmentsOnly ? undefined : new Map();
     for (const rec of snapshot) {
@@ -424,7 +419,6 @@ export class SeededShellStore<
 
   async get(key: string): Promise<CacheGetResult | null> {
     const seeded = this.segments.get(key);
-    this.onSegmentLookup?.(seeded !== undefined);
     if (seeded) return { data: seeded, shouldRevalidate: false };
     if (this.segmentsOnly) return null;
     return this.inner.get(key);

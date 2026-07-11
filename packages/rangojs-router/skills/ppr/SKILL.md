@@ -212,8 +212,10 @@ Partial responses expose the actual decision as `x-rango-ppr-replay`:
 `HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. With
 performance metrics enabled, the same decision appears as
 `ppr-navigation-replay` in `Server-Timing`. `HIT` means matching consumed the
-seeded segment record, not merely that a snapshot existed. There is still no
-Flight resume API; this is segment replay followed by normal Flight streaming.
+seeded segment record after it decoded successfully, not merely that a snapshot
+existed. An explicit `cache()` scope that supplies the match cannot produce a
+false HIT. There is still no Flight resume API; this is segment replay followed
+by normal Flight streaming, not reuse of the HTML `prelude`/`postponed` bytes.
 
 ### Capture-generation invalidation
 
@@ -301,6 +303,7 @@ Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
 | ------------------------------------------------- | ------------------------------------------------------------ |
 | `assertShellStatus(res, "HIT" \| "MISS")`         | Document Response from a real RSC serve / e2e `page.request` |
 | `assertPprReplayStatus(res, expected)`            | Partial response fresh/stale replay or bounded bypass        |
+| `parsePprReplayStatus(res)`                       | Read structured replay/bypass status or null                 |
 | `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
 | `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
 

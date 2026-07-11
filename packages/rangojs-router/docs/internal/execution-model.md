@@ -164,10 +164,12 @@ global middleware
   on `/__rsc_shell`. Fresh and stale-within-SWR runtime generations replay via a
   non-claiming passive read; partial requests never schedule shell recapture, and
   hard expiry still falls open. `x-rango-ppr-replay` distinguishes an actually
-  consumed fresh/stale record from a bounded bypass reason. The browser and
-  prefetch lock see the same partial payload as before. Pinned in both apps by
-  the fresh replay and `stale SWR navigation replays the captured handler
-promise, top-level handles, and Meta` dev+production e2e cases.
+  consumed fresh/stale record from a bounded bypass reason. HIT is reported only
+  after the seeded segment decodes and supplies the match; an explicit route
+  `cache()` scope that wins does not produce a false HIT. The browser and prefetch
+  lock see the same partial payload as before. Pinned in both apps by the fresh
+  replay and `stale SWR navigation replays the captured handler promise,
+top-level handles, and Meta` dev+production e2e cases.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
   `invalidated` when a tag marker rejects a capture that started before the
   invalidation. The capture emits a `refused` event with

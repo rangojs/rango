@@ -45,7 +45,9 @@ Related docs:
 The testing exports also include `PPR_REPLAY_STATUS_HEADER`,
 `parsePprReplayStatus()`, and `assertPprReplayStatus()` with the bounded
 `PprReplayStatus` / `PprReplayBypassReason` types. `./testing/e2e` re-exports the
-same pure helpers for Playwright without pulling the Vite virtual module.
+same pure helpers for Playwright without pulling the Vite virtual module. A HIT
+means the captured segment successfully decoded and supplied the partial match;
+otherwise the status carries a bounded bypass reason.
 
 ### Internal (not user-facing)
 
@@ -224,8 +226,10 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   namespace. Intercepts, handler-live holes, conditional transitions,
   nonce-bearing requests, stores without `supportsPassiveShellReads: true`, and
   unusable snapshots fall open to the ordinary partial path. Production may use
-  runtime or build entries; development uses runtime entries only. No client
-  payload flag or Flight resume is involved.
+  runtime or build entries; development uses runtime entries only.
+  `x-rango-ppr-replay` reports whether the seeded segment record actually
+  supplied the partial match, including freshness, or why replay was bypassed.
+  No client payload flag or Flight resume is involved.
 - Route-level segment caching (`cache()` DSL), named cache profiles (`cacheProfiles`)
 - `cache()` + segment scope propagation, global segment cache config on router
 - `"use cache"` directive runtime wrappers, response route cache layer

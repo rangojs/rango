@@ -1039,20 +1039,20 @@ function runShellCacheSpec(f: Fixture): void {
       await page.goto(f.url("/"));
       await waitForHydration(page);
       await using __ = await expectNoReload(page);
-      const responsePromise = page.waitForResponse((response) => {
-        const url = new URL(response.url());
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
         return (
-          url.pathname === "/shell-cache/exec-matrix" &&
-          url.searchParams.has("_rsc_partial")
+          responseUrl.pathname === "/shell-cache/exec-matrix" &&
+          responseUrl.searchParams.has("_rsc_partial")
         );
       });
       await testId(page, "nav-ppr-exec").click();
-      const response = await responsePromise;
+      const partialResponse = await partialResponsePromise;
+      await waitForNavigation(page, /\/shell-cache\/exec-matrix$/);
       assertPprReplayStatus(
-        { headers: new Headers(response.headers()) },
+        { headers: new Headers(partialResponse.headers()) },
         { outcome: "HIT", freshness: "fresh" },
       );
-      await waitForNavigation(page, /\/shell-cache\/exec-matrix$/);
       await expect(testId(page, "shell-exec-chrome")).toHaveText(
         "Exec matrix static chrome",
       );

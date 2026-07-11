@@ -1071,8 +1071,10 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       ppr: true,
       store,
       matchPartial: async () => {
-        const replayStore = getRequestContext()._shellImplicitCache?.store;
+        const active = getRequestContext();
+        const replayStore = active._shellImplicitCache?.store;
         replayArmed = (await replayStore?.get("doc:localhost/p")) !== null;
+        if (replayArmed) active._shellImplicitCache?.onHit?.();
         return emptyMatchResult();
       },
     });
@@ -1117,6 +1119,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
         expect(active).toBe(baseContext);
         expect(active._cacheStore).toBe(store);
         segmentHit = (await replayStore.get("doc:localhost/p")) !== null;
+        if (segmentHit) active._shellImplicitCache!.onHit?.();
         itemValue = (await replayStore.getItem!("loader-item"))?.value;
         marker = active._shellImplicitCache;
         active.setLocationState({
