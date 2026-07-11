@@ -48,6 +48,41 @@ function runDefaultPrefetchSpec(f: ReturnType<typeof useFixture>): void {
     const body = await res.text();
     expect(body).toMatch(/"defaultPrefetch"\s*:\s*"viewport"/);
   });
+
+  test("an offscreen bare Link waits for viewport intersection", async ({
+    page,
+  }) => {
+    const targetRequests: string[] = [];
+    page.on("request", (req) => {
+      if (
+        isPrefetchRequest(req) &&
+        new URL(req.url()).pathname.endsWith("/blog/post-5")
+      ) {
+        targetRequests.push(req.url());
+      }
+    });
+
+    await page.goto(f.url("/hash-navigation"));
+    await waitForHydration(page);
+
+    const link = page.getByTestId("link-default-prefetch-offscreen");
+    const top = await link.evaluate(
+      (element) => element.getBoundingClientRect().top,
+    );
+    expect(top).toBeGreaterThan(920);
+    await page.waitForTimeout(500);
+    expect(targetRequests).toHaveLength(0);
+
+    const prefetchRequest = page.waitForRequest(
+      (req) =>
+        isPrefetchRequest(req) &&
+        new URL(req.url()).pathname.endsWith("/blog/post-5"),
+    );
+    await link.scrollIntoViewIfNeeded();
+    const req = await prefetchRequest;
+
+    expect(new URL(req.url()).searchParams.get("_rsc_partial")).toBe("true");
+  });
 }
 
 test.describe("default-prefetch", () => {

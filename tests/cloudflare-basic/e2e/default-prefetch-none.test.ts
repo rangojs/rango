@@ -3,6 +3,14 @@ import { isPrefetchRequest } from "@rangojs/router/testing/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
+function isPrefetchRuntimeRequest(url: string): boolean {
+  const pathname = decodeURIComponent(new URL(url).pathname);
+  return (
+    /\/browser\/prefetch\/runtime\.(?:js|ts)$/.test(pathname) ||
+    /\/assets\/runtime-[^/]+\.js$/.test(pathname)
+  );
+}
+
 /**
  * Manual prefetch mode: this app sets createRouter({ defaultPrefetch: "none" })
  * (src/router.tsx), opting out of the router's default-on viewport prefetch.
@@ -54,6 +62,43 @@ function runDefaultPrefetchNoneSpec(f: Fixture): void {
 
     const req = await prefetchRequest;
     expect(req.url()).toContain("_rsc_partial");
+  });
+
+  test("an offscreen viewport override waits for intersection", async ({
+    page,
+  }) => {
+    const targetRequests: string[] = [];
+    const runtimeRequests: string[] = [];
+    page.on("request", (req) => {
+      if (isPrefetchRequest(req) && req.url().includes("observer-facade=1")) {
+        targetRequests.push(req.url());
+      }
+      if (isPrefetchRuntimeRequest(req.url())) {
+        runtimeRequests.push(req.url());
+      }
+    });
+
+    await page.goto(f.url("/pt-layout/from"));
+    await waitForHydration(page);
+
+    const link = page.getByTestId("pt-offscreen-viewport-link");
+    const top = await link.evaluate(
+      (element) => element.getBoundingClientRect().top,
+    );
+    expect(top).toBeGreaterThan(920);
+    await page.waitForTimeout(500);
+    expect(targetRequests).toHaveLength(0);
+    expect(runtimeRequests).toHaveLength(0);
+
+    const prefetchRequest = page.waitForRequest(
+      (req) =>
+        isPrefetchRequest(req) && req.url().includes("observer-facade=1"),
+    );
+    await link.scrollIntoViewIfNeeded();
+    const req = await prefetchRequest;
+
+    expect(new URL(req.url()).searchParams.get("_rsc_partial")).toBe("true");
+    expect(runtimeRequests).toHaveLength(1);
   });
 }
 

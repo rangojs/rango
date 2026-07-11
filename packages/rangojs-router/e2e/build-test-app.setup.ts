@@ -128,8 +128,10 @@ test("build test-app", async () => {
       .join("\n")}`,
   ).toEqual([]);
 
-  // Optional prefetch machinery must stay off the eager startup path. The
-  // request header is a stable marker owned by browser/prefetch/fetch.ts.
+  // Prefetch fetch/queue machinery must stay off the eager startup path. The
+  // request header is a stable marker owned by browser/prefetch/fetch.ts; the
+  // small shared viewport observer intentionally remains eager so it can load
+  // this chunk only after the first intersection.
   const clientDir = path.join(cwd, "dist", "client");
   const clientFiles = readJsFiles(clientDir);
   const prefetchChunks = clientFiles.filter((f) =>

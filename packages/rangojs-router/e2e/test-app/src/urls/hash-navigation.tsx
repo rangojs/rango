@@ -49,6 +49,11 @@ export const hashNavigationPatterns = urls(({ path }) => [
           <h2>Section B</h2>
           <p>Content for section B</p>
         </section>
+
+        <div style={{ height: "2000px" }} aria-hidden="true" />
+        <Link to="/blog/post-5" data-testid="link-default-prefetch-offscreen">
+          Offscreen default-prefetch link
+        </Link>
       </div>
     ),
     { name: "index" },
