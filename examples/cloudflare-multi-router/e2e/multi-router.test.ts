@@ -649,6 +649,7 @@ test.describe("multi-router (dev)", () => {
           "data-app-shell",
           "b",
         );
+        await waitForHydration(tab1);
 
         const appBKey = await findRangoStateKey(tab1, appAKey);
         expect(appBKey).toMatch(/^rango-state_/);
@@ -1252,6 +1253,7 @@ test.describe("multi-router (production)", () => {
           "data-app-shell",
           "b",
         );
+        await waitForHydration(tab1);
 
         const appBKey = await findRangoStateKey(tab1, appAKey);
         expect(appBKey).toMatch(/^rango-state_/);
