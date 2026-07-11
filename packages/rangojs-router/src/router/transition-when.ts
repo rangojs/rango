@@ -57,12 +57,13 @@ export function evaluatePprTransitionWhen<TEnv>(
     }
   };
 
-  const visit = (entry: EntryData): void => {
+  const visitEntryAndOrphanLayouts = (entry: EntryData): void => {
     if (visited.has(entry)) return;
     visited.add(entry);
     evaluate(entry, entry.shortCode);
 
-    for (const orphan of entry.layout) visit(orphan);
+    for (const orphan of entry.layout) visitEntryAndOrphanLayouts(orphan);
+    // Rendered parallel slots are leaves identified by their owning segment.
     for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
       entry.parallel,
     )) {
@@ -70,6 +71,6 @@ export function evaluatePprTransitionWhen<TEnv>(
     }
   };
 
-  for (const entry of entries) visit(entry);
-  ctx._pprTransitionWhen = decisions.size > 0 ? decisions : undefined;
+  for (const entry of entries) visitEntryAndOrphanLayouts(entry);
+  ctx._pprTransitionDecisions = decisions.size > 0 ? decisions : undefined;
 }

@@ -1,5 +1,4 @@
 import type { MatchResult } from "../types.js";
-import type { TransitionWhenContext } from "../types/segments.js";
 import type { getRequestContext } from "../server/request-context.js";
 import { invokeOnError } from "../router/error-handling.js";
 import type { OnErrorCallback } from "../types/error-types.js";
@@ -29,32 +28,31 @@ export function gateTransitions(
   ctx: ReturnType<typeof getRequestContext>,
   onError?: OnErrorCallback,
 ): MatchResult["segments"] {
-  const preDecisions = ctx._pprTransitionWhen;
+  const pprDecisions = ctx._pprTransitionDecisions;
   let gatedSegments = segments;
 
   const dropTransition = (id: string): void => {
     const index = gatedSegments.findIndex((segment) => segment.id === id);
     if (index === -1) return;
-    if (preDecisions) {
-      if (gatedSegments === segments) gatedSegments = [...segments];
-      gatedSegments[index] = {
-        ...gatedSegments[index],
-        transition: undefined,
-      };
-    } else {
+    if (!pprDecisions) {
       gatedSegments[index].transition = undefined;
+      return;
     }
+    if (gatedSegments === segments) gatedSegments = [...segments];
+    gatedSegments[index] = {
+      ...gatedSegments[index],
+      transition: undefined,
+    };
   };
 
-  if (preDecisions) {
-    for (const [id, keep] of preDecisions) {
+  if (pprDecisions) {
+    for (const [id, keep] of pprDecisions) {
       if (!keep) dropTransition(id);
     }
   }
   const predicates = ctx._transitionWhen;
-  if (predicates && predicates.length) {
+  if (predicates) {
     for (const { id, when } of predicates) {
-      let drop: boolean;
       try {
         // Assemble the ShouldRevalidateFn-shaped predicate context from the
         // request context. Source fields (currentUrl/currentParams/fromRouteName)
@@ -63,13 +61,11 @@ export function gateTransitions(
         // method/get/env come straight off ctx (setRequestContextParams ran
         // before the gate). Source/action fields are undefined when absent —
         // never fabricated (see TransitionWhenContext).
-        const whenCtx: TransitionWhenContext = createTransitionWhenContext(ctx);
-        drop = when(whenCtx) === false;
+        if (when(createTransitionWhenContext(ctx)) !== false) continue;
       } catch (error) {
         // A throwing predicate must not fail the response: report it and treat
         // the transition as gated off (do not hold). invokeOnError no-ops when
         // onError is undefined.
-        drop = true;
         invokeOnError(
           onError,
           error,
@@ -83,7 +79,7 @@ export function gateTransitions(
           "RSC",
         );
       }
-      if (drop) dropTransition(id);
+      dropTransition(id);
     }
   }
   return gatedSegments;

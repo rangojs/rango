@@ -171,8 +171,8 @@ export function runTransitionWhen<TEnv = any>(
           ),
       );
     }
-    // The real resolution-time collection + post-handler gate, so the predicate
-    // sees the production-assembled TransitionWhenContext.
+    // Ordinary predicates are collected here and evaluated by the gate. PPR
+    // predicates keep the decision already evaluated before this step.
     const serialized = applyViewTransitionDefault(
       configForGate,
       undefined,

@@ -264,7 +264,8 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 ### Route Transitions and Partial Rendering
 
-- On PPR routes, `transition({ when })` is evaluated from the matched manifest
+- The post-handler `transition({ when })` timing in (4) below applies to ordinary
+  routes. On PPR routes, the predicate is evaluated from the matched manifest
   after middleware and before cache lookup/route handlers on every runtime-cache,
   prerender, shell-document, and partial-shell replay. `router/transition-when.ts`
   owns context assembly and pre-handler evaluation; `rsc/transition-gate.ts`

@@ -38,7 +38,7 @@ export function applyViewTransitionDefault(
     if (segmentId !== undefined) {
       try {
         const ctx = getRequestContext();
-        if (!ctx._pprTransitionWhen?.has(segmentId)) {
+        if (!ctx._pprTransitionDecisions?.has(segmentId)) {
           (ctx._transitionWhen ??= []).push({
             id: segmentId,
             when: result.when,

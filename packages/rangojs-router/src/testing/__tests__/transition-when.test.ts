@@ -14,15 +14,14 @@ import { evaluatePprTransitionWhen } from "../../router/transition-when.js";
 const HoldMark = createVar<boolean>();
 
 /**
- * Exercises the full server-side transition({ when }) mechanism inside a real
- * request context — the same one a consumer's handler runs in:
+ * Exercises both server-side transition({ when }) paths inside a real request
+ * context:
  *
  *   1. resolution (applyViewTransitionDefault): strips the `when` FUNCTION from
- *      the serialized config (so it never crosses Flight or the segment cache)
- *      and records the predicate keyed by segment id;
- *   2. post-handler gate (gateTransitions): evaluates each predicate against the
- *      request context (seeing what the handler ctx.set) and drops the segment's
- *      transition when it returns false.
+ *      the serialized config and records ordinary predicates for the gate; PPR
+ *      decisions suppress that post-handler collection;
+ *   2. gateTransitions: evaluates ordinary predicates after handlers, or applies
+ *      the decision already evaluated before handlers for PPR routes.
  *
  * The full request -> match -> rsc-rendering pipeline that wires these together
  * only runs under real RSC rendering (dispatch refuses component routes; the
@@ -208,7 +207,7 @@ describe("transition({ when }) server gate", () => {
         { params: {}, routeName: "route" },
         () => {},
       );
-      return [...(ctx._pprTransitionWhen?.keys() ?? [])];
+      return [...(ctx._pprTransitionDecisions?.keys() ?? [])];
     });
 
     expect(result).toEqual(["route-seg", "orphan-seg", "orphan-seg.@aside"]);

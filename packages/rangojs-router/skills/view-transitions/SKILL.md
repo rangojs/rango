@@ -229,7 +229,7 @@ Timing follows the route's rendering contract:
 - On an ordinary route it runs after the route handler during fresh resolution, so `get()` can read handler- and middleware-set context. Cache/prerender hits replay the stored decision.
 - On a `ppr` route it is automatically hoisted before route handlers and runs on every match, including runtime-cache, prerender, document-shell, and partial-navigation replay. It can read URL/params/action metadata, `env`, and middleware-set context, but not values set by route handlers. This is what keeps the handler-free PPR fast path available without a second API.
 
-Its context mirrors the `revalidate()` predicate args — the same navigation/action metadata — plus `get`/`env` for post-handler reads:
+Its context mirrors the `revalidate()` predicate args — the same navigation/action metadata — plus `get`/`env` for request-context reads:
 
 ```ts
 import type { TransitionWhenContext } from "@rangojs/router";

@@ -460,7 +460,8 @@ export function withCacheLookup<TEnv>(
     state.shouldRevalidate = cacheResult.shouldRevalidate;
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
-    const pprTransitionDecisions = _getRequestContext()?._pprTransitionWhen;
+    const pprTransitionDecisions =
+      _getRequestContext()?._pprTransitionDecisions;
 
     const canCheckSegmentRevalidation =
       !ctx.isFullMatch &&

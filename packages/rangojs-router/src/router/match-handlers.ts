@@ -1,12 +1,19 @@
 import type { ReactNode } from "react";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { sanitizeError } from "../errors";
-import type { ErrorInfo, ErrorPhase, MatchResult } from "../types";
 import type {
-  EntryData,
-  InterceptEntry,
-  InterceptSelectorContext,
-} from "../server/context";
+  ErrorBoundaryHandler,
+  ErrorInfo,
+  ErrorPhase,
+  MatchResult,
+  NotFoundBoundaryHandler,
+} from "../types";
+import {
+  isPprEntry,
+  type EntryData,
+  type InterceptEntry,
+  type InterceptSelectorContext,
+} from "../server/context.js";
 import type { MatchApiDeps } from "./types.js";
 import type { RouterContext } from "./router-context.js";
 import { runWithRouterContext } from "./router-context.js";
@@ -30,7 +37,6 @@ import {
   startRevalidationTrace,
   flushRevalidationTrace,
 } from "./logging.js";
-import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
 import {
   type TelemetrySink,
@@ -228,14 +234,14 @@ export function createMatchHandlers<TEnv = any>(
     if (reqCtx) reqCtx._cacheSignal = segments;
   };
 
-  const preparePprTransitionWhen = (
+  const evaluatePprTransitionWhenForMatch = (
     ctx: MatchContext<TEnv>,
     isPartial: boolean,
   ): void => {
     const reqCtx = _getRequestContext();
     if (!reqCtx) return;
-    reqCtx._pprTransitionWhen = undefined;
-    if (ctx.manifestEntry.type !== "route" || !ctx.manifestEntry.ppr) return;
+    reqCtx._pprTransitionDecisions = undefined;
+    if (!isPprEntry(ctx.manifestEntry)) return;
 
     evaluatePprTransitionWhen(
       ctx.entries,
@@ -343,7 +349,7 @@ export function createMatchHandlers<TEnv = any>(
           }
 
           const ctx = result as MatchContext<TEnv>;
-          preparePprTransitionWhen(ctx, false);
+          evaluatePprTransitionWhenForMatch(ctx, false);
 
           try {
             const state = createPipelineState();
@@ -455,7 +461,7 @@ export function createMatchHandlers<TEnv = any>(
               emitter.end(0, false);
               return null;
             }
-            preparePprTransitionWhen(ctx, true);
+            evaluatePprTransitionWhenForMatch(ctx, true);
 
             if (isRouterDebugEnabled()) {
               startRevalidationTrace({
