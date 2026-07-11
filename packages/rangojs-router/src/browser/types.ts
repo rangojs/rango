@@ -430,9 +430,8 @@ export type StateListener = () => void;
 /**
  * Navigation store interface
  *
- * Manages both:
- * - NavigationState: Public state exposed via useNavigation hook
- * - SegmentState: Internal segment management for partial updates
+ * Owns segment state, history snapshots, and partial-update notifications.
+ * EventController owns the public navigation lifecycle exposed by hooks.
  */
 export interface NavigationStore {
   // Internal segment state (for bridges)

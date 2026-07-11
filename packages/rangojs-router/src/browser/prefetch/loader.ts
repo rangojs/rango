@@ -2,28 +2,7 @@ import type { RscPayload } from "../types.js";
 
 type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
 
-interface PrefetchRuntime {
-  setPrefetchDecoder(fn: PrefetchDecoder): void;
-  setPrefetchConcurrency(value: number): void;
-  prefetchDirect(
-    url: string,
-    segmentIds: string[],
-    version?: string,
-    routerId?: string,
-    prefetchKey?: ":source",
-  ): void;
-  prefetchQueued(
-    url: string,
-    segmentIds: string[],
-    version?: string,
-    routerId?: string,
-    prefetchKey?: ":source",
-  ): string;
-  observeForPrefetch(element: Element, callback: () => void): void;
-  unobserveForPrefetch(element: Element): void;
-  cancelAllPrefetches(keepUrl?: string | null): void;
-  abortAllPrefetches(): void;
-}
+type PrefetchRuntime = typeof import("./runtime.js");
 
 let runtime: PrefetchRuntime | null = null;
 let runtimePromise: Promise<PrefetchRuntime> | null = null;

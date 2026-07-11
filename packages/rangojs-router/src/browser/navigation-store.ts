@@ -161,11 +161,10 @@ function createLocation(loc: { href: string }): NavigationLocation {
 }
 
 /**
- * Create a navigation store for managing browser-side navigation state
+ * Create a navigation store for browser-side segment and history state.
  *
- * The store manages two types of state:
- * - NavigationState: Public state exposed via useNavigation hook
- * - SegmentState: Internal segment management for partial RSC updates
+ * The public navigation lifecycle lives in EventController; this store owns
+ * segment reconciliation, history snapshots, and cross-tab cache invalidation.
  *
  * @param config - Initial configuration
  * @returns NavigationStore instance
@@ -176,15 +175,6 @@ function createLocation(loc: { href: string }): NavigationLocation {
  *   initialLocation: window.location,
  *   initialSegmentIds: [],
  * });
- *
- * // Subscribe to state changes (for useNavigation hook)
- * const unsubscribe = store.subscribe(() => {
- *   const state = store.getState();
- *   console.log('Navigation state:', state);
- * });
- *
- * // Update state
- * store.setState({ state: 'loading' });
  *
  * // Subscribe to UI updates (for re-rendering)
  * store.onUpdate((update) => {
