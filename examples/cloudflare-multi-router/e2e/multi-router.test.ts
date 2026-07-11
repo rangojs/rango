@@ -649,19 +649,15 @@ test.describe("multi-router (dev)", () => {
           "b",
         );
 
-        // Tab 1 is now fully app B (with its own namespaced rango-state key).
-        // The property under test: tab 2's app-A token rotation must not surface
-        // in tab 1's app-B requests, asserted below via the X-Rango-State header.
+        // Tab 1 is now fully app B. The property under test: tab 2's app-A
+        // token rotation must not surface in tab 1's app-B requests.
 
+        let sawTab1Navigation = false;
         let tab1Header: string | null = null;
         tab1.on("request", (req) => {
-          const header = req.headers()["x-rango-state"];
-          if (
-            req.url().includes("_rsc_partial") &&
-            !isPrefetchRequest(req) &&
-            header
-          ) {
-            tab1Header = header;
+          if (req.url().includes("_rsc_partial") && !isPrefetchRequest(req)) {
+            sawTab1Navigation = true;
+            tab1Header = req.headers()["x-rango-state"] ?? null;
           }
         });
 
@@ -687,7 +683,7 @@ test.describe("multi-router (dev)", () => {
           timeout: 10000,
         });
 
-        expect(tab1Header).toBeTruthy();
+        expect(sawTab1Navigation).toBe(true);
         expect(tab1Header).not.toBe(rotatedAState);
       } finally {
         await tab1.close();
@@ -1267,19 +1263,15 @@ test.describe("multi-router (production)", () => {
           "b",
         );
 
-        // Tab 1 is now fully app B (with its own namespaced rango-state key).
-        // The property under test: tab 2's app-A token rotation must not surface
-        // in tab 1's app-B requests, asserted below via the X-Rango-State header.
+        // Tab 1 is now fully app B. The property under test: tab 2's app-A
+        // token rotation must not surface in tab 1's app-B requests.
 
+        let sawTab1Navigation = false;
         let tab1Header: string | null = null;
         tab1.on("request", (req) => {
-          const header = req.headers()["x-rango-state"];
-          if (
-            req.url().includes("_rsc_partial") &&
-            !isPrefetchRequest(req) &&
-            header
-          ) {
-            tab1Header = header;
+          if (req.url().includes("_rsc_partial") && !isPrefetchRequest(req)) {
+            sawTab1Navigation = true;
+            tab1Header = req.headers()["x-rango-state"] ?? null;
           }
         });
 
@@ -1297,7 +1289,7 @@ test.describe("multi-router (production)", () => {
           timeout: 10000,
         });
 
-        expect(tab1Header).toBeTruthy();
+        expect(sawTab1Navigation).toBe(true);
         expect(tab1Header).not.toBe(rotatedAState);
       } finally {
         await tab1.close();
