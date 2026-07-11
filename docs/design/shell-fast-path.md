@@ -216,8 +216,9 @@ Plain (non-promise) loader values stay PINNED to the capture on document HITs
 prelude already displays the capture-time value; serving fresh plain data in
 the payload is precisely the hydration-mismatch class the snapshot machinery
 exists to kill. The nested-promise shape is the one and only opt-in to
-document-visible freshness. Partial navigations and action revalidations are
-untouched and always fresh.
+document-visible freshness. Partial navigations keep loaders fresh while
+replaying an eligibility-checked shell snapshot; a cold partial can schedule a
+navigation-only capture to produce one. Action revalidations remain untouched.
 
 Replay is byte-identical by construction, which is STRONGER than the full
 tail's re-render-and-pin approach: a handler that computes something the

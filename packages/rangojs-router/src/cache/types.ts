@@ -306,6 +306,12 @@ export interface ShellCacheEntry {
    */
   snapshot?: ShellSnapshotRecord[];
   /**
+   * The entry was captured from a partial request only to produce an eligible
+   * segment snapshot. Document serving must treat its HTML prelude as a miss;
+   * the partial request's headers and middleware state are not document state.
+   */
+  navigationOnly?: true;
+  /**
    * True when the capture's HANDLER layer declared per-request liveness: a
    * handle pushed OUTSIDE a DSL loader scope carried a nested thenable (the
    * capture mask turns it into a never-filling hole), such a push was still

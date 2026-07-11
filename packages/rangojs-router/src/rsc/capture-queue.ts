@@ -23,6 +23,18 @@
  * swallow, so one rejected capture can never wedge every later one.
  */
 let captureQueue: Promise<void> = Promise.resolve();
+let admittedCaptures = 0;
+
+/** Bound queued/running capture closures retained by one isolate. */
+export const MAX_ADMITTED_CAPTURES: number = 32;
+
+/** The caller may drop this best-effort capture and retry on a later request. */
+export class CaptureQueueFullError extends Error {
+  constructor() {
+    super(`shell capture queue is full (${MAX_ADMITTED_CAPTURES})`);
+    this.name = "CaptureQueueFullError";
+  }
+}
 
 /**
  * Upper bound on how long one queue link may hold the queue. A capture task
@@ -43,6 +55,10 @@ const QUEUE_LINK_CAP_MS = 60_000;
 export function enqueueSerializedCapture(
   task: () => Promise<void>,
 ): Promise<void> {
+  if (admittedCaptures >= MAX_ADMITTED_CAPTURES) {
+    return Promise.reject(new CaptureQueueFullError());
+  }
+  admittedCaptures++;
   const prior = captureQueue;
   let releaseQueue!: () => void;
   captureQueue = new Promise<void>((resolve) => {
@@ -51,9 +67,16 @@ export function enqueueSerializedCapture(
   return (async () => {
     await prior.catch(() => {});
     let capTimer: ReturnType<typeof setTimeout> | undefined;
+    const taskPromise = Promise.resolve()
+      .then(task)
+      .finally(() => {
+        // A timed-out link releases serialization, but its detached task still
+        // counts against admission until it actually settles.
+        admittedCaptures--;
+      });
     try {
       await Promise.race([
-        task(),
+        taskPromise,
         new Promise<void>((resolve) => {
           capTimer = setTimeout(resolve, QUEUE_LINK_CAP_MS);
           (capTimer as { unref?: () => void }).unref?.();

@@ -20,6 +20,7 @@ import React from "react";
 import { isPprEntry, type EntryData } from "../server/context.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
+import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
 
 /** Debug/status header the browser (and e2e assertions) can read: HIT | MISS. */
 export const SHELL_STATUS_HEADER = "x-rango-shell";
@@ -62,9 +63,10 @@ export interface ResolvedPprConfig {
 }
 
 /**
- * Validate the raw `ppr.captureTimeout` option: a finite number >= 1ms passes
- * through; anything else (including 0/negative/NaN/Infinity/non-number)
- * resolves to undefined, which means "use the capture default" downstream.
+ * Validate the raw `ppr.captureTimeout` option: a finite number >= 1ms is
+ * clamped to the default ceiling; anything else (including
+ * 0/negative/NaN/Infinity/non-number) resolves to undefined, which means "use
+ * the capture default" downstream.
  * Mirrors the prefetch-limit option policy: invalid values silently fall back
  * to the default rather than throwing at request time. Also the boundary
  * re-normalizer for the dev /__rsc_shell endpoint (vite/router-discovery.ts),
@@ -72,7 +74,7 @@ export interface ResolvedPprConfig {
  */
 export function normalizeCaptureTimeout(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 1
-    ? value
+    ? Math.min(value, SHELL_CAPTURE_MAX_WAIT_MS)
     : undefined;
 }
 

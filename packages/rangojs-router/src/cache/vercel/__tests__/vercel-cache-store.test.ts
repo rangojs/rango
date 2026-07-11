@@ -528,13 +528,18 @@ describe("VercelCacheStore", () => {
       const s = new VercelCacheStore({ cache });
       await s.putShell(
         "k",
-        shellEntry({ handlerLiveHoles: true, transitionWhen: true }),
+        shellEntry({
+          handlerLiveHoles: true,
+          transitionWhen: true,
+          navigationOnly: true,
+        }),
         60,
         300,
       );
       const entry = (await s.getShell("k"))?.entry;
       expect(entry?.handlerLiveHoles).toBe(true);
       expect(entry?.transitionWhen).toBe(true);
+      expect(entry?.navigationOnly).toBe(true);
     });
 
     it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {

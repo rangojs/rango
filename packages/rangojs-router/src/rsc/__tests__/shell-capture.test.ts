@@ -21,6 +21,7 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { CacheScope } from "../../cache/cache-scope.js";
 import { cacheTag, recordRequestTags } from "../../cache/cache-tag.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
@@ -815,6 +816,7 @@ describe("runShellCapture", () => {
     } as unknown as HandlerContext<any>;
     const ssrModule = {
       renderHTML: vi.fn(),
+      resumeShellHTML: vi.fn(),
       captureShellHTML,
     } as unknown as SSRModule;
     return { ctx, ssrModule };
@@ -877,6 +879,90 @@ describe("runShellCapture", () => {
     expect(putShell.mock.calls[0]![0]).toBe("/p:shell");
     // The foreground store was untouched (the derived context isolates it).
     expect(reqCtx._handleStore).toBeDefined();
+  });
+
+  it("normalizes a navigation-only capture to document request identity", async () => {
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({
+        prelude: enc("<html><body>captured</body></html>"),
+        postponed: null,
+      })),
+    );
+    let matchedRequestUrl = "";
+    let ambientIdentity:
+      | Pick<RequestContext, "request" | "url" | "originalUrl" | "pathname">
+      | undefined;
+    const routeStoreGet = vi.fn(async () => null);
+    (ctx.router.match as ReturnType<typeof vi.fn>).mockImplementation(
+      async (request: Request) => {
+        matchedRequestUrl = request.url;
+        const active = getRequestContext();
+        ambientIdentity = {
+          request: active.request,
+          url: active.url,
+          originalUrl: active.originalUrl,
+          pathname: active.pathname,
+        };
+        await new CacheScope({
+          ttl: 60,
+          store: { get: routeStoreGet } as any,
+        }).lookupRoute("/p", {});
+        return okMatch;
+      },
+    );
+    const rawUrl = new URL(
+      "http://localhost/p?probe=keep&_rsc_partial=true&_rsc_segments=L0",
+    );
+    const request = new Request(rawUrl, {
+      headers: {
+        accept: "text/x-component",
+        authorization: "Bearer keep",
+        "X-Rango-Prefetch": "1",
+        "X-Rango-State": "transport-state",
+        "X-RSC-HMR": "1",
+        "X-RSC-Router-Client-Path": "/",
+        "X-RSC-Router-Intercept-Source": "/source",
+      },
+    });
+    const reqCtx = createRequestContext({
+      env: {},
+      request,
+      url: rawUrl,
+      variables: {},
+    }) as RequestContext;
+
+    await runShellCapture(ctx, request, {}, rawUrl, reqCtx, ssrModule, {
+      key: "/p:shell:navigation",
+      buildVersion: "test-build",
+      ttl: 300,
+      store: { putShell } as any,
+      navigationOnly: true,
+    });
+
+    expect(matchedRequestUrl).toBe("http://localhost/p?probe=keep");
+    expect(ambientIdentity?.url.toString()).toBe(
+      "http://localhost/p?probe=keep",
+    );
+    expect(ambientIdentity?.originalUrl.toString()).toBe(
+      "http://localhost/p?probe=keep",
+    );
+    expect(ambientIdentity?.pathname).toBe("/p");
+    expect(ambientIdentity?.request.headers.get("accept")).toBe("text/html");
+    expect(ambientIdentity?.request.headers.get("authorization")).toBe(
+      "Bearer keep",
+    );
+    for (const name of [
+      "x-rango-prefetch",
+      "x-rango-state",
+      "x-rsc-hmr",
+      "x-rsc-router-client-path",
+      "x-rsc-router-intercept-source",
+    ]) {
+      expect(ambientIdentity?.request.headers.has(name)).toBe(false);
+    }
+    expect(routeStoreGet).toHaveBeenCalledWith("doc:localhost/p?probe=keep");
   });
 
   // Capture-pipeline debug sink (issue #651): one structured event per
@@ -1290,6 +1376,40 @@ describe("runShellCapture", () => {
     scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, descriptor);
     expect(captured).toHaveLength(2);
     await captured[1]!();
+  });
+
+  it("loads a lazy SSR module only inside the background capture task", async () => {
+    const captured: Array<() => Promise<void>> = [];
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({
+        prelude: enc("<body>x</body>"),
+        postponed: null,
+      })),
+    );
+    const loadSSRModule = vi.fn(async () => ssrModule);
+    const reqCtx = makeReqCtx();
+    (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+      captured.push(task);
+    };
+    const request = new Request(
+      "http://localhost/lazy?_rsc_partial=true&_rsc_segments=L0",
+    );
+    const url = new URL(request.url);
+
+    scheduleShellCapture(ctx, request, {}, url, reqCtx, loadSSRModule, {
+      key: "/lazy:shell:navigation",
+      buildVersion: "test-build",
+      store: { putShell } as any,
+      navigationOnly: true,
+    });
+
+    expect(loadSSRModule).not.toHaveBeenCalled();
+    expect(captured).toHaveLength(1);
+    await captured[0]!();
+    expect(loadSSRModule).toHaveBeenCalledTimes(1);
+    expect(putShell).toHaveBeenCalledTimes(1);
   });
 
   // Deliverable 8: refused-capture backoff. A key that produced no usable shell

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { enqueueSerializedCapture } from "../capture-queue.js";
+import {
+  CaptureQueueFullError,
+  enqueueSerializedCapture,
+  MAX_ADMITTED_CAPTURES,
+} from "../capture-queue.js";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
@@ -65,5 +69,25 @@ describe("enqueueSerializedCapture", () => {
     expect(order).toEqual([1]);
     await second;
     expect(order).toEqual([1, 2]);
+  });
+
+  it("rejects work beyond the per-isolate admission bound and recovers after drain", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const admitted = Array.from({ length: MAX_ADMITTED_CAPTURES }, () =>
+      enqueueSerializedCapture(() => blocked),
+    );
+
+    await expect(
+      enqueueSerializedCapture(async () => {}),
+    ).rejects.toBeInstanceOf(CaptureQueueFullError);
+
+    release();
+    await Promise.all(admitted);
+    await expect(
+      enqueueSerializedCapture(async () => {}),
+    ).resolves.toBeUndefined();
   });
 });

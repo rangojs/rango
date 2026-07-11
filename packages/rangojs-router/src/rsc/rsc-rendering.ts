@@ -68,7 +68,11 @@ import {
 import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
-import type { ShellCacheEntry, ShellSnapshotRecord } from "../cache/types.js";
+import type {
+  SegmentCacheStore,
+  ShellCacheEntry,
+  ShellSnapshotRecord,
+} from "../cache/types.js";
 
 type PprReplayBypassReason =
   | "method"
@@ -104,6 +108,43 @@ function describePprReplayStatus(status: PprReplayStatus): string {
   return status.outcome === "HIT"
     ? status.freshness
     : `bypass:${status.reason}`;
+}
+
+function buildNavigationShellKey(url: URL): string {
+  return `${buildShellKey(url)}:navigation`;
+}
+
+function createShellCaptureDescriptor(
+  ctx: HandlerContext<any>,
+  key: string,
+  pprConfig: ResolvedPprConfig,
+  store: SegmentCacheStore<any>,
+  navigationOnly?: true,
+): ShellCaptureDescriptor {
+  return {
+    key,
+    buildVersion: ctx.version,
+    ttl: pprConfig.ttl,
+    swr: pprConfig.swr,
+    tags: pprConfig.tags,
+    captureTimeout: pprConfig.captureTimeout,
+    store,
+    debug: INTERNAL_RANGO_DEBUG,
+    maxSnapshotBytes: pprConfig.maxSnapshotBytes,
+    debugSink: resolveShellCaptureDebugSink(ctx.router.debugShellCapture),
+    navigationOnly,
+  };
+}
+
+function shouldHealReplayMiss(
+  reason: PprReplayBypassReason | undefined,
+): boolean {
+  return (
+    reason === undefined ||
+    reason === "invalid-version" ||
+    reason === "corrupt-entry" ||
+    reason === "stale-build-entry"
+  );
 }
 
 function resolveDevShellLookup(
@@ -194,6 +235,7 @@ async function handleRscRenderingInner<TEnv>(
   let payload: RscPayload;
   let hasInterceptSlots = false;
   let pprReplayStatus: PprReplayStatus | undefined;
+  let partialCaptureNeeded = false;
 
   // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
   //
@@ -280,23 +322,12 @@ async function handleRscRenderingInner<TEnv>(
           ssrModule.resumeShellHTML &&
           ssrModule.captureShellHTML
         ) {
-          const descriptor: ShellCaptureDescriptor = {
+          const descriptor = createShellCaptureDescriptor(
+            ctx,
             key,
-            buildVersion: ctx.version,
-            ttl: pprConfig.ttl,
-            swr: pprConfig.swr,
-            tags: pprConfig.tags,
-            captureTimeout: pprConfig.captureTimeout,
+            pprConfig,
             store,
-            debug: INTERNAL_RANGO_DEBUG,
-            maxSnapshotBytes: pprConfig.maxSnapshotBytes,
-            // The resolver owns the whole policy: option wins, the
-            // INTERNAL_RANGO_DEBUG env flag lights the events up when no
-            // option is set, an explicit `false` stays off.
-            debugSink: resolveShellCaptureDebugSink(
-              ctx.router.debugShellCapture,
-            ),
-          };
+          );
           // One serve funnel for BOTH entry sources (runtime store hit below,
           // build-manifest hit further down): schedule the background
           // recapture when asked, then commit the composed response.
@@ -347,7 +378,11 @@ async function handleRscRenderingInner<TEnv>(
               cached ? "hit" : "miss",
             );
           }
-          if (cached && isValidShellHit(cached.entry, ctx.version)) {
+          if (
+            cached &&
+            !cached.entry.navigationOnly &&
+            isValidShellHit(cached.entry, ctx.version)
+          ) {
             if (!hasIntactShellPayload(cached.entry)) {
               // Corrupt stored payload (undecodable prelude / unparseable
               // postponed): a store-layer fault worth a diagnostic, unlike the
@@ -407,6 +442,8 @@ async function handleRscRenderingInner<TEnv>(
     );
     const result = replay.result;
     pprReplayStatus = replay.status;
+    partialCaptureNeeded =
+      "captureNeeded" in replay && replay.captureNeeded === true;
 
     if (!result) {
       // Fall back to full render
@@ -607,6 +644,40 @@ async function handleRscRenderingInner<TEnv>(
     response.headers.set(SHELL_STATUS_HEADER, "MISS");
   }
 
+  if (
+    isPartial &&
+    partialCaptureNeeded &&
+    !reqCtx._dynamic &&
+    response.status === 200
+  ) {
+    const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry)!;
+    const store = reqCtx._cacheStore!;
+    scheduleShellCapture(
+      ctx,
+      request,
+      env,
+      url,
+      reqCtx,
+      async (captureRequest, captureUrl) => {
+        const [ssrModule, streamMode] = await getSSRSetup(
+          ctx,
+          captureRequest,
+          env,
+          captureUrl,
+          undefined,
+        );
+        return streamMode === "allReady" ? null : ssrModule;
+      },
+      createShellCaptureDescriptor(
+        ctx,
+        buildNavigationShellKey(url),
+        pprConfig,
+        store,
+        true,
+      ),
+    );
+  }
+
   return response;
 }
 
@@ -668,6 +739,7 @@ async function matchPartialWithPprReplay<TEnv>(
   }
 
   const key = buildShellKey(url);
+  const navigationKey = buildNavigationShellKey(url);
   let cached: Awaited<ReturnType<typeof store.getShell>> = null;
   try {
     cached = await store.getShell(key, { claimRevalidation: false });
@@ -686,6 +758,34 @@ async function matchPartialWithPprReplay<TEnv>(
       freshness = cached.shouldRevalidate ? "stale" : "fresh";
     } else {
       bypassReason = decision.reason;
+    }
+  }
+
+  if (
+    !snapshot &&
+    bypassReason !== "handler-live-holes" &&
+    bypassReason !== "transition-when"
+  ) {
+    let navigationCached: Awaited<ReturnType<typeof store.getShell>> = null;
+    try {
+      navigationCached = await store.getShell(navigationKey, {
+        claimRevalidation: false,
+      });
+    } catch (error) {
+      reportCacheError(error, "cache-read", "[NavigationPPR] getShell");
+      return runMatch({ outcome: "BYPASS", reason: "read-error" });
+    }
+    if (navigationCached) {
+      const decision = replayableShellSnapshot(
+        navigationCached.entry,
+        ctx.version,
+      );
+      if ("snapshot" in decision) {
+        snapshot = decision.snapshot;
+        freshness = navigationCached.shouldRevalidate ? "stale" : "fresh";
+      } else {
+        bypassReason = decision.reason;
+      }
     }
   }
 
@@ -710,10 +810,11 @@ async function matchPartialWithPprReplay<TEnv>(
   }
 
   if (!snapshot) {
-    return runMatch({
+    const match = await runMatch({
       outcome: "BYPASS",
       reason: bypassReason ?? "no-entry",
     });
+    return { ...match, captureNeeded: shouldHealReplayMiss(bypassReason) };
   }
 
   const previousImplicitCache = reqCtx._shellImplicitCache;

@@ -134,7 +134,11 @@ describe("CFCacheStore shell family (KV-only)", () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     await store.putShell(
       "k",
-      shellEntry({ handlerLiveHoles: true, transitionWhen: true }),
+      shellEntry({
+        handlerLiveHoles: true,
+        transitionWhen: true,
+        navigationOnly: true,
+      }),
       300,
       30,
     );
@@ -143,6 +147,7 @@ describe("CFCacheStore shell family (KV-only)", () => {
     const entry = (await store.getShell("k"))?.entry;
     expect(entry?.handlerLiveHoles).toBe(true);
     expect(entry?.transitionWhen).toBe(true);
+    expect(entry?.navigationOnly).toBe(true);
   });
 
   // The build-shell read-through's eviction gate (#699): a baked manifest
