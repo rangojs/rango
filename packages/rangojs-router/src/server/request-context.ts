@@ -254,21 +254,28 @@ export interface RequestContext<
   >;
 
   /**
-   * @internal Shell fast-path marker: makes the NEXT full match treat the whole
-   * matched route as an implicit doc-level cache() boundary (see
+   * @internal Shell fast-path marker: makes the next eligible match treat the
+   * whole matched route as an implicit doc-level cache() boundary (see
    * resolveShellImplicitCacheScope in cache/cache-scope.ts). Set ONLY on
    * (a) the capture's derived context — with a record-only store so the
    * capture's cacheRoute write lands in the snapshot, never the real store —
-   * and (b) a HIT tail's seeded context when the entry is eligible
-   * (!handlerLiveHoles), where the SeededShellStore serves the recorded doc
-   * entry and the match skips handler execution entirely. Routes with their
-   * own cache() config (including cache(false)) are never overridden: the
-   * marker only applies when the route tree derived NO cache scope.
+   * (b) a HIT tail's seeded context, and (c) an eligible normal-route partial
+   * replay, where `store` is a request-local segment overlay. Handler-live holes
+   * and conditional transitions decline replay.
+   * Routes with their own cache() config (including cache(false)) are never
+   * overridden: the marker only applies when the route tree derived NO cache
+   * scope.
    */
   _shellImplicitCache?: {
     ttl?: number;
     swr?: number;
     store?: SegmentCacheStore;
+    /**
+     * @internal Override the implicit scope's default cache namespace. Shell
+     * captures and navigation replay both consume the canonical document
+     * segment record even when the triggering request is partial.
+     */
+    keyPrefix?: "doc";
   };
 
   /**
@@ -645,6 +652,10 @@ export type PublicRequestContext<
   | "_transitionWhen"
   | "_cacheStore"
   | "_shellCaptureRun"
+  | "_shellImplicitCache"
+  | "_shellLoaderSeed"
+  | "_shellCaptureLoaderRecords"
+  | "_shellCaptureHandleLiveness"
   | "_shellFragmentPayload"
   | "_shellCaptureGuardTrippedLoaderId"
   | "_explicitTaggedStores"

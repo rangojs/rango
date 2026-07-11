@@ -59,6 +59,7 @@ export interface ChunkInfo {
 export interface PerRouterManifestEntry {
   id: string;
   routeManifest: Record<string, string>;
+  routeTrailingSlash?: Record<string, string>;
   routeSearchSchemas?: Record<string, Record<string, string>>;
   sourceFile?: string;
   factoryOnlyPrefixes?: Set<string>;
@@ -139,6 +140,8 @@ export interface DiscoveryState {
   resolvedStaticModules: Map<string, string[]> | undefined;
 
   discoveryDone: Promise<void> | null;
+  /** Monotonic Cloudflare-dev generation installed by the routes manifest. */
+  devDiscoveryEpoch?: number;
   devServerOrigin: string | null;
   devServer: any;
   selfWrittenGenFiles: Map<string, { at: number; hash: string }>;
@@ -192,6 +195,7 @@ export function createDiscoveryState(
     resolvedStaticModules: undefined,
 
     discoveryDone: null,
+    devDiscoveryEpoch: opts?.preset === "cloudflare" ? Date.now() : undefined,
     devServerOrigin: null,
     devServer: null,
     selfWrittenGenFiles: new Map(),

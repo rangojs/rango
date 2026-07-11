@@ -41,6 +41,8 @@ export interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
+    /** Cloudflare dev worker generation used for stale-document convergence. */
+    devDiscoveryEpoch?: number;
     /** TTL in milliseconds for the client-side in-memory prefetch cache */
     prefetchCacheTTL?: number;
     /** Max entries in the client-side in-memory prefetch cache (FIFO eviction) */

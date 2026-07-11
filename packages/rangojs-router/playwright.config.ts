@@ -30,6 +30,10 @@ const HOST_PREVIEW_PORT = 5297 + PORT_OFFSET;
 
 const isUIMode = process.argv.includes("--ui");
 const isCI = !!process.env.CI;
+// route-types-hmr owns an isolated server because it mutates generated route
+// files. A shared server would be a second writer with independent discovery
+// state, so the local-only script runs this project in its own process.
+const ROUTE_HMR_ONLY = process.env.RANGO_E2E_ROUTE_HMR_ONLY === "1";
 
 // Host-fixture isolation (finding: host servers must not boot on every shard).
 // The host-routing suite lives in its own `host` project + a dedicated CI job
@@ -49,7 +53,7 @@ export default defineConfig({
   globalTimeout: 600000, // 10 minutes max
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   webServer: [
-    ...(HOST_ONLY
+    ...(HOST_ONLY || ROUTE_HMR_ONLY
       ? []
       : [
           {
@@ -71,7 +75,7 @@ export default defineConfig({
             reuseExistingServer: !process.env.CI,
           },
         ]),
-    ...(RUN_HOST
+    ...(RUN_HOST && !ROUTE_HMR_ONLY
       ? [
           {
             // Host-router fixture (e2e/test-app/.host-fixture), node preset. Dev

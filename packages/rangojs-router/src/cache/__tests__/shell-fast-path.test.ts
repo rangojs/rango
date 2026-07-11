@@ -68,10 +68,16 @@ describe("resolveShellImplicitCacheScope", () => {
   });
 
   it("a route-derived scope always wins over the marker", () => {
+    const appStore = makeInnerStore();
+    const replayStore = makeInnerStore();
     const routeScope = new CacheScope({ ttl: 7 });
-    const ctx = makeReqCtx({ _shellImplicitCache: { ttl: 123 } });
+    const ctx = makeReqCtx({
+      _cacheStore: appStore,
+      _shellImplicitCache: { ttl: 123, store: replayStore },
+    });
     runWithRequestContext(ctx, () => {
       expect(resolveShellImplicitCacheScope(routeScope)).toBe(routeScope);
+      expect(routeScope.getStore()).toBe(appStore);
     });
   });
 
@@ -96,6 +102,31 @@ describe("resolveShellImplicitCacheScope", () => {
       const scope = resolveShellImplicitCacheScope(null);
       expect(scope!.getStore()).toBe(snapshotOnly);
     });
+  });
+
+  it("uses the canonical document key during a partial navigation replay", async () => {
+    const inner = makeInnerStore();
+    const request = new Request(
+      "http://localhost/p?_rsc_partial=true&_rsc_segments=L0",
+    );
+    const ctx = makeReqCtx({
+      request,
+      originalUrl: new URL(request.url),
+      url: new URL("http://localhost/p"),
+      _cacheStore: inner,
+      _shellImplicitCache: {
+        ttl: 60,
+        store: inner,
+        keyPrefix: "doc",
+      },
+    });
+
+    await runWithRequestContext(ctx, async () => {
+      const scope = resolveShellImplicitCacheScope(null)!;
+      await expect(scope.lookupRoute("/p", {})).resolves.toBeNull();
+    });
+
+    expect(inner.gets).toEqual(["doc:localhost/p"]);
   });
 });
 

@@ -681,6 +681,7 @@ export function getRootScoped(): boolean {
  * cross-router collision #757/#762 fixed (and the collector's historical
  * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
  * never contains, silently degrading to the dot-heuristic).
+ * A definition mounted more than once is stamped each time; the last mount wins.
  */
 export function stampStaticDefScope(
   handler: unknown,

@@ -3,7 +3,6 @@ import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
 
 // Local-only regression test — timing-dependent, not suitable for CI.
 // Run manually: TEST_BURST_SAVE=1 npx playwright test e2e/hmr-burst-save.test.ts --project=hmr
@@ -17,12 +16,6 @@ test.describe("hmr burst save", () => {
   });
 
   test.setTimeout(120000);
-
-  test.beforeAll(() => {
-    try {
-      execSync("git checkout -- src/", { cwd: f.root, stdio: "ignore" });
-    } catch {}
-  });
 
   const originalContents = new Map<string, string>();
 
@@ -132,7 +125,7 @@ test.describe("hmr burst save", () => {
     const failures = trackFailures(page);
 
     // Click to navigate to slow/1 (5s render) — request is in-flight
-    await page.locator('a[href="/slow/1"]').click();
+    await page.getByTestId("nav-slow-1").click();
 
     // While the slow render is in-flight, burst-save the handler
     await page.waitForTimeout(500);

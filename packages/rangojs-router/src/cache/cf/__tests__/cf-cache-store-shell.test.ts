@@ -130,16 +130,19 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(hit?.entry.buildVersion).toBe("build-abc");
   });
 
-  // The serve side arms the handler-free fast path on `!entry.handlerLiveHoles`,
-  // so the flag must survive the KV round trip: dropped, a handler-live entry
-  // read back from KV silently replays the handler layer and its holes (which
-  // only a handler re-run can fill) never fill on a HIT.
-  it("round-trips handlerLiveHoles through KV", async () => {
+  it("round-trips replay eligibility flags through KV", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
-    await store.putShell("k", shellEntry({ handlerLiveHoles: true }), 300, 30);
+    await store.putShell(
+      "k",
+      shellEntry({ handlerLiveHoles: true, transitionWhen: true }),
+      300,
+      30,
+    );
     await drain(mockCtx);
 
-    expect((await store.getShell("k"))?.entry.handlerLiveHoles).toBe(true);
+    const entry = (await store.getShell("k"))?.entry;
+    expect(entry?.handlerLiveHoles).toBe(true);
+    expect(entry?.transitionWhen).toBe(true);
   });
 
   // The build-shell read-through's eviction gate (#699): a baked manifest
@@ -214,6 +217,54 @@ describe("CFCacheStore shell family (KV-only)", () => {
 
     await store.invalidateTags(["home"]);
     expect(await store.getShell("k")).toBeNull();
+  });
+
+  it("does not resurrect a shell captured before tag invalidation", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const capturedAt = Date.now();
+    await store.invalidateTags(["home"]);
+    await drain(mockCtx);
+    expect(
+      await store.putShell(
+        "k",
+        shellEntry({ createdAt: capturedAt }),
+        300,
+        30,
+        ["home"],
+      ),
+    ).toBe("invalidated");
+    await drain(mockCtx);
+
+    expect(await store.getShell("k")).toBeNull();
+    expect(
+      [...mockKV.store.keys()].some((key) => key.includes("shell:k")),
+    ).toBe(false);
+  });
+
+  it("does not delete a newer shell when an older capture is rejected", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    await store.invalidateTags(["home"]);
+    await drain(mockCtx);
+    const invalidatedAt = Date.now();
+    vi.setSystemTime(new Date(invalidatedAt + 1));
+    await store.putShell(
+      "k",
+      shellEntry({ prelude: "new", createdAt: invalidatedAt + 1 }),
+      300,
+      30,
+      ["home"],
+    );
+    await drain(mockCtx);
+    await store.putShell(
+      "k",
+      shellEntry({ prelude: "old", createdAt: invalidatedAt - 1 }),
+      300,
+      30,
+      ["home"],
+    );
+    await drain(mockCtx);
+
+    expect((await store.getShell("k"))?.entry.prelude).toBe("new");
   });
 
   it("evicts and misses on a corrupt (non-JSON) KV entry", async () => {

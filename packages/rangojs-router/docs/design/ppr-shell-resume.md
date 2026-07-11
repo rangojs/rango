@@ -40,6 +40,50 @@ replay, fresh loaders, and the **full** Flight render (the browser still needs
 the complete payload for hydration; there is no Flight-side resume — that is a
 React limitation, not ours).
 
+### Navigation reuse is segment replay, not Flight resume
+
+The capture snapshot contains an implicit document-keyed segment record in
+addition to the HTML prelude. A partial RSC request for the same `ppr` URL may
+seed that record into the ordinary `matchPartial()` cache lookup. The normal
+pipeline still owns client-segment nullification, revalidation, diff selection,
+parallel ordering, handles, and fresh loader resolution; the browser receives an
+ordinary partial payload and has no PPR-specific branch.
+
+Only the snapshot's segment family is visible during navigation replay. Item,
+response, and loader-family pins exist to keep a document HIT byte-identical to
+its frozen HTML and would incorrectly freeze loader reads on a navigation. The
+implicit scope reads the canonical `doc:` identity even though the transport is
+partial, avoiding one cached shell per source-segment combination. Intercepts,
+handler-live holes, conditional transition gates encountered by the fresh shell
+capture, nonce-bearing requests, and snapshots without a segment record decline
+replay and run the full partial path. A transition already frozen by an explicit
+`cache()`/prerender hit keeps that cache tier's normal no-re-evaluation semantics.
+The replay store belongs only to that implicit scope: a consumer `cache()` scope
+continues to use its own store, key, TTL/SWR, tags, and condition. Segment misses,
+writes, and deletes stay inside the request overlay, so a partial pipeline can
+never write its output into the canonical document namespace.
+
+Navigation uses a passive shell read and only replays a fresh entry: production
+can read runtime or local build-manifest data, while dev stays runtime-only so a
+click never foreground-fetches `/__rsc_shell` and waits on capture. A stale entry
+falls open without claiming SWR revalidation ownership, because only a document
+request can recapture the HTML shell. Custom stores opt in with
+`supportsPassiveShellReads: true`; without that declaration replay declines
+rather than risk claiming a lock it cannot complete.
+
+### Capture-generation invalidation
+
+The shell's `createdAt` is the start of its capture generation, before matching
+or snapshot reads. Runtime stores compare tag invalidation markers against that
+timestamp at the write barrier and on reads, so an `updateTag()` racing the
+capture still wins even if the shell write completes later.
+Built-in stores acknowledge that rejected write. The capture reports it as a
+refusal and backs the key off instead of silently claiming success and
+recapturing on every document request. This includes deterministic
+self-invalidation: capture code that calls `updateTag()` on one of its own shell
+tags prevents that generation from being cached and emits a diagnostic naming
+the fix.
+
 ## Opt-in: the `ppr` path option, and integral serving
 
 If you are adding a PPR route or touching the serve path, read this first — it
@@ -632,8 +676,9 @@ export interface ShellCacheEntry {
   createdAt: number;        // epoch ms
 }
 
-getShell?(key: string): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
-putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<void>;
+supportsPassiveShellReads?: true;
+getShell?(key: string, options?: { claimRevalidation?: boolean }): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
+putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<"stored" | "invalidated" | void>;
 ```
 
 One entry carries both artifacts — the pair is version- and generation-coupled
@@ -991,6 +1036,7 @@ per-request data in loaders (holes); keep handles on the replay path.
 | Multi-tenant / host-router | the default key incorporates `url.host` so one tenant's shell can never compose into another tenant's page on a shared worker + store; custom `keyGenerator`s own host scoping themselves                                                                                                                                                                                                                                          |
 | Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries. Handler/loader header WRITES on a ppr route throw — see "The header doctrine" below                                                                                                                                                                   |
 | Actions / PE / formState   | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Partial RSC navigation     | replays the capture's canonical segment record when eligible, then applies normal `matchPartial()` diff/revalidation with fresh DSL loaders; otherwise ordinary axis 1. No HTML/Flight resume and no client-visible protocol flag                                                                                                                                                                                                  |
 | Per-request nonce          | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | React/router upgrade       | shells invalidated via `reactVersion` check (treated as a miss on mismatch; recapture overwrites and TTL ages the entry out — v1 has no `deleteShell`)                                                                                                                                                                                                                                                                             |
 | App redeploy (same React)  | shells invalidated via the `buildVersion` check — a persistent shared store (KV/runtime-cache) survives deploys, and resuming an old build's postponed blob against the new build's tree would tree-mismatch AFTER the 200 + prelude committed. Pre-field entries miss the same way. Corrupt entries fail `hasIntactShellPayload` pre-commit and degrade identically; a tail failure on a served HIT schedules a healing recapture |

@@ -171,7 +171,7 @@ export async function POST() {
 | `updateTag(...tags)`     | awaitable (`Promise<void>`) | server actions            | immediate; next read is fresh                         |
 | `revalidateTag(...tags)` | background (`void`)         | route handlers / webhooks | background (non-blocking); next read re-renders fresh |
 
-Both built-in stores support tags. For `CFCacheStore`, distributed (cross-colo)
+All three built-in stores support tags. For `CFCacheStore`, distributed (cross-colo)
 invalidation requires a `kv` namespace — the tag-invalidation markers live in
 that same namespace; there is **no** separate tag-invalidation store to wire.
 If no tag-capable store is configured, `updateTag`/`revalidateTag` warn and no-op.

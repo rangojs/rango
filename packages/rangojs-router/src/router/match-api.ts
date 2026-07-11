@@ -184,9 +184,8 @@ export async function createMatchContextForFull<TEnv>(
     },
     isSameRouteNavigation: false,
     interceptResult: null,
-    // Shell fast path: a capture or an eligible HIT tail may substitute an
-    // implicit doc-level scope (marker-gated; a route-derived scope wins).
-    // Full matches only — partial navigations never serve a shell.
+    // Shell fast path: a capture or an eligible document/navigation HIT may
+    // substitute an implicit doc-level scope (a route-derived scope wins).
     cacheScope: resolveShellImplicitCacheScope(snapshot.cacheScope),
     isIntercept: false,
     actionContext: undefined,
@@ -426,7 +425,12 @@ export async function createMatchContextForPartial<TEnv>(
     interceptSelectorContext,
     isSameRouteNavigation: nav.isSameRouteNavigation,
     interceptResult,
-    cacheScope: snapshot.cacheScope,
+    // A normal-route navigation may replay a PPR shell's canonical segment
+    // snapshot. Intercepts remain source-dependent and always use their normal
+    // cache path.
+    cacheScope: isIntercept
+      ? snapshot.cacheScope
+      : resolveShellImplicitCacheScope(snapshot.cacheScope),
     isIntercept,
     actionContext,
     isAction,

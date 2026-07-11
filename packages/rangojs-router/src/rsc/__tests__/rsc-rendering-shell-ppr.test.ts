@@ -19,7 +19,7 @@ import React from "react";
 import { handleRscRendering } from "../rsc-rendering.js";
 import { scheduleShellCapture } from "../shell-capture.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
-import type { ShellCacheEntry } from "../../cache/types.js";
+import type { CachedEntryData, ShellCacheEntry } from "../../cache/types.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -36,6 +36,17 @@ import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
 const scheduleMock = vi.mocked(scheduleShellCapture);
 
 const PRELUDE_HTML = "<html><body>SHELL-PRELUDE</body></html>";
+
+function emptyMatchResult() {
+  return {
+    segments: [],
+    matched: [],
+    diff: [],
+    resolvedIds: [],
+    params: {},
+    routeName: "home",
+  };
+}
 
 function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   return {
@@ -87,13 +98,9 @@ function makeCtx(ssrModule: SSRModule, streamMode: string) {
       onError: undefined,
       match: vi.fn(async () => ({
         redirect: undefined,
-        segments: [],
-        matched: [],
-        diff: [],
-        resolvedIds: [],
-        params: {},
-        routeName: "home",
+        ...emptyMatchResult(),
       })),
+      matchPartial: vi.fn(async () => emptyMatchResult()),
     },
     callOnError: vi.fn(),
     renderToReadableStream: (payload: RscPayload) => {
@@ -115,6 +122,11 @@ interface RunOpts {
   /** Store on reqCtx._cacheStore. Defaults to a fresh MemorySegmentCacheStore. */
   store?: unknown;
   url?: string;
+  partial?: boolean;
+  shell?: ShellCacheEntry;
+  matchPartial?: () => ReturnType<
+    HandlerContext<unknown>["router"]["matchPartial"]
+  >;
   arm?: (reqCtx: RequestContext<unknown>) => void;
 }
 
@@ -125,9 +137,22 @@ async function run(opts: RunOpts): Promise<{
   store: MemorySegmentCacheStore;
 }> {
   const { ctx } = makeCtx(opts.ssrModule, opts.streamMode ?? "stream");
-  const request = new Request(opts.url ?? "http://localhost/p", {
-    headers: { accept: "text/html" },
-  });
+  if (opts.matchPartial) {
+    (ctx.router.matchPartial as ReturnType<typeof vi.fn>).mockImplementation(
+      opts.matchPartial,
+    );
+  }
+  const request = new Request(
+    opts.url ??
+      (opts.partial
+        ? "http://localhost/p?_rsc_partial=true&_rsc_segments=L0"
+        : "http://localhost/p"),
+    {
+      headers: {
+        accept: opts.partial ? "text/x-component" : "text/html",
+      },
+    },
+  );
   const url = new URL(request.url);
   const store =
     (opts.store as MemorySegmentCacheStore | undefined) ??
@@ -139,6 +164,9 @@ async function run(opts: RunOpts): Promise<{
     variables: {},
   }) as RequestContext<unknown>;
   reqCtx._cacheStore = store as any;
+  if (opts.shell) {
+    await store.putShell(KEY, opts.shell, 300);
+  }
   // The classified route snapshot the RSC handler stores before dispatching the
   // render; the integrated PPR path reads the matched entry's ppr option off it.
   (reqCtx as any)._classifiedRoute = {
@@ -155,7 +183,7 @@ async function run(opts: RunOpts): Promise<{
       request,
       {},
       url,
-      false,
+      opts.partial ?? false,
       reqCtx._handleStore,
       opts.nonce,
     ),
@@ -912,6 +940,184 @@ describe("handleRscRendering — integrated PPR serve: bypasses", () => {
       "tenant-b.example/page:shell",
     );
   });
+});
+
+describe("handleRscRendering — PPR partial navigation replay", () => {
+  const segmentRecord: ShellSnapshotRecord = {
+    family: "segment",
+    key: "doc:localhost/p",
+    value: {
+      segments: [
+        {
+          encoded: "",
+          metadata: {
+            id: "R0",
+          } as CachedEntryData["segments"][number]["metadata"],
+        },
+      ],
+      handles: "",
+      expiresAt: Date.now() + 60_000,
+    },
+  };
+
+  async function expectReplayDeclined(
+    options: Pick<RunOpts, "nonce" | "arm" | "store"> & {
+      entryOverrides?: Partial<ShellCacheEntry>;
+    },
+  ): Promise<void> {
+    let replayArmed = false;
+
+    await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store: options.store,
+      shell: shellEntry({
+        snapshot: [segmentRecord],
+        ...options.entryOverrides,
+      }),
+      nonce: options.nonce,
+      arm: options.arm,
+      matchPartial: async () => {
+        const active = getRequestContext();
+        replayArmed = active._shellImplicitCache !== undefined;
+        return emptyMatchResult();
+      },
+    });
+
+    expect(replayArmed).toBe(false);
+  }
+
+  it("declines a stale shell without claiming revalidation ownership", async () => {
+    const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell").mockResolvedValue({
+      entry: shellEntry({ snapshot: [segmentRecord] }),
+      shouldRevalidate: true,
+    });
+
+    await expectReplayDeclined({ store });
+
+    expect(getShell).toHaveBeenCalledWith(KEY, { claimRevalidation: false });
+  });
+
+  it("seeds the captured document segments while item reads and loaders stay live", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.setItem("loader-item", "LIVE", { ttl: 60 });
+    let segmentHit = false;
+    let itemValue: string | undefined;
+    let marker: RequestContext["_shellImplicitCache"];
+    let baseContext: RequestContext<unknown> | undefined;
+
+    const { reqCtx } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      shell: shellEntry({
+        snapshot: [
+          segmentRecord,
+          {
+            family: "item",
+            key: "loader-item",
+            value: { value: "CAPTURED" },
+          },
+        ],
+      }),
+      arm: (active) => {
+        baseContext = active;
+      },
+      matchPartial: async () => {
+        const active = getRequestContext();
+        const replayStore = active._shellImplicitCache!.store!;
+        expect(active).toBe(baseContext);
+        expect(active._cacheStore).toBe(store);
+        segmentHit = (await replayStore.get("doc:localhost/p")) !== null;
+        itemValue = (await replayStore.getItem!("loader-item"))?.value;
+        marker = active._shellImplicitCache;
+        active.setLocationState({
+          __rsc_ls_key: "flash",
+          __rsc_ls_value: "preserved",
+        });
+        return emptyMatchResult();
+      },
+    });
+
+    expect(segmentHit).toBe(true);
+    expect(itemValue).toBe("LIVE");
+    expect(marker).toMatchObject({ keyPrefix: "doc" });
+    expect(reqCtx._shellImplicitCache).toBeUndefined();
+    expect(reqCtx._locationState).toEqual([
+      { __rsc_ls_key: "flash", __rsc_ls_value: "preserved" },
+    ]);
+  });
+
+  it("declines replay when a custom store does not opt into passive shell reads", async () => {
+    const getShell = vi.fn();
+    await expectReplayDeclined({
+      store: {
+        getShell,
+        putShell: vi.fn(),
+      },
+    });
+
+    expect(getShell).not.toHaveBeenCalled();
+  });
+
+  it("does not foreground-fetch the dev shell endpoint on a runtime miss", async () => {
+    const store = new MemorySegmentCacheStore();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).matched = { pr: true };
+      },
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it.each([
+    ["handler-live holes", { handlerLiveHoles: true }],
+    ["conditional transitions", { transitionWhen: true }],
+    ["a missing segment snapshot", { snapshot: [] }],
+    [
+      "a malformed snapshot record",
+      { snapshot: [null] as unknown as ShellSnapshotRecord[] },
+    ],
+    [
+      "an empty segment snapshot",
+      {
+        snapshot: [
+          {
+            ...segmentRecord,
+            value: {
+              ...(segmentRecord.value as CachedEntryData),
+              segments: [],
+            },
+          },
+        ],
+      },
+    ],
+  ] as const)("declines replay for %s", async (_label, overrides) =>
+    expectReplayDeclined({
+      entryOverrides: overrides as Partial<ShellCacheEntry>,
+    }),
+  );
+
+  it.each([
+    ["an active nonce", { nonce: "request-nonce" }],
+    [
+      "ctx.dynamic()",
+      { arm: (reqCtx: RequestContext<unknown>) => (reqCtx._dynamic = true) },
+    ],
+  ] as const)("declines replay for %s", async (_label, options) =>
+    expectReplayDeclined(options),
+  );
 });
 
 describe("handleRscRendering — no PPR flags is byte-identical axis 1", () => {

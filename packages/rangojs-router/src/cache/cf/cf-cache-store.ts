@@ -272,7 +272,7 @@ interface KVShellEnvelope {
   rv: string;
   /** Build version captured at prerender time (ShellCacheEntry.buildVersion) */
   bv?: string;
-  /** createdAt (ms epoch) */
+  /** Capture-generation start time (ms epoch), used by tag marker checks. */
   c: number;
   /** When entry becomes stale (ms epoch) */
   s: number;
@@ -293,6 +293,8 @@ interface KVShellEnvelope {
    * their holes only a handler re-run can fill.
    */
   lh?: boolean;
+  /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
+  tw?: true;
 }
 
 /**
@@ -323,6 +325,7 @@ interface KVResponseEnvelope {
 // ============================================================================
 
 export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
+  readonly supportsPassiveShellReads: true = true;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -1743,7 +1746,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // per-colo L1 for them is a deliberate follow-up (see the PPR shell-resume
   // design doc). Shell entries live only in KV (the global tier), so the family
   // requires a configured KV namespace; without one, getShell/putShell no-op and
-  // the shell-cache middleware fails open to a full HTML render. Tag invalidation
+  // the integrated PPR serve path fails open to a full HTML render. Tag invalidation
   // still applies: shell entries carry tags/taggedAt and are checked against the
   // same KV markers isGloballyInvalidated() reads for every other tier.
 
@@ -1772,7 +1775,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Get a cached PPR shell entry by key from KV (no L1). Applies the KV read
    * budget, corrupt-entry eviction, hard-expiry, and tag invalidation exactly
    * like kvGetItem, minus the L1 promote. SWR is a plain staleness flag — KV has
-   * no REVALIDATING herd guard, so the shell-cache middleware's module-level
+   * no REVALIDATING herd guard, so the capture scheduler's module-level
    * in-flight set is the recapture stampede guard.
    */
   async getShell(
@@ -1815,6 +1818,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           initialTheme: envelope.i,
           snapshot: envelope.sn,
           handlerLiveHoles: envelope.lh,
+          transitionWhen: envelope.tw,
           createdAt: envelope.c,
         },
         shouldRevalidate,
@@ -1826,8 +1830,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Store a PPR shell entry in KV with TTL and optional SWR window. Non-blocking
-   * (waitUntil) like the other KV writes. The tags/taggedAt ride in the envelope
+   * Store a PPR shell entry in KV with TTL and optional SWR window. The write is
+   * registered with waitUntil and awaited so invalidation rejection can be
+   * acknowledged to the capture scheduler. The tags/taggedAt ride in the envelope
    * so isGloballyInvalidated() can invalidate the shell via the shared KV markers.
    */
   async putShell(
@@ -1836,8 +1841,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void> {
-    // KV-only tier: needs a KV namespace and waitUntil (writes are non-blocking).
+  ): Promise<"stored" | "invalidated" | void> {
+    // KV-only tier: needs a KV namespace and waitUntil. The same write promise is
+    // registered for isolate lifetime and awaited so invalidation rejection can
+    // be acknowledged to the capture scheduler.
     if (!this.kv) {
       this.warnShellFamilyInertOnce();
       return;
@@ -1851,9 +1858,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // letting kv.put reject inside waitUntil (mirrors setItem/kvSetSegment).
       if (totalTtl < 60) return;
 
-      const staleAt = Date.now() + ttl * 1000;
+      const retentionTtl =
+        tags && tags.length > 0 && this.tagInvalidationTtl
+          ? Math.min(totalTtl, this.tagInvalidationTtl)
+          : totalTtl;
+      const now = Date.now();
+      const staleAt = now + ttl * 1000;
+      const expiresAt = now + retentionTtl * 1000;
       const taggedAt =
-        Array.isArray(tags) && tags.length > 0 ? Date.now() : undefined;
+        Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
       const kvKey = this.toKVKey(`shell:${key}`);
       // A key over the KV limit makes kv.put reject deep inside waitUntil; report
@@ -1871,31 +1884,43 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return;
       }
 
-      this.waitUntil(() =>
-        reportingAsync(
-          () => {
-            const envelope: KVShellEnvelope = {
-              p: entry.prelude,
-              po: entry.postponed,
-              rv: entry.reactVersion,
-              bv: entry.buildVersion,
-              c: entry.createdAt,
-              s: staleAt,
-              e: staleAt + swrWindow * 1000,
-              t: tags,
-              ta: taggedAt,
-              i: entry.initialTheme,
-              sn: entry.snapshot,
-              lh: entry.handlerLiveHoles,
-            };
-            return this.kv!.put(kvKey, JSON.stringify(envelope), {
-              expirationTtl: totalTtl,
-            });
-          },
-          "cache-write",
-          "[CFCacheStore] putShell",
-        ),
-      );
+      const write = (async (): Promise<"stored" | "invalidated" | void> => {
+        try {
+          if (
+            tags &&
+            tags.length > 0 &&
+            (await this.isGloballyInvalidated(tags, entry.createdAt))
+          ) {
+            return "invalidated";
+          }
+          const envelope: KVShellEnvelope = {
+            p: entry.prelude,
+            po: entry.postponed,
+            rv: entry.reactVersion,
+            bv: entry.buildVersion,
+            c: entry.createdAt,
+            s: staleAt,
+            e: expiresAt,
+            t: tags,
+            ta: taggedAt,
+            i: entry.initialTheme,
+            sn: entry.snapshot,
+            lh: entry.handlerLiveHoles,
+            tw: entry.transitionWhen,
+          };
+          await this.kv!.put(kvKey, JSON.stringify(envelope), {
+            expirationTtl: retentionTtl,
+          });
+          return "stored";
+        } catch (error) {
+          reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
+          return undefined;
+        }
+      })();
+      this.waitUntil(async () => {
+        await write;
+      });
+      return await write;
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
     }
@@ -2610,11 +2635,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * eager purge still fires for the whole batch first (it is additive).
    */
   /**
-   * Build-shell read-through gate (SegmentCacheStore.isTagsInvalidatedSince):
-   * a baked shell entry is immutable in the build manifest, so eviction is
-   * answered by the SAME KV tag markers updateTag() writes, compared against
-   * the entry's build-time createdAt. Thin public wrapper over the private
-   * envelope check (identical semantics: marker >= since, fail open).
+   * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince): the
+   * SAME KV markers used by runtime envelopes also evict immutable build shells
+   * and captures whose write races updateTag(). Thin public wrapper over the
+   * private envelope check (marker >= since, fail open).
    */
   async isTagsInvalidatedSince(
     tags: string[],

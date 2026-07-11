@@ -389,6 +389,7 @@ export function createRSCHandler<
   const handlerCtx: HandlerContext<TEnv> = {
     router,
     version,
+    devDiscoveryEpoch: router.__devDiscoveryEpoch,
     renderToReadableStream,
     decodeReply,
     createTemporaryReferenceSet,
@@ -1237,7 +1238,7 @@ export function createRSCHandler<
           };
           return renderRscResponse(
             {
-              ctx: { renderToReadableStream, callOnError },
+              ctx: handlerCtx,
               request,
               url,
               env,

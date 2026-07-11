@@ -56,7 +56,7 @@ describe("updateCacheHandleDataIfOwned", () => {
   it("writes when the entry is still owned by ownerInstance", () => {
     const store = createTestStore();
     store.cacheSegmentsForHistory("/p", [], { a: { s1: [1] } });
-    const owner = store.getCacheEntryInstance("/p")!;
+    const owner = store.getNavInstance();
 
     store.updateCacheHandleDataIfOwned("/p", { b: { s2: [2] } }, owner);
 
@@ -68,7 +68,7 @@ describe("updateCacheHandleDataIfOwned", () => {
   it("is a no-op when ownerInstance does not match (a newer same-URL visit)", () => {
     const store = createTestStore();
     store.cacheSegmentsForHistory("/p", [], { a: { s1: [1] } });
-    const owner = store.getCacheEntryInstance("/p")!;
+    const owner = store.getNavInstance();
 
     store.updateCacheHandleDataIfOwned("/p", { b: { s2: [2] } }, owner + 999);
 
@@ -89,7 +89,7 @@ describe("updateCacheHandleDataIfOwned", () => {
   it("sets stale + handlesPending, then preserves them when the flags are omitted", () => {
     const store = createTestStore();
     store.cacheSegmentsForHistory("/q", [], { a: { s1: [1] } });
-    const owner = store.getCacheEntryInstance("/q")!;
+    const owner = store.getNavInstance();
 
     store.updateCacheHandleDataIfOwned(
       "/q",
@@ -114,11 +114,10 @@ describe("updateCacheHandleDataIfOwned", () => {
   it("preserves the entry's nav-instance token (ownership survives repeated writes)", () => {
     const store = createTestStore();
     store.cacheSegmentsForHistory("/p", [], { a: { s1: [1] } });
-    const owner = store.getCacheEntryInstance("/p")!;
+    const owner = store.getNavInstance();
 
     store.updateCacheHandleDataIfOwned("/p", { a: { s1: [2] } }, owner);
-    // Same token, so a follow-up owned write still matches.
-    expect(store.getCacheEntryInstance("/p")).toBe(owner);
+    expect(store.getNavInstance()).toBe(owner);
     store.updateCacheHandleDataIfOwned("/p", { a: { s1: [3] } }, owner);
     expect(store.getCachedSegments("/p")!.handleData).toEqual({
       a: { s1: [3] },
