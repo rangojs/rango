@@ -1,6 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request as PWRequest } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  isPrefetchRequest,
+} from "./helper";
+
+// Click-driven NAVIGATION partials only — background production viewport
+// prefetches are expected traffic; these tests pin that a hash click triggers
+// no NAVIGATION fetch.
+function isNavigationPartial(req: PWRequest): boolean {
+  return req.url().includes("_rsc_partial") && !isPrefetchRequest(req);
+}
 
 /**
  * Hash-only navigation must bypass the SPA router and use native
@@ -26,7 +37,7 @@ test.describe("hash-navigation", () => {
     // Track RSC partial requests
     const rscRequests: string[] = [];
     page.on("request", (req) => {
-      if (req.url().includes("_rsc_partial")) {
+      if (isNavigationPartial(req)) {
         rscRequests.push(req.url());
       }
     });
@@ -54,7 +65,7 @@ test.describe("hash-navigation", () => {
 
     const rscRequests: string[] = [];
     page.on("request", (req) => {
-      if (req.url().includes("_rsc_partial")) {
+      if (isNavigationPartial(req)) {
         rscRequests.push(req.url());
       }
     });
@@ -103,7 +114,7 @@ test.describe("hash-navigation (production)", () => {
 
     const rscRequests: string[] = [];
     page.on("request", (req) => {
-      if (req.url().includes("_rsc_partial")) {
+      if (isNavigationPartial(req)) {
         rscRequests.push(req.url());
       }
     });
@@ -127,7 +138,7 @@ test.describe("hash-navigation (production)", () => {
 
     const rscRequests: string[] = [];
     page.on("request", (req) => {
-      if (req.url().includes("_rsc_partial")) {
+      if (isNavigationPartial(req)) {
         rscRequests.push(req.url());
       }
     });

@@ -1,6 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError, testId, waitForHydration } from "./helper";
+import {
+  expectNoPageError,
+  testId,
+  waitForHydration,
+  blockPrefetch,
+} from "./helper";
 
 /**
  * Proves that a raw <Suspense> placed inside a handler's render (NOT the loading()
@@ -217,6 +222,12 @@ function suspenseStreamTests(mode: "dev" | "build") {
       page,
     }) => {
       using _ = expectNoPageError(page);
+
+      // This pins the COLD same-route nav contract (fallback re-streams). A
+      // completed viewport prefetch of link-b would be adopted as
+      // a fully-prefetched commit, which deliberately skips the fallback
+      // (no-flash, #622) — keep the cache virgin so the nav streams live.
+      await blockPrefetch(page);
 
       // Land on /a and wait for its content so the boundary is resolved first.
       await page.goto(f.url("/suspense-stream/a"));

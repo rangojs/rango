@@ -37,7 +37,9 @@ import {
   prefetchDirect,
   prefetchQueued,
 } from "../prefetch/loader.js";
+import { getDefaultPrefetchStrategy } from "../prefetch/default-strategy.js";
 import { getAppVersion } from "../app-version.js";
+import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
 // The (hover: none) MediaQueryList, created lazily on first client read and
 // reused across every Link render. matchMedia allocates and registers a live
@@ -62,20 +64,10 @@ function isTouchDevice(): boolean {
   return hoverNoneQuery.matches;
 }
 
-/**
- * Prefetch strategy for the Link component
- * - "hover": Prefetch on mouse enter (direct, no queue)
- * - "viewport": Prefetch when link enters viewport (queued, waits for idle)
- * - "render": Prefetch on component mount regardless of visibility (queued, waits for idle)
- * - "adaptive": Hover on pointer devices, viewport on touch devices
- * - "none": No prefetching (default)
- */
-export type PrefetchStrategy =
-  | "hover"
-  | "viewport"
-  | "render"
-  | "adaptive"
-  | "none";
+// The PrefetchStrategy union is defined in router/prefetch-default.ts (both
+// the server-side option resolver and this client seat consume it); re-export
+// so the public `PrefetchStrategy` import path via client.tsx is unchanged.
+export type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
 /**
  * Resolve a prefetch strategy, expanding "adaptive" to the concrete strategy
@@ -125,8 +117,12 @@ export interface LinkProps extends Omit<
    */
   revalidate?: boolean;
   /**
-   * Prefetch strategy for the link destination
-   * @default "none"
+   * Prefetch strategy for the link destination. When omitted, falls back to
+   * the router-wide default (`createRouter({ defaultPrefetch })`: `"none"` in
+   * development, `"viewport"` in production). An explicit value always wins
+   * over the router default, including `"none"` to opt a single Link out.
+   *
+   * @default the router's environment-aware `defaultPrefetch`
    */
   prefetch?: PrefetchStrategy;
   /**
@@ -240,7 +236,7 @@ export const Link: ForwardRefExoticComponent<
     scroll = true,
     reloadDocument = false,
     revalidate,
-    prefetch = "none",
+    prefetch,
     prefetchKey,
     state,
     children,
@@ -262,10 +258,15 @@ export const Link: ForwardRefExoticComponent<
     return to === "/" ? bn : bn + to;
   }, [to, isExternal, ctx?.basename]);
 
-  // Resolve adaptive: viewport on touch devices, hover on pointer devices.
-  // isTouchDevice() is read here (per render), not from a module-load snapshot,
-  // so a device whose input capability changes resolves to the current value.
-  const resolvedStrategy = resolveAdaptiveStrategy(prefetch);
+  // No explicit `prefetch` prop: fall back to the router-wide default
+  // (server-resolved, applied at browser init — before hydration, so this
+  // render-time read never races the metadata). Then resolve adaptive:
+  // viewport on touch devices, hover on pointer devices. isTouchDevice() is
+  // read here (per render), not from a module-load snapshot, so a device
+  // whose input capability changes resolves to the current value.
+  const resolvedStrategy = resolveAdaptiveStrategy(
+    prefetch ?? getDefaultPrefetchStrategy(),
+  );
 
   // Internal ref for viewport observation; merge with forwarded ref
   const internalRef = useRef<HTMLAnchorElement | null>(null);

@@ -6,6 +6,7 @@ import {
   goBack,
   goForward,
   getHistoryState,
+  blockPrefetch,
 } from "./helper";
 
 /**
@@ -817,6 +818,12 @@ test.describe("stateful-navigation-failure", () => {
   test("failed stateful navigation shows error UI at source URL", async ({
     page,
   }) => {
+    // The bare link-state Links viewport-prefetch by default; a completed
+    // prefetch of the target would be adopted by the click and the navigation
+    // would SUCCEED instead of hitting the abort below — block prefetch
+    // before load.
+    await blockPrefetch(page);
+
     await page.goto(f.url("/location-state/link-state"));
     await waitForHydration(page);
 
@@ -856,6 +863,12 @@ test.describe("stateful-navigation-failure (production)", () => {
   test("failed stateful navigation shows error UI at source URL", async ({
     page,
   }) => {
+    // The bare link-state Links viewport-prefetch by default; a completed
+    // prefetch of the target would be adopted by the click and the navigation
+    // would SUCCEED instead of hitting the abort below — block prefetch
+    // before load.
+    await blockPrefetch(page);
+
     await page.goto(f.url("/location-state/link-state"));
     await waitForHydration(page);
 

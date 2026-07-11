@@ -42,6 +42,10 @@ const cspMiddleware: Middleware = async (ctx, next) => {
 
 export const router = createRouter<AppEnv>({
   document: Document,
+  // Manual prefetch mode: keeps this suite's request assertions free of
+  // automatic production viewport prefetch traffic (the environment default
+  // is dogfooded by the router's e2e test-app).
+  defaultPrefetch: "none",
   // Auto-generate a per-request CSP nonce (self-wired into router.fetch).
   nonce: () => true,
   // Test hook: the view-transition-optout e2e builds the app with

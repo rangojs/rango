@@ -53,6 +53,7 @@ export function buildFullPayload(
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
       prefetchCacheSize: ctx.router.prefetchCacheSize,
       prefetchConcurrency: ctx.router.prefetchConcurrency,
+      defaultPrefetch: ctx.router.defaultPrefetch,
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
       // Carry warmupEnabled on the initial full-render payload so the client

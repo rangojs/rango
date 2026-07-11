@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration } from "./helper";
+import { waitForHydration, isPrefetchRequest, blockPrefetch } from "./helper";
 
 /**
  * Rango-state invalidation lifecycle tests.
@@ -36,6 +36,12 @@ async function testRangoStateRotatesAfterAction(
   page: Page,
   url: (path: string) => string,
 ) {
+  // A post-action viewport prefetch (default-on, re-keyed under the rotated
+  // state) of the bare nav-home Link would be adopted by the click below —
+  // zero navigation requests and the header waiter would starve. Keep the
+  // navigation fetch live.
+  await blockPrefetch(page);
+
   // Load a page with a server action button
   await page.goto(url("/loader-cookie/action-sets-cookie"));
   await waitForHydration(page);
@@ -70,7 +76,9 @@ async function testRangoStateRotatesAfterAction(
   // Set up request listener to capture the X-Rango-State header on next navigation
   const headerPromise = new Promise<string | null>((resolve) => {
     page.on("request", (req) => {
-      if (req.url().includes("_rsc_partial")) {
+      // Skip background viewport prefetches — the waiter must resolve on the
+      // NAVIGATION request the click below issues.
+      if (req.url().includes("_rsc_partial") && !isPrefetchRequest(req)) {
         resolve(req.headerValue("x-rango-state"));
       }
     });
@@ -108,6 +116,10 @@ async function testInvalidatedStateSurvivesRefresh(
   page: Page,
   url: (path: string) => string,
 ) {
+  // Same rationale as testRangoStateRotatesAfterAction: keep the post-refresh
+  // click's navigation fetch live so the header waiter sees it.
+  await blockPrefetch(page);
+
   await page.goto(url("/loader-cookie/action-sets-cookie"));
   await waitForHydration(page);
 
@@ -132,7 +144,9 @@ async function testInvalidatedStateSurvivesRefresh(
   // Navigation after refresh should still use the rotated state
   const headerPromise = new Promise<string | null>((resolve) => {
     page.on("request", (req) => {
-      if (req.url().includes("_rsc_partial")) {
+      // Skip background viewport prefetches — the waiter must resolve on the
+      // NAVIGATION request the click below issues.
+      if (req.url().includes("_rsc_partial") && !isPrefetchRequest(req)) {
         resolve(req.headerValue("x-rango-state"));
       }
     });

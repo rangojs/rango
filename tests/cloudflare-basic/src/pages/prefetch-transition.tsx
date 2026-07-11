@@ -31,6 +31,14 @@ const PtLayout: Handler = () => (
       to
     </Link>
     <Outlet />
+    <div style={{ height: "2000px" }} aria-hidden="true" />
+    <Link
+      to="/about?observer-facade=1"
+      data-testid="pt-offscreen-viewport-link"
+      prefetch="viewport"
+    >
+      offscreen viewport link
+    </Link>
   </div>
 );
 

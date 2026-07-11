@@ -49,6 +49,8 @@ export interface RscPayload {
     prefetchCacheSize?: number;
     /** Max concurrent speculative prefetch requests on the client */
     prefetchConcurrency?: number;
+    /** Router-wide default prefetch strategy for Links without a `prefetch` prop */
+    defaultPrefetch?: import("../router/prefetch-default.js").PrefetchStrategy;
     /** Server-resolved rango state cookie name; the client reads it verbatim. */
     stateCookieName?: string;
     /** Theme configuration for FOUC prevention */

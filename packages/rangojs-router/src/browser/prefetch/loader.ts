@@ -1,4 +1,8 @@
 import type { RscPayload } from "../types.js";
+import {
+  observeForPrefetch as observeElementForPrefetch,
+  unobserveForPrefetch,
+} from "./observer.js";
 
 type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
 
@@ -83,19 +87,9 @@ export function observeForPrefetch(
   callback: () => void,
 ): () => void {
   if (typeof IntersectionObserver === "undefined") return () => {};
-  let active = true;
-  if (runtime) {
-    runtime.observeForPrefetch(element, callback);
-  } else {
-    void loadRuntime()
-      .then((loaded) => {
-        if (active) loaded.observeForPrefetch(element, callback);
-      })
-      .catch(() => {});
-  }
+  observeElementForPrefetch(element, callback);
   return () => {
-    active = false;
-    runtime?.unobserveForPrefetch(element);
+    unobserveForPrefetch(element);
   };
 }
 

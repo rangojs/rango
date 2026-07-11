@@ -97,12 +97,21 @@ test.describe("link-behavior", () => {
       fromCache: boolean;
     }> = [];
 
+    // Match the /blog INDEX partial only (the hover target). The blog index's
+    // own bare post links viewport-prefetch /blog/post-N after the navigation
+    // commits — live network responses that would fail the from-cache
+    // assertion below but have nothing to do with the hover-prefetched /blog.
+    const isBlogIndexPartial = (url: string): boolean => {
+      const parsed = new URL(url);
+      return (
+        parsed.pathname.endsWith("/blog") &&
+        parsed.searchParams.has("_rsc_partial")
+      );
+    };
+
     cdp.on("Network.responseReceived", (params: Record<string, any>) => {
       const resp = params.response as Record<string, any>;
-      if (
-        (resp.url as string).includes("/blog") &&
-        (resp.url as string).includes("_rsc_partial")
-      ) {
+      if (isBlogIndexPartial(resp.url as string)) {
         blogResponses.push({
           url: resp.url as string,
           fromCache: !!(resp.fromDiskCache || resp.fromPrefetchCache),
@@ -113,10 +122,10 @@ test.describe("link-behavior", () => {
     await page.goto(f.url("/link-behavior"));
     await waitForHydration(page);
 
-    // Wait for prefetch response to complete
-    const prefetchDone = page.waitForResponse(
-      (res) =>
-        res.url().includes("/blog") && res.url().includes("_rsc_partial"),
+    // Wait for the hover prefetch of /blog itself to complete (post-N
+    // prefetches from other links on the page must not satisfy this).
+    const prefetchDone = page.waitForResponse((res) =>
+      isBlogIndexPartial(res.url()),
     );
 
     await page.locator('[data-testid="link-prefetch-hover"]').hover();
@@ -326,12 +335,21 @@ test.describe("link-behavior (production)", () => {
       fromCache: boolean;
     }> = [];
 
+    // Match the /blog INDEX partial only (the hover target). The blog index's
+    // own bare post links viewport-prefetch /blog/post-N after the navigation
+    // commits — live network responses that would fail the from-cache
+    // assertion below but have nothing to do with the hover-prefetched /blog.
+    const isBlogIndexPartial = (url: string): boolean => {
+      const parsed = new URL(url);
+      return (
+        parsed.pathname.endsWith("/blog") &&
+        parsed.searchParams.has("_rsc_partial")
+      );
+    };
+
     cdp.on("Network.responseReceived", (params: Record<string, any>) => {
       const resp = params.response as Record<string, any>;
-      if (
-        (resp.url as string).includes("/blog") &&
-        (resp.url as string).includes("_rsc_partial")
-      ) {
+      if (isBlogIndexPartial(resp.url as string)) {
         blogResponses.push({
           url: resp.url as string,
           fromCache: !!(resp.fromDiskCache || resp.fromPrefetchCache),
@@ -342,9 +360,8 @@ test.describe("link-behavior (production)", () => {
     await page.goto(f.url("/link-behavior"));
     await waitForHydration(page);
 
-    const prefetchDone = page.waitForResponse(
-      (res) =>
-        res.url().includes("/blog") && res.url().includes("_rsc_partial"),
+    const prefetchDone = page.waitForResponse((res) =>
+      isBlogIndexPartial(res.url()),
     );
 
     await page.locator('[data-testid="link-prefetch-hover"]').hover();

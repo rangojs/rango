@@ -539,7 +539,8 @@ analog but operates on loader/query reload, not RSC-segment render.
 
 ### Prefetching: stability and control
 
-`<Link prefetch="hover|viewport|render|adaptive|none">` (default `"none"`), plus
+`<Link prefetch="hover|viewport|render|adaptive|none">` (default: the router's
+`defaultPrefetch`, `"none"` in development and `"viewport"` in production), plus
 `prefetchKey` (`":source"` scopes a prefetch to the originating page for routes
 whose response branches on `currentUrl`). The distinguishing part is the stability
 gating: a queued prefetch (`viewport`/`render`) will not fire until **both** the

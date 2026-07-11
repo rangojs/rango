@@ -32,6 +32,9 @@ function runPrefetchMetadataSpec(f: Fixture): void {
     // field is present.
     expect(body).toMatch(/"prefetchCacheSize"\s*:\s*25\b/);
     expect(body).toMatch(/"prefetchConcurrency"\s*:\s*3\b/);
+    // Explicit "none" overrides the production viewport default and proves
+    // defaultPrefetch propagated end-to-end through the Cloudflare build.
+    expect(body).toMatch(/"defaultPrefetch"\s*:\s*"none"/);
   });
 }
 

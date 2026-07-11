@@ -115,6 +115,7 @@ import {
 } from "./router/prerender-match.js";
 import { resolveStateCookieName } from "./router/state-cookie-name.js";
 import { resolvePrefetchCacheTTL } from "./router/prefetch-cache-ttl.js";
+import { resolveDefaultPrefetch } from "./router/prefetch-default.js";
 import {
   resolvePrefetchCacheSize,
   resolvePrefetchConcurrency,
@@ -160,6 +161,7 @@ export function createRouter<TEnv = any>(
     prefetchCacheTTL: prefetchCacheTTLOption,
     prefetchCacheSize: prefetchCacheSizeOption,
     prefetchConcurrency: prefetchConcurrencyOption,
+    defaultPrefetch: defaultPrefetchOption,
     stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
     telemetry: telemetrySink,
@@ -267,6 +269,10 @@ export function createRouter<TEnv = any>(
   const prefetchConcurrency = resolvePrefetchConcurrency(
     prefetchConcurrencyOption,
   );
+
+  // Resolve the router-wide default Link prefetch strategy ("none" in dev,
+  // "viewport" in production). Links without an explicit prop fall back to it.
+  const defaultPrefetch = resolveDefaultPrefetch(defaultPrefetchOption);
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -1009,6 +1015,7 @@ export function createRouter<TEnv = any>(
     prefetchCacheTTL,
     prefetchCacheSize,
     prefetchConcurrency,
+    defaultPrefetch,
 
     // Expose the resolved rango state cookie name for the server-side writer
     // (invalidateClientCache) and for shipping to the client in metadata.
