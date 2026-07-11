@@ -62,4 +62,9 @@
 
 ### Status notes
 
+- The prefetch row also owns
+  [browser/prefetch/loader.ts](../../src/browser/prefetch/loader.ts), the eager
+  configuration and race guard, and
+  [browser/prefetch/runtime.ts](../../src/browser/prefetch/runtime.ts), the lazy
+  boundary for fetch, queue, and observer code.
 - Some entries in this map are intentionally grouped (for example `router/segment-resolution/*`) because behavior is split across multiple files.

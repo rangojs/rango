@@ -32,12 +32,12 @@ export type LinkState =
   | LocationStateEntry[]
   | StateOrGetter<Record<string, unknown>>;
 
-import { prefetchDirect, prefetchQueued } from "../prefetch/fetch.js";
-import { getAppVersion } from "../app-version.js";
 import {
   observeForPrefetch,
-  unobserveForPrefetch,
-} from "../prefetch/observer.js";
+  prefetchDirect,
+  prefetchQueued,
+} from "../prefetch/loader.js";
+import { getAppVersion } from "../app-version.js";
 
 // The (hover: none) MediaQueryList, created lazily on first client read and
 // reused across every Link render. matchMedia allocates and registers a live
@@ -394,7 +394,7 @@ export const Link: ForwardRefExoticComponent<
 
     let cancelled = false;
     let unsubIdle: (() => void) | undefined;
-    let observedElement: Element | null = null;
+    let stopObserving: (() => void) | undefined;
 
     const triggerPrefetch = () => {
       if (cancelled) return;
@@ -431,8 +431,7 @@ export const Link: ForwardRefExoticComponent<
     } else if (isViewport) {
       const element = internalRef.current;
       if (!element) return;
-      observedElement = element;
-      observeForPrefetch(element, () => {
+      stopObserving = observeForPrefetch(element, () => {
         scheduleWhenIdle(triggerPrefetch);
       });
     }
@@ -440,9 +439,7 @@ export const Link: ForwardRefExoticComponent<
     return () => {
       cancelled = true;
       unsubIdle?.();
-      if (isViewport && observedElement) {
-        unobserveForPrefetch(observedElement);
-      }
+      stopObserving?.();
     };
   }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 

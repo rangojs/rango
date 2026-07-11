@@ -12,6 +12,7 @@ import {
   getNamePrefix,
   getUrlPrefix,
   requireDslContext,
+  stampStaticDefScope,
   type EntryData,
   type EntryPropDatas,
   type EntryPropSegments,
@@ -560,6 +561,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
         if (ctx.namePrefix) {
           (slotHandler as any).$$routePrefix = ctx.namePrefix;
         }
+        stampStaticDefScope(slotHandler);
       }
     } else {
       unwrappedSlots[slotName] = slotHandler;
@@ -1016,8 +1018,11 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   } satisfies EntryData;
 
   // Capture namespace prefix on static handler for build-time reverse() resolution
-  if (isStatic && handler.$$id && ctx.namePrefix) {
-    (handler as any).$$routePrefix = ctx.namePrefix;
+  if (isStatic && handler.$$id) {
+    if (ctx.namePrefix) {
+      (handler as any).$$routePrefix = ctx.namePrefix;
+    }
+    stampStaticDefScope(handler);
   }
 
   // Merge handler.use defaults with explicit use

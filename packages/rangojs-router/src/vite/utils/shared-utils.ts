@@ -253,6 +253,13 @@ export function getManualChunks(id: string): string | undefined {
   const normalized = Vite.normalizePath(id);
 
   if (
+    /\/browser\/prefetch\/(?:runtime|fetch|queue|observer|policy|resource-ready)\.[cm]?[jt]sx?(?:[?#].*)?$/.test(
+      normalized,
+    )
+  ) {
+    return undefined;
+  }
+  if (
     normalized.includes("node_modules/react/") ||
     normalized.includes("node_modules/react-dom/") ||
     normalized.includes("node_modules/react-server-dom-webpack/") ||
