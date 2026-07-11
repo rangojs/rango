@@ -55,6 +55,13 @@ export function RootLayout(ctx: any) {
         >
           PPR navigation replay
         </Link>
+        <Link
+          to="/inline-bound-action?probe=ppr-nav"
+          data-testid="nav-ppr-inline-action"
+          prefetch="none"
+        >
+          PPR inline action
+        </Link>
         <NavigationStatus testId="nav-status" />
       </nav>
       <BreadcrumbNav testId="breadcrumbs" />

@@ -405,6 +405,13 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    writes pass through (a live hole's loader may legitimately write); the shell
    family always passes through.
 
+Both tail shapes — seeded and fragment-only — also wire a fresh render barrier
+onto their derived context, closure-bound to that context and the request's
+handle store. Matching records streaming state on the derived context. Reusing
+the base context's barrier would make its resolver see a non-streaming tree,
+snapshot handles before streamed pushes settle, and give `ctx.rendered()` an
+empty inherited snapshot on a shell HIT.
+
 The freshness DOCTRINE, and it is deliberate: **within a shell's lifetime, shell
 regions intentionally show CAPTURE-time data.** Parity beats freshness INSIDE the
 shell; freshness comes from the holes, from the shell's own ttl/swr, and from tag

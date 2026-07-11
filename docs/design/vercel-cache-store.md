@@ -174,6 +174,15 @@ retention is capped at the marker lifetime so an invalidated shell cannot become
 visible after its marker expires. Tags still ride read results so a hit
 contributes them to the document tag union.
 
+One narrow race remains because Runtime Cache is regional, ephemeral, and
+LRU-evicted: memory pressure can evict a tag marker before its one-year TTL while
+a capture that started before invalidation is still running. If that capture
+then writes, neither the write barrier nor the read check can observe the missing
+marker. The retention clamp closes TTL expiry, not non-TTL platform eviction.
+Runtime Cache exposes no durable marker tier or compare-and-set primitive, so
+this seconds-wide window is a platform limit rather than something the store can
+close locally.
+
 `invalidateTags` is also the **one method that is allowed to throw**. Every other
 read/write degrades silently-but-loudly (reported via `reportCacheError`, never
 thrown — a cache is best-effort). But a failed `expireTag` must reject, so that an

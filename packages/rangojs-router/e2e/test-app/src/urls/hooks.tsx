@@ -65,6 +65,7 @@ export const hooksPatterns = urls(({ path, loader }) => [
   path("/inline-action", InlineActionHandler, { name: "inlineAction" }),
   path("/inline-bound-action", InlineBoundActionHandler, {
     name: "inlineBoundAction",
+    ppr: true,
   }),
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",

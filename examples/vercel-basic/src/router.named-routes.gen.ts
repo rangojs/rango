@@ -3,6 +3,7 @@ export const NamedRoutes = {
   about: "/about",
   cached: "/cached",
   home: "/",
+  pprInlineAction: "/ppr-inline-action",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

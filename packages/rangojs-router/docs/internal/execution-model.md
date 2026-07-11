@@ -112,6 +112,12 @@ global middleware
   prelude bytes flush first, and match/Flight/resume run behind them inside the
   response stream. Pinned by the `[PPR1]` semantic matrix row and
   `e2e/shell-secure.test.ts`.
+  - **A shell HIT tail owns its render barrier.** `serveShellHit` runs both seeded
+    and fragment-only tails under a derived request context with a freshly wired
+    barrier over the request's handle store. This keeps `_treeHasStreaming`, the
+    segment order, waiter/deadlock state, and the post-settle handle snapshot in
+    the same context as tail matching. Otherwise `ctx.rendered()` can inherit a
+    premature non-streaming snapshot and miss handles pushed behind `loading()`.
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
     middleware calls it BEFORE the commit point, so it forces the request onto
     axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid
