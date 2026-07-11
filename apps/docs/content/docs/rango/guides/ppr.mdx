@@ -4,9 +4,9 @@ description: Cache a page's rendered HTML shell and serve it instantly while the
 type: guide
 ---
 
-You have a page whose frame is stable — layout, headings, product copy — but parts of it must stay fresh on every request: a price, a basket badge, reviews. PPR caches the rendered HTML shell of the page (the React `prerender` prelude bytes plus `postponed` state) and, on later requests, flushes those bytes before any render work happens, then resumes rendering just the live holes. The browser sees one ordinary streamed document; loaders stay fresh on every request.
+You have a page whose frame is stable — layout, headings, product copy — but parts of it must stay fresh on every request: a price, a basket badge, reviews. PPR caches the rendered HTML shell of the page (the React `prerender` prelude bytes plus `postponed` state) and, on later requests, flushes those bytes after route classification and the complete middleware chain, but before downstream tail rendering. It then resumes just the live holes. The browser sees one ordinary streamed document; loaders stay fresh on every request.
 
-If you want the whole response frozen, loader output included, use the [Document Cache](/docs/rango/guides/document-cache) instead. If you want routes rendered at build time, that is [Prerender](/docs/rango/guides/prerender) — the `ppr` path option captures at runtime.
+If you want the whole response frozen, loader output included, use the [Document Cache](/docs/rango/guides/document-cache) instead. An ordinary `ppr` route captures after a runtime MISS. Combine [Prerender](/docs/rango/guides/prerender) with the `ppr` path option to produce the shell during `vite build` and make the first production request a shell HIT.
 
 ## Opt in with the `ppr` path option
 
@@ -129,23 +129,41 @@ On a document GET to a `ppr` route the router runs: match, then the **whole midd
 - **HIT** — the stored prelude bytes flush first; segment resolution, the fresh Flight render, and the resume of just the holes run behind them inside the response stream.
 - **MISS** — a plain live serve, plus a background capture (stampede-guarded, with exponential backoff). Middleware is not re-run during capture; the capture inherits the triggering request's post-middleware context.
 
-The observability header is `x-rango-shell: HIT | MISS`, on document responses only. A bare `curl` without an `Accept` header negotiates a Flight payload with no header at all — which reads as "PPR is off" but is only the wrong request shape:
+The observability header is `x-rango-shell: HIT | MISS`, on document responses only. Flight is explicit opt-in with `Accept: text/x-component`; a bare document GET receives HTML. Keeping `Accept: text/html` in a diagnostic command makes the intent explicit:
 
 ```bash
 curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/products/1 | grep -i x-rango-shell
 ```
 
-First document GET: `MISS` plus a background capture; in production the second request is a `HIT`. Dev shows a few extra MISSes (cold module transforms abort the capture window — per-attempt breadcrumbs with `INTERNAL_RANGO_DEBUG=1`); this self-heals. A declared route that never flips has an eligibility problem — look for the once-per-key warning. Some requests always stay on the normal render path: non-GET, RSC/partial/action/loader fetches, per-request CSP nonce, `streamMode: "allReady"`, redirects, 404s, error renders, and stores without the shell family. For bots, `ssr: { resolveStreaming }` returning `"allReady"` bypasses PPR entirely and serves one complete buffered document. Stored shells self-invalidate when `React.version` changes, so deploys self-heal via recapture.
+For a runtime-captured route, the first document GET is a `MISS` plus a
+background capture; a later request is a `HIT`. For `Prerender + ppr`, the shell
+is produced at build time, so the first production request can already be a
+`HIT`; dev producer B runs on demand and can return a `HIT`, but falls open to a
+`MISS` plus runtime capture when the bounded foreground wait expires. A declared
+route that never flips has an eligibility problem — look for the once-per-key
+warning. Some requests always stay on the normal render path: non-GET,
+RSC/partial/action/loader fetches, per-request CSP nonce,
+`streamMode: "allReady"`, redirects, 404s, error renders, and stores without the
+shell family. For bots, `ssr: { resolveStreaming }` returning `"allReady"`
+bypasses PPR entirely and serves one complete buffered document. Stored shells
+self-invalidate when `React.version` changes, so deploys self-heal via recapture.
 
 ## Options and invalidation
 
-| Field  | Default | Notes                                                              |
-| ------ | ------- | ------------------------------------------------------------------ |
-| `ttl`  | `300`   | shell freshness window in seconds (`ppr: true` uses the default)   |
-| `swr`  | —       | stale window: serve the stale shell + background recapture         |
-| `tags` | —       | operational tags unioned with the tags the capture render collects |
+| Field            | Default | Notes                                                              |
+| ---------------- | ------- | ------------------------------------------------------------------ |
+| `ttl`            | `300`   | shell freshness window in seconds (`ppr: true` uses the default)   |
+| `swr`            | —       | stale window: serve the stale shell + background recapture         |
+| `tags`           | —       | operational tags unioned with the tags the capture render collects |
+| `captureTimeout` | `15000` | capture settle budget in milliseconds; timeout refuses the capture |
 
 `updateTag()`/`revalidateTag()` is the only lever that changes the frozen shell HTML — a shell auto-carries every non-loader `cacheTag(...)` recorded during capture, and hitting one drops the shell for a recapture. Loader tags never attach (the holes are already live). `revalidate()` is a data lever: it re-renders holes with fresh data but never touches the shell.
+
+These fields govern the in-function shell entry. They do not emit HTTP
+`Cache-Control`. If you separately add `s-maxage`, a platform CDN may cache the
+completed response — shell, live-hole output, and hydration payload together —
+and skip all Rango middleware on a hit. That is valid only for a fully public,
+shared response.
 
 ## Per-user data
 
@@ -158,10 +176,10 @@ The shell is shared per host + URL across all users, so identity must never bake
 ## Pitfalls
 
 - **A bake-lane container that must be fresh per document GET** — it is snapshot-pinned for the shell's lifetime by design. Use the live lane or a nested promise.
-- **A bake-lane loader slower than the capture guard (~5s)** — the capture cannot hold for it: eternal MISS with the once-per-key warning.
+- **A bake-lane loader slower than `ppr.captureTimeout` (15s by default)** — the capture is refused rather than storing a partial shell.
 - **Shell shows capture-time data for the shell's lifetime** — a `cache()`/`"use cache"` value baked into the shell is pinned at capture and replayed on every HIT, even after that cache entry expires or is tag-invalidated. Parity beats freshness inside the shell; if a region needs freshness, put it under a hole, or make the shell itself invalidatable via `ppr.tags`.
 - **Uncached nondeterminism in shell material** — raw `Date.now()`/`Math.random()`/uncached `fetch` drifts between capture and hit and detonates hydration. Wrap it in `cache()`/`"use cache"` (pinned) or move it under a hole.
-- **Stacking with the Document Cache** — pick one per route; the document cache would cache the composite.
+- **Stacking with the Document Cache or an HTTP CDN cache** — both cache the completed composite, including live-hole output, so PPR is redundant on a hit. An external CDN also bypasses every Rango middleware.
 - **Per-request CSP nonce** — supply it via `createRouter({ nonce })`, the canonical path; a nonced route serves the normal render path with a once-per-key warning (a shared shell cannot bake one request's nonce).
 - **HIT status commits at the flush** — a failing hole cannot become a 500/redirect after the first shell byte; error UI renders inline via Suspense/error boundaries, like any streamed SSR page.
 

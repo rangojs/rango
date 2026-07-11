@@ -131,8 +131,10 @@ recompute for a merely-aging entry.
   layer.
 - **Client forward/back** is SWR after a mutation — see "Correctness &
   invalidation" → Client cache.
-- **Edge / document layer** uses the HTTP `stale-while-revalidate` directive; see
-  `/document-cache`.
+- **Store-backed document layer** uses the HTTP `stale-while-revalidate`
+  directive as policy for `createDocumentCacheMiddleware`; see
+  `/document-cache`. A platform CDN may independently consume the same header
+  and bypass the function on hits; see `/deployment-caching`.
 
 SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build
 has no stale entry to serve (see version-segmented store keys above).
@@ -485,5 +487,6 @@ overrides — see `/loader` for the full reference.
 
 - `/caching` — cache() DSL setup, stores, nested boundaries
 - `/use-cache` — "use cache" directive details, profiles, transforms, guards
-- `/document-cache` — Edge caching with Cache-Control headers (different layer)
+- `/document-cache` — store-backed complete-response middleware
+- `/deployment-caching` — in-function versus external CDN cache boundaries
 - `/ppr` — PPR shell caching: cached HTML shell + live loader holes (different layer)

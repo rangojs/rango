@@ -326,17 +326,24 @@ This only applies when `__PRERENDER_DEV_URL` is set by the plugin.
 
 ## Storage Layout
 
-Pre-rendered Flight payloads are stored in the build output:
+Pre-rendered Flight payloads are stored as content-hashed modules behind a lazy
+manifest in the RSC server bundle. They are not public `.rsc` files:
 
 ```
-dist/static/__<hash>/
-  prerender/
-    blog.post/
-      d4e5f6a7.flight    # hash of { slug: "hello-world" }
-      b8c9d0e1.flight    # hash of { slug: "getting-started" }
-    about/
-      _.flight            # static route, no params
+dist/rsc/
+  __prerender-manifest.js
+  assets/
+    __pr-<content-hash>.js
+
+# When a Prerender route also declares ppr:
+  __shell-manifest.js
+  assets/
+    __ps-<content-hash>.js
 ```
+
+The worker/function handles every request and reads these modules as build-time
+cache entries. See `/deployment-caching` for how this differs from a platform
+CDN static or prerender output.
 
 ## Concurrency
 

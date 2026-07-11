@@ -4,7 +4,7 @@ description: Public pages serve instantly from a cached HTML shell while per-use
 type: guide
 ---
 
-Public storefront pages are served from a cached HTML **shell**: the router flushes the prerendered page bytes before any render work happens, then resumes rendering for just the live regions ("holes"). The browser sees one ordinary streamed document; per-user data stays fresh on every request.
+Public storefront pages are served from a cached HTML **shell**: after route classification and the complete middleware chain, the router flushes the prerendered page bytes before downstream tail rendering, then resumes just the live regions ("holes"). The browser sees one ordinary streamed document; per-user data stays fresh on every request.
 
 The response header `x-rango-shell: HIT | MISS` shows whether a request was served from a shell. A `MISS` renders normally and schedules a background capture, so the second visit to a page is typically a `HIT`.
 

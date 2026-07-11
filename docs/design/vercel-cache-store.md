@@ -279,7 +279,7 @@ Rango apps deploy by writing the Build Output API v3 directory, `.vercel/output/
 └── functions/
     └── render.func/
         ├── .vc-config.json      # runtime: nodejs, supportsResponseStreaming: true
-        └── index.js + manifests # the bundled rsc (+ ssr) environment
+        └── index.js + manifests # bundled rsc/ssr, prerender, and PPR shell manifests
 ```
 
 `config.json` is the framework-less "static first, one function for the rest"
@@ -387,9 +387,23 @@ There are no `.html`/`.rsc` files in `static/` that the CDN returns directly —
 prerender and static manifests are bundled _inside_ the function, which looks up
 the stored Flight payloads at runtime exactly as it would a cache hit. The browser
 cannot tell a prerendered route from a cached one. (Vercel's own Prerender
-Functions / ISR are a separate CDN-level mechanism; if we ever map Rango's
-prerendered routes onto them, that is an additive optimization, not a replacement
-for the runtime lookup.)
+Functions / ISR are a separate CDN-level mechanism.) `Prerender + ppr` build
+shells follow the same rule: `__ps-*.js` assets and `__shell-manifest.js` live in
+the function bundle, and the first function request serves them through the
+normal middleware-before-shell path.
+
+The preset does not map these entries onto Vercel's CDN-stitched response
+`chain`. Although Vercel's open-source Build Output parser accepts generic
+`chain` metadata, a CDN-first shell would be committed before Rango's global and
+route middleware can authorize, redirect, set headers, or call `ctx.dynamic()`.
+That violates the shipped request contract. See
+`packages/rangojs-router/docs/design/vercel-chain-ppr.md` and
+`packages/rangojs-router/skills/deployment-caching/SKILL.md`.
+
+Fully public, completely shared responses can independently use HTTP
+`s-maxage`/`stale-while-revalidate` at the Vercel CDN. That caches the completed
+response, not only the PPR shell, and CDN hits bypass the function and every
+Rango middleware.
 
 ## Cache-tag mapping caveat (if both cache layers are ever used)
 

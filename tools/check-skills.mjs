@@ -1,4 +1,4 @@
-// Guard against docs-rot on the skills surface: the 43 published skills under
+// Guard against docs-rot on the published skills surface under
 // packages/rangojs-router/skills/ are the largest consumer-visible doc
 // surface but had zero mechanical protection (no frontmatter validation, no
 // check that cross-skill `/name` references resolve). A phantom reference
@@ -88,6 +88,20 @@ function checkFrontmatter(skillName, skillMdAbs) {
   let descriptionLine = -1;
 
   fmLines.forEach((l, i) => {
+    const separator = l.indexOf(":");
+    if (separator !== -1) {
+      const rawValue = l.slice(separator + 1).trim();
+      const isDoubleQuoted = rawValue.startsWith('"') && rawValue.endsWith('"');
+      const isSingleQuoted = rawValue.startsWith("'") && rawValue.endsWith("'");
+      if (rawValue.includes(": ") && !isDoubleQuoted && !isSingleQuoted) {
+        addViolation(
+          skillMdAbs,
+          i + 2,
+          "frontmatter values containing `: ` must be quoted for valid YAML",
+        );
+      }
+    }
+
     const nameMatch = l.match(/^name:\s*(.*)$/);
     if (nameMatch) {
       name = nameMatch[1].trim();

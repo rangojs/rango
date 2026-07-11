@@ -94,14 +94,14 @@ The tradeoff: loader/data caches use the same store, so every deploy is a **cold
 
 Same words, different jobs — this table is the most common source of the "`revalidate()` is caching" misread:
 
-| You may know                            | Rango axis       | Watch out                                                                                                                                                              |
-| --------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Next.js `export const revalidate = N`   | Axis 1 (cache)   | Same word, opposite meaning — Next's is time-based cache expiry. Use `cache({ ttl })` for that behavior; Rango's `revalidate()` is axis 2.                             |
-| Next.js `revalidateTag` / `updateTag`   | Axis 1 (cache)   | Same idea here: tag via `cache({ tags })` / `cacheTag()`, invalidate with `updateTag()` (awaitable) or `revalidateTag()` (background). No `revalidatePath` — use tags. |
-| React Router / Remix `shouldRevalidate` | Axis 2           | The correct mental model for Rango's `revalidate()`.                                                                                                                   |
-| HTTP `Cache-Control` / ISR              | Axis 1 (edge)    | Document/edge layer — see the [Document Cache guide](/docs/rango/guides/document-cache). Separate from both `cache()` and `revalidate()`.                              |
-| Next.js PPR                             | HTML shell layer | Same idea, different wiring: the opt-in `ppr` path option captures at runtime; holes are render-defined. See the [PPR guide](/docs/rango/guides/ppr).                  |
-| Remix / React Router `loader`           | Live data        | Like Rango loaders, fresh per request — but Rango loaders run in parallel, stream, and can opt into caching on demand.                                                 |
+| You may know                            | Rango axis       | Watch out                                                                                                                                                                             |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js `export const revalidate = N`   | Axis 1 (cache)   | Same word, opposite meaning — Next's is time-based cache expiry. Use `cache({ ttl })` for that behavior; Rango's `revalidate()` is axis 2.                                            |
+| Next.js `revalidateTag` / `updateTag`   | Axis 1 (cache)   | Same idea here: tag via `cache({ tags })` / `cacheTag()`, invalidate with `updateTag()` (awaitable) or `revalidateTag()` (background). No `revalidatePath` — use tags.                |
+| React Router / Remix `shouldRevalidate` | Axis 2           | The correct mental model for Rango's `revalidate()`.                                                                                                                                  |
+| HTTP `Cache-Control` / ISR              | Deployment layer | A CDN caches the complete response and bypasses Rango on hits. The store-backed document middleware is inside the app. See [Document Cache](/docs/rango/guides/document-cache).       |
+| Next.js PPR                             | HTML shell layer | Same React primitive, different transport: Rango serves after middleware. Ordinary `ppr` captures at runtime; `Prerender + ppr` captures at build. See [PPR](/docs/rango/guides/ppr). |
+| Remix / React Router `loader`           | Live data        | Like Rango loaders, fresh per request — but Rango loaders run in parallel, stream, and can opt into caching on demand.                                                                |
 
 <Cards>
   <Card href="/docs/rango/features/caching" title="Caching & Revalidation">
