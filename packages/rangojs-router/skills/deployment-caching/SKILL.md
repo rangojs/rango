@@ -1,6 +1,6 @@
 ---
 name: deployment-caching
-description: Choose the deployment cache boundary for a Rango app: in-function segment/prerender/PPR caches, store-backed whole-response caching, or an external CDN cache. Use when comparing Cloudflare, Vercel, and Node deployments; deciding whether Cache-Control can reduce origin work; or reasoning about middleware, live loaders, PPR, and CDN behavior.
+description: "Choose the deployment cache boundary for a Rango app: in-function segment/prerender/PPR caches, store-backed whole-response caching, or an external CDN cache. Use when comparing Cloudflare, Vercel, and Node deployments; deciding whether Cache-Control can reduce origin work; or reasoning about middleware, live loaders, PPR, and CDN behavior."
 argument-hint: [cloudflare|vercel|node]
 ---
 

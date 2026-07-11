@@ -138,10 +138,11 @@ curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/product
 For a runtime-captured route, the first document GET is a `MISS` plus a
 background capture; a later request is a `HIT`. For `Prerender + ppr`, the shell
 is produced at build time, so the first production request can already be a
-`HIT`; dev producer B runs on demand and presents the successful request as a
-`HIT` too. A declared route that never flips has an eligibility problem — look
-for the once-per-key warning. Some requests always stay on the normal render
-path: non-GET, RSC/partial/action/loader fetches, per-request CSP nonce,
+`HIT`; dev producer B runs on demand and can return a `HIT`, but falls open to a
+`MISS` plus runtime capture when the bounded foreground wait expires. A declared
+route that never flips has an eligibility problem — look for the once-per-key
+warning. Some requests always stay on the normal render path: non-GET,
+RSC/partial/action/loader fetches, per-request CSP nonce,
 `streamMode: "allReady"`, redirects, 404s, error renders, and stores without the
 shell family. For bots, `ssr: { resolveStreaming }` returning `"allReady"`
 bypasses PPR entirely and serves one complete buffered document. Stored shells

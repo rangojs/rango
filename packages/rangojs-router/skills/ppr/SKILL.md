@@ -261,7 +261,8 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   capture; a later request becomes a `HIT`.
 - `Prerender + ppr` route: the shell is produced during `vite build`, so the
   first production document request can already be a `HIT`. In dev, producer B
-  runs on demand and presents the successful request as a `HIT` too.
+  runs on demand and can return a `HIT`; if capture outlasts the bounded
+  foreground wait, the request falls open to `MISS` and runtime capture.
 - Production (workerd/node): the SECOND request is a `HIT`.
 - Dev: expect a few extra MISSes — cold module transforms abort the capture
   window (per-attempt breadcrumbs: start the server with

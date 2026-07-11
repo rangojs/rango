@@ -66,13 +66,13 @@ Two idioms, picked by what an _unrelated_ action should do: `ctx.isAction(X) || 
 
 Same words, different jobs — this is the most common source of misreads:
 
-| You may know                            | Maps to    | Watch out                                                                               |
-| --------------------------------------- | ---------- | --------------------------------------------------------------------------------------- |
-| Next.js `export const revalidate = N`   | **Axis 1** | Same word, opposite meaning. Use `cache({ ttl })` for the Next behavior.                |
-| Next.js `revalidateTag` / `updateTag`   | **Axis 1** | Same idea here: tag via `cache({ tags })` / `cacheTag()`, bust via `updateTag()`.       |
-| React Router / Remix `shouldRevalidate` | **Axis 2** | This is the correct mental model for Rango's `revalidate()`.                            |
-| HTTP `Cache-Control` / ISR              | **Axis 1** | Edge/document layer — separate from both `cache()` and `revalidate()`.                  |
-| Remix / React Router `loader`           | live data  | Like Rango loaders — but Rango loaders run in parallel, stream, and can opt into cache. |
+| You may know                            | Maps to          | Watch out                                                                                                    |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| Next.js `export const revalidate = N`   | **Axis 1**       | Same word, opposite meaning. Use `cache({ ttl })` for the Next behavior.                                     |
+| Next.js `revalidateTag` / `updateTag`   | **Axis 1**       | Same idea here: tag via `cache({ tags })` / `cacheTag()`, bust via `updateTag()`.                            |
+| React Router / Remix `shouldRevalidate` | **Axis 2**       | This is the correct mental model for Rango's `revalidate()`.                                                 |
+| HTTP `Cache-Control` / ISR              | Deployment layer | Complete-response deployment layer. A CDN hit bypasses Rango; the store-backed document middleware does not. |
+| Remix / React Router `loader`           | live data        | Like Rango loaders — but Rango loaders run in parallel, stream, and can opt into cache.                      |
 
 ## Nested caches
 
