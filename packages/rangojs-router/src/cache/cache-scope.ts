@@ -108,6 +108,8 @@ function getDefaultRouteCacheKey(
 // CacheScope
 // ============================================================================
 
+const CACHE_HIT_OBSERVERS = new WeakMap<CacheScope, () => void>();
+
 /**
  * CacheScope represents a cache boundary in the route tree.
  *
@@ -348,6 +350,7 @@ export class CacheScope {
         );
       }
 
+      CACHE_HIT_OBSERVERS.get(this)?.();
       return { segments, shouldRevalidate };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
@@ -555,9 +558,11 @@ export function resolveShellImplicitCacheScope(
   if (scope) return scope;
   const marker = getRequestContext()?._shellImplicitCache;
   if (!marker) return null;
-  return new CacheScope(
+  const implicitScope = new CacheScope(
     { ttl: marker.ttl, swr: marker.swr, store: marker.store },
     null,
     marker.keyPrefix,
   );
+  if (marker.onHit) CACHE_HIT_OBSERVERS.set(implicitScope, marker.onHit);
+  return implicitScope;
 }

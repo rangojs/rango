@@ -41,10 +41,14 @@ export {
   type CacheStatusTarget,
 } from "../cache-status.js";
 export {
+  assertPprReplayStatus,
   assertShellStatus,
+  parsePprReplayStatus,
   parseShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
+  type PprReplayStatus,
   type ShellStatus,
   type ShellStatusTarget,
 } from "../shell-status.js";

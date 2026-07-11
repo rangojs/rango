@@ -77,12 +77,19 @@ export type {
 } from "../router/telemetry.js";
 
 export {
+  assertPprReplayStatus,
   assertShellStatus,
+  parsePprReplayStatus,
   parseShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "./shell-status.js";
-export type { ShellStatus, ShellStatusTarget } from "./shell-status.js";
+export type {
+  PprReplayStatus,
+  ShellStatus,
+  ShellStatusTarget,
+} from "./shell-status.js";
 
 export { collectHandle } from "./collect-handle.js";
 

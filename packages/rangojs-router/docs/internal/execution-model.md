@@ -166,9 +166,11 @@ global middleware
   transition predicates are evaluated from the matched manifest before replay,
   so they stay request-specific without re-running handlers. Production may use
   the local build manifest; dev never blocks navigation on `/__rsc_shell`. The
-  browser and prefetch lock see the same partial payload as before. Pinned by
-  `[PPR4]` and in both apps by the `partial navigation replays the PPR segment
-shell` dev+production e2e.
+  browser and prefetch lock see the same partial payload as before.
+  `x-rango-ppr-replay: HIT` is set only when the seeded segment record actually
+  supplies the match; an explicit route `cache()` scope that wins does not
+  produce a false HIT. Pinned by `[PPR4]` and in both apps by the `partial
+  navigation replays the PPR segment shell` dev+production e2e.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
   `invalidated` when a tag marker rejects a capture that started before the
   invalidation. The capture emits a `refused` event with

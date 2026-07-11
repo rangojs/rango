@@ -40,6 +40,7 @@ import {
   type ShellCaptureDescriptor,
 } from "./shell-capture.js";
 import {
+  PPR_REPLAY_STATUS_HEADER,
   SHELL_STATUS_HEADER,
   resolvePprConfig,
   buildShellKey,
@@ -156,6 +157,7 @@ async function handleRscRenderingInner<TEnv>(
 
   let payload: RscPayload;
   let hasInterceptSlots = false;
+  let pprReplayHit = false;
 
   // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
   //
@@ -366,6 +368,9 @@ async function handleRscRenderingInner<TEnv>(
       url,
       reqCtx,
       nonce,
+      () => {
+        pprReplayHit = true;
+      },
     );
 
     if (!result) {
@@ -484,6 +489,9 @@ async function handleRscRenderingInner<TEnv>(
     // are deliberately NOT stamped. See browser/response-adapter.ts.
     "X-RSC-Router-Id": ctx.router.id,
   };
+  if (pprReplayHit) {
+    rscHeaders[PPR_REPLAY_STATUS_HEADER] = "HIT";
+  }
   // Tell the client's prefetch cache to scope this response to its source
   // URL (instead of the default source-agnostic wildcard). Intercept
   // responses depend on the source page matching an intercept rule, so
@@ -574,6 +582,7 @@ async function matchPartialWithPprReplay<TEnv>(
   url: URL,
   reqCtx: RequestContext<any>,
   nonce: string | undefined,
+  onReplayHit: () => void,
 ) {
   const runMatch = () => ctx.router.matchPartial(request, { env });
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
@@ -620,8 +629,11 @@ async function matchPartialWithPprReplay<TEnv>(
   reqCtx._shellImplicitCache = {
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
-    store: new SeededShellStore(store, snapshot, { segmentsOnly: true }),
+    store: new SeededShellStore(store, snapshot, {
+      segmentsOnly: true,
+    }),
     keyPrefix: "doc",
+    onHit: onReplayHit,
   };
 
   try {
