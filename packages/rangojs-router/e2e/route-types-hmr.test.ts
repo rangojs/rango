@@ -265,21 +265,21 @@ test.describe.serial("route-types-hmr", () => {
 
   test("should update route types when a route is renamed", async () => {
     const before = await fs.readFile(genFilePath, "utf-8");
-    expect(before).toContain('"blog.post"');
-    expect(before).not.toContain('"blog.article"');
+    expect(before).toContain('"factoryHmr.alpha"');
+    expect(before).not.toContain('"factoryHmr.article"');
 
-    // Rename "post" -> "article"
-    const modified = originalBlogContent.replace(
-      '{ name: "post" }',
+    // Rename a route that is not required to evaluate the app entry.
+    const modified = originalFactoryHmrContent.replace(
+      '{ name: "alpha" }',
       '{ name: "article" }',
     );
-    expect(modified).not.toBe(originalBlogContent);
-    writeFileBumpMtime(blogUrlsPath, modified);
+    expect(modified).not.toBe(originalFactoryHmrContent);
+    writeFileBumpMtime(factoryHmrPath, modified);
 
     await expect(async () => {
       const after = await fs.readFile(genFilePath, "utf-8");
-      expect(after).not.toContain('"blog.post"');
-      expect(after).toContain('"blog.article"');
+      expect(after).not.toContain('"factoryHmr.alpha"');
+      expect(after).toContain('"factoryHmr.article"');
     }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
