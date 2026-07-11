@@ -1,10 +1,12 @@
 # Shell Fast Path: the shell entry as a cache() of the handler layer
 
-Status: v1 IMPLEMENTED on `feat/shell-fast-path` (2026-07-05); the "v1 as
-built" section below is the authoritative record of what shipped and why it
-needed almost no new machinery. Prerequisite work (capture-time
-nested-thenable masking) shipped in PR #692; the instrumentation that produced
-the numbers below shipped in PR #691 and PR #693.
+Status: **shipped** on main (v1 2026-07-05; fragment splice closed #700 / PR
+#706). The "v1 as built" section below is the authoritative record of what
+shipped and why it needed almost no new machinery. Prerequisite work
+(capture-time nested-thenable masking) shipped in PR #692; the instrumentation
+that produced the numbers below shipped in PR #691 and PR #693. The FRAGMENT
+SPLICE that v1 deferred (the per-request Flight re-serialization of replayed
+segments) shipped as issue #700 — see "The fragment splice, as built" below.
 
 ## Why (the measurements that motivated this)
 
@@ -143,6 +145,55 @@ opted into `cache()`. v1 is exactly that, four small pieces:
   value — in both the prelude and the recorded segments. The correctness fix
   is the prerequisite for the fast path, not an orthogonal nicety.
 
+## The fragment splice, as built (issue #700)
+
+v1 killed handler re-EXECUTION on a HIT but kept re-SERIALIZATION: the tail
+deserialized the stored segment records into element trees and
+`renderToReadableStream` re-encoded the whole payload per request — measured
+1.09MB of entry-constant `__FLIGHT_DATA` bytes per request on a 3.77MB
+storefront homepage, ~200-300ms of workerd CPU at the measured ~5MB/s
+stream-generation throughput. The splice removes BOTH halves of that round
+trip. Per-SEGMENT, not whole-payload (the section below records why
+whole-payload was and stays rejected; the same reasoning rejects the
+vinext-style stored-payload-bytes splice — Rango's HIT payload interleaves
+live loader rows, the handles generator, and per-request metadata in the SAME
+Flight document, and the capture's stream is frozen mid-document with
+never-emitting masked-loader rows, so raw byte reuse means row-id surgery):
+
+- **Producer side**: `serveShellHit` runs every HIT tail under a derived
+  context flagged `_shellFragmentPayload` (rsc-rendering.ts). Under that flag,
+  the tail's segment sources — `CacheScope.lookupRoute` (the seeded doc
+  record / any route-scoped cache() hit) and the prerender-store path
+  (`yieldFromStore` in cache-lookup.ts, the Prerender+ppr / producer B lane)
+  — build segments via `fragmentSegments` (segment-codec.ts): the STORED
+  per-segment Flight strings ride the `ResolvedSegment` ReactNode fields
+  verbatim as `{ __rangoFragment: 1, f }` envelopes; nothing is decoded.
+  Loader data fields are never enveloped (consumer data of any shape — decode
+  as before; absent on these records in practice).
+- **Wire**: the outer Flight render serializes each envelope as a plain
+  object whose big string rides a raw `T`-row text chunk — a byte copy, not a
+  tree encode. Fresh serialization covers only what is genuinely live: loader
+  rows, handle records, per-request metadata rows.
+- **Consumer side**: BOTH payload consumers expand envelopes through their own
+  Flight deserializer before anything reads the segments — the SSR resume
+  pass inside `createSsrRootComponent` (payload promise chains the expansion,
+  so `onPayloadSettled` includes fragment module loads) and browser hydration
+  in `initBrowserApp` (before the store seed / renderSegments). Each fragment
+  is its own row space, decoded independently — the exact per-record decode
+  the codec has always done, just moved to the consumer — so there is no
+  row-id collision or shared-row dedupe hazard, and hydration sees the same
+  trees the double round trip produced.
+- **Scope**: the flag lives on the derived tail context ONLY and must never
+  reach a capture render (`deriveShellCaptureContext` bases off the clean
+  reqCtx): a capture serializes segments into records, and an envelope
+  reaching `serializeSegments` would store a double-encoded fragment.
+  Non-HIT payloads carry no envelopes and pay one field scan on the client.
+- **Failure posture**: the splice skips the tail-side decode that used to
+  validate a record server-side; a corrupt fragment now fails at the CONSUMER
+  decode, which rejects the payload — the SSR tail errors and `serveShellHit`
+  schedules the healing recapture (same class as a
+  parseable-but-mismatched postponed blob).
+
 ## Parity: why this cannot introduce hydration errors
 
 The dynamic surface on a fast-path HIT is exactly what it is on today's HIT —
@@ -181,11 +232,20 @@ consumer:
 
 - **Producer A (runtime)**: the background capture, triggered by traffic,
   TTL-bound.
-- **Producer B (build time)**: Prerender runs the same capture under
-  `BuildContext`. Build-time production is the SAFER producer: there is no
-  ambient user identity at build, so the identity guard is trivially
-  satisfied and the capture-credential defense-in-depth concern vanishes for
-  build-time entries.
+- **Producer B (build time)**: SHIPPED (#699). The build's shell prerender
+  phase (`vite/discovery/shell-prerender-phase.ts`, buildApp post) replays
+  middleware with `ctx.build === true` and then runs the SAME capture core
+  (`deriveShellCaptureContext` + `captureAndStoreShell`, driven by
+  `prerender/build-shell-capture.ts`) over the just-collected prerender
+  payloads. Middleware can call `ctx.dynamic()` to leave that URL for runtime.
+  The serve path reads the resulting manifest through
+  `rsc/shell-build-manifest.ts` on a store MISS — first request after deploy is
+  a HIT. Build-time production is the SAFER producer: there is no ambient user
+  identity at build, so the identity guard is trivially satisfied and the
+  capture-credential defense-in-depth concern vanishes for build-time entries.
+  In dev the same producer runs on demand via `/__rsc_shell`.
+  Details: `packages/rangojs-router/docs/prerender-api-design.md`
+  ("Build-time PPR shells").
 - **Consumer**: the fast path above. The worker cannot tell whether an entry
   came from a capture or from the build — extending the existing hard rule
   ("the browser can't tell a route was pre-rendered") one layer deeper, into
@@ -242,9 +302,9 @@ basket badge still streams live; the homepage is a runtime capture with a
   (their records already fast-path the covered subtree today).
 - **Prefetch renders and partial navigations** — unchanged; the fast path is
   document-HIT-tail only. The PDP-prefetch starvation lever is follow-up.
-- **Prerender unification (producer B)** — the entry format now carries
-  everything a build-time producer needs; wiring `matchForPrerender` to emit
-  shell entries is its own PR.
+- **Prerender unification (producer B)** — shipped since as #699 (see the
+  Unification section above); it was out of the v1 scope this section
+  records.
 - **Loader-pushed plain handle values consumed in shell content** drift on
   HITs (fresh push vs frozen prelude) exactly as they do today — the shape
   rule is the contract; not a fast-path regression.

@@ -26,10 +26,23 @@ function UsersPage(ctx: HandlerContext) {
   );
 }
 
+// Counterpart to site's /lookup: same route name, different search schema.
+function LookupPage(ctx: HandlerContext) {
+  return (
+    <main data-testid="admin-lookup-page">
+      <pre data-testid="admin-lookup-search">{JSON.stringify(ctx.search)}</pre>
+    </main>
+  );
+}
+
 export const adminPatterns = urls(({ path, layout, include }) => [
   layout(<AdminLayout />, () => [
     path("/", DashboardPage, { name: "home" }),
     path("/users", UsersPage, { name: "users" }),
+    path("/lookup", LookupPage, {
+      name: "lookup",
+      search: { page: "number" },
+    }),
     // Async include: the /api group is code-split, loaded on the first /api/*
     // request into this host-mounted admin router.
     include("/api", () => import("./api.js"), { name: "api" }),

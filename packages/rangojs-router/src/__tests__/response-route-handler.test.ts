@@ -157,6 +157,43 @@ describe("response-route-handler", () => {
     });
   });
 
+  describe("handler-thrown Response", () => {
+    it("matches a returned Response and skips onError", async () => {
+      const handlerCtx = createMockHandlerCtx();
+      const testEnv = createTestEnv();
+      const ctx = createRequestContext(testEnv);
+
+      const preview: ResponseRouteMatch = {
+        responseType: "json",
+        handler: (handlerContext: any) => {
+          handlerContext.header("X-Context", "merged");
+          throw new Response("accepted", {
+            status: 202,
+            headers: { "X-Handler": "thrown" },
+          });
+        },
+        params: {},
+      };
+
+      const response = await runWithRequestContext(ctx, () =>
+        handleResponseRoute(
+          handlerCtx,
+          preview,
+          testEnv.request,
+          testEnv.env,
+          testEnv.url,
+          testEnv.variables,
+        ),
+      );
+
+      expect(response.status).toBe(202);
+      expect(await response.text()).toBe("accepted");
+      expect(response.headers.get("X-Handler")).toBe("thrown");
+      expect(response.headers.get("X-Context")).toBe("merged");
+      expect(handlerCtx.callOnError).not.toHaveBeenCalled();
+    });
+  });
+
   describe("rewrapResponse handles WebSocket upgrade responses", () => {
     it("preserves the webSocket property on WebSocket upgrade responses", async () => {
       const handlerCtx = createMockHandlerCtx();

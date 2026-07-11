@@ -17,7 +17,7 @@
  */
 
 import React from "react";
-import type { EntryData } from "../server/context.js";
+import { isPprEntry, type EntryData } from "../server/context.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
 
@@ -30,11 +30,47 @@ export const SHELL_STATUS_HEADER = "x-rango-shell";
  */
 export const DEFAULT_PPR_TTL_SECONDS = 300;
 
+/**
+ * Timeout for the dev /__rsc_shell endpoint's sequential /__rsc_prerender
+ * pre-flight probe (vite/router-discovery.ts). Hoisted here so the client-side
+ * fetch bound (shell-build-manifest.ts devShellFetchTimeoutMs) enumerates the
+ * SAME term of the endpoint's worst-case envelope — the two cannot drift.
+ */
+export const DEV_SHELL_PROBE_TIMEOUT_MS: number = 10_000;
+
 /** The route's ppr option normalized to a concrete policy. */
 export interface ResolvedPprConfig {
   ttl: number;
   swr?: number;
   tags?: string[];
+  /**
+   * Snapshot size cap, passed through undefaulted (like swr/tags): the single
+   * defaulting site is captureAndStoreShell (DEFAULT_PPR_MAX_SNAPSHOT_BYTES in
+   * shell-capture.ts), so direct descriptor callers and resolved configs
+   * cannot drift.
+   */
+  maxSnapshotBytes?: number;
+  /**
+   * Capture settle budget in ms (`ppr.captureTimeout`). Undefined = the
+   * capture default (SHELL_CAPTURE_MAX_WAIT_MS, 15_000) — the default's single
+   * owner stays shell-capture.ts so build/runtime producers cannot drift.
+   */
+  captureTimeout?: number;
+}
+
+/**
+ * Validate the raw `ppr.captureTimeout` option: a finite number >= 1ms passes
+ * through; anything else (including 0/negative/NaN/Infinity/non-number)
+ * resolves to undefined, which means "use the capture default" downstream.
+ * Mirrors the prefetch-limit option policy: invalid values silently fall back
+ * to the default rather than throwing at request time. Also the boundary
+ * re-normalizer for the dev /__rsc_shell endpoint (vite/router-discovery.ts),
+ * whose param crossed an HTTP query string.
+ */
+export function normalizeCaptureTimeout(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? value
+    : undefined;
 }
 
 /**
@@ -42,20 +78,29 @@ export interface ResolvedPprConfig {
  * route does not declare `ppr` (or declares `ppr: false`) — the caller then does
  * NOTHING: no store read, no capture, no logs. Pure axis 1, zero cost.
  *
+ * The route's NAME is irrelevant here (and everywhere on the shell lane):
+ * nameless `path()` routes register their EntryData under a synthesized
+ * `$path_*` manifest key with the `ppr` option intact (urls/path-helper.ts),
+ * so a nameless entry resolves exactly like a named one — pinned by the
+ * nameless-ppr e2e in both apps (issue #714).
+ *
  * PPR is a DOCUMENT-level property of the page route; there is no subtree
  * inheritance (declaring it on a layout is not supported — a follow-up).
  */
 export function resolvePprConfig(
   entry: EntryData | undefined | null,
 ): ResolvedPprConfig | null {
-  if (!entry || entry.type !== "route") return null;
+  // isPprEntry (server/context.ts) is the ONE opt-in predicate — shared with
+  // the header-write latch so serve and guard can never drift.
+  if (!entry || !isPprEntry(entry)) return null;
   const ppr = entry.ppr;
-  if (ppr === undefined || ppr === false) return null;
   if (ppr === true) return { ttl: DEFAULT_PPR_TTL_SECONDS };
   return {
     ttl: ppr.ttl ?? DEFAULT_PPR_TTL_SECONDS,
     swr: ppr.swr,
     tags: ppr.tags,
+    maxSnapshotBytes: ppr.maxSnapshotBytes,
+    captureTimeout: normalizeCaptureTimeout(ppr.captureTimeout),
   };
 }
 
@@ -131,6 +176,91 @@ export function hasShellFamily(
   putShell: NonNullable<SegmentCacheStore["putShell"]>;
 } {
   return !!store?.getShell && !!store?.putShell;
+}
+
+/**
+ * Per-stage timing of one shell-HIT tail, all offsets in ms from the response
+ * commit (prelude flush). The HIT commits its 200 + headers BEFORE the live
+ * tail runs, so Server-Timing on the HIT response structurally cannot carry
+ * these numbers — they ride the dev mirror below instead (same doctrine as
+ * the ppr:capture mirror in rsc-rendering.ts, issue #651).
+ */
+export interface ShellTailTiming {
+  key: string;
+  outcome: "complete" | "redirect" | "error";
+  /** Loader-family seed decode (only when the entry carried a snapshot). */
+  seedMs?: number;
+  /** Tail router.match() settled. */
+  matchMs?: number;
+  /** Tail stream (resume output) handed to the response stream. */
+  handoverMs?: number;
+  /** First resumed-HTML byte enqueued on the wire. */
+  firstHtmlMs?: number;
+  /** Tail fully drained (last hole settled and flushed). */
+  completeMs?: number;
+  /** Prelude size flushed at commit (decoded bytes). */
+  preludeBytes?: number;
+  /** Total tail bytes streamed behind the prelude. */
+  tailBytes?: number;
+}
+
+/**
+ * Compact single-line form for the console log and the dev Server-Timing
+ * mirror's `desc`. Plain alphanumerics/`=`/`-` only — no quoted-string
+ * escaping needed.
+ */
+export function describeShellTailTiming(timing: ShellTailTiming): string {
+  const parts: string[] = [timing.outcome];
+  if (timing.seedMs !== undefined) parts.push(`seed=${timing.seedMs}ms`);
+  if (timing.matchMs !== undefined) parts.push(`match=${timing.matchMs}ms`);
+  if (timing.handoverMs !== undefined) {
+    parts.push(`handover=${timing.handoverMs}ms`);
+  }
+  if (timing.firstHtmlMs !== undefined) {
+    parts.push(`first-html=${timing.firstHtmlMs}ms`);
+  }
+  if (timing.completeMs !== undefined) {
+    parts.push(`complete=${timing.completeMs}ms`);
+  }
+  if (timing.preludeBytes !== undefined) {
+    parts.push(`prelude=${timing.preludeBytes}b`);
+  }
+  if (timing.tailBytes !== undefined) parts.push(`tail=${timing.tailBytes}b`);
+  return parts.join(" ");
+}
+
+/**
+ * Dev-only last-tail-per-key buffer backing the `ppr:tail` Server-Timing
+ * mirror: a HIT's tail finishes after its own headers are long gone, so its
+ * per-stage numbers ride the NEXT ppr GET for the key when the metrics
+ * surface is active (debugPerformance). Same shape and FIFO cap as the
+ * capture mirror (shell-capture.ts lastCaptureEventsForTiming); dev-only so
+ * production isolates never grow the map.
+ */
+const lastTailTimingsForServerTiming = new Map<string, ShellTailTiming>();
+const MAX_TAIL_TIMING_KEYS = 100;
+
+/** Buffer one terminal tail timing for the dev Server-Timing mirror. */
+export function publishShellTailTiming(timing: ShellTailTiming): void {
+  if (process.env.NODE_ENV === "production") return;
+  lastTailTimingsForServerTiming.delete(timing.key);
+  if (lastTailTimingsForServerTiming.size >= MAX_TAIL_TIMING_KEYS) {
+    const oldest = lastTailTimingsForServerTiming.keys().next().value;
+    if (oldest !== undefined) lastTailTimingsForServerTiming.delete(oldest);
+  }
+  lastTailTimingsForServerTiming.set(timing.key, timing);
+}
+
+/**
+ * Consume (read-and-clear) the buffered tail timing for `key`, so one tail
+ * reports into exactly one later response's Server-Timing.
+ */
+export function takeShellTailTimingForServerTiming(
+  key: string,
+): ShellTailTiming | undefined {
+  const timing = lastTailTimingsForServerTiming.get(key);
+  if (timing) lastTailTimingsForServerTiming.delete(key);
+  return timing;
 }
 
 /** Keys already warned about a missing shell store family (once per key). */

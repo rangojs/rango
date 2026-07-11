@@ -474,7 +474,10 @@ Emitted when a configured phase deadline elapses (see `RouterTimeouts`). The
 `phase` is the `TimeoutPhase` whose budget was exceeded (`"action"`,
 `"render-start"`, or `"stream-idle"`). `customHandler` reflects whether an
 `onTimeout` handler was configured — `false` means the router served the
-default timeout response.
+default timeout response. A render-start timeout may also include `render`, a
+frozen snapshot of the foreground Flight/HTML/response operation. It is absent
+when the deadline fired before the response-construction driver started (for
+example, in a slow route handler) or on a response route.
 
 ```typescript
 {
@@ -485,8 +488,23 @@ default timeout response.
   actionId: "submit",     // optional (present for action-phase timeouts)
   durationMs: 5000,
   customHandler: false,   // whether onTimeout was configured
+  render: {               // optional; render-start timeouts only
+    mode: "full",
+    phase: "html",
+    state: "running",
+    completed: 1,
+    total: 3,
+    phaseDurationMs: 4200,
+  },
 }
 ```
+
+The same `RenderTimeoutContext` snapshot is passed to `onTimeout` as
+`context.render` and to `onError` as `context.metadata.render` — each surface
+receives its own copy, so a callback that mutates its copy (for example a
+redacting logger) cannot corrupt what the other surfaces observe. Values are
+identical across the three, so a timeout can be correlated across all support
+surfaces without reconstructing progress from timestamps.
 
 ### Origin-Rejected Events
 

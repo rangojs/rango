@@ -62,7 +62,7 @@ const DEFAULT_URL = "http://localhost/";
 /** A route handler under test: the `(ctx) => RSC | Response` function you pass to `path(...)`. */
 export type TestableHandler<TEnv = any> = (
   ctx: HandlerContext<any, TEnv>,
-) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+) => ReactNode | Response | Promise<ReactNode | Response>;
 
 /** Options for {@link renderHandler}. */
 export interface RenderHandlerOptions<TEnv = any> {
@@ -80,6 +80,12 @@ export interface RenderHandlerOptions<TEnv = any> {
   routeName?: string;
   /** Route name -> pattern map enabling `ctx.reverse()`. */
   routeMap?: Record<string, string>;
+  /**
+   * Seed `ctx.build` (default false) so a handler that branches on the
+   * build-time pass — including calling `ctx.dynamic()` on a MISS — is
+   * unit-testable. Assert a `ctx.dynamic()` call via `result.dynamic`.
+   */
+  build?: boolean;
   /**
    * Seed the data `ctx.use(SomeLoader)` returns — NO real loader runs (same model
    * as `runLoader`'s `loaders`). Matched by loader reference, so a real
@@ -163,6 +169,12 @@ export interface RenderHandlerResult {
   locationState: Record<string, unknown>;
   /** What the handler pushed via `ctx.use(Handle)(...)` (e.g. Meta, Breadcrumbs), keyed by handle. */
   handles: Map<Handle<any, any>, unknown[]>;
+  /**
+   * Whether the handler called `ctx.dynamic()` (the PPR shell opt-out). The
+   * public way to assert the opt-out without reading the `@internal`
+   * `ctx._dynamic`.
+   */
+  dynamic: boolean;
 }
 
 /**
@@ -239,6 +251,7 @@ export async function renderHandler<TEnv = any>(
     request,
     url,
     variables: seedVariables({}, opts.vars),
+    build: opts.build,
     stateCookieName,
     version: opts.stateCookie?.version,
     cacheStore: opts.cacheStore,
@@ -353,5 +366,6 @@ export async function renderHandler<TEnv = any>(
     stateCookieName,
     locationState,
     handles: handlePushes,
+    dynamic: (reqCtx as RequestContext<TEnv>)._dynamic === true,
   };
 }

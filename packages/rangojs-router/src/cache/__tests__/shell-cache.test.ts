@@ -69,6 +69,41 @@ describe("MemorySegmentCacheStore shell family", () => {
     expect(await store.getShell("k")).toBeNull();
   });
 
+  it("does not resurrect a shell captured before tag invalidation", async () => {
+    const store = new MemorySegmentCacheStore();
+    const captured = shellEntry({ createdAt: T0 });
+    vi.setSystemTime(new Date(T0 + 1));
+    await store.invalidateTags(["home"]);
+    expect(await store.putShell("k", captured, 300, 30, ["home"])).toBe(
+      "invalidated",
+    );
+
+    expect(await store.getShell("k")).toBeNull();
+  });
+
+  it("does not delete a newer shell when an older capture is rejected", async () => {
+    const store = new MemorySegmentCacheStore();
+    vi.setSystemTime(new Date(T0 + 1));
+    await store.invalidateTags(["home"]);
+    vi.setSystemTime(new Date(T0 + 2));
+    await store.putShell(
+      "k",
+      shellEntry({ prelude: "new", createdAt: T0 + 2 }),
+      300,
+      30,
+      ["home"],
+    );
+    await store.putShell(
+      "k",
+      shellEntry({ prelude: "old", createdAt: T0 }),
+      300,
+      30,
+      ["home"],
+    );
+
+    expect((await store.getShell("k"))?.entry.prelude).toBe("new");
+  });
+
   it("keeps the shell family isolated from the response/item families on the same key", async () => {
     const store = new MemorySegmentCacheStore();
     await store.putShell("same", shellEntry(), 300, 30);

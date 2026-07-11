@@ -37,6 +37,13 @@ export interface CacheGetResult {
  */
 export interface SegmentCacheStore<TEnv = unknown> {
   /**
+   * The store honors getShell(..., { claimRevalidation: false }) without
+   * claiming an SWR lock. Navigation replay requires this opt-in because it
+   * cannot recapture an HTML shell after observing a stale entry.
+   */
+  readonly supportsPassiveShellReads?: true;
+
+  /**
    * Default cache options for this store.
    * Used by cache() boundaries when ttl/swr are not explicitly specified.
    */
@@ -144,9 +151,12 @@ export interface SegmentCacheStore<TEnv = unknown> {
    *
    * Optional: a store that does not implement the shell family disables the
    * shell-cache middleware (it fails open to the normal HTML render path).
+   * A passive read reports a stale entry as `shouldRevalidate: true` without
+   * claiming store-specific revalidation ownership.
    */
   getShell?(
     key: string,
+    options?: { claimRevalidation?: boolean },
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
 
   /**
@@ -160,6 +170,8 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param swrSeconds - Optional stale-while-revalidate window in seconds
    * @param tags - Optional cache tags for invalidation (participates in
    *   invalidateTags via the same tag machinery as the item family)
+   * @returns `invalidated` when a generation marker rejected the write,
+   *   `stored` when acknowledged, or void for stores without acknowledgements.
    */
   putShell?(
     key: string,
@@ -167,7 +179,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void>;
+  ): Promise<"stored" | "invalidated" | void>;
 
   /**
    * Get a cached function result by key.
@@ -196,6 +208,19 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param tags - The cache tags to invalidate
    */
   invalidateTags?(tags: string[]): Promise<void>;
+
+  /**
+   * True when ANY of `tags` was invalidated (invalidateTags/updateTag) at or
+   * after `sinceMs` (>= so a same-millisecond invalidation wins, favouring
+   * freshness). Consulted by build-shell read-through and runtime shell stores:
+   * "was it evicted" is answered by tag markers against the entry's createdAt,
+   * including when invalidation races a capture that has not been written yet.
+   * Optional: without it, TAGGED build entries are not served (untagged ones
+   * are unaffected — they are evictable only by deploy/buildVersion anyway).
+   * Fail open to `false` on marker-read errors: a transient store fault must
+   * degrade to "still valid", the same posture as the envelope tag checks.
+   */
+  isTagsInvalidatedSince?(tags: string[], sinceMs: number): Promise<boolean>;
 }
 
 /**
@@ -293,7 +318,13 @@ export interface ShellCacheEntry {
    * their holes always fill.
    */
   handlerLiveHoles?: boolean;
-  /** Epoch ms when the shell was captured. */
+  /**
+   * The capture encountered transition({ when }). Its effective hold policy is
+   * request-dependent, so handler-free document and navigation replay must
+   * re-run resolution to collect and evaluate the predicate.
+   */
+  transitionWhen?: true;
+  /** Capture-generation start time; tag invalidations at or after it win. */
   createdAt: number;
 }
 
@@ -318,6 +349,17 @@ export type ShellSnapshotFamily = "item" | "segment" | "response" | "loader";
 export interface ShellSnapshotLoaderValue {
   /** RSC-serialized elided container (see loader-snapshot.ts). */
   value: string;
+  /**
+   * Hole bit, capture-computed (elide already walks every node): 1 = the
+   * container carries hole markers, so a HIT must gate the overlay on the
+   * fresh run (only the loader body can mint the live nested promises);
+   * 0 = fully pinned, so a HIT resolves the payload promise immediately from
+   * the pin while the fresh run proceeds ungated (side effects and cache
+   * read-through writes preserved; its values were discarded either way —
+   * recorded paths win wholesale). Absent on pre-bit snapshots, which keep
+   * the gated path.
+   */
+  holes?: 0 | 1;
 }
 
 /** A serialized cached Response for the response family of a shell snapshot. */

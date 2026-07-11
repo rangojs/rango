@@ -39,7 +39,7 @@
  * effectively per-document. Unit tests reset them via clearPrefetchCache().
  */
 
-import { abortAllPrefetches } from "./queue.js";
+import { abortAllPrefetches } from "./loader.js";
 import { invalidateRangoState } from "../rango-state.js";
 import type { RscPayload } from "../types.js";
 

@@ -33,6 +33,8 @@ transport behavior, or request/response ownership.
   redirect, error-boundary, and PE paths?
 - Could cookies or headers be duplicated, dropped, or overwritten by a later
   response owner?
+- Does `serializeCookieValue` reject Domain/Path/SameSite values that could
+  inject extra attributes (CR/LF/`;`/`,`, non-enum SameSite)?
 
 ## Request Context Isolation
 
@@ -145,26 +147,33 @@ transfer is **fail-closed**: if a rebuild path ever drops it, the redirect is
 neutralized to root, never opened off-host.
 
 Soft SPA/Flight redirects are `200`/`204` responses (`X-RSC-Redirect` header /
-`metadata.redirect` payload), not 3xx, so they never reach the server guard —
-they stay validated client-side (`metadata.redirect.external` targets are
-scheme-validated by `validateExternalRedirect` before `location.assign`).
+`metadata.redirect` payload), not 3xx, so they never reach `guardOutgoingRedirect`.
+They are resolved **at construction** with the same shared rules
+(`resolveSoftRedirectUrl` → `resolveSameOriginRedirect` /
+`resolveExternalRedirect` / `safeSameOriginLanding`) before the URL is written
+into the header or Flight metadata. Client validators remain defense-in-depth
+(`metadata.redirect.external` targets are scheme-validated by
+`validateExternalRedirect` before `location.assign`).
 
 Two shared, runtime-neutral rules live in `src/redirect-origin.ts` and are
-imported by both the client validators and the server guard so the two sides
-cannot drift: `resolveSameOriginRedirect` (same-origin) and
-`resolveExternalRedirect` (off-origin but `http(s)`-only).
+imported by both the client validators and the server soft/3xx paths so the
+sides cannot drift: `resolveSameOriginRedirect` (same-origin) and
+`resolveExternalRedirect` (off-origin but `http(s)`-only). Soft construction
+also uses `resolveSoftRedirectUrl` / `safeSameOriginLanding`.
 
-Implementation: `src/redirect-origin.ts` (shared rules + brand),
-`src/rsc/redirect-guard.ts` (server guard), wired at the `handler.ts` chokepoint;
-`redirect()` opt-in brand in `src/route-definition/redirect.ts`; brand transfer
-in `src/router/middleware.ts` + `src/rsc/helpers.ts` +
-`src/rsc/response-route-handler.ts` (and the `dispatch` mirror in
-`src/testing/dispatch.ts`); SPA propagation in `src/rsc/helpers.ts`
-(`interceptRedirectForPartial`); client honoring + scheme validation in
-`src/browser/validate-redirect-origin.ts` (`validateExternalRedirect`), consumed
-by `src/browser/server-action-bridge.ts` / `src/browser/partial-update.ts`. Two
-client init-window hard-nav fallbacks (`server-action-bridge.ts`,
-`rsc-router.tsx`) re-validate defensively.
+Implementation: `src/redirect-origin.ts` (shared rules + brand + soft resolve),
+`src/rsc/redirect-guard.ts` (server 3xx guard), wired at the `handler.ts`
+chokepoint; soft creators `createSimpleRedirectResponse` /
+`createRedirectFlightResponse` + `interceptRedirectForPartial` in
+`src/rsc/helpers.ts` / `handler.ts`; `redirect()` opt-in brand in
+`src/route-definition/redirect.ts`; brand transfer in `src/router/middleware.ts`
+
+- `src/rsc/helpers.ts` + `src/rsc/response-route-handler.ts` (and the `dispatch`
+  mirror in `src/testing/dispatch.ts`); client honoring + scheme validation in
+  `src/browser/validate-redirect-origin.ts` (`validateExternalRedirect`), consumed
+  by `src/browser/server-action-bridge.ts` / `src/browser/partial-update.ts`. Two
+  client init-window hard-nav fallbacks (`server-action-bridge.ts`,
+  `rsc-router.tsx`) re-validate defensively.
 
 Covered by:
 
@@ -250,3 +259,17 @@ shared cache stores (e.g. multiple custom domains on the same CF worker):
 - Host with port differentiates localhost:3000 from localhost:4000.
 - Response route cache keys include host (separate test in
   `response-route-handler.test.ts`).
+
+### Response-route cache parity (`response-cache-serve.ts`, `dispatch.test.ts`)
+
+`serveResponseRouteWithCache` matches document-cache safety:
+
+- **GET/HEAD only** — POST/PUT/etc. skip the cache (no read, no write).
+- **Per-client signals** — `Set-Cookie` / `x-rango-keep-cache` on the live
+  response skip `putResponse` (still return the live body).
+- **Default key** — `response:{type}:` + `cacheKeyBase(host, path, searchParams)`
+  (sorted search; reserved `_rsc*` / allowlisted `__*` params excluded).
+
+Userland pins in `dispatch.test.ts` (`cached response routes`): POST not
+cached; Set-Cookie not stored; reordered query params share a key; reserved
+`_rsc*` excluded from the key.

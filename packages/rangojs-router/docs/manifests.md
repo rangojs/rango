@@ -106,10 +106,16 @@ The eager module carries only the flat route maps (for `reverse()`); the trie an
 precomputed match entries live in the lazy `virtual:rsc-router/routes-manifest/<routerId>`
 chunk, populated via `await ensureRouterManifest(routerId)` before any matching.
 Keeping that data in exactly one (lazy) chunk is a hard constraint — see CLAUDE.md
-"Bundle Hygiene" rule #1; do not add `setRouteTrie`/`setPrecomputedEntries` here.
+"Bundle Hygiene" rule #1; do not inline trie/precomputedEntries data here.
+The lazy chunk carries ONLY that derived match data — it does not re-export the
+name->path map (the eager module's `setRouterManifest()` is its sole source, and
+`ensureRouterManifest()` ignores any `manifest` field on the loaded module).
 
 The `import` of the gen file creates a dependency in Vite's module graph.
 When the gen file changes, Vite invalidates the virtual module automatically.
+The lazy per-router module keeps a bare side-effect `import` of the gen file for
+the same reason: without that edge, a Cloudflare dev program reload re-imports
+the cached per-router module and re-installs a stale authoritative trie.
 
 ## HMR Flow (Dev Only)
 
@@ -175,8 +181,20 @@ Each `createRouter()` gets isolated data:
 
 `ctx.reverse()` resolves via `getRouterManifest(routerId) ?? getGlobalRouteMap()`.
 
+Search schemas and root-scope flags are per-router the same way: `path()` registers
+them under the evaluating router's id (threaded through the evaluation store by
+createRouter/generateManifestFull/lazy-include contexts), and lookups pass
+`reqCtx._routerId` so same-named routes in different routers keep their own
+schema. The name-keyed global tier remains as the fallback for contexts with no
+router identity (single-router apps, unit tests).
+
 Per-router virtual modules (`virtual:rsc-router/routes-manifest/<routerId>`) are loaded lazily
-via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request.
+via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request — in BUILD
+only. `ensureRouterManifest()` marks a loader-supplied trie authoritative (misses are hard
+404s), which is only valid for a trie serialized from complete build-time discovery. Dev
+never registers loaders: the handler rebuilds the trie from live `router.urlpatterns`
+(`buildRouterTrieFromUrlpatterns`, non-authoritative), so a Cloudflare program reload can
+never serve a removed route from a stale-but-authoritative discovery trie.
 
 Router roots must be sibling app roots. Nested router roots are not supported:
 if a router source file lives under another router's directory, Vite runtime

@@ -2,12 +2,13 @@
  * Runtime-neutral same-origin redirect rule.
  *
  * Shared by the client redirect guard (`browser/validate-redirect-origin.ts`,
- * which validates redirect targets the client JS is about to navigate to) and
- * the server outgoing-redirect guard (`rsc/redirect-guard.ts`, which validates
- * every browser-followed `Location` header before it leaves the handler). Kept
- * at the `src/` root so both layers import the ONE rule and cannot drift -- a
+ * which validates redirect targets the client JS is about to navigate to), the
+ * server outgoing 3xx guard (`rsc/redirect-guard.ts`, which validates every
+ * browser-followed `Location` header before it leaves the handler), and soft
+ * Flight / `X-RSC-Redirect` construction (`resolveSoftRedirectUrl`). Kept at
+ * the `src/` root so every layer imports the ONE rule and cannot drift -- a
  * cross-origin target blocked on the JS/fetch path is blocked identically on the
- * no-JS (PE) and full-page document paths.
+ * no-JS (PE), full-page document, and soft SPA channels.
  */
 
 /**
@@ -66,12 +67,40 @@ export function resolveExternalRedirect(
  * Every guard that neutralizes a cross-origin/unsafe redirect target sends the
  * browser here instead: the app's basename root, or `"/"` when unset. Kept
  * beside the resolvers so the "where does a blocked redirect go" answer lives
- * in ONE place -- the server 3xx guard (`rsc/redirect-guard.ts`) and the
- * shell-HIT degradation path (`rsc/rsc-rendering.ts`) must agree, or a blocked
- * redirect lands differently depending on which exit it took.
+ * in ONE place -- the server 3xx guard (`rsc/redirect-guard.ts`), the
+ * shell-HIT degradation path (`rsc/rsc-rendering.ts`), and soft Flight/
+ * X-RSC-Redirect construction must agree, or a blocked redirect lands
+ * differently depending on which exit it took.
  */
 export function safeSameOriginLanding(basename: string | undefined): string {
   return basename && basename !== "/" ? basename : "/";
+}
+
+/**
+ * Resolve a soft (SPA/Flight) redirect target before it leaves the server.
+ *
+ * Soft redirects are 200/204 (`X-RSC-Redirect` / `metadata.redirect`), not 3xx,
+ * so they never hit `guardOutgoingRedirect`. This applies the same policy the
+ * 3xx guard uses: same-origin by default, `external` opts into http(s)-only
+ * off-host, anything else lands on {@link safeSameOriginLanding}. Returns the
+ * URL that should be written into the soft-redirect wire fields.
+ */
+export function resolveSoftRedirectUrl(
+  url: string,
+  requestOrigin: string,
+  basename: string | undefined,
+  external?: boolean,
+): string {
+  if (external) {
+    return (
+      resolveExternalRedirect(url, requestOrigin) ??
+      safeSameOriginLanding(basename)
+    );
+  }
+  return (
+    resolveSameOriginRedirect(url, requestOrigin) ??
+    safeSameOriginLanding(basename)
+  );
 }
 
 /**

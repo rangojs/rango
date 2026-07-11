@@ -130,11 +130,59 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(hit?.entry.buildVersion).toBe("build-abc");
   });
 
-  it("no-ops getShell/putShell when no KV namespace is configured", async () => {
+  it("round-trips replay eligibility flags through KV", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    await store.putShell(
+      "k",
+      shellEntry({ handlerLiveHoles: true, transitionWhen: true }),
+      300,
+      30,
+    );
+    await drain(mockCtx);
+
+    const entry = (await store.getShell("k"))?.entry;
+    expect(entry?.handlerLiveHoles).toBe(true);
+    expect(entry?.transitionWhen).toBe(true);
+  });
+
+  // The build-shell read-through's eviction gate (#699): a baked manifest
+  // entry is immutable, so updateTag reaches it by comparing the SAME KV tag
+  // markers invalidateTags writes against the entry's build-time createdAt.
+  it("isTagsInvalidatedSince: marker at or after `since` wins; absent tags are false", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const t0 = Date.now();
+    await store.invalidateTags(["home"]);
+    await drain(mockCtx);
+    expect(await store.isTagsInvalidatedSince(["home"], t0)).toBe(true);
+    expect(await store.isTagsInvalidatedSince(["home"], t0 + 1)).toBe(false);
+    expect(await store.isTagsInvalidatedSince(["absent"], t0)).toBe(false);
+  });
+
+  it("no-ops getShell/putShell when no KV namespace is configured, warning once per isolate", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const inertWarnings = () =>
+      warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === "string" &&
+          c[0].includes("shell family (getShell/putShell) is a no-op"),
+      );
+
     const store = new CFCacheStore({ ctx: mockCtx }); // no kv
     await store.putShell("k", shellEntry(), 300, 30);
     await drain(mockCtx);
     expect(await store.getShell("k")).toBeNull();
+
+    // The silent fail-open is loud exactly once (issue #651): getShell/
+    // putShell only run for ppr routes, so this names the permanent-MISS
+    // shape and the fix without spamming every request.
+    expect(inertWarnings()).toHaveLength(1);
+    expect(inertWarnings()[0][0]).toContain("kv: env.CACHE_KV");
+
+    // Once per ISOLATE, not per instance: CFCacheStore is constructed per
+    // request, so a second no-KV store must not re-warn.
+    const store2 = new CFCacheStore({ ctx: createMockCtx() });
+    expect(await store2.getShell("k")).toBeNull();
+    expect(inertWarnings()).toHaveLength(1);
   });
 
   it("skips the KV write when ttl+swr is below the 60s KV floor", async () => {
@@ -169,6 +217,54 @@ describe("CFCacheStore shell family (KV-only)", () => {
 
     await store.invalidateTags(["home"]);
     expect(await store.getShell("k")).toBeNull();
+  });
+
+  it("does not resurrect a shell captured before tag invalidation", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const capturedAt = Date.now();
+    await store.invalidateTags(["home"]);
+    await drain(mockCtx);
+    expect(
+      await store.putShell(
+        "k",
+        shellEntry({ createdAt: capturedAt }),
+        300,
+        30,
+        ["home"],
+      ),
+    ).toBe("invalidated");
+    await drain(mockCtx);
+
+    expect(await store.getShell("k")).toBeNull();
+    expect(
+      [...mockKV.store.keys()].some((key) => key.includes("shell:k")),
+    ).toBe(false);
+  });
+
+  it("does not delete a newer shell when an older capture is rejected", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    await store.invalidateTags(["home"]);
+    await drain(mockCtx);
+    const invalidatedAt = Date.now();
+    vi.setSystemTime(new Date(invalidatedAt + 1));
+    await store.putShell(
+      "k",
+      shellEntry({ prelude: "new", createdAt: invalidatedAt + 1 }),
+      300,
+      30,
+      ["home"],
+    );
+    await drain(mockCtx);
+    await store.putShell(
+      "k",
+      shellEntry({ prelude: "old", createdAt: invalidatedAt - 1 }),
+      300,
+      30,
+      ["home"],
+    );
+    await drain(mockCtx);
+
+    expect((await store.getShell("k"))?.entry.prelude).toBe("new");
   });
 
   it("evicts and misses on a corrupt (non-JSON) KV entry", async () => {

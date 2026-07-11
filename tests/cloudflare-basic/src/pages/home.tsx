@@ -1,4 +1,4 @@
-import { Meta } from "@rangojs/router";
+import { Meta, redirect } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -23,6 +23,10 @@ const features = [
 ];
 
 export function HomePage(ctx: HandlerContext) {
+  if (ctx.searchParams.has("ssr-setup-redirect")) {
+    return redirect("/about");
+  }
+
   const meta = ctx.use(Meta);
   meta({ title: "Home - RSC Router Cloudflare" });
   meta({

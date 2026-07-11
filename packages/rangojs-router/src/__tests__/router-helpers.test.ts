@@ -432,6 +432,52 @@ describe("serializeCookie", () => {
     expect(result).not.toContain("HttpOnly");
     expect(result).not.toContain("Domain");
   });
+
+  it("rejects domain with forbidden characters", () => {
+    expect(() =>
+      serializeCookie("a", "b", { domain: "example.com;evil" }),
+    ).toThrow("invalid cookie domain");
+    expect(() =>
+      serializeCookie("a", "b", { domain: "example.com\nhost" }),
+    ).toThrow("invalid cookie domain");
+  });
+
+  it("rejects path with forbidden characters or missing leading slash", () => {
+    expect(() => serializeCookie("a", "b", { path: "/;evil" })).toThrow(
+      "invalid cookie path",
+    );
+    expect(() => serializeCookie("a", "b", { path: "relative" })).toThrow(
+      "invalid cookie path",
+    );
+  });
+
+  it("rejects sameSite outside the allowed set", () => {
+    expect(() =>
+      serializeCookie("a", "b", { sameSite: "invalid" as any }),
+    ).toThrow("invalid cookie sameSite");
+  });
+
+  it("rejects non-finite maxAge", () => {
+    expect(() => serializeCookie("a", "b", { maxAge: NaN })).toThrow(
+      "invalid cookie maxAge",
+    );
+    expect(() => serializeCookie("a", "b", { maxAge: Infinity })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
+
+  it("rejects fractional maxAge", () => {
+    expect(() => serializeCookie("a", "b", { maxAge: 1.5 })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
+
+  it("rejects maxAge that would serialize in exponential notation", () => {
+    // Number.isInteger(1e21) is true; Max-Age=1e+21 is invalid wire syntax.
+    expect(() => serializeCookie("a", "b", { maxAge: 1e21 })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
 });
 
 // ========================================================================

@@ -189,6 +189,33 @@ describe("VercelCacheStore", () => {
       await expect(s.invalidateTags(["x"])).rejects.toThrow("expireTag boom");
     });
 
+    // The build-shell read-through's eviction gate (#699): the platform's
+    // expireTag DELETES entries and keeps no history, so invalidateTags writes
+    // its own tm-family markers and isTagsInvalidatedSince compares them
+    // against a baked entry's build-time createdAt (>= — same-ms wins).
+    it("isTagsInvalidatedSince: marker at or after `since` wins; absent tags are false", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const t0 = Date.now();
+      await s.invalidateTags(["home"]);
+      expect(await s.isTagsInvalidatedSince(["home"], t0)).toBe(true);
+      expect(await s.isTagsInvalidatedSince(["home"], t0 + 1)).toBe(false);
+      expect(await s.isTagsInvalidatedSince(["absent"], 0)).toBe(false);
+      expect(await s.isTagsInvalidatedSince(["absent", "home"], t0)).toBe(true);
+    });
+
+    it("tag markers survive expireTag (untagged) and live in the tm family", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.invalidateTags(["home"]);
+      const markerKey = [...store.keys()].find((k) => k.includes(":tm:"));
+      expect(markerKey).toBeTruthy();
+      expect(store.get(markerKey!)!.tags).toEqual([]);
+      // Invalidating another tag must not delete the first marker.
+      await s.invalidateTags(["other"]);
+      expect(store.has(markerKey!)).toBe(true);
+    });
+
     it("drops comma-bearing and over-length tags but keeps valid ones", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
@@ -496,6 +523,20 @@ describe("VercelCacheStore", () => {
       expect(hit?.entry.snapshot).toEqual(entry.snapshot);
     });
 
+    it("round-trips replay eligibility flags", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell(
+        "k",
+        shellEntry({ handlerLiveHoles: true, transitionWhen: true }),
+        60,
+        300,
+      );
+      const entry = (await s.getShell("k"))?.entry;
+      expect(entry?.handlerLiveHoles).toBe(true);
+      expect(entry?.transitionWhen).toBe(true);
+    });
+
     it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
@@ -511,6 +552,18 @@ describe("VercelCacheStore", () => {
       expect(await s.getShell("k")).toBeNull();
     });
 
+    it("reports a passive stale read without claiming the revalidation lock", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300);
+
+      vi.setSystemTime(new Date(T0 + 120_000));
+      expect(
+        (await s.getShell("k", { claimRevalidation: false }))?.shouldRevalidate,
+      ).toBe(true);
+      expect(store.has("rg:h:k:lock")).toBe(false);
+    });
+
     it("is invalidated by tag", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
@@ -518,6 +571,55 @@ describe("VercelCacheStore", () => {
       expect(await s.getShell("k")).not.toBeNull();
       await s.invalidateTags(["home"]);
       expect(await s.getShell("k")).toBeNull();
+    });
+
+    it("does not resurrect a shell captured before tag invalidation", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const captured = shellEntry({ createdAt: T0 });
+      vi.setSystemTime(new Date(T0 + 1));
+      await s.invalidateTags(["home"]);
+      expect(await s.putShell("k", captured, 60, 300, ["home"])).toBe(
+        "invalidated",
+      );
+
+      expect(await s.getShell("k")).toBeNull();
+      expect(store.has("rg:h:k")).toBe(false);
+    });
+
+    it("does not delete a newer shell when an older capture is rejected", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      vi.setSystemTime(new Date(T0 + 1));
+      await s.invalidateTags(["home"]);
+      vi.setSystemTime(new Date(T0 + 2));
+      await s.putShell(
+        "k",
+        shellEntry({ prelude: "new", createdAt: T0 + 2 }),
+        60,
+        300,
+        ["home"],
+      );
+      await s.putShell(
+        "k",
+        shellEntry({ prelude: "old", createdAt: T0 }),
+        60,
+        300,
+        ["home"],
+      );
+
+      expect((await s.getShell("k"))?.entry.prelude).toBe("new");
+    });
+
+    it("does not retain a tagged shell longer than its invalidation marker", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const twoYears = 2 * 365 * 24 * 60 * 60;
+      await s.putShell("k", shellEntry(), twoYears, 0, ["home"]);
+
+      expect(store.get("rg:h:k")?.expiresAt).toBe(
+        T0 + 365 * 24 * 60 * 60 * 1000,
+      );
     });
 
     it("skips a shell write above maxItemBytes (fail-open) and misses", async () => {

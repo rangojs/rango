@@ -20,10 +20,10 @@
  * - Response routes (non-RSC)                         -> serialized Response
  *   - json:           JSON.stringify(result) (bare value) with application/json
  *   - text/html/xml/md: String(result) with the mapped MIME type
- *   - handler returning a Response:                     re-wrapped like
+ *   - handler returning or throwing a Response:         re-wrapped like
  *     handleResponseRoute (stub headers/cookies merged, Set-Cookie preserved,
  *     WebSocket upgrade passed through without reconstruction)
- *   - handler throwing an error:                        typed 500 / RouterError
+ *   - handler throwing a non-Response error:            typed 500 / RouterError
  *     status, matching handleResponseRoute (RFC 9457 problem+json body with
  *     application/problem+json for json routes, text/plain message otherwise)
  *   - content-negotiated route:                         Vary: Accept appended
@@ -53,7 +53,7 @@
  *   cache({ key })/cache({ tags }), or a custom store whose keyGenerator/
  *   getResponse/putResponse throws) fires onError with phase "cache" and
  *   metadata.category, while the request still degrades-to-miss exactly as before.
- *   (A thrown response-route HANDLER error is the one onError path NOT covered —
+ *   (A thrown non-Response route HANDLER error is the one onError path NOT covered —
  *   see "DOES NOT support" below.)
  * - createRouter({ telemetry }) match-transaction lifecycle: request.start opens
  *   the transaction before the global middleware chain, request.end closes it
@@ -63,6 +63,10 @@
  *   (getRequestId). Emission is gated entirely on a configured sink; with none,
  *   dispatch does zero new work and stays byte-identical for existing callers.
  *   Lets a consumer unit-test their sink wiring in-process instead of only at e2e.
+ * - Response-route `renderStartMs` timeouts and `onTimeout`: dispatch races the
+ *   same terminal response work, reports the timeout through onError/telemetry,
+ *   and invokes the configured callback. `context.render` is absent because this
+ *   primitive deliberately does not run the Flight/HTML render driver.
  *
  * What dispatch DOES NOT support (and why):
  * - RSC component routes — rendering requires the Flight serializer + React
@@ -70,7 +74,7 @@
  *   This includes partial requests that resolve to a component route.
  * - Server actions (?_rsc_action) — RSC protocol concerns handled by
  *   router.fetch().
- * - createRouter({ onError }) on a thrown response-route HANDLER error: the
+ * - createRouter({ onError }) on a thrown non-Response route HANDLER error: the
  *   error is serialized into the same typed 500 / RouterError Response as
  *   production, but onError is NOT invoked for that path here. Cover handler-error
  *   onError side effects with an e2e test. (This is the unchanged boundary; cache
@@ -129,21 +133,22 @@ import {
   createSimpleRedirectResponse,
   finalizeResponse,
   interceptRedirectForPartial,
-  mergeStubHeadersAndFinalize,
+  rewrapResponseRouteResponse,
 } from "../rsc/helpers.js";
 import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
 import { stringifyJsonRouteResult } from "../rsc/json-route-result.js";
-import {
-  EXTERNAL_REDIRECT_MARKER,
-  isExternalRedirect,
-  markExternalRedirect,
-} from "../redirect-origin.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import { invokeOnError } from "../router/error-handling.js";
 import type { OnErrorCallback } from "../types/error-types.js";
 import type { Rango } from "../router/router-interfaces.js";
 import { getRequestId, resolveSink, safeEmit } from "../router/telemetry.js";
 import type { TelemetrySink } from "../router/telemetry.js";
+import {
+  RouterTimeoutError,
+  createDefaultTimeoutResponse,
+  withTimeout,
+} from "../router/timeout.js";
+import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -164,6 +169,8 @@ interface DispatchableRouter<TEnv> {
    * byte-identical for every existing caller.
    */
   telemetry?: TelemetrySink;
+  timeouts?: ResolvedTimeouts;
+  onTimeout?: OnTimeoutCallback<TEnv>;
   findMatch(pathname: string): Promise<{
     redirectTo?: string;
     routeKey?: string;
@@ -297,51 +304,6 @@ function serializeResponseRouteError(
 }
 
 /**
- * Re-wrap a handler-returned Response, byte-identical to handleResponseRoute's
- * rewrapResponse:
- * - A WebSocket upgrade (status 101 or a `webSocket` property) is returned via
- *   mergeStubHeadersAndFinalize WITHOUT reconstruction — the Response
- *   constructor rejects status 101, and an upgrade response's headers/socket
- *   must not be rebuilt.
- * - Otherwise headers are copied into a fresh Headers (Set-Cookie appended to
- *   preserve duplicates, others set) and the Response is rebuilt through
- *   createResponseWithMergedHeaders so stub headers/cookies, the ctx.setStatus
- *   override, and onResponse callbacks merge exactly as in production. statusText
- *   is intentionally dropped (production does not carry it across the re-wrap).
- *
- * Must run inside runWithRequestContext (reads the ambient request context via
- * the helpers), which callHandler guarantees.
- */
-function rewrapHandlerResponse(result: Response): Response {
-  if (isWebSocketUpgradeResponse(result)) {
-    return mergeStubHeadersAndFinalize(result);
-  }
-  const headers = new Headers();
-  result.headers.forEach((value, key) => {
-    // Mirror production: never copy the reserved external-redirect marker off a
-    // handler result (it is not a trust signal; the opt-in is the out-of-band
-    // brand transferred below).
-    if (key.toLowerCase() === EXTERNAL_REDIRECT_MARKER) return;
-    if (key.toLowerCase() === "set-cookie") {
-      headers.append(key, value);
-    } else {
-      headers.set(key, value);
-    }
-  });
-  const rewrapped = createResponseWithMergedHeaders(result.body, {
-    status: result.status,
-    headers,
-  });
-  // Mirror production's rewrapResponse: transfer the out-of-band external brand
-  // only from a genuinely branded result (a real redirect(url, { external:
-  // true })), never from a proxied upstream's forged header.
-  if (isExternalRedirect(result)) {
-    markExternalRedirect(rewrapped);
-  }
-  return rewrapped;
-}
-
-/**
  * Run a request through the router in-process and return the Response.
  *
  * @example
@@ -451,6 +413,7 @@ export async function dispatch<TEnv = any>(
   // with it. Mirror it so basename-redirect tests behave as they do in a real
   // mounted app instead of always seeing no prefix.
   requestContext._basename = router.basename;
+  requestContext._routerId = routerId;
 
   // Match production's response-route reverse EXACTLY: the real handler builds
   // it from the route map alone (response-route-handler.ts), with NO matched
@@ -539,13 +502,15 @@ export async function dispatch<TEnv = any>(
       const callHandler = async (): Promise<Response> => {
         let merged: Response;
         try {
-          const result = await (handler as Function)(responseHandlerCtx);
+          let result: unknown;
+          try {
+            result = await (handler as Function)(responseHandlerCtx);
+          } catch (error) {
+            if (!(error instanceof Response)) throw error;
+            result = error;
+          }
           if (result instanceof Response) {
-            // Handler returned a Response: mirror handleResponseRoute's
-            // rewrapResponse (WebSocket-upgrade bypass + Set-Cookie-preserving
-            // header rebuild, statusText dropped) rather than the generic
-            // createResponseWithMergedHeaders re-wrap below.
-            merged = rewrapHandlerResponse(result);
+            merged = rewrapResponseRouteResponse(result);
           } else {
             // Route the serialized (json/text/...) body through the SAME
             // production finalizer the RSC handler uses, so ctx.onResponse()
@@ -671,6 +636,89 @@ export async function dispatch<TEnv = any>(
       return executeHandler().then(finalizeResponse);
     };
 
+    // The renderStartMs deadline wraps ONLY the response-route unit, mirroring
+    // handler.ts:845 where withTimeout(handleResponseRoute(...)) runs INSIDE
+    // coreRequestHandler — after the global middleware chain has already
+    // entered. Wrapping the outer chain (as an earlier version did) counted
+    // global middleware time toward the deadline, so a slow global auth
+    // middleware could 504 a request production serves. On timeout the 504/
+    // onTimeout Response is RETURNED from coreHandler so it flows back out
+    // through the global chain and finalizeResponse, identical to production
+    // (handler.ts:857 returns handleTimeoutResponse into the same next() path).
+    const runResponseRoute = async (): Promise<Response> => {
+      const responseWork = callResponseRoute();
+      const renderOutcome = await withTimeout(
+        responseWork,
+        router.timeouts?.renderStartMs,
+        "render-start",
+      );
+      if (!renderOutcome.timedOut) return renderOutcome.result;
+
+      // The race's losing side keeps executing after the timeout wins; its
+      // eventual Response is dropped. Swallow any rejection (no
+      // unhandled-rejection surfacing) and cancel the orphaned body stream so,
+      // under vitest, the abandoned handler cannot leak into the next test.
+      // Production abandons it too (handler.ts:845); this is a runner-scoped
+      // cleanup, not an observable-behavior change.
+      void responseWork
+        .then(
+          (orphan) => orphan.body?.cancel(),
+          () => {},
+        )
+        .catch(() => {});
+
+      const durationMs = renderOutcome.durationMs;
+      const timeoutError = new RouterTimeoutError("render-start", durationMs);
+      // Field-for-field parity with handleTimeoutResponse's callOnError
+      // (handler.ts:254): env is passed through (was previously dropped). render
+      // is always absent — dispatch runs no Flight/HTML driver, so there is no
+      // foreground cursor to snapshot.
+      invokeOnError(
+        router.onError,
+        timeoutError,
+        "handler",
+        {
+          request: req,
+          url,
+          env,
+          routeKey,
+          handledByBoundary: false,
+          metadata: { timeout: true, phase: "render-start", durationMs },
+        },
+        "RSC",
+      );
+      if (sink) {
+        safeEmit(resolveSink(sink), {
+          type: "request.timeout",
+          timestamp: performance.now(),
+          requestId: telemetryRequestId,
+          phase: "render-start",
+          pathname: url.pathname,
+          routeKey,
+          durationMs,
+          customHandler: router.onTimeout !== undefined,
+        });
+      }
+      if (router.onTimeout) {
+        try {
+          return await router.onTimeout({
+            phase: "render-start",
+            request: req,
+            url,
+            env,
+            routeKey,
+            durationMs,
+          });
+        } catch (error) {
+          if (process.env.NODE_ENV !== "production") {
+            console.error("[dispatch] onTimeout callback error:", error);
+          }
+          return createDefaultTimeoutResponse("render-start");
+        }
+      }
+      return createDefaultTimeoutResponse("render-start");
+    };
+
     // coreHandler is the single terminal the global middleware chain wraps,
     // mirroring production's coreHandler (handler.ts): a trailing-slash/redirect
     // 308, an unmatched-path 404, or the response route. Both the 308 and the
@@ -678,7 +726,9 @@ export async function dispatch<TEnv = any>(
     // cookies/headers merge onto them, identical to production's
     // rsc-rendering.ts redirect path — and because they sit inside the chain, a
     // global middleware that short-circuits (e.g. an auth 401) runs first and
-    // wins, never reaching the 308/404.
+    // wins, never reaching the 308/404. The renderStartMs deadline lives inside
+    // runResponseRoute (below the chain), never covering the 308/404 paths —
+    // production only wraps the response-route plan (handler.ts:834-856).
     const coreHandler = async (): Promise<Response> => {
       if (redirectTo) {
         return createResponseWithMergedHeaders(null, {
@@ -692,7 +742,7 @@ export async function dispatch<TEnv = any>(
           headers: { "content-type": "text/plain;charset=utf-8" },
         });
       }
-      return callResponseRoute();
+      return runResponseRoute();
     };
 
     // request.start opens the match transaction, mirroring match-handlers.ts.
@@ -712,7 +762,11 @@ export async function dispatch<TEnv = any>(
 
     try {
       // Global (pattern-matched) middleware wraps coreHandler, exactly as
-      // production wraps coreHandler with executeMiddleware (handler.ts).
+      // production wraps coreHandler with executeMiddleware (handler.ts:568).
+      // The renderStartMs deadline is deliberately NOT applied here — it wraps
+      // only the response-route unit inside coreHandler (see runResponseRoute),
+      // mirroring handler.ts:845 so global middleware time is never counted
+      // toward the deadline.
       const globalMatches = matchMiddleware(url.pathname, router.middleware);
       const mwResponse =
         globalMatches.length === 0
@@ -734,9 +788,22 @@ export async function dispatch<TEnv = any>(
       // 204 + X-RSC-Redirect (see the location-state divergence in the header).
       let finalResponse: Response;
       if (isPartial || isAction) {
+        const softOpts = {
+          requestOrigin: url.origin,
+          basename: router.basename,
+        };
+        // Pass `external` through: interceptRedirectForPartial forwards the
+        // out-of-band brand as the third callback arg (helpers.ts). Dropping it
+        // would neutralize redirect(url, { external: true }) to "/" in dispatch
+        // while production preserves it via createRedirectFlightResponse.
         const intercepted = interceptRedirectForPartial(
           mwResponse,
-          (redirectUrl) => createSimpleRedirectResponse(redirectUrl),
+          (redirectUrl, _locationState, external) =>
+            createSimpleRedirectResponse(redirectUrl, {
+              ...softOpts,
+              external,
+            }),
+          softOpts,
         );
         finalResponse = finalizeResponse(intercepted ?? mwResponse);
       } else {
@@ -768,8 +835,7 @@ export async function dispatch<TEnv = any>(
       // browser-followed (3xx + Location) redirect is same-origin guarded before
       // it leaves -- a cross-origin Location is rewritten to the basename root
       // unless redirect(url, { external: true }) opted out. Soft partial/action
-      // redirects are 204 + X-RSC-Redirect and pass through untouched (the client
-      // validates them), so this is a no-op for them.
+      // redirects are already resolved at createSimpleRedirectResponse time.
       return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
     } catch (error) {
       if (sink) {

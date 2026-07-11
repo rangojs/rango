@@ -49,6 +49,9 @@ jobs:
       - name: Check e2e dev/prod bucketing
         run: pnpm check:e2e-bucketing
 
+      - name: Check e2e dev/prod parity
+        run: node tools/check-e2e-parity.mjs --strict
+
       - name: Check internal doc links
         run: pnpm check:doc-links
 
@@ -82,6 +85,38 @@ jobs:
 
       - name: Check formatting
         run: pnpm format
+
+  # Bundle guards (issue #761): builds cloudflare-basic, cloudflare-stress-demo
+  # and the e2e test-app with RANGO_ANALYZE=1, then asserts (1) no server-only
+  # module contributes bytes to any client bundle beyond the allowlist in
+  # tools/check-bundle-guards.mjs, (2) the client router chunk gzip ratchet,
+  # (3) the stress-demo eager routes-manifest ceiling.
+  bundle-guards:
+    needs: [debounce]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The check builds cloudflare-basic, whose vite config loads the
+      # workspace router's ./vite entry from dist/.
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Run the bundle guards
+        run: pnpm check:bundle-guards
 
   install-playwright:
     needs: [debounce]
@@ -135,8 +170,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # No router build: typecheck resolves @rangojs/router types from src
-      # (the exports map `types` points at ./src/*), so dist/ is not needed.
+      # Package type conditions point at dist/types. Turbo's ^build dependency
+      # also builds the workspace router before consumer typechecks, but keep
+      # declaration generation explicit here so this CI contract cannot drift
+      # with a future task-graph change.
+      - name: Build rangojs-router declarations
+        run: pnpm --filter @rangojs/router build:types
+
       - name: Run typecheck
         run: pnpm typecheck
 
@@ -374,6 +414,62 @@ jobs:
         with:
           name: playwright-report-vercel-basic
           path: examples/vercel-basic/playwright-report/
+          retention-days: 7
+
+  # Host-router coverage on the node/vercel preset: routing by Host header
+  # (a.localhost / b.localhost sub-apps) plus the generated entry's
+  # NoRouteMatchError -> 404 catch, in dev AND against the served
+  # .vercel/output. The deploy-shape bundling of the same output is covered
+  # by vercel-smoke above.
+  vercel-multi-router-e2e:
+    needs: [install-playwright]
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-
+
+      - name: Install Playwright system deps
+        run: pnpm --filter rangojs-vercel-multi-router exec playwright install-deps chromium
+
+      - name: Run vercel-multi-router e2e tests (dev + production)
+        run: pnpm --filter rangojs-vercel-multi-router test:e2e
+        env:
+          TEST_DEBUG: "1"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report-vercel-multi-router
+          path: examples/vercel-multi-router/playwright-report/
           retention-days: 7
 
   rangojs-router-e2e:

@@ -1,4 +1,5 @@
 import { createRouter } from "@rangojs/router";
+import type { TimeoutContext } from "@rangojs/router";
 import {
   createDocumentCacheMiddleware,
   CFCacheStore,
@@ -36,6 +37,38 @@ export const router = createRouter<AppBindings>({
   // in (e2e/default-prefetch-none.test.ts). The test-app dogfoods the
   // default-on seat.
   defaultPrefetch: "none",
+  // Render-timeout diagnostics fixture (e2e/render-timeout-stage.test.ts). Gated
+  // behind RANGO_E2E_RENDER_TIMEOUT (inlined by vite.config.ts `define`, set on
+  // the e2e webServers in playwright.config.ts) so the 15s render-start deadline
+  // + onTimeout bookkeeping applies ONLY under the e2e run — never on a real
+  // `vite dev`/`preview`/`wrangler deploy`, and never on the vitest unit suite
+  // (which builds its own router). Router-level `timeouts` cannot be scoped
+  // per-test on the shared e2e webServer, so all e2e requests see the 15s
+  // deadline; that is well above any healthy request and never reaches a deploy.
+  ...(process.env.RANGO_E2E_RENDER_TIMEOUT
+    ? {
+        timeouts: { renderStartMs: 15000 },
+        onTimeout: (context: TimeoutContext<AppBindings>) =>
+          new Response(JSON.stringify(context.render ?? null), {
+            status: 504,
+            headers: { "content-type": "application/json;charset=utf-8" },
+          }),
+      }
+    : {}),
+  ssr: {
+    resolveStreaming: async ({ url }) => {
+      // Same gate as the timeouts above: the 20s stall that trips the render
+      // deadline only arms under the e2e flag, so `?__render_timeout_stage` is
+      // inert on a real deploy.
+      if (
+        process.env.RANGO_E2E_RENDER_TIMEOUT &&
+        url.searchParams.has("__render_timeout_stage")
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20000));
+      }
+      return "stream" as const;
+    },
+  },
   // Enable theme support with system detection
   theme: {
     defaultTheme: "light",
@@ -74,7 +107,11 @@ export const router = createRouter<AppBindings>({
     // Test-only: record { phase, message } so the redirect onError e2e can
     // read it back via /__test/last-error. The console.error above is kept so
     // a real consumer's logging path stays exercised.
-    onErrorLog.push({ phase: ctx.phase, message: ctx.error.message });
+    onErrorLog.push({
+      phase: ctx.phase,
+      message: ctx.error.message,
+      metadata: ctx.metadata,
+    });
   },
 })
   // Document cache middleware - caches full responses based on Cache-Control headers

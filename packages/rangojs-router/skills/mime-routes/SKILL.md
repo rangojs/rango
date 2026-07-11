@@ -41,26 +41,33 @@ When an API client requests the same URL (`Accept: application/json`), the JSON 
 1. **Q-value priority** — higher `q` wins (`Accept: application/json;q=0.9, text/html;q=1.0` serves RSC)
 2. **Client order tiebreaker** — when q-values are equal, the type listed first in Accept wins (matches Express/Hono behavior)
 3. **Specific MIME match** — the variant whose MIME type appears in Accept wins
-4. **Wildcard / empty Accept** — `*/*` and missing Accept fall back to route definition order (the first-defined variant wins)
+4. **Wildcard / empty Accept** — `*/*` and missing Accept fall back to route definition order (the first-defined variant wins); when the RSC route wins this way, it serves the HTML document
 5. **All responses** on a negotiated URL get `Vary: Accept` header, including the RSC side
 
-RSC participates as a `text/html` candidate alongside response-type variants.
-There is no special short-circuit — RSC follows the same negotiation rules as other types.
+RSC participates as a candidate alongside response-type variants under two MIME
+types: `text/html` (the document — its canonical representation) and
+`text/x-component` (the RSC flight wire format). There is no special
+short-circuit — RSC follows the same negotiation rules as other types.
 
 The MIME mapping used for matching:
 
-| Tag                  | MIME type                                                    |
-| -------------------- | ------------------------------------------------------------ |
-| RSC (plain `path()`) | `text/html` (negotiation) / `text/x-component` (wire format) |
-| `json`               | `application/json`                                           |
-| `text`               | `text/plain`                                                 |
-| `xml`                | `application/xml`                                            |
-| `html`               | `text/html`                                                  |
-| `md`                 | `text/markdown`                                              |
+| Tag                  | MIME type                              |
+| -------------------- | -------------------------------------- |
+| RSC (plain `path()`) | `text/html` **and** `text/x-component` |
+| `json`               | `application/json`                     |
+| `text`               | `text/plain`                           |
+| `xml`                | `application/xml`                      |
+| `html`               | `text/html`                            |
+| `md`                 | `text/markdown`                        |
 
-RSC routes negotiate as `text/html` but respond with `text/x-component` (the RSC wire format).
-The browser's RSC runtime decodes this transparently — clients requesting `text/html` get
-the RSC page rendered normally.
+Which representation an RSC win renders is decided by the same Accept header:
+the flight wire format is **explicit opt-in only** (`Accept: text/x-component`,
+or the internal `_rsc_*`/`__rsc` transport params the client runtime sends).
+Everything else — browsers, `curl` (`*/*`), a missing Accept header, mismatched
+types like `application/json` on a URL with no JSON variant — gets the HTML
+document. A generic HTTP client never sees the wire format by accident, and an
+explicit `Accept: text/x-component` selects the RSC flight stream even on a
+route where a response variant is defined first.
 
 Tags `image`, `stream`, and `any` are pass-through and do not participate in Accept matching.
 
@@ -77,11 +84,12 @@ export const urlpatterns = urls(({ path }) => [
 ]);
 ```
 
-- `Accept: text/html` — RSC page
+- `Accept: text/html` — RSC page (HTML document)
 - `Accept: application/json` — JSON handler
 - `Accept: text/plain` — text handler
 - `Accept: application/xml` — XML handler
-- `Accept: */*` — RSC page (the primary, since it was registered first)
+- `Accept: */*` — RSC page as HTML (the primary, since it was registered first)
+- `Accept: text/x-component` — RSC page as the flight wire format
 
 ## Wildcard Routes
 

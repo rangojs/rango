@@ -65,6 +65,7 @@ import {
   getTagMarkerMemo,
   getTagMarkerInflight,
 } from "./cf-tag-marker-memo.js";
+import { createCloudflareZonePurge } from "./cf-zone-purge.js";
 
 // ============================================================================
 // Constants
@@ -138,6 +139,13 @@ const warnedNoKvReadInvalidation = new Set<string>();
 const warnedTagInvalidationTtlFloor = new Set<string>();
 
 /**
+ * Stores (by namespace) already warned about the shell family being inert
+ * (getShell/putShell no-op without a KV namespace), so a ppr route hitting the
+ * silent fail-open warns once per isolate instead of on every request.
+ */
+const warnedShellFamilyInert = new Set<string>();
+
+/**
  * Stores (by namespace) already warned that tag invalidation is writing KV
  * markers with no expiry (tagInvalidationTtl unset), so the unbounded-growth
  * warning fires once per process rather than once per invalidateTags call
@@ -146,6 +154,57 @@ const warnedTagInvalidationTtlFloor = new Set<string>();
  * below-floor value, never for the unset (no-expiry) default that this bounds.
  */
 const warnedNoTagInvalidationTtl = new Set<string>();
+
+/**
+ * Stores (by namespace) already warned that an entry's tag set produced a
+ * Cache-Tag header over Cloudflare's aggregate limit, so the header was
+ * omitted (the entry stays cacheable and marker-invalidatable; it just cannot
+ * be evicted per-tag by a purge). Once per process, not per write.
+ */
+const warnedCacheTagHeaderOverflow = new Set<string>();
+
+/**
+ * Stores (by namespace) already warned that an over-limit tag set made an
+ * entry UNCACHEABLE in KV-less purge mode: with no Cache-Tag tokens a purge
+ * cannot evict it, and with no KV there is no marker fallback either, so
+ * caching it would serve stale until TTL while updateTag() reports success.
+ * Once per process, not per write.
+ */
+const warnedCacheTagOverflowUncacheable = new Set<string>();
+
+/**
+ * Max length of one emitted `rg:*` Cache-Tag token. Cloudflare caps a purge
+ * API tag value at 1,024 characters and the aggregate Cache-Tag header at
+ * 16 KB; an application tag is unbounded, so an over-long token is collapsed
+ * to a deterministic hash (see boundedTagToken) instead of being allowed to
+ * fail the whole L1 write. 256 keeps headers compact while leaving room for
+ * long-but-reasonable tag names under any namespace.
+ */
+const CACHE_TAG_TOKEN_MAX = 256;
+
+/**
+ * Cloudflare's documented aggregate Cache-Tag header limit (16 KB). A tagged
+ * entry whose tokens would exceed it gets NO Cache-Tag header (plus a
+ * once-per-namespace warning) rather than a failed cache write; the read path
+ * then falls back to the marker check for that entry (see isL1Invalidated).
+ */
+const CACHE_TAG_HEADER_MAX_BYTES = 16 * 1024;
+
+/**
+ * FNV-1a 64-bit hash of a tag value, hex-encoded. Used to bound over-long
+ * Cache-Tag tokens: deterministic (write-time token === purge-time token) and
+ * collision-safe in the failure direction — a collision over-purges (an extra
+ * eviction, healed by the next render), never serves stale.
+ * @internal
+ */
+function fnv1a64(input: string): string {
+  let hash = 0xcbf29ce484222325n;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
+}
 
 // ============================================================================
 // Types
@@ -213,7 +272,7 @@ interface KVShellEnvelope {
   rv: string;
   /** Build version captured at prerender time (ShellCacheEntry.buildVersion) */
   bv?: string;
-  /** createdAt (ms epoch) */
+  /** Capture-generation start time (ms epoch), used by tag marker checks. */
   c: number;
   /** When entry becomes stale (ms epoch) */
   s: number;
@@ -227,6 +286,15 @@ interface KVShellEnvelope {
   i?: string;
   /** Capture data snapshot: recorded cache-store hits/writes for HIT parity */
   sn?: import("../types.js").ShellSnapshotRecord[];
+  /**
+   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
+   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
+   * here silently fast-pathed handler-live entries after a KV round trip —
+   * their holes only a handler re-run can fill.
+   */
+  lh?: boolean;
+  /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
+  tw?: true;
 }
 
 /**
@@ -257,6 +325,7 @@ interface KVResponseEnvelope {
 // ============================================================================
 
 export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
+  readonly supportsPassiveShellReads: true = true;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -273,6 +342,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly debug?: (event: CFCacheReadDebugEvent) => void;
   private readonly kv?: KVNamespace;
   private readonly onRevalidateTag?: (tags: string[]) => Promise<void>;
+  private readonly tagPurge?: (cacheTags: string[]) => Promise<void>;
   private readonly tagInvalidationTtl?: number;
   private readonly tagCacheTtl: number;
 
@@ -328,6 +398,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
     this.onRevalidateTag = options.onRevalidateTag;
+    // tagPurge accepts a ready purge function or a credentials object; the
+    // object form is normalized through the built-in zone purge client, which
+    // validates zoneId/apiToken eagerly so an unset env var fails at
+    // construction instead of on the first updateTag().
+    this.tagPurge =
+      typeof options.tagPurge === "function"
+        ? options.tagPurge
+        : options.tagPurge
+          ? createCloudflareZonePurge(options.tagPurge)
+          : undefined;
     // tagInvalidationTtl feeds KV's expirationTtl, which CF rejects below
     // KV_MIN_EXPIRATION_TTL (60s) -- a too-small finite value would make EVERY
     // marker write throw and break ALL invalidation. Floor it (and warn once);
@@ -350,8 +430,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // tag machinery (tagCacheTtl for L1 markers, or onRevalidateTag for CDN purge)
     // but omits kv gets only the purge fired - marker writes are skipped without
     // kv - yet every tagged read still serves stale data with no other signal.
-    // Surface that misconfiguration.
-    if (!this.kv && (this.tagCacheTtl > 0 || this.onRevalidateTag)) {
+    // Surface that misconfiguration. Exception: with tagPurge configured (purge
+    // mode) L1 eviction is the purge itself, so a KV-less store is a supported
+    // L1-only configuration, not a silent no-op.
+    if (
+      !this.kv &&
+      !this.tagPurge &&
+      (this.tagCacheTtl > 0 || this.onRevalidateTag)
+    ) {
       this.warnOncePerNamespace(
         warnedNoKvReadInvalidation,
         `[CFCacheStore] tagCacheTtl/onRevalidateTag is configured without a KV ` +
@@ -867,9 +953,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // when debug is on, so the hot path pays nothing. It is the serial read
       // that sits between matchMs and bodyReadMs for a tagged entry.
       const markerStart = this.debug ? Date.now() : 0;
-      const invalidated = await this.isGloballyInvalidated(
+      const invalidated = await this.isL1Invalidated(
         tagInfo.tags,
         tagInfo.taggedAt,
+        response.headers,
       );
       const markerMs = this.debug ? Date.now() - markerStart : undefined;
       if (invalidated) {
@@ -1025,6 +1112,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     swr?: number,
   ): Promise<void> {
     if (this.isReservedSegmentKey(key, "cache-write")) return;
+    if (this.skipUncacheableTagSet(data.tags)) return;
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(key);
@@ -1045,6 +1133,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         ? { ...data, taggedAt }
         : data;
 
+      // Serialize the segment payload exactly once: L1 stores the JSON body
+      // directly, and kvSetSegment embeds the same string as envelope.d so the
+      // (potentially large) Flight/segment tree is not walked a second time.
       const body = JSON.stringify(dataToStore);
       const response = new Response(body, {
         headers: {
@@ -1081,8 +1172,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         await putPromise;
       }
 
-      // L2: persist to KV
-      this.kvSetSegment(key, dataToStore, staleAt, totalTtl, swrWindow);
+      // L2: persist to KV (reuses `body` as envelope.d)
+      this.kvSetSegment(key, body, staleAt, totalTtl, swrWindow);
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] set");
     }
@@ -1156,7 +1247,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // Tag invalidation check (treat invalidated entry as a miss).
       const tagInfo = this.readTagInfo(response.headers);
-      if (await this.isGloballyInvalidated(tagInfo.tags, tagInfo.taggedAt)) {
+      if (
+        await this.isL1Invalidated(
+          tagInfo.tags,
+          tagInfo.taggedAt,
+          response.headers,
+        )
+      ) {
         return null;
       }
 
@@ -1232,6 +1329,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     headers.delete(CACHE_STATUS_HEADER);
     headers.delete(CACHE_TAGS_HEADER);
     headers.delete(CACHE_TAGGED_AT_HEADER);
+    // Remove OUR namespaced tokens from Cache-Tag while preserving any the
+    // document author set (setTagHeaders appended ours onto theirs). The
+    // author's tags may be load-bearing for their own CDN purging; ours are
+    // internal storage bookkeeping and must not leak to clients.
+    this.stripInternalCacheTags(headers);
     // Internal stale-path bookkeeping (hard-expiry deadline + REVALIDATING
     // stamp). Carried on doc L1 entries for the herd guard; never serve them.
     headers.delete(CACHE_EXPIRES_AT_HEADER);
@@ -1257,6 +1359,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     swr?: number,
     tags?: string[],
   ): Promise<void> {
+    if (this.skipUncacheableTagSet(tags)) return;
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`doc:${key}`);
@@ -1424,9 +1527,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // marker-resolution tail only under debug (see get()).
       const tagInfo = this.readTagInfo(response.headers);
       const markerStart = this.debug ? Date.now() : 0;
-      const invalidated = await this.isGloballyInvalidated(
+      const invalidated = await this.isL1Invalidated(
         tagInfo.tags,
         tagInfo.taggedAt,
+        response.headers,
       );
       const markerMs = this.debug ? Date.now() - markerStart : undefined;
       if (invalidated) {
@@ -1554,6 +1658,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     value: string,
     options?: CacheItemOptions,
   ): Promise<void> {
+    if (this.skipUncacheableTagSet(options?.tags)) return;
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`fn:${key}`);
@@ -1567,7 +1672,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const taggedAt =
         Array.isArray(tags) && tags.length > 0 ? Date.now() : undefined;
 
-      const body = JSON.stringify({ value, handles: options?.handles });
+      // Serialize value/handles once; L1 body and KV envelope.v/h share the
+      // escaped strings so a large RSC payload is not re-escaped for L2.
+      const valueJson = JSON.stringify(value);
+      const handlesJson =
+        options?.handles !== undefined
+          ? JSON.stringify(options.handles)
+          : undefined;
+      const body =
+        handlesJson !== undefined
+          ? `{"value":${valueJson},"handles":${handlesJson}}`
+          : `{"value":${valueJson}}`;
       const response = new Response(body, {
         headers: {
           "Content-Type": "application/json",
@@ -1594,24 +1709,24 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         await putPromise;
       }
 
-      // L2: persist to KV (KV requires expirationTtl >= 60s)
+      // L2: persist to KV (KV requires expirationTtl >= 60s). Wire shape matches
+      // JSON.stringify(KVItemEnvelope); field names differ from L1 so we assemble
+      // from the pre-escaped value/handles pieces rather than re-stringifying.
       if (this.kv && this.waitUntil && totalTtl >= 60) {
         const kvKey = this.toKVKey(`fn:${key}`);
+        const expiresAt = staleAt + swrWindow * 1000;
+        let envelopeJson = `{"v":${valueJson}`;
+        if (handlesJson !== undefined) envelopeJson += `,"h":${handlesJson}`;
+        envelopeJson += `,"s":${staleAt},"e":${expiresAt}`;
+        if (tags !== undefined) envelopeJson += `,"t":${JSON.stringify(tags)}`;
+        if (taggedAt !== undefined) envelopeJson += `,"ta":${taggedAt}`;
+        envelopeJson += `}`;
         this.waitUntil(() =>
           reportingAsync(
-            () => {
-              const envelope: KVItemEnvelope = {
-                v: value,
-                h: options?.handles,
-                s: staleAt,
-                e: staleAt + swrWindow * 1000,
-                t: tags,
-                ta: taggedAt,
-              };
-              return this.kv!.put(kvKey, JSON.stringify(envelope), {
+            () =>
+              this.kv!.put(kvKey, envelopeJson, {
                 expirationTtl: totalTtl,
-              });
-            },
+              }),
             "cache-write",
             "[CFCacheStore] kvSetItem",
           ),
@@ -1631,21 +1746,45 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // per-colo L1 for them is a deliberate follow-up (see the PPR shell-resume
   // design doc). Shell entries live only in KV (the global tier), so the family
   // requires a configured KV namespace; without one, getShell/putShell no-op and
-  // the shell-cache middleware fails open to a full HTML render. Tag invalidation
+  // the integrated PPR serve path fails open to a full HTML render. Tag invalidation
   // still applies: shell entries carry tags/taggedAt and are checked against the
   // same KV markers isGloballyInvalidated() reads for every other tier.
+
+  /**
+   * Warn once per isolate that the shell family is inert: getShell/putShell
+   * are ONLY called for routes that declared the `ppr` path option, so firing
+   * here (not in the constructor) scopes the warning to apps that actually
+   * use PPR — a KV-less CFCacheStore is a perfectly fine config otherwise.
+   * Without it, the correctness-first fail-open (issue #651) is invisible:
+   * every ppr route is a permanent MISS with zero diagnostics.
+   * @internal
+   */
+  private warnShellFamilyInertOnce(): void {
+    this.warnOncePerNamespace(
+      warnedShellFamilyInert,
+      `[CFCacheStore] a ppr route resolved to this store, but no KV namespace ` +
+        `is configured, so the shell family (getShell/putShell) is a no-op: ` +
+        `every ppr route stays a permanent shell MISS (the page still serves ` +
+        `via a full render). Bind a KV namespace and pass it — ` +
+        `new CFCacheStore({ ctx, kv: env.CACHE_KV }) — or use a shell-capable ` +
+        `store via createRouter({ cache }).`,
+    );
+  }
 
   /**
    * Get a cached PPR shell entry by key from KV (no L1). Applies the KV read
    * budget, corrupt-entry eviction, hard-expiry, and tag invalidation exactly
    * like kvGetItem, minus the L1 promote. SWR is a plain staleness flag — KV has
-   * no REVALIDATING herd guard, so the shell-cache middleware's module-level
+   * no REVALIDATING herd guard, so the capture scheduler's module-level
    * in-flight set is the recapture stampede guard.
    */
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    if (!this.kv) return null;
+    if (!this.kv) {
+      this.warnShellFamilyInertOnce();
+      return null;
+    }
     try {
       const kvKey = this.toKVKey(`shell:${key}`);
       const { value: envelope, timedOut } =
@@ -1678,6 +1817,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           buildVersion: envelope.bv,
           initialTheme: envelope.i,
           snapshot: envelope.sn,
+          handlerLiveHoles: envelope.lh,
+          transitionWhen: envelope.tw,
           createdAt: envelope.c,
         },
         shouldRevalidate,
@@ -1689,8 +1830,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Store a PPR shell entry in KV with TTL and optional SWR window. Non-blocking
-   * (waitUntil) like the other KV writes. The tags/taggedAt ride in the envelope
+   * Store a PPR shell entry in KV with TTL and optional SWR window. The write is
+   * registered with waitUntil and awaited so invalidation rejection can be
+   * acknowledged to the capture scheduler. The tags/taggedAt ride in the envelope
    * so isGloballyInvalidated() can invalidate the shell via the shared KV markers.
    */
   async putShell(
@@ -1699,9 +1841,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void> {
-    // KV-only tier: needs a KV namespace and waitUntil (writes are non-blocking).
-    if (!this.kv || !this.waitUntil) return;
+  ): Promise<"stored" | "invalidated" | void> {
+    // KV-only tier: needs a KV namespace and waitUntil. The same write promise is
+    // registered for isolate lifetime and awaited so invalidation rejection can
+    // be acknowledged to the capture scheduler.
+    if (!this.kv) {
+      this.warnShellFamilyInertOnce();
+      return;
+    }
+    if (!this.waitUntil) return;
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
@@ -1710,9 +1858,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // letting kv.put reject inside waitUntil (mirrors setItem/kvSetSegment).
       if (totalTtl < 60) return;
 
-      const staleAt = Date.now() + ttl * 1000;
+      const retentionTtl =
+        tags && tags.length > 0 && this.tagInvalidationTtl
+          ? Math.min(totalTtl, this.tagInvalidationTtl)
+          : totalTtl;
+      const now = Date.now();
+      const staleAt = now + ttl * 1000;
+      const expiresAt = now + retentionTtl * 1000;
       const taggedAt =
-        Array.isArray(tags) && tags.length > 0 ? Date.now() : undefined;
+        Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
       const kvKey = this.toKVKey(`shell:${key}`);
       // A key over the KV limit makes kv.put reject deep inside waitUntil; report
@@ -1730,30 +1884,43 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return;
       }
 
-      this.waitUntil(() =>
-        reportingAsync(
-          () => {
-            const envelope: KVShellEnvelope = {
-              p: entry.prelude,
-              po: entry.postponed,
-              rv: entry.reactVersion,
-              bv: entry.buildVersion,
-              c: entry.createdAt,
-              s: staleAt,
-              e: staleAt + swrWindow * 1000,
-              t: tags,
-              ta: taggedAt,
-              i: entry.initialTheme,
-              sn: entry.snapshot,
-            };
-            return this.kv!.put(kvKey, JSON.stringify(envelope), {
-              expirationTtl: totalTtl,
-            });
-          },
-          "cache-write",
-          "[CFCacheStore] putShell",
-        ),
-      );
+      const write = (async (): Promise<"stored" | "invalidated" | void> => {
+        try {
+          if (
+            tags &&
+            tags.length > 0 &&
+            (await this.isGloballyInvalidated(tags, entry.createdAt))
+          ) {
+            return "invalidated";
+          }
+          const envelope: KVShellEnvelope = {
+            p: entry.prelude,
+            po: entry.postponed,
+            rv: entry.reactVersion,
+            bv: entry.buildVersion,
+            c: entry.createdAt,
+            s: staleAt,
+            e: expiresAt,
+            t: tags,
+            ta: taggedAt,
+            i: entry.initialTheme,
+            sn: entry.snapshot,
+            lh: entry.handlerLiveHoles,
+            tw: entry.transitionWhen,
+          };
+          await this.kv!.put(kvKey, JSON.stringify(envelope), {
+            expirationTtl: retentionTtl,
+          });
+          return "stored";
+        } catch (error) {
+          reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
+          return undefined;
+        }
+      })();
+      this.waitUntil(async () => {
+        await write;
+      });
+      return await write;
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
     }
@@ -1938,13 +2105,19 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Header entries carrying an entry's tags (JSON-encoded, comma-safe) and the
    * timestamp they were attached. Returns an empty object when there are no
    * tags so untagged entries stay header-free and skip the invalidation check.
+   *
+   * Also stamps the namespaced `Cache-Tag` header (see entryCacheTags) so a
+   * Cloudflare purge-by-tag can evict the entry — the mechanism purge mode
+   * (tagPurge) relies on. Written unconditionally (not only in purge mode):
+   * it costs a small header and makes existing entries purgeable the moment a
+   * consumer turns purge mode on, with no re-render needed.
    */
   private tagHeaderEntries(
     tags: string[] | undefined,
     taggedAt: number | undefined,
   ): Record<string, string> {
     if (!Array.isArray(tags) || tags.length === 0 || !taggedAt) return {};
-    return {
+    const entries: Record<string, string> = {
       // encodeURIComponent so the value is pure ASCII: HTTP header values are
       // ByteStrings, but JSON.stringify leaves codepoints > U+00FF (emoji/CJK)
       // verbatim, which makes new Response({ headers }) throw and the outer
@@ -1953,13 +2126,78 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       [CACHE_TAGS_HEADER]: encodeURIComponent(JSON.stringify(tags)),
       [CACHE_TAGGED_AT_HEADER]: String(taggedAt),
     };
+    // Over Cloudflare's aggregate Cache-Tag limit the header is OMITTED — the
+    // entry still caches and stays marker-invalidatable; it just cannot be
+    // purge-evicted per tag (isL1Invalidated falls back to the marker check
+    // for such entries, so purge mode stays correct). Emitting a header over
+    // the limit would instead risk failing the whole L1 write. The KV-LESS
+    // purge-mode combination never reaches here: there the marker fallback
+    // has no KV to consult, so skipUncacheableTagSet rejects the write first.
+    const cacheTag = this.entryCacheTagHeader(tags);
+    if (cacheTag !== null) {
+      entries["Cache-Tag"] = cacheTag;
+    } else {
+      this.warnOncePerNamespace(
+        warnedCacheTagHeaderOverflow,
+        `[CFCacheStore] an entry's ${tags.length} tags produce a Cache-Tag ` +
+          `header over Cloudflare's ${CACHE_TAG_HEADER_MAX_BYTES}-byte ` +
+          `limit; the header was omitted. The entry stays cacheable and ` +
+          `marker-invalidatable, but a purge-by-tag cannot evict it (purge ` +
+          `mode falls back to the marker check for it). Reduce the number ` +
+          `of tags per entry.`,
+      );
+    }
+    return entries;
+  }
+
+  /**
+   * Joined entry Cache-Tag header value for `tags`, or null when it would
+   * exceed Cloudflare's aggregate header limit. Tokens are pure ASCII
+   * (encodeURIComponent output), so .length is bytes.
+   * @internal
+   */
+  private entryCacheTagHeader(tags: string[]): string | null {
+    const joined = this.entryCacheTags(tags).join(",");
+    return joined.length <= CACHE_TAG_HEADER_MAX_BYTES ? joined : null;
+  }
+
+  /**
+   * Write-path gate for the one configuration where an over-limit tag set has
+   * NO invalidation path: purge mode WITHOUT KV. There the entry Cache-Tag
+   * tokens are the only eviction mechanism, and a tag set whose header
+   * overflows CACHE_TAG_HEADER_MAX_BYTES gets no tokens — a purge could never
+   * evict the entry and there is no KV marker fallback, so it would serve
+   * stale until TTL while updateTag() reports success. Returns true (and
+   * warns once) so the caller SKIPS caching: the route simply renders fresh,
+   * which is the fail-safe direction. With KV configured the omitted-header
+   * entry falls back to the marker check (see tagHeaderEntries), and KV-less
+   * MARKER mode keeps its documented no-read-side-invalidation semantics —
+   * neither is gated.
+   * @internal
+   */
+  private skipUncacheableTagSet(tags: string[] | undefined): boolean {
+    if (!this.tagPurge || this.kv) return false;
+    if (!Array.isArray(tags) || tags.length === 0) return false;
+    if (this.entryCacheTagHeader(tags) !== null) return false;
+    this.warnOncePerNamespace(
+      warnedCacheTagOverflowUncacheable,
+      `[CFCacheStore] an entry's ${tags.length} tags produce a Cache-Tag ` +
+        `header over Cloudflare's ${CACHE_TAG_HEADER_MAX_BYTES}-byte limit. ` +
+        `In purge mode without KV those tokens are the only invalidation ` +
+        `path, so the entry was NOT cached (it renders fresh instead of ` +
+        `becoming un-invalidatable). Reduce the number of tags per entry, ` +
+        `or configure { kv } to get the marker fallback.`,
+    );
+    return true;
   }
 
   /**
    * Merge the internal tag headers onto an existing Headers instance. The
    * from-scratch paths spread tagHeaderEntries() into an object-literal init;
    * the document put/promote paths build a Headers first, so they .set() each
-   * entry instead.
+   * entry instead — except `Cache-Tag`, which is APPENDED: a document author
+   * may have set their own Cache-Tag, and clobbering it would break their CDN
+   * purging. Append produces the comma-merged list CF expects.
    */
   private setTagHeaders(
     headers: Headers,
@@ -1969,7 +2207,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     for (const [name, value] of Object.entries(
       this.tagHeaderEntries(tags, taggedAt),
     )) {
-      headers.set(name, value);
+      if (name === "Cache-Tag") headers.append(name, value);
+      else headers.set(name, value);
     }
   }
 
@@ -2035,6 +2274,46 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       );
       return false;
     }
+  }
+
+  /**
+   * Tag-invalidation check for an L1 (Cache API) hit. In purge mode (tagPurge
+   * configured), invalidateTags() evicts L1 entries via a Cloudflare
+   * purge-by-tag call, so a hit that SURVIVED is trusted without a per-read
+   * marker lookup — that skipped lookup is the entire point of purge mode.
+   * Only the per-request memo is consulted (synchronous, no KV read) so a
+   * request that ran updateTag() still masks its own entries during the purge
+   * propagation window (read-your-own-writes).
+   *
+   * The trust is conditional on the entry actually CARRYING this store's
+   * entry Cache-Tag tokens (`headers`): an entry a purge cannot reach — one
+   * written before the tokens existed, or whose tag set overflowed the
+   * Cache-Tag header limit — keeps the full marker check, or purge mode
+   * would serve it stale until TTL with no eviction path.
+   *
+   * Without tagPurge this is the full marker cascade. KV-tier reads and
+   * shells always use isGloballyInvalidated directly: purge cannot reach KV,
+   * so the markers stay their invalidation mechanism.
+   * @internal
+   */
+  private async isL1Invalidated(
+    tags: string[] | undefined,
+    taggedAt: number | undefined,
+    headers: Headers,
+  ): Promise<boolean> {
+    if (!this.tagPurge) return this.isGloballyInvalidated(tags, taggedAt);
+    if (!Array.isArray(tags) || tags.length === 0 || !taggedAt) return false;
+    if (!this.hasEntryCacheTags(headers)) {
+      return this.isGloballyInvalidated(tags, taggedAt);
+    }
+    const ctx = _getRequestContext();
+    if (!ctx) return false;
+    const memo = getTagMarkerMemo(ctx, this);
+    for (const tag of tags) {
+      const marker = memo.get(tag);
+      if (marker != null && marker >= taggedAt) return true;
+    }
+    return false;
   }
 
   /** Synthetic Cache API request for a tag's L1-cached invalidation marker. */
@@ -2167,25 +2446,117 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
+   * Namespace token used inside every `rg:*` Cache-Tag. encodeURIComponent'd
+   * like the tag values: a raw namespace containing a comma would split into
+   * bogus tokens inside the comma-delimited Cache-Tag header — breaking both
+   * stripInternalCacheTags (internal tokens would leak to clients) and the
+   * purge match (the purged tag string never equals any stored token).
+   * @internal
+   */
+  private nsToken(): string {
+    return encodeURIComponent(this.namespace ?? "default");
+  }
+
+  /**
    * Cloudflare Cache-Tags written on a tag's L1 marker entry, namespaced per
    * store so purges never collide with other Cache-Tags in the zone. Three
    * tiers, broad to specific:
    *   rg:{ns}            - everything this store cached (deploy/nuclear reset)
    *   rg:{ns}:lk         - all tag-lookup markers
    *   rg:{ns}:lk:{tag}   - this tag's lookup (the normal updateTag purge target)
-   * The tag value is encodeURIComponent'd so commas/spaces can't corrupt the
-   * comma-delimited Cache-Tag header.
+   * The namespace and tag value are encodeURIComponent'd so commas/spaces
+   * can't corrupt the comma-delimited Cache-Tag header.
    * @internal
    */
   private lookupCacheTags(tag: string): string[] {
-    const ns = this.namespace ?? "default";
+    const ns = this.nsToken();
     return [`rg:${ns}`, `rg:${ns}:lk`, this.lookupPurgeTag(tag)];
+  }
+
+  /**
+   * Build one `{prefix}{tag}` Cache-Tag token, bounded to CACHE_TAG_TOKEN_MAX:
+   * an over-long encoded tag collapses to `{prefix}h:{fnv1a64(tag)}` so a
+   * legally-long application tag can never blow Cloudflare's per-tag purge
+   * limit (1,024 chars) or bloat the header. Deterministic, so the write-time
+   * token and the invalidate-time purge token always agree.
+   * @internal
+   */
+  private boundedTagToken(prefix: string, tag: string): string {
+    const token = `${prefix}${encodeURIComponent(tag)}`;
+    if (token.length <= CACHE_TAG_TOKEN_MAX) return token;
+    return `${prefix}h:${fnv1a64(tag)}`;
   }
 
   /** The specific Cache-Tag a consumer purges to evict tag `tag`'s lookup. */
   private lookupPurgeTag(tag: string): string {
-    const ns = this.namespace ?? "default";
-    return `rg:${ns}:lk:${encodeURIComponent(tag)}`;
+    return this.boundedTagToken(`rg:${this.nsToken()}:lk:`, tag);
+  }
+
+  /**
+   * Cloudflare Cache-Tags written on a tagged DATA entry (segment/item/doc),
+   * mirroring the lookup-marker tiers but under `:e` (entry):
+   *   rg:{ns}       - everything this store cached (deploy/nuclear reset)
+   *   rg:{ns}:e     - all data entries
+   *   rg:{ns}:e:{t} - entries carrying tag `t` (the purge-mode invalidation
+   *                   target; see CFCacheStoreOptions.tagPurge)
+   * Namespace and tag value encodeURIComponent'd like the lookup tier.
+   * @internal
+   */
+  private entryCacheTags(tags: string[]): string[] {
+    const ns = this.nsToken();
+    return [
+      `rg:${ns}`,
+      `rg:${ns}:e`,
+      ...tags.map((tag) => this.entryPurgeTag(tag)),
+    ];
+  }
+
+  /** The specific Cache-Tag purged to evict entries carrying tag `tag`. */
+  private entryPurgeTag(tag: string): string {
+    return this.boundedTagToken(`rg:${this.nsToken()}:e:`, tag);
+  }
+
+  /**
+   * Whether an L1 entry's stored headers carry this store's entry Cache-Tag
+   * tokens — i.e. whether a purge-by-tag can actually evict it. False for an
+   * entry written before this feature existed, or one whose tag set exceeded
+   * CACHE_TAG_HEADER_MAX_BYTES (header omitted). Purge mode only trusts
+   * entries a purge can reach; the rest keep the marker check.
+   * @internal
+   */
+  private hasEntryCacheTags(headers: Headers): boolean {
+    const raw = headers.get("Cache-Tag");
+    if (raw === null) return false;
+    const tier = `rg:${this.nsToken()}:e`;
+    return raw.split(",").some((token) => {
+      const trimmed = token.trim();
+      return trimmed === tier || trimmed.startsWith(`${tier}:`);
+    });
+  }
+
+  /**
+   * Drop this store's namespaced tokens (`rg:{ns}` and `rg:{ns}:*`) from a
+   * Cache-Tag header, keeping author-set tokens intact. Deletes the header
+   * when nothing remains. Serve-path counterpart of setTagHeaders' append.
+   * An author token that exactly equals a reserved `rg:{ns}` tier is stripped
+   * too — `rg:` is this store's documented-reserved Cache-Tag prefix.
+   * @internal
+   */
+  private stripInternalCacheTags(headers: Headers): void {
+    const raw = headers.get("Cache-Tag");
+    if (raw === null) return;
+    const ns = this.nsToken();
+    const kept = raw
+      .split(",")
+      .map((token) => token.trim())
+      .filter(
+        (token) =>
+          token.length > 0 &&
+          token !== `rg:${ns}` &&
+          !token.startsWith(`rg:${ns}:`),
+      );
+    if (kept.length > 0) headers.set("Cache-Tag", kept.join(","));
+    else headers.delete("Cache-Tag");
   }
 
   /**
@@ -2249,9 +2620,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * writes the fresh marker straight into this colo's L1 (write-through, NOT
    * delete - a delete would let the next read re-read a not-yet-converged KV
    * value and re-arm the stale window), and memoizes it for same-request
-   * read-your-own-writes. Finally fires onRevalidateTag with the namespaced
-   * lookup Cache-Tags so a consumer purge evicts the cached lookups in other
-   * colos promptly (otherwise they converge within tagCacheTtl).
+   * read-your-own-writes. In purge mode (tagPurge) it then AWAITS the
+   * consumer's purge-by-tag call with the entry Cache-Tags — the eviction the
+   * per-read marker skip on L1 hits relies on. Finally fires onRevalidateTag
+   * with the namespaced lookup Cache-Tags so a consumer purge evicts the
+   * cached lookups in other colos promptly (otherwise they converge within
+   * tagCacheTtl).
    *
    * Durable-write integrity: the in-memory write-through (memo + L1) for a tag
    * runs ONLY after that tag's KV marker write is confirmed. If any KV write
@@ -2260,16 +2634,30 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * silently reporting success while other requests/colos serve stale data. The
    * eager purge still fires for the whole batch first (it is additive).
    */
+  /**
+   * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince): the
+   * SAME KV markers used by runtime envelopes also evict immutable build shells
+   * and captures whose write races updateTag(). Thin public wrapper over the
+   * private envelope check (marker >= since, fail open).
+   */
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
+    return this.isGloballyInvalidated(tags, sinceMs);
+  }
+
   async invalidateTags(tags: string[]): Promise<void> {
     if (tags.length === 0) return;
     const invalidatedAt = Date.now();
     const ctx = _getRequestContext();
     const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
 
-    if (!this.kv && !this.onRevalidateTag) {
+    if (!this.kv && !this.onRevalidateTag && !this.tagPurge) {
       console.warn(
         `[CFCacheStore] invalidateTags had no effect: configure a KV namespace ` +
-          `for distributed invalidation, or an onRevalidateTag hook.`,
+          `for distributed invalidation, a tagPurge hook for purge-by-tag ` +
+          `eviction, or an onRevalidateTag hook.`,
       );
     }
 
@@ -2324,22 +2712,55 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // only when KV is configured. Markers are read exclusively through
     // isGloballyInvalidated(), which short-circuits to "not invalidated" when
     // !this.kv; writing memo/L1 markers without KV would be dead state no read
-    // path ever consults. The onRevalidateTag purge below still fires regardless
-    // (it is additive and external to the marker cascade). The memo write is
-    // synchronous (read-your-own-writes); the L1 Cache API writes are
-    // independent, so fan them out in parallel rather than awaiting each.
-    if (this.kv) {
+    // path ever consults — EXCEPT the memo in purge mode: isL1Invalidated()
+    // consults it (and only it) on every L1 hit, so a KV-less purge-mode store
+    // still writes the memo for same-request read-your-own-writes. The
+    // onRevalidateTag purge below still fires regardless (it is additive and
+    // external to the marker cascade). The memo write is synchronous
+    // (read-your-own-writes); the L1 Cache API writes are independent, so fan
+    // them out in parallel rather than awaiting each.
+    const lookupMarkerCacheActive = Boolean(this.kv) && this.tagCacheTtl > 0;
+    if (this.kv || this.tagPurge) {
       const l1Writes: Promise<void>[] = [];
       for (const tag of tags) {
         if (failedTags.has(tag)) continue;
         memo?.set(tag, invalidatedAt);
-        if (this.tagCacheTtl > 0) {
+        if (lookupMarkerCacheActive) {
           l1Writes.push(
             this.putTagMarkerL1(tag, invalidatedAt, { critical: true }),
           );
         }
       }
       if (l1Writes.length > 0) await Promise.all(l1Writes);
+    }
+
+    // Purge mode: evict the tagged L1 entries across every colo via the
+    // consumer's purge-by-tag call. AWAITED, and a failure is correctness-
+    // bearing (unlike onRevalidateTag): with the per-read marker lookup skipped
+    // on L1 hits, a dropped purge leaves L1 serving stale until TTL — so it
+    // surfaces through updateTag() like a failed marker write. Fired for the
+    // whole batch regardless of marker outcome (purging is additive and
+    // idempotent; a retry re-runs both). Lookup Cache-Tags ride along when the
+    // L1 marker cache is active (tagCacheTtl > 0 AND kv — without kv no lookup
+    // entries are ever written) so a single purge call also converges other
+    // colos' cached lookups (no separate onRevalidateTag needed).
+    let purgeError: unknown;
+    if (this.tagPurge) {
+      const purgeTags = tags.flatMap((tag) =>
+        lookupMarkerCacheActive
+          ? [this.entryPurgeTag(tag), this.lookupPurgeTag(tag)]
+          : [this.entryPurgeTag(tag)],
+      );
+      try {
+        await this.tagPurge(purgeTags);
+      } catch (error) {
+        purgeError = error ?? new Error("tagPurge rejected");
+        reportCacheError(
+          purgeError,
+          "cache-invalidate",
+          "[CFCacheStore] tagPurge hook",
+        );
+      }
     }
 
     // One batched eager purge of the lookup markers for the whole call. Fired
@@ -2356,13 +2777,25 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
     }
 
-    if (failedTags.size > 0) {
+    if (failedTags.size > 0 || purgeError) {
+      const parts: string[] = [];
+      if (failedTags.size > 0) {
+        parts.push(
+          `${failedTags.size}/${tags.length} tag marker write(s) failed: ` +
+            `${[...failedTags].join(", ")}`,
+        );
+      }
+      if (purgeError) {
+        parts.push(
+          `the tagPurge purge-by-tag call failed (tagged L1 entries stay ` +
+            `stale until TTL)`,
+        );
+      }
       const err = new Error(
-        `[CFCacheStore] ${failedTags.size}/${tags.length} tag marker write(s) ` +
-          `failed: ${[...failedTags].join(", ")}. Those tags may still serve ` +
+        `[CFCacheStore] ${parts.join("; ")}. Those tags may still serve ` +
           `stale data across requests/colos; retry the invalidation.`,
       );
-      (err as Error & { cause?: unknown }).cause = errors[0];
+      (err as Error & { cause?: unknown }).cause = errors[0] ?? purgeError;
       throw err;
     }
   }
@@ -2455,11 +2888,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Write segment data to KV.
+   *
+   * `dataJson` is the already-serialized CachedEntryData body also stored in
+   * L1 — embedded as envelope.d without a second JSON.stringify walk.
    * @internal
    */
   private kvSetSegment(
     key: string,
-    data: CachedEntryData,
+    dataJson: string,
     staleAt: number,
     totalTtl: number,
     swrWindow: number,
@@ -2491,19 +2927,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
 
     const expiresAt = staleAt + swrWindow * 1000;
+    // Same wire shape as JSON.stringify({ d, s, e }) — dataJson is already
+    // valid JSON for CachedEntryData, so embedding it avoids re-walking the tree.
+    const envelopeJson = `{"d":${dataJson},"s":${staleAt},"e":${expiresAt}}`;
 
     this.waitUntil(() =>
       reportingAsync(
-        () => {
-          const envelope: KVSegmentEnvelope = {
-            d: data,
-            s: staleAt,
-            e: expiresAt,
-          };
-          return this.kv!.put(kvKey, JSON.stringify(envelope), {
+        () =>
+          this.kv!.put(kvKey, envelopeJson, {
             expirationTtl: totalTtl,
-          });
-        },
+          }),
         "cache-write",
         "[CFCacheStore] kvSetSegment",
       ),

@@ -269,6 +269,7 @@ export const routes = {
   "renderedBarrier.streamingDeadlock": "/rendered-barrier/streaming-deadlock",
   "renderedBarrier.streamingPrerender": "/rendered-barrier/streaming-prerender",
   "renderedBarrier.useCache": "/rendered-barrier/use-cache",
+  "responseCache.responseCache.cookie": "/response-cache/cached-cookie",
   "responseCache.responseCache.html": "/response-cache/cached-html",
   "responseCache.responseCache.json": "/response-cache/cached-json",
   "responseCache.responseCache.jsonQuery": "/response-cache/cached-json-query",

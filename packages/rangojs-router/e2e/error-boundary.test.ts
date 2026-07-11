@@ -106,18 +106,33 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("should show loading then error boundary for streaming error", async ({
       page,
     }) => {
-      await page.goto(f.url("/errors/streaming-error"));
-
-      // Should briefly show loading state
-      await expect(
-        testId(page, "main-content").locator(
-          '[data-testid="streaming-error-loading"]',
-        ),
-      ).toBeVisible({
-        timeout: 2000,
+      // The "loading first" pin lives on the RAW STREAM, not the live DOM.
+      // The DOM fallback is transient: with head-executing module scripts
+      // (headScripts "preinit") hydration can process the streamed error
+      // instruction and swap in the error boundary BEFORE a locator poll
+      // ever observes the fallback — page.goto resolves at `load`, which for
+      // this route is after the error already streamed. Asserting the DOM
+      // loading state raced hydration speed (failed 4/4 on a warm local
+      // preview, flaked on CI). The stream is deterministic: the shell ships
+      // the fallback, React's errored-boundary marker arrives later in the
+      // same body.
+      const res = await fetch(f.url("/errors/streaming-error"), {
+        headers: { Accept: "text/html" },
       });
+      const html = await res.text();
+      const fallbackIdx = html.indexOf('data-testid="streaming-error-loading"');
+      expect(fallbackIdx, "loading fallback is in the shell").toBeGreaterThan(
+        -1,
+      );
+      const erroredIdx = html.indexOf("<!--$!-->");
+      expect(
+        erroredIdx,
+        "errored-boundary marker streams after the fallback",
+      ).toBeGreaterThan(fallbackIdx);
 
-      // Then the error boundary should appear
+      // The browser lands on the error boundary regardless of how early
+      // hydration won the swap.
+      await page.goto(f.url("/errors/streaming-error"));
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });

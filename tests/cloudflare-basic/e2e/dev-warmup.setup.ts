@@ -41,6 +41,12 @@ const PPR_WARMUP_ROUTES = [
   "/ppr-shell",
   "/ppr-shell/stream",
   "/ppr-shell/no-hole",
+  // Prerender + ppr composition: its capture additionally round-trips the dev
+  // /__rsc_prerender endpoint (temp-server on-demand render) — the heaviest
+  // capture in the suite. Safe to warm since capture execution is serialized
+  // per isolate (capture-queue.ts): it can no longer starve sibling captures'
+  // quiet windows (the GH-runner rotating eternal-MISS class).
+  "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
   "/ppr-blog",
   "/ppr-blog/getting-started-with-rsc",
@@ -54,6 +60,7 @@ const PPR_WARMUP_ROUTES = [
 const PPR_WARMUP_HIT_ROUTES = [
   "/ppr-shell",
   "/ppr-shell/stream",
+  "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
   "/ppr-blog",
 ];
@@ -61,10 +68,12 @@ const PPR_WARMUP_HIT_ROUTES = [
 // Warm the PPR capture pipeline before the ppr-shell dev tests run.
 //
 // On a cold CI runner the dev module graph is compiled ON DEMAND during the
-// capture render, repeatedly blowing the capture's 5s budget
-// (SHELL_CAPTURE_MAX_WAIT_MS): one probe cycle is ~5s attempt + ~5s in-place
-// retry + backoff, so warmToHit's 20s window fits only ~2 cycles and the suite
-// hard-fails on runners that need more (#652 item 3 — the eternal-MISS shape
+// capture render, repeatedly blowing the capture budget
+// (SHELL_CAPTURE_MAX_WAIT_MS — 5s when #652 was diagnosed, 15s today): one
+// probe cycle is a full-budget attempt + in-place retry + backoff, so
+// warmToHit's 20s window fit only ~2 cycles at the old 5s budget (none at
+// 15s) and the suite hard-fails on runners that need more (#652 item 3 —
+// the eternal-MISS shape
 // survived the runtime-side dev backoff cap alone; see PR #659's first CI run,
 // `physics hole` 3x at ~20s). Warming here makes the first real capture attempt
 // run against a hot graph, so it completes inside its budget on attempt 1; the
@@ -72,19 +81,14 @@ const PPR_WARMUP_HIT_ROUTES = [
 setup("warmup ppr capture path", async ({ request }) => {
   setup.setTimeout(180_000);
 
-  // Compile every ppr fixture route's modules (axis-1 render + scheduled
-  // background capture per route).
-  for (const route of PPR_WARMUP_ROUTES) {
-    const res = await request.get(`${route}?probe=warmup`, {
-      headers: { Accept: "text/html" },
-    });
-    expect(res.status()).toBe(200);
-  }
-
-  // Drive each capturable fixture to a stored shell. The first route pays the
-  // shared cold-pipeline cost; the rest confirm their route-specific modules.
-  // The dev backoff cap (~2s) guarantees the poll is never frozen out between
-  // attempts.
+  // Warm-and-poll PER ROUTE, not compile-all-then-poll-all: capture execution
+  // is serialized per isolate (capture-queue.ts), so firing every route's GET
+  // up front enqueues one capture per route back-to-back — on a cold runner
+  // each takes 10-20s and the HIT polls then time out waiting behind the
+  // WHOLE queue (both dev shards' warmups failed 3x exactly this way on the
+  // first serialized CI run). Interleaving gives each route's capture an
+  // empty queue and its full budget; later routes get faster as the shared
+  // pipeline warms.
   for (const route of PPR_WARMUP_HIT_ROUTES) {
     await expect(async () => {
       const res = await request.get(`${route}?probe=warmup`, {
@@ -93,5 +97,15 @@ setup("warmup ppr capture path", async ({ request }) => {
       expect(res.status()).toBe(200);
       expect(res.headers()["x-rango-shell"]).toBe("HIT");
     }).toPass({ timeout: 60_000 });
+  }
+
+  // Module-warm the never-HIT routes last (their scheduled captures refuse or
+  // stay MISS by design; queued after the HIT set, they can't delay it).
+  for (const route of PPR_WARMUP_ROUTES) {
+    if (PPR_WARMUP_HIT_ROUTES.includes(route)) continue;
+    const res = await request.get(`${route}?probe=warmup`, {
+      headers: { Accept: "text/html" },
+    });
+    expect(res.status()).toBe(200);
   }
 });

@@ -62,6 +62,35 @@ export interface PartialPrerenderProps {
    * capture render auto-collects (the shell's own non-loader request tags).
    */
   tags?: string[];
+  /**
+   * Upper bound (serialized UTF-8 bytes) on the capture data snapshot riding
+   * inside the shell entry. The snapshot duplicates every cache-store value
+   * the capture pinned, so a page over a large cache() segment can push the
+   * entry toward store value limits (Cloudflare KV caps a value at 25 MiB).
+   * Over the cap the snapshot is skipped: the shell is still stored and
+   * served, but pinned reads fall back to the live store, so drifted cached
+   * content can hydration-mismatch and be repaired client-side (the
+   * pre-snapshot behavior). Reported once per key. Defaults to 8 MiB.
+   */
+  maxSnapshotBytes?: number;
+  /**
+   * Capture settle budget in MILLISECONDS (default 15000). Bounds the whole
+   * background capture: the wait for deferred shell material — top-level
+   * pushed handle promises (`ctx.use(Meta)(promise.then(...))` and friends)
+   * are AWAITED and their settled values baked into the stored shell — AND
+   * the fizz prerender deadline. Declare it to tighten the budget below the
+   * default or when a route's shell material takes longer than 15s to
+   * settle. A budget that expires with pushes still pending REFUSES the
+   * capture (the route stays MISS with the once-per-key warning) — a shell
+   * with missing head material is never stored. Capture is background work
+   * (waitUntil), so a longer budget costs latency-to-HIT only, never a served
+   * response; the platform waitUntil lifetime (workerd: ~30s past response
+   * completion) is the physical ceiling — the default's derivation lives in
+   * docs/design/ppr-shell-resume.md (Cost model). Build-time captures
+   * (Prerender+ppr, producer B) honor the same budget with no platform
+   * ceiling. Non-finite or sub-1ms values fall back to the default.
+   */
+  captureTimeout?: number;
 }
 
 export interface PathOptions<

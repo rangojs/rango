@@ -40,6 +40,8 @@ import {
   track,
   RangoContext,
   runInsideLoaderScope,
+  latchCachedHeaderScope,
+  latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
@@ -650,6 +652,12 @@ export async function resolveAllSegments<TEnv>(
   const allSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
 
+  // ppr routes are document-scoped cached territory: the whole chain (root
+  // layout down to the page) bakes into the shared shell, so the header-write
+  // guard latches BEFORE any entry resolves (unlike the positional cache()
+  // latch below). See assertCachedHeaderWriteAllowed (server/context.ts).
+  latchPprHeaderScopeForEntries(entries, routeKey);
+
   // Safe request access: during build-time prerendering, context.request
   // is a throwing getter. Use undefined when unavailable.
   let safeRequest: Request | undefined;
@@ -665,11 +673,13 @@ export async function resolveAllSegments<TEnv>(
 
   for (const entry of entries) {
     // Set ALS flag when entering a cache() boundary so that ctx.get()
-    // can guard non-cacheable variable reads. Also guards response-level
-    // side effects (headers.set). Persists for all descendant entries.
+    // can guard non-cacheable variable reads. Also latch the header-write
+    // scope (response-level side effects — headers/cookies/status).
+    // Persists for all descendant entries.
     if (entry.type === "cache") {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
+      latchCachedHeaderScope("cache", routeKey);
     }
     const doneEntry = track(`segment:${entry.id}`, 1);
     const resolvedSegments = await resolveWithErrorBoundary(
@@ -717,6 +727,15 @@ export async function resolveLoadersOnly<TEnv>(
 ): Promise<ResolvedSegment[]> {
   const loaderSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
+
+  // Loader-only serves (cached non-loader segments) still run loaders live —
+  // on a ppr route their header writes are dead letters (headers flushed with
+  // the shell), so the guard latches here too. cache() needs no latch: loader
+  // writes are exempt under cache() (see assertCachedHeaderWriteAllowed).
+  latchPprHeaderScopeForEntries(
+    entries,
+    (context as InternalHandlerContext<any, TEnv>)._routeName,
+  );
 
   async function collectEntryLoaders(
     entry: EntryData,

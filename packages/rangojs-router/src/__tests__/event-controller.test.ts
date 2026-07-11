@@ -365,6 +365,55 @@ describe("createEventController", () => {
       expect(second.hadConcurrentActions).toBe(true); // second saw first
     });
 
+    // #675: a completed action lingers in inflightActions for the 100ms
+    // doSettle window. An action starting inside that window is sequential,
+    // not concurrent — latching hadAnyConcurrentActions here made the second
+    // action classify as consolidation-needed, and its consolidation refetch
+    // re-ran revalidate-gated loaders as "new-segment" on a plain GET.
+    it("action starting during a completed action's settle window is not concurrent (#675)", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("hash#target", []);
+      first.recordRevalidatedSegments(["R0D0.loaderA", "R0"]);
+      first.complete("done");
+
+      // Inside the 100ms settle window: first is completed but still in the map.
+      vi.advanceTimersByTime(50);
+      expect(ctrl.getInflightActions().size).toBe(1);
+
+      const second = ctrl.startAction("hash#decoy", []);
+      expect(second.hadConcurrentActions).toBe(false);
+      expect(ctrl.hadAnyConcurrentActions()).toBe(false);
+    });
+
+    it("action starting after complete() but before stream end is not concurrent (#675)", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("hash#target", []);
+      const token = first.startStreaming();
+      // Response fully processed and applied; the Flight stream's EOF is
+      // still draining (token not ended) — entry.completed is set, phase is
+      // still "streaming".
+      first.complete("done");
+
+      const second = ctrl.startAction("hash#decoy", []);
+      expect(second.hadConcurrentActions).toBe(false);
+      expect(ctrl.hadAnyConcurrentActions()).toBe(false);
+
+      token.end();
+      vi.advanceTimersByTime(100);
+    });
+
+    it("action starting while another is still fetching stays concurrent", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("hash#a", []);
+
+      const second = ctrl.startAction("hash#b", []);
+      expect(second.hadConcurrentActions).toBe(true);
+      expect(ctrl.hadAnyConcurrentActions()).toBe(true);
+
+      first.complete();
+      second.complete();
+    });
+
     it("recordRevalidatedSegments accumulates into shared set", () => {
       const ctrl = createController();
       const first = ctrl.startAction("hash#a", []);

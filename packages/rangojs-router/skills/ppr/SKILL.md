@@ -21,11 +21,12 @@ shell is shared per host+URL, the holes are per request.
 
 - You want the WHOLE response frozen, loader output included — see
   `/document-cache`.
-- You want routes rendered at build time with `Static()`/`Prerender()` — the
-  `ppr` path option captures at runtime; see `/prerender`.
+- You want build-time Flight segment payloads from `Static()`/`Prerender()` —
+  see `/prerender`. A `Prerender` page may also declare `ppr`; then producer B
+  can bake the HTML shell at build time while loaders stay live.
 - You are unsure which cache layer you need — start at `/cache-guide`.
 
-## Setup: one path option, no middleware
+## Setup: one path option, no PPR middleware to mount
 
 PPR is a DOCUMENT-level property declared on the page route via the `ppr` path
 option. Serving is **integral to the router** — there is nothing to mount. The
@@ -169,15 +170,86 @@ On a document GET to a ppr route the router runs:
 point is after the chain, an unauthorized request NEVER sees shell bytes — put
 auth middleware anywhere (global or route DSL) and it guards PPR for free.
 
+### Soft navigation reuses the captured segment shell
+
+A usable shell snapshot also accelerates ordinary partial RSC navigations to
+the same URL. The capture records the canonical document segment tree alongside
+the HTML prelude. On a partial request the server replays only that segment
+record through the normal `matchPartial()` pipeline, which then:
+
+- preserves client-owned shared layouts by segment id;
+- returns only new or revalidating destination segments;
+- runs DSL loaders fresh with their normal `loading()` streaming behavior;
+- keeps the existing prefetch key, source scope, and in-flight lock unchanged.
+
+This is deliberately invisible to the browser: the response is the same
+`RscPayload` shape as any other partial navigation. Captured item/response values
+and loader-container pins are NOT replayed on this path, so loader reads stay
+live. A route's own `cache()` scope still resolves its normal store, key, TTL,
+SWR, tags, and condition; only the implicit document scope sees the replay
+overlay, and fresh segment writes there stay request-local rather than polluting
+the canonical `doc:` namespace. Intercepts, handler-live holes,
+`transition({ when })`, an active nonce, and an absent/corrupt segment snapshot
+fall open to the ordinary partial path when encountered by the fresh shell
+capture. A transition already replayed from an explicit cache tier remains
+frozen by that tier's normal semantics.
+
+Only fresh shells replay. Production may use either a runtime entry or the
+local build manifest; development uses runtime entries only, because probing
+`/__rsc_shell` would block the foreground navigation on an on-demand capture.
+A passive stale read does not claim SWR ownership because partial requests
+cannot recapture the HTML shell. Custom `SegmentCacheStore` implementations
+must set `supportsPassiveShellReads: true` and honor
+`getShell(key, { claimRevalidation: false })` to opt into navigation replay.
+There is still no Flight resume API; this is segment replay followed by normal
+Flight streaming, not reuse of the HTML `prelude`/`postponed` bytes.
+
+### Capture-generation invalidation
+
+If handler or bake-lane code calls `updateTag()` on one of the shell's own tags
+while capture is running, that generation is rejected. Built-in stores report it;
+Rango warns with the shell key and backs capture off instead of rendering the
+same doomed generation on every request. Move a deterministic self-invalidation
+out of render code if you want the shell to persist.
+
+### Opting out per request with `ctx.dynamic()`
+
+Middleware and handlers can call `ctx.dynamic()` to force this request back to
+axis 1. In middleware it runs before the PPR commit point, so the router skips
+shell lookup, HIT serving, and MISS capture for that request. In handlers it is
+too late to prevent a MISS render from already happening, but it still prevents
+the follow-up shell capture.
+
+During `Prerender` + `ppr` build-shell capture, middleware is replayed with
+`ctx.build === true`, `ctx.waitUntil()` inert, and the same `ctx.dynamic()`
+opt-out. Use that for routes where the shell depends on runtime-only auth,
+cookies, or side-effectful SDK calls. A skipped build shell can still be owned
+later by runtime capture when runtime middleware does not call `ctx.dynamic()`.
+
+`ctx.dynamic()` also **re-permits handler header/cookie writes** (issue #735).
+The header doctrine below forbids handler writes on a ppr route because they
+ride MISSes and vanish on HITs — but a `dynamic()` render never HITs, so its
+write is deterministic. Calling `ctx.dynamic()` clears the header latch for the
+rest of the render, so the SAME handler can write its control-flow header
+directly (no middleware relay). Ordering is a contract: call `dynamic()` BEFORE
+the write — a write before it still throws.
+
+```ts
+function catalogPage(ctx) {
+  ctx.dynamic(); // declare live -> refuses capture AND clears the header latch
+  ctx.headers.set("x-rango-sfra-proxy", "catalog");
+  return <Catalog />;
+}
+```
+
 ## Verifying it works
 
-The header exists on DOCUMENT responses only. A bare `curl` (no `Accept`)
-content-negotiates a Flight payload (`text/x-component`) with NO
-`x-rango-shell` header at all — which reads as "PPR is off" but is only the
-wrong request shape:
+The header exists on DOCUMENT responses only. A bare `curl` gets the HTML
+document (Flight is explicit-opt-in via `Accept: text/x-component`), so it
+sees the header directly; only an explicit Flight request shape lacks it:
 
 ```
-curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/products/1 | grep -i x-rango-shell
+curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-shell
 ```
 
 - First document GET: `MISS`, plus a background capture.
@@ -193,6 +265,47 @@ curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/product
 - A ppr-declared route that CANNOT be honored (missing shell store family,
   per-request nonce) serves plain axis 1 with NO header and warns once per
   key — no header + a declared `ppr` means look for that warning.
+- On Cloudflare, `CFCacheStore` WITHOUT a KV namespace has an inert shell
+  family (the shell tier is KV-only): every ppr route stays `MISS` forever.
+  The store warns once per isolate — bind KV
+  (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use another store.
+- Structured capture diagnostics: `createRouter({ debugShellCapture: true })`
+  logs one line per capture attempt/skip (outcome, durations, prelude and
+  snapshot bytes, backoff state); pass a function to receive each
+  `ShellCaptureDebugEvent` instead. In dev, with `debugPerformance` on, the
+  last capture outcome for a key also rides the next document GET's
+  `Server-Timing` as `ppr-capture;desc="…"`.
+
+### Unit / integration testing (public primitives)
+
+Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
+(Playwright):
+
+| Helper                                            | Use for                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| `assertShellStatus(res, "HIT" \| "MISS")`         | Document Response from a real RSC serve / e2e `page.request` |
+| `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
+| `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
+
+```ts
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import { assertShellStatus, shellCacheKey } from "@rangojs/router/testing";
+
+// Unit: store + key (after a real putShell / capture flush in e2e)
+const store = new MemorySegmentCacheStore();
+const key = shellCacheKey("http://localhost/products/1");
+// ... after production putShell ...
+expect(await store.getShell(key)).not.toBeNull();
+
+// E2E: header on a real document GET
+assertShellStatus({ headers: new Headers(res.headers()) }, "HIT");
+```
+
+**Out of unit scope** (stay e2e): live MISS → background capture → HIT,
+browser resume of holes, build-time producer B. `dispatch` never runs PPR.
+`renderHandler` only exposes `ctx.dynamic()` / `build` for the opt-out path.
+Do not invent a HIT Response in unit tests. Full recipe: `/testing` skill →
+`cache-prerender.md` (PPR shell section).
 
 ## The hole doctrine (encode this in your head)
 
@@ -309,8 +422,21 @@ The lane is decided PER TREE NODE, at the entry that REGISTERS the loaders —
 `loading()` on a CHILD route does not change a parent layout's lane, and
 `loading()` IS valid on layout and parallel entries, not just routes.
 
-Three hard edges (each e2e/unit-pinned):
+Four hard edges (each e2e/unit-pinned):
 
+- **Header writes throw (issue #713).** ppr is a document-scoped `cache()`:
+  in any cached scenario ONLY MIDDLEWARE writes response headers. A handler
+  or loader on a ppr route calling `ctx.headers.set()`, `cookies().set()`,
+  `ctx.header()`, `ctx.setTheme()`, or `setStatus()` throws on EVERY render —
+  dev and prod,
+  first render, same guard family as the `cache()` boundary guard. Handlers
+  are replayed on HITs (the write would silently differ between MISS and
+  HIT); loaders are live but settle AFTER the response headers flushed with
+  the shell (dead letters). Move the write into route middleware — it runs
+  on every request, including HITs, and its headers/cookies merge into every
+  response. The one exception: a handler that calls `ctx.dynamic()` FIRST
+  re-permits its own header/cookie write (#735) — a dynamic() render never
+  HITs, so the write is deterministic (see "Opting out per request").
 - **Identity refuses.** `cookies()`/`headers()` inside a bake-lane loader
   throws during capture and the capture REFUSES (deterministic, once-per-key
   warned) — identity can never bake into the shared shell. Give that loader's
@@ -321,7 +447,8 @@ Three hard edges (each e2e/unit-pinned):
   Pitfalls: the session-object bake trap).
 - **A rejecting bake-lane loader refuses.** Error UI never bakes.
 - **Baked containers show CAPTURE-time data** for the shell's lifetime on
-  document GETs (client navigations stay fresh — axis 1). That IS the bake
+  document GETs. Soft navigations may replay the captured handler segments, but
+  DSL loaders and their item/response reads remain fresh. That IS the bake
   lane's meaning; if a value must be fresh on every serve, it belongs on the
   live lane (`loading()`) or in a nested promise.
 
@@ -455,9 +582,10 @@ bake-lane container — or key per variant at the CDN tier.
 
 ## What always stays on axis 1
 
-Non-GET, RSC/partial/action/loader fetches, per-request CSP nonce,
-`streamMode: "allReady"`, redirects, 404s, error renders, routes without `ppr`,
-and any store without the shell family. A stored shell is invalidated when
+Non-GET, non-partial RSC/action/loader fetches, partial requests without an
+eligible captured segment snapshot, per-request CSP nonce, `streamMode:
+"allReady"`, redirects, 404s, error renders, routes without `ppr`, and any store
+without the shell family. A stored shell is invalidated when
 `React.version` changes (postponed state is build-coupled), so deploys
 self-heal via recapture.
 
@@ -505,11 +633,12 @@ path(
 );
 ```
 
-| Field  | Default | Notes                                                                                              |
-| ------ | ------- | -------------------------------------------------------------------------------------------------- |
-| `ttl`  | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                   |
-| `swr`  | —       | stale window: serve the stale shell + background recapture                                         |
-| `tags` | —       | operational tags UNIONED with the tags the capture render auto-collects — see "Invalidation" below |
+| Field              | Default | Notes                                                                                                                                                     |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                          |
+| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                |
+| `tags`             | —       | operational tags UNIONED with the tags the capture render auto-collects — see "Invalidation" below                                                        |
+| `maxSnapshotBytes` | 8 MiB   | cap on the entry's capture data snapshot; over it the snapshot is skipped (shell still stored, warned once per key) so the entry stays under store limits |
 
 The shell store is always the app-level `createRouter({ cache })` store; the
 default key is `${host}${pathname}${sortedSearch}:shell` (host-scoped so

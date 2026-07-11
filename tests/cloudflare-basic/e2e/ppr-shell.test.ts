@@ -9,6 +9,8 @@ import {
   goBack,
 } from "./helper";
 import { guardHydrationErrors } from "@shared/e2e";
+import { assertShellStatus } from "@rangojs/router/testing/e2e";
+import type { PprExecCounters } from "../src/loaders/ppr-shell";
 
 // End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
 // option (src/urls.tsx) — serving is integral to the router (no middleware) —
@@ -27,6 +29,9 @@ import { guardHydrationErrors } from "@shared/e2e";
 // pins the whole tree and the sanity gate refuses to store (eternal MISS — the
 // shape this suite was first written in). See docs/design/ppr-shell-resume.md
 // ("The hole contract").
+// The inline-action rows distinguish runtime PPR from build-time
+// Static/Prerender replay (#584, blocked on plugin-rsc #1246): a KV shell HIT and
+// partial navigation must preserve the embedded bound server reference.
 
 const LOADER_DELAY_MS = 400;
 
@@ -53,8 +58,34 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
   await expect(async () => {
     const res = await request.get(url, { headers: HTML_HEADERS });
     expect(res.status()).toBe(200);
-    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    // Dogfood the public testing helper (same contract as production header).
+    assertShellStatus(
+      {
+        headers: new Headers({
+          "x-rango-shell": res.headers()["x-rango-shell"] ?? "",
+        }),
+      },
+      "HIT",
+    );
   }).toPass({ timeout: 20000 });
+}
+
+async function expectInlineActionRoundTrip(page: Page): Promise<void> {
+  await expect(testId(page, "ppr-inline-action-page")).toBeVisible();
+  const rendered = await testId(
+    page,
+    "ppr-inline-action-rendered",
+  ).textContent();
+  const captured = rendered!.replace(/^rendered:/, "");
+  expect(captured).toMatch(/^cf-server-token-/);
+
+  await testId(page, "ppr-inline-action-submit").click();
+  await expect(testId(page, "ppr-inline-action-captured")).toHaveText(
+    `captured:${captured}`,
+  );
+  await expect(testId(page, "ppr-inline-action-submitted")).toHaveText(
+    "submitted:from-client",
+  );
 }
 
 /** Native fetch + incremental reader: first-chunk latency and the full HTML body. */
@@ -101,6 +132,39 @@ function describePprShell(mode: "dev" | "build") {
   test.describe(`ppr-shell caching (${label})`, () => {
     const f = useFixture({ root: ".", mode });
 
+    test("runtime shell HIT preserves an embedded bound action", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const url = f.url("/ppr-shell/inline-action?probe=ppr-inline-hit");
+      await warmToHit(page.request, url);
+
+      const response = await page.goto(url);
+      expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await expectInlineActionRoundTrip(page);
+    });
+
+    test("partial PPR navigation preserves an embedded bound action", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await warmToHit(
+        page.request,
+        f.url("/ppr-shell/inline-action?probe=ppr-inline-nav"),
+      );
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "nav-ppr-inline-action").click();
+      await expect(page).toHaveURL(
+        /ppr-shell\/inline-action\?probe=ppr-inline-nav$/,
+      );
+      await expectInlineActionRoundTrip(page);
+    });
+
     // --- Working today: engagement, bypass matrix, axis-1 render/hydration. ---
 
     test("engages for an HTML document GET and tags x-rango-shell: MISS", async ({
@@ -123,8 +187,10 @@ function describePprShell(mode: "dev" | "build") {
     }) => {
       // Accept omits text/html: mayNeedSSR() is false, so the middleware bypasses
       // to axis 1 and never tags the response (the Flight path is untouched by PPR).
+      // Explicit flight opt-in: */* now negotiates to the HTML document (which
+      // engages the shell), so the bypass is pinned via the wire-format Accept.
       const res = await request.get(f.url("/ppr-shell?probe=rsc"), {
-        headers: { Accept: "*/*" },
+        headers: { Accept: "text/x-component" },
       });
       expect(res.status()).toBe(200);
       expect(res.headers()["x-rango-shell"]).toBeUndefined();
@@ -237,6 +303,51 @@ function describePprShell(mode: "dev" | "build") {
       );
       await expect(testId(page, "ppr-price")).toContainText("Live price:");
 
+      const counter = testId(page, "ppr-counter");
+      await counter.click();
+      await expect(counter).toHaveText("count: 1");
+    });
+
+    // Fragment splice (issue #700): a HIT tail emits the stored snapshot
+    // fragments VERBATIM into the hydration payload (__rangoFragment envelopes
+    // the SSR resume pass and browser hydration expand) instead of
+    // re-serializing the baked tree per request on the worker. A MISS (fresh
+    // render) carries none; the warmed page must stay hydration-clean and its
+    // hole live — the envelopes are consumer-invisible.
+    test("HIT payload carries verbatim fragment envelopes; the page hydrates cleanly on workerd", async ({
+      page,
+    }) => {
+      // Cold-graph absorber: the capture's doc segment record is written under
+      // waitUntil and pinned into the snapshot only if it settles within the
+      // capture's write-settle window — a COLD dev worker's first serialization
+      // can outlast it, storing a snapshot-less entry whose HITs keep the full
+      // tail (no fragments) until TTL. Warm a sacrificial probe first so the
+      // asserted probe's capture settles in time.
+      await warmToHit(page.request, f.url("/ppr-shell?probe=fragwarmup"));
+      const url = f.url("/ppr-shell?probe=fragments");
+
+      const miss = await page.request.get(url, { headers: HTML_HEADERS });
+      if (miss.headers()["x-rango-shell"] === "MISS") {
+        // A persisted-KV rerun may already HIT; only a genuine MISS pins the
+        // no-envelope half.
+        expect(await miss.text()).not.toContain("__rangoFragment");
+      }
+
+      await warmToHit(page.request, url);
+      const res = await page.request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const { prelude, resumed } = splitPrelude(await res.text());
+      expect(prelude).not.toContain("__rangoFragment");
+      expect(resumed).toContain("__rangoFragment");
+
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      await page.goto(url);
+      await waitForHydration(page);
+      await expect(testId(page, "ppr-shell-header")).toHaveText(
+        "PPR Shell Demo",
+      );
+      await expect(testId(page, "ppr-price")).toContainText("Live price:");
       const counter = testId(page, "ppr-counter");
       await counter.click();
       await expect(counter).toHaveText("count: 1");
@@ -502,10 +613,22 @@ function describePprShell(mode: "dev" | "build") {
       using __ = guardHydrationErrors(page);
       await page.goto(url);
       await waitForHydration(page);
-      await expect(page.getByTestId("ppr-settled-label")).toHaveText(
+      // Scope to the PprShellSettled container (data-testid="ppr-settled").
+      // When the nested promise's Flight payload lands client-side before fizz's
+      // `$RC("B:0","S:0")` completeSegment script executes (a streaming race the
+      // #706 fragment splice widens — the baked payload is now a byte copy that
+      // finishes well ahead of the resume), React client-renders the dehydrated
+      // boundary in place and leaves fizz's HIDDEN segment container
+      // (`<div hidden id="S:0">`, a direct child of <body>) orphaned in the DOM.
+      // That orphan carries the `hidden` attribute — invisible, zero layout, out
+      // of the a11y tree — but it holds a second `ppr-settled-fast` node, so a
+      // bare testid locator strict-mode-collides with it. The container scope
+      // keeps only the visible in-place copy (the orphan lives outside it).
+      const settled = page.getByTestId("ppr-settled");
+      await expect(settled.getByTestId("ppr-settled-label")).toHaveText(
         /Settled outer \d+/,
       );
-      await expect(page.getByTestId("ppr-settled-fast")).toHaveText(
+      await expect(settled.getByTestId("ppr-settled-fast")).toHaveText(
         /Settled fast \d+/,
       );
     });
@@ -603,6 +726,55 @@ function describePprShell(mode: "dev" | "build") {
       expect(prelude).toContain("Bare home static content");
     });
 
+    // /ppr-shell/bake-slow: the PIN-FIRST optimization (loader-cache.ts
+    // `if (!recorded.holes)`) on the real KV-backed CFCacheStore under workerd.
+    // The layout registers a 600ms bake-lane loader (no loading() on the
+    // layout) returning a plain HOLE-FREE container. Its container bakes into
+    // the snapshot's loader family hole-free, so on a HIT the payload resolves
+    // the loaderData from the PIN immediately instead of gating on the fresh
+    // 600ms run (which still executes ungated for side effects). The child keeps
+    // a fast ~30ms price hole behind loading() so a real shell captures. Two
+    // guarantees in one: the served label is pinned (frozen across HITs, not the
+    // advancing fresh seq) AND the pin makes the full HIT response beat the
+    // 600ms fresh run.
+    test("pin-first bake lane: a HIT serves the pinned 600ms container fast and frozen across HITs", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell/bake-slow?probe=bakeslow");
+      await warmToHit(request, url);
+
+      // request.get buffers the WHOLE body, so elapsed covers stream
+      // completion. Without pin-first the payload gates on the fresh 600ms bake
+      // run (elapsed >= 600ms); pinned, the recorded container resolves
+      // immediately and only the ~30ms live hole remains — the 400ms bound
+      // leaves a 200ms+ margin for CI noise either side.
+      const start = Date.now();
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      const elapsed = Date.now() - start;
+      expect(res.status()).toBe(200);
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const html = await res.text();
+
+      // The pinned bake label rides the HIT body beside the live hole content.
+      const captured = /bake-\d+/.exec(html)?.[0];
+      expect(captured, "the pinned bake label rides the HIT body").toBeTruthy();
+      expect(html).toContain("Live price:");
+
+      expect(
+        elapsed,
+        `HIT full-response ${elapsed}ms must beat the 600ms fresh bake run`,
+      ).toBeLessThan(400);
+
+      // Frozen: a second HIT serves the SAME captured label (the pin, not the
+      // fresh seq that keeps advancing in the background) while the price hole
+      // stays live.
+      const second = await request.get(url, { headers: HTML_HEADERS });
+      expect(second.headers()["x-rango-shell"]).toBe("HIT");
+      const secondHtml = await second.text();
+      expect(/bake-\d+/.exec(secondHtml)?.[0]).toBe(captured);
+      expect(secondHtml).toContain("Live price:");
+    });
+
     // /ppr-shell/slot-hole: the escape (skills/ppr "layout-with-loaders
     // playbook") on the real KV-backed CFCacheStore under workerd. The same
     // chrome data is owned by a @badge parallel slot with its OWN loading(), so
@@ -693,6 +865,162 @@ function describePprShell(mode: "dev" | "build") {
       expect(second.html).toContain("Exec matrix static chrome");
       expect(second.html).toContain("exec badge");
     });
+
+    test("partial navigation replays the PPR segment shell while middleware and loaders stay live", async ({
+      page,
+    }) => {
+      const target = f.url("/ppr-shell/exec-matrix");
+      await warmToHit(page.request, target);
+
+      using _ = expectNoPageError(page);
+      const navigateFromFreshDocument = async () => {
+        await page.goto(f.url("/"));
+        await waitForHydration(page);
+        await using __ = await expectNoReload(page);
+        await testId(page, "nav-ppr-exec").click();
+        await waitForNavigation(page, /\/ppr-shell\/exec-matrix$/);
+        await expect(testId(page, "ppr-exec-chrome")).toHaveText(
+          "Exec matrix static chrome",
+        );
+        return JSON.parse(
+          (await testId(page, "ppr-exec-counters").textContent())!,
+        ) as PprExecCounters;
+      };
+
+      const first = await navigateFromFreshDocument();
+      const second = await navigateFromFreshDocument();
+
+      expect(second.middleware).toBe(first.middleware + 1);
+      expect(second.loader).toBe(first.loader + 1);
+      expect(second.path).toBe(first.path);
+      expect(second.layout).toBe(first.layout);
+      expect(second.parallel).toBe(first.parallel);
+    });
+
+    // Prerender + ppr COMPOSITION (docs/design/shell-fast-path.md): one route
+    // carries both a build-time Prerender handler (trie pr:true) and the ppr
+    // option. Build-time segments bake into the frozen prelude; the slot-owned
+    // loader is the live hole (seq advances per HIT). The Prerender handler
+    // never executes at serve (production evicts it to a stub).
+    test("prerender + ppr compose: build-time segments are the frozen prelude, the slot loader streams fresh per HIT", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell/prerendered/alpha?probe=pp");
+      const miss = await request.get(url, { headers: HTML_HEADERS });
+      expect(miss.status()).toBe(200);
+      expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+      expect(await miss.text()).toContain(
+        "Prerendered shell content for alpha",
+      );
+      await warmToHit(request, url);
+
+      const { html } = await measureFirstChunk(url);
+      const { prelude, resumed } = splitPrelude(html);
+      expect(prelude).toContain("Prerendered shell content for alpha");
+      expect(prelude).toContain("Loading pp seq...");
+      expect(prelude).not.toContain("ppr-pp-seq:");
+      expect(resumed).toContain("ppr-pp-seq:");
+
+      // Slot loader liveness: seq advances across HITs while the shell replays.
+      const second = await request.get(url, { headers: HTML_HEADERS });
+      expect(second.headers()["x-rango-shell"]).toBe("HIT");
+      const seq1 = Number(html.match(/ppr-pp-seq: (\d+)/)?.[1]);
+      const seq2 = Number(
+        (await second.text()).match(/ppr-pp-seq: (\d+)/)?.[1],
+      );
+      expect(seq2).toBe(seq1 + 1);
+
+      // Per-param shells: the sibling prerendered slug HITs with its own content.
+      const betaUrl = f.url("/ppr-shell/prerendered/beta?probe=pp");
+      await warmToHit(request, betaUrl);
+      const beta = await (
+        await request.get(betaUrl, { headers: HTML_HEADERS })
+      ).text();
+      expect(splitPrelude(beta).prelude).toContain(
+        "Prerendered shell content for beta",
+      );
+    });
+
+    // -------------------------------------------------------------------
+    // Producer B (#699): the shell entry is produced at BUILD time (dev: on
+    // demand via /__rsc_shell), so the FIRST request already HITs. Build
+    // entries cover the BARE pathname only — the ?probe= URLs above carry a
+    // search string and keep exercising the runtime-capture lanes untouched.
+    // Bare-path usage is partitioned across tests (fullyParallel-safe):
+    // beta = first-request assertion, alpha = liveness; eviction has its own
+    // route + tag (/ppr-shell/prerendered-evict/gamma); the "warm" slug in
+    // the beforeAll absorbs the cold-graph cost (dev: the on-demand capture
+    // compiles the temp-server SSR graph on first use).
+    // -------------------------------------------------------------------
+
+    test.beforeAll(async ({ playwright }) => {
+      const ctx = await playwright.request.newContext();
+      try {
+        await warmToHit(
+          ctx as unknown as Page["request"],
+          f.url("/ppr-shell/prerendered/warm"),
+        );
+      } finally {
+        await ctx.dispose();
+      }
+    });
+
+    test("build-time shell: the FIRST request serves x-rango-shell: HIT with the frozen prelude", async ({
+      request,
+    }) => {
+      const res = await request.get(f.url("/ppr-shell/prerendered/beta"), {
+        headers: HTML_HEADERS,
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const { prelude, resumed } = splitPrelude(await res.text());
+      expect(prelude).toContain("Prerendered shell content for beta");
+      expect(prelude).toContain("Loading pp seq...");
+      expect(prelude).not.toContain("ppr-pp-seq:");
+      expect(resumed).toContain("ppr-pp-seq:");
+    });
+
+    test("build-time shell: loaders stay live across baked-entry HITs (seq advances)", async ({
+      request,
+    }) => {
+      const readSeq = (html: string): number => {
+        const match = html.match(/ppr-pp-seq: (\d+)/);
+        expect(match, "live seq present in the document").toBeTruthy();
+        return Number(match![1]);
+      };
+      const url = f.url("/ppr-shell/prerendered/alpha");
+      const first = await request.get(url, { headers: HTML_HEADERS });
+      expect(first.headers()["x-rango-shell"]).toBe("HIT");
+      const seq1 = readSeq(await first.text());
+      const second = await request.get(url, { headers: HTML_HEADERS });
+      expect(second.headers()["x-rango-shell"]).toBe("HIT");
+      expect(readSeq(await second.text())).toBe(seq1 + 1);
+    });
+
+    test("updateTag evicts the build-time shell; the runtime capture then owns the route", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell/prerendered-evict/gamma");
+      const baked = await request.get(url, { headers: HTML_HEADERS });
+      expect(baked.headers()["x-rango-shell"]).toBe("HIT");
+      expect(await baked.text()).toContain("Evictable shell content for gamma");
+
+      // Awaitable invalidation: the KV tag marker lands before the response,
+      // so the next read is deterministically MISS — the baked entry is
+      // immutable, but the marker comparison (isTagsInvalidatedSince against
+      // the entry's build-time createdAt) rejects it.
+      const invalidate = await request.get(
+        f.url("/test/invalidate-tag/ppr-pp-evict-shell"),
+      );
+      expect(invalidate.status()).toBe(200);
+
+      const evicted = await request.get(url, { headers: HTML_HEADERS });
+      expect(evicted.headers()["x-rango-shell"]).toBe("MISS");
+
+      // Producer A takes over: the MISS scheduled a runtime capture that
+      // stores a runtime entry (the runtime store is read before the manifest).
+      await warmToHit(request, url);
+    });
   });
 }
 
@@ -702,3 +1030,58 @@ function describePprShell(mode: "dev" | "build") {
 // HIT composition are identical under DSL attachment. See docs/design/ppr-shell-resume.md.
 describePprShell("dev");
 describePprShell("build");
+
+// ---------------------------------------------------------------------
+// Dev boot-race readiness (#719 P2/P3) on the Cloudflare temp-server path — the
+// preset where getOrCreateTempServer stands up a temp Node server on the first
+// shell request and the runners/registry readiness sites fire. Own isolated dev
+// workers, no warm-up slug (the describePprShell beforeAll masks the boot
+// window). NO production sibling: production serves the first-request HIT from a
+// build manifest with no /__rsc_shell endpoint / temp server / re-poll loop
+// (covered by describePprShell("build")). A dev-only mechanism has no production
+// counterpart (hard-rule dev+prod pairing, N/A justified).
+// ---------------------------------------------------------------------
+
+test.describe("ppr-shell dev readiness: injected boot-race (#719)", () => {
+  // Deterministic regression guard: RANGO_E2E_INJECT_SHELL_NOTREADY makes the
+  // dev endpoint emit ONE reopt-class NOT-READY per pathname through the REAL
+  // classifier before serving, so the read-through's re-poll runs end-to-end
+  // (a natural cold race settles too fast to guard this). The FIRST request to a
+  // virgin slug must still recover to x-rango-shell: HIT.
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+    isolatedServer: true,
+    cliOptions: { env: { RANGO_E2E_INJECT_SHELL_NOTREADY: "1" } },
+  });
+
+  test("injected reopt NOT-READY: the FIRST request re-polls to HIT", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/ppr-shell/prerendered/alpha"), {
+      headers: HTML_HEADERS,
+    });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+  });
+});
+
+test.describe("ppr-shell dev readiness: cold first request (#719)", () => {
+  // Natural cold path (weak guard per #719: a fast machine can settle before the
+  // first servable request), but on Cloudflare the temp server is genuinely cold
+  // on the first shell request (the main-worker warmup does not create it). A
+  // virgin Prerender+ppr URL as the literal FIRST request on a fresh worker —
+  // HIT on request one, or a MISS that heals to HIT inside the readiness window.
+  const f = useFixture({ root: ".", mode: "dev", isolatedServer: true });
+
+  test("cold virgin route: first request HITs (or heals within the readiness window)", async ({
+    request,
+  }) => {
+    const url = f.url("/ppr-shell/prerendered/beta");
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.status()).toBe(200);
+    if (res.headers()["x-rango-shell"] !== "HIT") {
+      await warmToHit(request, url);
+    }
+  });
+});

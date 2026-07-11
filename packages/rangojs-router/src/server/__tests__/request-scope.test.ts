@@ -163,6 +163,31 @@ describe("RequestScope: executionContext + waitUntil", () => {
       // Swallow the rejection so it doesn't surface as unhandled.
       (arg as Promise<unknown>).catch(() => {});
     });
+
+    it("marks build contexts and keeps waitUntil side-effect free during build", async () => {
+      const mockEC = createMockExecutionContext();
+      const url = new URL("https://example.com/foo");
+      let ran = false;
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(url),
+        url,
+        variables: {},
+        executionContext: mockEC,
+        build: true,
+      });
+
+      ctx.waitUntil(async () => {
+        ran = true;
+      });
+      ctx.dynamic();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(ctx.build).toBe(true);
+      expect(ctx._dynamic).toBe(true);
+      expect(mockEC.waitUntil).not.toHaveBeenCalled();
+      expect(ran).toBe(false);
+    });
   });
 
   describe("HandlerContext", () => {
@@ -235,6 +260,30 @@ describe("RequestScope: executionContext + waitUntil", () => {
         expect(handlerCtx.originalUrl.searchParams.get("_rsc_partial")).toBe(
           "1",
         );
+      });
+    });
+
+    it("exposes build and delegates dynamic() to the ALS-bound RequestContext", () => {
+      const url = new URL("https://example.com/foo");
+      const reqCtx = createRequestContext({
+        env: {},
+        request: new Request(url),
+        url,
+        variables: {},
+        build: true,
+      });
+
+      runWithRequestContext(reqCtx, () => {
+        const handlerCtx = createHandlerContext(
+          {},
+          new Request(url),
+          url.searchParams,
+          url.pathname,
+          url,
+        );
+        expect(handlerCtx.build).toBe(true);
+        handlerCtx.dynamic();
+        expect(reqCtx._dynamic).toBe(true);
       });
     });
   });
@@ -319,6 +368,33 @@ describe("RequestScope: executionContext + waitUntil", () => {
       } finally {
         errorSpy.mockRestore();
       }
+    });
+
+    it("exposes build and delegates dynamic() to the ALS-bound RequestContext", () => {
+      const url = new URL("https://example.com/foo");
+      const reqCtx = createRequestContext({
+        env: {},
+        request: new Request(url),
+        url,
+        variables: {},
+        build: true,
+      });
+
+      runWithRequestContext(reqCtx, () => {
+        const responseHolder: ResponseHolder = {
+          response: new Response(null, { status: 200 }),
+        };
+        const mwCtx = createMiddlewareContext(
+          new Request(url),
+          {},
+          {},
+          {},
+          responseHolder,
+        );
+        expect(mwCtx.build).toBe(true);
+        mwCtx.dynamic();
+        expect(reqCtx._dynamic).toBe(true);
+      });
     });
   });
 

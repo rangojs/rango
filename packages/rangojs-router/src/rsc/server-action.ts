@@ -19,8 +19,8 @@ import {
   getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
-import { appendMetric } from "../router/metrics.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import type { TraceSpan } from "../router/tracing.js";
 import { gateTransitions } from "./transition-gate.js";
 import type { RscPayload } from "./types.js";
 import {
@@ -30,6 +30,7 @@ import {
   interceptRedirectForPartial,
   attachLocationStateIfPresent,
 } from "./helpers.js";
+import { renderRscResponse } from "./render-pipeline.js";
 import { warnNonRedirectActionResponse } from "./runtime-warnings.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { MatchResult } from "../types.js";
@@ -182,6 +183,7 @@ export async function executeServerAction<TEnv>(
       const intercepted = interceptRedirectForPartial(
         data,
         ctx.createRedirectFlightResponse,
+        { requestOrigin: url.origin, basename: ctx.router.basename },
       );
       if (intercepted) return intercepted;
 
@@ -203,6 +205,7 @@ export async function executeServerAction<TEnv>(
       const intercepted = interceptRedirectForPartial(
         error,
         ctx.createRedirectFlightResponse,
+        { requestOrigin: url.origin, basename: ctx.router.basename },
       );
       if (intercepted) return intercepted;
 
@@ -334,7 +337,7 @@ export function revalidateAfterAction<TEnv>(
   // "render:total" AND opens "rango.render" from one boundary covering
   // matchPartial -> serialize, so the revalidation loaders' rango.loader spans
   // nest under a rango.render parent instead of dangling at the request root.
-  return observePhase(PHASES.render, () =>
+  return observePhase(PHASES.render, (span) =>
     revalidateAfterActionInner(
       ctx,
       request,
@@ -342,6 +345,7 @@ export function revalidateAfterAction<TEnv>(
       url,
       handleStore,
       continuation,
+      span,
     ),
   );
 }
@@ -353,6 +357,7 @@ async function revalidateAfterActionInner<TEnv>(
   url: URL,
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   continuation: ActionContinuation,
+  renderSpan: TraceSpan,
 ): Promise<Response> {
   const {
     returnValue,
@@ -362,8 +367,6 @@ async function revalidateAfterActionInner<TEnv>(
     errorBoundary,
   } = continuation;
   const reqCtx = getRequestContext();
-  const metricsStore = reqCtx._metricsStore;
-
   // Expose the action that triggered this revalidation to the transition({ when })
   // gate (covers both the error-boundary and success gate calls below). Mirrors
   // the action fields a revalidate() predicate sees.
@@ -412,27 +415,27 @@ async function revalidateAfterActionInner<TEnv>(
     // is a success-only semantic. Error boundary responses update the error UI
     // but should not mutate browser history state.
 
-    const errorStart = performance.now();
-    const errorStream = ctx.renderToReadableStream<RscPayload>(errorPayload, {
+    return renderRscResponse({
+      ctx,
+      request,
+      env,
+      url,
+      payload: errorPayload,
       temporaryReferences,
-      onError: (error: unknown) => {
-        ctx.callOnError(error, "rendering", { request, url, env });
+      init: {
+        status: actionStatus,
+        headers: {
+          "content-type": "text/x-component;charset=utf-8",
+          // Router identity for the client's pre-decode integrity check (the
+          // action apply path has no post-decode guard). See response-adapter.
+          "X-RSC-Router-Id": ctx.router.id,
+        },
       },
-    });
-    appendMetric(
-      metricsStore,
-      "rsc-serialize",
-      errorStart,
-      performance.now() - errorStart,
-    );
-
-    return createResponseWithMergedHeaders(errorStream, {
-      status: actionStatus,
-      headers: {
-        "content-type": "text/x-component;charset=utf-8",
-        // Router identity for the client's pre-decode integrity check (the
-        // action apply path has no post-decode guard). See response-adapter.
-        "X-RSC-Router-Id": ctx.router.id,
+      tracking: {
+        mode: "action-revalidation",
+        routeKey: reqCtx._routeName,
+        actionId: actionContext?.actionId,
+        span: renderSpan,
       },
     });
   }
@@ -452,8 +455,11 @@ async function revalidateAfterActionInner<TEnv>(
     if (fullMatch.redirect) {
       // Action context is always partial — use X-RSC-Redirect header so
       // the client can perform SPA navigation instead of fetch auto-following
-      // a raw 308 to a URL that would render full HTML.
-      return createSimpleRedirectResponse(fullMatch.redirect);
+      // a raw 308 to a URL that would render full HTML. Resolve server-side.
+      return createSimpleRedirectResponse(fullMatch.redirect, {
+        requestOrigin: url.origin,
+        basename: ctx.router.basename,
+      });
     }
 
     // Non-redirect: this branch is only reachable when no previous URL could
@@ -498,25 +504,27 @@ async function revalidateAfterActionInner<TEnv>(
 
   attachLocationStateIfPresent(payload);
 
-  const renderStart = performance.now();
-  const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+  return renderRscResponse({
+    ctx,
+    request,
+    env,
+    url,
+    payload,
     temporaryReferences,
-    onError: (error: unknown) => {
-      ctx.callOnError(error, "rendering", { request, url, env });
+    init: {
+      status: actionStatus,
+      headers: {
+        "content-type": "text/x-component;charset=utf-8",
+        // Router identity for the client's pre-decode integrity check (the
+        // action apply path has no post-decode guard). See response-adapter.
+        "X-RSC-Router-Id": ctx.router.id,
+      },
     },
-  });
-  const rscSerializeDur = performance.now() - renderStart;
-  // This measures synchronous stream creation, not end-to-end stream consumption.
-  // render:total is recorded by the observePhase wrapper in revalidateAfterAction.
-  appendMetric(metricsStore, "rsc-serialize", renderStart, rscSerializeDur);
-
-  return createResponseWithMergedHeaders(rscStream, {
-    status: actionStatus,
-    headers: {
-      "content-type": "text/x-component;charset=utf-8",
-      // Router identity for the client's pre-decode integrity check (the action
-      // apply path has no post-decode guard). See response-adapter.
-      "X-RSC-Router-Id": ctx.router.id,
+    tracking: {
+      mode: "action-revalidation",
+      routeKey: reqCtx._routeName,
+      actionId: actionContext?.actionId,
+      span: renderSpan,
     },
   });
 }

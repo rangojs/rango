@@ -282,4 +282,57 @@ describe("runMiddleware", () => {
       expect(cookie).toMatch(/^myapp_shop=v9:\d+;/);
     });
   });
+
+  describe("build + ctx.dynamic() (PPR shell opt-out)", () => {
+    // The build-time PPR shell-capture producer replays middleware with a
+    // synthetic build context, so a consumer whose middleware branches on
+    // ctx.build (e.g. `if (ctx.build) ctx.dynamic()`) must be unit-testable
+    // through the public primitive. build defaults false; seeding it true makes
+    // that branch reachable and result.dynamic surfaces the opt-out.
+    const buildGatedOptOut: MiddlewareFn = async (ctx, next) => {
+      if (ctx.build) ctx.dynamic();
+      return next();
+    };
+
+    it("build:true makes ctx.build true and the ctx.dynamic() branch reachable", async () => {
+      const { ctx, dynamic, nextCalled } = await runMiddleware(
+        buildGatedOptOut,
+        { request: "/pp/alpha", build: true },
+      );
+      expect(ctx.build).toBe(true);
+      expect(dynamic).toBe(true);
+      // dynamic() forces the dynamic axis but does not short-circuit the chain.
+      expect(nextCalled).toBe(1);
+    });
+
+    it("defaults to build:false, so the same middleware does NOT opt out", async () => {
+      const { ctx, dynamic } = await runMiddleware(buildGatedOptOut, {
+        request: "/pp/alpha",
+      });
+      expect(ctx.build).toBe(false);
+      expect(dynamic).toBe(false);
+    });
+
+    it("surfaces an unconditional ctx.dynamic() on result.dynamic at runtime", async () => {
+      const mw: MiddlewareFn = async (ctx, next) => {
+        ctx.dynamic();
+        return next();
+      };
+      const { dynamic } = await runMiddleware(mw, { request: "/pp/alpha" });
+      expect(dynamic).toBe(true);
+    });
+
+    it("ctx.waitUntil() is inert under build:true (matches the build producer)", async () => {
+      let ran = false;
+      const mw: MiddlewareFn = async (ctx, next) => {
+        ctx.waitUntil(async () => {
+          ran = true;
+        });
+        return next();
+      };
+      await runMiddleware(mw, { request: "/pp/alpha", build: true });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(ran).toBe(false);
+    });
+  });
 });

@@ -146,34 +146,42 @@ not reinvent the TTL math, it lives in `cache-policy.ts` for exactly this reason
 
 #### Herd dampening is best-effort here
 
-When `get` returns a stale entry, the store pushes `staleAt` forward by 30s and
-re-writes the envelope, so other readers in the same region briefly see it as
-fresh while one of them revalidates. `CFCacheStore` does the same with its
-`MAX_REVALIDATION_INTERVAL` re-arm, but it has the Cache API's atomicity to lean
-on. `getCache` has no compare-and-set and storage is regional, so two readers can
-still both read the stale value before either re-stamps and both trigger a
-refresh. That is acceptable — the contract only asks that we _try_ to prevent a
-thundering herd, and a duplicated revalidation is a cost overrun, not a
-correctness bug. The re-stamp runs through `waitUntil` (off the response path)
-when one is provided, fire-and-forget otherwise.
+When `get` sees a stale entry, it tries to claim a short-lived companion key
+(`{entryKey}:lock`). Only the claimant receives `shouldRevalidate: true`; other
+readers keep serving the stale payload without scheduling duplicate work. The
+payload envelope is never rewritten merely to dampen the herd, so a read cannot
+push its hard expiry forward. `getCache` has no compare-and-set and storage is
+regional, so two readers can still claim concurrently; duplicated revalidation
+is a cost overrun, not a stale-serving correctness bug. Lock writes use
+`waitUntil` when provided.
 
-### Tags: delete-via-`expireTag`, not marker comparison
+### Tags: `expireTag` plus generation markers
 
-`CFCacheStore` keeps a per-tag KV marker timestamp and, on every tagged read,
-compares the entry's `taggedAt` against the marker — invalidation is lazy. Vercel
-does it the other way: `set({ tags })` registers the tags, and `expireTag` physically
-expires every entry carrying them, server-side and globally. So the Vercel store's
-model is the **delete model**, the same as `MemorySegmentCacheStore`, not CF's
-marker model:
+`set({ tags })` registers ordinary runtime entries and `expireTag` physically
+expires them. PPR adds one case deletion alone cannot cover: a shell capture can
+start before invalidation and finish after `expireTag`, and a build shell lives
+outside Runtime Cache. The store therefore also writes a one-year `tm` marker
+per invalidated tag and compares shell generations against it:
 
 - write path: pass the entry's tags straight to `cache.set(key, value, { tags })`.
-- invalidate path: `invalidateTags(tags)` → `cache.expireTag(tags)`, one call for
-  the whole batch.
+- invalidate path: write all `tm` markers first, then
+  `invalidateTags(tags)` → `cache.expireTag(tags)`, one call for the batch.
+- shell path: reject a write whose capture generation predates a marker, and
+  repeat the marker check on read to cover the check-to-write race.
 
-There is no companion tag store, no `taggedAt` bookkeeping for invalidation
-(we keep tags on the read-side result so a hit still contributes them to the
-document tag union, but they are not used to _decide_ invalidation — Vercel
-already did). This is why the store is small.
+Markers use the same Runtime Cache handle, not a companion store. Tagged shell
+retention is capped at the marker lifetime so an invalidated shell cannot become
+visible after its marker expires. Tags still ride read results so a hit
+contributes them to the document tag union.
+
+One narrow race remains because Runtime Cache is regional, ephemeral, and
+LRU-evicted: memory pressure can evict a tag marker before its one-year TTL while
+a capture that started before invalidation is still running. If that capture
+then writes, neither the write barrier nor the read check can observe the missing
+marker. The retention clamp closes TTL expiry, not non-TTL platform eviction.
+Runtime Cache exposes no durable marker tier or compare-and-set primitive, so
+this seconds-wide window is a platform limit rather than something the store can
+close locally.
 
 `invalidateTags` is also the **one method that is allowed to throw**. Every other
 read/write degrades silently-but-loudly (reported via `reportCacheError`, never
@@ -190,7 +198,7 @@ forget them. The store handles each; this is what it is doing and why.
 | Limit                       | Value                                                             | What the store does                                                                                                                                                                                                                         |
 | --------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.                                                      |
-| Tags per item               | **64** (docs say 64 _or_ 128; 64 is the floor)                    | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                        |
+| Tags per item               | **128**                                                           | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                        |
 | Tag length                  | **256 bytes**, no commas                                          | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning.                                                                                                                     |
 | Cross-deploy reconciliation | **none** — TTL/tag updates are not reconciled between deployments | Fold a build id into the key. Use the `version` option (`v/{version}/...` prefix) or, better, the `getCache({ namespace })` argument. Without it, an entry written by a prior deploy with a now-changed shape can be served after a deploy. |
 | Storage consistency         | **regional**                                                      | A write in region A is not visible to a read in region B until B warms. Plan for per-region cold starts; every `get` is best-effort regardless.                                                                                             |
@@ -402,9 +410,9 @@ Shipped:
   (`src/cache/vercel/`).
 - A white-box unit suite (`src/cache/vercel/__tests__/vercel-cache-store.test.ts`)
   over a fake `VercelRuntimeCache`: SWR fresh/stale/expired transitions, the
-  herd-dampening re-stamp, tag invalidation + the `invalidateTags`
-  throw-on-failure, comma/over-length tag drop, the 64-tag clamp, the 2 MB skip,
-  Set-Cookie stripping, version keyspace isolation, family non-collision.
+  companion-lock herd dampening, tag invalidation + the `invalidateTags`
+  throw-on-failure, comma/over-length tag drop, the 128-tag clamp, the 2 MB
+  skip, Set-Cookie stripping, version keyspace isolation, family non-collision.
 - The first-class **`rango({ preset: "vercel" })`** preset: `src/vite/rango.ts`
   (the `else`/node-like branch with NODE_ENV folding + banner) plus
   `src/vite/plugins/vercel-output.ts` (the `buildApp`-hook emitter — `buildApp`
@@ -420,16 +428,17 @@ Shipped:
 
 Deferred (the follow-up):
 
-- **Userland test coverage** through the `@rangojs/router/testing` primitives
-  (`renderHandler` / `dispatch` with a `VercelCacheStore`), in addition to the
-  white-box suite above.
-- **Docs-surface registration**: add the store to
-  `packages/rangojs-router/docs/internal/feature-map.md` and
-  `feature-file-map.md`, and move "Vercel / other adapters" out of the _Planned_
-  section of [`caching.md`](./caching.md).
 - **Real-Vercel e2e**: a `tests/vercel-basic` dev+prod suite, plus confirming
   `getCache`/`expireTag`/`waitUntil` runtime behavior and streaming under the
   actual Node launcher on a live deployment.
+
+Already done (no longer deferred):
+
+- **Userland test coverage** via `dispatch` + `VercelCacheStore`
+  (`src/testing/__tests__/dispatch-vercel-cache-store.test.ts`).
+- **Docs-surface registration**: `VercelCacheStore` is listed in
+  `packages/rangojs-router/docs/internal/feature-map.md` (`./cache` row) and
+  production backends are marked completed in [`caching.md`](./caching.md).
 
 ## Open questions to confirm against the installed `@vercel/functions`
 

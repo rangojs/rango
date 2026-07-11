@@ -47,6 +47,58 @@ test.describe("multi-router (dev)", () => {
     mode: "dev",
   });
 
+  test.describe("per-router search schemas (same-named routes)", () => {
+    test("site /lookup parses with site's schema, not admin's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      // { q: string } — admin's { page: number } must not leak in.
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
+
+    test("admin /lookup parses with admin's schema, not site's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const adminUrl = f
+        .url("/lookup?q=hello&page=2")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":2}',
+      );
+    });
+
+    test("site /lookup still parses with site's schema AFTER admin evaluated", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // Order matters: routers register their schemas when their urls module
+      // evaluates (admin's on the admin request above). This revisit is the
+      // collision case — a name-keyed global registry would now parse site's
+      // request with admin's { page: number } schema.
+      const adminUrl = f
+        .url("/lookup?page=7")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":7}',
+      );
+
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
+  });
+
   test.describe("site app (localhost)", () => {
     test("should render home page", async ({ page }) => {
       using _ = expectNoPageError(page);
@@ -669,6 +721,58 @@ test.describe("multi-router (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
+  });
+
+  test.describe("per-router search schemas (same-named routes)", () => {
+    test("site /lookup parses with site's schema, not admin's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      // { q: string } — admin's { page: number } must not leak in.
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
+
+    test("admin /lookup parses with admin's schema, not site's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const adminUrl = f
+        .url("/lookup?q=hello&page=2")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":2}',
+      );
+    });
+
+    test("site /lookup still parses with site's schema AFTER admin evaluated", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // Order matters: routers register their schemas when their urls module
+      // evaluates (admin's on the admin request above). This revisit is the
+      // collision case — a name-keyed global registry would now parse site's
+      // request with admin's { page: number } schema.
+      const adminUrl = f
+        .url("/lookup?page=7")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":7}',
+      );
+
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
   });
 
   test.describe("site app (localhost)", () => {

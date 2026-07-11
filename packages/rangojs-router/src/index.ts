@@ -398,4 +398,5 @@ export type {
   RouterTimeouts,
   TimeoutPhase,
   TimeoutContext,
+  RenderTimeoutContext,
 } from "./router/timeout.js";

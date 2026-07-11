@@ -7,7 +7,11 @@ import { useFixture, type Fixture } from "./fixture";
  * the captured rango.* span tree is readable through the /__debug/trace route.
  * The real path (@vercel/otel registerOTel) is covered by scripts/smoke.mjs.
  */
-const DEBUG_ENV = { ...process.env, RANGO_TRACE_DEBUG: "1" };
+const DEBUG_ENV = {
+  ...process.env,
+  RANGO_TRACE_DEBUG: "1",
+  RANGO_VERCEL_CACHE_E2E: "1",
+};
 
 /**
  * Dev-mode spec. Title intentionally has NO "(production)" tag so it lands in
@@ -50,6 +54,25 @@ export async function waitForHydration(page: Page): Promise<void> {
     () => document.documentElement.hasAttribute("data-hydrated"),
     { timeout: 20000 },
   );
+}
+
+export async function expectNoReload(page: Page) {
+  await page.evaluate(() => {
+    const marker = document.createElement("meta");
+    marker.setAttribute("name", "x-reload-check");
+    document.head.append(marker);
+  });
+
+  return {
+    [Symbol.asyncDispose]: async () => {
+      await expect(page.locator('meta[name="x-reload-check"]')).toBeAttached({
+        timeout: 100,
+      });
+      await page.evaluate(() => {
+        document.querySelector('meta[name="x-reload-check"]')!.remove();
+      });
+    },
+  };
 }
 
 /** Collect and verify no uncaught page errors occurred. */

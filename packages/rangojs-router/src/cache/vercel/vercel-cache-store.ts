@@ -127,7 +127,18 @@ const REVALIDATION_LOCK_MS = 30_000;
 /** Family prefixes that keep the value tiers from colliding in the single Vercel
  *  keyspace. The router's own semantic prefixes (doc:/partial:/use-cache:) become
  *  the suffix; `rg:` namespaces every Rango entry. `h` is the PPR shell tier. */
-type CacheFamily = "s" | "i" | "r" | "h";
+type CacheFamily = "s" | "i" | "r" | "h" | "tm";
+
+/**
+ * TTL for tag-invalidation marker entries ("tm" family), written by
+ * invalidateTags for the build-shell read-through's isTagsInvalidatedSince
+ * gate. The platform's expireTag() DELETES tagged entries (no queryable
+ * history), so the markers are rango's own record of "tag X was invalidated
+ * at T". One year: runtime tagged-shell retention is capped to this lifetime,
+ * while buildVersion retires build shells on the next deploy. An expired marker
+ * therefore cannot resurrect a runtime shell that outlived its invalidation.
+ */
+const TAG_MARKER_TTL_SECONDS = 365 * 24 * 60 * 60;
 
 /** Stored envelope for a segment-tree entry (get/set). */
 interface VercelSegmentEnvelope {
@@ -179,7 +190,7 @@ interface VercelShellEnvelope {
   rv: string;
   /** Build version at capture (ShellCacheEntry.buildVersion). */
   bv?: string;
-  /** createdAt (ms since epoch). */
+  /** Capture-generation start time, used by tag marker checks. */
   c: number;
   /** staleAt (ms since epoch). */
   s: number;
@@ -191,6 +202,15 @@ interface VercelShellEnvelope {
   i?: string;
   /** Capture data snapshot: recorded cache-store hits/writes for HIT parity. */
   sn?: ShellSnapshotRecord[];
+  /**
+   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
+   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
+   * here silently fast-pathed handler-live entries after a store round trip —
+   * their holes only a handler re-run can fill.
+   */
+  lh?: boolean;
+  /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
+  tw?: true;
 }
 
 /** Read-path outcome for the debug sink. */
@@ -337,6 +357,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export class VercelCacheStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
+  readonly supportsPassiveShellReads: true = true;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -713,6 +734,7 @@ export class VercelCacheStore<
 
   async getShell(
     key: string,
+    options?: { claimRevalidation?: boolean },
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
     const storeKey = this.toStoreKey(key, "h");
     const started = Date.now();
@@ -756,14 +778,25 @@ export class VercelCacheStore<
       return null;
     }
 
+    if (
+      env.t &&
+      env.t.length > 0 &&
+      (await this.isTagsInvalidatedSince(env.t, env.c))
+    ) {
+      void this.safeDelete(storeKey);
+      this.emitDebug({ op: "getShell", key, outcome: "miss", readMs });
+      return null;
+    }
+
     const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
-      ? await this.claimRevalidation(
-          storeKey,
-          env.e,
-          "[VercelCacheStore] getShell",
-        )
-      : false;
+    let shouldRevalidate = isStale;
+    if (isStale && options?.claimRevalidation !== false) {
+      shouldRevalidate = await this.claimRevalidation(
+        storeKey,
+        env.e,
+        "[VercelCacheStore] getShell",
+      );
+    }
     this.emitDebug({
       op: "getShell",
       key,
@@ -781,6 +814,8 @@ export class VercelCacheStore<
         buildVersion: env.bv,
         initialTheme: env.i,
         snapshot: env.sn,
+        handlerLiveHoles: env.lh,
+        transitionWhen: env.tw,
         createdAt: env.c,
       },
       shouldRevalidate,
@@ -793,10 +828,12 @@ export class VercelCacheStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void> {
+  ): Promise<"stored" | "invalidated" | void> {
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
+      const totalTtl = ttl + swrWindow;
+      const now = Date.now();
       const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
       // Store the CLAMPED tags (see putResponse/setItem) so dropped tags don't
       // resurface on a hit; write() re-clamps idempotently.
@@ -804,6 +841,17 @@ export class VercelCacheStore<
         tags,
         "[VercelCacheStore] putShell",
       );
+      const storeKey = this.toStoreKey(key, "h");
+      if (
+        safeTags.length > 0 &&
+        (await this.isTagsInvalidatedSince(safeTags, entry.createdAt))
+      ) {
+        return "invalidated";
+      }
+      const retentionTtl =
+        safeTags.length > 0
+          ? Math.min(totalTtl, TAG_MARKER_TTL_SECONDS)
+          : totalTtl;
       const env: VercelShellEnvelope = {
         p: entry.prelude,
         po: entry.postponed,
@@ -811,27 +859,62 @@ export class VercelCacheStore<
         bv: entry.buildVersion,
         c: entry.createdAt,
         s: staleAt,
-        e: expiresAt,
+        e: Math.min(expiresAt, now + retentionTtl * 1000),
         t: safeTags.length > 0 ? safeTags : undefined,
         i: entry.initialTheme,
         sn: entry.snapshot,
+        lh: entry.handlerLiveHoles,
+        tw: entry.transitionWhen,
       };
       // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
       // oversized shell prelude is reported and skipped (fail-open to a full
       // render), never silently no-op'd on the platform.
       await this.write(
-        this.toStoreKey(key, "h"),
+        storeKey,
         env,
-        ttl + swrWindow,
+        retentionTtl,
         safeTags,
         "[VercelCacheStore] putShell",
       );
+      return "stored";
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] putShell");
     }
   }
 
   // --- Tags ---
+
+  /**
+   * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince).
+   * expireTag() keeps no queryable history, so invalidateTags() writes "tm"
+   * markers for runtime capture races and immutable build shells. Marker >=
+   * generation start wins; read errors fail open like the CF marker check.
+   */
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
+    try {
+      const markers = await Promise.all(
+        tags.map((tag) => this.cache.get(this.toStoreKey(tag, "tm"))),
+      );
+      for (const raw of markers) {
+        if (raw == null) continue;
+        const decoded = this.decodeRaw(raw) as { at?: unknown } | null;
+        const at =
+          decoded && typeof decoded.at === "number" ? decoded.at : null;
+        if (at !== null && at >= sinceMs) return true;
+      }
+      return false;
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-read",
+        "[VercelCacheStore] tag invalidation check",
+      );
+      return false;
+    }
+  }
 
   async invalidateTags(tags: string[]): Promise<void> {
     if (!tags || tags.length === 0) return;
@@ -842,6 +925,20 @@ export class VercelCacheStore<
       "cache-invalidate",
     );
     if (safe.length === 0) return;
+    // Marker writes FIRST, and strict: isTagsInvalidatedSince() is how an
+    // updateTag() reaches a build-time shell entry (expireTag cannot delete
+    // what lives in the build manifest), so a failed marker write must reject
+    // like a failed expireTag — silently resolving would report success while
+    // the baked shell keeps serving.
+    await Promise.all(
+      safe.map((tag) =>
+        this.cache.set(
+          this.toStoreKey(tag, "tm"),
+          JSON.stringify({ at: Date.now() }),
+          { ttl: TAG_MARKER_TTL_SECONDS },
+        ),
+      ),
+    );
     try {
       await this.cache.expireTag(safe);
     } catch (error) {
@@ -1095,7 +1192,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, sn } = raw;
+    const { p, po, rv, bv, c, s, e, t, i, sn, lh, tw } = raw;
     if (typeof p !== "string" || typeof rv !== "string") return null;
     if (po !== null && typeof po !== "string") return null;
     if (typeof c !== "number") return null;
@@ -1111,6 +1208,8 @@ export class VercelCacheStore<
       t: Array.isArray(t) ? (t as string[]) : undefined,
       i: typeof i === "string" ? i : undefined,
       sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
+      lh: lh === true ? true : undefined,
+      tw: tw === true ? true : undefined,
     };
   }
 

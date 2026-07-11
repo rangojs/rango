@@ -80,6 +80,7 @@ Match the surrounding code first; repo-wide conventions:
 ## Environment gotchas
 
 - `pnpm <script>` can fail locally (verifyDepsBeforeRun → install → lefthook). Run binaries directly instead: `./node_modules/.bin/vitest run`, `./node_modules/.bin/playwright test …` — or reuse running Playwright servers. Don't debug the pnpm wrapper.
+- **E2e ports are per-checkout, not the documented bases.** The shared Playwright webServer ports (rangojs-router base 5188/5189 + host 5296/5297, cloudflare-basic 5198/5199) are shifted by an automatic per-clone offset (`checkoutPortOffset()` in `tests/shared-e2e` — hash of the checkout path) so parallel clones can't silently test each other's servers or kill them mid-run (scar tissue: PR #705 verification chased phantom failures for an hour). Read the actual ports from playwright's webServer command output; `RANGO_E2E_PORT_OFFSET=<n>` overrides (0 forces the bases); CI pins 0. Never hardcode a port in cleanup commands (`lsof ... | kill`) — derive it the same way.
 - Full suite output is massive: `pnpm test 2>&1 | tail -80` from the repo root.
 - Format-fix commits go AFTER CI passes on the substantive commit, with `[skip ci]`.
 - Lefthook pre-commit runs formatting and `check:e2e-bucketing`; if your harness bypasses hooks, run `pnpm run format` and `pnpm check:e2e-bucketing` manually.
@@ -106,7 +107,7 @@ RULES:
 - Prefer the `prodDescribe(name, (f) => { ... })` helper (e.g. `tests/vite-rsc-demo/e2e/helper.ts`) — it generates the tag and wires the build fixture so the title can't drift. Use `f.url(...)`.
 - A helper taking a `mode` variable (e.g. `defineSpec(label, mode)`) must itself couple `mode: "build"` with a `(production)` title — the static check can't tie a variable mode to a title.
 
-Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (`(prod)`, `-build` — both have happened) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` reports dev describes lacking a `(production)` sibling and guard-blind variable-mode describes.
+Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (`(prod)`, `-build` — both have happened) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` (CI lint runs `--strict`) fails on any top-level fixture-owning describe without a same-file `(production)` sibling unless it is listed in `tools/e2e-parity-allowlist.json` with a non-empty reason. Guard-blind (non-literal mode) describes are reported but do not fail strict mode — the helper that generates them must couple `mode: "build"` with a `(production)` title. Intentional dev-only (HMR, serve-only plugins) must be allowlisted — do not silence gaps by renaming titles.
 
 ## E2e: running a subset locally
 
@@ -169,7 +170,7 @@ Keep in sync in the same PR whenever exports, files, or features change:
 
 RULES:
 
-1. **Generated route data lives in exactly ONE chunk** — the contract is lazy-only (`virtual:rsc-router/routes-manifest/<routerId>`, populated via `await ensureRouterManifest(routerId)` before matching). Never add `setRouteTrie`/`setPrecomputedEntries` to the eager manifest.
+1. **Generated route data lives in exactly ONE chunk** — the contract is lazy-only (`virtual:rsc-router/routes-manifest/<routerId>`, populated via `await ensureRouterManifest(routerId)` before matching). Never inline the trie/precomputedEntries into the eager manifest (via `setRouterTrie`/`setRouterPrecomputedEntries` or otherwise).
 2. **Non-Cloudflare app vite configs MUST fold NODE_ENV for build**: `define: { "process.env.NODE_ENV": JSON.stringify("production") }`. Reference: `packages/rangojs-router/e2e/test-app/vite.config.ts`.
 
 Why (tree-shaking can't catch either; both caused large regressions — commits `d10a2470`, `e56f2ee2`): (1) inlined `JSON.parse('<huge string>')` data in both an eager and a lazy chunk stays live in BOTH — each is side-effectful; (2) unfolded NODE_ENV makes the minifier keep React's dev AND prod branches, doubling its footprint. The Cloudflare vite plugin folds automatically; vanilla `vite build` folds client only, not SSR/RSC.

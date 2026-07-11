@@ -86,6 +86,10 @@ global middleware
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request
   and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.
+- A response-route handler can return or throw a `Response`; both forms are
+  response control flow. Request-context headers/cookies merge, `onError` is
+  skipped, and status-200 responses use the normal response-cache policy.
+  Pinned by the `[RR1]` semantic matrix row.
 - After a cached entry's SWR TTL expires, a request is served the stale value
   while a background refresh recomputes the entry; a later request sees the
   fresh value. Pinned by the `[SWR1]` semantic matrix row.
@@ -108,11 +112,29 @@ global middleware
   prelude bytes flush first, and match/Flight/resume run behind them inside the
   response stream. Pinned by the `[PPR1]` semantic matrix row and
   `e2e/shell-secure.test.ts`.
-- **PPR capture is mixed-chain and never re-runs middleware.** The background
-  capture renders the page under a derived context that INHERITS the triggering
-  request's post-middleware state (so middleware-derived ctx values photograph
-  into the shell — scope fidelity) while the chain itself runs exactly once per
-  HTTP request (pinned by the middleware-run counter in `[PPR1]`). Within the
+  - **A shell HIT tail owns its render barrier.** `serveShellHit` runs both seeded
+    and fragment-only tails under a derived request context with a freshly wired
+    barrier over the request's handle store. This keeps `_treeHasStreaming`, the
+    segment order, waiter/deadlock state, and the post-settle handle snapshot in
+    the same context as tail matching. Otherwise `ctx.rendered()` can inherit a
+    premature non-streaming snapshot and miss handles pushed behind `loading()`.
+  - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
+    middleware calls it BEFORE the commit point, so it forces the request onto
+    axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid
+    shell exists (`!reqCtx._dynamic` guards both the serve gate and the MISS
+    capture-schedule in `rsc-rendering.ts`). A handler runs AFTER the commit, so
+    it can only suppress the follow-up capture on a MISS. It gates the PPR SHELL
+    axis only — a `Prerender()` route's build-baked B-segments still replay.
+- **Runtime PPR capture is mixed-chain and never re-runs middleware.** The
+  background capture renders the page under a derived context that INHERITS the
+  triggering request's post-middleware state (so middleware-derived ctx values
+  photograph into the shell — scope fidelity) while the chain itself runs
+  exactly once per HTTP request (pinned by the middleware-run counter in
+  `[PPR1]`). Build-time producer B is the exception: it replays middleware
+  during shell capture with `ctx.build === true` (and `ctx.waitUntil()` inert,
+  so build replay fires no background work), before deriving the capture
+  context; middleware may `ctx.dynamic()` there to skip baking a URL's shell.
+  Within the
   capture, `cache()`d segments replay from the segment cache and UNCACHED
   segments execute their handlers fresh (the `cookies()`/`headers()` capture
   guard is load-bearing for handler/render code and bake-lane segment loaders;
@@ -124,9 +146,30 @@ global middleware
   before SSR ("a promise nested inside your data is never baked; the container
   settles").
 - **Serve-time guarding is guaranteed on every serve.** Every serve — MISS and
-  HIT — runs the full chain (middleware + handlers + fresh loaders); only the
-  shell HTML is cached, so a HIT still runs the loader holes fresh. Pinned by
+  HIT — runs middleware and fresh loaders. Eligible shell snapshots replay the
+  captured handler segments instead of re-running those handlers; handler-live
+  holes and conditional transition gates decline that fast path. Pinned by
   the `[PPR2]` semantic matrix row.
+- **Partial navigations reuse the same captured segment shell without a client
+  protocol.** A normal-route partial request may seed the snapshot's canonical
+  `doc:` segment record into `matchPartial()`. Existing client segment ids,
+  revalidation rules, and diff collection decide what is returned; loaders run
+  fresh, and captured item/response/loader pins are excluded. The overlay is the
+  implicit scope's explicit store, not the request's app store, so route-authored
+  `cache()` scopes retain their freshness semantics and request effects stay on
+  the original render-barrier context. Overlay segment misses and mutations are
+  isolated from the real `doc:` namespace. Intercepts remain source-resolved,
+  while handler-live holes and `transition({ when })` re-run the ordinary handler
+  path. Production may use the local build manifest; dev never blocks navigation
+  on `/__rsc_shell`. The browser and prefetch lock see the same partial payload as
+  before. Pinned in both apps by the `partial navigation replays the PPR segment
+shell` dev+production e2e.
+- **Capture-generation invalidation is observable.** Built-in shell stores return
+  `invalidated` when a tag marker rejects a capture that started before the
+  invalidation. The capture emits a `refused` event with
+  `storeWrite: "invalidated"`, warns once, and enters normal refused-capture
+  backoff. A render that deterministically invalidates its own shell tag therefore
+  stays uncached, but it no longer fails silently or recaptures on every request.
 - **The consumption-lane rule.** For every shared-artifact capture — `cache()`,
   `"use cache"`, and the PPR shell — HOW a loader is consumed decides its lane:
   - Server-side handler consumption (`await ctx.use(loader)`) is the BAKED

@@ -30,6 +30,8 @@ const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
 const SHELL_CACHE_REGISTRY_KEY = "__rsc_router_shell_cache_registry__";
 const TAG_INDEX_REGISTRY_KEY = "__rsc_router_tag_index_registry__";
 const KEY_TAGS_REGISTRY_KEY = "__rsc_router_key_tags_registry__";
+const TAG_INVALIDATED_AT_REGISTRY_KEY =
+  "__rsc_router_tag_invalidated_at_registry__";
 
 /**
  * Get or create a named Map from a globalThis-backed registry.
@@ -186,6 +188,7 @@ const DEFAULT_MAX_ENTRIES = 1000;
 export class MemorySegmentCacheStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
+  readonly supportsPassiveShellReads: true = true;
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
   private itemCache: Map<string, CachedItemEntry>;
@@ -194,6 +197,12 @@ export class MemorySegmentCacheStore<
   private tagIndex: Map<string, Set<string>>;
   /** prefixed cache key -> set of tags (reverse index for O(tags) unregister) */
   private keyTags: Map<string, Set<string>>;
+  /**
+   * tag -> epoch ms of its latest invalidateTags() call. Runtime capture races
+   * and immutable build shells are gated by comparing these markers with the
+   * shell generation start. Per-isolate, like every other map here.
+   */
+  private tagInvalidatedAt: Map<string, number>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -228,6 +237,10 @@ export class MemorySegmentCacheStore<
         KEY_TAGS_REGISTRY_KEY,
         options.name,
       );
+      this.tagInvalidatedAt = getNamedMap<number>(
+        TAG_INVALIDATED_AT_REGISTRY_KEY,
+        options.name,
+      );
     } else {
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
@@ -235,6 +248,7 @@ export class MemorySegmentCacheStore<
       this.shellCache = new Map<string, CachedShellEntry>();
       this.tagIndex = new Map<string, Set<string>>();
       this.keyTags = new Map<string, Set<string>>();
+      this.tagInvalidatedAt = new Map<string, number>();
     }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
@@ -444,7 +458,14 @@ export class MemorySegmentCacheStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void> {
+  ): Promise<"stored" | "invalidated"> {
+    if (
+      tags &&
+      tags.length > 0 &&
+      this.tagsInvalidatedSince(tags, entry.createdAt)
+    ) {
+      return "invalidated";
+    }
     const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
     const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
@@ -455,10 +476,32 @@ export class MemorySegmentCacheStore<
     if (tags && tags.length > 0) {
       this.registerTags(tags, prefixedKey);
     }
+    return "stored";
+  }
+
+  async isTagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+  ): Promise<boolean> {
+    return this.tagsInvalidatedSince(tags, sinceMs);
+  }
+
+  private tagsInvalidatedSince(tags: string[], sinceMs: number): boolean {
+    for (const tag of tags) {
+      const at = this.tagInvalidatedAt.get(tag);
+      // >= so a same-millisecond invalidation wins (freshness over staleness),
+      // matching the CF marker comparison.
+      if (at !== undefined && at >= sinceMs) return true;
+    }
+    return false;
   }
 
   async invalidateTags(tags: string[]): Promise<void> {
+    const invalidatedAt = Date.now();
     for (const tag of tags) {
+      // Marker first: build-shell entries evict by marker comparison even when
+      // no runtime entry currently carries the tag (tagIndex miss below).
+      this.tagInvalidatedAt.set(tag, invalidatedAt);
       const keys = this.tagIndex.get(tag);
       if (!keys || keys.size === 0) continue;
 

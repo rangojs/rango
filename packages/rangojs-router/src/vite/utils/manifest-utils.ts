@@ -1,7 +1,4 @@
-export {
-  flattenLeafEntries,
-  buildRouteToStaticPrefix,
-} from "../../build/prefix-tree-utils.js";
+export { flattenLeafEntries } from "../../build/prefix-tree-utils.js";
 
 /**
  * Wrap a value as `JSON.parse('...')` instead of a JS object literal.

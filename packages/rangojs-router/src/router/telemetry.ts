@@ -154,6 +154,7 @@ export interface RequestTimeoutEvent extends BaseEvent {
   actionId?: string;
   durationMs: number;
   customHandler: boolean;
+  render?: import("./timeout.js").RenderTimeoutContext;
 }
 
 export interface OriginCheckRejectedEvent extends BaseEvent {

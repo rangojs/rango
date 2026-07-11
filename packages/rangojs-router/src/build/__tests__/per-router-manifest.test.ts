@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { generateManifestFull } from "../generate-manifest";
-import {
-  buildRouteTrie,
-  extractAncestryFromTrie,
-  type TrieNode,
-} from "../route-trie";
+import { buildRouteTrie, type TrieNode } from "../route-trie";
 import { urls } from "../../urls";
 import {
   setRouterManifest,
@@ -17,10 +13,27 @@ import {
   ensureRouterManifest,
   setCachedManifest,
   clearCachedManifest,
+  clearAllRouterData,
   getGlobalRouteMap,
-  setRouteTrie,
-  getRouteTrie,
 } from "../../route-map-builder";
+
+/**
+ * Collect the route names present in a built trie (keys only). Replaces the
+ * old extractAncestryFromTrie, which returned name->ancestry; these tests only
+ * ever asserted on the route-name key set (multi-router isolation).
+ */
+function trieRouteNames(node: TrieNode): Record<string, true> {
+  const names: Record<string, true> = {};
+  const visit = (n: TrieNode): void => {
+    if (n.r) names[n.r.n] = true;
+    if (n.w) names[n.w.n] = true;
+    if (n.s) for (const child of Object.values(n.s)) visit(child);
+    if (n.xp) for (const child of Object.values(n.xp)) visit(child.c);
+    if (n.p) visit(n.p.c);
+  };
+  visit(node);
+  return names;
+}
 
 // Simulate flattenLeafEntries from vite/index.ts (not exported, so replicate here)
 function flattenLeafEntries(
@@ -129,18 +142,16 @@ describe("per-router manifest generation", () => {
     // Build per-router tries
     const siteTrie = buildRouteTrie(
       siteManifest.routeManifest,
-      siteManifest._routeAncestry,
       siteStaticPrefix,
     );
     const adminTrie = buildRouteTrie(
       adminManifest.routeManifest,
-      adminManifest._routeAncestry,
       adminStaticPrefix,
     );
 
     // Extract route names from each trie
-    const siteTrieRoutes = extractAncestryFromTrie(siteTrie);
-    const adminTrieRoutes = extractAncestryFromTrie(adminTrie);
+    const siteTrieRoutes = trieRouteNames(siteTrie);
+    const adminTrieRoutes = trieRouteNames(adminTrie);
 
     // Site trie should only contain site routes
     expect(Object.keys(siteTrieRoutes)).toEqual(
@@ -220,21 +231,13 @@ describe("per-router manifest generation", () => {
     Object.assign(mergedManifest, siteManifest.routeManifest);
     Object.assign(mergedManifest, adminManifest.routeManifest);
 
-    const mergedAncestry: Record<string, string[]> = {};
-    Object.assign(mergedAncestry, siteManifest._routeAncestry);
-    Object.assign(mergedAncestry, adminManifest._routeAncestry);
-
     const mergedStaticPrefix: Record<string, string> = {};
     for (const name of Object.keys(mergedManifest)) {
       mergedStaticPrefix[name] = "";
     }
 
-    const mergedTrie = buildRouteTrie(
-      mergedManifest,
-      mergedAncestry,
-      mergedStaticPrefix,
-    );
-    const trieRoutes = extractAncestryFromTrie(mergedTrie);
+    const mergedTrie = buildRouteTrie(mergedManifest, mergedStaticPrefix);
+    const trieRoutes = trieRouteNames(mergedTrie);
 
     // Merged trie has all routes (but "/" collides: last writer wins)
     expect(Object.keys(trieRoutes)).toContain("about");
@@ -312,17 +315,15 @@ describe("per-router manifest with includes", () => {
 
     const siteTrie = buildRouteTrie(
       siteManifest.routeManifest,
-      siteManifest._routeAncestry,
       siteStaticPrefix,
     );
     const adminTrie = buildRouteTrie(
       adminManifest.routeManifest,
-      adminManifest._routeAncestry,
       adminStaticPrefix,
     );
 
-    const siteRoutes = extractAncestryFromTrie(siteTrie);
-    const adminRoutes = extractAncestryFromTrie(adminTrie);
+    const siteRoutes = trieRouteNames(siteTrie);
+    const adminRoutes = trieRouteNames(adminTrie);
 
     // Site trie should have blog.detail (dynamic param route)
     expect(siteRoutes).toHaveProperty("blog.detail");
@@ -339,7 +340,6 @@ describe("per-router storage isolation", () => {
   beforeEach(() => {
     // Clear global state before each test
     clearCachedManifest();
-    setRouteTrie(null);
   });
 
   it("should store and retrieve per-router manifests independently", async () => {
@@ -355,8 +355,8 @@ describe("per-router storage isolation", () => {
   });
 
   it("should store and retrieve per-router tries independently", async () => {
-    const siteTrie: TrieNode = { r: { n: "home", sp: "", a: ["M0L0"] } };
-    const adminTrie: TrieNode = { r: { n: "dashboard", sp: "", a: ["M1L0"] } };
+    const siteTrie: TrieNode = { r: { n: "home", sp: "" } };
+    const adminTrie: TrieNode = { r: { n: "dashboard", sp: "" } };
 
     setRouterTrie("site", siteTrie);
     setRouterTrie("admin", adminTrie);
@@ -394,9 +394,8 @@ describe("per-router storage isolation", () => {
 });
 
 describe("ensureRouterManifest lazy loading", () => {
-  it("should load manifest from registered loader on first call", async () => {
+  it("should load trie and precomputed entries from registered loader on first call", async () => {
     const mockModule = {
-      manifest: { home: "/", about: "/about" },
       trie: { r: { n: "home", sp: "", a: [] } } as TrieNode,
       precomputedEntries: [{ staticPrefix: "", routes: { home: "/" } }],
     };
@@ -406,17 +405,19 @@ describe("ensureRouterManifest lazy loading", () => {
     );
 
     // Before loading
-    expect(getRouterManifest("lazy-site")).toBeUndefined();
+    expect(getRouterTrie("lazy-site")).toBeUndefined();
 
     // Load
     await ensureRouterManifest("lazy-site");
 
     // After loading
-    expect(getRouterManifest("lazy-site")).toEqual(mockModule.manifest);
     expect(getRouterTrie("lazy-site")).toBe(mockModule.trie);
     expect(getRouterPrecomputedEntries("lazy-site")).toBe(
       mockModule.precomputedEntries,
     );
+    // The name->path map comes only from the eager module's
+    // setRouterManifest(); the lazy module does not carry it.
+    expect(getRouterManifest("lazy-site")).toBeUndefined();
   });
 
   it("should not re-load if manifest AND trie are already set", async () => {
@@ -453,33 +454,37 @@ describe("ensureRouterManifest lazy loading", () => {
     // Loader was called to load the missing trie
     expect(loadCount).toBe(1);
     expect(getRouterTrie("manifest-only")).toBe(mockTrie);
+    // A stray manifest field on the lazy module must not clobber the
+    // eagerly-set map.
+    expect(getRouterManifest("manifest-only")).toEqual({ y: "/y" });
   });
 
   it("should remove loader after successful load", async () => {
     let loadCount = 0;
     registerRouterManifestLoader("once", () => {
       loadCount++;
-      return Promise.resolve({ manifest: { z: "/z" } });
+      return Promise.resolve({ trie: { type: "root", children: {} } as any });
     });
 
     await ensureRouterManifest("once");
     expect(loadCount).toBe(1);
 
-    // Second call: manifest exists, loader removed
+    // Second call: loader removed, not re-invoked
     await ensureRouterManifest("once");
     expect(loadCount).toBe(1);
   });
 
   it("should handle loader with partial exports", async () => {
-    // Only manifest, no trie or precomputedEntries
+    // Only trie, no precomputedEntries
+    const mockTrie = { type: "root", children: {} } as any;
     registerRouterManifestLoader("partial", () =>
-      Promise.resolve({ manifest: { a: "/a" } }),
+      Promise.resolve({ trie: mockTrie }),
     );
 
     await ensureRouterManifest("partial");
 
-    expect(getRouterManifest("partial")).toEqual({ a: "/a" });
-    expect(getRouterTrie("partial")).toBeUndefined();
+    expect(getRouterTrie("partial")).toBe(mockTrie);
+    expect(getRouterManifest("partial")).toBeUndefined();
     expect(getRouterPrecomputedEntries("partial")).toBeUndefined();
   });
 
@@ -487,5 +492,21 @@ describe("ensureRouterManifest lazy loading", () => {
     // No loader, no manifest
     await ensureRouterManifest("nonexistent");
     expect(getRouterManifest("nonexistent")).toBeUndefined();
+  });
+
+  it("clearAllRouterData clears registered loaders", async () => {
+    // A loader surviving a clear closes over pre-clear data; re-running it
+    // would re-install a stale trie as authoritative.
+    let loadCount = 0;
+    registerRouterManifestLoader("cleared", () => {
+      loadCount++;
+      return Promise.resolve({ trie: { type: "root", children: {} } as any });
+    });
+
+    clearAllRouterData();
+
+    await ensureRouterManifest("cleared");
+    expect(loadCount).toBe(0);
+    expect(getRouterTrie("cleared")).toBeUndefined();
   });
 });

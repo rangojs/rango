@@ -166,7 +166,17 @@ function describeTagEviction(mode: "dev" | "build") {
       await waitForHydration(page);
 
       await expect(testId(page, "blog-title")).toHaveText("Blog");
-      await expect(testId(page, "blog-sidebar")).toBeVisible();
+      // Scope to the layout: when the sidebar's Flight data lands client-side
+      // before fizz's $RC script executes (a streaming race the #700 fragment
+      // splice widens — the baked payload is now a byte copy and finishes
+      // well ahead of the resume), React client-renders the dehydrated
+      // boundary and leaves fizz's HIDDEN segment container
+      // (`<div hidden id="S:n">`) orphaned in the DOM. The visible tree is
+      // identical either way; a bare testid locator just strict-mode-collides
+      // with that hidden artifact.
+      await expect(
+        testId(page, "blog-layout").getByTestId("blog-sidebar"),
+      ).toBeVisible();
     });
   });
 }

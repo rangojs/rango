@@ -1,3 +1,5 @@
+import { PprInlineActionForm } from "../Document.js";
+
 export function AboutPage() {
   return (
     <main data-testid="about">
@@ -8,6 +10,28 @@ export function AboutPage() {
         that streams the RSC/HTML response; static client assets are served from
         the CDN. See the README for the deploy steps.
       </p>
+    </main>
+  );
+}
+
+export function PprInlineActionPage() {
+  const captured = `vercel-server-token-${crypto.randomUUID()}`;
+
+  async function submit(
+    _previous: { captured: string; submitted: string },
+    formData: FormData,
+  ): Promise<{ captured: string; submitted: string }> {
+    "use server";
+    return {
+      captured,
+      submitted: String(formData.get("value")),
+    };
+  }
+
+  return (
+    <main>
+      <h1>PPR Inline Action</h1>
+      <PprInlineActionForm action={submit} renderedCaptured={captured} />
     </main>
   );
 }

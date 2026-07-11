@@ -227,6 +227,17 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
           };
           if (event.routeKey) attrs["rango.route_key"] = event.routeKey;
           if (event.actionId) attrs["rango.action_id"] = event.actionId;
+          if (event.render) {
+            attrs["rango.render.mode"] = event.render.mode;
+            attrs["rango.render.phase"] = event.render.phase;
+            attrs["rango.render.state"] = event.render.state;
+            attrs["rango.render.completed"] = event.render.completed;
+            attrs["rango.render.total"] = event.render.total;
+            if (event.render.phaseDurationMs !== undefined) {
+              attrs["rango.render.phase_duration_ms"] =
+                event.render.phaseDurationMs;
+            }
+          }
           const span = instant("rango.request.timeout", attrs);
           span.setStatus({
             code: STATUS_ERROR,

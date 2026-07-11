@@ -1,8 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   devSpec,
   prodSpec,
   waitForHydration,
+  expectNoReload,
   expectNoPageError,
   testId,
   type Fixture,
@@ -14,6 +15,34 @@ function flatten(node: SpanNode | null): SpanNode[] {
 }
 function find(node: SpanNode | null, name: string): SpanNode | undefined {
   return flatten(node).find((n) => n.name === name);
+}
+
+const HTML_HEADERS = { Accept: "text/html" };
+
+async function warmToHit(request: Page["request"], url: string): Promise<void> {
+  await expect(async () => {
+    const response = await request.get(url, { headers: HTML_HEADERS });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-shell"]).toBe("HIT");
+  }).toPass({ timeout: 20_000 });
+}
+
+async function expectInlineActionRoundTrip(page: Page): Promise<void> {
+  await expect(testId(page, "ppr-inline-action-page")).toBeVisible();
+  const rendered = await testId(
+    page,
+    "ppr-inline-action-rendered",
+  ).textContent();
+  const captured = rendered!.replace(/^rendered:/, "");
+  expect(captured).toMatch(/^vercel-server-token-/);
+
+  await testId(page, "ppr-inline-action-submit").click();
+  await expect(testId(page, "ppr-inline-action-captured")).toHaveText(
+    `captured:${captured}`,
+  );
+  await expect(testId(page, "ppr-inline-action-submitted")).toHaveText(
+    "submitted:from-client",
+  );
 }
 
 function runSpec(f: Fixture): void {
@@ -43,8 +72,36 @@ function runSpec(f: Fixture): void {
     const first = await read();
     const second = await read();
     // Within the 10s TTL the segment is served from cache, so the timestamp
-    // stays frozen across requests (an in-process MemorySegmentCacheStore hit).
+    // stays frozen across requests (a VercelCacheStore hit in e2e).
     expect(second).toBe(first);
+  });
+
+  test("runtime Vercel shell HIT preserves an embedded bound action", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    const url = f.url("/ppr-inline-action?probe=vercel-ppr-hit");
+    await warmToHit(page.request, url);
+
+    const response = await page.goto(url);
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+    await expectInlineActionRoundTrip(page);
+  });
+
+  test("partial PPR navigation through Vercel preserves an embedded bound action", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await warmToHit(page.request, f.url("/ppr-inline-action"));
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-ppr-inline-action").click();
+    await expect(page).toHaveURL(/\/ppr-inline-action$/);
+    await expectInlineActionRoundTrip(page);
   });
 
   test("client-side navigation works after hydration", async ({ page }) => {

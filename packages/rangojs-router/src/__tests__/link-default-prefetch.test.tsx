@@ -7,16 +7,16 @@ import { createRoot, type Root } from "react-dom/client";
 // WHICH strategy the Link resolved (did it enqueue?) without any network or
 // IntersectionObserver machinery. observeForPrefetch invokes its callback
 // synchronously — the element is "in viewport" the moment it's observed.
-vi.mock("../browser/prefetch/fetch.js", () => ({
+vi.mock("../browser/prefetch/loader.js", () => ({
   prefetchDirect: vi.fn(),
   prefetchQueued: vi.fn(() => "key"),
-}));
-vi.mock("../browser/prefetch/observer.js", () => ({
-  observeForPrefetch: vi.fn((_el: Element, cb: () => void) => cb()),
-  unobserveForPrefetch: vi.fn(),
+  observeForPrefetch: vi.fn((_el: Element, cb: () => void) => {
+    cb();
+    return vi.fn();
+  }),
 }));
 
-import { prefetchQueued } from "../browser/prefetch/fetch.js";
+import { prefetchQueued } from "../browser/prefetch/loader.js";
 import { Link } from "../browser/react/Link.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";

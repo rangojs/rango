@@ -19,6 +19,25 @@ export async function getDriftStamp(ctx: HandlerContext): Promise<string> {
   return `drift-${driftExecutions}`;
 }
 
+// Snapshot SIZE-CAP fixture (issue #651): a default-profile cached value baked
+// into the shell above loading(). The route caps ppr.maxSnapshotBytes far below
+// any real snapshot, so EVERY capture skips the snapshot (over cap, once-per-key
+// warning) yet still stores the shell. A HIT's tail then re-reads this value
+// LIVE from the real store — the default profile's ttl outlasts the test, so
+// the un-pinned read returns the capture-time value and the page hydrates
+// without mismatch. (Drift after expiry is the documented trade, exercised
+// conceptually by the drift fixture above — not asserted here.)
+let capStampExecutions = 0;
+
+export async function getCapStamp(ctx: HandlerContext): Promise<string> {
+  "use cache";
+  // ctx is a tainted key arg (excluded from the value, scopes the key by
+  // pathname+search); reference it so the transform keeps it.
+  void ctx.pathname;
+  capStampExecutions += 1;
+  return `cap-stamp-${capStampExecutions}`;
+}
+
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to
 // prove loaders stay fresh while the shell is served from the cached prelude.
@@ -288,5 +307,125 @@ export const ShellExecLoader = createLoader(
     shellExecCounters.loader += 1;
     await new Promise((resolve) => setTimeout(resolve, SHELL_EXEC_DELAY_MS));
     return { ...shellExecCounters };
+  },
+);
+
+// Slow deferred-shell-material fixture (issue #715, the storefront meta
+// pattern): the layout pushes THREE top-level handle values that settle IN
+// PARTS — immediate, slow (~5.5s), and a Meta CHAINED off the slow promise
+// (+1s, ~6.5s total). All three are TOP-LEVEL pushes, so the capture awaits
+// the COMPLETE settlement sequence (resolvedHandleStream converges only after
+// every push resolves — a partial prefix is unrepresentable) and bakes the
+// final values. Under a sub-settlement budget (the negative's explicit
+// 1500ms) the sequence outlasts the deadline, the handles row never emits,
+// SsrRoot stays suspended at the root, and the capture REFUSES (trivial
+// prelude — eternal MISS + once-per-key warning). With `ppr.captureTimeout:
+// 10000` (or the 15s default) the same route captures and the stored prelude
+// carries all three resolved parts. A per-capture seq rides in
+// each value so consecutive HITs pin frozenness (the prelude keeps the
+// capture-time seq while axis-1/misses would advance it).
+const SLOW_META_SLOW_DELAY_MS = 5_500;
+const SLOW_META_CHAIN_EXTRA_MS = 1_000;
+
+export interface SlowMetaParts {
+  immediate: Promise<string>;
+  slow: Promise<string>;
+  chainedTitle: Promise<string>;
+}
+
+let slowMetaSeq = 0;
+
+export function makeSlowMetaParts(): SlowMetaParts {
+  slowMetaSeq += 1;
+  const seq = slowMetaSeq;
+  const immediate = Promise.resolve(`slow-meta-immediate-${seq}`);
+  const slow = new Promise<string>((resolve) =>
+    setTimeout(() => resolve(`slow-meta-slow-${seq}`), SLOW_META_SLOW_DELAY_MS),
+  );
+  // The Meta value is CHAINED off the slow push's promise with additional
+  // latency — the staged-resolution shape (data -> derived meta) the capture
+  // must ride to full convergence, not to the first settle.
+  const chainedTitle = slow.then(
+    (v) =>
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve(`${v}-chained`), SLOW_META_CHAIN_EXTRA_MS),
+      ),
+  );
+  return { immediate, slow, chainedTitle };
+}
+
+/** Handle collecting the slow fixture's non-Meta pushes for shell render. */
+export const SlowMetaHandles = createHandle<string, string[]>((values) =>
+  values.flat(),
+);
+
+/**
+ * Render counter for the /shell-cache/outlined fixture. Fizz OUTLINES any
+ * Suspense boundary over ~500 bytes (fallback written inline first, content
+ * as a queued task, outline-deferred at flush), so the big section exercises
+ * the outlined render + flush path end to end. Baked correctly, the section
+ * renders only during capture; the count riding inside the stored prelude is
+ * a capture-time snapshot by construction.
+ */
+export const outlinedRenderCounter: { count: number } = { count: 0 };
+
+// Slot loader for the /shell-cache/outlined fixture's masked hole. Dedicated
+// (not ShellBadgeLoader) so its seq is isolated from the slot-hole suite; the
+// value advancing across HITs pins that the hole stays LIVE while the outlined
+// section beside it is served from the frozen prelude.
+let outlinedBadgeSeq = 0;
+
+export const ShellOutlinedBadgeLoader = createLoader(
+  async (): Promise<string> => {
+    await new Promise((resolve) => setTimeout(resolve, SHELL_BADGE_DELAY_MS));
+    outlinedBadgeSeq += 1;
+    return `outlined-badge-${outlinedBadgeSeq}`;
+  },
+);
+
+// Pin-first bake-lane fixture (loader-cache.ts `if (!recorded.holes)`). A
+// bake-lane loader (registered on a layout with NO loading()) that sleeps a
+// deliberately SLOW 600ms and returns a plain, HOLE-FREE container ({ label }
+// — no nested promises). At capture it executes and its settled container bakes
+// into the shell snapshot's loader family, hole-free. On a shell HIT the record
+// is hole-free, so the HIT payload resolves the loaderData from the PIN
+// immediately instead of gating on the fresh 600ms run (which still runs
+// ungated for its side effects). The seq advances per execution ONLY to prove
+// the served value is the pinned capture-time one — it must stay frozen across
+// HITs while the fresh run keeps incrementing in the background. 600ms is well
+// above the e2e's 400ms HIT bound so a gated (unoptimized) HIT visibly exceeds
+// it while a pinned HIT clears it with a 200ms+ margin for CI noise.
+const SHELL_BAKE_SLOW_DELAY_MS = 600;
+
+let shellBakeSlowSeq = 0;
+
+export const ShellBakeSlowLoader = createLoader(
+  async (): Promise<{ label: string }> => {
+    await new Promise((resolve) =>
+      setTimeout(resolve, SHELL_BAKE_SLOW_DELAY_MS),
+    );
+    shellBakeSlowSeq += 1;
+    return { label: `bake-${shellBakeSlowSeq}` };
+  },
+);
+
+// The fast LIVE hole under the bake-slow layout: ~30ms behind loading() so the
+// route has a real hole and the shell actually captures (a route with no hole
+// anywhere can refuse capture). Kept far under the 600ms bake AND the 400ms HIT
+// bound so it never dominates the pinned HIT's tail. Returns the ShellPriceData
+// shape so the shared ShellBakeSlow component renders the same "Live price:"
+// content the other fixtures assert on. seq advances every request to prove the
+// hole stays live while the bake label is pinned.
+const SHELL_BAKE_HOLE_DELAY_MS = 30;
+
+let shellBakeHoleSeq = 0;
+
+export const ShellBakeHoleLoader = createLoader(
+  async (): Promise<ShellPriceData> => {
+    await new Promise((resolve) =>
+      setTimeout(resolve, SHELL_BAKE_HOLE_DELAY_MS),
+    );
+    shellBakeHoleSeq += 1;
+    return { price: 42, seq: shellBakeHoleSeq, loadedAt: Date.now() };
   },
 );

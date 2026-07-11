@@ -39,8 +39,8 @@ both walk `patterns.handler()`:
    router construction to seed `routesEntries` used by `findMatch`.
 2. **Build-time discovery** — `generateManifestFull` /
    `buildPrefixTreeNode` (`src/build/generate-manifest.ts`) walk it to produce
-   the route manifest, ancestry, trie input, trailing-slash config, prerender
-   list, response-type map, and generated-type inputs.
+   the route manifest, trie input, trailing-slash config, prerender list,
+   response-type map, and generated-type inputs.
 
 Between them those walks populate four structures that are expected to be
 **complete and synchronously readable at any time**:

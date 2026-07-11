@@ -6,6 +6,7 @@ import type {
   OnErrorCallback,
 } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
+import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
 import type { UrlBuilder } from "../urls/pattern-types.js";
@@ -127,14 +128,6 @@ export interface RangoOptions<TEnv = any> {
   debugPerformance?: boolean;
 
   /**
-   * Allow the `?__debug_manifest` query parameter to return route manifest data as JSON.
-   * In development mode this is always enabled regardless of this setting.
-   * Defaults to false. Set to true to enable in production.
-   * @internal
-   */
-  allowDebugManifest?: boolean;
-
-  /**
    * DEVELOPMENT/TEST ONLY. Emit an `X-Rango-Cache` response header describing
    * the cache status of the matched route, for use by testing primitives such
    * as `assertCacheStatus`.
@@ -148,6 +141,18 @@ export interface RangoOptions<TEnv = any> {
    * production — it exposes internal cache decisions.
    */
   debugCacheSignal?: boolean;
+
+  /**
+   * Debug sink for the PPR shell-capture pipeline (routes with the `ppr` path
+   * option). `true` logs one structured line per capture attempt/skip to
+   * console (visible via `wrangler tail`); a function receives each
+   * `ShellCaptureDebugEvent` (outcome per attempt, snapshot bytes,
+   * write-barrier wait, backoff state) for programmatic capture. Off by
+   * default; the events also mirror into the dev Server-Timing surface when
+   * `debugPerformance` is on. Intended for validating capture behavior on a
+   * real deployment, not steady-state production.
+   */
+  debugShellCapture?: ShellCaptureDebug;
 
   /**
    * Document component that wraps the entire application.

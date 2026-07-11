@@ -38,8 +38,11 @@ export const TAG_MARKER_ABSENT = "none";
  * entry A's own KV says is invalidated. Keying by the instance isolates them;
  * two reads through the SAME store still share the memo. A read through one
  * store never populates another's memo, so each store always consults its own KV
- * binding. Markers are read only through isGloballyInvalidated(), which already
- * short-circuits when a store has no KV, so a store without KV never allocates.
+ * binding. Markers are read through isGloballyInvalidated(), which
+ * short-circuits when a store has no KV — and, in purge mode, through
+ * isL1Invalidated(), which consults ONLY this memo on an L1 hit (no KV read),
+ * so a purge-mode store allocates the memo even without KV for same-request
+ * read-your-own-writes after updateTag().
  *
  * Without the memo, isGloballyInvalidated() issues a KV read per tag on every
  * tagged cache read, so a page composed of many segments/items sharing a tag

@@ -44,6 +44,14 @@ export {
   type CacheStatusTarget,
 } from "../cache-status.js";
 export {
+  assertShellStatus,
+  parseShellStatus,
+  shellCacheKey,
+  SHELL_STATUS_HEADER,
+  type ShellStatus,
+  type ShellStatusTarget,
+} from "../shell-status.js";
+export {
   testId,
   waitForHydration,
   waitForNavigation,

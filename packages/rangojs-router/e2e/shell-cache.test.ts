@@ -9,6 +9,8 @@ import {
   goBack,
 } from "./helper";
 import { guardHydrationErrors } from "@shared/e2e";
+import { assertShellStatus } from "@rangojs/router/testing/e2e";
+import type { ShellExecCounters } from "./test-app/src/urls/shell-cache.defs";
 
 // End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
 // option (test-app/src/urls/shell-cache.tsx) — serving is integral to the router
@@ -39,6 +41,10 @@ const LOADER_DELAY_MS = 400;
 // outer value resolves fast, the nested pendingData promise settles ~300ms later.
 const STREAM_INNER_DELAY_MS = 300;
 
+// Last row index of the /shell-cache/outlined fixture's big section
+// (OUTLINED_ROW_COUNT - 1 in test-app/src/urls/shell-cache.tsx).
+const OUTLINED_LAST_ROW = 9999;
+
 // The shell cache only engages for HTML document GETs; mayNeedSSR treats a request
 // whose Accept omits text/html as RSC and bypasses. Playwright's raw request.get
 // defaults to Accept: * / *, so document probes must ask for HTML the way a browser
@@ -49,7 +55,15 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
   await expect(async () => {
     const res = await request.get(url, { headers: HTML_HEADERS });
     expect(res.status()).toBe(200);
-    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    // Dogfood the public testing helper (same contract as production header).
+    assertShellStatus(
+      {
+        headers: new Headers({
+          "x-rango-shell": res.headers()["x-rango-shell"] ?? "",
+        }),
+      },
+      "HIT",
+    );
   }).toPass({ timeout: 10000 });
 }
 
@@ -109,8 +123,11 @@ function runShellCacheSpec(f: Fixture): void {
   test("bypasses non-document (RSC) requests — no shell header", async ({
     request,
   }) => {
+    // Explicit flight opt-in: */* now negotiates to the HTML document (which
+    // engages the shell), so the RSC bypass is pinned via the wire-format
+    // Accept the flight transport actually sends.
     const res = await request.get(f.url("/shell-cache?probe=rsc"), {
-      headers: { Accept: "*/*" },
+      headers: { Accept: "text/x-component" },
     });
     expect(res.status()).toBe(200);
     expect(res.headers()["x-rango-shell"]).toBeUndefined();
@@ -180,6 +197,42 @@ function runShellCacheSpec(f: Fixture): void {
 
     // First byte (the cached prelude) does not wait on the ~400ms live loader.
     expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
+  });
+
+  // Script strategy inside the composite HIT (src/ssr/preinit-client-references.ts):
+  // the frozen prelude carries the executing module scripts (bootstrap always;
+  // preinit-upgraded chunk scripts in build, where client-reference deps exist),
+  // and the resumed tail re-emits NONE of them — the preinit dedupe markers and
+  // cleared bootstrap fields ride inside the serialized postponed state.
+  test("HIT: executing module scripts live in the prelude, exactly once each", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache?probe=scripts");
+    await warmToHit(request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const { prelude, resumed } = splitPrelude(html);
+
+    const executingSrcs = (part: string) =>
+      [...part.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)]
+        .filter((m) => m[0].includes('type="module"'))
+        .map((m) => m[1]!);
+
+    // The executing bootstrap (id="_R_") is frozen into the prelude.
+    expect(prelude).toContain('id="_R_"');
+    const preludeSrcs = executingSrcs(prelude);
+    expect(preludeSrcs.length).toBeGreaterThan(0);
+
+    // The resume pass never duplicates a script the shell already shipped.
+    const resumedSrcs = executingSrcs(resumed);
+    for (const src of preludeSrcs) {
+      expect(resumedSrcs, `resume re-emitted ${src}`).not.toContain(src);
+    }
+    const seen = new Set<string>();
+    for (const src of preludeSrcs) {
+      expect(seen.has(src), `prelude duplicated ${src}`).toBe(false);
+      seen.add(src);
+    }
   });
 
   // --- The hole doctrine: PHYSICS and HANDLES holes ---
@@ -391,6 +444,49 @@ function runShellCacheSpec(f: Fixture): void {
     expect(liveSeq).toBeGreaterThan(firstSeq);
   });
 
+  // --- Snapshot size cap (issue #651): over-cap snapshot skipped, serving intact. ---
+
+  // /shell-cache/snapshot-cap declares ppr.maxSnapshotBytes: 64 — far below the
+  // snapshot its capture records (the cap-stamp "use cache" item alone exceeds
+  // it) — so every capture stores the shell WITHOUT its snapshot (the skip +
+  // once-per-key report mechanics are pinned in shell-capture.test.ts). The
+  // contract pinned HERE: the cap degrades pinning, never serving — the route
+  // still flips MISS -> HIT and the HIT hydrates with zero errors (the
+  // cap-stamp's default-profile ttl outlasts the test, so the un-pinned live
+  // re-read agrees with the frozen prelude), while the price hole stays live.
+  test("size-cap fallback: an over-cap snapshot still stores the shell and the HIT hydrates cleanly", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/shell-cache/snapshot-cap?probe=capfallback");
+    await warmToHit(page.request, url);
+
+    // Raw-wire HIT: the shell serves from the store even though its snapshot
+    // was dropped, with the baked cap-stamp in the document.
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const html = await res.text();
+    expect(html).toMatch(/cap-stamp-\d+/);
+    const firstSeq = Number(/data-seq="(\d+)"/.exec(html)?.[1] ?? "0");
+
+    // Browser HIT: zero hydration errors (the guards above), the shell island
+    // is interactive, and the live hole advances past the baseline.
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(testId(page, "cap-stamp")).toHaveText(/cap-stamp-\d+/);
+    const counter = testId(page, "shell-counter");
+    await expect(counter).toHaveText("count: 0");
+    await counter.click();
+    await expect(counter).toHaveText("count: 1");
+    const price = testId(page, "shell-price");
+    await expect(price).toContainText("Live price:");
+    const liveSeq = Number(await price.getAttribute("data-seq"));
+    expect(liveSeq).toBeGreaterThan(firstSeq);
+  });
+
   // --- Loader-carried promise: the deterministic streaming lane in a hole. ---
 
   // /shell-cache/stream's loader resolves an outer value fast but carries a nested
@@ -595,10 +691,22 @@ function runShellCacheSpec(f: Fixture): void {
     using __ = guardHydrationErrors(page);
     await page.goto(url);
     await waitForHydration(page);
-    await expect(testId(page, "shell-settled-label")).toHaveText(
+    // Scope to the ShellSettledValue container (data-testid="shell-settled").
+    // When the nested promise's Flight payload lands client-side before fizz's
+    // `$RC("B:0","S:0")` completeSegment script executes (a streaming race the
+    // #706 fragment splice widens — the baked payload is now a byte copy that
+    // finishes well ahead of the resume), React client-renders the dehydrated
+    // boundary in place and leaves fizz's HIDDEN segment container
+    // (`<div hidden id="S:0">`, a direct child of <body>) orphaned in the DOM.
+    // That orphan carries the `hidden` attribute — invisible, zero layout, out
+    // of the a11y tree — but it holds a second `shell-settled-fast` node, so a
+    // bare testid locator strict-mode-collides with it. The container scope
+    // keeps only the visible in-place copy (the orphan lives outside it).
+    const settled = testId(page, "shell-settled");
+    await expect(settled.getByTestId("shell-settled-label")).toHaveText(
       /Settled outer \d+/,
     );
-    await expect(testId(page, "shell-settled-fast")).toHaveText(
+    await expect(settled.getByTestId("shell-settled-fast")).toHaveText(
       /Settled fast \d+/,
     );
   });
@@ -629,6 +737,54 @@ function runShellCacheSpec(f: Fixture): void {
     const second = await measureFirstChunk(url);
     const seqOf = (h: string) => Number(h.match(/data-seq="(\d+)"/)?.[1]);
     expect(seqOf(second.html)).toBeGreaterThan(seqOf(html)!);
+  });
+
+  // /shell-cache/bake-slow: the PIN-FIRST optimization (loader-cache.ts
+  // `if (!recorded.holes)`). The layout registers a 600ms bake-lane loader
+  // (no loading() on the layout) returning a plain HOLE-FREE container. Its
+  // container bakes into the snapshot's loader family hole-free, so on a HIT the
+  // payload resolves the loaderData from the PIN immediately instead of gating
+  // on the fresh 600ms run (which still executes ungated for side effects). The
+  // child keeps a fast ~30ms price hole behind loading() so a real shell
+  // captures. Two guarantees in one: the served label is pinned (frozen across
+  // HITs, not the advancing fresh seq) AND the pin makes the full HIT response
+  // beat the 600ms fresh run.
+  test("pin-first bake lane: a HIT serves the pinned 600ms container fast and frozen across HITs", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/bake-slow?probe=bakeslow");
+    await warmToHit(request, url);
+
+    // request.get buffers the WHOLE body, so elapsed covers stream completion.
+    // Without pin-first the payload gates on the fresh 600ms bake run
+    // (elapsed >= 600ms); pinned, the recorded container resolves immediately
+    // and only the ~30ms live hole remains — the 400ms bound leaves a 200ms+
+    // margin for CI noise either side.
+    const start = Date.now();
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    const elapsed = Date.now() - start;
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const html = await res.text();
+
+    // The pinned bake label rides the HIT body beside the live hole's content.
+    const captured = /bake-\d+/.exec(html)?.[0];
+    expect(captured, "the pinned bake label rides the HIT body").toBeTruthy();
+    expect(html).toContain("Live price:");
+
+    expect(
+      elapsed,
+      `HIT full-response ${elapsed}ms must beat the 600ms fresh bake run`,
+    ).toBeLessThan(400);
+
+    // Frozen: a second HIT serves the SAME captured label (the pin, not the
+    // fresh seq that keeps advancing in the background) while the price hole
+    // stays live.
+    const second = await request.get(url, { headers: HTML_HEADERS });
+    expect(second.headers()["x-rango-shell"]).toBe("HIT");
+    const secondHtml = await second.text();
+    expect(/bake-\d+/.exec(secondHtml)?.[0]).toBe(captured);
+    expect(secondHtml).toContain("Live price:");
   });
 
   // /shell-cache/guard: the identity wall. A bake-lane loader (no loading())
@@ -867,6 +1023,186 @@ function runShellCacheSpec(f: Fixture): void {
     // The replayed handler output still renders (structure intact, not blank).
     expect(second.html).toContain("Exec matrix static chrome");
     expect(second.html).toContain("exec badge");
+  });
+
+  test("partial navigation replays the PPR segment shell while middleware and loaders stay live", async ({
+    page,
+  }) => {
+    const target = f.url("/shell-cache/exec-matrix");
+    await warmToHit(page.request, target);
+
+    using _ = expectNoPageError(page);
+    const navigateFromFreshDocument = async () => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "nav-ppr-exec").click();
+      await waitForNavigation(page, /\/shell-cache\/exec-matrix$/);
+      await expect(testId(page, "shell-exec-chrome")).toHaveText(
+        "Exec matrix static chrome",
+      );
+      return JSON.parse(
+        (await testId(page, "shell-exec-counters").textContent())!,
+      ) as ShellExecCounters;
+    };
+
+    const first = await navigateFromFreshDocument();
+    const second = await navigateFromFreshDocument();
+
+    expect(second.middleware).toBe(first.middleware + 1);
+    expect(second.loader).toBe(first.loader + 1);
+    expect(second.path).toBe(first.path);
+    expect(second.layout).toBe(first.layout);
+    expect(second.parallel).toBe(first.parallel);
+  });
+
+  // Issue #702: fizz OUTLINES any Suspense boundary over ~500 bytes (fallback
+  // written inline first, content as a queued task; past progressiveChunkSize
+  // the completed content is outline-DEFERRED at flush into an out-of-band
+  // segment + $RC — all prelude bytes). This pins that outlined-but-READY
+  // content bakes into the STORED shell: fizz's runnable work is microtask-
+  // atomic relative to the capture's macrotask abort schedule (tracked-
+  // postpones pings run on scheduleMicrotask; the quiesce hops and abort on
+  // setTimeout), so ready content of any size flushes before the abort lands.
+  //
+  // Structural scar tissue (why the hole is a SLOT): the original reproducer
+  // put the section under a route-level loading() + loader. That shape can
+  // NEVER bake the section — LoaderResolver use()es the masked loader promise
+  // ABOVE the whole route subtree, so at capture nothing below it renders,
+  // and React postpones whole Suspense boundaries (the fallback owns the
+  // boundary's DOM slot), so bytes inside the postponed boundary cannot ride
+  // the prelude. Under loading(), the entire route body IS the hole by
+  // doctrine; content that must bake belongs BESIDE the hole (slot/layout
+  // chrome) — the layout-with-loaders playbook.
+  test("large sync Suspense section bakes into the shell — outlined content flushes before the capture abort", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/outlined?probe=outlined");
+    await warmToHit(request, url);
+
+    // Byte PROVENANCE is the discriminator: the stored prelude ends at the
+    // first </html> (splitPrelude); the resumed tail (holes + $RC + hydration
+    // payload) streams after it. Baked = every row inside the prelude; the
+    // broken shape baked only the fallback and re-streamed the section per
+    // request (measured on a real storefront: ~2.7MB re-rendered per HIT).
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const html = await res.text();
+    const { prelude, resumed } = splitPrelude(html);
+
+    expect(prelude).toContain("Outlined row 0<");
+    expect(prelude).toContain(`Outlined row ${OUTLINED_LAST_ROW}<`);
+    expect(prelude).toContain('data-testid="outlined-static"');
+
+    // The masked slot hole still postpones: the fallback is frozen into the
+    // prelude, the live value (`outlined-badge-<seq>`, digit-anchored so the
+    // fallback's own testid can't match) exists only in the per-request
+    // resumed tail — masked-loader content must never bake.
+    expect(prelude).toContain("outlined badge pending...");
+    expect(prelude).not.toMatch(/outlined-badge-\d/);
+    expect(resumed).toMatch(/outlined-badge-\d/);
+
+    // The hole is LIVE: a second HIT serves the identical frozen prelude while
+    // the badge seq advances (the loader re-ran for this request).
+    const res2 = await request.get(url, { headers: HTML_HEADERS });
+    expect(res2.headers()["x-rango-shell"]).toBe("HIT");
+    const html2 = await res2.text();
+    const second = splitPrelude(html2);
+    expect(second.prelude).toBe(prelude);
+    const seqOf = (body: string): number => {
+      const m = /outlined-badge-(\d+)/.exec(body);
+      expect(m, "resumed badge value present").toBeTruthy();
+      return Number(m![1]);
+    };
+    expect(seqOf(second.resumed)).toBeGreaterThan(seqOf(resumed));
+  });
+
+  // --- Fragment splice (issue #700): a HIT tail emits stored snapshot
+  // fragments VERBATIM into the hydration payload instead of re-serializing
+  // the baked tree per request. On the wire the replayed segments travel as
+  // __rangoFragment envelopes (string copy); the SSR resume pass and browser
+  // hydration expand them through their own Flight deserializers. ---
+
+  // Cold-graph absorber for the fragment assertions below: the capture's doc
+  // segment record is written under waitUntil and pinned into the snapshot
+  // only if it settles within the capture's write-settle window — on a COLD
+  // dev module graph the first serialization outlasts it, storing a
+  // snapshot-less entry whose HITs keep the full tail (no fast path, no
+  // fragments) until TTL. Warming a sacrificial probe first compiles the
+  // codec so the asserted probes' captures settle in time. Production builds
+  // serialize in milliseconds and never need this.
+  async function warmFragmentGraph(request: Page["request"]): Promise<void> {
+    await warmToHit(request, f.url("/shell-cache?probe=fragwarmup"));
+  }
+
+  test("HIT hydration payload carries verbatim fragment envelopes; MISS carries none", async ({
+    request,
+  }) => {
+    await warmFragmentGraph(request);
+    const url = f.url("/shell-cache/outlined?probe=fragments");
+
+    // First request: MISS — a fresh render serializes real elements, so no
+    // envelope may appear anywhere in the document. Conditional on a genuine
+    // MISS so a test RETRY (probe already warmed by attempt 1) stays valid.
+    const miss = await request.get(url, { headers: HTML_HEADERS });
+    expect(miss.status()).toBe(200);
+    if (miss.headers()["x-rango-shell"] === "MISS") {
+      expect(await miss.text()).not.toContain("__rangoFragment");
+    }
+
+    await warmToHit(request, url);
+
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const { prelude, resumed } = splitPrelude(await res.text());
+
+    // The envelope marker rides ONLY the resumed tail (the inlined hydration
+    // payload); the frozen prelude HTML never carries it.
+    expect(prelude).not.toContain("__rangoFragment");
+    expect(resumed).toContain("__rangoFragment");
+
+    // Payload completeness: the baked section's rows still reach the client
+    // for hydration — inside the fragment strings, not as freshly
+    // re-serialized element rows.
+    expect(resumed).toContain(`Outlined row ${OUTLINED_LAST_ROW}`);
+  });
+
+  // Route choice: /shell-cache/slot-hole, deliberately. The fragment splice
+  // requires the ARMED fast path (a snapshot-seeded doc record), and in dev
+  // that depends on the capture's deferred doc-record write settling inside
+  // the snapshot write-settle window — which slot-hole's lean tree does
+  // deterministically, while /shell-cache's heavier chrome misses the window
+  // in dev (pre-existing #695 behavior: those dev HITs keep the full tail)
+  // and /shell-cache/outlined has a pre-existing dev-only render-counter
+  // drift (hydration mismatches on main too, fragments or not). Not
+  // exec-matrix: its test asserts exact module-counter deltas, and this
+  // test's requests to the same route would race them.
+  test("fragment-envelope HIT hydrates with zero errors and the slot hole stays live", async ({
+    page,
+  }) => {
+    await warmFragmentGraph(page.request);
+    const url = f.url("/shell-cache/slot-hole?probe=fraghydrate");
+    await warmToHit(page.request, url);
+
+    // Confirm this exact probe's HIT really is fragment-shaped before driving
+    // the browser at it — the hydration guard below then proves the envelopes
+    // are consumer-invisible.
+    const res = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    expect(await res.text()).toContain("__rangoFragment");
+
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    await page.goto(url);
+    await waitForHydration(page);
+
+    await expect(testId(page, "shell-slot-home")).toHaveText(
+      "Slot home static content",
+    );
+    // The masked slot hole stayed live: the badge value streamed in fresh
+    // through the expanded-fragment shell.
+    await expect(testId(page, "shell-badge-value")).toContainText(/badge-\d/);
   });
 }
 

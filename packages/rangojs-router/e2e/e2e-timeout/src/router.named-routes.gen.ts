@@ -4,6 +4,7 @@ export const NamedRoutes = {
   "timeout.fastRender": "/timeout/fast-render",
   "timeout.fastResponse": "/timeout/fast-response",
   "timeout.slowAction": "/timeout/slow-action",
+  "timeout.slowHtmlSetup": "/timeout/slow-html-setup",
   "timeout.slowRender": "/timeout/slow-render",
   "timeout.slowResponse": "/timeout/slow-response",
 } as const;

@@ -6,6 +6,7 @@ import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
+import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
@@ -352,6 +353,12 @@ export interface RangoInternal<
   readonly debugPerformance?: boolean;
 
   /**
+   * PPR shell-capture debug sink (createRouter({ debugShellCapture })), read
+   * by rsc-rendering when it builds the capture descriptor for a ppr route.
+   */
+  readonly debugShellCapture?: ShellCaptureDebug;
+
+  /**
    * Resolved platform phase-span tracing (Cloudflare custom spans or OTel), or
    * undefined when off. Threaded onto the request context and read at each
    * traced phase.
@@ -365,12 +372,6 @@ export interface RangoInternal<
    * observeEvent's emitter list in router/instrument.ts.
    */
   readonly telemetry?: TelemetrySink;
-
-  /**
-   * Whether ?__debug_manifest is allowed in production.
-   * Always enabled in development.
-   */
-  readonly allowDebugManifest: boolean;
 
   /**
    * Resolved timeout configuration (merged from shorthand + structured).
@@ -425,6 +426,9 @@ export interface RangoInternal<
   /** @internal basename for runtime manifest generation */
   readonly __basename?: string;
 
+  /** @internal Cloudflare dev worker generation captured at construction. */
+  readonly __devDiscoveryEpoch?: number;
+
   /**
    * @internal Router-level error/notFound fallbacks (`createRouter` options),
    * exposed for the build-time clientChunks discovery so a `"use client"`
@@ -475,6 +479,7 @@ export interface RangoInternal<
     routeName?: string,
     buildEnv?: any,
     devMode?: boolean,
+    rootScoped?: boolean,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**

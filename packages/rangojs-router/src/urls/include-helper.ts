@@ -155,6 +155,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         counters: capturedCounters,
         cacheProfiles: ctx.cacheProfiles,
         rootScoped: capturedRootScoped,
+        routerId: ctx.routerId,
         includeScope,
       },
     } as IncludeItem;

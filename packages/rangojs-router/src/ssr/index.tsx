@@ -1,7 +1,12 @@
 import React from "react";
 import { createSsrRootComponent } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
+import { runWithPreinitNonce } from "./preinit-client-references.js";
+import { SHELL_CAPTURE_MAX_WAIT_MS } from "../rsc/shell-capture-constants.js";
 import type { ErrorPhase } from "../types.js";
+import type { HeadScriptsOption } from "../vite/plugin-types.js";
+
+export { installClientReferencePreinit } from "./preinit-client-references.js";
 
 /**
  * Options for injectRSCPayload
@@ -18,6 +23,7 @@ export interface InjectRSCPayloadOptions {
  */
 interface RenderToReadableStreamOptions {
   bootstrapScriptContent?: string;
+  bootstrapModules?: string[];
   nonce?: string;
   formState?: unknown;
 }
@@ -35,6 +41,7 @@ interface ReactDOMReadableStream extends ReadableStream<Uint8Array> {
 interface PrerenderOptions {
   signal?: AbortSignal;
   bootstrapScriptContent?: string;
+  bootstrapModules?: string[];
   onError?: (error: unknown) => void;
 }
 
@@ -134,6 +141,17 @@ export interface SSRDependencies<TEnv = unknown> {
   loadBootstrapScriptContent: () => Promise<string>;
 
   /**
+   * Document script strategy; the generated virtual SSR entry threads the
+   * `rango({ headScripts })` plugin option here (canonical docs on
+   * `RangoBaseOptions.headScripts` in vite/plugin-types.ts). The
+   * bootstrapModules conversion runs ONLY on an explicit `"preinit"`:
+   * undefined keeps the inline bootstrap verbatim, so a custom SSR entry that
+   * never installed the preinit hook cannot drift into the half-converted
+   * state on upgrade (the generated entry always passes an explicit value).
+   */
+  headScripts?: HeadScriptsOption;
+
+  /**
    * prerender from react-dom/static.edge. Optional; required only by
    * {@link createShellCaptureHandler} for PPR shell capture.
    */
@@ -165,15 +183,6 @@ export interface SSRDependencies<TEnv = unknown> {
 }
 
 /**
- * Default guard for how long capture waits on the caller's `quiesce` signal
- * before forcing the abort that freezes the shell. This is the ONLY wall-clock
- * on the capture path and it is a pathological guard — it should never fire once
- * the caller's `quiesce` is a task-quantized, frozen-byte signal (the capture
- * gate in shell-capture.ts). See docs/design/ppr-shell-resume.md.
- */
-const DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS = 5000;
-
-/**
  * Fixed number of macrotask hops between `quiesce` resolving and the abort. These
  * give React's fizz worker turns to flush the settled shell into the prelude and
  * mark still-pending boundaries as POSTPONED (rather than errored) before
@@ -184,13 +193,16 @@ const DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS = 5000;
  * cached segments that are ALREADY serialized, so it emits the whole shell payload
  * in the first tick and the gate declares quiesce almost immediately (~a few ms).
  * On the old fresh-execution path the Flight dribbled out as handlers ran, so
- * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed. Under
- * replay, Flight-quiet fires BEFORE the fizz side has consumed the instant payload
- * and rendered the shell to `<body>`, so the fizz needs a real buffer of turns after
- * quiesce — otherwise the abort lands on an unrendered tree (empty prelude, root
- * postpone) and the sanity gate refuses. Still task-based (masked loaders never
- * emit, so more hops never lets a hole settle); a cold worker whose first
- * attempt still under-renders heals on the in-place retry. Bounded by maxWaitMs.
+ * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed.
+ *
+ * Hops alone are NOT render-readiness: fizz cannot emit even <html> until the
+ * payload root settles, which waits on every referenced client-module LOAD —
+ * real module-runner I/O in dev (100ms+ cold), which no fixed count of near-
+ * zero-cost task hops can buy. captureShellHTML therefore awaits the payload-
+ * settled signal (SsrRootOptions.onPayloadSettled, deadline-bounded) between
+ * quiesce and these hops; the hops then only flush the settled tree and mark
+ * pending boundaries POSTPONED. Still task-based (masked loaders never emit,
+ * so more hops never lets a hole settle). Bounded by maxWaitMs end to end.
  */
 const POST_QUIESCE_TASK_HOPS = 16;
 
@@ -236,6 +248,38 @@ function createCancelableTimeout(ms: number): {
     id = setTimeout(resolve, ms);
   });
   return { promise, cancel: () => clearTimeout(id) };
+}
+
+/**
+ * True when a debugger is attached outside a production build: a breakpoint
+ * pauses script execution but not wall-clock, so the capture deadline would
+ * expire mid-inspection and push the key into refusal/backoff while debugging.
+ * Next.js precedent (packages/next/src/export/worker.ts): its static-page
+ * timeout race is disabled when NODE_OPTIONS contains --inspect. The gate is
+ * the bare `process.env.NODE_ENV !== "production"` token — the build define
+ * folds exactly that token to a literal (same dev signal as shell-capture.ts's
+ * isDevMode), and it covers dev servers that never set NODE_ENV, the common
+ * debug case. A production worker launched with --inspect in NODE_OPTIONS
+ * keeps the capture's safety bound unconditionally. Every probe is guarded:
+ * `process` reads are optional-chained and the node:inspector import is
+ * try/caught, so non-Node runtimes (workerd) resolve to false instead of
+ * breaking.
+ */
+export async function isDebuggerAttached(): Promise<boolean> {
+  if (process.env.NODE_ENV === "production") return false;
+  try {
+    // Substring match also catches --inspect-brk / --inspect=PORT.
+    if (globalThis.process?.env?.NODE_OPTIONS?.includes("--inspect")) {
+      return true;
+    }
+    if (globalThis.process?.execArgv?.some((a) => a.startsWith("--inspect"))) {
+      return true;
+    }
+    const inspector = await import("node:inspector");
+    return inspector.url() !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -301,7 +345,7 @@ function createDataVariantHtmlStream(): ReadableStream<Uint8Array> {
 interface ShellCaptureOptions {
   /** Caller-provided promise that resolves once the cached content settled. */
   quiesce: Promise<void>;
-  /** Upper bound on how long to wait for `quiesce`. Default 5000ms. */
+  /** Upper bound on how long to wait for `quiesce`. Default SHELL_CAPTURE_MAX_WAIT_MS. */
   maxWaitMs?: number;
 }
 
@@ -324,6 +368,47 @@ interface ShellResumeOptions {
   postponed: string | null;
   /** Nonce for CSP. */
   nonce?: string;
+}
+
+/**
+ * The exact shape plugin-rsc's loadBootstrapScriptContent returns in both dev
+ * and build: a single dynamic import of the browser entry, nothing else.
+ * Escapes/other statements never appear in that generated content; anything
+ * that doesn't match falls back to inline bootstrapScriptContent unchanged.
+ */
+const BOOTSTRAP_IMPORT_ONLY_RE =
+  /^\s*import\(\s*(["'])([^"'\\]+)\1\s*\)\s*;?\s*$/;
+
+/**
+ * Prefer bootstrapModules over the inline import() bootstrap. When the content
+ * is exactly `import("<entry-url>")`, hand Fizz the URL instead: React then
+ * emits a `<link rel="modulepreload" fetchpriority="low">` hint in the head
+ * plus the executing `<script type="module" src async>` at end of shell — the
+ * entry fetch starts with the first flushed bytes instead of when the parser
+ * reaches an opaque inline script that only reveals the URL once executed.
+ * Fizz stamps the request nonce on both tags (the inline form needed that
+ * too), and under PPR both land in the stored prelude; on resume React has
+ * already cleared the bootstrap fields from the postponed state, so nothing
+ * re-emits.
+ */
+function resolveBootstrapOptions(
+  content: string,
+  headScripts: SSRDependencies["headScripts"],
+): Pick<
+  RenderToReadableStreamOptions,
+  "bootstrapScriptContent" | "bootstrapModules"
+> {
+  // Explicit opt-in only: undefined (a custom SSR entry that predates the
+  // option, which also never installed the preinit hook) keeps the inline
+  // bootstrap byte-for-byte — converting by default would break CSPs that
+  // allowlist the known inline import() via a script hash.
+  if (headScripts !== "preinit") {
+    return { bootstrapScriptContent: content };
+  }
+  const match = BOOTSTRAP_IMPORT_ONLY_RE.exec(content);
+  return match
+    ? { bootstrapModules: [match[2]!] }
+    : { bootstrapScriptContent: content };
 }
 
 /**
@@ -383,12 +468,16 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 
       // Render React tree to HTML stream
       // Pass formState for useActionState progressive enhancement if provided
-      // Pass nonce for CSP if provided
-      const htmlStream = await renderToReadableStream(<SsrRoot />, {
-        bootstrapScriptContent,
-        formState,
-        nonce,
-      });
+      // Pass nonce for CSP if provided. runWithPreinitNonce makes the same
+      // nonce visible to the client-reference preinit hook (ALS — the hook is
+      // isolate-global, the nonce per request).
+      const htmlStream = await runWithPreinitNonce(nonce, () =>
+        renderToReadableStream(<SsrRoot />, {
+          ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
+          formState,
+          nonce,
+        }),
+      );
 
       // Wait for all Suspense boundaries to resolve when streamMode is "allReady".
       // This buffers the entire HTML before flushing — used for bots that
@@ -444,7 +533,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
     rscStream: ReadableStream<Uint8Array>,
     opts: ShellCaptureOptions,
   ): Promise<ShellCaptureResult | null> {
-    const maxWaitMs = opts.maxWaitMs ?? DEFAULT_SHELL_CAPTURE_MAX_WAIT_MS;
+    const maxWaitMs = opts.maxWaitMs ?? SHELL_CAPTURE_MAX_WAIT_MS;
 
     // Arm the maxWaitMs deadline BEFORE the first await so it bounds the ENTIRE
     // capture, the bootstrap-script load included. loadBootstrapScriptContent()
@@ -452,12 +541,27 @@ export function createShellCaptureHandler<TEnv = unknown>(
     // captureShellHTML with no upper bound and held the background capture task
     // open. One deadline, shared by the bootstrap race below and the quiesce
     // race, keeps the whole path "bounded by maxWaitMs like every quiesce input".
-    const deadline = createCancelableTimeout(maxWaitMs);
+    // Debugger attached (non-production, see isDebuggerAttached): a paused process
+    // must not burn the budget, so the deadline becomes a never-resolving
+    // promise (the Next.js approach) — no timer, so it cannot hold the event
+    // loop open either.
+    const deadline = (await isDebuggerAttached())
+      ? { promise: new Promise<void>(() => {}), cancel: () => {} }
+      : createCancelableTimeout(maxWaitMs);
     try {
       // No nonce (nonce'd requests never reach capture); no formState.
+      // payloadSettled: fires when the Flight payload root settles — i.e.
+      // every client-module load the payload references completed and fizz
+      // can actually emit the tree. The abort below gates on it (bounded by
+      // the same deadline): Flight byte-quiet alone is NOT render-readiness.
+      let settlePayload!: () => void;
+      const payloadSettled = new Promise<void>((resolve) => {
+        settlePayload = resolve;
+      });
       const SsrRoot = createSsrRootComponent({
         createFromReadableStream,
         rscStream,
+        onPayloadSettled: settlePayload,
       });
 
       // Bootstrap load raced against the deadline. A load that never resolves
@@ -490,7 +594,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
       const abortReason = { rangoShellCaptureAbort: true };
       const prerenderPromise = prerender(<SsrRoot />, {
         signal: controller.signal,
-        bootstrapScriptContent,
+        ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
         // Abort is how capture WORKS: once the shell is quiet we abort() to
         // freeze the prelude and let the still-pending holes postpone. React
         // reports the abort reason for each pending boundary through onError.
@@ -526,10 +630,36 @@ export function createShellCaptureHandler<TEnv = unknown>(
       // wall-clock debounce here — maxWaitMs is only the pathological guard for a
       // shell that never goes quiet (a root postpone / hung handle).
       await Promise.race([opts.quiesce, deadline.promise]);
+      // Then wait for fizz RENDER-READINESS, bounded by the same deadline:
+      // the payload root settles only after every client-module load the
+      // payload references completed (real module-runner I/O in dev; 100ms+
+      // on a cold graph). Flight byte-quiet does NOT imply this — a fully
+      // REPLAYED (prerendered) route's Flight stream finishes in ~1-3ms and
+      // an abort taken on quiet-plus-task-hops alone landed BEFORE fizz could
+      // emit <html>, freezing a zero-byte prelude: the eternal-MISS shape
+      // this route class showed on every cold graph (dev cold boots, GH
+      // runners) while ordinary routes — whose live handler execution keeps
+      // Flight noisy long enough — never hit it. Masked-loader holes do not
+      // block payload settlement (they postpone below the root), so this
+      // await costs a genuinely hole-y shell nothing; a payload that NEVER
+      // settles (hung handles) degrades at the deadline exactly as before.
+      // A prerender that SETTLES first (early success or a hard rejection)
+      // ends the wait immediately — fizz is already done either way.
+      const prerenderSettled = prerenderPromise.then(
+        () => {},
+        () => {},
+      );
+      await Promise.race([payloadSettled, prerenderSettled, deadline.promise]);
       // Fixed task hops before the abort: give React's fizz worker turns to flush
       // the now-complete shell and mark the still-pending boundaries as POSTPONED
-      // rather than errored. Deterministic (the byte set is already frozen), so a
-      // fixed count of turns suffices — no wall-clock.
+      // rather than errored. Deterministic (the byte set is already frozen and
+      // the payload is settled), so a fixed count of turns suffices — no
+      // wall-clock. Ready-but-queued fizz render work (however large — a multi-MB
+      // outlined boundary) can never lose this race: tracked-postpones pings run
+      // on scheduleMicrotask, so every runnable task drains before the FIRST
+      // setTimeout hop fires; only tasks parked on genuinely pending promises
+      // (masked loaders, real per-request I/O) remain, and those are exactly the
+      // holes that must postpone (issue #702).
       for (let i = 0; i < POST_QUIESCE_TASK_HOPS; i++) {
         await macrotask();
       }
@@ -659,10 +789,15 @@ export function createShellResumeHandler<TEnv = unknown>(
       const injector = injectRSCPayloadEager(rscStream2, { nonce });
       void (async () => {
         try {
-          const resumed = await resume(<SsrRoot />, JSON.parse(postponed), {
-            onError: (error) => reportRenderError(onError, error),
-            nonce,
-          });
+          // Nonce wrap mirrors renderHTML: client references first discovered
+          // during resume (holes the shell never rendered) preinit into the
+          // resumed stream and need the per-request nonce.
+          const resumed = await runWithPreinitNonce(nonce, () =>
+            resume(<SsrRoot />, JSON.parse(postponed), {
+              onError: (error) => reportRenderError(onError, error),
+              nonce,
+            }),
+          );
           await resumed.pipeTo(injector.writable);
         } catch (error) {
           reportRenderError(onError, error);

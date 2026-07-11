@@ -40,6 +40,50 @@ replay, fresh loaders, and the **full** Flight render (the browser still needs
 the complete payload for hydration; there is no Flight-side resume — that is a
 React limitation, not ours).
 
+### Navigation reuse is segment replay, not Flight resume
+
+The capture snapshot contains an implicit document-keyed segment record in
+addition to the HTML prelude. A partial RSC request for the same `ppr` URL may
+seed that record into the ordinary `matchPartial()` cache lookup. The normal
+pipeline still owns client-segment nullification, revalidation, diff selection,
+parallel ordering, handles, and fresh loader resolution; the browser receives an
+ordinary partial payload and has no PPR-specific branch.
+
+Only the snapshot's segment family is visible during navigation replay. Item,
+response, and loader-family pins exist to keep a document HIT byte-identical to
+its frozen HTML and would incorrectly freeze loader reads on a navigation. The
+implicit scope reads the canonical `doc:` identity even though the transport is
+partial, avoiding one cached shell per source-segment combination. Intercepts,
+handler-live holes, conditional transition gates encountered by the fresh shell
+capture, nonce-bearing requests, and snapshots without a segment record decline
+replay and run the full partial path. A transition already frozen by an explicit
+`cache()`/prerender hit keeps that cache tier's normal no-re-evaluation semantics.
+The replay store belongs only to that implicit scope: a consumer `cache()` scope
+continues to use its own store, key, TTL/SWR, tags, and condition. Segment misses,
+writes, and deletes stay inside the request overlay, so a partial pipeline can
+never write its output into the canonical document namespace.
+
+Navigation uses a passive shell read and only replays a fresh entry: production
+can read runtime or local build-manifest data, while dev stays runtime-only so a
+click never foreground-fetches `/__rsc_shell` and waits on capture. A stale entry
+falls open without claiming SWR revalidation ownership, because only a document
+request can recapture the HTML shell. Custom stores opt in with
+`supportsPassiveShellReads: true`; without that declaration replay declines
+rather than risk claiming a lock it cannot complete.
+
+### Capture-generation invalidation
+
+The shell's `createdAt` is the start of its capture generation, before matching
+or snapshot reads. Runtime stores compare tag invalidation markers against that
+timestamp at the write barrier and on reads, so an `updateTag()` racing the
+capture still wins even if the shell write completes later.
+Built-in stores acknowledge that rejected write. The capture reports it as a
+refusal and backs the key off instead of silently claiming success and
+recapturing on every document request. This includes deterministic
+self-invalidation: capture code that calls `updateTag()` on one of its own shell
+tags prevents that generation from being cached and emits a diagnostic naming
+the fix.
+
 ## Opt-in: the `ppr` path option, and integral serving
 
 If you are adding a PPR route or touching the serve path, read this first — it
@@ -55,12 +99,89 @@ path("/products/:id", PricePage, { name: "product", ppr: { ttl: 600, swr: 120 } 
 ```
 
 `ppr: true` uses the default policy (`DEFAULT_PPR_TTL_SECONDS` = 300);
-`PartialPrerenderProps { ttl?, swr?, tags? }` sets it explicitly
-(`src/urls/pattern-types.ts`; stored on the route `EntryData` by
+`PartialPrerenderProps { ttl?, swr?, tags?, captureTimeout? }` sets it
+explicitly (`src/urls/pattern-types.ts`; stored on the route `EntryData` by
 `src/urls/path-helper.ts`; normalized by `resolvePprConfig` in
 `src/rsc/shell-serve.ts`). There is NO subtree inheritance in v1 — declaring
 `ppr` on a layout is not supported (a possible follow-up). A route without the
 option is pure axis 1: no store read, no capture, no logs, zero cost.
+
+The route's NAME is orthogonal to all of this (issue #714): a nameless
+`path()` registers its `EntryData` under a synthesized `$path_*` manifest key
+with the `ppr` option intact, so it captures and serves exactly like a named
+route — pinned by the nameless-ppr e2e in both apps and the
+`shell-serve-ppr-config` unit round-trip. (The issue's observed "silent
+ignore" was the pre-#705 Accept rule: a document GET without `text/html` in
+Accept — curl's default `*/*` — negotiated to the Flight wire format and
+bypassed the shell lane for named and nameless routes alike.)
+
+### `captureTimeout`: the capture settle budget (issue #715)
+
+The background capture is bounded by ONE deadline — `captureShellHTML`'s
+`maxWaitMs` — hard-coded to 5s until #715. Deferred shell material (a handler
+pushing `ctx.use(Meta)(dataPromise.then(...))`, top-level handle pushes
+carrying promises) is AWAITED by the capture and its settled values bake into
+the stored shell; material that settles slower than the budget made the route
+uncapturable forever (eternal MISS + backoff + the no-usable-shell warning).
+`ppr.captureTimeout` (ms, default 15000 — raised from 5000, see the Cost
+model below) declares the budget per route:
+
+```ts
+path("/pdp/:id", ProductPage, {
+  name: "product",
+  ppr: { ttl: 600, swr: 120, captureTimeout: 10_000 },
+});
+```
+
+Semantics, in dependency order:
+
+- **One knob, one deadline.** The resolved value flows
+  `resolvePprConfig -> ShellCaptureDescriptor.captureTimeout ->
+captureShellHTML({ maxWaitMs })`, so it bounds BOTH the fizz prerender and
+  the deferred-material settle window — the `holdUntil` gate and the quiesce
+  race are inputs to the same deadline. There is no second timer to drift.
+- **Ordering is the contract, the budget only bounds it.** The capture gate
+  never freezes while a tracked top-level push is pending
+  (`gateFlightForCapture`'s `holdUntil`), and `SsrRoot` suspends at the ROOT
+  until the handles snapshot fully settles (`resolvedHandleStream` yields
+  once, after EVERY push — including promises chained off other pushes —
+  resolves). A partial prefix of the settlement sequence is therefore
+  unrepresentable in a stored shell.
+- **Expiry with pushes pending REFUSES.** If the budget elapses first, the
+  handles row never emitted, the prerender is still root-suspended, the
+  prelude has no `<body>`, and the sanity gate returns null — no-shell, the
+  existing retry/backoff/warning path. A shell with missing or unsettled head
+  material is never stored, at any budget.
+- **Cost model.** Capture is background work (`waitUntil`): a longer budget
+  costs latency-to-HIT only, never a served response — that is why 5s (which
+  spuriously refused a real storefront's ~7s meta chains) could be raised.
+  The platform's `waitUntil` lifetime is the physical ceiling — on workerd,
+  ~30s past response completion — so a `captureTimeout` near or past that
+  ceiling gets killed by the platform, not by rango (see Platform notes).
+  Ceiling math for the default: a guaranteed two-attempt envelope is
+  `2 x budget + the in-place retry delay + store I/O <= ~30s`, i.e. budget
+  <= ~14s. The 15s default deliberately sits just past that bound: attempt 1
+  always gets its full 15s; only when it consumed the whole budget can the
+  in-place retry be truncated by the platform kill on workerd, which degrades
+  to the existing best-effort contract (the key stays MISS and a later
+  request re-captures). Node/dev and build-time captures have no `waitUntil`
+  ceiling. Canonical in-code doc: `SHELL_CAPTURE_MAX_WAIT_MS` in
+  `src/rsc/shell-capture-constants.ts`.
+- **Producer B parity.** Build-time captures (Prerender+ppr,
+  `src/prerender/build-shell-capture.ts`) and the dev `/__rsc_shell` endpoint
+  honor the same knob (`resolveBuildPprConfig` resolves it; the dev
+  read-through threads it as a query param and sizes its own fetch bound —
+  `devShellFetchTimeoutMs` — to the endpoint's full sequential envelope:
+  pre-flight probe + two attempts + retry margin). Build has no `waitUntil`
+  bound, so there the option is the only ceiling.
+- **Validation.** Non-finite or sub-1ms values normalize to undefined (the
+  capture default applies); the default's single owner stays
+  `SHELL_CAPTURE_MAX_WAIT_MS` in `src/rsc/shell-capture.ts`.
+
+Deliberately unchanged: `SHELL_CAPTURE_WRITE_BARRIER_MS` (1.5s pre-render
+write barrier), `SHELL_SNAPSHOT_WRITE_SETTLE_MS` (1s deferred-write settle),
+the retry-in-place delay, and the refused-capture backoff windows — those
+bound store I/O and scheduling, not shell-material settlement.
 
 Serving is INTEGRAL to the router — `createShellCacheMiddleware` and
 `ShellCacheOptions` were removed from the public surface entirely (pre-release
@@ -284,6 +405,13 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    writes pass through (a live hole's loader may legitimately write); the shell
    family always passes through.
 
+Both tail shapes — seeded and fragment-only — also wire a fresh render barrier
+onto their derived context, closure-bound to that context and the request's
+handle store. Matching records streaming state on the derived context. Reusing
+the base context's barrier would make its resolver see a non-streaming tree,
+snapshot handles before streamed pushes settle, and give `ctx.rendered()` an
+empty inherited snapshot on a shell HIT.
+
 The freshness DOCTRINE, and it is deliberate: **within a shell's lifetime, shell
 regions intentionally show CAPTURE-time data.** Parity beats freshness INSIDE the
 shell; freshness comes from the holes, from the shell's own ttl/swr, and from tag
@@ -320,9 +448,11 @@ UNCACHED segments execute their handlers fresh. A capture render behaves like a
 normal render with respect to the segment cache, with ONE addition the capture
 data snapshot needs: it fires its own `onResponse` callbacks with a synthetic 200
 so the ring-3 segment write runs during capture and is recorded (see "the capture
-data snapshot" above). Middleware is NOT re-run: it
+data snapshot" above). Runtime background capture does NOT re-run middleware: it
 already ran for the triggering request, and the derived context inherits its
-post-middleware state; guarding is serve-time (the commit point above).
+post-middleware state; guarding is serve-time (the commit point above). Build
+producer B is different: it replays middleware once with `ctx.build === true`
+before deriving the capture context.
 
 > **(a) STRUCTURAL: the ENTIRE segment subtree under a `loading()`
 > registration** — loaders masked at capture, the boundary postpones, the
@@ -463,12 +593,13 @@ HIT  ──> committed composed response (x-rango-shell: HIT)
            (+ scheduleShellCapture on a stale/SWR hit)
 ```
 
-Why `router.match()` and not a pipeline re-run for capture: the middleware
-chain (auth, logging) must run exactly once per request. It already ran for the
-triggering request; the derived context inherits the post-middleware state
-(variables, cache store) while overriding the render-scoped accumulators (a
-fresh handle store, request-tag set, and transition list). No double middleware
-side effects, and the served response is never blocked on the capture
+Why `router.match()` and not a pipeline re-run for runtime capture: the
+middleware chain (auth, logging) must run exactly once per request. It already
+ran for the triggering request; the derived context inherits the
+post-middleware state (variables, cache store) while overriding the
+render-scoped accumulators (a fresh handle store, request-tag set, and
+transition list). No double middleware side effects, and the served response is
+never blocked on the capture
 (`runBackground` = `waitUntil` on workerd, fire-and-forget in Node dev).
 
 `_shellCaptureRun` on the derived context is the single ACTIVE marker: loader
@@ -492,7 +623,7 @@ from `react-dom/server.edge`:
 createShellCaptureHandler(deps) =>
   captureShellHTML(rscStream, opts: {
     quiesce: Promise<void>;   // caller signals "cached content settled"
-    maxWaitMs?: number;       // guard, default 5000
+    maxWaitMs?: number;       // guard, default 15000
   }): Promise<{ prelude: Uint8Array; postponed: string | null } | null>
 
 createShellResumeHandler(deps) =>
@@ -552,8 +683,9 @@ export interface ShellCacheEntry {
   createdAt: number;        // epoch ms
 }
 
-getShell?(key: string): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
-putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<void>;
+supportsPassiveShellReads?: true;
+getShell?(key: string, options?: { claimRevalidation?: boolean }): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
+putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<"stored" | "invalidated" | void>;
 ```
 
 One entry carries both artifacts — the pair is version- and generation-coupled
@@ -909,26 +1041,223 @@ per-request data in loaders (holes); keep handles on the replay path.
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Shell content              | shared per host+URL key — personalization must live in loaders/holes (the shell-manifest pattern). ENFORCED: `cookies()`/`headers()` reads throw during a capture render (`assertNotInsideShellCapture`, cookie-store.ts), making cookie-reading shells PPR-ineligible by construction                                                                                                                                             |
 | Multi-tenant / host-router | the default key incorporates `url.host` so one tenant's shell can never compose into another tenant's page on a shared worker + store; custom `keyGenerator`s own host scoping themselves                                                                                                                                                                                                                                          |
-| Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries                                                                                                                                                                                                                                                        |
+| Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries. Handler/loader header WRITES on a ppr route throw — see "The header doctrine" below                                                                                                                                                                   |
 | Actions / PE / formState   | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Partial RSC navigation     | replays the capture's canonical segment record when eligible, then applies normal `matchPartial()` diff/revalidation with fresh DSL loaders; otherwise ordinary axis 1. No HTML/Flight resume and no client-visible protocol flag                                                                                                                                                                                                  |
 | Per-request nonce          | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | React/router upgrade       | shells invalidated via `reactVersion` check (treated as a miss on mismatch; recapture overwrites and TTL ages the entry out — v1 has no `deleteShell`)                                                                                                                                                                                                                                                                             |
 | App redeploy (same React)  | shells invalidated via the `buildVersion` check — a persistent shared store (KV/runtime-cache) survives deploys, and resuming an old build's postponed blob against the new build's tree would tree-mismatch AFTER the 200 + prelude committed. Pre-field entries miss the same way. Corrupt entries fail `hasIntactShellPayload` pre-commit and degrade identically; a tail failure on a served HIT schedules a healing recapture |
 | Dev server                 | works; shells are memory-store-scoped and cheap to recapture; HMR edits produce stale shells until TTL/recapture — documented, acceptable                                                                                                                                                                                                                                                                                          |
 | Composite response         | per-request; only the shell entry is cacheable. Note ordering with the document cache: if the document-cache middleware wraps a ppr route, it may cache the composite — correct output, but it makes shell caching redundant for that route. Pick one per route.                                                                                                                                                                   |
 
+### The header doctrine (issue #713)
+
+**`ppr` is a document-scoped `cache()`; in any cached scenario ONLY MIDDLEWARE
+writes response headers.** That is the entire rule.
+
+Handler and loader header writes (`ctx.headers.set/append/delete`, the
+RequestContext `header`/`setCookie`/`deleteCookie`/`setStatus`/`setTheme`
+lane, and raw `ctx.res.headers` mutations) THROW on a ppr route — on every
+render, dev and prod, MISS and HIT alike — through the same unified guard
+that already refuses them inside a `cache()` boundary
+(`assertCachedHeaderWriteAllowed`, `src/server/context.ts`; latched by the
+segment funnels via `latchPprHeaderScopeForEntries`). Deterministic: the first
+dev render fails loudly, so a MISS/HIT header divergence can never ship. Why a
+guard and not replay: a handler runs on MISS/capture but is replayed on HITs,
+so any header it writes silently differs between MISS and HIT (field evidence:
+a storefront session bug from exactly that cookie-shaped divergence). Loaders
+are live but POST-COMMIT — the response headers flush with the shell prelude
+at TTFB before any loader settles, so loader writes are dead letters on HITs
+by physics. Middleware is THE header lane: it wraps the commit point, runs on
+every request including HITs, and its stub-response writes merge into every
+response (`createResponseWithMergedHeaders` -> `applyStubHeaders`,
+`src/rsc/helpers.ts`). One deliberate asymmetry survives, and it is loader-KIND
+specific (#725): a DSL (registered) loader's writes inside a plain `cache()`
+boundary stay ALLOWED — a registered loader re-runs on every HIT
+(`runInsideLoaderScope` in `fresh.ts` -> `resolveLoadersOnly` on the cache-hit
+path) and merges into every response, so no divergence exists (pinned by the
+`/loader-cookie-allowed` cache-scope-guard e2e and vite-rsc-demo's shop cart).
+A **handler-invoked** loader body (`await ctx.use(Loader)` from a handler,
+never registered with `loader()`) does NOT get the exemption: on a HIT the
+handler is skipped, so that loader never re-runs and its Set-Cookie/header
+would land only on the MISS — it throws exactly like a handler write. The
+discriminator is `isInsideLoaderScope()` (DSL scope only, `loaderScopeALS`),
+not `isInsideAnyLoaderScope()` (which also sees the handler-invoked
+`loaderBodyScopeALS`); because the DSL scope ALS survives nested `ctx.use`
+bodies, a handler-invoked loader nested under a DSL loader stays exempt (its
+DSL parent re-invokes it every HIT). ppr loader writes throw regardless — the
+shell prelude flushes before any loader settles.
+
+**`ctx.dynamic()` re-permits the handler write (issue #735).** A handler that
+calls `ctx.dynamic()` opts this request off the shell axis — `rsc-rendering.ts`
+skips both the HIT commit and the MISS capture on `_dynamic`, so the route is
+ALWAYS live: every request re-runs the handler and its header write lands
+identically each time. The guard's reason to forbid it (MISS/HIT divergence)
+evaporates, so `ctx.dynamic()` clears the ppr latch
+(`clearPprHeaderScope`, `src/server/context.ts`) and the same-handler
+`ctx.headers.set()`/`cookies().set()` that would otherwise throw now lands on
+every response. Ordering is a contract: call `dynamic()` BEFORE the write — a
+write before it hits the still-live latch and throws (pinned dev+prod by the
+`/ppr-header-guard/dynamic` e2e in both apps). `dynamic()` drops only the SHELL
+axis, never the CACHE axis:
+
+- A `cache()` boundary entered AFTER `dynamic()` re-latches `"cache"` (the field
+  is undefined again, so `latchCachedHeaderScope`'s `!store.cachedHeaderScope`
+  guard sets), so a handler write inside that cache() still throws.
+- A ppr route NESTED under a `cache()` boundary latches `"ppr"` at the funnel
+  top (`fresh.ts`, first-wins), which masks the positional `cache()` latch — but
+  the handler still runs inside the cache scope (`insideCacheScope`). A
+  `cache()` HIT skips that handler, so the write is still non-deterministic:
+  `clearPprHeaderScope` UNMASKS to `"cache"` there instead of clearing, so the
+  guard keeps throwing (accurate cache() wording). Only a pure-ppr funnel
+  actually clears.
+
+And `dynamic()` from MIDDLEWARE is a no-op for the latch: middleware runs
+outside the funnel `Store.run` scope, so nothing is latched to clear — the
+middleware exemption is unchanged.
+
+The exhaustive write-site table (issue #726/#735):
+
+| Write site                      | Pre-commit?         | Same every request? | Verdict                 |
+| ------------------------------- | ------------------- | ------------------- | ----------------------- |
+| Middleware                      | yes                 | yes                 | legal                   |
+| Handler, shelled (ppr) route    | frozen, gone on HIT | no                  | guard throws            |
+| Handler, `ctx.dynamic()` route  | yes (always live)   | yes                 | **re-permitted (#735)** |
+| Loader behind `loading()`       | no (post-commit)    | —                   | forbidden               |
+| Loader in plain `cache()` (DSL) | buffered, re-runs   | yes                 | existing exemption      |
+
+Note this is a WRITE-only narrowing. The request-scoped READ guard
+(`isInsideCacheScope`, `src/server/context.ts`) deliberately stays on the
+BROAD predicate (`isInsideAnyLoaderScope()`): a handler-invoked loader's read
+under `cache()` bakes a shared copy into the cached artifact — the accepted
+consumption-lane tradeoff (#672/#674) — whereas a write has no baked-copy
+semantics on a HIT, so only writes narrow to DSL scope.
+
+Mechanics (the invariants the code comments point at):
+
+- **One choke point, not enumerated wrappers.** Every consumer-reachable
+  mutation of the stub response's Headers funnels through a guarded proxy
+  shadowed onto the stub `Response` instance
+  (`createRequestContext`, `src/server/request-context.ts`): `ctx.header`,
+  `setCookie`/`deleteCookie` (and `cookies().set`), `ctx.setTheme`, the
+  handler `ctx.headers` proxy, and raw `ctx.res.headers.set(...)` all hit the
+  guard at the mutation itself. `setStatus`/`onResponse` are not Headers
+  mutations and stay individually guarded. Internal serve machinery
+  (`_rotateStateCookie`, `_setKeepCacheDirective`) writes to the raw Headers —
+  `invalidateClientCache()`/`keepClientCache()` are documented callable from
+  loaders and during capture.
+- **Latch lifetime = funnel scope.** The latch is a field on the RangoContext
+  ALS store; each funnel runs inside its own `Store.run` scope and
+  `runWithStore` deliberately never copies `cachedHeaderScope`, so the latch
+  dies when the funnel scope unwinds. That is the whole middleware exemption:
+  pre-`next()` writes happen before any latch exists, post-`next()` writes
+  happen after the scope died — pinned by the `/ppr-header-guard/mw-post-next`
+  e2e (post-next header + cookie land on MISS and HIT). The serve/commit
+  path's stub reads and Set-Cookie drain (`rsc/helpers.ts`) run outside any
+  latched scope for the same reason.
+- **Guard and serve share predicate AND input.** The latch checks the LEAF
+  route entry (`entries[entries.length - 1]`, the `manifestEntry`) with the
+  same `isPprEntry` predicate the serve path feeds `resolvePprConfig` — a ppr
+  declaration on a non-leaf ancestor neither shell-serves nor latches.
+- **Intercept funnels carry a defense-in-depth latch.** ppr and intercepts do
+  not compose on the shell path (shells are captured/served only for document
+  requests; `withInterceptResolution` skips intercepts on full matches), but a
+  partial nav can render an intercept over a ppr-declared target in its own
+  store scope — `resolveInterceptEntry`/`resolveInterceptLoadersOnly` latch
+  off the target route's manifest entry, after intercept middleware runs.
+
+Six-framework survey (2026-07, issue #713): the ecosystem splits by SURFACE.
+Response-object endpoints (Next route handlers, Nitro, vinext handlers) replay
+captured headers — with Set-Cookie as an open wound (Nitro session-fixation
+issue #3468; Next silently caches Set-Cookie). Document/page surfaces — our
+surface — are doctrine-B unanimously: no framework replays page-code headers
+from a document cache entry (Next app pages expose no mutable header API and
+`cookies().set()` throws at render; SvelteKit and Astro silently drop, a
+self-acknowledged wart; React Router 7 makes it a build error when no live
+lane exists). Next's derived `revalidate -> Cache-Control` does not transfer:
+`ppr.ttl/swr` governs the WORKER-INTERNAL shell entry, never HTTP
+cacheability — ppr responses are dynamic by design (live holes, live
+middleware, per-request payload rows; the worker handles every request). The
+only "special" cached header in the ecosystem is Vercel's postponed-state
+transport for their CDN-split serving model — rango has no split, so no
+analog exists. NO replay machinery, NO derived headers, NO exclusion
+taxonomy. A someday-option (not built): RR7-style declarative per-route
+`headers()` use-item on the live lane, if a request-dependent need
+materializes.
+
 ## Platform notes
 
 Cloudflare Workers: the in-worker pattern is the endgame — the worker always
 runs (~5 ms cold starts); the win is skipping shell-render CPU and its
-upstream reads. `waitUntil` (via `runBackground`) covers capture. Chunked
-encoding and edge compression of the composite are automatic; never store
-compressed bytes.
+upstream reads. `waitUntil` (via `runBackground`) covers capture. The
+`waitUntil` lifetime — workerd allows roughly 30s of work past response
+completion — is the PHYSICAL ceiling on `ppr.captureTimeout`: a budget at or
+past it gets the capture killed by the platform mid-flight (nothing stored,
+same self-healing MISS as any refused capture; rango cannot warn because the
+isolate is gone). Keep per-route budgets comfortably under it; build-time
+captures (producer B) have no such bound. Chunked encoding and edge
+compression of the composite are automatic; never store compressed bytes.
 
 Vercel: identical in-function pattern on Fluid Compute via the Vercel store.
 The Build Output API `chain` mechanism (platform-appended streaming, shell
 served from the PoP cache) exists but is undocumented and Next-only in
 practice — deliberately out of scope; revisit with Vercel directly.
+
+## Operability (issue #651)
+
+Three surfaces make the capture pipeline observable and bounded; all are
+diagnostics-only — none changes what a consumer's page renders.
+
+**Snapshot size cap.** The capture data snapshot duplicates every pinned
+cache value inside the shell entry, so a page over a large `cache()` segment
+could push the stored envelope toward store value limits (Cloudflare KV caps
+a value at 25 MiB) — and the failure was invisible: `kv.put` rejects deep
+inside `waitUntil`. `PartialPrerenderProps.maxSnapshotBytes` (default 8 MiB,
+`DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) bounds the serialized snapshot; over the
+cap `captureAndStoreShell` stores the shell WITHOUT it and warns once per
+key. The trade is documented drift: un-pinned reads fall back to the live
+store on a HIT, so content that drifted between capture and HIT
+hydration-mismatches and React repairs it client-side — the pre-snapshot
+behavior, and strictly better than losing the entire entry to a rejected
+write. Both producers apply the cap (producer B receives it via
+`BuildShellCaptureOptions` / the dev `/__rsc_shell` `maxSnapshotBytes`
+param).
+
+**Capture debug sink.** `createRouter({ debugShellCapture })` mirrors the
+`CFCacheDebug` pattern: `true` logs one structured line per event, a
+function receives each `ShellCaptureDebugEvent` — outcome per attempt
+(`stored`/`redirect`/`no-shell`/`refused`/`error`), skip events
+(`skip-in-flight`/`skip-backoff`) and backoff escalation (`backoff`), plus
+attempt/barrier/write-settle durations and prelude/snapshot byte sizes.
+`INTERNAL_RANGO_DEBUG` lights the console sink without the option; an
+explicit `debugShellCapture: false` stays off. In dev the terminal event per
+key is buffered and, when `debugPerformance` metrics are active, rides the
+NEXT ppr GET's Server-Timing as `ppr-capture;dur=<attempt ms>;desc="…"`
+(consumed on read — one capture, one report), alongside a `ppr:shell-read`
+hit/miss metric for the serve-side store read. The capture runs AFTER its
+triggering response commits, which is why its outcome can only ride a later
+response's header.
+
+**HIT-tail timing mirror.** The HIT commits its 200 + headers at the prelude
+flush, so Server-Timing on the HIT response structurally cannot carry the
+live tail's numbers — all of match/loaders/Flight/resume happens inside the
+response body. In dev, `serveShellHit` records per-stage offsets from the
+commit (`seed`/`match`/`handover`/`first-html`/`complete`, plus
+prelude/tail byte counts — `ShellTailTiming`, shell-serve.ts) and buffers
+the terminal timing per key; when `debugPerformance` metrics are active it
+rides the NEXT ppr GET's Server-Timing as `ppr-tail;dur=<complete
+ms>;desc="…"` — the same consume-on-read doctrine as the `ppr-capture`
+mirror above. Production folds the collection away (`NODE_ENV` literal);
+`INTERNAL_RANGO_DEBUG` remains the raw console narration of the same window.
+
+**Inert shell family.** The shell family is KV-only on `CFCacheStore`; with
+no KV namespace bound, `getShell`/`putShell` no-op and every ppr route is a
+permanent MISS — the correctness-first fail-open of v1, previously with zero
+diagnostics. The store now warns once per isolate, from inside
+`getShell`/`putShell` (only ppr routes call them, so a KV-less store in a
+non-PPR app stays silent), naming the fix: bind a KV namespace
+(`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use a shell-capable
+store.
 
 ## Dead ideas (do not re-propose)
 
@@ -984,17 +1313,18 @@ are not revived.
   implicitly). Turning on caching for data must never silently change HTML
   serving; PPR requires the explicit `ppr` declaration. Silent axis 1
   otherwise.
-- **Full-pipeline capture dispatch** (re-run the whole middleware pipeline for
-  the capture instead of `router.match()` under a derived context). It would
-  double every middleware side effect (auth, logging) and re-trip the
-  single-use `next()` latch; the derived context inherits the post-middleware
-  state instead, and guarding is serve-time.
+- **Full-pipeline runtime capture dispatch** (re-run the whole middleware
+  pipeline for the background capture instead of `router.match()` under a
+  derived context). It would double every middleware side effect (auth,
+  logging) and re-trip the single-use `next()` latch; the derived context
+  inherits the post-middleware state instead, and guarding is serve-time.
+  Build-time producer B is allowed to replay middleware because there is no
+  live response, it exposes `ctx.build === true`, and `ctx.waitUntil()` is inert.
 
 ## Out of scope (v1)
 
-- Build-time capture in the prerender pipeline (B segments). Runtime capture
-  via background re-render covers the feature; build-time is an optimization
-  with the same storage contract.
+- Build-time capture in the prerender pipeline (B segments): SHIPPED as
+  producer B (#699), with middleware replay added under `ctx.build === true`.
 - CF Cache-API L1 tier for shell entries (KV only in v1).
 - Vercel BOA `chain` / streaming-lambda serving.
 - Render-recorded shell-tag union for shell entries: SHIPPED in #648 (originally
@@ -1002,8 +1332,15 @@ are not revived.
   reactVersion gate). The render-callable `cacheTag()` unions render-recorded tags
   onto the shell entry — see "Shell invalidation is DERIVATIVE (render-recorded
   tags, #648)" above.
-- Flight-byte splicing for the cached portion of the payload (the full Flight
-  render still runs per request; hydration needs it anyway).
+- Flight-byte splicing for the cached portion of the payload: SHIPPED as #700
+  (originally scoped out — "the full Flight render still runs per request").
+  A HIT tail now emits the STORED per-segment fragment strings verbatim into
+  the hydration payload (`__rangoFragment` envelopes, `src/segment-fragments.ts`;
+  `fragmentSegments` in segment-codec.ts) and the SSR resume pass + browser
+  hydration expand them through their own Flight deserializers — per-SEGMENT
+  splicing, so the whole-payload hazards recorded above (the handles
+  AsyncGenerator, live promises, row-id surgery) never apply. See
+  docs/design/shell-fast-path.md ("The fragment splice, as built").
 - Warm-pass two-phase capture: a second capture render that lets non-loader
   in-shell async settle (closing the last residual quiesce window — raw
   in-component I/O in the shell, above) rather than relying on the anti-pattern

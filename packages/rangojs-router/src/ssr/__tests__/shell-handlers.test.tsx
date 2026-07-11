@@ -13,6 +13,7 @@ import {
   createSSRHandler,
   createShellCaptureHandler,
   createShellResumeHandler,
+  isDebuggerAttached,
   type SSRDependencies,
 } from "../index";
 
@@ -336,8 +337,13 @@ describe("createShellCaptureHandler", () => {
       Promise.resolve(makeTree(new Promise(() => {}), "cap")),
     );
     const capture = createShellCaptureHandler(deps);
+    // Short maxWaitMs: this mock's prerender settles ONLY on abort, and the
+    // abort now waits for payload/prerender settlement OR the deadline — so
+    // the deadline is the intended path here (a payload that never settles
+    // degrades at maxWaitMs). The default 15s would race vitest's own timeout.
     const result = await capture(makeRscStream("ABORT_FLIGHT"), {
       quiesce: Promise.resolve(),
+      maxWaitMs: 50,
     });
     expect(result).toBeNull();
   });
@@ -578,5 +584,41 @@ describe("createSSRHandler (regression: real tee + inject path)", () => {
     // Injected hydration payload from the teed second branch.
     expect(html).toContain("__FLIGHT_DATA");
     expect(html).toContain("REGRESSION_FLIGHT");
+  });
+});
+
+// Debugger-attached budget bypass (Next.js precedent, export/worker.ts): the
+// helper gates the capture deadline swap in captureShellHTML. Gate is
+// NODE_ENV !== "production" (matches isDevMode; covers NODE_ENV-unset dev
+// servers) — production keeps the budget unconditionally, --inspect or not.
+describe("isDebuggerAttached", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("true in dev for --inspect-brk with a port (substring match)", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NODE_OPTIONS", "--max-old-space-size=4096 --inspect-brk=9230");
+    await expect(isDebuggerAttached()).resolves.toBe(true);
+  });
+
+  it("true when NODE_ENV is unset (dev server without an explicit env) with --inspect", async () => {
+    vi.stubEnv("NODE_ENV", undefined);
+    vi.stubEnv("NODE_OPTIONS", "--inspect");
+    await expect(isDebuggerAttached()).resolves.toBe(true);
+  });
+
+  it("false in production even with --inspect in NODE_OPTIONS", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NODE_OPTIONS", "--inspect");
+    await expect(isDebuggerAttached()).resolves.toBe(false);
+  });
+
+  it("false in dev with no inspect flag and no active inspector", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NODE_OPTIONS", "");
+    // The residual probes (execArgv, inspector.url()) are inert in a plain
+    // vitest worker; running the suite itself under --inspect would flip them.
+    await expect(isDebuggerAttached()).resolves.toBe(false);
   });
 });

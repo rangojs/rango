@@ -1,4 +1,4 @@
-import { Meta } from "@rangojs/router";
+import { Meta, Prerender } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -6,13 +6,21 @@ import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
 import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
 import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
+import { PprPrerenderSeqLoader } from "../loaders/ppr-shell.js";
+import { PprBakeSlowLoader, PprBakeHoleLoader } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
 import { PprShellSettled } from "../components/PprShellSettled.js";
+import { PprBakeSlow } from "../components/PprBakeSlow.js";
 import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
-import { PprShellExecMatrix } from "../components/PprShellExecMatrix.js";
+import {
+  PprInlineActionForm,
+  PprShellExecMatrix,
+  type PprInlineActionState,
+} from "../components/PprShellExecMatrix.js";
+import { PprPrerenderSeq } from "../components/PprPrerenderSeq.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -97,6 +105,32 @@ export function PprBareHomePage() {
   return <p data-testid="ppr-bare-home">Bare home static content</p>;
 }
 
+// Pin-first bake-lane layout (loader-cache.ts `if (!recorded.holes)`), the
+// workerd/KV counterpart of test-app's ShellBakeSlowLayout. Registers
+// PprBakeSlowLoader — 600ms, NO loading() on the layout, so the BAKE lane (see
+// urls.tsx). Its plain hole-free container bakes into the shell snapshot's
+// loader family; on a HIT the record is hole-free, so the payload resolves the
+// loaderData from the PIN immediately rather than gating on the slow fresh run.
+// The child ppr route keeps a fast ~30ms price hole behind loading() so a real
+// shell captures.
+export function PprBakeSlowLayout() {
+  return (
+    <main data-testid="ppr-bake-slow-page">
+      <p data-testid="ppr-bake-chrome">Bake slow static chrome</p>
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprBakeSlowPage() {
+  return (
+    <PprBakeSlow
+      bakeLoader={PprBakeSlowLoader}
+      holeLoader={PprBakeHoleLoader}
+    />
+  );
+}
+
 // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"): the same
 // chrome data owned by a @badge parallel slot with its OWN loading() — a
 // badge-sized GUARANTEED-fresh hole (the bake lane would pin the value for the
@@ -140,4 +174,68 @@ export function PprExecBadgeSlot() {
 export function PprExecPage() {
   pprExecCounters.path += 1;
   return <PprShellExecMatrix loader={PprShellExecLoader} />;
+}
+
+export function PprInlineActionPage() {
+  const captured = `cf-server-token-${crypto.randomUUID()}`;
+  async function submit(
+    _previous: PprInlineActionState,
+    formData: FormData,
+  ): Promise<PprInlineActionState> {
+    "use server";
+    return {
+      captured,
+      submitted: String(formData.get("value")),
+    };
+  }
+
+  return <PprInlineActionForm action={submit} renderedCaptured={captured} />;
+}
+
+// Prerender + ppr composition (docs/design/shell-fast-path.md): build-time
+// segments — the article content AND the slot handler element — bake into the
+// frozen prelude; the SLOT-owned loader (loader()+loading() on @ppSeq, the
+// slot-hole playbook) masks at capture and re-runs fresh per HIT. The
+// Prerender handler never executes at serve (production evicts it to a stub).
+export const PprPrerenderedArticle = Prerender(
+  // "warm" is the e2e warm-up slug: the suite's beforeAll polls its bare path
+  // to HIT so producer B's machinery (dev: the /__rsc_shell on-demand capture
+  // graph on the temp Node server) is hot before the strict first-request
+  // assertions run on the virgin alpha/beta bare paths.
+  async () => [{ slug: "alpha" }, { slug: "beta" }, { slug: "warm" }],
+  async (ctx) => {
+    return (
+      <div data-testid="ppr-pp-article">
+        <h1 data-testid="ppr-pp-article-title">{`PPR-PP ${ctx.params.slug}`}</h1>
+        <p data-testid="ppr-pp-article-content">
+          {`Prerendered shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppSeq" />
+      </div>
+    );
+  },
+);
+
+/**
+ * Dedicated fixture for the build-shell EVICTION e2e (#699): its own route +
+ * tag so updateTag("ppr-pp-evict-shell") cannot blast the sibling
+ * /ppr-shell/prerendered/:slug entries a concurrently-running test asserts on
+ * (dev runs fullyParallel). Same slot-hole shape as PprPrerenderedArticle.
+ */
+export const PprPrerenderedEvictArticle = Prerender(
+  async () => [{ slug: "gamma" }],
+  async (ctx) => {
+    return (
+      <div data-testid="ppr-pp-evict-article">
+        <p data-testid="ppr-pp-evict-article-content">
+          {`Evictable shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppSeq" />
+      </div>
+    );
+  },
+);
+
+export function PprPrerenderSeqSlot() {
+  return <PprPrerenderSeq loader={PprPrerenderSeqLoader} />;
 }

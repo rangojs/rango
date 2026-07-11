@@ -1,4 +1,12 @@
-import { urls, updateTag, revalidateTag, Meta, nonce } from "@rangojs/router";
+import {
+  urls,
+  updateTag,
+  revalidateTag,
+  Meta,
+  nonce,
+  cookies,
+  redirect,
+} from "@rangojs/router";
 import { Suspense } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
@@ -9,6 +17,13 @@ import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
+import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
+
+declare global {
+  var __loadPrerenderManifestModule:
+    | (() => Promise<{ default: Record<string, string> }>)
+    | undefined;
+}
 
 // Page handlers
 import { HomePage } from "./pages/home.js";
@@ -24,21 +39,45 @@ import {
   PprBareHomePage,
   PprSlotChromeLayout,
   PprSlotHomePage,
+  PprBakeSlowLayout,
+  PprBakeSlowPage,
   PprExecLayout,
   PprExecBadgeSlot,
   PprExecPage,
+  PprInlineActionPage,
+  PprPrerenderedArticle,
+  PprPrerenderedEvictArticle,
+  PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
+import {
+  CfPhgDynamicPage,
+  CfPhgHandlerPage,
+  CfPhgLoaderPage,
+  CfPhgMwLivePage,
+  CfPprBasketPage,
+} from "./pages/ppr-header-guard.js";
+import {
+  CfPhgCookieWriterLoader,
+  CfPhgHoleLoader,
+} from "./loaders/ppr-header-guard.js";
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
   PprShellSettledLoader,
   PprShellExecLoader,
   pprExecCounters,
+  PprPrerenderSeqLoader,
   PprChromeLoader,
   PprBadgeLoader,
+  PprBakeSlowLoader,
+  PprBakeHoleLoader,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
+import {
+  PprSlowMetaLayout,
+  PprShortMetaLayout,
+} from "./pages/ppr-slow-meta.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage } from "./pages/features.js";
@@ -121,6 +160,7 @@ export const urlpatterns = urls(
     include,
     middleware,
     transition,
+    errorBoundary,
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
@@ -197,6 +237,30 @@ export const urlpatterns = urls(
       { name: "testRevalidateTag" },
     ),
 
+    // Purge mode (tagPurge) against the real CFCacheStore in workerd, on a
+    // SEPARATE store so the marker-mode routes above keep their semantics.
+    // The tagPurge stub records the Cache-Tags (workerd cannot purge by tag);
+    // the e2e asserts the recorded tags and the delegation contract (a
+    // surviving L1 entry keeps serving after updateTag). See purge-store.ts.
+    cache({ ttl: 600, tags: ["cf-purge-items"], store: purgeModeStore }, () => [
+      path.json("/test/purge-tagged-json", () => ({ ts: Date.now() }), {
+        name: "testPurgeTaggedJson",
+      }),
+    ]),
+    // Test utils: read / clear the recorded purge calls (same module-state
+    // pattern as /__test/last-error).
+    path.json("/__test/purge-log", () => ({ calls: [...purgeLog] }), {
+      name: "testPurgeLog",
+    }),
+    path.json(
+      "/__test/clear-purge-log",
+      () => {
+        clearPurgeLog();
+        return { cleared: true };
+      },
+      { name: "testClearPurgeLog" },
+    ),
+
     // Cached response routes: test cache() with CFCacheStore across MIME types
     cache({ ttl: 600 }, () => [
       path.json(
@@ -216,6 +280,23 @@ export const urlpatterns = urls(
         "/test/cached-html",
         () => `<h1 data-ts="${Date.now()}">cached</h1>`,
         { name: "testCachedHtml" },
+      ),
+      path.json(
+        "/test/cached-cookie",
+        () => {
+          cookies().set("session", "tok", { path: "/" });
+          return { source: "cached-cookie", ts: Date.now() };
+        },
+        { name: "testCachedCookie" },
+      ),
+      path.json(
+        "/test/cached-json-query",
+        (ctx) => ({
+          source: "cached-json-query",
+          q: ctx.url.searchParams.get("q") ?? "",
+          ts: Date.now(),
+        }),
+        { name: "testCachedJsonQuery" },
       ),
     ]),
 
@@ -435,7 +516,157 @@ export const urlpatterns = urls(
             { name: "pprShellSettled", ppr: true },
             () => [loader(PprShellSettledLoader)],
           ),
+          // NAMELESS ppr route (issue #714): `name` is orthogonal to shell
+          // caching — the entry registers under a synthesized $path_* manifest
+          // key with the ppr option intact, so it must engage (MISS -> HIT)
+          // exactly like the named siblings above. Param mirrors the issue's
+          // repro shape. NOT in PPR_WARMUP_HIT_ROUTES: its e2e owns the full
+          // MISS -> capture -> HIT round-trip.
+          path(
+            "/ppr-nameless/:probe",
+            PprShellPricePage,
+            { ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-nameless-fallback">Loading price...</div>,
+              ),
+            ],
+          ),
         ]),
+        // Deferred shell material settling in parts (issue #715): see
+        // pages/ppr-slow-meta.tsx. The declared 10s budget admits the ~6.5s
+        // staged settlement; the short-budget sibling refuses. NOT in
+        // PPR_WARMUP_HIT_ROUTES — a ~6.5s capture must never park the shared
+        // warmup path; the e2e owns the round-trip.
+        layout(PprSlowMetaLayout, () => [
+          path(
+            "/ppr-slow-meta",
+            PprShellPricePage,
+            {
+              name: "pprSlowMeta",
+              ppr: { ttl: 300, swr: 120, captureTimeout: 10000 },
+            },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-slow-meta-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+        ]),
+        // Refusal semantics under a too-short budget (issue #715 negative):
+        // ~3.5s material against an explicit 1500ms budget — the capture
+        // refuses (stays MISS, no partial bake). Short tempo keeps the
+        // worker's serialized capture queue clear for the sibling ppr tests;
+        // the router test-app's slow-meta-default negative is likewise
+        // explicit-budget (the 15s default admits both fixtures' material).
+        layout(PprShortMetaLayout, () => [
+          path(
+            "/ppr-short-meta",
+            PprShellPricePage,
+            {
+              name: "pprShortMeta",
+              ppr: { ttl: 300, swr: 120, captureTimeout: 1500 },
+            },
+            () => [
+              loader(PprShellPriceLoader),
+              loading(
+                <div data-testid="ppr-short-meta-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
+        ]),
+        // ppr header-write guard (issue #713): handler/loader header writes on
+        // a ppr route throw deterministically; middleware stays the live
+        // header lane. Guard routes carry their own errorBoundary and are only
+        // fetched by ppr-header-guard.test.ts. NOT in PPR_WARMUP_HIT_ROUTES:
+        // the guard routes never store a shell (they 500), and the mw-live/
+        // basket e2es own their MISS -> HIT round-trips.
+        layout(
+          () => (
+            <div>
+              <Outlet />
+            </div>
+          ),
+          () => [
+            errorBoundary((props) => (
+              <div data-testid="cf-phg-error-page">
+                <span data-testid="cf-phg-error-message">
+                  {props.error.message}
+                </span>
+              </div>
+            )),
+            path("/ppr-header-guard", CfPhgHandlerPage, {
+              name: "pprHeaderGuardHandler",
+              ppr: true,
+            }),
+            path(
+              "/ppr-header-guard/loader",
+              CfPhgLoaderPage,
+              { name: "pprHeaderGuardLoader", ppr: true },
+              () => [loader(CfPhgCookieWriterLoader)],
+            ),
+            // DYNAMIC RE-PERMIT (#735): ctx.dynamic() opts off the shell and
+            // clears the ppr header latch, so the handler header write is
+            // re-permitted and rides EVERY request (route is always live).
+            path("/ppr-header-guard/dynamic", CfPhgDynamicPage, {
+              name: "pprHeaderGuardDynamic",
+              ppr: true,
+            }),
+          ],
+        ),
+        // POSITIVE CONTROL (issue #713): middleware header + cookie on a ppr
+        // route ride MISS and HIT alike. Scoped to this subtree.
+        middleware(
+          async (ctx, next) => {
+            ctx.headers.set("X-CF-PHG-MW", "static-value");
+            ctx.headers.set("X-CF-PHG-MW-Req", crypto.randomUUID());
+            cookies().set("cf_phg_mw_session", "live-cookie", { path: "/" });
+            return next();
+          },
+          () => [
+            path(
+              "/ppr-mw-live",
+              CfPhgMwLivePage,
+              { name: "pprMwLive", ppr: { ttl: 300, swr: 120 } },
+              () => [
+                loader(CfPhgHoleLoader),
+                loading(
+                  <div data-testid="cf-phg-mw-live-fallback">Loading...</div>,
+                ),
+              ],
+            ),
+          ],
+        ),
+        // Storefront basket shape (issue #713): the action rotates the basket
+        // cookie; the following GET is a shell HIT whose middleware reads the
+        // cookie per request and reflects it as a response header — session
+        // continuity through action POST -> GET(HIT).
+        middleware(
+          async (ctx, next) => {
+            const basket = cookies().get("basket_count")?.value ?? "0";
+            ctx.headers.set("X-CF-Basket-Count", basket);
+            return next();
+          },
+          () => [
+            path(
+              "/ppr-basket",
+              CfPprBasketPage,
+              { name: "pprBasket", ppr: { ttl: 300, swr: 120 } },
+              () => [
+                loader(CfPhgHoleLoader),
+                loading(
+                  <div data-testid="cf-ppr-basket-fallback">Loading...</div>,
+                ),
+              ],
+            ),
+          ],
+        ),
         // Shell fast-path execution matrix (docs/design/shell-fast-path.md):
         // middleware + layout + parallel + path + loader counters, asserted
         // layer-by-layer across consecutive HITs on workerd/KV. The middleware
@@ -468,6 +699,60 @@ export const urlpatterns = urls(
             ]),
           ],
         ),
+        path("/ppr-shell/inline-action", PprInlineActionPage, {
+          name: "pprShellInlineAction",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+        // Prerender + ppr composition (docs/design/shell-fast-path.md):
+        // build-time segments are the frozen prelude; the slot-owned loader
+        // is the badge-sized streaming hole. See pages/ppr-shell.tsx.
+        path(
+          "/ppr-shell/prerendered/:slug",
+          PprPrerenderedArticle,
+          { name: "pprShellPrerendered", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            parallel({
+              "@ppSeq": {
+                handler: PprPrerenderSeqSlot,
+                use: () => [
+                  loader(PprPrerenderSeqLoader),
+                  loading(
+                    <span data-testid="ppr-pp-seq-fallback">
+                      Loading pp seq...
+                    </span>,
+                  ),
+                ],
+              },
+            }),
+          ],
+        ),
+        // Build-shell eviction fixture (#699): its own route + tag so the
+        // eviction e2e's updateTag cannot blast the sibling prerendered
+        // entries (baked manifest entries are immutable — eviction is a tag
+        // MARKER comparison in the store, not a deletion).
+        path(
+          "/ppr-shell/prerendered-evict/:slug",
+          PprPrerenderedEvictArticle,
+          {
+            name: "pprShellPrerenderedEvict",
+            ppr: { ttl: 300, swr: 120, tags: ["ppr-pp-evict-shell"] },
+          },
+          () => [
+            parallel({
+              "@ppSeq": {
+                handler: PprPrerenderSeqSlot,
+                use: () => [
+                  loader(PprPrerenderSeqLoader),
+                  loading(
+                    <span data-testid="ppr-pp-seq-fallback">
+                      Loading pp seq...
+                    </span>,
+                  ),
+                ],
+              },
+            }),
+          ],
+        ),
         // LAYOUT-LOADER shapes (the storefront): the layout registers a
         // loader with NO loading() on the LAYOUT — the BAKE lane
         // (docs/design/loader-container-bake.md). PprChromeLoader executes at
@@ -496,6 +781,29 @@ export const urlpatterns = urls(
             name: "pprShellLayoutLoaderBare",
             ppr: true,
           }),
+        ]),
+        // Pin-first bake lane (loader-cache.ts `if (!recorded.holes)`): see
+        // PprBakeSlowLayout. The layout's 600ms hole-free bake loader is
+        // snapshot-pinned; on a HIT the payload resolves it from the pin
+        // immediately instead of gating on the fresh 600ms run. Child keeps a
+        // fast live price hole behind loading() so a real shell captures. NOT in
+        // PPR_WARMUP_HIT_ROUTES — a 600ms capture must never park the shared
+        // warmup path; its e2e owns the MISS -> HIT round-trip.
+        layout(PprBakeSlowLayout, () => [
+          loader(PprBakeSlowLoader),
+          path(
+            "/ppr-shell/bake-slow",
+            PprBakeSlowPage,
+            { name: "pprBakeSlow", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprBakeHoleLoader),
+              loading(
+                <div data-testid="ppr-bake-price-fallback">
+                  Loading price...
+                </div>,
+              ),
+            ],
+          ),
         ]),
         // LIVE-lane alternative (skills/ppr "layout-with-loaders playbook"):
         // the same chrome data owned by a @badge parallel slot with its OWN
@@ -789,6 +1097,25 @@ export const urlpatterns = urls(
         path("/action-location-state", ActionLocationStatePage, {
           name: "actionLocationState",
         }),
+
+        // Soft + document redirect guard fixture (mirrors test-app redirect-guard).
+        path(
+          "/redirect-guard/go",
+          () => (
+            <div data-testid="redirect-guard-page">
+              <h1 data-testid="redirect-guard-title">Redirect Guard</h1>
+            </div>
+          ),
+          { name: "redirectGuardGo" },
+          () => [
+            middleware((ctx, next) => {
+              const to = ctx.searchParams.get("to");
+              if (!to) return next();
+              const external = ctx.searchParams.get("ext") === "1";
+              return external ? redirect(to, { external: true }) : redirect(to);
+            }),
+          ],
+        ),
 
         // Slow routes for navigation progress demo
         // /slow/1 uses handler pattern (blocks) - for testing

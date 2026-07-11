@@ -53,6 +53,41 @@ test.describe("content negotiation (dev)", () => {
     expect(body.format).toBe("json");
   });
 
+  test("Accept: text/x-component returns the flight stream on a JSON-first route", async ({
+    request,
+  }) => {
+    // The RSC candidate also serves the flight wire format; an explicit
+    // wire-format Accept selects it deterministically even when a response
+    // variant is defined first (where */* would pick the variant).
+    const response = await request.get(f.url("/test/negotiate"), {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/x-component");
+  });
+
+  test("plain RSC route: Accept: */* serves the HTML document", async ({
+    request,
+  }) => {
+    // Flight is explicit-opt-in only; a generic client (curl default) gets
+    // the HTML document, never the internal wire format.
+    const response = await request.get(f.url("/"), {
+      headers: { Accept: "*/*" },
+    });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/html");
+  });
+
+  test("plain RSC route: Accept: text/x-component serves the flight stream", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/"), {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/x-component");
+  });
+
   test("Vary: Accept present on negotiated JSON response", async ({
     request,
   }) => {
@@ -284,6 +319,36 @@ test.describe("content negotiation (production)", () => {
     });
     const vary = response.headers()["vary"] || "";
     expect(vary).toContain("Accept");
+  });
+
+  test("Accept: text/x-component returns the flight stream on a JSON-first route in production", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/test/negotiate"), {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/x-component");
+  });
+
+  test("plain RSC route: Accept: */* serves the HTML document in production", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/"), {
+      headers: { Accept: "*/*" },
+    });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/html");
+  });
+
+  test("plain RSC route: Accept: text/x-component serves the flight stream in production", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/"), {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/x-component");
   });
 
   test("text negotiate: plain text in production", async ({ request }) => {

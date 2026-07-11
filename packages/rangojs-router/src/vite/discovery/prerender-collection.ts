@@ -281,6 +281,22 @@ export async function expandPrerenderRoutes(
               "__pr",
               mainValue,
             );
+            // Prerender + ppr composition: flag the URL as a build-time shell
+            // candidate for the post-build capture phase (producer B, #699).
+            // The payload JSON is retained in memory so that phase can seed an
+            // in-realm prerender store the capture's match() will HIT.
+            if (result.ppr !== undefined && result.ppr !== false) {
+              (state.shellCandidates ??= []).push({
+                urlPath: entry.urlPath,
+                routeName: result.routeName,
+                paramHash,
+                ppr: result.ppr === true ? true : result.ppr,
+              });
+              (state.prerenderPayloadValues ??= new Map()).set(
+                mainKey,
+                mainValue,
+              );
+            }
             if (result.interceptSegments?.length) {
               const interceptKey = `${result.routeName}/${paramHash}/i`;
               const interceptValue = JSON.stringify({
@@ -399,15 +415,26 @@ export async function renderStaticHandlers(
 
       const startHandler = performance.now();
       let handled = false;
-      for (const [, routerInstance] of registry) {
+      // Owner-first: path() stamped the mounting router's id on the def
+      // ($$routerId). Sweeping the whole registry hands the FIRST router's
+      // id and route map to every static handler — wrong scoping in
+      // multi-router apps. The full sweep remains only as the fallback for
+      // an unstamped def (evaluated outside a router scope).
+      const owner = (def as any).$$routerId as string | undefined;
+      const owned = owner !== undefined ? registry.get(owner) : undefined;
+      const candidates = owned ? [owned] : [...registry.values()];
+      for (const routerInstance of candidates) {
         if (!routerInstance.renderStaticSegment) continue;
         try {
           const result = await routerInstance.renderStaticSegment(
             def.handler,
             def.$$id,
-            (def as any).$$routePrefix,
+            // Full route name when stamped; the historical $$routePrefix is a
+            // name PREFIX (never in the root-scope registry) kept as fallback.
+            (def as any).$$routeName ?? (def as any).$$routePrefix,
             state.resolvedBuildEnv,
             !state.isBuildMode,
+            (def as any).$$rootScoped,
           );
           if (result) {
             // result.handles is the pre-encoded handle string ("" when none).

@@ -16,19 +16,17 @@ import type { RouteEntry } from "../../types.js";
 // design — see docs/internal/matching-and-lazy-discovery.md M3/M4/C1).
 
 // Build a trie + a single flat RouteEntry from the same routes so both matchers
-// see identical input. sp/ancestry are synthetic — they do not affect the
-// matched (routeKey, params, redirectTo) which is what parity compares.
+// see identical input. sp is synthetic — it does not affect the matched
+// (routeKey, params, redirectTo) which is what parity compares.
 function buildBoth(
   routes: Record<string, string>,
   ts?: Record<string, string>,
 ) {
-  const ancestry: Record<string, string[]> = {};
   const sp: Record<string, string> = {};
   for (const [name, pattern] of Object.entries(routes)) {
-    ancestry[name] = [`A:${name}`];
     sp[name] = extractStaticPrefix(pattern);
   }
-  const trie = buildRouteTrie(routes, ancestry, sp, ts);
+  const trie = buildRouteTrie(routes, sp, ts);
   const entry = {
     prefix: "",
     staticPrefix: "",

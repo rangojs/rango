@@ -5,10 +5,14 @@ import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
+import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+  isValidDevDiscoveryEpoch,
+} from "./dev-discovery-protocol.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
 import {
   registerRouteMap,
-  getPrecomputedEntries,
   getRouterManifest,
   getRouterPrecomputedEntries,
   ensureRouterManifest,
@@ -160,7 +164,6 @@ export function createRouter<TEnv = any>(
     defaultPrefetch: defaultPrefetchOption,
     stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
-    allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
     tracing: tracingOption,
     ssr: ssrOption,
@@ -170,6 +173,7 @@ export function createRouter<TEnv = any>(
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
     debugCacheSignal: debugCacheSignalOption = false,
+    debugShellCapture: debugShellCaptureOption,
     strictMode: strictModeOption = true,
   } = options;
 
@@ -231,6 +235,14 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+  const rawDevDiscoveryEpoch = (
+    globalThis as typeof globalThis & {
+      __RANGO_DEV_DISCOVERY_EPOCH?: unknown;
+    }
+  ).__RANGO_DEV_DISCOVERY_EPOCH;
+  const devDiscoveryEpoch = isValidDevDiscoveryEpoch(rawDevDiscoveryEpoch)
+    ? rawDevDiscoveryEpoch
+    : undefined;
 
   // Resolve the rango state cookie name once, here, so the two cookie writers
   // (the client document.cookie writer and the server Set-Cookie writer)
@@ -412,8 +424,7 @@ export function createRouter<TEnv = any>(
     string,
     Record<string, string>
   > | null {
-    const current =
-      getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
+    const current = getRouterPrecomputedEntries(routerId);
     if (current !== precomputedSource) {
       precomputedSource = current;
       // buildPrecomputedByPrefix drops any staticPrefix owned by more than one
@@ -676,6 +687,7 @@ export function createRouter<TEnv = any>(
 
   // Prerender/static match deps (bind closure state for extracted functions)
   const prerenderDeps = {
+    routerId,
     findMatch,
     buildRouterContext,
     mergedRouteMap,
@@ -707,6 +719,7 @@ export function createRouter<TEnv = any>(
     routeName?: string,
     buildEnv?: TEnv,
     devMode?: boolean,
+    rootScoped?: boolean,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
@@ -715,6 +728,8 @@ export function createRouter<TEnv = any>(
       routeName,
       buildEnv,
       devMode,
+      routerId,
+      rootScoped,
     );
   }
 
@@ -795,6 +810,7 @@ export function createRouter<TEnv = any>(
           parent: syntheticMapRoot,
           counters: {},
           mountIndex: currentMountIndex,
+          routerId,
           cacheProfiles: resolvedCacheProfiles,
           // basename sets the initial URL prefix so all path() patterns
           // are registered with the prefix (e.g. "/admin" + "/users" = "/admin/users").
@@ -1015,6 +1031,10 @@ export function createRouter<TEnv = any>(
     // Expose router-wide performance debugging for request-level metrics setup
     debugPerformance,
 
+    // Expose the PPR shell-capture debug sink for the render layer
+    // (rsc-rendering resolves it into the capture descriptor)
+    debugShellCapture: debugShellCaptureOption,
+
     // Expose resolved span tracing for the handler (Cloudflare custom spans)
     tracing: resolvedTracing,
 
@@ -1023,9 +1043,6 @@ export function createRouter<TEnv = any>(
     // Raw (not the resolveSink no-op wrapper) so router.telemetry stays
     // undefined when unconfigured and call sites gate on truthiness.
     telemetry: telemetrySink,
-
-    // Expose debug manifest flag for handler
-    allowDebugManifest: allowDebugManifestOption,
 
     // Expose origin check configuration for handler (default: enabled)
     originCheck: originCheckOption ?? true,
@@ -1085,6 +1102,9 @@ export function createRouter<TEnv = any>(
     // Expose basename for runtime manifest generation
     __basename: basename,
 
+    // Pin payload metadata to the worker generation that created this router.
+    __devDiscoveryEpoch: devDiscoveryEpoch,
+
     // Expose router-level boundary defaults for build-time clientChunks
     // discovery (so a "use client" default boundary lands in app-fallback).
     // These are createRouter options, never pushed onto EntryData.
@@ -1103,6 +1123,18 @@ export function createRouter<TEnv = any>(
         | null = null;
 
       return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+        if (
+          devDiscoveryEpoch !== undefined &&
+          request.headers.get(DEV_DISCOVERY_PROBE_HEADER) ===
+            String(devDiscoveryEpoch)
+        ) {
+          return new Response(null, {
+            headers: {
+              [DEV_DISCOVERY_EPOCH_HEADER]: String(devDiscoveryEpoch),
+            },
+          });
+        }
+
         // Trigger lazy import of per-router manifest data before route matching.
         // No-op if data is already loaded or no loader is registered.
         await ensureRouterManifest(routerId);

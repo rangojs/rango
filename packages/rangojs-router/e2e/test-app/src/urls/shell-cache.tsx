@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { urls, Meta, Breadcrumbs, nonce } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
@@ -11,14 +12,22 @@ import {
   ShellIdentityLoader,
   ShellSettledLoader,
   ShellExecLoader,
+  ShellOutlinedBadgeLoader,
   shellExecCounters,
   ShellHandles,
+  SlowMetaHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
   makeNestedFastHandlePush,
+  makeSlowMetaParts,
   makePhysicsPromise,
   getDriftStamp,
+  getCapStamp,
+  outlinedRenderCounter,
+  ShellBakeSlowLoader,
+  ShellBakeHoleLoader,
 } from "./shell-cache.defs.js";
+import { SlowMetaView } from "../components/SlowMetaView.js";
 import { ShellBadge } from "../components/ShellBadge.js";
 import { ShellSettledValue } from "../components/ShellSettledValue.js";
 import { ShellGuardValue } from "../components/ShellGuardValue.js";
@@ -28,6 +37,7 @@ import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
 import { ShellHandleView } from "../components/ShellHandleView.js";
 import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
+import { ShellBakeSlow } from "../components/ShellBakeSlow.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
@@ -94,6 +104,68 @@ function ShellCachePricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
 }
 
+// Large SYNCHRONOUS Suspense-wrapped section: fizz outlines any boundary over
+// ~500 bytes (fallback inline first, content as a queued task) and, past
+// progressiveChunkSize, outline-DEFERS it at flush (placeholder + out-of-band
+// segment + $RC — all inside the stored prelude). Big enough that the section
+// dominates the capture's fizz work: a capture abort that raced ready-but-
+// queued render work would truncate it. Fizz's runnable work is microtask-
+// atomic relative to the capture's macrotask abort schedule (tracked-postpones
+// pings are scheduleMicrotask; the abort hops are setTimeout), so ready
+// content of ANY size flushes before the abort can land — issue #702.
+const OUTLINED_ROW_COUNT = 10000;
+
+function OutlinedRows() {
+  outlinedRenderCounter.count += 1;
+  const renderCount = outlinedRenderCounter.count;
+  return (
+    <div data-testid="outlined-content">
+      <span data-testid="outlined-render-count">{renderCount}</span>
+      {Array.from({ length: OUTLINED_ROW_COUNT }, (_, i) => (
+        <a
+          key={i}
+          href={`/shell-cache/outlined#row-${i}`}
+          className="outlined-fixture-row transition-all duration-150 ease-in-out text-sm tracking-normal font-light border-neutral-200 hover:text-emphasis"
+        >
+          {`Outlined row ${i}`}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function ShellOutlinedPage() {
+  return (
+    <div>
+      <p data-testid="outlined-static">Outlined page static</p>
+      <Suspense
+        fallback={<div data-testid="outlined-fallback">Loading section...</div>}
+      >
+        <OutlinedRows />
+      </Suspense>
+    </div>
+  );
+}
+
+// Chrome layout for the outlined fixture: the masked hole is a SIBLING slot
+// (@outlinedBadge, own loader + loading()), never an ANCESTOR of the section.
+// Structural scar tissue (issue #702): a route-level loading() can NOT host
+// this fixture — LoaderBoundary's LoaderResolver use()es the masked loader
+// promise ABOVE the route subtree, so during capture nothing below it ever
+// renders, and React postpones at Suspense-boundary granularity (the fallback
+// occupies the boundary's DOM slot), so content inside the postponed boundary
+// can never ride the prelude. Under loading(), the WHOLE route body is the
+// hole by construction; static material that must bake belongs beside the
+// hole (a slot, layout chrome) — the layout-with-loaders playbook.
+function ShellOutlinedChromeLayout() {
+  return (
+    <main data-testid="shell-outlined-page">
+      <ParallelOutlet name="@outlinedBadge" />
+      <Outlet />
+    </main>
+  );
+}
+
 // Loader-carried-promise page, reused by BOTH /shell-cache/stream (WITH
 // loading(): the LIVE lane — the whole loader value is the hole) and
 // /shell-cache/no-hole (NO loading(): the BAKE lane — the outer label bakes
@@ -129,6 +201,30 @@ function ShellDriftLayout(ctx: HandlerContext) {
 }
 
 function ShellDriftPricePage() {
+  return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// Snapshot SIZE-CAP fixture layout (issue #651): same shape as the drift
+// fixture — a cached stamp baked into the shell + the live price hole — but the
+// route's ppr.maxSnapshotBytes is far below any real snapshot, so every capture
+// skips the snapshot while still storing the shell. See getCapStamp.
+async function CapStamp({ stamp }: { stamp: Promise<string> }) {
+  return <p data-testid="cap-stamp">{await stamp}</p>;
+}
+
+function ShellCapLayout(ctx: HandlerContext) {
+  const stamp = getCapStamp(ctx);
+  return (
+    <main data-testid="shell-cap-page">
+      <h1 data-testid="shell-cap-header">Shell Cap Demo</h1>
+      <CapStamp stamp={stamp} />
+      <ShellCacheCounter />
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellCapPricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
 }
 
@@ -183,6 +279,30 @@ function ShellTrapChromeLayout() {
 // loaders get a per-slot LoaderBoundary — a badge-sized GUARANTEED-fresh hole —
 // where the bake lane would pin the value for the shell's lifetime. Chrome and
 // the static page bake; the route needs no loader or loading() of its own.
+// Pin-first bake-lane layout (loader-cache.ts `if (!recorded.holes)`): registers
+// ShellBakeSlowLoader — 600ms, NO loading() on the layout, so the BAKE lane. Its
+// plain hole-free container bakes into the shell snapshot's loader family; on a
+// HIT the record is hole-free, so the payload resolves the loaderData from the
+// PIN immediately rather than gating on the slow fresh run. The child ppr route
+// keeps a fast ~30ms price hole behind loading() so a real shell captures.
+function ShellBakeSlowLayout() {
+  return (
+    <main data-testid="shell-bake-slow-page">
+      <p data-testid="shell-bake-chrome">Bake slow static chrome</p>
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellBakeSlowPage() {
+  return (
+    <ShellBakeSlow
+      bakeLoader={ShellBakeSlowLoader}
+      holeLoader={ShellBakeHoleLoader}
+    />
+  );
+}
+
 function ShellSlotChromeLayout() {
   return (
     <main data-testid="shell-slot-page">
@@ -280,6 +400,29 @@ function ShellSettledPage() {
   return <ShellSettledValue loader={ShellSettledLoader} />;
 }
 
+// Slow deferred-shell-material layout (issue #715, the storefront meta
+// pattern): three TOP-LEVEL pushes settling in parts — immediate, ~5.5s slow,
+// and a Meta title CHAINED off the slow promise (+1s, ~6.5s total). The
+// capture must ride the COMPLETE settlement sequence (never a partial prefix)
+// and bake the final values; a budget that expires with pushes pending
+// REFUSES the capture. Shared by the 10s-budget route (captures at ~6.5s)
+// and the sub-settlement 1500ms-budget negative (eternal MISS) so the two
+// differ ONLY in the captureTimeout value.
+function ShellSlowMetaLayout(ctx: HandlerContext) {
+  const parts = makeSlowMetaParts();
+  const pushPart = ctx.use(SlowMetaHandles);
+  pushPart(parts.immediate);
+  pushPart(parts.slow);
+  ctx.use(Meta)(parts.chainedTitle.then((title) => ({ title })));
+  return (
+    <main data-testid="shell-slow-meta-page">
+      <p data-testid="shell-slow-meta-static">Slow meta static shell</p>
+      <SlowMetaView />
+      <Outlet />
+    </main>
+  );
+}
+
 export const shellCachePatterns = urls(
   ({ path, layout, loader, loading, middleware, parallel }) => [
     layout(ShellCacheLayout, () => [
@@ -340,6 +483,26 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
+    // Snapshot SIZE-CAP route (issue #651): maxSnapshotBytes far below any real
+    // snapshot → every capture skips the snapshot (over cap, stored WITHOUT it)
+    // but the shell must still store and the HIT lane must serve + hydrate
+    // cleanly — the cap degrades pinning, never serving. The cap-stamp's
+    // default-profile ttl outlasts the test, so the un-pinned live re-read
+    // matches the frozen prelude (drift after expiry is the documented trade).
+    layout(ShellCapLayout, () => [
+      path(
+        "/shell-cache/snapshot-cap",
+        ShellCapPricePage,
+        {
+          name: "shellCacheSnapshotCap",
+          ppr: { ttl: 300, swr: 120, maxSnapshotBytes: 64 },
+        },
+        () => [
+          loader(ShellPriceLoader),
+          loading(<div data-testid="cap-price-fallback">Loading price...</div>),
+        ],
+      ),
+    ]),
     // Per-request nonce via the ContextVar TOKEN in route middleware (issue #656).
     // Scoped to THIS subtree (not global) so it gates only this ppr route and
     // leaves the rest of the shell-cache suite capturable — a global token nonce
@@ -390,6 +553,25 @@ export const shellCachePatterns = urls(
         ppr: true,
       }),
     ]),
+    // Pin-first bake lane: see ShellBakeSlowLayout above. The layout's 600ms
+    // hole-free bake loader is snapshot-pinned; on a HIT the payload resolves
+    // it from the pin immediately (loader-cache.ts `if (!recorded.holes)`)
+    // instead of gating on the fresh 600ms run. Child keeps a fast live price
+    // hole behind loading() so a real shell captures.
+    layout(ShellBakeSlowLayout, () => [
+      loader(ShellBakeSlowLoader),
+      path(
+        "/shell-cache/bake-slow",
+        ShellBakeSlowPage,
+        { name: "shellCacheBakeSlow", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellBakeHoleLoader),
+          loading(
+            <div data-testid="shell-bake-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+    ]),
     // Shell fast-path execution matrix: middleware + layout + parallel + path
     // + loader counters, asserted layer-by-layer across consecutive HITs. The
     // middleware is scoped to this subtree so its counter isolates the fixture.
@@ -421,6 +603,33 @@ export const shellCachePatterns = urls(
         ]),
       ],
     ),
+    // Outlined-boundary fixture (issue #702): a big sync Suspense section
+    // beside a masked SLOT hole. The hole is a sibling (slot with its own
+    // loader + loading()), never an ancestor — see ShellOutlinedChromeLayout
+    // for why a route-level loading() cannot host this shape. Pins that
+    // outlined-but-ready content bakes into the STORED prelude (green = every
+    // row before the first </html>) while the masked hole still postpones
+    // (badge fallback frozen in the prelude, value fresh in the resumed tail
+    // on every HIT).
+    layout(ShellOutlinedChromeLayout, () => [
+      parallel({
+        "@outlinedBadge": {
+          handler: () => <ShellBadge loader={ShellOutlinedBadgeLoader} />,
+          use: () => [
+            loader(ShellOutlinedBadgeLoader),
+            loading(
+              <span data-testid="outlined-badge-fallback">
+                outlined badge pending...
+              </span>,
+            ),
+          ],
+        },
+      }),
+      path("/shell-cache/outlined", ShellOutlinedPage, {
+        name: "shellCacheOutlined",
+        ppr: { ttl: 300, swr: 120 },
+      }),
+    ]),
     // Settled-marker regression (storefront PDP #438): bake-lane loader whose
     // nested promise is already resolved at container return — the snapshot
     // pins its value; the HIT overlay must rehydrate a Promise for use().
@@ -430,6 +639,65 @@ export const shellCachePatterns = urls(
       { name: "shellCacheSettled", ppr: true },
       () => [loader(ShellSettledLoader)],
     ),
+    // NAMELESS ppr route (issue #714): `name` is orthogonal to shell caching —
+    // the DSL registers the entry under a synthesized $path_* manifest key with
+    // the ppr option intact, so this route must engage (MISS -> HIT) exactly
+    // like its named siblings. The param mirrors the issue's repro shape.
+    path(
+      "/shell-cache/nameless/:probe",
+      ShellCachePricePage,
+      { ppr: { ttl: 300, swr: 120 } },
+      () => [
+        loader(ShellPriceLoader),
+        loading(
+          <div data-testid="shell-nameless-fallback">Loading price...</div>,
+        ),
+      ],
+    ),
+    // Slow deferred shell material (issue #715): see ShellSlowMetaLayout. The
+    // declared 10s budget admits the ~6.5s staged settlement; the sibling's
+    // sub-settlement 1500ms budget refuses. TTL long past the test window so
+    // no SWR recapture re-runs the slow pushes mid-test.
+    layout(ShellSlowMetaLayout, () => [
+      path(
+        "/shell-cache/slow-meta",
+        ShellCachePricePage,
+        {
+          name: "shellCacheSlowMeta",
+          ppr: { ttl: 300, swr: 120, captureTimeout: 10000 },
+        },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="slow-meta-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+      // Negative: identical material against an EXPLICIT sub-settlement
+      // budget — 1500ms expires with pushes pending, the capture refuses (no
+      // partial bake), and the route stays MISS with the once-per-key
+      // warning. Explicit rather than no-knob since the default budget grew
+      // to 15s, which ADMITS this ~6.5s material — a no-knob refusal would
+      // need >15s material and ~30s test waits; the default VALUE is pinned
+      // by the shell-capture unit test. Path/name keep the historical
+      // "-default" suffix (stable warning regex + gen.ts).
+      path(
+        "/shell-cache/slow-meta-default",
+        ShellCachePricePage,
+        {
+          name: "shellCacheSlowMetaDefault",
+          ppr: { ttl: 300, swr: 120, captureTimeout: 1500 },
+        },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="slow-meta-default-price-fallback">
+              Loading price...
+            </div>,
+          ),
+        ],
+      ),
+    ]),
     // Identity-guard negative: a bake-lane loader (no loading()) that reads
     // cookies(). Capture refuses deterministically (guard flag) — MISS forever
     // — while axis 1 serves the per-user value normally.

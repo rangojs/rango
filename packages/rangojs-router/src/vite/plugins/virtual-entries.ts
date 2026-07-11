@@ -1,3 +1,5 @@
+import type { HeadScriptsOption } from "../plugin-types.js";
+
 export const VIRTUAL_ENTRY_BROWSER: string = `
 import {
   createFromReadableStream,
@@ -24,7 +26,17 @@ async function initializeApp() {
   // context, including strictMode (default true) from createRouter. StrictMode
   // is the default; createRouter({ strictMode: false }) ships the opt-out in the
   // payload metadata. StrictMode emits no DOM, so toggling never changes markup.
-  const { strictMode } = await initBrowserApp({ rscStream, deps });
+  const { strictMode, initialPayload } = await initBrowserApp({ rscStream, deps });
+
+  if (import.meta.hot) {
+    const { startDevDiscoveryHandshake } = await import(
+      "@rangojs/router/internal/browser/dev-discovery"
+    );
+    startDevDiscoveryHandshake(
+      initialPayload.metadata?.devDiscoveryEpoch,
+      import.meta.hot
+    );
+  }
 
   const app = createElement(Rango);
   hydrateRoot(
@@ -36,21 +48,49 @@ async function initializeApp() {
 initializeApp().catch(console.error);
 `.trim();
 
-export const VIRTUAL_ENTRY_SSR: string = `
-import { createFromReadableStream } from "@rangojs/router/internal/deps/ssr";
+/**
+ * Generate the virtual SSR entry. `headScripts` mirrors the rango() plugin
+ * option: "preinit" (default) installs the client-reference preinit hook and
+ * lets the SSR handlers convert the bootstrap to `bootstrapModules`;
+ * "preload" omits the hook and pins the handlers to the hint-only strategy.
+ */
+export function getVirtualEntrySSR(
+  headScripts: HeadScriptsOption = "preinit",
+): string {
+  const preinit = headScripts !== "preload";
+  // The preload variant drops exactly three preinit-only lines, all built
+  // here so the template below stays a single unconditional shape.
+  const depsImportNames = preinit
+    ? "createFromReadableStream,\n  setOnClientReference,"
+    : "createFromReadableStream,";
+  const ssrImportNames = preinit ? "\n  installClientReferencePreinit," : "";
+  const install = preinit
+    ? `
+// Upgrade client-reference modulepreload hints to executing module scripts in
+// the document head, for every render pass (live SSR, shell capture, resume).
+// See src/ssr/preinit-client-references.ts for the full rationale.
+installClientReferencePreinit(setOnClientReference);
+`
+    : "";
+  const hs = JSON.stringify(headScripts);
+  return `
+import {
+  ${depsImportNames}
+} from "@rangojs/router/internal/deps/ssr";
 import { renderToReadableStream, resume } from "react-dom/server.edge";
 import { prerender } from "react-dom/static.edge";
 import { injectRSCPayload } from "@rangojs/router/internal/deps/html-stream-server";
 import {
   createSSRHandler,
   createShellCaptureHandler,
-  createShellResumeHandler,
+  createShellResumeHandler,${ssrImportNames}
 } from "@rangojs/router/ssr";
-
+${install}
 export const renderHTML = createSSRHandler({
   createFromReadableStream,
   renderToReadableStream,
   injectRSCPayload,
+  headScripts: ${hs},
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });
@@ -61,6 +101,7 @@ export const captureShellHTML = createShellCaptureHandler({
   injectRSCPayload,
   prerender,
   resume,
+  headScripts: ${hs},
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });
@@ -71,10 +112,12 @@ export const resumeShellHTML = createShellResumeHandler({
   injectRSCPayload,
   prerender,
   resume,
+  headScripts: ${hs},
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });
 `.trim();
+}
 
 /**
  * Virtual modules an RSC entry must import at startup to register the data the
