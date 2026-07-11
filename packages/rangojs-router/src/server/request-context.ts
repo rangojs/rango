@@ -1516,7 +1516,7 @@ export function createUseFunction<TEnv>(
     // RequestContext carries no `search` field, so reading `(ctx as any).search`
     // here always yielded {} — dropping typed search for action/dispatch loaders.
     const searchSchema = ctx._routeName
-      ? getSearchSchema(ctx._routeName)
+      ? getSearchSchema(ctx._routeName, ctx._routerId)
       : undefined;
     const loaderSearch = searchSchema
       ? parseSearchParams(ctx.searchParams, searchSchema)
@@ -1546,7 +1546,9 @@ export function createUseFunction<TEnv>(
         getGlobalRouteMap(),
         ctx._routeName,
         ctx.params as Record<string, string>,
-        ctx._routeName ? isRouteRootScoped(ctx._routeName) : undefined,
+        ctx._routeName
+          ? isRouteRootScoped(ctx._routeName, ctx._routerId)
+          : undefined,
       ),
       rendered: () => {
         throw new Error(

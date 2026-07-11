@@ -44,7 +44,7 @@ import { isRouteNotFoundError } from "../errors.js";
 import { createReverseFunction } from "../router/handler-context.js";
 import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
 import type { MiddlewareEntry } from "../router/middleware.js";
-import { getGlobalRouteMap } from "../route-map-builder.js";
+import { getGlobalRouteMap, isRouteRootScoped } from "../route-map-builder.js";
 import {
   resolvePprConfig,
   type ResolvedPprConfig,
@@ -183,6 +183,9 @@ async function attemptBuildCapture(
     stateCookieName: router.resolvedStateCookieName,
     version: opts.buildVersion,
   });
+  // Scope registry lookups (root-scope/search-schema) per router during the
+  // bake, mirroring rsc/handler.ts on the request path (#762).
+  baseCtx._routerId = router.id;
 
   // Entry collector: captureAndStoreShell's sink. putShell never fails here,
   // so a "stored" outcome always carries the entry.
@@ -235,6 +238,9 @@ async function attemptBuildCapture(
       getGlobalRouteMap(),
       preview?.routeKey,
       preview?.params ?? {},
+      preview?.routeKey
+        ? isRouteRootScoped(preview.routeKey, router.id)
+        : undefined,
     );
 
     const runCapture = () =>

@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { writeFileBumpMtime } from "./helper";
+import {
+  ROUTE_REDISCOVERY_PATTERN,
+  writeFileAndAwaitHmr,
+  writeFileBumpMtime,
+} from "./helper";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -101,12 +105,15 @@ test.describe.serial("route-types-hmr", () => {
     originalFactoryHmrContent = gitBaseline(factoryHmrPath);
     originalGenContent = gitBaseline(genFilePath);
 
-    // Write baselines to disk in case a prior crash left stale modifications.
-    writeFileBumpMtime(blogUrlsPath, originalBlogContent);
-    writeFileBumpMtime(mainUrlsPath, originalMainUrlsContent);
-    writeFileBumpMtime(handlersPath, originalHandlersContent);
-    writeFileBumpMtime(factoryHmrPath, originalFactoryHmrContent);
-    await fs.writeFile(genFilePath, originalGenContent);
+    // The dirty guard above guarantees source files match HEAD. Do not rewrite
+    // clean baselines here: those no-op writes start rediscovery immediately
+    // before the first test and race its first real mutation.
+    await expect
+      .poll(() => ROUTE_REDISCOVERY_PATTERN.test(f.proc().stdout()), {
+        timeout: WATCHER_TIMEOUT,
+      })
+      .toBe(true);
+    await expect(expectBaselineApplied).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   // Deferred skip: test.skip() cannot be called from beforeAll, so we
@@ -115,21 +122,53 @@ test.describe.serial("route-types-hmr", () => {
     test.skip(dirtyGuardMessage.length > 0, dirtyGuardMessage);
   });
 
-  test.afterEach(async () => {
+  async function expectBaselineApplied(): Promise<void> {
+    expect(await fs.readFile(genFilePath, "utf-8")).toBe(originalGenContent);
+    const reverse = await queryReverse([
+      "blog.index",
+      "blog.post",
+      "blog.comments",
+      "blog.article",
+      "blog.recovered",
+    ]);
+    expect(reverse["blog.index"]).toBe("/blog");
+    expect(reverse["blog.post"]).toBe("/blog/:postId");
+    expect(reverse["blog.comments"]).toBeNull();
+    expect(reverse["blog.article"]).toBeNull();
+    expect(reverse["blog.recovered"]).toBeNull();
+  }
+
+  async function writeRouteFileAndAwait(
+    page: import("@playwright/test").Page,
+    filePath: string,
+    content: string,
+    waitForApplied: () => Promise<void>,
+  ): Promise<void> {
+    await writeFileAndAwaitHmr(page, filePath, content, {
+      totalTimeoutMs: WATCHER_TIMEOUT,
+      retryIntervalMs: 2_000,
+      waitForApplied,
+    });
+  }
+
+  test.afterEach(async ({ page }) => {
     if (dirtyGuardMessage) return;
-    writeFileBumpMtime(blogUrlsPath, originalBlogContent);
-    writeFileBumpMtime(mainUrlsPath, originalMainUrlsContent);
-    writeFileBumpMtime(handlersPath, originalHandlersContent);
-    writeFileBumpMtime(factoryHmrPath, originalFactoryHmrContent);
-    // Wait for HMR + re-discovery to regenerate the gen file.
-    // Verify the gen file is restored to avoid stale modifications
-    // leaking when the dev server shuts down before the watcher fires.
-    await expect(async () => {
-      const gen = await fs.readFile(genFilePath, "utf-8");
-      expect(gen).toContain('"blog.post"');
-      expect(gen).not.toContain('"blog.article"');
-      expect(gen).not.toContain('"blog.comments"');
-    }).toPass({ timeout: isCI ? 15000 : 10000 });
+    const baselines = [
+      [blogUrlsPath, originalBlogContent],
+      [mainUrlsPath, originalMainUrlsContent],
+      [handlersPath, originalHandlersContent],
+      [factoryHmrPath, originalFactoryHmrContent],
+    ] as const;
+    for (const [filePath, baseline] of baselines) {
+      if ((await fs.readFile(filePath, "utf-8")) === baseline) continue;
+      await writeRouteFileAndAwait(
+        page,
+        filePath,
+        baseline,
+        expectBaselineApplied,
+      );
+    }
+    await expect(expectBaselineApplied).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   // Force-restore the gen file when the test suite exits, even if
@@ -292,47 +331,64 @@ test.describe.serial("route-types-hmr", () => {
     }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
-  test("should update route types when an include is removed", async () => {
+  test("should update route types when an include is removed", async ({
+    page,
+  }) => {
     const before = await fs.readFile(genFilePath, "utf-8");
-    expect(before).toContain('"blog.index"');
-    expect(before).toContain('"blog.post"');
+    expect(before).toContain('"metaTemplate.index"');
+    expect(before).toContain('"metaTemplate.child"');
 
-    // Comment out the blog include
+    // Comment out an include that is not required to evaluate the app entry.
     const modified = originalMainUrlsContent.replace(
-      'include("/blog", blogPatterns, { name: "blog" }),',
-      '// include("/blog", blogPatterns, { name: "blog" }),',
+      'include("/meta-template", metaTemplatePatterns, { name: "metaTemplate" }),',
+      '// include("/meta-template", metaTemplatePatterns, { name: "metaTemplate" }),',
     );
     expect(modified).not.toBe(originalMainUrlsContent);
-    writeFileBumpMtime(mainUrlsPath, modified);
-
-    await expect(async () => {
+    await writeRouteFileAndAwait(page, mainUrlsPath, modified, async () => {
       const after = await fs.readFile(genFilePath, "utf-8");
-      expect(after).not.toContain('"blog.index"');
-      expect(after).not.toContain('"blog.post"');
-    }).toPass({ timeout: WATCHER_TIMEOUT });
+      expect(after).not.toContain('"metaTemplate.index"');
+      expect(after).not.toContain('"metaTemplate.child"');
+      const reverse = await queryReverse([
+        "metaTemplate.index",
+        "metaTemplate.child",
+      ]);
+      expect(reverse["metaTemplate.index"]).toBeNull();
+      expect(reverse["metaTemplate.child"]).toBeNull();
+    });
   });
 
-  test("should update route types when an include is re-added", async () => {
-    // First remove the blog include
+  test("should update route types when an include is re-added", async ({
+    page,
+  }) => {
+    // First remove an include that is not required to evaluate the app entry.
     const removed = originalMainUrlsContent.replace(
-      'include("/blog", blogPatterns, { name: "blog" }),',
-      '// include("/blog", blogPatterns, { name: "blog" }),',
+      'include("/meta-template", metaTemplatePatterns, { name: "metaTemplate" }),',
+      '// include("/meta-template", metaTemplatePatterns, { name: "metaTemplate" }),',
     );
-    writeFileBumpMtime(mainUrlsPath, removed);
-
-    await expect(async () => {
+    await writeRouteFileAndAwait(page, mainUrlsPath, removed, async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
-      expect(content).not.toContain('"blog.index"');
-    }).toPass({ timeout: WATCHER_TIMEOUT });
+      expect(content).not.toContain('"metaTemplate.index"');
+      const reverse = await queryReverse(["metaTemplate.index"]);
+      expect(reverse["metaTemplate.index"]).toBeNull();
+    });
 
     // Restore the include
-    writeFileBumpMtime(mainUrlsPath, originalMainUrlsContent);
-
-    await expect(async () => {
-      const after = await fs.readFile(genFilePath, "utf-8");
-      expect(after).toContain('"blog.index"');
-      expect(after).toContain('"blog.post"');
-    }).toPass({ timeout: WATCHER_TIMEOUT });
+    await writeRouteFileAndAwait(
+      page,
+      mainUrlsPath,
+      originalMainUrlsContent,
+      async () => {
+        const after = await fs.readFile(genFilePath, "utf-8");
+        expect(after).toContain('"metaTemplate.index"');
+        expect(after).toContain('"metaTemplate.child"');
+        const reverse = await queryReverse([
+          "metaTemplate.index",
+          "metaTemplate.child",
+        ]);
+        expect(reverse["metaTemplate.index"]).toBe("/meta-template");
+        expect(reverse["metaTemplate.child"]).toBe("/meta-template/child");
+      },
+    );
   });
 
   test("should converge to the final state after rapid sequential edits", async () => {

@@ -65,6 +65,8 @@ export interface RscMetadata {
    * Used to detect version mismatches after HMR/deployment.
    */
   version?: string;
+  /** Cloudflare dev worker generation used for stale-document convergence. */
+  devDiscoveryEpoch?: number;
   /**
    * TTL in milliseconds for the client-side in-memory prefetch cache.
    * Sent on initial render so the browser can configure its cache duration.
@@ -430,24 +432,10 @@ export type StateListener = () => void;
 /**
  * Navigation store interface
  *
- * Manages both:
- * - NavigationState: Public state exposed via useNavigation hook
- * - SegmentState: Internal segment management for partial updates
+ * Owns segment state, history snapshots, and partial-update notifications.
+ * EventController owns the public navigation lifecycle exposed by hooks.
  */
 export interface NavigationStore {
-  // Public state (for useNavigation hook)
-  getState(): NavigationState;
-  setState(partial: Partial<NavigationState>): void;
-  subscribe(listener: StateListener): () => void;
-
-  // Inflight action management
-  addInflightAction(action: InflightAction): void;
-  removeInflightAction(id: string): void;
-
-  // Action state (for controlling update behavior during server actions)
-  isActionInProgress(): boolean;
-  setActionInProgress(value: boolean): void;
-
   // Internal segment state (for bridges)
   getSegmentState(): SegmentState;
   setPath(path: string): void;
@@ -459,8 +447,6 @@ export interface NavigationStore {
   setHistoryKey(key: string): void;
   /** Monotonic token of the most recently committed navigation. */
   getNavInstance(): number;
-  /** Nav-instance token recorded on a cache entry (undefined if absent). */
-  getCacheEntryInstance(historyKey: string): number | undefined;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],
@@ -506,7 +492,6 @@ export interface NavigationStore {
     stale?: boolean,
     handlesPending?: boolean,
   ): void;
-  markCacheAsStale(): void;
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
@@ -525,14 +510,6 @@ export interface NavigationStore {
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;
-
-  // Action state tracking (for useAction hook)
-  getActionState(actionId: string): TrackedActionState;
-  setActionState(actionId: string, state: Partial<TrackedActionState>): void;
-  subscribeToAction(
-    actionId: string,
-    listener: ActionStateListener,
-  ): () => void;
 }
 
 // ============================================================================

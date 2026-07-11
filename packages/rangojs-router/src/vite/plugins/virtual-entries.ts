@@ -26,7 +26,17 @@ async function initializeApp() {
   // context, including strictMode (default true) from createRouter. StrictMode
   // is the default; createRouter({ strictMode: false }) ships the opt-out in the
   // payload metadata. StrictMode emits no DOM, so toggling never changes markup.
-  const { strictMode } = await initBrowserApp({ rscStream, deps });
+  const { strictMode, initialPayload } = await initBrowserApp({ rscStream, deps });
+
+  if (import.meta.hot) {
+    const { startDevDiscoveryHandshake } = await import(
+      "@rangojs/router/internal/browser/dev-discovery"
+    );
+    startDevDiscoveryHandshake(
+      initialPayload.metadata?.devDiscoveryEpoch,
+      import.meta.hot
+    );
+  }
 
   const app = createElement(Rango);
   hydrateRoot(

@@ -56,6 +56,7 @@ These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. T
 | `./internal/deps/html-stream-client` | HTML stream client dependency bridge                                                       |
 | `./internal/deps/html-stream-server` | HTML stream server dependency bridge                                                       |
 | `./internal/rsc-handler`             | RSC handler internals                                                                      |
+| `./internal/browser/dev-discovery`   | Browser-only Cloudflare dev stale-document convergence helper                              |
 | `./cache-runtime`                    | Cache runtime dependencies                                                                 |
 | `./types`                            | Type declarations for the `@rangojs/router:version` virtual module                         |
 
@@ -161,7 +162,7 @@ Public API (`Rango` interface):
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
 - `strictMode` (default true) — wraps client hydration in `React.StrictMode`; shipped to the client via initial payload metadata and read once by the browser entry. `strictMode: false` opts out (used to isolate StrictMode's double-render when measuring hook stability)
-- `prefetchCacheSize` (default 100) and `prefetchConcurrency` (default 2) — client prefetch tuning knobs: max decoded prefetch payloads kept before FIFO eviction, and max concurrent speculative prefetches. Resolved server-side (`router/prefetch-limits.ts`), shipped via initial payload metadata, and applied once at init to `browser/prefetch/cache.ts` / `queue.ts`. Sub-1/non-finite values fall back to the default; disabling prefetch entirely remains `prefetchCacheTTL: false`'s job
+- `prefetchCacheSize` (default 100) and `prefetchConcurrency` (default 2) — client prefetch tuning knobs: max decoded prefetch payloads kept before FIFO eviction, and max concurrent speculative prefetches. Resolved server-side (`router/prefetch-limits.ts`) and shipped via initial payload metadata. The synchronous cache stays eager so navigation can adopt a warm response immediately; `browser/prefetch/loader.ts` holds decoder/concurrency configuration without loading the fetch/queue/observer runtime until the first explicit prefetch trigger. Sub-1/non-finite values fall back to the default; disabling prefetch entirely remains `prefetchCacheTTL: false`'s job
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
 - Request timeouts via `timeout`/`timeouts`/`onTimeout` options
 - `basename` for sub-path deployments — auto-prefixes all routes, `reverse()`, `Link`, `redirect()`, `router.use()` patterns, and `useRouter()` navigation. `href()` is intentionally not basename-aware (raw path helper).
@@ -354,7 +355,7 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 
 ### Dev and HMR
 
-`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. `poke()` — dev-only Vite plugin that triggers a full browser reload from terminal input: `Ctrl+R` when available, plus safe line-based shortcuts like `e + Enter`.
+`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. In Cloudflare dev, successful discovery advances a worker generation epoch only when the path, name, trailing-slash, or search-schema shape changes; after invalidating workerd, the plugin probes until the active router reports that epoch, then broadcasts readiness over the browser hot channel. Each document also queries the latest acknowledged epoch at startup and after reconnecting. Only an older document reloads, so content-only `rsc:update` keeps navigation and client state. `poke()` — dev-only Vite plugin that triggers a full browser reload from terminal input: `Ctrl+R` when available, plus safe line-based shortcuts like `e + Enter`.
 
 ---
 

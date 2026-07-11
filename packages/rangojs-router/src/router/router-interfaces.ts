@@ -419,6 +419,9 @@ export interface RangoInternal<
   /** @internal basename for runtime manifest generation */
   readonly __basename?: string;
 
+  /** @internal Cloudflare dev worker generation captured at construction. */
+  readonly __devDiscoveryEpoch?: number;
+
   /**
    * @internal Router-level error/notFound fallbacks (`createRouter` options),
    * exposed for the build-time clientChunks discovery so a `"use client"`
@@ -469,6 +472,7 @@ export interface RangoInternal<
     routeName?: string,
     buildEnv?: any,
     devMode?: boolean,
+    rootScoped?: boolean,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**

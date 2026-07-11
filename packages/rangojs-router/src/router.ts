@@ -5,6 +5,11 @@ import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
+import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+  isValidDevDiscoveryEpoch,
+} from "./dev-discovery-protocol.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
 import {
   registerRouteMap,
@@ -228,6 +233,14 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+  const rawDevDiscoveryEpoch = (
+    globalThis as typeof globalThis & {
+      __RANGO_DEV_DISCOVERY_EPOCH?: unknown;
+    }
+  ).__RANGO_DEV_DISCOVERY_EPOCH;
+  const devDiscoveryEpoch = isValidDevDiscoveryEpoch(rawDevDiscoveryEpoch)
+    ? rawDevDiscoveryEpoch
+    : undefined;
 
   // Resolve the rango state cookie name once, here, so the two cookie writers
   // (the client document.cookie writer and the server Set-Cookie writer)
@@ -667,6 +680,7 @@ export function createRouter<TEnv = any>(
 
   // Prerender/static match deps (bind closure state for extracted functions)
   const prerenderDeps = {
+    routerId,
     findMatch,
     buildRouterContext,
     mergedRouteMap,
@@ -698,6 +712,7 @@ export function createRouter<TEnv = any>(
     routeName?: string,
     buildEnv?: TEnv,
     devMode?: boolean,
+    rootScoped?: boolean,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
@@ -706,6 +721,8 @@ export function createRouter<TEnv = any>(
       routeName,
       buildEnv,
       devMode,
+      routerId,
+      rootScoped,
     );
   }
 
@@ -1077,6 +1094,9 @@ export function createRouter<TEnv = any>(
     // Expose basename for runtime manifest generation
     __basename: basename,
 
+    // Pin payload metadata to the worker generation that created this router.
+    __devDiscoveryEpoch: devDiscoveryEpoch,
+
     // Expose router-level boundary defaults for build-time clientChunks
     // discovery (so a "use client" default boundary lands in app-fallback).
     // These are createRouter options, never pushed onto EntryData.
@@ -1095,6 +1115,18 @@ export function createRouter<TEnv = any>(
         | null = null;
 
       return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+        if (
+          devDiscoveryEpoch !== undefined &&
+          request.headers.get(DEV_DISCOVERY_PROBE_HEADER) ===
+            String(devDiscoveryEpoch)
+        ) {
+          return new Response(null, {
+            headers: {
+              [DEV_DISCOVERY_EPOCH_HEADER]: String(devDiscoveryEpoch),
+            },
+          });
+        }
+
         // Trigger lazy import of per-router manifest data before route matching.
         // No-op if data is already loaded or no loader is registered.
         await ensureRouterManifest(routerId);

@@ -20,6 +20,12 @@ import {
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
 import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+  DEV_DISCOVERY_QUERY_EVENT,
+  DEV_DISCOVERY_READY_EVENT,
+} from "../dev-discovery-protocol.js";
+import {
   DEV_SHELL_PROBE_TIMEOUT_MS,
   normalizeCaptureTimeout,
 } from "../rsc/shell-serve.js";
@@ -472,6 +478,45 @@ export function createRouterDiscoveryPlugin(
       if ((globalThis as any).__rscRouterDiscoveryActive) return;
       s.devServer = server;
 
+      let workerReadyEpoch: number | undefined;
+      const publishDevDiscoveryReady = (epoch: number) => {
+        if (epoch <= (workerReadyEpoch ?? -1)) return;
+        workerReadyEpoch = epoch;
+        (server.environments as any)?.client?.hot?.send({
+          type: "custom",
+          event: DEV_DISCOVERY_READY_EVENT,
+          data: { epoch },
+        });
+        debugDiscovery?.("hmr: workerd ready at epoch %d", epoch);
+      };
+      if (opts?.preset === "cloudflare") {
+        const registeredClientHotChannels = new Set<any>();
+        const registerDevDiscoveryHotChannels = () => {
+          const clientHot = (server.environments as any)?.client?.hot;
+          if (clientHot && !registeredClientHotChannels.has(clientHot)) {
+            registeredClientHotChannels.add(clientHot);
+            clientHot.on(
+              DEV_DISCOVERY_QUERY_EVENT,
+              (_payload: unknown, client: any) => {
+                if (workerReadyEpoch === undefined) return;
+                client.send(DEV_DISCOVERY_READY_EVENT, {
+                  epoch: workerReadyEpoch,
+                });
+              },
+            );
+          }
+          debugDiscovery?.(
+            "hmr: dev discovery browser channel registered (client=%s)",
+            !!clientHot,
+          );
+        };
+
+        registerDevDiscoveryHotChannels();
+        if (server.httpServer && !server.httpServer.listening) {
+          server.httpServer.once("listening", registerDevDiscoveryHotChannels);
+        }
+      }
+
       // Serve the internal-debug module no-cache: consumers resolve it into
       // node_modules, where dev's immutable `?v=` caching pinned browsers to a
       // stale baked INTERNAL_RANGO_DEBUG. See internalDebugNoCacheMiddleware.
@@ -500,6 +545,7 @@ export function createRouterDiscoveryPlugin(
       const getDevServerOrigin = () =>
         server.resolvedUrls?.local?.[0]?.replace(/\/$/, "") ||
         `http://localhost:${server.config.server.port || 5173}`;
+      let devServerClosed = false;
 
       // Shared temp server for Cloudflare dev (no module runner in workerd).
       // Used by both discover() (route type generation) and the prerender
@@ -510,6 +556,7 @@ export function createRouterDiscoveryPlugin(
 
       // Clean up the temporary server and build env when the dev server shuts down
       server.httpServer?.on("close", () => {
+        devServerClosed = true;
         if (prerenderTempServer) {
           prerenderTempServer.close().catch(() => {});
           prerenderTempServer = null;
@@ -1426,6 +1473,22 @@ export function createRouterDiscoveryPlugin(
             writeCombinedRouteTypesWithTracking(s);
           }
         };
+        const routeShapeSignature = () =>
+          JSON.stringify(
+            s.perRouterManifests.map(
+              ({
+                id,
+                routeManifest,
+                routeTrailingSlash,
+                routeSearchSchemas,
+              }) => ({
+                id,
+                routeManifest,
+                routeTrailingSlash,
+                routeSearchSchemas,
+              }),
+            ),
+          );
 
         const maybeHandleGeneratedRouteFileMutation = (
           filePath: string,
@@ -1464,6 +1527,7 @@ export function createRouterDiscoveryPlugin(
           // populated manifest there's nothing useful to do, so bail
           // before involving the gate machine at all.
           if (!hasMainRunner && s.perRouterManifests.length === 0) return;
+          let previousRouteShape = routeShapeSignature();
           await gate.runRefreshCycle(async () => {
             const hmrStart = performance.now();
             try {
@@ -1518,7 +1582,19 @@ export function createRouterDiscoveryPlugin(
               // original call already resolved on the failed cycle. A failed
               // cycle throws above and never reaches here, so a broken edit
               // never reloads the worker onto bad source.
-              if (rscEnv && !rscEnv.runner) forceCloudflareWorkerReload(rscEnv);
+              if (rscEnv && !rscEnv.runner) {
+                const nextRouteShape = routeShapeSignature();
+                let expectedEpoch: number | undefined;
+                if (nextRouteShape !== previousRouteShape) {
+                  expectedEpoch = Math.max(
+                    Date.now(),
+                    (s.devDiscoveryEpoch ?? 0) + 1,
+                  );
+                  s.devDiscoveryEpoch = expectedEpoch;
+                }
+                previousRouteShape = nextRouteShape;
+                forceCloudflareWorkerReload(rscEnv, expectedEpoch);
+              }
             } catch (err: any) {
               s.lastDiscoveryError = {
                 message: err?.message ?? String(err),
@@ -1552,7 +1628,8 @@ export function createRouterDiscoveryPlugin(
         // HMR update for them and the entry chain is never evicted.
         //
         // Fix: after discovery completes, (1) invalidate the worker env's
-        // Node-side module graph, then (2) send a full-reload to the worker.
+        // Node-side module graph, (2) send a full-reload to the worker, then
+        // (3) probe until the active router reports the new discovery epoch.
         // Step (2) alone is insufficient: the full-reload handler clears the
         // runner's evaluatedModules and re-imports entrypoints, but each
         // re-import fetches the module back through this Node-side graph, which
@@ -1560,13 +1637,19 @@ export function createRouterDiscoveryPlugin(
         // rebuilds the stale route table and the new route 404s/hits the
         // catch-all. Invalidating the graph forces a fresh transform on
         // re-fetch (the same mechanism refreshTempRscEnv uses for discovery),
-        // so the re-import re-runs createRouter() with the new routes. This is
-        // the programmatic equivalent of the dev-server "r + enter" restart,
-        // scoped to the worker environment instead of tearing down the server.
-        const forceCloudflareWorkerReload = (rscEnv: any) => {
+        // so the re-import re-runs createRouter() with the new routes. The probe
+        // is detached because the refresh callback still holds the discovery
+        // gate; awaiting it here would deadlock the request that proves the new
+        // router is active. Once it succeeds, the client hot channel broadcasts
+        // readiness to open and newly-booted stale documents.
+        const forceCloudflareWorkerReload = (
+          rscEnv: any,
+          expectedEpoch: number | undefined,
+        ) => {
           if (!rscEnv?.hot) return;
-          try {
-            const graph = rscEnv.moduleGraph;
+
+          const graph = rscEnv.moduleGraph;
+          const reloadWorkerd = () => {
             if (graph?.invalidateAll) {
               graph.invalidateAll();
               debugDiscovery?.("hmr: invalidated workerd rsc module graph");
@@ -1575,12 +1658,49 @@ export function createRouterDiscoveryPlugin(
             debugDiscovery?.(
               "hmr: forced workerd rsc env reload (full-reload)",
             );
-          } catch (err: any) {
+          };
+          reloadWorkerd();
+
+          if (expectedEpoch === undefined) return;
+          void (async () => {
+            const deadline = Date.now() + 15_000;
+            do {
+              if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch) {
+                return;
+              }
+              await new Promise<void>((resolve) => setTimeout(resolve, 25));
+              if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch) {
+                return;
+              }
+              try {
+                const response = await fetch(getDevServerOrigin() + "/", {
+                  cache: "no-store",
+                  headers: {
+                    [DEV_DISCOVERY_PROBE_HEADER]: String(expectedEpoch),
+                  },
+                  signal: AbortSignal.timeout(1_000),
+                });
+                if (
+                  !devServerClosed &&
+                  expectedEpoch === s.devDiscoveryEpoch &&
+                  response.headers.get(DEV_DISCOVERY_EPOCH_HEADER) ===
+                    String(expectedEpoch)
+                ) {
+                  publishDevDiscoveryReady(expectedEpoch);
+                  return;
+                }
+                // A response without the expected epoch proves an older worker
+                // evaluation won the race after the initial invalidation. Clear
+                // that completed evaluation and retry the reload.
+                reloadWorkerd();
+              } catch {}
+            } while (Date.now() < deadline);
+
             debugDiscovery?.(
-              "hmr: workerd reload failed: %s",
-              err?.message ?? err,
+              "hmr: workerd readiness probe timed out at epoch %d",
+              expectedEpoch,
             );
-          }
+          })();
         };
 
         const scheduleRouteRegeneration = () => {

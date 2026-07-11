@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
 import { parseAstAsync } from "vite";
-import { getVirtualEntrySSR } from "../plugins/virtual-entries.js";
+import {
+  getVirtualEntrySSR,
+  VIRTUAL_ENTRY_BROWSER,
+} from "../plugins/virtual-entries.js";
+
+describe("virtual browser entry", () => {
+  it("loads the dev discovery handshake only inside the hot branch", () => {
+    expect(VIRTUAL_ENTRY_BROWSER).not.toMatch(
+      /^import .*internal\/browser\/dev-discovery/m,
+    );
+    expect(VIRTUAL_ENTRY_BROWSER).toContain(
+      'await import(\n      "@rangojs/router/internal/browser/dev-discovery"',
+    );
+  });
+});
 
 describe("getVirtualEntrySSR headScripts wiring", () => {
   it('default ("preinit") installs the client-reference preinit hook', () => {

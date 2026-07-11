@@ -5,7 +5,7 @@ const { abortAllPrefetchesMock, invalidateRangoStateMock } = vi.hoisted(() => ({
   invalidateRangoStateMock: vi.fn(),
 }));
 
-vi.mock("../browser/prefetch/queue", () => ({
+vi.mock("../browser/prefetch/loader", () => ({
   abortAllPrefetches: abortAllPrefetchesMock,
 }));
 

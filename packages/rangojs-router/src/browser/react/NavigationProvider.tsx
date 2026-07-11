@@ -26,7 +26,7 @@ import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
-import { cancelAllPrefetches } from "../prefetch/queue.js";
+import { cancelAllPrefetches } from "../prefetch/loader.js";
 import { handleNavigationEnd } from "../scroll-restoration.js";
 import { createAppShellRef, type AppShellRef } from "../app-shell.js";
 import { startConnectionWarmup } from "../connection-warmup.js";
