@@ -1077,6 +1077,13 @@ function runShellCacheSpec(f: Fixture): void {
     const probe = crypto.randomUUID();
     const one = f.url(`/shell-cache/stale-replay/1?probe=${probe}`);
     const two = f.url(`/shell-cache/stale-replay/2?probe=${probe}`);
+    const waitForPartialResponse = (pathname: string) =>
+      page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === pathname && url.searchParams.has("_rsc_partial")
+        );
+      });
     await warmToHit(page.request, one);
 
     using _ = expectNoPageError(page);
@@ -1093,13 +1100,9 @@ function runShellCacheSpec(f: Fixture): void {
       link.textContent = "Enter stale replay fixture";
       document.body.append(link);
     }, two);
-    const bypassResponsePromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        url.pathname === "/shell-cache/stale-replay/2" &&
-        url.searchParams.has("_rsc_partial")
-      );
-    });
+    const bypassResponsePromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/2",
+    );
     await testId(page, "shell-stale-replay-entry").click();
     const bypassResponse = await bypassResponsePromise;
     assertPprReplayStatus(
@@ -1110,13 +1113,9 @@ function runShellCacheSpec(f: Fixture): void {
       /^shell-stale-2-execution-\d+$/,
     );
 
-    const freshResponsePromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        url.pathname === "/shell-cache/stale-replay/1" &&
-        url.searchParams.has("_rsc_partial")
-      );
-    });
+    const freshResponsePromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/1",
+    );
     await testId(page, "shell-stale-replay-1").click();
     const freshResponse = await freshResponsePromise;
     assertPprReplayStatus(
@@ -1138,13 +1137,9 @@ function runShellCacheSpec(f: Fixture): void {
     ]);
     await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
 
-    const returnToTwoPromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        url.pathname === "/shell-cache/stale-replay/2" &&
-        url.searchParams.has("_rsc_partial")
-      );
-    });
+    const returnToTwoPromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/2",
+    );
     await testId(page, "shell-stale-replay-2").click();
     const returnToTwo = await returnToTwoPromise;
     assertPprReplayStatus(
@@ -1178,13 +1173,9 @@ function runShellCacheSpec(f: Fixture): void {
     });
     assertShellStatus({ headers: new Headers(staleDocument.headers()) }, "HIT");
 
-    const staleResponsePromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        url.pathname === "/shell-cache/stale-replay/1" &&
-        url.searchParams.has("_rsc_partial")
-      );
-    });
+    const staleResponsePromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/1",
+    );
     const startedAt = Date.now();
     await testId(page, "shell-stale-replay-1").click();
     const staleResponse = await staleResponsePromise;

@@ -150,8 +150,9 @@ global middleware
   captured handler segments instead of re-running those handlers; handler-live
   holes and conditional transition gates decline that fast path. Pinned by
   the `[PPR2]` semantic matrix row.
-- **Partial navigations reuse the same captured segment shell without a client
-  protocol.** A normal-route partial request may seed the snapshot's canonical
+- **Partial navigations reuse the same captured segment shell without changing
+  the Flight payload or client runtime.** A normal-route partial request may seed
+  the snapshot's canonical
   `doc:` segment record into `matchPartial()`. Existing client segment ids,
   revalidation rules, and diff collection decide what is returned; loaders run
   fresh, and captured item/response/loader pins are excluded. The overlay is the

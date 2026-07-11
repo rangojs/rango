@@ -39,22 +39,25 @@ export const PPR_REPLAY_STATUS_HEADER: string = "x-rango-ppr-replay";
 /** Values the serve path writes on `x-rango-shell`. */
 export type ShellStatus = "HIT" | "MISS";
 
+const PPR_REPLAY_BYPASS_REASONS = [
+  "method",
+  "dynamic",
+  "nonce",
+  "store-unavailable",
+  "passive-read-unsupported",
+  "read-error",
+  "no-entry",
+  "invalid-version",
+  "corrupt-entry",
+  "handler-live-holes",
+  "transition-when",
+  "no-segment-snapshot",
+  "snapshot-miss",
+  "stale-build-entry",
+] as const;
+
 /** Bounded reasons a PPR partial request can fall open to ordinary matching. */
-export type PprReplayBypassReason =
-  | "method"
-  | "dynamic"
-  | "nonce"
-  | "store-unavailable"
-  | "passive-read-unsupported"
-  | "read-error"
-  | "no-entry"
-  | "invalid-version"
-  | "corrupt-entry"
-  | "handler-live-holes"
-  | "transition-when"
-  | "no-segment-snapshot"
-  | "snapshot-miss"
-  | "stale-build-entry";
+export type PprReplayBypassReason = (typeof PPR_REPLAY_BYPASS_REASONS)[number];
 
 /** Parsed `x-rango-ppr-replay` value. */
 export type PprReplayStatus =
@@ -85,22 +88,7 @@ function getHeaders(target: ShellStatusTarget): Headers {
   return target.headers;
 }
 
-const PPR_REPLAY_BYPASS_REASONS = new Set<PprReplayBypassReason>([
-  "method",
-  "dynamic",
-  "nonce",
-  "store-unavailable",
-  "passive-read-unsupported",
-  "read-error",
-  "no-entry",
-  "invalid-version",
-  "corrupt-entry",
-  "handler-live-holes",
-  "transition-when",
-  "no-segment-snapshot",
-  "snapshot-miss",
-  "stale-build-entry",
-]);
+const PPR_REPLAY_BYPASS_REASON_SET = new Set<string>(PPR_REPLAY_BYPASS_REASONS);
 
 /**
  * Read `x-rango-shell` from a response. Returns `null` when the header is
@@ -165,7 +153,7 @@ export function parsePprReplayStatus(
     const reason = detail.match(/^reason=(.+)$/)?.[1] as
       | PprReplayBypassReason
       | undefined;
-    if (reason && PPR_REPLAY_BYPASS_REASONS.has(reason)) {
+    if (reason && PPR_REPLAY_BYPASS_REASON_SET.has(reason)) {
       return { outcome, reason };
     }
   }

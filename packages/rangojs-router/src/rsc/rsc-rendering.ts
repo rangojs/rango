@@ -627,18 +627,20 @@ async function matchPartialWithPprReplay<TEnv>(
   nonce: string | undefined,
 ) {
   const replayStart = reqCtx._metricsStore ? performance.now() : 0;
+  const recordReplayStatus = (status: PprReplayStatus): void => {
+    if (!reqCtx._metricsStore) return;
+    appendMetric(
+      reqCtx._metricsStore,
+      "ppr:navigation-replay",
+      replayStart,
+      performance.now() - replayStart,
+      undefined,
+      describePprReplayStatus(status),
+    );
+  };
   const runMatch = async (status?: PprReplayStatus) => {
     const result = await ctx.router.matchPartial(request, { env });
-    if (status && reqCtx._metricsStore) {
-      appendMetric(
-        reqCtx._metricsStore,
-        "ppr:navigation-replay",
-        replayStart,
-        performance.now() - replayStart,
-        undefined,
-        describePprReplayStatus(status),
-      );
-    }
+    if (status) recordReplayStatus(status);
     return { result, status };
   };
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
@@ -674,14 +676,16 @@ async function matchPartialWithPprReplay<TEnv>(
     return runMatch({ outcome: "BYPASS", reason: "read-error" });
   }
 
-  let runtimeDecision: ShellReplayDecision | undefined;
+  let bypassReason: PprReplayBypassReason | undefined;
   let snapshot: ShellSnapshotRecord[] | undefined;
   let freshness: "fresh" | "stale" = "fresh";
   if (cached) {
-    runtimeDecision = replayableShellSnapshot(cached.entry, ctx.version);
-    if ("snapshot" in runtimeDecision) {
-      snapshot = runtimeDecision.snapshot;
+    const decision = replayableShellSnapshot(cached.entry, ctx.version);
+    if ("snapshot" in decision) {
+      snapshot = decision.snapshot;
       freshness = cached.shouldRevalidate ? "stale" : "fresh";
+    } else {
+      bypassReason = decision.reason;
     }
   }
 
@@ -691,7 +695,7 @@ async function matchPartialWithPprReplay<TEnv>(
     // otherwise ordinary navigation on capture, so replay remains runtime-only.
     const buildHit = await lookupBuildShell(url, ctx.version, store);
     if (buildHit?.stale) {
-      runtimeDecision ??= { reason: "stale-build-entry" };
+      bypassReason ??= "stale-build-entry";
     } else if (buildHit) {
       const buildDecision = replayableShellSnapshot(
         buildHit.entry,
@@ -700,19 +704,15 @@ async function matchPartialWithPprReplay<TEnv>(
       if ("snapshot" in buildDecision) {
         snapshot = buildDecision.snapshot;
       } else {
-        runtimeDecision ??= buildDecision;
+        bypassReason ??= buildDecision.reason;
       }
     }
   }
 
   if (!snapshot) {
-    const reason =
-      runtimeDecision && "reason" in runtimeDecision
-        ? runtimeDecision.reason
-        : "no-entry";
     return runMatch({
       outcome: "BYPASS",
-      reason,
+      reason: bypassReason ?? "no-entry",
     });
   }
 
@@ -735,16 +735,7 @@ async function matchPartialWithPprReplay<TEnv>(
     const status: PprReplayStatus = segmentReplayHit
       ? { outcome: "HIT", freshness }
       : { outcome: "BYPASS", reason: "snapshot-miss" };
-    if (reqCtx._metricsStore) {
-      appendMetric(
-        reqCtx._metricsStore,
-        "ppr:navigation-replay",
-        replayStart,
-        performance.now() - replayStart,
-        undefined,
-        describePprReplayStatus(status),
-      );
-    }
+    recordReplayStatus(status);
     return { result, status };
   } finally {
     reqCtx._shellImplicitCache = previousImplicitCache;

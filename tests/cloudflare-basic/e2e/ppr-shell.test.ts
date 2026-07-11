@@ -918,6 +918,13 @@ function describePprShell(mode: "dev" | "build") {
       const probe = crypto.randomUUID();
       const one = f.url(`/ppr-stale-replay/1?probe=${probe}`);
       const two = f.url(`/ppr-stale-replay/2?probe=${probe}`);
+      const waitForPartialResponse = (pathname: string) =>
+        page.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            url.pathname === pathname && url.searchParams.has("_rsc_partial")
+          );
+        });
       await warmToHit(page.request, one);
 
       using _ = expectNoPageError(page);
@@ -932,13 +939,9 @@ function describePprShell(mode: "dev" | "build") {
         link.textContent = "Enter stale replay fixture";
         document.body.append(link);
       }, two);
-      const bypassResponsePromise = page.waitForResponse((response) => {
-        const url = new URL(response.url());
-        return (
-          url.pathname === "/ppr-stale-replay/2" &&
-          url.searchParams.has("_rsc_partial")
-        );
-      });
+      const bypassResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/2",
+      );
       await testId(page, "ppr-stale-replay-entry").click();
       const bypassResponse = await bypassResponsePromise;
       assertPprReplayStatus(
@@ -949,13 +952,9 @@ function describePprShell(mode: "dev" | "build") {
         /^ppr-stale-2-execution-\d+$/,
       );
 
-      const freshResponsePromise = page.waitForResponse((response) => {
-        const url = new URL(response.url());
-        return (
-          url.pathname === "/ppr-stale-replay/1" &&
-          url.searchParams.has("_rsc_partial")
-        );
-      });
+      const freshResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/1",
+      );
       await testId(page, "ppr-stale-replay-1").click();
       const freshResponse = await freshResponsePromise;
       assertPprReplayStatus(
@@ -977,13 +976,7 @@ function describePprShell(mode: "dev" | "build") {
       ]);
       await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
 
-      const returnToTwoPromise = page.waitForResponse((response) => {
-        const url = new URL(response.url());
-        return (
-          url.pathname === "/ppr-stale-replay/2" &&
-          url.searchParams.has("_rsc_partial")
-        );
-      });
+      const returnToTwoPromise = waitForPartialResponse("/ppr-stale-replay/2");
       await testId(page, "ppr-stale-replay-2").click();
       const returnToTwo = await returnToTwoPromise;
       assertPprReplayStatus(
@@ -1017,13 +1010,9 @@ function describePprShell(mode: "dev" | "build") {
         "HIT",
       );
 
-      const staleResponsePromise = page.waitForResponse((response) => {
-        const url = new URL(response.url());
-        return (
-          url.pathname === "/ppr-stale-replay/1" &&
-          url.searchParams.has("_rsc_partial")
-        );
-      });
+      const staleResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/1",
+      );
       const startedAt = Date.now();
       await testId(page, "ppr-stale-replay-1").click();
       const staleResponse = await staleResponsePromise;
