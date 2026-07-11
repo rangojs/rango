@@ -209,9 +209,8 @@ interface TransitionConfig {
   default?: string | Record<string, string>; // fallback for any phase
   name?: string; // explicit view-transition-name
   viewTransition?: "auto" | false; // boundary opt-out (see below)
-  // Conditional gate, evaluated server-side AFTER the route handler. Return
-  // false to drop this transition for the request, so the navigation streams its
-  // loading() fallback instead of holding. See the gate section below.
+  // Conditional server-side gate. PPR routes run it before route handlers and
+  // on every replay; other routes run it after handlers on fresh resolution.
   when?: (ctx: TransitionWhenContext) => boolean;
 }
 ```
@@ -223,14 +222,19 @@ interface TransitionConfig {
 
 ## Conditional transitions (`when`)
 
-`transition({ when })` gates the hold per request. The predicate runs **server-side, AFTER the route handler** and outside any cache scope; return `false` to drop this segment's transition for the request (the navigation streams its `loading()` fallback instead of holding).
+`transition({ when })` gates the hold per request. The predicate runs server-side and outside any cache scope; return `false` to drop this segment's transition for the request (the navigation streams its `loading()` fallback instead of holding).
 
-Its context mirrors the `revalidate()` predicate args — the same navigation/action metadata — plus `get`/`env` for post-handler reads:
+Timing follows the route's rendering contract:
+
+- On an ordinary route it runs after the route handler during fresh resolution, so `get()` can read handler- and middleware-set context. Cache/prerender hits replay the stored decision.
+- On a `ppr` route it is automatically hoisted before route handlers and runs on every match, including runtime-cache, prerender, document-shell, and partial-navigation replay. It can read URL/params/action metadata, `env`, and middleware-set context, but not values set by route handlers. This is what keeps the handler-free PPR fast path available without a second API.
+
+Its context mirrors the `revalidate()` predicate args — the same navigation/action metadata — plus `get`/`env` for request-context reads:
 
 ```ts
 import type { TransitionWhenContext } from "@rangojs/router";
 
-// Hold only when the handler marked this request (handler sets, gate reads):
+// Ordinary route: hold only when the handler marked this request:
 transition({ when: (ctx) => ctx.get(KeepScroll) === true });
 
 // Hold only when arriving from a specific page (the navigation SOURCE):
@@ -252,13 +256,13 @@ transition({
 | `toRouteName` (and `fromRouteName`)                    | route **name**                               | when the route is named (undefined for unnamed/auto-generated)                        |
 | `actionId` / `actionUrl` / `actionResult` / `formData` | the server action that triggered this render | action-triggered renders only                                                         |
 | `method`                                               | `"GET"` (nav) / `"POST"` (action)            | always                                                                                |
-| `get` / `env`                                          | read handler/middleware vars + app env       | always                                                                                |
+| `get` / `env`                                          | read request vars + app env                  | always; PPR timing exposes middleware vars, not handler writes                        |
 
 A predicate that throws is reported to `router.onError` (phase `"rendering"`) and treated as no-hold (conservative).
 
 **Same-route content-holds need the transition present on the FIRST render.** The same-route hold works by giving the route a param-agnostic key so a param change reconciles instead of remounting — but that key is established when the route first mounts. A source gate that returns `false` on the initial full load (where `currentUrl`/`currentParams`/`fromRouteName` are undefined) drops the transition before the route mounts, so the route mounts _outside_ a transition scope and **every** later same-route param nav remounts (flashing the skeleton) regardless of what the gate decides on those navs. Write source gates so they hold when there is no source — e.g. `({ currentParams }) => currentParams?.tab !== "raw"` (true on the initial load) rather than `=== "details"` (false on the initial load) — when the same-route content-hold must engage. This only affects same-route param navigations; action-only or cross-route gating is unaffected (no shared param key is in play).
 
-**Prefetch / cache caveat.** The gate runs during resolution, so a **prefetched** navigation decides at prefetch time — `currentUrl`/`currentParams`/`fromRouteName` reflect the page the prefetch fired from, not necessarily the click-time source — and a `cache()`/prerender hit replays the stored transition without re-running the predicate. A source-sensitive gate can therefore be frozen to prefetch/store-time state. This covers ~99% of navigations; if yours must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and don't `cache()` that segment.
+**Prefetch / cache caveat.** A **prefetched** navigation still decides at prefetch time — `currentUrl`/`currentParams`/`fromRouteName` reflect the page the prefetch fired from, not necessarily the click-time source. Non-PPR `cache()`/prerender hits also replay the stored transition without rerunning the predicate. PPR routes rerun it on the server for each cache/prerender/PPR match, but a completed browser prefetch still carries its earlier Flight decision. If the exact click-time source matters, source-scope the prefetch (`<Link prefetchKey=":source">`).
 
 ## Opting out of the router boundary (place your own `<ViewTransition>`)
 

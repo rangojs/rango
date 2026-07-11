@@ -54,9 +54,12 @@ response, and loader-family pins exist to keep a document HIT byte-identical to
 its frozen HTML and would incorrectly freeze loader reads on a navigation. The
 implicit scope reads the canonical `doc:` identity even though the transport is
 partial, avoiding one cached shell per source-segment combination. Intercepts,
-handler-live holes, conditional transition gates encountered by the shell
-capture, nonce-bearing requests, and snapshots without a segment record decline
-replay and run the full partial path. A transition already frozen by an explicit
+handler-live holes, nonce-bearing requests, and snapshots without a segment
+record decline replay and run the full partial path. Conditional transition
+predicates do not: PPR hoists them before route handlers and evaluates them from
+the matched manifest on every runtime-cache, prerender, and shell replay. Their
+request-specific result is projected only onto the outgoing payload, never the
+reusable segment record. A transition already frozen by an explicit
 `cache()`/prerender hit keeps that cache tier's normal no-re-evaluation semantics.
 The replay store belongs only to that implicit scope: a consumer `cache()` scope
 continues to use its own store, key, TTL/SWR, tags, and condition. Segment misses,

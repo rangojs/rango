@@ -193,11 +193,13 @@ and loader-container pins are NOT replayed on this path, so loader reads stay
 live. A route's own `cache()` scope still resolves its normal store, key, TTL,
 SWR, tags, and condition; only the implicit document scope sees the replay
 overlay, and fresh segment writes there stay request-local rather than polluting
-the canonical `doc:` namespace. Intercepts, handler-live holes,
-`transition({ when })`, an active nonce, and an absent/corrupt segment snapshot
-fall open to the ordinary partial path when encountered by the shell
-capture. A transition already replayed from an explicit cache tier remains
-frozen by that tier's normal semantics.
+the canonical `doc:` namespace. `transition({ when })` is evaluated from the
+matched manifest before route handlers on every PPR match, so it can vary by
+URL/params/action or middleware context without disabling replay; handler-set
+context is unavailable by design. Intercepts, handler-live holes, an active
+nonce, and an absent/corrupt segment snapshot fall open to the ordinary partial
+path when encountered by the shell capture. A transition already replayed from
+an explicit cache tier remains frozen by that tier's normal semantics.
 
 Fresh and stale-within-SWR runtime shells replay. The stale read is passive: it
 uses `getShell(key, { claimRevalidation: false })`, does not claim SWR ownership,

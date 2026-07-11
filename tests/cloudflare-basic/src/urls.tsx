@@ -727,6 +727,12 @@ export const urlpatterns = urls(
                 PprExecPage,
                 { name: "pprShellExecMatrix", ppr: { ttl: 300, swr: 120 } },
                 () => [
+                  transition({
+                    when: ({ nextUrl }) => {
+                      pprExecCounters.transitionWhen += 1;
+                      return nextUrl.searchParams.get("transition") !== "drop";
+                    },
+                  }),
                   loader(PprShellExecLoader),
                   loading(
                     <div data-testid="ppr-exec-fallback">

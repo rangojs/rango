@@ -73,6 +73,13 @@ export function NavLayout() {
           PPR navigation replay
         </Link>
         <Link
+          to="/ppr-shell/exec-matrix?transition=drop"
+          data-testid="nav-ppr-exec-drop"
+          prefetch="none"
+        >
+          PPR navigation replay without transition
+        </Link>
+        <Link
           to="/ppr-shell/inline-action?probe=ppr-inline-nav"
           data-testid="nav-ppr-inline-action"
           prefetch="none"

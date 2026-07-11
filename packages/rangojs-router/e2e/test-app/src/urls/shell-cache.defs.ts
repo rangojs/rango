@@ -309,6 +309,7 @@ const SHELL_EXEC_DELAY_MS = 150;
 
 export interface ShellExecCounters {
   middleware: number;
+  transitionWhen: number;
   layout: number;
   parallel: number;
   path: number;
@@ -317,6 +318,7 @@ export interface ShellExecCounters {
 
 export const shellExecCounters: ShellExecCounters = {
   middleware: 0,
+  transitionWhen: 0,
   layout: 0,
   parallel: 0,
   path: 0,

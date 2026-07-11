@@ -694,6 +694,45 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(secondPrelude).not.toMatch(/srv-chip-\d+-user-a/);
     },
   },
+  {
+    id: "PPR4",
+    contract:
+      "conditional transition predicates rerun on every PPR shell HIT while route handlers replay",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "in-scope-child",
+    assert: async ({ request, baseUrl }) => {
+      const htmlHeaders = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-cache/exec-matrix?probe=matrix-transition");
+      await expect(async () => {
+        const response = await request.get(url, htmlHeaders);
+        expect(response.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+
+      const readCounters = async () => {
+        const response = await request.get(url, htmlHeaders);
+        expect(response.headers()["x-rango-shell"]).toBe("HIT");
+        const body = await response.text();
+        const match = body.match(
+          /data-testid="shell-exec-counters"[^>]*>(\{[^<]+\})</,
+        );
+        expect(match).toBeTruthy();
+        return JSON.parse(match![1].replace(/&quot;/g, '"')) as {
+          transitionWhen: number;
+          path: number;
+          layout: number;
+          parallel: number;
+        };
+      };
+
+      const first = await readCounters();
+      const second = await readCounters();
+      expect(second.transitionWhen).toBe(first.transitionWhen + 1);
+      expect(second.path).toBe(first.path);
+      expect(second.layout).toBe(first.layout);
+      expect(second.parallel).toBe(first.parallel);
+    },
+  },
 ];
 
 function registerSemanticMatrixSuite(build: BuildAxis): void {
