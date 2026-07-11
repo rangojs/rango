@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { writeFileBumpMtime } from "@shared/e2e";
+import { ROUTE_REDISCOVERY_PATTERN, writeFileBumpMtime } from "@shared/e2e";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -93,11 +93,16 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     await expect
       .poll(
         async () => {
-          const res = await fetch(f.url(route), {
-            headers: { Accept: "text/html" },
-          });
-          const body = await res.text();
-          return body.includes(`data-testid="${marker}"`);
+          try {
+            const res = await fetch(f.url(route), {
+              headers: { Accept: "text/html" },
+              signal: AbortSignal.timeout(1_000),
+            });
+            const body = await res.text();
+            return body.includes(`data-testid="${marker}"`);
+          } catch {
+            return false;
+          }
         },
         { timeout: GEN_TIMEOUT },
       )
@@ -165,6 +170,7 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
         .poll(() => readGen(), { timeout: GEN_TIMEOUT })
         .toContain('about: "/about"');
     }
+    await expectServed("/about", "about-page");
   });
 
   // Force the gen file back to its committed baseline on suite exit, even if
@@ -335,6 +341,7 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
 
     await page.goto(f.url("/about"));
     await expect(page.getByTestId("about-page")).toBeVisible();
+    const outputOffset = f.proc().stdout().length;
     mutateUrls(
       readUrls().replace(
         "// Prefixed wildcard before the root catch-all",
@@ -342,9 +349,14 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
       ),
     );
 
-    // The watcher debounce + Cloudflare rediscovery normally settles in under
-    // one second; wait past it to prove no delayed readiness event reloads.
-    await page.waitForTimeout(3_000);
+    await expect
+      .poll(
+        () =>
+          ROUTE_REDISCOVERY_PATTERN.test(f.proc().stdout().slice(outputOffset)),
+        { timeout: GEN_TIMEOUT },
+      )
+      .toBe(true);
+    await page.waitForTimeout(500);
     expect(aboutDocumentRequests).toBe(1);
     await expect(page.getByTestId("about-page")).toBeVisible();
   });

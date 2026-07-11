@@ -42,8 +42,13 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     }
   });
   const done = new Promise<void>((resolve) => {
-    child.on("exit", (code) => {
-      if (code !== 0 && code !== 143 && process.platform !== "win32") {
+    child.on("exit", (code, signal) => {
+      if (
+        code !== 0 &&
+        code !== 143 &&
+        signal !== "SIGTERM" &&
+        process.platform !== "win32"
+      ) {
         console.log(styleText("magenta", `${label}`), `exit code ${code}`);
       }
       resolve();

@@ -183,7 +183,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.strict-check.json --noEmit && tsc -p tsconfig.augment-check.json --noEmit",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
-    "test:hmr-local": "playwright test --project=dev-warmup --project=hmr-routes --project=hmr-basename --project=hmr-prerender --no-deps --workers=1",
+    "test:hmr-local": "playwright test --project=dev-warmup --project=hmr-basename --project=hmr-prerender --no-deps --workers=1 && RANGO_E2E_ROUTE_HMR_ONLY=1 playwright test --project=hmr-routes --no-deps --workers=1",
+    "test:hmr-routes-local": "RANGO_E2E_ROUTE_HMR_ONLY=1 playwright test --project=hmr-routes --no-deps --workers=1",
     "test:unit": "pnpm run build:types && vitest run",
     "test:unit:watch": "vitest",
     "test:unit:rsc": "vitest run --config vitest.rsc.config.ts"
