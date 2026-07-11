@@ -56,6 +56,13 @@ export function RootLayout(ctx: any) {
           PPR navigation replay
         </Link>
         <Link
+          to="/shell-cache/exec-matrix?transition=drop"
+          data-testid="nav-ppr-exec-drop"
+          prefetch="none"
+        >
+          PPR navigation replay without transition
+        </Link>
+        <Link
           to="/inline-bound-action?probe=ppr-nav"
           data-testid="nav-ppr-inline-action"
           prefetch="none"

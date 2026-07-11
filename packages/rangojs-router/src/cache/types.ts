@@ -319,9 +319,10 @@ export interface ShellCacheEntry {
    */
   handlerLiveHoles?: boolean;
   /**
-   * The capture encountered transition({ when }). Its effective hold policy is
-   * request-dependent, so handler-free document and navigation replay must
-   * re-run resolution to collect and evaluate the predicate.
+   * Legacy/fallback marker for a transition({ when }) predicate that was not
+   * evaluated by the PPR pre-handler gate. Such an entry stays conservatively
+   * ineligible for handler-free replay. New PPR matches evaluate known segment
+   * predicates before the pipeline and do not set this marker.
    */
   transitionWhen?: true;
   /** Capture-generation start time; tag invalidations at or after it win. */

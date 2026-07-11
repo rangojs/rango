@@ -3,35 +3,54 @@ import type { TransitionWhenContext } from "../types/segments.js";
 import type { getRequestContext } from "../server/request-context.js";
 import { invokeOnError } from "../router/error-handling.js";
 import type { OnErrorCallback } from "../types/error-types.js";
+import { createTransitionWhenContext } from "../router/transition-when.js";
 
 /**
  * Apply transition({ when }) gates to a payload's segments.
  *
- * The predicates were collected during resolution (keyed by segment id) and
- * stripped from the serialized config; here — after handlers ran and outside any
- * cache scope — we evaluate each and drop the segment's transition when the
- * predicate does not hold, so the navigation streams its loading fallback
- * instead of holding the previous content. A predicate that throws is reported
- * to the router's onError (phase "rendering") and then treated as "do not hold"
- * (conservative), so a buggy predicate degrades to no transition rather than
- * failing the response.
+ * PPR predicates were evaluated from the manifest before cache lookup and route
+ * handlers; their request-specific decisions are projected onto a copy so they
+ * never mutate reusable cache/prerender/shell records. Ordinary-route predicates
+ * were collected during fresh resolution and are evaluated here after handlers.
+ * Both paths drop the segment transition when the predicate does not hold.
  *
  * Mutating the segments here is safe: the segment cache stores a serialized copy
  * (segment-codec), written during match() BEFORE this gate runs, so dropping a
- * transition never corrupts a cache entry. The flip side is that a cache hit
+ * transition never corrupts a cache entry. On an ordinary route, a cache hit
  * skips resolution, collects no predicate, and replays the cached transition
- * as-is (it was serialized before the gate) — combining transition({ when })
- * with cache() on the same segment freezes the gate to its cached state, so
- * avoid caching a route whose transition decision is request-dependent.
+ * as-is (it was serialized before the gate). PPR routes are the exception: their
+ * manifest predicates were evaluated before lookup and apply to replayed data.
  *
- * Returns the same array (mutated) for inline use at the payload's `segments`
- * field.
+ * Returns the same array for the ordinary post-handler path. A PPR drop returns a
+ * copy containing only the request-specific transition changes.
  */
 export function gateTransitions(
   segments: MatchResult["segments"],
   ctx: ReturnType<typeof getRequestContext>,
   onError?: OnErrorCallback,
 ): MatchResult["segments"] {
+  const preDecisions = ctx._pprTransitionWhen;
+  let gatedSegments = segments;
+
+  const dropTransition = (id: string): void => {
+    const index = gatedSegments.findIndex((segment) => segment.id === id);
+    if (index === -1) return;
+    if (preDecisions) {
+      if (gatedSegments === segments) gatedSegments = [...segments];
+      gatedSegments[index] = {
+        ...gatedSegments[index],
+        transition: undefined,
+      };
+    } else {
+      gatedSegments[index].transition = undefined;
+    }
+  };
+
+  if (preDecisions) {
+    for (const [id, keep] of preDecisions) {
+      if (!keep) dropTransition(id);
+    }
+  }
   const predicates = ctx._transitionWhen;
   if (predicates && predicates.length) {
     for (const { id, when } of predicates) {
@@ -44,22 +63,7 @@ export function gateTransitions(
         // method/get/env come straight off ctx (setRequestContextParams ran
         // before the gate). Source/action fields are undefined when absent —
         // never fabricated (see TransitionWhenContext).
-        const whenCtx: TransitionWhenContext = {
-          currentUrl: ctx._gateCurrentUrl,
-          currentParams: ctx._gateCurrentParams,
-          fromRouteName:
-            ctx._prevRouteKey as TransitionWhenContext["fromRouteName"],
-          nextUrl: ctx.url,
-          nextParams: ctx.params,
-          toRouteName: ctx.routeName,
-          actionId: ctx._gateActionId,
-          actionUrl: ctx._gateActionUrl,
-          actionResult: ctx._gateActionResult,
-          formData: ctx._gateFormData,
-          method: ctx.request.method,
-          get: ctx.get,
-          env: ctx.env,
-        };
+        const whenCtx: TransitionWhenContext = createTransitionWhenContext(ctx);
         drop = when(whenCtx) === false;
       } catch (error) {
         // A throwing predicate must not fail the response: report it and treat
@@ -79,11 +83,8 @@ export function gateTransitions(
           "RSC",
         );
       }
-      if (drop) {
-        const seg = segments.find((s) => s.id === id);
-        if (seg) seg.transition = undefined;
-      }
+      if (drop) dropTransition(id);
     }
   }
-  return segments;
+  return gatedSegments;
 }

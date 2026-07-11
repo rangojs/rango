@@ -460,6 +460,7 @@ export function withCacheLookup<TEnv>(
     state.shouldRevalidate = cacheResult.shouldRevalidate;
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
+    const pprTransitionDecisions = _getRequestContext()?._pprTransitionWhen;
 
     const canCheckSegmentRevalidation =
       !ctx.isFullMatch &&
@@ -533,8 +534,13 @@ export function withCacheLookup<TEnv>(
             reason: "cached-no-rules",
           });
         }
-        segment.component = null;
-        segment.loading = undefined;
+        // A PPR transition decision must reach the client even when this cached
+        // segment otherwise needs no update. Keep its replayed component so the
+        // partial result retains the segment for gateTransitions().
+        if (!pprTransitionDecisions?.has(segment.id)) {
+          segment.component = null;
+          segment.loading = undefined;
+        }
         yield segment;
         continue;
       }
@@ -566,7 +572,7 @@ export function withCacheLookup<TEnv>(
         shouldRevalidate,
       });
 
-      if (!shouldRevalidate) {
+      if (!shouldRevalidate && !pprTransitionDecisions?.has(segment.id)) {
         segment.component = null;
         segment.loading = undefined;
       }

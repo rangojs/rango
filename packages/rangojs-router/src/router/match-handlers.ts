@@ -41,6 +41,7 @@ import {
   buildCacheSignalSegments,
 } from "./telemetry.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { evaluatePprTransitionWhen } from "./transition-when.js";
 
 /**
  * Per-call telemetry lifecycle emitter for match()/matchPartial(). Each method
@@ -227,6 +228,35 @@ export function createMatchHandlers<TEnv = any>(
     if (reqCtx) reqCtx._cacheSignal = segments;
   };
 
+  const preparePprTransitionWhen = (
+    ctx: MatchContext<TEnv>,
+    isPartial: boolean,
+  ): void => {
+    const reqCtx = _getRequestContext();
+    if (!reqCtx) return;
+    reqCtx._pprTransitionWhen = undefined;
+    if (ctx.manifestEntry.type !== "route" || !ctx.manifestEntry.ppr) return;
+
+    evaluatePprTransitionWhen(
+      ctx.entries,
+      reqCtx,
+      {
+        params: ctx.matched.params,
+        routeName: ctx.interceptSelectorContext.toRouteName,
+      },
+      (error, segmentId) =>
+        callOnError(error, "rendering", {
+          request: ctx.request,
+          url: ctx.url,
+          env: ctx.env,
+          params: ctx.matched.params,
+          segmentId,
+          isPartial,
+          handledByBoundary: false,
+        }),
+    );
+  };
+
   async function createMatchContextForFull(
     request: Request,
     env: TEnv,
@@ -313,6 +343,7 @@ export function createMatchHandlers<TEnv = any>(
           }
 
           const ctx = result as MatchContext<TEnv>;
+          preparePprTransitionWhen(ctx, false);
 
           try {
             const state = createPipelineState();
@@ -424,6 +455,7 @@ export function createMatchHandlers<TEnv = any>(
               emitter.end(0, false);
               return null;
             }
+            preparePprTransitionWhen(ctx, true);
 
             if (isRouterDebugEnabled()) {
               startRevalidationTrace({

@@ -4,7 +4,12 @@ import { createVar } from "../../context-var.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { applyViewTransitionDefault } from "../../router/segment-resolution/view-transition-default.js";
 import { gateTransitions } from "../../rsc/transition-gate.js";
-import type { ResolvedSegment } from "../../types/segments.js";
+import type {
+  ResolvedSegment,
+  TransitionWhenContext,
+} from "../../types/segments.js";
+import type { EntryData } from "../../server/context.js";
+import { evaluatePprTransitionWhen } from "../../router/transition-when.js";
 
 const HoldMark = createVar<boolean>();
 
@@ -108,6 +113,106 @@ describe("transition({ when }) server gate", () => {
     // ...and the failure is surfaced via onError rather than swallowed.
     expect(reported).toEqual([{ message: "boom", phase: "rendering" }]);
   });
+
+  it("evaluates a PPR predicate before handler-set context exists", async () => {
+    let valueSeenByPredicate: boolean | undefined;
+    const { result } = await runInRequestContext(() => {
+      const ctx = getRequestContext();
+      const transition = {
+        enter: "fade",
+        when: (c: TransitionWhenContext) => {
+          valueSeenByPredicate = c.get(HoldMark);
+          return valueSeenByPredicate === true;
+        },
+      };
+      const entry = {
+        type: "route",
+        id: "ppr-route",
+        shortCode: "route-seg",
+        parent: null,
+        transition,
+        layout: [],
+        parallel: {},
+      } as unknown as EntryData;
+
+      evaluatePprTransitionWhen(
+        [entry],
+        ctx,
+        { params: {}, routeName: "ppr-route" },
+        () => {},
+      );
+      ctx.set(HoldMark, true);
+
+      const segment = {
+        id: "route-seg",
+        namespace: "r",
+        type: "route",
+        index: 0,
+        component: null,
+        transition: applyViewTransitionDefault(
+          transition,
+          undefined,
+          "route-seg",
+        ),
+      } as ResolvedSegment;
+      const originalTransition = segment.transition;
+      const [gated] = gateTransitions([segment], ctx);
+      return {
+        transition: gated.transition,
+        originalTransition,
+        inputTransitionAfterGate: segment.transition,
+        postHandlerPredicates: ctx._transitionWhen,
+      };
+    });
+
+    expect(valueSeenByPredicate).toBeUndefined();
+    expect(result?.transition).toBeUndefined();
+    expect(result?.originalTransition).toBeDefined();
+    expect(result?.inputTransitionAfterGate).toBe(result?.originalTransition);
+    expect(result?.postHandlerPredicates).toEqual([]);
+  });
+
+  it("maps PPR route, orphan, and parallel predicates to resolved segment ids", async () => {
+    const { result } = await runInRequestContext(() => {
+      const ctx = getRequestContext();
+      const when = () => true;
+      const parallel = {
+        type: "parallel",
+        id: "parallel",
+        shortCode: "parallel-seg",
+        transition: { when },
+        handler: { "@aside": null },
+        layout: [],
+        parallel: {},
+      } as unknown as EntryData;
+      const orphan = {
+        type: "layout",
+        id: "orphan",
+        shortCode: "orphan-seg",
+        transition: { when },
+        layout: [],
+        parallel: { "@aside": parallel },
+      } as unknown as EntryData;
+      const route = {
+        type: "route",
+        id: "route",
+        shortCode: "route-seg",
+        transition: { when },
+        layout: [orphan],
+        parallel: {},
+      } as unknown as EntryData;
+
+      evaluatePprTransitionWhen(
+        [route],
+        ctx,
+        { params: {}, routeName: "route" },
+        () => {},
+      );
+      return [...(ctx._pprTransitionWhen?.keys() ?? [])];
+    });
+
+    expect(result).toEqual(["route-seg", "orphan-seg", "orphan-seg.@aside"]);
+  });
 });
 
 /**
@@ -183,6 +288,26 @@ describe("runTransitionWhen (public testing primitive)", () => {
       ).kept;
     expect(keptFrom("/list")).toBe(true);
     expect(keptFrom("/other")).toBe(false);
+  });
+
+  it("models PPR predicates with the same pre-handler context", () => {
+    const run = (id: string) =>
+      runTransitionWhen(
+        {
+          when: (c) => c.currentParams?.id === "1" && c.get(HoldMark) === true,
+        },
+        {
+          ppr: true,
+          currentParams: { id },
+          vars: [[HoldMark, true]],
+        },
+      );
+
+    const { kept, whenContext } = run("1");
+    expect(kept).toBe(true);
+    expect(run("2").kept).toBe(false);
+    expect(whenContext?.currentParams).toEqual({ id: "1" });
+    expect(whenContext?.get(HoldMark)).toBe(true);
   });
 
   it("gates on the action that triggered the revalidation (actionId)", () => {

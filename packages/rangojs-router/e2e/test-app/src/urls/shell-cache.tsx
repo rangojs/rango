@@ -424,7 +424,7 @@ function ShellSlowMetaLayout(ctx: HandlerContext) {
 }
 
 export const shellCachePatterns = urls(
-  ({ path, layout, loader, loading, middleware, parallel }) => [
+  ({ path, layout, loader, loading, middleware, parallel, transition }) => [
     layout(ShellCacheLayout, () => [
       // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
       path(
@@ -592,6 +592,12 @@ export const shellCachePatterns = urls(
             ShellExecPage,
             { name: "shellCacheExecMatrix", ppr: { ttl: 300, swr: 120 } },
             () => [
+              transition({
+                when: ({ nextUrl }) => {
+                  shellExecCounters.transitionWhen += 1;
+                  return nextUrl.searchParams.get("transition") !== "drop";
+                },
+              }),
               loader(ShellExecLoader),
               loading(
                 <div data-testid="shell-exec-fallback">

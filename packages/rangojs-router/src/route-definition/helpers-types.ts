@@ -460,11 +460,11 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * startTransition only when the router sets viewTransition: false.
    *
    * Conditional hold: pass `when: (ctx) => boolean` to gate the transition per
-   * request. It runs server-side AFTER the route handler (so it can read state
-   * the handler set via `ctx.get(...)`); returning false drops this transition
-   * for the request, so the navigation streams its loading() skeleton instead of
-   * holding. This is a post-handler predicate — distinct from intercept()'s
-   * match-time `when` config selector (`intercept(slot, route, Comp, { when })`).
+   * request. It normally runs server-side after the route handler. On a `ppr`
+   * route it is automatically hoisted before route handlers and reevaluated on
+   * every replay, so it may read URL/params/action/env and middleware-set context
+   * but not handler-set context. Returning false drops this transition for the
+   * request. This is distinct from intercept()'s match-time `when` selector.
    *
    * ```typescript
    * // Attach to a single route
@@ -491,7 +491,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param config - ViewTransition configuration (enter, exit, update, share,
    *   default, name), `viewTransition: "auto" | false` to toggle the router
    *   boundary (createRouter({ viewTransition }) sets the app-wide default), and
-   *   `when: (ctx) => boolean` to gate the transition per request post-handler
+   *   `when: (ctx) => boolean` to gate the transition per request
    * @param children - Optional callback returning child routes to wrap
    */
   transition: {

@@ -824,6 +824,7 @@ function describePprShell(mode: "dev" | "build") {
       const readHit = async (): Promise<{
         counters: {
           middleware: number;
+          transitionWhen: number;
           layout: number;
           parallel: number;
           path: number;
@@ -854,6 +855,7 @@ function describePprShell(mode: "dev" | "build") {
 
       // Live layers: exactly one execution per HIT.
       expect(second.counters.middleware).toBe(first.middleware + 1);
+      expect(second.counters.transitionWhen).toBe(first.transitionWhen + 1);
       expect(second.counters.loader).toBe(first.loader + 1);
 
       // Handler layers: replayed from the captured record — frozen across HITs.
@@ -891,10 +893,33 @@ function describePprShell(mode: "dev" | "build") {
       const second = await navigateFromFreshDocument();
 
       expect(second.middleware).toBe(first.middleware + 1);
+      expect(second.transitionWhen).toBe(first.transitionWhen + 1);
       expect(second.loader).toBe(first.loader + 1);
       expect(second.path).toBe(first.path);
       expect(second.layout).toBe(first.layout);
       expect(second.parallel).toBe(first.parallel);
+    });
+
+    test("partial PPR replay applies a fresh transition({ when }) drop decision", async ({
+      page,
+    }) => {
+      const target = f.url("/ppr-shell/exec-matrix?transition=drop");
+      await warmToHit(page.request, target);
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "nav-ppr-exec-drop").click();
+
+      await expect(testId(page, "ppr-exec-fallback")).toBeVisible();
+      await waitForNavigation(
+        page,
+        /\/ppr-shell\/exec-matrix\?transition=drop$/,
+      );
+      await expect(testId(page, "ppr-exec-chrome")).toHaveText(
+        "Exec matrix static chrome",
+      );
     });
 
     // Prerender + ppr COMPOSITION (docs/design/shell-fast-path.md): one route
