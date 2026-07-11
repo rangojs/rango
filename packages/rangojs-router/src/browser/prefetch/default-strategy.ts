@@ -7,21 +7,18 @@
  * `initPrefetchCache` / `setPrefetchConcurrency`. Every `<Link>` without an
  * explicit `prefetch` prop reads the value at render time.
  *
- * The module initial value must equal the server resolver's default
- * ("viewport"): during SSR this module is never initialized from metadata, so
- * a Link render on the server sees the built-in default regardless of router
- * config. That is safe — the strategy only drives client-side effects and
- * event handlers, never rendered markup — but keeping the two defaults equal
- * means a metadata-less payload (older server) still behaves as documented.
+ * The module initial value must equal the server resolver's environment default:
+ * `"none"` in development and `"viewport"` in production. During SSR this
+ * module is never initialized from metadata, so keeping both seats aligned also
+ * gives metadata-less payloads the documented behavior.
  */
 
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
-// Mirrors DEFAULT_PREFETCH_STRATEGY in router/prefetch-default.ts. Kept as a
-// local literal so the client bundle doesn't pull in router-layer code (same
-// convention as the defaults in queue.ts/cache.ts); the cross-seat equality
-// is pinned by src/__tests__/prefetch-default-strategy.test.ts.
-let defaultStrategy: PrefetchStrategy = "viewport";
+// Mirrors DEFAULT_PREFETCH_STRATEGY without pulling router-layer code into the
+// client bundle. NODE_ENV is folded by the app build.
+let defaultStrategy: PrefetchStrategy =
+  process.env.NODE_ENV === "production" ? "viewport" : "none";
 
 /**
  * Apply the server-resolved default strategy. Called once at browser app init

@@ -17,8 +17,8 @@ import { blogPatterns } from "./blog/urls.jsx";
 // composition, server actions, loaders, fetchable loaders, handles, location
 // state (navigation-set and action-set), and revalidation.
 // Manual prefetch mode: keeps this suite's request assertions free of
-// default-on viewport prefetch traffic (default-on is dogfooded by the
-// router's e2e test-app).
+// automatic production viewport prefetch traffic (the environment default is
+// dogfooded by the router's e2e test-app).
 export const router = createRouter({ defaultPrefetch: "none" }).routes(
   ({ path, layout, include, loader, loading, revalidate, transition }) => [
     layout(AppLayout, () => [

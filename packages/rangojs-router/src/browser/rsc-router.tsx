@@ -299,8 +299,8 @@ export async function initBrowserApp(
     setPrefetchConcurrency(prefetchConcurrency);
   }
   // Apply the router-wide default Link prefetch strategy. Undefined (older
-  // server payload) keeps the module default, which equals the server
-  // resolver's default ("viewport") by contract — see default-strategy.ts.
+  // server payload) keeps the module's environment-aware default, which equals
+  // the server resolver's default by contract — see default-strategy.ts.
   const defaultPrefetch = initialPayload.metadata?.defaultPrefetch;
   if (defaultPrefetch !== undefined) {
     setDefaultPrefetchStrategy(defaultPrefetch);

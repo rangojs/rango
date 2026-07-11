@@ -55,7 +55,7 @@ interface RangoOptions<TEnv> {
   prefetchCacheTTL?: number | false;
 
   // Default prefetch strategy for Links without a `prefetch` prop
-  // (default: "viewport"). "none" = manual mode; per-Link props win.
+  // (dev: "none", production: "viewport"). Per-Link props win.
   defaultPrefetch?: "hover" | "viewport" | "render" | "adaptive" | "none";
 
   // CSP nonce provider (for router.fetch)
@@ -196,10 +196,10 @@ const router = createRouter({ warmup: false }); // disable
 
 ## defaultPrefetch
 
-`"hover" | "viewport" | "render" | "adaptive" | "none"`, default `"viewport"`. The prefetch strategy every `<Link>` without its own `prefetch` prop falls back to. A per-Link `prefetch` prop always wins — in both directions:
+`"hover" | "viewport" | "render" | "adaptive" | "none"`. The default is `"none"` in development and `"viewport"` in production, matching Next.js production-only automatic prefetch. A per-Link `prefetch` prop always wins in both directions, and an explicit router default overrides the environment in either mode:
 
 ```typescript
-const router = createRouter({ defaultPrefetch: "none" }); // manual mode
+const router = createRouter({ defaultPrefetch: "none" }); // manual mode everywhere
 ```
 
 ```tsx
@@ -208,7 +208,7 @@ const router = createRouter({ defaultPrefetch: "none" }); // manual mode
 <Link to="/checkout" prefetch="hover" />    {/* opts in under manual mode */}
 ```
 
-With the default, every visible Link triggers an RSC render on the server (loaders included). Routes served from cache absorb this cheaply; per-user dynamic routes pay full price per viewport entry — pick `"hover"`, `"adaptive"` (hover on pointer devices, viewport on touch), or `"none"` when that cost matters. To turn the prefetch subsystem off entirely (including per-Link opt-ins), use `prefetchCacheTTL: false`.
+With the production default, every visible Link triggers an RSC render on the server (loaders included). Routes served from cache absorb this cheaply; per-user dynamic routes pay full price per viewport entry — pick `"hover"`, `"adaptive"` (hover on pointer devices, viewport on touch), or `"none"` when that cost matters. To turn the prefetch subsystem off entirely (including per-Link opt-ins), use `prefetchCacheTTL: false`.
 
 Speculative requests carry the `X-Rango-Prefetch: 1` header, so middleware and loaders with side effects (cookies, counters, audit logs) can detect and skip them.
 

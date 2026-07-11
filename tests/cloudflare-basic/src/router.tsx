@@ -32,10 +32,9 @@ export const router = createRouter<AppBindings>({
   // size 100 / concurrency 2).
   prefetchCacheSize: 25,
   prefetchConcurrency: 3,
-  // Manual prefetch mode (default is "viewport"): this app dogfoods the
-  // opt-out seat — bare Links stay quiet, per-Link `prefetch` props still opt
-  // in (e2e/default-prefetch-none.test.ts). The test-app dogfoods the
-  // default-on seat.
+  // Manual prefetch mode: this app dogfoods the explicit opt-out seat. In
+  // production this overrides the environment's viewport default; per-Link
+  // strategies still opt in (e2e/default-prefetch-none.test.ts).
   defaultPrefetch: "none",
   // Render-timeout diagnostics fixture (e2e/render-timeout-stage.test.ts). Gated
   // behind RANGO_E2E_RENDER_TIMEOUT (inlined by vite.config.ts `define`, set on

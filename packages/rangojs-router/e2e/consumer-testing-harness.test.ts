@@ -61,7 +61,7 @@ function harnessSpecs(): void {
     page,
   }) => {
     // expectParity guards its own window against speculative prefetch, but
-    // the home load below sprays default-on viewport prefetches BEFORE the
+    // a production home load can spray viewport prefetches BEFORE the
     // parity call — a prefetched route's Set-Cookie (e.g. cart-id) would land
     // in the JS jar only and fail the cookie comparison. Consumers comparing
     // cookie jars should do the same (or list volatile cookies in

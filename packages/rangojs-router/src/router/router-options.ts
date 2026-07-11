@@ -539,7 +539,7 @@ export interface RangoOptions<TEnv = any> {
    * directions (a Link can opt out of an aggressive default with
    * `prefetch="none"`, or opt in under `defaultPrefetch: "none"`).
    *
-   * - `"viewport"` (default): prefetch when the link enters the viewport —
+   * - `"viewport"` (production default): prefetch when the link enters the viewport —
    *   idle-gated and queued (see `prefetchConcurrency`), so prefetches never
    *   compete with hydration or an active navigation.
    * - `"hover"`: prefetch on mouse enter only. Much lighter on the server —
@@ -550,15 +550,16 @@ export interface RangoOptions<TEnv = any> {
    * - `"render"`: prefetch on mount regardless of visibility.
    * - `"none"`: manual mode — nothing prefetches unless a Link opts in.
    *
-   * Server-load note: with the default, every visible Link triggers an RSC
-   * render (loaders included) on the server. Routes served from cache/PPR
+   * Automatic prefetch defaults to `"none"` in development and `"viewport"`
+   * in production. With the production default, every visible Link triggers an
+   * RSC render (loaders included) on the server. Routes served from cache/PPR
    * absorb this cheaply; per-user dynamic routes pay full price per viewport
    * entry. Set `"hover"`, `"adaptive"`, or `"none"` when that cost matters.
    *
    * To disable the prefetch subsystem entirely (including per-Link opt-ins
    * and `useRouter().prefetch()`), set `prefetchCacheTTL: false` instead.
    *
-   * @default "viewport"
+   * @default "none" in development; "viewport" in production
    */
   defaultPrefetch?: PrefetchStrategy;
 

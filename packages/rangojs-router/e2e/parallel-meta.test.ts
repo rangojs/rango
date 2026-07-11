@@ -192,7 +192,7 @@ test.describe("parallel-meta-slot", () => {
     // JSON-LD should update to Product B
     jsonLd = page.locator('script[type="application/ld+json"]');
     await expect(jsonLd).toHaveCount(2);
-    // A fully-prefetched adoption (default-on viewport prefetch of pm-link-b)
+    // A fully-prefetched adoption (production viewport prefetch of pm-link-b)
     // commits the route content immediately while the @meta slot commit can
     // trail by a frame — poll for convergence instead of a one-shot read.
     await expect
@@ -408,7 +408,7 @@ test.describe("parallel-meta-slot (production)", () => {
 
     jsonLd = page.locator('script[type="application/ld+json"]');
     await expect(jsonLd).toHaveCount(2);
-    // A fully-prefetched adoption (default-on viewport prefetch of pm-link-b)
+    // A fully-prefetched adoption (production viewport prefetch of pm-link-b)
     // commits the route content immediately while the @meta slot commit can
     // trail by a frame — poll for convergence instead of a one-shot read.
     await expect

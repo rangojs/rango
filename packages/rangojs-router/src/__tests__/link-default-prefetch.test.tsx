@@ -70,17 +70,17 @@ describe("Link default prefetch fallback", () => {
     setDefaultPrefetchStrategy(DEFAULT_PREFETCH_STRATEGY);
   });
 
-  it("a bare Link viewport-prefetches under the built-in default", () => {
-    expect(getDefaultPrefetchStrategy()).toBe("viewport");
+  it("a bare Link stays quiet under the built-in development default", () => {
+    expect(getDefaultPrefetchStrategy()).toBe("none");
+    renderLink({ to: "/target" });
+    expect(prefetchQueued).not.toHaveBeenCalled();
+  });
+
+  it("a bare Link viewport-prefetches under an explicit production strategy", () => {
+    setDefaultPrefetchStrategy("viewport");
     renderLink({ to: "/target" });
     expect(prefetchQueued).toHaveBeenCalledTimes(1);
     expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/target");
-  });
-
-  it("a bare Link does nothing under defaultPrefetch: none (manual mode)", () => {
-    setDefaultPrefetchStrategy("none");
-    renderLink({ to: "/target" });
-    expect(prefetchQueued).not.toHaveBeenCalled();
   });
 
   it("an explicit prefetch prop wins over the router default in both directions", () => {

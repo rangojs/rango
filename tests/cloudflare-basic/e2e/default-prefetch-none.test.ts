@@ -13,13 +13,12 @@ function isPrefetchRuntimeRequest(url: string): boolean {
 
 /**
  * Manual prefetch mode: this app sets createRouter({ defaultPrefetch: "none" })
- * (src/router.tsx), opting out of the router's default-on viewport prefetch.
- * Pins the two sides of the manual-mode contract:
+ * (src/router.tsx), overriding the production viewport default. This pins both
+ * sides of the manual-mode contract:
  *
- *   1. Bare Links (no `prefetch` prop) issue NO speculative prefetches — the
- *      router default resolved to "none" and reached the client.
- *   2. A per-Link `prefetch` prop still opts in — manual mode changes the
- *      fallback, not the per-Link override.
+ *   1. Bare Links issue no speculative prefetches because the resolved router
+ *      default is "none".
+ *   2. A per-Link strategy still opts in; manual mode only changes the fallback.
  *
  * Every speculative prefetch carries the X-Rango-Prefetch header
  * (browser/prefetch/fetch.ts), which is what both tests key on.
@@ -36,16 +35,13 @@ function runDefaultPrefetchNoneSpec(f: Fixture): void {
       }
     });
 
-    // Home renders bare Links (and hover-strategy entry links, which cannot
-    // fire without a hover). Under the default-on fallback the bare Links
-    // would enqueue viewport prefetches as soon as the app goes idle.
+    // Home renders bare Links and explicit hover Links, which cannot fire
+    // without a hover. A viewport fallback would enqueue the bare Links.
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    // Idle window in which the viewport default would have fired — the
-    // idle-gated queue drains promptly once hydration settles.
+    // The idle-gated viewport queue would drain during this window.
     await page.waitForTimeout(2000);
-
     expect(prefetchRequests).toHaveLength(0);
   });
 

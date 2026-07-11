@@ -224,7 +224,7 @@ function suspenseStreamTests(mode: "dev" | "build") {
       using _ = expectNoPageError(page);
 
       // This pins the COLD same-route nav contract (fallback re-streams). A
-      // completed default-on viewport prefetch of link-b would be adopted as
+      // completed viewport prefetch of link-b would be adopted as
       // a fully-prefetched commit, which deliberately skips the fallback
       // (no-flash, #622) — keep the cache virgin so the nav streams live.
       await blockPrefetch(page);

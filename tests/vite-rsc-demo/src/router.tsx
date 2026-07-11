@@ -136,8 +136,8 @@ const router = createRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
   // Manual prefetch mode: keeps this suite's request-count/timing assertions
-  // free of default-on viewport prefetch traffic. Default-on is dogfooded by
-  // the router's e2e test-app; the opt-out seat by tests/cloudflare-basic.
+  // free of automatic production viewport prefetch traffic. The environment
+  // default is dogfooded by test-app; this opt-out by cloudflare-basic too.
   defaultPrefetch: "none",
   cache: { store: cacheStore },
   // Auto-generate a per-request CSP nonce, applied to React's bootstrap scripts

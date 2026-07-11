@@ -10,13 +10,10 @@
  * Link.tsx re-exports it so the public `PrefetchStrategy` export path is
  * unchanged.
  *
- * Policy note: unlike prefetch-limits.ts (numbers), the only invalid inputs
- * here are strings outside the union — possible via untyped JS consumers or a
- * value threaded from config/env. Falling back to the default ("viewport")
- * rather than "none" matches the numeric resolvers: a malformed value never
- * silently disables a feature the consumer nominally left enabled. Explicit
- * disable is the literal "none" (or `prefetchCacheTTL: false` for the whole
- * prefetch subsystem).
+ * Policy note: automatic prefetch stays quiet in development, matching the
+ * production-only default used by Next.js. Explicit router and per-Link
+ * strategies still work in every mode. Invalid untyped inputs fall back to the
+ * current environment's default.
  */
 
 /**
@@ -34,7 +31,14 @@ export type PrefetchStrategy =
   | "adaptive"
   | "none";
 
-export const DEFAULT_PREFETCH_STRATEGY: PrefetchStrategy = "viewport";
+function defaultPrefetchForEnvironment(
+  nodeEnv: string | undefined,
+): PrefetchStrategy {
+  return nodeEnv === "production" ? "viewport" : "none";
+}
+
+export const DEFAULT_PREFETCH_STRATEGY: PrefetchStrategy =
+  defaultPrefetchForEnvironment(process.env.NODE_ENV);
 
 const VALID_STRATEGIES: ReadonlySet<string> = new Set([
   "hover",
@@ -46,9 +50,10 @@ const VALID_STRATEGIES: ReadonlySet<string> = new Set([
 
 export function resolveDefaultPrefetch(
   raw: PrefetchStrategy | undefined,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
 ): PrefetchStrategy {
   if (typeof raw === "string" && VALID_STRATEGIES.has(raw)) {
     return raw;
   }
-  return DEFAULT_PREFETCH_STRATEGY;
+  return defaultPrefetchForEnvironment(nodeEnv);
 }

@@ -5,14 +5,15 @@ import {
   type PrefetchStrategy,
 } from "../prefetch-default.js";
 
-// Strings, not counts: the only invalid inputs are strings outside the union
-// (untyped JS consumers, config/env-threaded values). Fallback is the default
-// ("viewport"), never "none" — a malformed value must not silently disable a
-// feature the consumer nominally left enabled.
 describe("resolveDefaultPrefetch", () => {
-  it("defaults to viewport when undefined", () => {
-    expect(DEFAULT_PREFETCH_STRATEGY).toBe("viewport");
-    expect(resolveDefaultPrefetch(undefined)).toBe("viewport");
+  it("defaults to none outside production", () => {
+    expect(DEFAULT_PREFETCH_STRATEGY).toBe("none");
+    expect(resolveDefaultPrefetch(undefined, "development")).toBe("none");
+    expect(resolveDefaultPrefetch(undefined, "test")).toBe("none");
+  });
+
+  it("defaults to viewport in production", () => {
+    expect(resolveDefaultPrefetch(undefined, "production")).toBe("viewport");
   });
 
   it("passes every valid strategy through unchanged", () => {
@@ -24,31 +25,29 @@ describe("resolveDefaultPrefetch", () => {
       "none",
     ];
     for (const strategy of all) {
-      expect(resolveDefaultPrefetch(strategy)).toBe(strategy);
+      expect(resolveDefaultPrefetch(strategy, "development")).toBe(strategy);
+      expect(resolveDefaultPrefetch(strategy, "production")).toBe(strategy);
     }
   });
 
-  it("falls back to the default for strings outside the union", () => {
+  it("falls back to the environment default for invalid inputs", () => {
     expect(
-      resolveDefaultPrefetch("intent" as unknown as PrefetchStrategy),
+      resolveDefaultPrefetch(
+        "intent" as unknown as PrefetchStrategy,
+        "development",
+      ),
+    ).toBe("none");
+    expect(
+      resolveDefaultPrefetch(
+        "Viewport" as unknown as PrefetchStrategy,
+        "production",
+      ),
     ).toBe("viewport");
     expect(
-      resolveDefaultPrefetch("Viewport" as unknown as PrefetchStrategy),
+      resolveDefaultPrefetch(null as unknown as PrefetchStrategy, "test"),
+    ).toBe("none");
+    expect(
+      resolveDefaultPrefetch(42 as unknown as PrefetchStrategy, "production"),
     ).toBe("viewport");
-    expect(resolveDefaultPrefetch("" as unknown as PrefetchStrategy)).toBe(
-      "viewport",
-    );
-  });
-
-  it("falls back to the default for non-string inputs", () => {
-    expect(resolveDefaultPrefetch(null as unknown as PrefetchStrategy)).toBe(
-      "viewport",
-    );
-    expect(resolveDefaultPrefetch(42 as unknown as PrefetchStrategy)).toBe(
-      "viewport",
-    );
-    expect(resolveDefaultPrefetch(true as unknown as PrefetchStrategy)).toBe(
-      "viewport",
-    );
   });
 });

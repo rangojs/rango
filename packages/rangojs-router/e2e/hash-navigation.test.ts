@@ -6,9 +6,9 @@ import {
   isPrefetchRequest,
 } from "./helper";
 
-// Click-driven NAVIGATION partials only — background viewport prefetches
-// (default-on since defaultPrefetch) are expected traffic; these tests pin
-// that a hash click triggers no NAVIGATION fetch.
+// Click-driven NAVIGATION partials only — background production viewport
+// prefetches are expected traffic; these tests pin that a hash click triggers
+// no NAVIGATION fetch.
 function isNavigationPartial(req: PWRequest): boolean {
   return req.url().includes("_rsc_partial") && !isPrefetchRequest(req);
 }

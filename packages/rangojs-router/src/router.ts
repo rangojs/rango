@@ -270,9 +270,8 @@ export function createRouter<TEnv = any>(
     prefetchConcurrencyOption,
   );
 
-  // Resolve the router-wide default Link prefetch strategy (default:
-  // "viewport"). Shipped to the client in payload metadata; Links without an
-  // explicit `prefetch` prop fall back to it.
+  // Resolve the router-wide default Link prefetch strategy ("none" in dev,
+  // "viewport" in production). Links without an explicit prop fall back to it.
   const defaultPrefetch = resolveDefaultPrefetch(defaultPrefetchOption);
 
   // Resolve warmup enabled flag (default: true)

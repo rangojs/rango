@@ -150,7 +150,7 @@ test.describe("revalidation-precision", () => {
     using _ = expectNoPageError(page);
 
     // See "navigation should send current segment IDs": keep the click's
-    // navigation fetch live under default-on prefetch.
+    // navigation fetch live when automatic prefetch is enabled.
     await blockPrefetch(page);
 
     const rscRequests: string[] = [];
@@ -246,9 +246,8 @@ test.describe("revalidation-precision", () => {
     using _ = expectNoPageError(page);
 
     // This test times the back-navigation cache restore. Every page it walks
-    // sprays default-on viewport prefetches whose dev-server renders contend
-    // with the timed restore — keep the measurement about the cache, not
-    // background traffic.
+    // can trigger viewport prefetches whose renders contend with the timed
+    // restore — keep the measurement about the cache, not background traffic.
     await blockPrefetch(page);
 
     // Navigate to index
@@ -350,7 +349,7 @@ test.describe("revalidation-headers", () => {
     using _ = expectNoPageError(page);
 
     // See "navigation should send current segment IDs": keep the click's
-    // navigation fetch live under default-on prefetch.
+    // navigation fetch live when automatic prefetch is enabled.
     await blockPrefetch(page);
 
     const headers: Record<string, string>[] = [];

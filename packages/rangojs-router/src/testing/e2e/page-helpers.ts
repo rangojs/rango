@@ -162,10 +162,10 @@ export async function measureTime<T>(
 /**
  * True when the request is a speculative prefetch (Link viewport/hover/render
  * strategies or `useRouter().prefetch()`). Every prefetch fetch carries the
- * `X-Rango-Prefetch` header. Links prefetch by default (`defaultPrefetch`,
- * "viewport" unless the router opts out), so tests that track `_rsc_partial`
- * requests to pin NAVIGATION behavior must skip these — a request-count or
- * first-request assertion otherwise races background prefetch traffic.
+ * `X-Rango-Prefetch` header. Links prefetch by default in production unless
+ * the router opts out, so tests that track `_rsc_partial` requests to pin
+ * NAVIGATION behavior must skip these — a request-count or first-request
+ * assertion otherwise races background prefetch traffic.
  */
 export function isPrefetchRequest(req: {
   headers: () => Record<string, string>;

@@ -17,8 +17,8 @@ export const testNoJs = test.extend({
 
 // Speculative-prefetch test utilities live in the PUBLIC e2e harness
 // (`@rangojs/router/testing/e2e` page-helpers) — consumers hit the same
-// default-on prefetch traffic in their own suites. Re-exported here so repo
-// tests use one implementation.
+// automatic production prefetch traffic in their own suites. Re-exported here
+// so repo tests use one implementation.
 export {
   isPrefetchRequest,
   blockPrefetch,

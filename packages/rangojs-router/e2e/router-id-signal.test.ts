@@ -22,7 +22,7 @@ import {
  */
 
 // The click-driven NAVIGATION request must stay live and observable under
-// default-on prefetch: a completed viewport prefetch of the bare
+// automatic production prefetch: a completed viewport prefetch of the bare
 // search-home-link target would be adopted by the click (zero navigation
 // requests), and an inflight one defers the live fetch past the click's
 // resolution — so blockPrefetch keeps the cache virgin and waitForRequest

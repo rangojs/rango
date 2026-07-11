@@ -321,7 +321,8 @@ export interface RangoInternal<
   /**
    * Router-wide default Link prefetch strategy for Links without an explicit
    * `prefetch` prop. Shipped to the client in payload metadata. Derived from
-   * the `defaultPrefetch` option (default "viewport").
+   * the `defaultPrefetch` option (default "none" in development and
+   * "viewport" in production).
    */
   readonly defaultPrefetch: import("./prefetch-default.js").PrefetchStrategy;
 

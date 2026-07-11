@@ -320,8 +320,8 @@ export function createParity({
     const originUrl = page.url();
 
     // Exclude speculative prefetch traffic from the parity window. Links
-    // prefetch by default (`defaultPrefetch`, "viewport" unless the router
-    // opts out), and a prefetched route's middleware/loader side effects
+    // prefetch by default in production unless the router opts out, and a
+    // prefetched route's middleware/loader side effects
     // (Set-Cookie, session state) land in the JS jar only — a no-JS context
     // cannot prefetch, so that traffic would diverge the jars on requests the
     // intent never caused. Aborted prefetches are benign by design (evicted,

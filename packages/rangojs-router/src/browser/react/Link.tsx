@@ -118,11 +118,11 @@ export interface LinkProps extends Omit<
   revalidate?: boolean;
   /**
    * Prefetch strategy for the link destination. When omitted, falls back to
-   * the router-wide default (`createRouter({ defaultPrefetch })`, "viewport"
-   * unless configured). An explicit value always wins over the router default
-   * — including `"none"` to opt a single Link out.
+   * the router-wide default (`createRouter({ defaultPrefetch })`: `"none"` in
+   * development, `"viewport"` in production). An explicit value always wins
+   * over the router default, including `"none"` to opt a single Link out.
    *
-   * @default the router's `defaultPrefetch` ("viewport")
+   * @default the router's environment-aware `defaultPrefetch`
    */
   prefetch?: PrefetchStrategy;
   /**

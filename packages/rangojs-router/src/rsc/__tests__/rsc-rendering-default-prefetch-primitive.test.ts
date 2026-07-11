@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { RscPayload } from "../types.js";
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
@@ -62,9 +62,19 @@ async function fetchFullRenderPayload(
 }
 
 describe("router.fetch full-render payload carries defaultPrefetch (primitive)", () => {
-  it("emits the built-in default (viewport) when the option is omitted", async () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("emits none when the option is omitted outside production", async () => {
     const payload = await fetchFullRenderPayload();
     expect(payload.metadata).toBeDefined();
+    expect(payload.metadata!.defaultPrefetch).toBe("none");
+  });
+
+  it("emits viewport when the option is omitted in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const payload = await fetchFullRenderPayload();
     expect(payload.metadata!.defaultPrefetch).toBe("viewport");
   });
 

@@ -34,7 +34,7 @@ test.describe("auth-boundary (dev)", () => {
     using _ = expectNoPageError(page);
 
     // The auth-boundary index (where the reject redirects to) renders bare
-    // Links to BOTH protected routes; a default-on viewport prefetch of the
+    // Links to BOTH protected routes; a production viewport prefetch of the
     // global-protected one runs its middleware, whose Set-Cookie would
     // overwrite the `rejected-by` cookie this test asserts on.
     await blockPrefetch(page);
@@ -292,7 +292,7 @@ test.describe("auth-boundary (production)", () => {
     using _ = expectNoPageError(page);
 
     // The auth-boundary index (where the reject redirects to) renders bare
-    // Links to BOTH protected routes; a default-on viewport prefetch of the
+    // Links to BOTH protected routes; a production viewport prefetch of the
     // global-protected one runs its middleware, whose Set-Cookie would
     // overwrite the `rejected-by` cookie this test asserts on.
     await blockPrefetch(page);
