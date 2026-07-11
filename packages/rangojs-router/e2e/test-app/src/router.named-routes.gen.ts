@@ -351,6 +351,7 @@ export const NamedRoutes = {
   shellCacheSlowMeta: "/shell-cache/slow-meta",
   shellCacheSlowMetaDefault: "/shell-cache/slow-meta-default",
   shellCacheSnapshotCap: "/shell-cache/snapshot-cap",
+  shellCacheStaleReplay: "/shell-cache/stale-replay/:id",
   shellCacheStream: "/shell-cache/stream",
   shellSecure: "/shell-secure",
   shellSecureDsl: "/shell-secure-dsl",

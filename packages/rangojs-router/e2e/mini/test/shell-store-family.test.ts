@@ -3,7 +3,9 @@ import React from "react";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import type { ShellCacheEntry } from "@rangojs/router/cache";
 import {
+  assertPprReplayStatus,
   assertShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "@rangojs/router/testing";
@@ -58,5 +60,18 @@ describe("shell store family (mini dogfood, public surface)", () => {
       },
     });
     expect(() => assertShellStatus(res, "MISS")).not.toThrow();
+  });
+
+  it("assertPprReplayStatus distinguishes fresh, stale, and bounded bypass responses", () => {
+    for (const [value, expected] of [
+      ["HIT; freshness=fresh", { outcome: "HIT", freshness: "fresh" }],
+      ["HIT; freshness=stale", { outcome: "HIT", freshness: "stale" }],
+      ["BYPASS; reason=no-entry", { outcome: "BYPASS", reason: "no-entry" }],
+    ] as const) {
+      const response = new Response(null, {
+        headers: { [PPR_REPLAY_STATUS_HEADER]: value },
+      });
+      expect(() => assertPprReplayStatus(response, expected)).not.toThrow();
+    }
   });
 });

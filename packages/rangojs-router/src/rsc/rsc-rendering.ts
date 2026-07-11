@@ -69,6 +69,44 @@ import { reportCacheError } from "../cache/cache-error.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type { ShellCacheEntry, ShellSnapshotRecord } from "../cache/types.js";
 
+const PPR_REPLAY_STATUS_HEADER = "x-rango-ppr-replay";
+
+type PprReplayBypassReason =
+  | "method"
+  | "dynamic"
+  | "nonce"
+  | "store-unavailable"
+  | "passive-read-unsupported"
+  | "read-error"
+  | "no-entry"
+  | "invalid-version"
+  | "corrupt-entry"
+  | "handler-live-holes"
+  | "transition-when"
+  | "no-segment-snapshot"
+  | "snapshot-miss"
+  | "stale-build-entry";
+
+type PprReplayStatus =
+  | { outcome: "HIT"; freshness: "fresh" | "stale" }
+  | { outcome: "BYPASS"; reason: PprReplayBypassReason };
+
+type ShellReplayDecision =
+  | { snapshot: ShellSnapshotRecord[] }
+  | { reason: PprReplayBypassReason };
+
+function serializePprReplayStatus(status: PprReplayStatus): string {
+  return status.outcome === "HIT"
+    ? `HIT; freshness=${status.freshness}`
+    : `BYPASS; reason=${status.reason}`;
+}
+
+function describePprReplayStatus(status: PprReplayStatus): string {
+  return status.outcome === "HIT"
+    ? status.freshness
+    : `bypass:${status.reason}`;
+}
+
 function resolveDevShellLookup(
   reqCtx: RequestContext<any>,
   pprConfig: ResolvedPprConfig,
@@ -86,17 +124,15 @@ function resolveDevShellLookup(
 }
 
 function replayableShellSnapshot(
-  entry: ShellCacheEntry | undefined,
+  entry: ShellCacheEntry,
   buildVersion: string,
-): ShellSnapshotRecord[] | undefined {
-  if (
-    !entry ||
-    !isValidShellHit(entry, buildVersion) ||
-    entry.handlerLiveHoles ||
-    entry.transitionWhen
-  ) {
-    return undefined;
+): ShellReplayDecision {
+  if (!isValidShellHit(entry, buildVersion)) {
+    return { reason: "invalid-version" };
   }
+  if (!hasIntactShellPayload(entry)) return { reason: "corrupt-entry" };
+  if (entry.handlerLiveHoles) return { reason: "handler-live-holes" };
+  if (entry.transitionWhen) return { reason: "transition-when" };
   const snapshot = entry.snapshot;
   const hasSegments = snapshot?.some((record) => {
     if (
@@ -111,7 +147,9 @@ function replayableShellSnapshot(
     const segments = (record.value as { segments?: unknown }).segments;
     return Array.isArray(segments) && segments.length > 0;
   });
-  return hasSegments ? snapshot : undefined;
+  return hasSegments && snapshot
+    ? { snapshot }
+    : { reason: "no-segment-snapshot" };
 }
 
 export function handleRscRendering<TEnv>(
@@ -156,6 +194,7 @@ async function handleRscRenderingInner<TEnv>(
 
   let payload: RscPayload;
   let hasInterceptSlots = false;
+  let pprReplayStatus: PprReplayStatus | undefined;
 
   // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
   //
@@ -359,7 +398,7 @@ async function handleRscRenderingInner<TEnv>(
 
   if (isPartial) {
     // Partial render (navigation)
-    const result = await matchPartialWithPprReplay(
+    const replay = await matchPartialWithPprReplay(
       ctx,
       request,
       env,
@@ -367,6 +406,8 @@ async function handleRscRenderingInner<TEnv>(
       reqCtx,
       nonce,
     );
+    const result = replay.result;
+    pprReplayStatus = replay.status;
 
     if (!result) {
       // Fall back to full render
@@ -378,10 +419,17 @@ async function handleRscRenderingInner<TEnv>(
         // perform SPA navigation. A raw 308 would be auto-followed by
         // fetch, hitting the target without _rsc_partial. Resolve the
         // target server-side (same open-redirect policy as 3xx).
-        return createSimpleRedirectResponse(match.redirect, {
+        const redirectResponse = createSimpleRedirectResponse(match.redirect, {
           requestOrigin: url.origin,
           basename: ctx.router.basename,
         });
+        if (pprReplayStatus) {
+          redirectResponse.headers.set(
+            PPR_REPLAY_STATUS_HEADER,
+            serializePprReplayStatus(pprReplayStatus),
+          );
+        }
+        return redirectResponse;
       }
 
       payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
@@ -484,6 +532,10 @@ async function handleRscRenderingInner<TEnv>(
     // are deliberately NOT stamped. See browser/response-adapter.ts.
     "X-RSC-Router-Id": ctx.router.id,
   };
+  if (pprReplayStatus) {
+    rscHeaders[PPR_REPLAY_STATUS_HEADER] =
+      serializePprReplayStatus(pprReplayStatus);
+  }
   // Tell the client's prefetch cache to scope this response to its source
   // URL (instead of the default source-agnostic wildcard). Intercept
   // responses depend on the source page matching an intercept rule, so
@@ -575,20 +627,43 @@ async function matchPartialWithPprReplay<TEnv>(
   reqCtx: RequestContext<any>,
   nonce: string | undefined,
 ) {
-  const runMatch = () => ctx.router.matchPartial(request, { env });
+  const replayStart = reqCtx._metricsStore ? performance.now() : 0;
+  const runMatch = async (status?: PprReplayStatus) => {
+    const result = await ctx.router.matchPartial(request, { env });
+    if (status && reqCtx._metricsStore) {
+      appendMetric(
+        reqCtx._metricsStore,
+        "ppr:navigation-replay",
+        replayStart,
+        performance.now() - replayStart,
+        undefined,
+        describePprReplayStatus(status),
+      );
+    }
+    return { result, status };
+  };
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
   const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
   const store = reqCtx._cacheStore;
 
-  if (
-    request.method !== "GET" ||
-    !pprConfig ||
-    reqCtx._dynamic ||
-    activeNonce !== undefined ||
-    !hasShellFamily(store) ||
-    store.supportsPassiveShellReads !== true
-  ) {
-    return runMatch();
+  if (!pprConfig) return runMatch();
+  if (request.method !== "GET") {
+    return runMatch({ outcome: "BYPASS", reason: "method" });
+  }
+  if (reqCtx._dynamic) {
+    return runMatch({ outcome: "BYPASS", reason: "dynamic" });
+  }
+  if (activeNonce !== undefined) {
+    return runMatch({ outcome: "BYPASS", reason: "nonce" });
+  }
+  if (!hasShellFamily(store)) {
+    return runMatch({ outcome: "BYPASS", reason: "store-unavailable" });
+  }
+  if (store.supportsPassiveShellReads !== true) {
+    return runMatch({
+      outcome: "BYPASS",
+      reason: "passive-read-unsupported",
+    });
   }
 
   const key = buildShellKey(url);
@@ -597,35 +672,81 @@ async function matchPartialWithPprReplay<TEnv>(
     cached = await store.getShell(key, { claimRevalidation: false });
   } catch (error) {
     reportCacheError(error, "cache-read", "[NavigationPPR] getShell");
-    return runMatch();
+    return runMatch({ outcome: "BYPASS", reason: "read-error" });
   }
 
-  let snapshot = cached?.shouldRevalidate
-    ? undefined
-    : replayableShellSnapshot(cached?.entry, ctx.version);
+  let runtimeDecision: ShellReplayDecision | undefined;
+  let snapshot: ShellSnapshotRecord[] | undefined;
+  let freshness: "fresh" | "stale" = "fresh";
+  if (cached) {
+    runtimeDecision = replayableShellSnapshot(cached.entry, ctx.version);
+    if ("snapshot" in runtimeDecision) {
+      snapshot = runtimeDecision.snapshot;
+      freshness = cached.shouldRevalidate ? "stale" : "fresh";
+    }
+  }
 
   if (!snapshot) {
     // Production build manifests are local module data. In dev, resolving a
     // missing build shell would foreground-fetch /__rsc_shell and block an
     // otherwise ordinary navigation on capture, so replay remains runtime-only.
     const buildHit = await lookupBuildShell(url, ctx.version, store);
-    if (!buildHit?.stale) {
-      snapshot = replayableShellSnapshot(buildHit?.entry, ctx.version);
+    if (buildHit?.stale) {
+      runtimeDecision ??= { reason: "stale-build-entry" };
+    } else if (buildHit) {
+      const buildDecision = replayableShellSnapshot(
+        buildHit.entry,
+        ctx.version,
+      );
+      if ("snapshot" in buildDecision) {
+        snapshot = buildDecision.snapshot;
+      } else {
+        runtimeDecision ??= buildDecision;
+      }
     }
   }
 
-  if (!snapshot) return runMatch();
+  if (!snapshot) {
+    const reason =
+      runtimeDecision && "reason" in runtimeDecision
+        ? runtimeDecision.reason
+        : "no-entry";
+    return runMatch({
+      outcome: "BYPASS",
+      reason,
+    });
+  }
 
   const previousImplicitCache = reqCtx._shellImplicitCache;
+  let segmentReplayHit = false;
   reqCtx._shellImplicitCache = {
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
-    store: new SeededShellStore(store, snapshot, { segmentsOnly: true }),
+    store: new SeededShellStore(store, snapshot, {
+      segmentsOnly: true,
+      onSegmentLookup: (hit) => {
+        segmentReplayHit ||= hit;
+      },
+    }),
     keyPrefix: "doc",
   };
 
   try {
-    return await runMatch();
+    const result = await ctx.router.matchPartial(request, { env });
+    const status: PprReplayStatus = segmentReplayHit
+      ? { outcome: "HIT", freshness }
+      : { outcome: "BYPASS", reason: "snapshot-miss" };
+    if (reqCtx._metricsStore) {
+      appendMetric(
+        reqCtx._metricsStore,
+        "ppr:navigation-replay",
+        replayStart,
+        performance.now() - replayStart,
+        undefined,
+        describePprReplayStatus(status),
+      );
+    }
+    return { result, status };
   } finally {
     reqCtx._shellImplicitCache = previousImplicitCache;
   }

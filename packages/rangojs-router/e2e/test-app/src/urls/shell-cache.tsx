@@ -15,12 +15,14 @@ import {
   ShellOutlinedBadgeLoader,
   shellExecCounters,
   ShellHandles,
+  ShellStaleReplayHandle,
   SlowMetaHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
   makeNestedFastHandlePush,
   makeSlowMetaParts,
   makePhysicsPromise,
+  makeShellStaleReplayData,
   getDriftStamp,
   getCapStamp,
   outlinedRenderCounter,
@@ -38,6 +40,7 @@ import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
 import { ShellHandleView } from "../components/ShellHandleView.js";
 import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
 import { ShellBakeSlow } from "../components/ShellBakeSlow.js";
+import { ShellStaleReplay } from "../components/ShellStaleReplay.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
@@ -400,6 +403,30 @@ function ShellSettledPage() {
   return <ShellSettledValue loader={ShellSettledLoader} />;
 }
 
+function ShellStaleReplayPage(ctx: HandlerContext<{ id: string }>) {
+  const id = ctx.params.id;
+  const data = makeShellStaleReplayData(id);
+  const push = ctx.use(ShellStaleReplayHandle);
+  push({ yo: `yo-${id}` });
+  push(data.then((value) => ({ asd: value })));
+  ctx.use(Meta)(
+    data.then(async (value) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { title: `Stale replay ${id}: ${value}` };
+    }),
+  );
+
+  return (
+    <Suspense fallback={<div>Loading stale replay {id}...</div>}>
+      <ShellStaleReplay
+        data={data}
+        handle={ShellStaleReplayHandle}
+        search={ctx.url.search}
+      />
+    </Suspense>
+  );
+}
+
 // Slow deferred-shell-material layout (issue #715, the storefront meta
 // pattern): three TOP-LEVEL pushes settling in parts — immediate, ~5.5s slow,
 // and a Meta title CHAINED off the slow promise (+1s, ~6.5s total). The
@@ -639,6 +666,10 @@ export const shellCachePatterns = urls(
       { name: "shellCacheSettled", ppr: true },
       () => [loader(ShellSettledLoader)],
     ),
+    path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
+      name: "shellCacheStaleReplay",
+      ppr: { ttl: 300, swr: 120 },
+    }),
     // NAMELESS ppr route (issue #714): `name` is orthogonal to shell caching —
     // the DSL registers the entry under a synthesized $path_* manifest key with
     // the ppr option intact, so this route must engage (MISS -> HIT) exactly
@@ -759,12 +790,18 @@ export const shellCachePatterns = urls(
     // the suite can pin that the gate degrades to a working MISS (never a
     // committed-200 dead page) and that the recapture heals the key.
     // `mode`: postponed (unparseable JSON) | prelude (undecodable base64) |
-    // build (stale buildVersion). The key mirrors buildShellKey for the
+    // build (stale buildVersion) | stale (rewrite with ttl=1). The key mirrors buildShellKey for the
     // single-search-param URLs the suite uses (sorted search == raw search).
     // router.js is imported dynamically to avoid the urls -> router cycle.
     path.json(
       "/shell-cache/__corrupt",
-      async (ctx): Promise<{ ok: boolean; found: boolean }> => {
+      async (
+        ctx,
+      ): Promise<{
+        ok: boolean;
+        found: boolean;
+        segmentKeys?: string[];
+      }> => {
         const url = new URL(ctx.request.url);
         const target = url.searchParams.get("target") ?? "";
         const mode = url.searchParams.get("mode") ?? "postponed";
@@ -777,8 +814,14 @@ export const shellCachePatterns = urls(
         if (mode === "postponed") entry.postponed = '{"truncated';
         else if (mode === "prelude") entry.prelude = "%%%not-base64%%%";
         else if (mode === "build") entry.buildVersion = "stale-build";
-        await cacheStore.putShell(key, entry, 300, 120);
-        return { ok: true, found: true };
+        await cacheStore.putShell(key, entry, mode === "stale" ? 1 : 300, 120);
+        return {
+          ok: true,
+          found: true,
+          segmentKeys: entry.snapshot
+            ?.filter((record) => record.family === "segment")
+            .map((record) => record.key),
+        };
       },
       { name: "shellCacheCorrupt" },
     ),

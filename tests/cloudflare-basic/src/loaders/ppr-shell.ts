@@ -1,4 +1,4 @@
-import { createLoader } from "@rangojs/router";
+import { createHandle, createLoader } from "@rangojs/router";
 
 // Physics fixture: a handler-created promise passed as a PROP to a client
 // component that use()s it under its own <Suspense>. Genuinely pending real I/O
@@ -132,6 +132,23 @@ export const PprShellSettledLoader = createLoader(
     };
   },
 );
+
+export interface PprStaleReplayHandleValue {
+  yo?: string;
+  asd?: string;
+}
+
+export const PprStaleReplayHandle = createHandle<PprStaleReplayHandleValue>();
+
+let pprStaleReplayExecutions = 0;
+
+export function makePprStaleReplayData(id: string): Promise<string> {
+  pprStaleReplayExecutions += 1;
+  const execution = pprStaleReplayExecutions;
+  return new Promise((resolve) =>
+    setTimeout(() => resolve(`ppr-stale-${id}-execution-${execution}`), 1_500),
+  );
+}
 
 // Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md),
 // the workerd/KV counterpart of test-app's shell-cache exec matrix. Per-layer

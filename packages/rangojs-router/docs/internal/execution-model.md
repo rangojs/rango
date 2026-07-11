@@ -161,9 +161,13 @@ global middleware
   isolated from the real `doc:` namespace. Intercepts remain source-resolved,
   while handler-live holes and `transition({ when })` re-run the ordinary handler
   path. Production may use the local build manifest; dev never blocks navigation
-  on `/__rsc_shell`. The browser and prefetch lock see the same partial payload as
-  before. Pinned in both apps by the `partial navigation replays the PPR segment
-shell` dev+production e2e.
+  on `/__rsc_shell`. Fresh and stale-within-SWR runtime generations replay via a
+  non-claiming passive read; partial requests never schedule shell recapture, and
+  hard expiry still falls open. `x-rango-ppr-replay` distinguishes an actually
+  consumed fresh/stale record from a bounded bypass reason. The browser and
+  prefetch lock see the same partial payload as before. Pinned in both apps by
+  the fresh replay and `stale SWR navigation replays the captured handler
+promise, top-level handles, and Meta` dev+production e2e cases.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
   `invalidated` when a tag marker rejects a capture that started before the
   invalidation. The capture emits a `refused` event with

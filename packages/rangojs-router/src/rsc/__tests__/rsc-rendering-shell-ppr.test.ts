@@ -1028,10 +1028,11 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     options: Pick<RunOpts, "nonce" | "arm" | "store"> & {
       entryOverrides?: Partial<ShellCacheEntry>;
     },
+    reason: string,
   ): Promise<void> {
     let replayArmed = false;
 
-    await run({
+    const { response } = await run({
       ssrModule: fullSsrModule(),
       partial: true,
       ppr: true,
@@ -1050,18 +1051,38 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     });
 
     expect(replayArmed).toBe(false);
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      `BYPASS; reason=${reason}`,
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
   }
 
-  it("declines a stale shell without claiming revalidation ownership", async () => {
+  it("passively replays a stale shell without claiming revalidation ownership", async () => {
     const store = new MemorySegmentCacheStore();
     const getShell = vi.spyOn(store, "getShell").mockResolvedValue({
       entry: shellEntry({ snapshot: [segmentRecord] }),
       shouldRevalidate: true,
     });
+    let replayArmed = false;
 
-    await expectReplayDeclined({ store });
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      matchPartial: async () => {
+        const replayStore = getRequestContext()._shellImplicitCache?.store;
+        replayArmed = (await replayStore?.get("doc:localhost/p")) !== null;
+        return emptyMatchResult();
+      },
+    });
 
+    expect(replayArmed).toBe(true);
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=stale",
+    );
     expect(getShell).toHaveBeenCalledWith(KEY, { claimRevalidation: false });
+    expect(scheduleMock).not.toHaveBeenCalled();
   });
 
   it("seeds the captured document segments while item reads and loaders stay live", async () => {
@@ -1072,7 +1093,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     let marker: RequestContext["_shellImplicitCache"];
     let baseContext: RequestContext<unknown> | undefined;
 
-    const { reqCtx } = await run({
+    const { reqCtx, response } = await run({
       ssrModule: fullSsrModule(),
       partial: true,
       ppr: true,
@@ -1109,6 +1130,9 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(segmentHit).toBe(true);
     expect(itemValue).toBe("LIVE");
     expect(marker).toMatchObject({ keyPrefix: "doc" });
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
     expect(reqCtx._shellImplicitCache).toBeUndefined();
     expect(reqCtx._locationState).toEqual([
       { __rsc_ls_key: "flash", __rsc_ls_value: "preserved" },
@@ -1117,12 +1141,15 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
 
   it("declines replay when a custom store does not opt into passive shell reads", async () => {
     const getShell = vi.fn();
-    await expectReplayDeclined({
-      store: {
-        getShell,
-        putShell: vi.fn(),
+    await expectReplayDeclined(
+      {
+        store: {
+          getShell,
+          putShell: vi.fn(),
+        },
       },
-    });
+      "passive-read-unsupported",
+    );
 
     expect(getShell).not.toHaveBeenCalled();
   });
@@ -1146,12 +1173,13 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
   });
 
   it.each([
-    ["handler-live holes", { handlerLiveHoles: true }],
-    ["conditional transitions", { transitionWhen: true }],
-    ["a missing segment snapshot", { snapshot: [] }],
+    ["handler-live holes", { handlerLiveHoles: true }, "handler-live-holes"],
+    ["conditional transitions", { transitionWhen: true }, "transition-when"],
+    ["a missing segment snapshot", { snapshot: [] }, "no-segment-snapshot"],
     [
       "a malformed snapshot record",
       { snapshot: [null] as unknown as ShellSnapshotRecord[] },
+      "no-segment-snapshot",
     ],
     [
       "an empty segment snapshot",
@@ -1166,22 +1194,59 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
           },
         ],
       },
+      "no-segment-snapshot",
     ],
-  ] as const)("declines replay for %s", async (_label, overrides) =>
-    expectReplayDeclined({
-      entryOverrides: overrides as Partial<ShellCacheEntry>,
-    }),
+    [
+      "an invalid build version",
+      { buildVersion: "other-build" },
+      "invalid-version",
+    ],
+    ["a corrupt prelude", { prelude: "%%%" }, "corrupt-entry"],
+  ] as const)("declines replay for %s", async (_label, overrides, reason) =>
+    expectReplayDeclined(
+      { entryOverrides: overrides as Partial<ShellCacheEntry> },
+      reason,
+    ),
   );
 
   it.each([
-    ["an active nonce", { nonce: "request-nonce" }],
+    ["an active nonce", { nonce: "request-nonce" }, "nonce"],
     [
       "ctx.dynamic()",
       { arm: (reqCtx: RequestContext<unknown>) => (reqCtx._dynamic = true) },
+      "dynamic",
     ],
-  ] as const)("declines replay for %s", async (_label, options) =>
-    expectReplayDeclined(options),
+  ] as const)("declines replay for %s", async (_label, options, reason) =>
+    expectReplayDeclined(options, reason),
   );
+
+  it("reports a bounded no-entry bypass for a missing or hard-expired shell", async () => {
+    const store = new MemorySegmentCacheStore();
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=no-entry",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("reports snapshot-miss when an eligible snapshot is not consumed by matching", async () => {
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [segmentRecord] }),
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=snapshot-miss",
+    );
+  });
 });
 
 describe("handleRscRendering — no PPR flags is byte-identical axis 1", () => {
