@@ -310,6 +310,26 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     expect(scheduleMock).toHaveBeenCalledTimes(1);
   });
 
+  it("never serves a navigation-only capture as an HTML document", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(
+      KEY,
+      shellEntry({ navigationOnly: true, snapshot: [] }),
+      300,
+    );
+    const ssrModule = fullSsrModule();
+
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    expect(scheduleMock.mock.calls[0]![6]).not.toMatchObject({
+      navigationOnly: true,
+    });
+  });
+
   // Corrupt stored payloads previously exploded AFTER the commit point: an
   // unparseable postponed blob threw inside resumeShellHTML with the 200 + full
   // static prelude already flushed — a visually complete page that never
@@ -1045,7 +1065,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       arm: options.arm,
       matchPartial: async () => {
         const active = getRequestContext();
-        replayArmed = active._shellImplicitCache !== undefined;
+        replayArmed = active._shellImplicitCache?.keyPrefix === "doc";
         return emptyMatchResult();
       },
     });
@@ -1157,11 +1177,11 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(getShell).not.toHaveBeenCalled();
   });
 
-  it("does not foreground-fetch the dev shell endpoint on a runtime miss", async () => {
+  it("schedules a navigation-only capture without foreground-fetching the dev shell endpoint", async () => {
     const store = new MemorySegmentCacheStore();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    await run({
+    const { response } = await run({
       ssrModule: fullSsrModule(),
       partial: true,
       ppr: true,
@@ -1172,6 +1192,15 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     });
 
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=no-entry",
+    );
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+      key: KEY,
+      store,
+      navigationOnly: true,
+    });
     fetchSpy.mockRestore();
   });
 
@@ -1235,7 +1264,10 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(response.headers.get("x-rango-ppr-replay")).toBe(
       "BYPASS; reason=no-entry",
     );
-    expect(scheduleMock).not.toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+      navigationOnly: true,
+    });
   });
 
   it("reports snapshot-miss when an eligible snapshot is not consumed by matching", async () => {

@@ -835,6 +835,8 @@ export interface ShellCaptureDescriptor {
    * {@link ShellCaptureDebugEvent} per attempt/skip.
    */
   debugSink?: (event: ShellCaptureDebugEvent) => void;
+  /** Store the snapshot for navigation replay, never the captured HTML prelude. */
+  navigationOnly?: true;
 }
 
 /**
@@ -1664,6 +1666,7 @@ async function captureAndStoreShell(
           // ShellCacheEntry.initialTheme.
           initialTheme: reqCtx.theme,
           snapshot,
+          navigationOnly: capture.navigationOnly,
           // Handler-layer liveness folded at the barrier: nested thenables in
           // handler-scoped pushes, handler pushes still pending (liveness
           // unknowable), or a handler-invoked loader execution — any of them

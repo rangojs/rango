@@ -194,6 +194,7 @@ async function handleRscRenderingInner<TEnv>(
   let payload: RscPayload;
   let hasInterceptSlots = false;
   let pprReplayStatus: PprReplayStatus | undefined;
+  let partialCaptureNeeded = false;
 
   // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
   //
@@ -347,7 +348,11 @@ async function handleRscRenderingInner<TEnv>(
               cached ? "hit" : "miss",
             );
           }
-          if (cached && isValidShellHit(cached.entry, ctx.version)) {
+          if (
+            cached &&
+            !cached.entry.navigationOnly &&
+            isValidShellHit(cached.entry, ctx.version)
+          ) {
             if (!hasIntactShellPayload(cached.entry)) {
               // Corrupt stored payload (undecodable prelude / unparseable
               // postponed): a store-layer fault worth a diagnostic, unlike the
@@ -407,6 +412,8 @@ async function handleRscRenderingInner<TEnv>(
     );
     const result = replay.result;
     pprReplayStatus = replay.status;
+    partialCaptureNeeded =
+      "captureNeeded" in replay && replay.captureNeeded === true;
 
     if (!result) {
       // Fall back to full render
@@ -607,6 +614,45 @@ async function handleRscRenderingInner<TEnv>(
     response.headers.set(SHELL_STATUS_HEADER, "MISS");
   }
 
+  if (
+    isPartial &&
+    partialCaptureNeeded &&
+    !reqCtx._dynamic &&
+    response.status === 200
+  ) {
+    const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
+    const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
+    const store = reqCtx._cacheStore;
+    if (pprConfig && activeNonce === undefined && hasShellFamily(store)) {
+      const [ssrModule, streamMode] = await getSSRSetup(
+        ctx,
+        request,
+        env,
+        url,
+        reqCtx._metricsStore,
+      );
+      if (
+        streamMode !== "allReady" &&
+        ssrModule.resumeShellHTML &&
+        ssrModule.captureShellHTML
+      ) {
+        scheduleShellCapture(ctx, request, env, url, reqCtx, ssrModule, {
+          key: buildShellKey(url),
+          buildVersion: ctx.version,
+          ttl: pprConfig.ttl,
+          swr: pprConfig.swr,
+          tags: pprConfig.tags,
+          captureTimeout: pprConfig.captureTimeout,
+          store,
+          debug: INTERNAL_RANGO_DEBUG,
+          maxSnapshotBytes: pprConfig.maxSnapshotBytes,
+          debugSink: resolveShellCaptureDebugSink(ctx.router.debugShellCapture),
+          navigationOnly: true,
+        });
+      }
+    }
+  }
+
   return response;
 }
 
@@ -710,10 +756,11 @@ async function matchPartialWithPprReplay<TEnv>(
   }
 
   if (!snapshot) {
-    return runMatch({
+    const match = await runMatch({
       outcome: "BYPASS",
       reason: bypassReason ?? "no-entry",
     });
+    return { ...match, captureNeeded: bypassReason === undefined };
   }
 
   const previousImplicitCache = reqCtx._shellImplicitCache;

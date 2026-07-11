@@ -915,6 +915,54 @@ function describePprShell(mode: "dev" | "build") {
       expect(second.parallel).toBe(first.parallel);
     });
 
+    test("a cold partial request captures a PPR snapshot for a later prefetch", async ({
+      page,
+      request,
+    }) => {
+      using _ = expectNoPageError(page);
+      const probe = `cold-partial-${mode}`;
+      const targetPath = `/ppr-shell/slot-hole?probe=${probe}`;
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      const firstResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === probe &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
+      await page.evaluate((href) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.dataset.testid = "cold-partial-link";
+        link.textContent = "Cold partial";
+        document.body.append(link);
+      }, f.url(targetPath));
+      await testId(page, "cold-partial-link").click();
+      const firstResponse = await firstResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(firstResponse.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+
+      const partialUrl = firstResponse.url();
+      await expect(async () => {
+        const replay = await request.get(partialUrl, {
+          headers: {
+            "X-RSC-Router-Client-Path": f.url("/"),
+            "X-Rango-Prefetch": "1",
+          },
+        });
+        assertPprReplayStatus(
+          { headers: new Headers(replay.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+      }).toPass({ timeout: 20000 });
+    });
+
     test("partial PPR replay applies a fresh transition({ when }) drop decision", async ({
       page,
     }) => {

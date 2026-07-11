@@ -6,10 +6,15 @@ import {
 } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
+import { assertPprReplayStatus } from "@rangojs/router/testing/e2e";
 
 type BuildAxis = "dev" | "prod";
 type TransportAxis = "js" | "pe" | "request";
-type ExecutionAxis = "full-render" | "action-followup" | "shell-capture";
+type ExecutionAxis =
+  | "full-render"
+  | "partial-render"
+  | "action-followup"
+  | "shell-capture";
 type ScopeAxis =
   | "in-scope-child"
   | "sibling-orphan"
@@ -731,6 +736,55 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(second.path).toBe(first.path);
       expect(second.layout).toBe(first.layout);
       expect(second.parallel).toBe(first.parallel);
+    },
+  },
+  {
+    id: "PPR5",
+    contract:
+      "a cold partial request schedules an eligibility-checked navigation snapshot for later prefetch replay",
+    transport: "request",
+    execution: "partial-render",
+    scope: "in-scope-child",
+    assert: async ({ build, page, request, baseUrl }) => {
+      const targetPath = `/shell-cache/slot-hole?probe=matrix-cold-partial-${build}`;
+      await openJsPage(page, baseUrl("/"));
+
+      const firstResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/shell-cache/slot-hole" &&
+          responseUrl.searchParams.get("probe") ===
+            `matrix-cold-partial-${build}` &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
+      await page.evaluate((href) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.dataset.testid = "matrix-cold-partial-link";
+        link.textContent = "Cold partial";
+        document.body.append(link);
+      }, baseUrl(targetPath));
+      await testId(page, "matrix-cold-partial-link").click();
+      const firstResponse = await firstResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(firstResponse.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+
+      const partialUrl = firstResponse.url();
+      await expect(async () => {
+        const replay = await request.get(partialUrl, {
+          headers: {
+            "X-RSC-Router-Client-Path": baseUrl("/"),
+            "X-Rango-Prefetch": "1",
+          },
+        });
+        assertPprReplayStatus(
+          { headers: new Headers(replay.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+      }).toPass({ timeout: 10000 });
     },
   },
 ];

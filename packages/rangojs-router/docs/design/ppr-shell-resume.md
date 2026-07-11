@@ -40,7 +40,7 @@ replay, fresh loaders, and the **full** Flight render (the browser still needs
 the complete payload for hydration; there is no Flight-side resume — that is a
 React limitation, not ours).
 
-### Navigation reuse is segment replay, not Flight resume
+### Navigation reuse is segment caching, not Flight resume
 
 The capture snapshot contains an implicit document-keyed segment record in
 addition to the HTML prelude. A partial RSC request for the same `ppr` URL may
@@ -48,6 +48,13 @@ seed that record into the ordinary `matchPartial()` cache lookup. The normal
 pipeline still owns client-segment nullification, revalidation, diff selection,
 parallel ordering, handles, and fresh loader resolution; the browser receives an
 ordinary partial payload and has no PPR-specific branch.
+
+A partial request does not require a prior document capture. On a shell-snapshot
+miss, the first request renders normally and schedules the existing shell
+capture with `navigationOnly: true`. Capture, rather than a direct segment write,
+is load-bearing: it records handler-live holes and the other eligibility flags
+that decide whether replay is safe. Later navigations and prefetches consume the
+snapshot when eligible.
 
 Only the snapshot's segment family is visible during navigation replay. Item,
 response, and loader-family pins exist to keep a document HIT byte-identical to
@@ -70,15 +77,23 @@ Navigation uses a passive shell read and replays fresh or stale-within-SWR
 runtime entries. The stale generation is already authorized by the store's hard
 expiry, so the partial request may consume its canonical segment record without
 claiming SWR ownership or recapturing HTML; only a later document request owns
-that refresh. Hard-expired entries fall open. Production can also read a fresh
-local build-manifest entry, while dev stays runtime-only so a click never
-foreground-fetches `/__rsc_shell`. Custom stores opt in with
+that refresh. Hard-expired entries schedule a navigation-only capture. Production
+can also read a fresh local build-manifest entry. Dev never foreground-fetches
+`/__rsc_shell`; it uses the same local background capture. Custom stores opt in with
 `supportsPassiveShellReads: true`; without that declaration replay declines.
+
+The capture still produces a prelude/postponed pair, but marks the entry
+navigation-only. Document serving treats that prelude as a miss because it
+inherited `_rsc_partial`, prefetch headers, and partial-only middleware context;
+a real document request replaces it with a document-safe shell. Partial replay
+uses only the segment snapshot and eligibility flags.
 
 The partial response reports the actual outcome in `x-rango-ppr-replay`:
 `HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. The matching
 `ppr:navigation-replay` metric uses `fresh`, `stale`, or `bypass:<reason>` as its
-description. This is deliberately separate from document-only `x-rango-shell`.
+description. A first cold partial reports `BYPASS; reason=no-entry` while it
+schedules capture; a later request reports `HIT`. This is deliberately
+separate from document-only `x-rango-shell`.
 
 ### Capture-generation invalidation
 

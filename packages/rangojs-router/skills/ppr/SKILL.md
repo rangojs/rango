@@ -175,12 +175,14 @@ On a document GET to a ppr route the router runs:
 point is after the chain, an unauthorized request NEVER sees shell bytes — put
 auth middleware anywhere (global or route DSL) and it guards PPR for free.
 
-### Soft navigation reuses the captured segment shell
+### Soft navigation caches and reuses the handler layer
 
-A usable shell snapshot also accelerates ordinary partial RSC navigations to
-the same URL. The capture records the canonical document segment tree alongside
-the HTML prelude. On a partial request the server replays only that segment
-record through the normal `matchPartial()` pipeline, which then:
+Ordinary partial RSC navigations to a `ppr` URL use the same handler-layer cache
+contract even when no document request has captured an HTML shell yet. When a
+shell snapshot exists, the server replays its canonical document segment record.
+On a cold partial request, normal matching renders the response and schedules a
+background navigation-only shell capture; later navigations and prefetches
+replay its eligible snapshot. In both cases `matchPartial()`:
 
 - preserves client-owned shared layouts by segment id;
 - returns only new or revalidating destination segments;
@@ -191,9 +193,8 @@ This is deliberately invisible to the browser: the response is the same
 `RscPayload` shape as any other partial navigation. Captured item/response values
 and loader-container pins are NOT replayed on this path, so loader reads stay
 live. A route's own `cache()` scope still resolves its normal store, key, TTL,
-SWR, tags, and condition; only the implicit document scope sees the replay
-overlay, and fresh segment writes there stay request-local rather than polluting
-the canonical `doc:` namespace. `transition({ when })` is evaluated from the
+SWR, tags, and condition; only the implicit PPR scope sees this behavior.
+`transition({ when })` is evaluated from the
 matched manifest before route handlers on every PPR match, so it can vary by
 URL/params/action or middleware context without disabling replay; handler-set
 context is unavailable by design. Intercepts, handler-live holes, an active
@@ -204,11 +205,18 @@ an explicit cache tier remains frozen by that tier's normal semantics.
 Fresh and stale-within-SWR runtime shells replay. The stale read is passive: it
 uses `getShell(key, { claimRevalidation: false })`, does not claim SWR ownership,
 and cannot recapture HTML. A later document request owns the background
-recapture; hard-expired entries fall open. Production may also use a fresh local
-build manifest; development stays runtime-only because probing `/__rsc_shell`
-would block navigation on an on-demand capture. Custom `SegmentCacheStore`
+recapture; hard-expired entries schedule a navigation-only capture. Production
+may also use a fresh local build manifest. Development does not probe
+`/__rsc_shell`; it schedules the same local background capture instead. Custom `SegmentCacheStore`
 implementations must set `supportsPassiveShellReads: true` and honor the
 non-claiming read option.
+
+The first cold partial request reports `BYPASS; reason=no-entry` because no
+artifact could supply that response; its successful render schedules
+`scheduleShellCapture` with a navigation-only marker. The next request reports
+`HIT` when the capture produced an eligible snapshot. Document serving refuses
+that entry's prelude because it inherited partial-request middleware state; a
+real document request replaces it with a document-safe shell.
 
 Partial responses expose the actual decision as `x-rango-ppr-replay`:
 `HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. With
