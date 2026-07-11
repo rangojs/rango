@@ -199,6 +199,12 @@ fall open to the ordinary partial path when encountered by the fresh shell
 capture. A transition already replayed from an explicit cache tier remains
 frozen by that tier's normal semantics.
 
+`x-rango-ppr-replay: HIT` confirms that the captured segment record actually
+supplied a partial navigation. Absence means the ordinary partial path or
+another cache tier supplied it. The signal is attached only after the seeded
+record is read, so merely finding a shell snapshot cannot produce a false HIT
+when an explicit `cache()` scope wins.
+
 Only fresh shells replay. Production may use either a runtime entry or the
 local build manifest; development uses runtime entries only, because probing
 `/__rsc_shell` would block the foreground navigation on an on-demand capture.
@@ -294,6 +300,8 @@ Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
 | Helper                                            | Use for                                                      |
 | ------------------------------------------------- | ------------------------------------------------------------ |
 | `assertShellStatus(res, "HIT" \| "MISS")`         | Document Response from a real RSC serve / e2e `page.request` |
+| `assertPprReplayStatus(res, "HIT")`               | Partial Response whose segments came from PPR replay         |
+| `parsePprReplayStatus(res)`                       | Read replay HIT or null without throwing                     |
 | `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
 | `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
 

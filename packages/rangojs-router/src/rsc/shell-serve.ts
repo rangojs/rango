@@ -24,6 +24,9 @@ import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
 /** Debug/status header the browser (and e2e assertions) can read: HIT | MISS. */
 export const SHELL_STATUS_HEADER = "x-rango-shell";
 
+/** Partial-navigation status header set only after captured PPR segments are consumed. */
+export const PPR_REPLAY_STATUS_HEADER = "x-rango-ppr-replay";
+
 /**
  * Default shell ttl (seconds) for `ppr: true` and for a PartialPrerenderProps
  * that omits `ttl`.

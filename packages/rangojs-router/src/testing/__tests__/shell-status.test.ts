@@ -4,8 +4,11 @@ import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import { buildShellKey } from "../../rsc/shell-serve.js";
 import {
+  assertPprReplayStatus,
   assertShellStatus,
+  parsePprReplayStatus,
   parseShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "../shell-status.js";
@@ -78,6 +81,30 @@ describe("assertShellStatus / parseShellStatus", () => {
     expect(parseShellStatus(responseWith(null))).toBeNull();
     expect(parseShellStatus(responseWith("STALE"))).toBeNull();
     expect(parseShellStatus(responseWith("HIT"))).toBe("HIT");
+  });
+});
+
+describe("assertPprReplayStatus / parsePprReplayStatus", () => {
+  function responseWith(status: string | null): Response {
+    if (status === null) return new Response(null);
+    return new Response(null, {
+      headers: { [PPR_REPLAY_STATUS_HEADER]: status },
+    });
+  }
+
+  it("recognizes a confirmed partial-navigation replay HIT", () => {
+    expect(() =>
+      assertPprReplayStatus(responseWith("HIT"), "HIT"),
+    ).not.toThrow();
+    expect(parsePprReplayStatus(responseWith("HIT"))).toBe("HIT");
+  });
+
+  it("treats an absent or unrecognized signal as no replay", () => {
+    expect(parsePprReplayStatus(responseWith(null))).toBeNull();
+    expect(parsePprReplayStatus(responseWith("MISS"))).toBeNull();
+    expect(() => assertPprReplayStatus(responseWith(null), "HIT")).toThrow(
+      /no x-rango-ppr-replay/,
+    );
   });
 });
 
