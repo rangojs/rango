@@ -12,9 +12,9 @@
  *    + `ppr: true` on a response route is a no-op for shell serve/capture. The
  *    production path lives in `rsc/rsc-rendering.ts` + `rsc/shell-capture.ts`.
  *
- * 2. **Smallest HIT signals:** `x-rango-shell` (`HIT` | `MISS`) on document
- *    GETs, and `x-rango-ppr-replay: HIT` only when a partial navigation
- *    actually consumes the captured segment record.
+ * 2. **Smallest status signals:** `x-rango-shell` (`HIT` | `MISS`) on document
+ *    GETs, and `x-rango-ppr-replay` on partial requests to ppr routes. A replay
+ *    HIT is reported only when matching consumes the captured segment record.
  *    Secondary unit signal: `store.getShell(shellCacheKey(url))` after a real
  *    capture flush (background `putShell`). There is no Flight flag for shell HIT.
  *
@@ -33,14 +33,36 @@ import { sortedSearchString } from "../cache/cache-key-utils.js";
 /** Production header name (`rsc/shell-serve.ts` `SHELL_STATUS_HEADER`). */
 export const SHELL_STATUS_HEADER: string = "x-rango-shell";
 
-/** Production header reporting that a partial navigation consumed PPR replay. */
+/** Partial-navigation replay decision header from `rsc/rsc-rendering.ts`. */
 export const PPR_REPLAY_STATUS_HEADER: string = "x-rango-ppr-replay";
 
 /** Values the serve path writes on `x-rango-shell`. */
 export type ShellStatus = "HIT" | "MISS";
 
-/** Values currently written on `x-rango-ppr-replay`. */
-export type PprReplayStatus = "HIT";
+const PPR_REPLAY_BYPASS_REASONS = [
+  "method",
+  "dynamic",
+  "nonce",
+  "store-unavailable",
+  "passive-read-unsupported",
+  "read-error",
+  "no-entry",
+  "invalid-version",
+  "corrupt-entry",
+  "handler-live-holes",
+  "transition-when",
+  "no-segment-snapshot",
+  "snapshot-miss",
+  "stale-build-entry",
+] as const;
+
+/** Bounded reasons a PPR partial request can fall open to ordinary matching. */
+export type PprReplayBypassReason = (typeof PPR_REPLAY_BYPASS_REASONS)[number];
+
+/** Parsed `x-rango-ppr-replay` value. */
+export type PprReplayStatus =
+  | { outcome: "HIT"; freshness: "fresh" | "stale" }
+  | { outcome: "BYPASS"; reason: PprReplayBypassReason };
 
 /** A target carrying response headers (a Response or a `{ headers }` object). */
 export type ShellStatusTarget = Response | { headers: Headers };
@@ -65,6 +87,8 @@ export function shellCacheKey(url: URL | string): string {
 function getHeaders(target: ShellStatusTarget): Headers {
   return target.headers;
 }
+
+const PPR_REPLAY_BYPASS_REASON_SET = new Set<string>(PPR_REPLAY_BYPASS_REASONS);
 
 /**
  * Read `x-rango-shell` from a response. Returns `null` when the header is
@@ -107,30 +131,59 @@ export function assertShellStatus(
   }
 }
 
-/** Read the partial-navigation PPR replay status, or null when replay did not supply segments. */
+/** Parse the dedicated PPR partial-navigation replay decision header. */
 export function parsePprReplayStatus(
   target: ShellStatusTarget,
 ): PprReplayStatus | null {
-  const raw = getHeaders(target).get(PPR_REPLAY_STATUS_HEADER);
-  return raw?.trim() === "HIT" ? "HIT" : null;
+  const raw = getHeaders(target).get(PPR_REPLAY_STATUS_HEADER)?.trim();
+  if (!raw) return null;
+
+  const [outcome, detail, ...extra] = raw.split(";").map((part) => part.trim());
+  if (extra.length > 0 || !detail) return null;
+
+  if (outcome === "HIT") {
+    const freshness = detail.match(/^freshness=(fresh|stale)$/)?.[1];
+    if (freshness === "fresh" || freshness === "stale") {
+      return { outcome, freshness };
+    }
+    return null;
+  }
+
+  if (outcome === "BYPASS") {
+    const reason = detail.match(/^reason=(.+)$/)?.[1] as
+      | PprReplayBypassReason
+      | undefined;
+    if (reason && PPR_REPLAY_BYPASS_REASON_SET.has(reason)) {
+      return { outcome, reason };
+    }
+  }
+
+  return null;
 }
 
-/** Assert that a partial-navigation response consumed the captured PPR segment record. */
+/** Assert a partial response's PPR replay outcome and freshness/reason. */
 export function assertPprReplayStatus(
   target: ShellStatusTarget,
   expected: PprReplayStatus,
 ): void {
-  const headerValue = getHeaders(target).get(PPR_REPLAY_STATUS_HEADER);
-  if (headerValue === null) {
+  const raw = getHeaders(target).get(PPR_REPLAY_STATUS_HEADER);
+  if (raw === null) {
     throw new Error(
       `assertPprReplayStatus: response has no ${PPR_REPLAY_STATUS_HEADER} header. ` +
-        `The header is only set when a partial navigation consumes a captured PPR segment record.`,
+        "The header is set on partial requests to ppr-declared routes.",
     );
   }
-  const actual = headerValue.trim();
-  if (actual !== expected) {
+
+  const actual = parsePprReplayStatus(target);
+  if (!actual) {
     throw new Error(
-      `assertPprReplayStatus: expected "${expected}" but got "${actual}".`,
+      `assertPprReplayStatus: unrecognized ${PPR_REPLAY_STATUS_HEADER} value "${raw}".`,
+    );
+  }
+
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `assertPprReplayStatus: expected ${JSON.stringify(expected)} but got ${JSON.stringify(actual)}.`,
     );
   }
 }

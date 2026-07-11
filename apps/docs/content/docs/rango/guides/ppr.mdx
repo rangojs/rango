@@ -129,7 +129,15 @@ On a document GET to a `ppr` route the router runs: match, then the **whole midd
 - **HIT** — the stored prelude bytes flush first; segment resolution, the fresh Flight render, and the resume of just the holes run behind them inside the response stream.
 - **MISS** — a plain live serve, plus a background capture (stampede-guarded, with exponential backoff). Middleware is not re-run during capture; the capture inherits the triggering request's post-middleware context.
 
-The observability header is `x-rango-shell: HIT | MISS`, on document responses only. Flight is explicit opt-in with `Accept: text/x-component`; a bare document GET receives HTML. Keeping `Accept: text/html` in a diagnostic command makes the intent explicit:
+The document observability header is `x-rango-shell: HIT | MISS`. Soft
+navigations use the captured canonical segment snapshot too: fresh and
+stale-within-SWR runtime snapshots replay baked handler output and handles while
+loaders stay live. A stale partial read is passive — it does not claim SWR or
+recapture HTML; a later document request owns the refresh, and hard expiry falls
+open. Partial responses report `x-rango-ppr-replay: HIT; freshness=fresh|stale`
+or `BYPASS; reason=<bounded-token>`.
+
+Flight is explicit opt-in with `Accept: text/x-component`; a bare document GET receives HTML. Keeping `Accept: text/html` in a diagnostic command makes the intent explicit:
 
 ```bash
 curl -s -D - -o /dev/null -H "Accept: text/html" https://app.example.com/products/1 | grep -i x-rango-shell
@@ -142,7 +150,7 @@ is produced at build time, so the first production request can already be a
 `MISS` plus runtime capture when the bounded foreground wait expires. A declared
 route that never flips has an eligibility problem — look for the once-per-key
 warning. Some requests always stay on the normal render path: non-GET,
-RSC/partial/action/loader fetches, per-request CSP nonce,
+action/loader fetches, per-request CSP nonce,
 `streamMode: "allReady"`, redirects, 404s, error renders, and stores without the
 shell family. For bots, `ssr: { resolveStreaming }` returning `"allReady"`
 bypasses PPR entirely and serves one complete buffered document. Stored shells

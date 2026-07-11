@@ -1053,7 +1053,7 @@ function runShellCacheSpec(f: Fixture): void {
       await waitForNavigation(page, /\/shell-cache\/exec-matrix$/);
       assertPprReplayStatus(
         { headers: new Headers(partialResponse.headers()) },
-        "HIT",
+        { outcome: "HIT", freshness: "fresh" },
       );
       await expect(testId(page, "shell-exec-chrome")).toHaveText(
         "Exec matrix static chrome",
@@ -1094,6 +1094,128 @@ function runShellCacheSpec(f: Fixture): void {
     await expect(testId(page, "shell-exec-chrome")).toHaveText(
       "Exec matrix static chrome",
     );
+  });
+
+  test("stale SWR navigation replays the captured handler promise, top-level handles, and Meta", async ({
+    page,
+  }) => {
+    const probe = crypto.randomUUID();
+    const one = f.url(`/shell-cache/stale-replay/1?probe=${probe}`);
+    const two = f.url(`/shell-cache/stale-replay/2?probe=${probe}`);
+    const waitForPartialResponse = (pathname: string) =>
+      page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === pathname && url.searchParams.has("_rsc_partial")
+        );
+      });
+    await warmToHit(page.request, one);
+
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    // Enter /2 through a real partial request without warming it. This pins the
+    // bounded bypass signal and gives the /2 -> /1 fresh replay control.
+    await page.evaluate((href) => {
+      const link = document.createElement("a");
+      link.href = href;
+      link.dataset.testid = "shell-stale-replay-entry";
+      link.textContent = "Enter stale replay fixture";
+      document.body.append(link);
+    }, two);
+    const bypassResponsePromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/2",
+    );
+    await testId(page, "shell-stale-replay-entry").click();
+    const bypassResponse = await bypassResponsePromise;
+    assertPprReplayStatus(
+      { headers: new Headers(bypassResponse.headers()) },
+      { outcome: "BYPASS", reason: "no-entry" },
+    );
+    await expect(testId(page, "shell-stale-replay-data")).toContainText(
+      /^shell-stale-2-execution-\d+$/,
+    );
+
+    const freshResponsePromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/1",
+    );
+    await testId(page, "shell-stale-replay-1").click();
+    const freshResponse = await freshResponsePromise;
+    assertPprReplayStatus(
+      { headers: new Headers(freshResponse.headers()) },
+      { outcome: "HIT", freshness: "fresh" },
+    );
+    const capturedData = await testId(
+      page,
+      "shell-stale-replay-data",
+    ).textContent();
+    const capturedHandles = await testId(
+      page,
+      "shell-stale-replay-handles",
+    ).textContent();
+    expect(capturedData).toMatch(/^shell-stale-1-execution-\d+$/);
+    expect(JSON.parse(capturedHandles!).flat(Infinity)).toEqual([
+      { yo: "yo-1" },
+      { asd: capturedData },
+    ]);
+    await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
+
+    const returnToTwoPromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/2",
+    );
+    await testId(page, "shell-stale-replay-2").click();
+    const returnToTwo = await returnToTwoPromise;
+    assertPprReplayStatus(
+      { headers: new Headers(returnToTwo.headers()) },
+      { outcome: "BYPASS", reason: "no-entry" },
+    );
+    await expect(testId(page, "shell-stale-replay-data")).toContainText(
+      /^shell-stale-2-execution-\d+$/,
+    );
+
+    const aged = await page.request.get(
+      f.url(
+        `/shell-cache/__corrupt?target=${encodeURIComponent(one)}&mode=stale`,
+      ),
+    );
+    expect(await aged.json()).toEqual({
+      ok: true,
+      found: true,
+      segmentKeys: [
+        `doc:${new URL(one).host}/shell-cache/stale-replay/1:id=1?probe=${probe}`,
+      ],
+    });
+    await page.waitForTimeout(1_200);
+
+    // Match the production race: a stale document HIT starts background
+    // recapture, then the browser navigates to the same shell before that
+    // handler promise settles. The partial response must consume the stale
+    // generation rather than rerun the handler or wait for recapture.
+    const staleDocument = await page.request.get(one, {
+      headers: HTML_HEADERS,
+    });
+    assertShellStatus({ headers: new Headers(staleDocument.headers()) }, "HIT");
+
+    const staleResponsePromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/1",
+    );
+    const startedAt = Date.now();
+    await testId(page, "shell-stale-replay-1").click();
+    const staleResponse = await staleResponsePromise;
+    assertPprReplayStatus(
+      { headers: new Headers(staleResponse.headers()) },
+      { outcome: "HIT", freshness: "stale" },
+    );
+    await expect(testId(page, "shell-stale-replay-data")).toHaveText(
+      capturedData!,
+    );
+    await expect(testId(page, "shell-stale-replay-handles")).toHaveText(
+      capturedHandles!,
+    );
+    await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
+    expect(Date.now() - startedAt).toBeLessThan(1_200);
   });
 
   // Issue #702: fizz OUTLINES any Suspense boundary over ~500 bytes (fallback

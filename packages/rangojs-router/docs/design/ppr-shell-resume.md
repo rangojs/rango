@@ -59,19 +59,26 @@ record decline replay and run the full partial path. Conditional transition
 predicates do not: PPR hoists them before route handlers and evaluates them from
 the matched manifest on every runtime-cache, prerender, and shell replay. Their
 request-specific result is projected only onto the outgoing payload, never the
-reusable segment record.
+reusable segment record. A transition already frozen by an explicit
+`cache()`/prerender hit keeps that cache tier's normal no-re-evaluation semantics.
 The replay store belongs only to that implicit scope: a consumer `cache()` scope
 continues to use its own store, key, TTL/SWR, tags, and condition. Segment misses,
 writes, and deletes stay inside the request overlay, so a partial pipeline can
 never write its output into the canonical document namespace.
 
-Navigation uses a passive shell read and only replays a fresh entry: production
-can read runtime or local build-manifest data, while dev stays runtime-only so a
-click never foreground-fetches `/__rsc_shell` and waits on capture. A stale entry
-falls open without claiming SWR revalidation ownership, because only a document
-request can recapture the HTML shell. Custom stores opt in with
-`supportsPassiveShellReads: true`; without that declaration replay declines
-rather than risk claiming a lock it cannot complete.
+Navigation uses a passive shell read and replays fresh or stale-within-SWR
+runtime entries. The stale generation is already authorized by the store's hard
+expiry, so the partial request may consume its canonical segment record without
+claiming SWR ownership or recapturing HTML; only a later document request owns
+that refresh. Hard-expired entries fall open. Production can also read a fresh
+local build-manifest entry, while dev stays runtime-only so a click never
+foreground-fetches `/__rsc_shell`. Custom stores opt in with
+`supportsPassiveShellReads: true`; without that declaration replay declines.
+
+The partial response reports the actual outcome in `x-rango-ppr-replay`:
+`HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. The matching
+`ppr:navigation-replay` metric uses `fresh`, `stale`, or `bypass:<reason>` as its
+description. This is deliberately separate from document-only `x-rango-shell`.
 
 ### Capture-generation invalidation
 

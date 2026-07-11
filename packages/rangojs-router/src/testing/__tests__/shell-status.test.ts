@@ -92,19 +92,52 @@ describe("assertPprReplayStatus / parsePprReplayStatus", () => {
     });
   }
 
-  it("recognizes a confirmed partial-navigation replay HIT", () => {
-    expect(() =>
-      assertPprReplayStatus(responseWith("HIT"), "HIT"),
-    ).not.toThrow();
-    expect(parsePprReplayStatus(responseWith("HIT"))).toBe("HIT");
+  it.each([
+    ["HIT; freshness=fresh", { outcome: "HIT", freshness: "fresh" } as const],
+    ["HIT; freshness=stale", { outcome: "HIT", freshness: "stale" } as const],
+    [
+      "BYPASS; reason=no-entry",
+      { outcome: "BYPASS", reason: "no-entry" } as const,
+    ],
+    [
+      "BYPASS; reason=transition-when",
+      { outcome: "BYPASS", reason: "transition-when" } as const,
+    ],
+  ])("parses and asserts %s", (raw, expected) => {
+    const response = responseWith(raw);
+    expect(parsePprReplayStatus(response)).toEqual(expected);
+    expect(() => assertPprReplayStatus(response, expected)).not.toThrow();
   });
 
-  it("treats an absent or unrecognized signal as no replay", () => {
-    expect(parsePprReplayStatus(responseWith(null))).toBeNull();
-    expect(parsePprReplayStatus(responseWith("MISS"))).toBeNull();
-    expect(() => assertPprReplayStatus(responseWith(null), "HIT")).toThrow(
-      /no x-rango-ppr-replay/,
-    );
+  it.each([
+    null,
+    "HIT",
+    "HIT; freshness=expired",
+    "BYPASS; reason=unbounded-detail",
+    "BYPASS; reason=no-entry; extra=true",
+  ])("rejects absent or malformed value %s", (raw) => {
+    expect(parsePprReplayStatus(responseWith(raw))).toBeNull();
+  });
+
+  it("throws for missing, malformed, and mismatched statuses", () => {
+    expect(() =>
+      assertPprReplayStatus(responseWith(null), {
+        outcome: "HIT",
+        freshness: "fresh",
+      }),
+    ).toThrow(/no x-rango-ppr-replay/);
+    expect(() =>
+      assertPprReplayStatus(responseWith("BYPASS; reason=unknown"), {
+        outcome: "BYPASS",
+        reason: "no-entry",
+      }),
+    ).toThrow(/unrecognized/);
+    expect(() =>
+      assertPprReplayStatus(responseWith("HIT; freshness=stale"), {
+        outcome: "HIT",
+        freshness: "fresh",
+      }),
+    ).toThrow(/expected .*fresh.* got .*stale/);
   });
 });
 

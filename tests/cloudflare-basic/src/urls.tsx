@@ -5,8 +5,10 @@ import {
   Meta,
   nonce,
   cookies,
+  getRequestContext,
   redirect,
 } from "@rangojs/router";
+import { CFCacheStore } from "@rangojs/router/cache";
 import { Suspense } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
@@ -18,6 +20,7 @@ import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
+import type { AppBindings } from "./env.js";
 
 declare global {
   var __loadPrerenderManifestModule:
@@ -44,6 +47,7 @@ import {
   PprExecLayout,
   PprExecBadgeSlot,
   PprExecPage,
+  PprStaleReplayPage,
   PprInlineActionPage,
   PprPrerenderedArticle,
   PprPrerenderedEvictArticle,
@@ -449,6 +453,37 @@ export const urlpatterns = urls(
     path("/files/*", FilesWildcardPage, { name: "filesWildcard" }),
     path("/*", CatchAllPage, { name: "catchAll" }),
 
+    path.json(
+      "/__test/age-ppr-shell",
+      async (
+        ctx,
+      ): Promise<{
+        ok: boolean;
+        found: boolean;
+        segmentKeys?: string[];
+      }> => {
+        const target = ctx.searchParams.get("target") ?? "";
+        const targetUrl = new URL(target, ctx.url);
+        const key = `${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
+        const requestContext = getRequestContext<AppBindings>();
+        const store = new CFCacheStore({
+          ctx: requestContext.executionContext!,
+          kv: requestContext.env.KV,
+        });
+        const hit = await store.getShell(key);
+        if (!hit) return { ok: false, found: false };
+        await store.putShell(key, hit.entry, 1, 120);
+        return {
+          ok: true,
+          found: true,
+          segmentKeys: hit.entry.snapshot
+            ?.filter((record) => record.family === "segment")
+            .map((record) => record.key),
+        };
+      },
+      { name: "testAgePprShell" },
+    ),
+
     layout(<RootLayout />, () => [
       // Global navigation layout
       layout(<NavLayout />, () => [
@@ -557,6 +592,10 @@ export const urlpatterns = urls(
             ],
           ),
         ]),
+        path("/ppr-stale-replay/:id", PprStaleReplayPage, {
+          name: "pprStaleReplay",
+          ppr: { ttl: 4, swr: 120 },
+        }),
         // Refusal semantics under a too-short budget (issue #715 negative):
         // ~3.5s material against an explicit 1500ms budget — the capture
         // refuses (stays MISS, no partial bake). Short tempo keeps the
