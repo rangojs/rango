@@ -116,6 +116,27 @@ export const ShellHandles = createHandle<ShellHandleItem, ShellHandleItem[]>(
   (values) => values.flat(),
 );
 
+export interface ShellStaleReplayHandleValue {
+  yo?: string;
+  asd?: string;
+}
+
+export const ShellStaleReplayHandle =
+  createHandle<ShellStaleReplayHandleValue>();
+
+let shellStaleReplayExecutions = 0;
+
+export function makeShellStaleReplayData(id: string): Promise<string> {
+  shellStaleReplayExecutions += 1;
+  const execution = shellStaleReplayExecutions;
+  return new Promise((resolve) =>
+    setTimeout(
+      () => resolve(`shell-stale-${id}-execution-${execution}`),
+      1_500,
+    ),
+  );
+}
+
 const SHELL_HANDLE_BAKED_DELAY_MS = 150;
 const SHELL_HANDLE_NESTED_DELAY_MS = 250;
 
@@ -288,6 +309,7 @@ const SHELL_EXEC_DELAY_MS = 150;
 
 export interface ShellExecCounters {
   middleware: number;
+  transitionWhen: number;
   layout: number;
   parallel: number;
   path: number;
@@ -296,6 +318,7 @@ export interface ShellExecCounters {
 
 export const shellExecCounters: ShellExecCounters = {
   middleware: 0,
+  transitionWhen: 0,
   layout: 0,
   parallel: 0,
   path: 0,

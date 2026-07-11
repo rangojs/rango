@@ -23,10 +23,9 @@ import { getRequestContext } from "../../server/request-context.js";
  * gate, which also avoids needless object allocation and payload growth.
  *
  * `when`: a server-only predicate. It is STRIPPED from the returned config (a
- * function cannot cross Flight or the segment cache) and recorded on the request
- * context keyed by `segmentId`, so rsc-rendering can evaluate it post-handler —
- * outside any cache scope — and drop this segment's transition when it returns
- * false. Used by both the fresh and revalidation resolution paths.
+ * function cannot cross Flight or the segment cache). PPR routes evaluate it
+ * from the manifest before the pipeline; other routes record it here for the
+ * existing post-handler gate. Used by both fresh and revalidation resolution.
  */
 export function applyViewTransitionDefault(
   transition: EntryData["transition"],
@@ -39,7 +38,12 @@ export function applyViewTransitionDefault(
     if (segmentId !== undefined) {
       try {
         const ctx = getRequestContext();
-        (ctx._transitionWhen ??= []).push({ id: segmentId, when: result.when });
+        if (!ctx._pprTransitionDecisions?.has(segmentId)) {
+          (ctx._transitionWhen ??= []).push({
+            id: segmentId,
+            when: result.when,
+          });
+        }
       } catch {
         // No active request context (e.g. a unit test calling this util
         // directly). Skip collection; the strip below still applies so the

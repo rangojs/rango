@@ -4,8 +4,11 @@ import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import { buildShellKey } from "../../rsc/shell-serve.js";
 import {
+  assertPprReplayStatus,
   assertShellStatus,
+  parsePprReplayStatus,
   parseShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "../shell-status.js";
@@ -78,6 +81,63 @@ describe("assertShellStatus / parseShellStatus", () => {
     expect(parseShellStatus(responseWith(null))).toBeNull();
     expect(parseShellStatus(responseWith("STALE"))).toBeNull();
     expect(parseShellStatus(responseWith("HIT"))).toBe("HIT");
+  });
+});
+
+describe("assertPprReplayStatus / parsePprReplayStatus", () => {
+  function responseWith(status: string | null): Response {
+    if (status === null) return new Response(null);
+    return new Response(null, {
+      headers: { [PPR_REPLAY_STATUS_HEADER]: status },
+    });
+  }
+
+  it.each([
+    ["HIT; freshness=fresh", { outcome: "HIT", freshness: "fresh" } as const],
+    ["HIT; freshness=stale", { outcome: "HIT", freshness: "stale" } as const],
+    [
+      "BYPASS; reason=no-entry",
+      { outcome: "BYPASS", reason: "no-entry" } as const,
+    ],
+    [
+      "BYPASS; reason=transition-when",
+      { outcome: "BYPASS", reason: "transition-when" } as const,
+    ],
+  ])("parses and asserts %s", (raw, expected) => {
+    const response = responseWith(raw);
+    expect(parsePprReplayStatus(response)).toEqual(expected);
+    expect(() => assertPprReplayStatus(response, expected)).not.toThrow();
+  });
+
+  it.each([
+    null,
+    "HIT",
+    "HIT; freshness=expired",
+    "BYPASS; reason=unbounded-detail",
+    "BYPASS; reason=no-entry; extra=true",
+  ])("rejects absent or malformed value %s", (raw) => {
+    expect(parsePprReplayStatus(responseWith(raw))).toBeNull();
+  });
+
+  it("throws for missing, malformed, and mismatched statuses", () => {
+    expect(() =>
+      assertPprReplayStatus(responseWith(null), {
+        outcome: "HIT",
+        freshness: "fresh",
+      }),
+    ).toThrow(/no x-rango-ppr-replay/);
+    expect(() =>
+      assertPprReplayStatus(responseWith("BYPASS; reason=unknown"), {
+        outcome: "BYPASS",
+        reason: "no-entry",
+      }),
+    ).toThrow(/unrecognized/);
+    expect(() =>
+      assertPprReplayStatus(responseWith("HIT; freshness=stale"), {
+        outcome: "HIT",
+        freshness: "fresh",
+      }),
+    ).toThrow(/expected .*fresh.* got .*stale/);
   });
 });
 

@@ -277,10 +277,15 @@ export async function handleProgressiveEnhancement<TEnv>(
     // JS/PE parity: this is an action's revalidation render, so mark it BEFORE
     // matching — a stale `foregroundOnAction` cache entry must re-execute in the
     // foreground during the re-render, exactly as the JS path's
-    // revalidateAfterAction does. The transition({ when }) gate fields below are
-    // set post-match (the gate reads them after rendering); foregroundOnAction
-    // reads _inActionRevalidation during the match, so it must be set here.
-    getRequestContext()._inActionRevalidation = true;
+    // revalidateAfterAction does. PPR transition({ when }) runs during match,
+    // while foregroundOnAction reads _inActionRevalidation there too, so all
+    // action metadata must be available before matching.
+    const peReqCtx = getRequestContext();
+    peReqCtx._inActionRevalidation = true;
+    peReqCtx._gateActionId = directActionId ?? undefined;
+    peReqCtx._gateActionUrl = new URL(url);
+    peReqCtx._gateActionResult = actionResult;
+    peReqCtx._gateFormData = formData;
 
     const match = await ctx.router.match(renderRequest, { env });
 
@@ -290,16 +295,6 @@ export async function handleProgressiveEnhancement<TEnv>(
         headers: { Location: match.redirect },
       });
     }
-
-    // Expose the no-JS action to the transition({ when }) gate. currentUrl/Params
-    // are absent on this full-render path (no navigation snapshot); useActionState
-    // ids are block-scoped, so only a direct action id is available here.
-    // actionUrl is the page the action was submitted from (this request's url).
-    const peReqCtx = getRequestContext();
-    peReqCtx._gateActionId = directActionId ?? undefined;
-    peReqCtx._gateActionUrl = new URL(url);
-    peReqCtx._gateActionResult = actionResult;
-    peReqCtx._gateFormData = formData;
 
     const payload: RscPayload = {
       metadata: {

@@ -1,10 +1,9 @@
 /**
  * runTransitionWhen — unit-test a transition({ when }) predicate in isolation.
  *
- * Runs the SAME two server functions the router uses — applyViewTransitionDefault
- * (strips the `when` function from the serialized config and records the
- * predicate on the request context) and gateTransitions (assembles the
- * TransitionWhenContext and evaluates the predicate post-handler). So the
+ * Runs the SAME server functions the router uses — the PPR pre-handler evaluator
+ * when `ppr: true`, applyViewTransitionDefault (which strips the server-only
+ * function), and gateTransitions. So the
  * predicate sees exactly the navigation/action metadata it would at runtime
  * (currentUrl/currentParams/fromRouteName, nextUrl/nextParams/toRouteName,
  * actionId/actionUrl/actionResult/formData/method, get/env), and `kept` reflects
@@ -33,6 +32,9 @@ import type {
   TransitionWhenContext,
 } from "../types/segments.js";
 import type { OnErrorCallback } from "../types/error-types.js";
+import type { EntryData } from "../server/context.js";
+import { evaluatePprTransitionWhen } from "../router/transition-when.js";
+import { invokeOnError } from "../router/error-handling.js";
 
 const toURL = (v: string | URL, base: URL): URL =>
   typeof v === "string" ? new URL(v, base.origin) : v;
@@ -53,7 +55,7 @@ export interface RunTransitionWhenOptions<TEnv = any> {
   toRouteName?: string;
   /** Environment bindings surfaced as `env` (and `ctx.env`). */
   env?: TEnv;
-  /** Variables a handler/middleware would have set this request, readable via the predicate's `get()`. */
+  /** Variables readable via the predicate's `get()`. With `ppr`, these model pre-handler middleware/input state. */
   vars?: VarsInit;
   /** Navigation SOURCE url (`currentUrl`): a URL or path string. */
   currentUrl?: string | URL;
@@ -71,6 +73,8 @@ export interface RunTransitionWhenOptions<TEnv = any> {
   formData?: FormData;
   /** Receives an error thrown by the predicate (the gate reports to `router.onError`, phase `"rendering"`). */
   onError?: OnErrorCallback;
+  /** Model a route with `ppr`, where the predicate runs before route handlers and cache lookup. */
+  ppr?: boolean;
 }
 
 /**
@@ -138,8 +142,37 @@ export function runTransitionWhen<TEnv = any>(
     : config;
 
   return runWithRequestContext(reqCtx, () => {
-    // The real resolution-time collection + post-handler gate, so the predicate
-    // sees the production-assembled TransitionWhenContext.
+    if (opts.ppr) {
+      const entry = {
+        type: "route",
+        id: "tx-when-entry",
+        shortCode: "tx-when-seg",
+        parent: null,
+        transition: configForGate,
+        layout: [],
+        parallel: {},
+      } as unknown as EntryData;
+      evaluatePprTransitionWhen(
+        [entry],
+        reqCtx,
+        { params: reqCtx.params, routeName: opts.toRouteName },
+        (error, segmentId) =>
+          invokeOnError(
+            opts.onError,
+            error,
+            "rendering",
+            {
+              request: reqCtx.request,
+              url: reqCtx.url,
+              params: reqCtx.params,
+              segmentId,
+            },
+            "RSC",
+          ),
+      );
+    }
+    // Ordinary predicates are collected here and evaluated by the gate. PPR
+    // predicates keep the decision already evaluated before this step.
     const serialized = applyViewTransitionDefault(
       configForGate,
       undefined,
@@ -153,12 +186,12 @@ export function runTransitionWhen<TEnv = any>(
       component: null,
       transition: serialized,
     } as ResolvedSegment;
-    gateTransitions(
+    const [gatedSegment] = gateTransitions(
       [segment],
       reqCtx as Parameters<typeof gateTransitions>[1],
       opts.onError,
     );
-    const kept = segment.transition !== undefined;
+    const kept = gatedSegment.transition !== undefined;
     return { kept, dropped: !kept, whenContext, ctx: reqCtx };
   });
 }

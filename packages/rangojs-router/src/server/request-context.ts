@@ -208,6 +208,9 @@ export interface RequestContext<
    */
   _transitionWhen?: Array<{ id: string; when: TransitionWhenFn }>;
 
+  /** @internal PPR transition decisions evaluated before cache lookup/handlers. */
+  _pprTransitionDecisions?: Map<string, boolean>;
+
   /** @internal Cache store for segment caching (optional, used by CacheScope) */
   _cacheStore?: SegmentCacheStore;
 
@@ -276,6 +279,8 @@ export interface RequestContext<
      * segment record even when the triggering request is partial.
      */
     keyPrefix?: "doc";
+    /** @internal Called only after the implicit cache hit decodes successfully. */
+    onHit?: () => void;
   };
 
   /**
@@ -650,6 +655,7 @@ export type PublicRequestContext<
   | "deleteCookie"
   | "_handleStore"
   | "_transitionWhen"
+  | "_pprTransitionDecisions"
   | "_cacheStore"
   | "_shellCaptureRun"
   | "_shellImplicitCache"

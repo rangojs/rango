@@ -14,11 +14,12 @@ export type ViewTransitionClass = Record<string, string> | string;
  *
  * It mirrors the {@link ShouldRevalidateFn} args a `revalidate()` predicate
  * gets — the same navigation/action metadata — so the two read the same shape,
- * plus `get`/`env` for post-handler reads. There is no full `HandlerContext`
+ * plus `get`/`env` for request-context reads. There is no full `HandlerContext`
  * here: the gate runs at the RSC-payload layer with the request context, not a
  * handler context, so handler-only sugar (`search`/`build`/`dev`/`headers`) is
- * absent by design. `get` is the way to read what the handler/middleware set
- * via `ctx.set(...)` this request.
+ * absent by design. On ordinary routes, `get` can read what handlers or
+ * middleware set via `ctx.set(...)`. On `ppr` routes the gate runs before route
+ * handlers, so only middleware-established values are available.
  *
  * Field availability (all source fields are optional — never fabricated):
  * - `currentUrl` / `currentParams` / `fromRouteName` (the navigation SOURCE) are
@@ -43,11 +44,12 @@ export type ViewTransitionClass = Record<string, string> | string;
  * time, so `currentUrl`/`currentParams`/`fromRouteName` reflect the page the
  * prefetch fired from, NOT necessarily the page the user actually navigates from
  * — the decision is baked into the stored Flight payload and replayed verbatim.
- * A `cache()`/prerender hit replays the stored transition with the predicate NOT
- * re-run at all. So a source-sensitive predicate can be frozen to prefetch-time
- * or store-time state. This is accepted (~99% of navigations match), but if your
- * gate must reflect the exact click-time source, source-scope the prefetch
- * (`<Link prefetchKey=":source">`) and do not `cache()` that segment.
+ * A non-PPR `cache()`/prerender hit replays the stored transition with the
+ * predicate NOT re-run. A `ppr` route instead evaluates the predicate before
+ * handlers on every match, including cache, prerender, and PPR replay. Prefetch
+ * still freezes the server decision into its Flight payload. If the gate must
+ * reflect the exact click-time source, source-scope the prefetch
+ * (`<Link prefetchKey=":source">`).
  */
 export type TransitionWhenContext<
   TParams = Record<string, string>,
@@ -74,17 +76,19 @@ export type TransitionWhenContext<
 /**
  * Predicate that gates whether a transition() applies for the current request.
  *
- * Evaluated server-side AFTER the route's handler runs (so `get(...)` can read
- * handler/middleware-set state) and outside any cache scope. Return false to
- * drop this segment's transition for the request; return true to apply it. The
+ * Evaluated server-side outside any cache scope. On ordinary routes it runs
+ * AFTER the route's handler, so `get(...)` can read handler/middleware state. A
+ * route with `ppr` automatically hoists it before route handlers and reevaluates
+ * it on every cache/prerender/PPR replay; there `get(...)` can read middleware
+ * state, but not values set by route handlers. Return false to drop this
+ * segment's transition for the request; return true to apply it. The
  * context ({@link TransitionWhenContext}) carries the same navigation/action
  * metadata a `revalidate()` predicate sees plus `get`/`env`. If it throws, the
  * error is reported to the router's onError (phase "rendering") and the
  * transition is dropped (the navigation does not hold).
  *
  * Distinct from intercept()'s `when` config selector, which runs at MATCH time
- * over `{ from, to, params, segments, … }`; a transition `when` runs
- * post-handler over the resolved payload.
+ * over `{ from, to, params, segments, … }`.
  *
  * Scope: dropping a transition removes only THIS segment's contribution to the
  * navigation's hold. The startTransition hold is navigation-wide — it engages if
@@ -92,10 +96,10 @@ export type TransitionWhenContext<
  * navigation stream its loading fallback only when no other matched segment
  * keeps a transition (the common case: a single transition on the route).
  *
- * Evaluated on every fresh (cache-miss) resolution; it is NOT re-run when a
- * segment is replayed from the runtime cache or a build-time prerender, and a
- * prefetched navigation freezes it to prefetch-time state — see the caveat on
- * {@link TransitionWhenContext}.
+ * On non-PPR routes it runs only during fresh resolution. On PPR routes it runs
+ * before handlers for every match, including runtime cache, build-time
+ * prerender, and PPR segment replay. A prefetched navigation still freezes the
+ * result to prefetch time; see {@link TransitionWhenContext}.
  */
 export type TransitionWhenFn = (ctx: TransitionWhenContext) => boolean;
 
@@ -129,11 +133,12 @@ export interface TransitionConfig {
   viewTransition?: "auto" | false;
   /**
    * Optional server-side predicate that gates this transition per request. When
-   * present and it returns false (evaluated post-handler), the router drops this
-   * segment's transition for the request, so the navigation streams its loading
-   * fallback instead of holding. The predicate is server-only and never
-   * serialized to the client; only its resolved effect (transition kept or
-   * dropped) crosses. See {@link TransitionWhenFn}.
+   * present and it returns false, the router drops this segment's transition for
+   * the request, so the navigation streams its loading fallback instead of
+   * holding. PPR routes evaluate it before route handlers and on every replay;
+   * other routes evaluate it after handlers on fresh resolution. The predicate
+   * is server-only and never serialized to the client; only its resolved effect
+   * crosses. See {@link TransitionWhenFn}.
    */
   when?: TransitionWhenFn;
 }

@@ -148,10 +148,14 @@ global middleware
 - **Serve-time guarding is guaranteed on every serve.** Every serve — MISS and
   HIT — runs middleware and fresh loaders. Eligible shell snapshots replay the
   captured handler segments instead of re-running those handlers; handler-live
-  holes and conditional transition gates decline that fast path. Pinned by
-  the `[PPR2]` semantic matrix row.
-- **Partial navigations reuse the same captured segment shell without a client
-  protocol.** A normal-route partial request may seed the snapshot's canonical
+  holes decline that fast path. A PPR route's `transition({ when })` predicates
+  run after middleware but before cache lookup and route handlers on every match,
+  then project the request-specific decision onto the outgoing payload without
+  mutating the reusable segment record. Pinned by the `[PPR2]` and `[PPR4]`
+  semantic matrix rows.
+- **Partial navigations reuse the same captured segment shell without changing
+  the Flight payload or client runtime.** A normal-route partial request may seed
+  the snapshot's canonical
   `doc:` segment record into `matchPartial()`. Existing client segment ids,
   revalidation rules, and diff collection decide what is returned; loaders run
   fresh, and captured item/response/loader pins are excluded. The overlay is the
@@ -159,11 +163,20 @@ global middleware
   `cache()` scopes retain their freshness semantics and request effects stay on
   the original render-barrier context. Overlay segment misses and mutations are
   isolated from the real `doc:` namespace. Intercepts remain source-resolved,
-  while handler-live holes and `transition({ when })` re-run the ordinary handler
-  path. Production may use the local build manifest; dev never blocks navigation
-  on `/__rsc_shell`. The browser and prefetch lock see the same partial payload as
-  before. Pinned in both apps by the `partial navigation replays the PPR segment
-shell` dev+production e2e.
+  while handler-live holes re-run the ordinary handler path. Conditional
+  transition predicates are evaluated from the matched manifest before replay,
+  so they stay request-specific without re-running handlers. Production may use
+  the local build manifest; dev never blocks navigation on `/__rsc_shell`. Fresh
+  and stale-within-SWR runtime generations replay via a non-claiming passive
+  read; partial requests never schedule shell recapture, and hard expiry still
+  falls open. `x-rango-ppr-replay` distinguishes an actually consumed fresh/stale
+  record from a bounded bypass reason. HIT is reported only after the seeded
+  segment decodes and supplies the match; an explicit route `cache()` scope that
+  wins does not produce a false HIT. The browser and prefetch lock see the same
+  partial payload as before. Pinned by `[PPR4]` and in both apps by the fresh
+  replay, fresh transition-decision, and `stale SWR navigation replays the
+captured handler promise, top-level handles, and Meta` dev+production e2e
+  cases.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
   `invalidated` when a tag marker rejects a capture that started before the
   invalidation. The capture emits a `refused` event with

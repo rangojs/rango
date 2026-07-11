@@ -1,12 +1,19 @@
 import type { ReactNode } from "react";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { sanitizeError } from "../errors";
-import type { ErrorInfo, ErrorPhase, MatchResult } from "../types";
 import type {
-  EntryData,
-  InterceptEntry,
-  InterceptSelectorContext,
-} from "../server/context";
+  ErrorBoundaryHandler,
+  ErrorInfo,
+  ErrorPhase,
+  MatchResult,
+  NotFoundBoundaryHandler,
+} from "../types";
+import {
+  isPprEntry,
+  type EntryData,
+  type InterceptEntry,
+  type InterceptSelectorContext,
+} from "../server/context.js";
 import type { MatchApiDeps } from "./types.js";
 import type { RouterContext } from "./router-context.js";
 import { runWithRouterContext } from "./router-context.js";
@@ -30,7 +37,6 @@ import {
   startRevalidationTrace,
   flushRevalidationTrace,
 } from "./logging.js";
-import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
 import {
   type TelemetrySink,
@@ -41,6 +47,7 @@ import {
   buildCacheSignalSegments,
 } from "./telemetry.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { evaluatePprTransitionWhen } from "./transition-when.js";
 
 /**
  * Per-call telemetry lifecycle emitter for match()/matchPartial(). Each method
@@ -227,6 +234,35 @@ export function createMatchHandlers<TEnv = any>(
     if (reqCtx) reqCtx._cacheSignal = segments;
   };
 
+  const evaluatePprTransitionWhenForMatch = (
+    ctx: MatchContext<TEnv>,
+    isPartial: boolean,
+  ): void => {
+    const reqCtx = _getRequestContext();
+    if (!reqCtx) return;
+    reqCtx._pprTransitionDecisions = undefined;
+    if (!isPprEntry(ctx.manifestEntry)) return;
+
+    evaluatePprTransitionWhen(
+      ctx.entries,
+      reqCtx,
+      {
+        params: ctx.matched.params,
+        routeName: ctx.interceptSelectorContext.toRouteName,
+      },
+      (error, segmentId) =>
+        callOnError(error, "rendering", {
+          request: ctx.request,
+          url: ctx.url,
+          env: ctx.env,
+          params: ctx.matched.params,
+          segmentId,
+          isPartial,
+          handledByBoundary: false,
+        }),
+    );
+  };
+
   async function createMatchContextForFull(
     request: Request,
     env: TEnv,
@@ -313,6 +349,7 @@ export function createMatchHandlers<TEnv = any>(
           }
 
           const ctx = result as MatchContext<TEnv>;
+          evaluatePprTransitionWhenForMatch(ctx, false);
 
           try {
             const state = createPipelineState();
@@ -424,6 +461,7 @@ export function createMatchHandlers<TEnv = any>(
               emitter.end(0, false);
               return null;
             }
+            evaluatePprTransitionWhenForMatch(ctx, true);
 
             if (isRouterDebugEnabled()) {
               startRevalidationTrace({
