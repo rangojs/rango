@@ -71,7 +71,7 @@ export function buildLoaderErrorContext<TEnv>(
  * the short-circuit mechanism. Otherwise return the ReactNode.
  */
 export function handleHandlerResult(
-  result: ReactNode | Response | Promise<ReactNode> | Promise<Response>,
+  result: ReactNode | Response | Promise<ReactNode | Response>,
 ): ReactNode {
   if (result instanceof Response) {
     throw result;

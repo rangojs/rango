@@ -39,6 +39,23 @@ export interface MiddlewareContext<
 > extends RequestScope<TEnv> {
   params: TParams;
 
+  /**
+   * True for build-time render/capture requests. Live requests use false.
+   * Build-time PPR shell capture sets this while replaying middleware.
+   */
+  readonly build: boolean;
+
+  /**
+   * Opt this request out of PPR shell serving/capture.
+   * During middleware this runs before the shell HIT commit point, so it can
+   * force the request onto the dynamic axis.
+   *
+   * Scope: the PPR SHELL axis only. It does NOT disable prerender B-segment
+   * (Prerender/Static) serving — a Prerender() route still replays its
+   * build-baked segments at runtime.
+   */
+  dynamic(): void;
+
   readonly headers: Headers;
 
   get: GetVariableFn;

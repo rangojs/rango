@@ -277,6 +277,13 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
   result: null,
 };
 
+// Shared empty inflight-actions list. getState() hands back this exact reference
+// whenever no action is inflight (the overwhelmingly common case), so the derived
+// snapshot's `inflightActions` is referentially stable across notifies instead of
+// a fresh [] each call. Read-only by contract (consumers only read length/spread),
+// same as the shared DEFAULT_ACTION_STATE.
+const EMPTY_INFLIGHT_ACTIONS: InflightAction[] = [];
+
 /**
  * Check if a subscription ID matches an action's full ID.
  *
@@ -371,7 +378,19 @@ export function createEventController(
   const actionListeners = new Map<string, Set<ActionStateListener>>();
   const handleListeners = new Set<HandleListener>();
 
-  const notify = makeDebouncedNotifier(stateListeners);
+  const notifyStateListeners = makeDebouncedNotifier(stateListeners);
+
+  // Memoized derived snapshot. Every state mutation already funnels through
+  // notify(), so invalidating here (synchronously, before the debounced fire)
+  // means a getState() call between two mutations reuses the same object — an
+  // unchanged state returns the SAME reference — while any real change recomputes
+  // on the next read. Kept null when dirty.
+  let cachedDerivedState: DerivedNavigationState | null = null;
+
+  function notify(): void {
+    cachedDerivedState = null;
+    notifyStateListeners();
+  }
 
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -397,14 +416,21 @@ export function createEventController(
   const notifyHandles = makeDebouncedNotifier(handleListeners);
 
   function getState(): DerivedNavigationState {
-    const inflightActionsList: InflightAction[] = [...inflightActions.values()]
-      .filter((a) => a.phase !== "settling")
-      .map((a) => ({
-        id: a.id,
-        actionId: a.actionId,
-        payload: a.payload,
-        startedAt: a.startedAt,
-      }));
+    if (cachedDerivedState) return cachedDerivedState;
+
+    // Skip the spread/filter/map entirely when idle — the common case — and hand
+    // back the shared frozen empty list for referential stability.
+    const inflightActionsList: InflightAction[] =
+      inflightActions.size === 0
+        ? EMPTY_INFLIGHT_ACTIONS
+        : [...inflightActions.values()]
+            .filter((a) => a.phase !== "settling")
+            .map((a) => ({
+              id: a.id,
+              actionId: a.actionId,
+              payload: a.payload,
+              startedAt: a.startedAt,
+            }));
 
     const hasActiveActions = inflightActionsList.length > 0;
     const isVisibleNavigation =
@@ -414,7 +440,7 @@ export function createEventController(
 
     const isStreaming = activeStreamCount > 0 || state === "loading";
 
-    return {
+    cachedDerivedState = {
       state,
       isStreaming,
       // True when a navigation is active (fetching or streaming, before
@@ -430,9 +456,14 @@ export function createEventController(
           : null,
       inflightActions: inflightActionsList,
     };
+    return cachedDerivedState;
   }
 
   function getActionState(actionId: string): TrackedActionState {
+    // Nothing inflight — skip building/scanning the list and return the shared
+    // idle snapshot (the same reference use-action falls back to).
+    if (inflightActions.size === 0) return DEFAULT_ACTION_STATE;
+
     const entry = [...inflightActions.values()]
       .filter((a) => matchesActionId(actionId, a.actionId))
       .reduce<ActionEntry | undefined>((best, a) => {
@@ -584,8 +615,22 @@ export function createEventController(
     const arbitration = arb;
     arbitration.inflight++;
 
-    // Track if this action started while others were pending (concurrent)
-    const hadConcurrent = inflightActions.size > 0;
+    // Track if this action started while another was genuinely in-flight.
+    // Completed entries don't count: complete()/fail() ran, so the prior
+    // action's response was fully processed and applied — a request dispatched
+    // after that point is strictly ordered behind the prior action's server
+    // execution, and there is no skipped render or order uncertainty for
+    // consolidation to repair. Completed entries still linger in the map for
+    // the 100ms doSettle window (useAction reads) and, on a slow connection,
+    // while the Flight stream drains its EOF after complete(). Counting them
+    // latched hadAnyConcurrentActions for back-to-back sequential actions,
+    // which made the LAST action classify as consolidation-needed; the
+    // consolidation refetch omits every concurrently-revalidated segment id
+    // from _rsc_segments, so the server re-ran gated loaders as "new-segment"
+    // — bypassing revalidate(({ isAction }) => ...) on a plain GET (#675).
+    const hadConcurrent = [...inflightActions.values()].some(
+      (a) => !a.completed,
+    );
     if (hadConcurrent) {
       hadAnyConcurrentActions = true;
     }

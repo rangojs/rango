@@ -6,6 +6,8 @@
  * fake). The Cloudflare KV adapter lives in `@rangojs/router/prerender/cloudflare`.
  */
 
+export { PrerenderError } from "./create-prerender-trigger.js";
+
 export {
   createMemoryPrerenderStore,
   type MemoryPrerenderStore,

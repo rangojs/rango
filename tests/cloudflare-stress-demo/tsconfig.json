@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "types": [
+      "node",
       "@cloudflare/workers-types",
       "vite/client",
       "@rangojs/router/types"

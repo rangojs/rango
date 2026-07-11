@@ -256,6 +256,41 @@ function miniTests(f: Fixture) {
     expect(fresh2).toBeGreaterThan(fresh1);
   });
 
+  test("shell manifest: frozen shell replays handle ids, prices stay live", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/manifest"));
+    await waitForHydration(page);
+    const shell1 = await getNumericContent(
+      page.getByTestId("manifest-shell-seq"),
+    );
+    // Prices resolve for exactly the ids the shell rendered ("3" is in the
+    // price store but not in the shell's catalog, so it never appears).
+    await expect(page.getByTestId("manifest-price-1")).toHaveText("$19");
+    await expect(page.getByTestId("manifest-price-2")).toHaveText("$29");
+    await expect(page.getByTestId("manifest-price-3")).toHaveCount(0);
+    const priceSeq1 = Number(
+      await page.getByTestId("manifest-price-1").getAttribute("data-seq"),
+    );
+
+    await page.goto(f.url("/manifest"));
+    await waitForHydration(page);
+    const shell2 = await getNumericContent(
+      page.getByTestId("manifest-shell-seq"),
+    );
+    const priceSeq2 = Number(
+      await page.getByTestId("manifest-price-1").getAttribute("data-seq"),
+    );
+
+    // The shell — and its handle pushes — replayed from cache (handler
+    // skipped)...
+    expect(shell2).toBe(shell1);
+    // ...while the live loader read the REPLAYED ids and priced them fresh.
+    expect(priceSeq2).toBeGreaterThan(priceSeq1);
+  });
+
   test("errorBoundary(): handler throw renders fallback", async ({ page }) => {
     // Suppress the expected page error from the thrown handler error.
     await page.goto(f.url("/errors/boom"));

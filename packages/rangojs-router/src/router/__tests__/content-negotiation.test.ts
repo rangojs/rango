@@ -138,6 +138,21 @@ describe("pickNegotiateVariant", () => {
     expect(result).toBe(rscCandidate);
   });
 
+  it("selects RSC for explicit text/x-component regardless of definition order", () => {
+    // The RSC candidate registers under the wire-format MIME too; without it,
+    // an explicit flight request fell through to the definition-order
+    // fallback and a JSON-first route answered with JSON.
+    const accept = parseAcceptTypes("text/x-component");
+    const result = pickNegotiateVariant(accept, [jsonCandidate, rscCandidate]);
+    expect(result).toBe(rscCandidate);
+  });
+
+  it("wire-format entry does not shadow an exact match for another variant", () => {
+    const accept = parseAcceptTypes("application/json");
+    const result = pickNegotiateVariant(accept, [rscCandidate, jsonCandidate]);
+    expect(result).toBe(jsonCandidate);
+  });
+
   it("prefers higher q-value when multiple types match", () => {
     const accept = parseAcceptTypes("application/json;q=0.5, text/html;q=0.9");
     const result = pickNegotiateVariant(accept, [jsonCandidate, htmlCandidate]);

@@ -1,0 +1,54 @@
+---
+title: Metadata & Handles
+description: Push metadata at the point where the data already exists — and build your own cross-segment channels with the same primitive.
+type: guide
+---
+
+In most frameworks, metadata runs as a separate export and pays for its own data access. In Rango, metadata is a push at the point where the data already exists:
+
+```tsx
+path(
+  "/product/:slug",
+  async (ctx) => {
+    const product = await ctx.use(ProductLoader);
+    const meta = ctx.use(Meta);
+    meta({ title: product.name });
+    meta({ property: "og:image", content: product.image });
+    return <ProductPage product={product} />;
+  },
+  { name: "product" },
+);
+```
+
+## Segments layer
+
+A layout sets a template, the route pushes a value, and the collected head composes them:
+
+<MetaLayersDemo />
+
+Later segments override earlier ones per key, an `unset` descriptor removes an inherited tag, and deferred (Promise) values resolve before collection so async metadata participates in templating like any other value. On soft navigation the previous title holds until the new one resolves — no flash of an intermediate state.
+
+## Meta is not a special case
+
+`Meta` is one instance of the **handle** primitive. `createHandle()` gives any feature the same contract: push data from handlers in segment order, define a collect function, read the result with `useHandle()` on the client.
+
+```tsx
+export const Breadcrumb = createHandle<Crumb, Crumb[]>((segments) =>
+  segments.flat(),
+);
+
+// each segment pushes its own crumb
+const push = ctx.use(Breadcrumb);
+push({ label: product.name, href: ctx.reverse(".product", ctx.params) });
+
+// a client component collects the trail
+const crumbs = useHandle(Breadcrumb);
+```
+
+`Script` (nonced script injection) and `Breadcrumbs` are the other built-ins; your own accumulate-across-segments needs ride the same mechanism.
+
+## Handles replay on cache hits
+
+Handles are captured when a segment renders and **replayed on every cache or prerender hit**. That replay is a typed channel from the frozen half of a render to the live half: the cached artifact can describe itself, and loaders — always live — can read that description.
+
+The canonical case: a prerendered product list tracks which product ids it rendered; a live price loader awaits `ctx.rendered()`, reads the replayed handle, and fetches prices for exactly those products in one batched query. The holes can never desync from the shell — the live data always matches what is actually displayed, by construction — and the dynamic data is batched instead of fetched per-hole.

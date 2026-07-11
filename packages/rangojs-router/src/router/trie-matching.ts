@@ -65,7 +65,8 @@ export function tryTrieMatch(
     // same value the regex matcher produces for the bare prefix. Without this
     // the trie misses, the regex fallback runs, and its no-config branch emits
     // a corrupt slice-off redirect. The static terminal still wins above.
-    if (trie.w) {
+    // A one-or-more catch-all (`w1`, from `:name+`) rejects this empty case.
+    if (trie.w && !trie.w.w1) {
       return validateAndBuild(
         trie.w,
         [],
@@ -194,8 +195,9 @@ function walkTrie(
     // walkTrie otherwise only reaches node.w in the index<length branch below,
     // so without this a request to the wildcard's own prefix misses the trie
     // and the regex fallback emits a corrupt redirect. A static terminal
-    // (node.r) still wins.
-    if (node.w) {
+    // (node.r) still wins. A one-or-more catch-all (`w1`, from `:name+`) rejects
+    // this empty case — it requires at least one trailing segment.
+    if (node.w && !node.w.w1) {
       const validatedParams = leafConstraintsPass(node.w, paramValues, "");
       if (validatedParams) {
         return {
@@ -252,14 +254,20 @@ function walkTrie(
 
   if (node.w) {
     const rest = joinRemainingSegments(segments, index);
-    const validatedParams = leafConstraintsPass(node.w, paramValues, rest);
-    if (validatedParams) {
-      return {
-        leaf: node.w,
-        paramValues: [...paramValues],
-        wildcardValue: rest,
-        validatedParams,
-      };
+    // A one-or-more catch-all (`w1`, from `:name+`) requires at least one
+    // non-empty trailing segment. `rest` can still be "" here on a malformed
+    // double-slash URL (e.g. `/docs//` splits to a trailing "" segment), so
+    // guard this in-path site the same way the root and base-case sites are.
+    if (!(node.w.w1 && rest === "")) {
+      const validatedParams = leafConstraintsPass(node.w, paramValues, rest);
+      if (validatedParams) {
+        return {
+          leaf: node.w,
+          paramValues: [...paramValues],
+          wildcardValue: rest,
+          validatedParams,
+        };
+      }
     }
   }
 

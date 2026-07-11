@@ -1,7 +1,7 @@
 ---
 name: breadcrumbs
-description: Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments
-argument-hint: [setup]
+description: Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, or asking how to show the current navigation path in a layout.
+argument-hint: "[setup]"
 ---
 
 # Breadcrumbs

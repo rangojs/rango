@@ -151,6 +151,10 @@ export function isStoredEntryValidFor(
     stored == null ||
     typeof stored !== "object" ||
     stored.v !== 1 ||
+    stored.entry == null ||
+    typeof stored.entry !== "object" ||
+    !Array.isArray(stored.entry.segments) ||
+    typeof stored.entry.handles !== "string" ||
     stored.meta == null ||
     typeof stored.meta !== "object"
   ) {

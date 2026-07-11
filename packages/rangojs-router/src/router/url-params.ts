@@ -42,3 +42,16 @@ export function encodePathSegment(value: string): string {
     (match) => PATH_SAFE_ESCAPES[match.toUpperCase()] ?? match,
   );
 }
+
+/**
+ * Encode a catch-all remainder: encode each `/`-separated segment but keep the
+ * separators, so `a/b c` -> `a/b%20c` (not `a%2Fb%20c`). Shared by the reverse
+ * helper and the build-time prerender substitution so both produce identical
+ * URLs. `encode` defaults to the path-safe `encodePathSegment`.
+ */
+export function encodePathRemainder(
+  value: string,
+  encode: (segment: string) => string = encodePathSegment,
+): string {
+  return value.split("/").map(encode).join("/");
+}

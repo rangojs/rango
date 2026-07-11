@@ -60,7 +60,10 @@ function defineOnDemandFlow(f: Fixture) {
     const res = await page.request.get(f.url(`/guide-trigger/${SLUG}`));
     expect(res.ok()).toBe(true);
     const json = await res.json();
-    expect(json).toMatchObject({ ok: true, status: "rendered" });
+    expect(json, JSON.stringify(json)).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
 
     // (c) Now served from the KV overlay, short-circuiting the live handler.
     await gotoGuide(page, f, SLUG);
@@ -91,6 +94,34 @@ function defineOnDemandFlow(f: Fixture) {
     await expect(testId(page, "guide-source")).toHaveText("prerender");
     await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
     await expect(testId(page, "guide-ondemand")).toHaveText("false");
+  });
+
+  test("personalized producer is skipped and live fallback remains", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    const slug = `personalized-${SLUG}`;
+
+    await page.goto(f.url(`/guides/personalized/${slug}`));
+    await waitForHydration(page);
+    await expect(testId(page, "guide-personalized-source")).toHaveText(
+      `live:${slug}`,
+    );
+
+    const response = await page.request.get(
+      f.url(`/guide-personalized-trigger/${slug}`),
+    );
+    expect(response.ok()).toBe(true);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      status: "skipped-personalized",
+    });
+
+    await page.goto(f.url(`/guides/personalized/${slug}`));
+    await waitForHydration(page);
+    await expect(testId(page, "guide-personalized-source")).toHaveText(
+      `live:${slug}`,
+    );
   });
 }
 

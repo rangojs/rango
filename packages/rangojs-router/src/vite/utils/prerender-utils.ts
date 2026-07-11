@@ -10,12 +10,10 @@ import {
 import { resolve } from "node:path";
 
 import { escapeRegExp } from "../../regex-escape.js";
+import { encodePathRemainder } from "../../router/url-params.js";
 
 export function encodePathParam(value: unknown): string {
-  return String(value)
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+  return encodePathRemainder(String(value), encodeURIComponent);
 }
 
 export function substituteRouteParams(
@@ -28,6 +26,21 @@ export function substituteRouteParams(
 
   for (const [key, value] of Object.entries(params)) {
     const escaped = escapeRegExp(key);
+    // Named catch-all `:key+` / `:key*` (issue #634). Like the runtime reverse,
+    // the value is multi-segment: encode each segment and keep the `/` separators
+    // (a whole-value encode would turn `a/b` into `a%2Fb`), and consume the
+    // trailing modifier so it does not leak into the URL. `*` (zero-or-more)
+    // absent collapses via the trailing cleanup below.
+    const catchAllRe = new RegExp(`:${escaped}[+*]`);
+    if (catchAllRe.test(result)) {
+      if (value === "") {
+        result = result.replace(catchAllRe, "");
+        hadOmittedOptional = true;
+      } else {
+        result = result.replace(catchAllRe, encodePathRemainder(value, encode));
+      }
+      continue;
+    }
     if (value === "") {
       result = result.replace(
         new RegExp(`:${escaped}(\\([^)]*\\))?(?!\\?)`),
@@ -194,26 +207,45 @@ export function resetStagedBuildAssets(projectRoot: string): void {
   rmSync(getStagedAssetDir(projectRoot), { recursive: true, force: true });
 }
 
-export function stageBuildAssetModule(
-  projectRoot: string,
-  prefix: "__pr" | "__st",
+/**
+ * Write one content-hashed `export default <value>;` asset module into `dir`
+ * (created if needed) and return its file name. Identical payloads dedupe to
+ * one file (the hash is the content). Shared by the staged prerender/static
+ * flow (stageBuildAssetModule below) and the shell prerender phase, which
+ * writes directly into the final RSC assets dir — it runs after buildApp,
+ * past the staging/copy window.
+ */
+export function writeBuildAssetModule(
+  dir: string,
+  prefix: "__pr" | "__st" | "__ps",
   exportValue: string,
 ): string {
-  const stagedDir = getStagedAssetDir(projectRoot);
-  mkdirSync(stagedDir, { recursive: true });
+  mkdirSync(dir, { recursive: true });
 
   const contentHash = createHash("sha256")
     .update(exportValue)
     .digest("hex")
     .slice(0, 8);
   const fileName = `${prefix}-${contentHash}.js`;
-  const filePath = resolve(stagedDir, fileName);
+  const filePath = resolve(dir, fileName);
 
   if (!existsSync(filePath)) {
     writeFileSync(filePath, `export default ${exportValue};\n`);
   }
 
   return fileName;
+}
+
+export function stageBuildAssetModule(
+  projectRoot: string,
+  prefix: "__pr" | "__st",
+  exportValue: string,
+): string {
+  return writeBuildAssetModule(
+    getStagedAssetDir(projectRoot),
+    prefix,
+    exportValue,
+  );
 }
 
 export function copyStagedBuildAssets(

@@ -1,6 +1,23 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { PrerenderError } from "../prerender/index.js";
+import type { PublicRequestContext } from "../server/request-context.js";
+
+type InternalOnlyContextKey =
+  | "_pendingBackgroundTasks"
+  | "_prerender"
+  | "_onDemandProducer"
+  | "_shellCaptureLoaderHandleValues"
+  | "_shellCaptureGuardTripped"
+  | "_tracing";
+
+const publicContextHidesInternalFields: Extract<
+  keyof PublicRequestContext,
+  InternalOnlyContextKey
+> extends never
+  ? true
+  : false = true;
 
 const srcRoot = resolve(import.meta.dirname, "..");
 const hostIndex = resolve(srcRoot, "host", "index.ts");
@@ -9,6 +26,14 @@ const rootIndex = resolve(srcRoot, "index.ts");
 const rscEntry = resolve(srcRoot, "index.rsc.ts");
 
 describe("public export boundaries", () => {
+  it("keeps internal-only fields out of the public request context type", () => {
+    expect(publicContextHidesInternalFields).toBe(true);
+  });
+
+  it("exports the on-demand prerender error from the public subpath", () => {
+    expect(PrerenderError).toBeTypeOf("function");
+  });
+
   // The server-only cache-tag APIs are real in the react-server entry and must
   // have matching stubs in the default entry, or non-react-server (SSR/client/
   // default) bundles that encounter the import fail at module linking.

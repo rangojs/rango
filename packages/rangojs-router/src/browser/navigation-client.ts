@@ -28,6 +28,7 @@ import {
   consumePrefetch,
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
+import { cancelAllPrefetches } from "./prefetch/loader.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -100,6 +101,11 @@ export function createNavigationClient(
       if (routerId) {
         fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
+
+      // If the lazy prefetch runtime has not loaded yet, prevent a deferred
+      // speculative request from starting after this navigation misses the
+      // synchronous cache lookup and begins its own fetch.
+      cancelAllPrefetches(targetUrl);
 
       // Check completed in-memory prefetch cache before making a network
       // request. Try the source-scoped key first (populated when the server
@@ -223,7 +229,11 @@ export function createNavigationClient(
           ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
           headers: {
             "X-RSC-Router-Client-Path": previousUrl,
-            "X-Rango-State": getRangoState(),
+            // Reuse the single per-operation read (see rangoState above): the
+            // cache-key lookup and this header must agree on one value, and the
+            // cookie read has side effects (external-rotation notify) we do not
+            // want to fire twice per navigation.
+            "X-Rango-State": rangoState,
             ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
             ...(interceptSourceUrl && {
               "X-RSC-Router-Intercept-Source": interceptSourceUrl,

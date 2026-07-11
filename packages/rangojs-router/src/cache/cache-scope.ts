@@ -31,7 +31,7 @@ import {
   encodeHandles,
   decodeHandles,
 } from "./handle-snapshot.js";
-import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
+import { cacheKeyBase } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
   isFiniteNonNegativeSeconds,
@@ -85,25 +85,11 @@ function validatedSwr(value: number | undefined): number | undefined {
   return isValidCacheSeconds(value, "swr") ? value : undefined;
 }
 
-function getCacheKeyBase(
-  host: string,
-  pathname: string,
-  params?: Record<string, string>,
-  searchParams?: URLSearchParams,
-): string {
-  const paramStr = sortedRouteParams(params);
-  const searchStr = searchParams ? sortedSearchString(searchParams) : "";
-
-  let key = `${host}${pathname}`;
-  if (paramStr) key += `:${paramStr}`;
-  if (searchStr) key += `?${searchStr}`;
-  return key;
-}
-
 function getDefaultRouteCacheKey(
   pathname: string,
   params?: Record<string, string>,
   isIntercept?: boolean,
+  prefixOverride?: "doc",
 ): string {
   const ctx = getRequestContext();
   const isPartial = ctx?.originalUrl?.searchParams.has("_rsc_partial") ?? false;
@@ -111,9 +97,11 @@ function getDefaultRouteCacheKey(
   const host = ctx?.url.host ?? "localhost";
 
   // Intercept navigations get their own cache namespace
-  const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
+  const prefix = isIntercept
+    ? "intercept"
+    : (prefixOverride ?? (isPartial ? "partial" : "doc"));
 
-  return `${prefix}:${getCacheKeyBase(host, pathname, params, searchParams)}`;
+  return `${prefix}:${cacheKeyBase(host, pathname, searchParams, params)}`;
 }
 
 // ============================================================================
@@ -146,6 +134,7 @@ export class CacheScope {
   constructor(
     config: PartialCacheOptions | false,
     parent: CacheScope | null = null,
+    private readonly defaultKeyPrefix?: "doc",
   ) {
     this.config = config;
     this.parent = parent;
@@ -224,7 +213,12 @@ export class CacheScope {
     params: Record<string, string>,
     isIntercept?: boolean,
   ): Promise<string> {
-    const defaultKey = getDefaultRouteCacheKey(pathname, params, isIntercept);
+    const defaultKey = getDefaultRouteCacheKey(
+      pathname,
+      params,
+      isIntercept,
+      this.defaultKeyPrefix,
+    );
     const keyFn = this.config !== false ? this.config.key : undefined;
     return resolveCacheKey(keyFn, this.getStore(), defaultKey, "CacheScope");
   }
@@ -300,10 +294,19 @@ export class CacheScope {
       // partial: evict the entry (self-heal - the re-render re-caches under the
       // same key) and report it as corruption, distinct from a transient infra
       // error (handled by the outer catch).
+      //
+      // Shell-HIT tail (_shellFragmentPayload, issue #700): skip the decode and
+      // carry the stored fragment strings verbatim — the payload consumers
+      // expand them (segment-fragments.ts). Read off the ambient context at the
+      // same point the cache key was resolved (getDefaultRouteCacheKey), so the
+      // flag shares fate with the key: a disrupted ALS already missed the
+      // seeded record and degraded to the full tail.
       let segments: ResolvedSegment[];
       try {
-        const { deserializeSegments } = await import("./segment-codec.js");
-        segments = await deserializeSegments(cached.segments);
+        const codec = await import("./segment-codec.js");
+        segments = _getRequestContext()?._shellFragmentPayload
+          ? await codec.fragmentSegments(cached.segments)
+          : await codec.deserializeSegments(cached.segments);
       } catch (error) {
         reportCacheError(
           error,
@@ -467,7 +470,11 @@ export class CacheScope {
       }
 
       // Collect handle data for non-loader segments only
-      const handles = captureHandles(nonLoaderSegments, handleStore);
+      const handles = captureHandles(
+        nonLoaderSegments,
+        handleStore,
+        requestCtx._shellCaptureLoaderHandleValues,
+      );
 
       try {
         if (INTERNAL_RANGO_DEBUG) {
@@ -526,4 +533,31 @@ export function createCacheScope(
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent
   return new CacheScope(config.options, parent);
+}
+
+/**
+ * Shell fast path: when the route tree derived NO cache scope and the current
+ * request context carries the `_shellImplicitCache` marker (a shell capture,
+ * an eligible HIT tail, or a normal partial navigation replay), substitute an
+ * implicit doc-level scope so withCacheLookup/withCacheStore treat the WHOLE
+ * matched route as a cache() boundary — the shell entry IS a cache() of the
+ * handler layer, with loaders as the live carve-outs
+ * (resolveFreshLoadersAndYield).
+ *
+ * An existing scope — including an explicit cache(false) opt-out — always
+ * wins: the consumer's cache() semantics (their ttl/swr/store/condition) are
+ * never overridden, and cache(false) keeps the tail on the full handler
+ * re-run path.
+ */
+export function resolveShellImplicitCacheScope(
+  scope: CacheScope | null,
+): CacheScope | null {
+  if (scope) return scope;
+  const marker = getRequestContext()?._shellImplicitCache;
+  if (!marker) return null;
+  return new CacheScope(
+    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
+    null,
+    marker.keyPrefix,
+  );
 }

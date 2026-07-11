@@ -192,3 +192,64 @@ export class DiscoveryError extends Error {
     Object.setPrototypeOf(this, DiscoveryError.prototype);
   }
 }
+
+/** How the dev caller should surface a discovery failure. */
+export interface DiscoveryFailureReport {
+  level: "error" | "warn";
+  message: string;
+}
+
+/**
+ * Decide how to surface a dev-boot discovery failure in the terminal.
+ *
+ * The bare "no routers found" case (a DiscoveryError with no caught host-handler
+ * failures) is ambiguous. It is either:
+ *   - a genuine misconfiguration — the entry never calls createRouter(), or the
+ *     configured entry path is wrong; or
+ *   - a transient artifact of a Vite dependency re-optimization racing with boot
+ *     discovery (a module read before the entry import resolves to the
+ *     pre-optimize copy of the runner graph while createRouter() populated the
+ *     post-optimize copy — see router-discovery.ts).
+ *
+ * We can only tell them apart when the caller observed the dep optimizer's
+ * `browserHash` change across the discovery attempt (`reoptimizeObserved`): a
+ * reload-causing re-optimization landed mid-flight, so the empty read was
+ * transient and the app self-heals per-request (handler.ts builds the trie from
+ * the router's live urlpatterns) with discovery re-running on the next boot.
+ *
+ * A DiscoveryError that DOES carry caught host-handler failures already embeds
+ * the real cause in its message, and any non-DiscoveryError is a hard failure;
+ * both stay loud with full detail.
+ */
+export function describeDiscoveryFailure(
+  err: unknown,
+  opts: { reoptimizeObserved?: boolean } = {},
+): DiscoveryFailureReport {
+  if (err instanceof DiscoveryError && err.caught.length === 0) {
+    const entry = err.entryPath ?? "the router entry";
+    if (opts.reoptimizeObserved) {
+      return {
+        level: "warn",
+        message:
+          `[rango] No routers found while Vite was re-optimizing dependencies on ` +
+          `dev boot. This is transient: routes are served per-request and ` +
+          `discovery re-runs automatically, so it clears on the next boot. If ` +
+          `routes still 404, confirm ${entry} calls createRouter().`,
+      };
+    }
+    return {
+      level: "error",
+      message:
+        `${err.message}\n` +
+        `  Ensure ${entry} calls createRouter() at module top level and that the ` +
+        `configured router entry path is correct.`,
+    };
+  }
+
+  const e = err as { stack?: string; message?: string };
+  const detail = e?.stack ?? e?.message ?? String(err);
+  return {
+    level: "error",
+    message: `[rango] Router discovery failed: ${detail}`,
+  };
+}

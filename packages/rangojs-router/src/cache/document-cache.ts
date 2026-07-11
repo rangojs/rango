@@ -19,7 +19,7 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
-import { sortedSearchString } from "./cache-key-utils.js";
+import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
 
@@ -127,20 +127,31 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
 // ============================================================================
 
 /**
- * Add cache status header to response for debugging
+ * Add the cache-status header (HIT/STALE/MISS) to a response.
+ *
+ * The response we get here is always a fresh instance — the store rebuilds a
+ * new Response per getResponse(), and the miss path wraps a fresh Response
+ * around the tee'd body — so mutating its headers in place is safe and avoids
+ * cloning every header + allocating a new Response on every cache hit. Only when
+ * the headers are immutable (a guarded Response rejects set() with a TypeError)
+ * do we fall back to rebuilding the Response with a mutable Headers.
  */
 function addCacheStatusHeader(
   response: Response,
   status: "HIT" | "STALE" | "MISS",
 ): Response {
-  const headers = new Headers(response.headers);
-  headers.set(CACHE_STATUS_HEADER, status);
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  try {
+    response.headers.set(CACHE_STATUS_HEADER, status);
+    return response;
+  } catch {
+    const headers = new Headers(response.headers);
+    headers.set(CACHE_STATUS_HEADER, status);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
 }
 
 /**
@@ -177,7 +188,13 @@ export interface DocumentCacheOptions<TEnv = any> {
   skipPaths?: string[];
 
   /**
-   * Custom cache key generator
+   * Custom cache key generator.
+   *
+   * Replaces the default `host + pathname + search` key entirely. On a
+   * multi-domain deployment served by one function you MUST include `url.host`
+   * (or an equivalent tenant discriminator) yourself — the default key is
+   * host-namespaced, but a custom generator's output is used verbatim, so
+   * omitting host bleeds one hostname's cached response to another.
    */
   keyGenerator?: (url: URL) => string;
 
@@ -300,17 +317,17 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
       const typeSuffix = isRscRequest ? ":rsc" : ":html";
 
-      let searchSuffix = "";
-      if (!keyGenerator) {
-        const sorted = sortedSearchString(url.searchParams);
-        if (sorted) {
-          searchSuffix = `?${sorted}`;
-        }
-      }
-
+      // Default key rides the shared host-namespaced base (cacheKeyBase) so the
+      // segment tier (cache-scope.ts) and this document tier cannot drift on the
+      // host-namespacing rule -- see the contract on cacheKeyBase.
+      // The keyGenerator branch is left untouched: a consumer-supplied generator
+      // owns its own namespacing (auto-prefixing host would silently change their
+      // existing keys and double any host they already include).
       const cacheKey = keyGenerator
         ? keyGenerator(url) + segmentHash + typeSuffix
-        : `${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
+        : cacheKeyBase(url.host, url.pathname, url.searchParams) +
+          segmentHash +
+          typeSuffix;
       // 1. Check cache
       const cached = await store.getResponse(cacheKey);
 

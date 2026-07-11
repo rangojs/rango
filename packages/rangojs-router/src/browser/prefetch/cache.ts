@@ -39,7 +39,7 @@
  * effectively per-document. Unit tests reset them via clearPrefetchCache().
  */
 
-import { abortAllPrefetches } from "./queue.js";
+import { abortAllPrefetches } from "./loader.js";
 import { invalidateRangoState } from "../rango-state.js";
 import type { RscPayload } from "../types.js";
 
@@ -112,6 +112,16 @@ interface PrefetchCacheEntry {
 
 const cache = new Map<string, PrefetchCacheEntry>();
 const inflight = new Set<string>();
+
+// Watermark: the smallest entry timestamp currently in `cache`, i.e. a lower
+// bound on when the oldest entry expires (timestamp + cacheTTL). storePrefetch's
+// eager expiry sweep is skipped while `now - earliestTimestamp <= cacheTTL` — the
+// oldest entry cannot be expired yet, so nothing would be evicted. Deletions
+// (consume/has/remove) may leave it stale-LOW, which only forces a harmless extra
+// sweep that recomputes it exactly; it is never stale-high, so a skipped sweep
+// can never retain an expired entry. consume/has still TTL-check lazily, so a
+// skipped sweep never serves a stale entry. Infinity when the cache is empty.
+let earliestTimestamp = Infinity;
 
 const inflightPromises = new Map<string, Promise<DecodedPrefetch | null>>();
 
@@ -269,12 +279,20 @@ export function storePrefetch(
     return;
   }
 
-  // Evict expired entries
+  // Evict expired entries — but only when the watermark says the oldest entry
+  // could have expired, so a burst of stores no longer walks the whole map each
+  // time. The sweep recomputes the exact watermark from the survivors.
   const now = Date.now();
-  for (const [k, cached] of cache) {
-    if (now - cached.timestamp > cacheTTL) {
-      cache.delete(k);
+  if (now - earliestTimestamp > cacheTTL) {
+    let min = Infinity;
+    for (const [k, cached] of cache) {
+      if (now - cached.timestamp > cacheTTL) {
+        cache.delete(k);
+      } else if (cached.timestamp < min) {
+        min = cached.timestamp;
+      }
     }
+    earliestTimestamp = min;
   }
 
   // FIFO eviction if at capacity
@@ -284,6 +302,9 @@ export function storePrefetch(
   }
 
   cache.set(key, { entry, timestamp: now });
+  // The new entry is the newest, so it only moves the watermark when the cache
+  // was empty (Infinity); otherwise the older watermark stands.
+  if (now < earliestTimestamp) earliestTimestamp = now;
 }
 
 /**
@@ -354,6 +375,7 @@ export function clearPrefetchCache(): void {
   inflightAliases.clear();
   adoptedKeys.clear();
   cache.clear();
+  earliestTimestamp = Infinity;
   abortAllPrefetches();
   invalidateRangoState();
 }

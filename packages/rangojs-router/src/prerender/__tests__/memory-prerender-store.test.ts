@@ -96,6 +96,26 @@ describe("isStoredEntryValidFor — malformed durable values read as a miss", ()
       false,
     );
   });
+  it("rejects an envelope with a malformed entry without throwing", () => {
+    const meta = { buildId: k.buildId, params: m.params };
+    expect(
+      isStoredEntryValidFor({ v: 1, entry: null, meta } as any, k, m),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        { v: 1, entry: { segments: null, handles: "" }, meta } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        { v: 1, entry: { segments: [], handles: null }, meta } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("isStoredEntryValidFor (verify-on-read)", () => {

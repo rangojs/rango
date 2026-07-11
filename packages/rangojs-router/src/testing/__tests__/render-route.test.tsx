@@ -682,3 +682,81 @@ describe("renderRoute nonce (useNonce contract)", () => {
     expect(getByTestId("nonce").textContent).toBe("(none)");
   });
 });
+
+// Userland coverage for named catch-all params (issue #634), exercised through
+// the public `renderRoute` primitive exactly as a consumer would: define a
+// `:slug*` / `:path+` route, render a real request, and read the joined
+// remainder from `useParams()`.
+describe("renderRoute catch-all params (named #634, bare `*` #636)", () => {
+  it(":slug* exposes the joined multi-segment remainder under the param name", async () => {
+    function Docs() {
+      const { slug } = useParams<{ slug: string }>();
+      return <span data-testid="slug">{slug}</span>;
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/docs/:slug*", Component: Docs }],
+      { request: "/docs/getting-started/install" },
+    );
+    expect(getByTestId("slug").textContent).toBe("getting-started/install");
+
+    // The catch-all re-binds across navigation to a different depth.
+    await router.navigate("/docs/api/reference");
+    expect(getByTestId("slug").textContent).toBe("api/reference");
+  });
+
+  it(":path+ (one-or-more) exposes the remainder under the param name", async () => {
+    function Files() {
+      const { path } = useParams<{ path: string }>();
+      return <span data-testid="path">{path}</span>;
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/files/:path+", Component: Files }],
+      { request: "/files/a/b/c" },
+    );
+    expect(getByTestId("path").textContent).toBe("a/b/c");
+  });
+
+  // Review F8: the documented zero-segment `:slug*` case is now reachable
+  // through the primitive — matchLeaf matches the bare prefix and binds "".
+  it(":slug* matches the bare prefix binding '' (initial request and navigate)", async () => {
+    function Docs() {
+      const { slug } = useParams<{ slug: string }>();
+      return <span data-testid="slug">{slug === "" ? "(empty)" : slug}</span>;
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/docs/:slug*", Component: Docs }],
+      { request: "/docs" },
+    );
+    expect(getByTestId("slug").textContent).toBe("(empty)");
+
+    await router.navigate("/docs/a/b");
+    expect(getByTestId("slug").textContent).toBe("a/b");
+
+    await router.navigate("/docs");
+    expect(getByTestId("slug").textContent).toBe("(empty)");
+  });
+
+  // #636: the bare `*` wildcard is the unnamed zero-or-more catch-all — same
+  // semantics as `:slug*`, but the remainder binds `params["*"]`. This pins the
+  // fix through the primitive: matchLeaf (compilePattern + buildParamsFromMatch)
+  // now matches the bare prefix binding "", where it previously did not.
+  it("bare * matches the bare prefix binding '' (initial request and navigate)", async () => {
+    function Files() {
+      const splat = useParams<{ "*": string }>()["*"];
+      return (
+        <span data-testid="splat">{splat === "" ? "(empty)" : splat}</span>
+      );
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/files/*", Component: Files }],
+      { request: "/files" },
+    );
+    expect(getByTestId("splat").textContent).toBe("(empty)");
+
+    await router.navigate("/files/a/b");
+    expect(getByTestId("splat").textContent).toBe("a/b");
+
+    await router.navigate("/files");
+    expect(getByTestId("splat").textContent).toBe("(empty)");
+  });
+});

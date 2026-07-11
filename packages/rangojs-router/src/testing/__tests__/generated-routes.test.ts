@@ -6,7 +6,9 @@ import {
 
 // assertGeneratedRoutesMatch only reads router.routeMap, so a plain object
 // satisfies the contract — no need to construct a full router (and pull in the
-// RSC runtime) for this primitive.
+// RSC runtime) for this primitive. diffGeneratedRoutes/assertGeneratedRoutesMatch
+// are async (they await findMatch to expand async include() routes); a fakeRouter
+// with no findMatch resolves immediately, but the calls are still awaited.
 function fakeRouter(routeMap: Record<string, unknown>): {
   routeMap: Record<string, unknown>;
 } {
@@ -14,11 +16,11 @@ function fakeRouter(routeMap: Record<string, unknown>): {
 }
 
 describe("diffGeneratedRoutes", () => {
-  it("reports ok when the maps are identical", () => {
+  it("reports ok when the maps are identical", async () => {
     const router = fakeRouter({ home: "/", post: "/blog/:slug" });
     const generated = { home: "/", post: "/blog/:slug" };
 
-    const diff = diffGeneratedRoutes(router, generated);
+    const diff = await diffGeneratedRoutes(router, generated);
 
     expect(diff.ok).toBe(true);
     expect(diff.missing).toEqual([]);
@@ -26,48 +28,48 @@ describe("diffGeneratedRoutes", () => {
     expect(diff.mismatch).toEqual([]);
   });
 
-  it("detects a route in the generated map but missing at runtime", () => {
+  it("detects a route in the generated map but missing at runtime", async () => {
     const router = fakeRouter({ home: "/" });
     const generated = { home: "/", about: "/about" };
 
-    const diff = diffGeneratedRoutes(router, generated);
+    const diff = await diffGeneratedRoutes(router, generated);
 
     expect(diff.ok).toBe(false);
     expect(diff.missing).toEqual(["about"]);
     expect(diff.extra).toEqual([]);
   });
 
-  it("detects a route at runtime but missing from the generated map", () => {
+  it("detects a route at runtime but missing from the generated map", async () => {
     const router = fakeRouter({ home: "/", contact: "/contact" });
     const generated = { home: "/" };
 
-    const diff = diffGeneratedRoutes(router, generated);
+    const diff = await diffGeneratedRoutes(router, generated);
 
     expect(diff.ok).toBe(false);
     expect(diff.extra).toEqual(["contact"]);
     expect(diff.missing).toEqual([]);
   });
 
-  it("detects a pattern mismatch for the same name", () => {
+  it("detects a pattern mismatch for the same name", async () => {
     const router = fakeRouter({ post: "/blog/:slug" });
     const generated = { post: "/articles/:slug" };
 
-    const diff = diffGeneratedRoutes(router, generated);
+    const diff = await diffGeneratedRoutes(router, generated);
 
     expect(diff.ok).toBe(false);
     expect(diff.mismatch).toEqual([["post", "/articles/:slug", "/blog/:slug"]]);
   });
 
-  it("compares on the .path for object-shaped route map entries", () => {
+  it("compares on the .path for object-shaped route map entries", async () => {
     const router = fakeRouter({ api: { path: "/api/data", response: "json" } });
     const generated = { api: "/api/data" };
 
-    const diff = diffGeneratedRoutes(router, generated);
+    const diff = await diffGeneratedRoutes(router, generated);
 
     expect(diff.ok).toBe(true);
   });
 
-  it("ignores auto-generated runtime names ($path_/$prefix_) as extras", () => {
+  it("ignores auto-generated runtime names ($path_/$prefix_) as extras", async () => {
     // An app with an unnamed path()/include() route carries synthetic
     // $path_*/$prefix_* names in router.routeMap that are deliberately absent
     // from the generated file (route-types-writer / runtime-discovery skip
@@ -81,7 +83,7 @@ describe("diffGeneratedRoutes", () => {
     });
     const generated = { home: "/" };
 
-    const diff = diffGeneratedRoutes(router, generated);
+    const diff = await diffGeneratedRoutes(router, generated);
 
     expect(diff.extra).toEqual([]);
     expect(diff.ok).toBe(true);
@@ -89,23 +91,23 @@ describe("diffGeneratedRoutes", () => {
 });
 
 describe("assertGeneratedRoutesMatch", () => {
-  it("does not throw on a match", () => {
+  it("does not throw on a match", async () => {
     const router = fakeRouter({ home: "/", post: "/blog/:slug" });
-    expect(() =>
+    await expect(
       assertGeneratedRoutesMatch(router, { home: "/", post: "/blog/:slug" }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it("does not throw when the runtime map carries only auto-generated extras", () => {
+  it("does not throw when the runtime map carries only auto-generated extras", async () => {
     // The flagship whole-app assertion must stay green for an in-sync app that
     // uses unnamed routes/includes (an extremely common pattern).
     const router = fakeRouter({ home: "/", $path__about: "/about" });
-    expect(() =>
+    await expect(
       assertGeneratedRoutesMatch(router, { home: "/" }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it("throws and lists missing, extra, and mismatched routes", () => {
+  it("throws and lists missing, extra, and mismatched routes", async () => {
     const router = fakeRouter({
       home: "/",
       contact: "/contact",
@@ -119,7 +121,7 @@ describe("assertGeneratedRoutesMatch", () => {
 
     let message = "";
     try {
-      assertGeneratedRoutesMatch(router, generated);
+      await assertGeneratedRoutesMatch(router, generated);
     } catch (error) {
       message = (error as Error).message;
     }

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   compilePattern,
+  buildParamsFromMatch,
   extractStaticPrefix,
   findMatch as rawFindMatch,
   isLazyEvaluationNeeded,
@@ -180,12 +181,21 @@ describe("compilePattern", () => {
       expect(match![1]).toBe("docs/readme.md");
     });
 
-    it("should match wildcard with prefix", () => {
-      const { regex, paramNames } = compilePattern("/api/*");
+    it("should match wildcard with prefix, including the bare prefix", () => {
+      const { regex, paramNames, catchAll } = compilePattern("/api/*");
       expect(regex.test("/api/users")).toBe(true);
       expect(regex.test("/api/users/123/posts")).toBe(true);
       expect(regex.test("/api/")).toBe(true);
-      expect(regex.test("/api")).toBe(false);
+      // Bare `*` is a zero-or-more catch-all: the bare prefix matches and binds
+      // "*" === "", aligning the regex fallback with the trie (issue #636).
+      expect(regex.test("/api")).toBe(true);
+      expect(
+        buildParamsFromMatch(regex.exec("/api")!, paramNames, catchAll),
+      ).toEqual({ "*": "" });
+      // A deeper path still binds the full remainder.
+      expect(
+        buildParamsFromMatch(regex.exec("/api/a/b")!, paramNames, catchAll),
+      ).toEqual({ "*": "a/b" });
       expect(paramNames).toEqual(["*"]);
     });
   });
@@ -1061,5 +1071,117 @@ describe("extractStaticPrefix", () => {
       "/shop/p:slug/items",
     );
     expect(extractStaticPrefix("/tel:+1/x")).toBe("/tel:+1/x");
+  });
+});
+
+// Named catch-all params: `:name+` (one-or-more, Next `[...name]` / RR splat) and
+// `:name*` (zero-or-more, Next `[[...name]]`). Both consume the remainder and
+// expose it as a single decoded string at `params[name]` (embedded slashes
+// preserved). See issue #634.
+describe("compilePattern named catch-all (:name+ / :name*)", () => {
+  it(":name+ compiles to one-or-more (.+) captured under the name", () => {
+    const { regex, paramNames } = compilePattern("/docs/:slug+");
+    expect(paramNames).toEqual(["slug"]);
+    expect(regex.test("/docs/a")).toBe(true);
+    expect(regex.test("/docs/a/b/c")).toBe(true);
+    // one-or-more: the bare prefix and trailing-slash-only form must not match
+    expect(regex.test("/docs")).toBe(false);
+    expect(regex.test("/docs/")).toBe(false);
+    expect(regex.exec("/docs/a/b/c")![1]).toBe("a/b/c");
+  });
+
+  it(":name* compiles to zero-or-more and matches the bare prefix directly", () => {
+    const { regex, paramNames } = compilePattern("/docs/:slug*");
+    expect(paramNames).toEqual(["slug"]);
+    expect(regex.test("/docs/a")).toBe(true);
+    expect(regex.test("/docs/a/b")).toBe(true);
+    expect(regex.test("/docs/")).toBe(true);
+    // Review F6: unlike bare `*`, a named `:slug*` matches the bare prefix in the
+    // regex fallback too (aligning it with the trie — no corrupt redirect).
+    expect(regex.test("/docs")).toBe(true);
+    expect(regex.exec("/docs/a/b")![1]).toBe("a/b");
+  });
+
+  it("extractStaticPrefix stops at a named catch-all (fast-skip preserved)", () => {
+    expect(extractStaticPrefix("/docs/:slug*")).toBe("/docs");
+    expect(extractStaticPrefix("/shop/:path+")).toBe("/shop");
+  });
+});
+
+// Review F3: a `+`/`*` is a catch-all modifier ONLY as a bare trailing token.
+// In any other combination it is the start of a literal suffix — the same parse
+// as before the feature existed — so a pattern that was valid on the parent
+// commit never becomes a registration-time error.
+describe("compilePattern catch-all falls back to a literal suffix (review F3)", () => {
+  it("treats `:name+text` as a param with a literal `+text` suffix", () => {
+    expect(() => compilePattern("/release/:version+build")).not.toThrow();
+    const { regex, paramNames } = compilePattern("/release/:version+build");
+    expect(paramNames).toEqual(["version"]);
+    expect(regex.test("/release/v1+build")).toBe(true);
+    expect(regex.test("/release/v1")).toBe(false);
+  });
+
+  it("treats `:name*.min` as a param with a literal `*.min` suffix", () => {
+    expect(() => compilePattern("/glob/:name*.min")).not.toThrow();
+    expect(
+      compilePattern("/glob/:name*.min").regex.test("/glob/app*.min"),
+    ).toBe(true);
+  });
+
+  it("does not treat `?`+modifier, `**`, or a constrained `+` as a catch-all", () => {
+    expect(() => compilePattern("/docs/:slug?*")).not.toThrow();
+    expect(() => compilePattern("/docs/:slug**")).not.toThrow();
+    expect(() => compilePattern("/docs/:slug(a|b)+")).not.toThrow();
+  });
+
+  it("treats a non-terminal `:name+` as a literal-suffix param, not an error", () => {
+    expect(() => compilePattern("/docs/:slug+/edit")).not.toThrow();
+    expect(
+      compilePattern("/docs/:slug+/edit").regex.test("/docs/x+/edit"),
+    ).toBe(true);
+  });
+});
+
+describe("findMatch named catch-all (:name+ / :name*)", () => {
+  it(":name+ surfaces the joined remainder at params[name]", () => {
+    const entries = [createRouteEntry("", { docs: "/docs/:slug+" })];
+    const r = findMatch("/docs/a/b/c", entries);
+    expect(r).not.toBeNull();
+    expect(r!.params).toEqual({ slug: "a/b/c" });
+  });
+
+  it(":name+ matches a single trailing segment", () => {
+    const entries = [createRouteEntry("", { docs: "/docs/:slug+" })];
+    expect(findMatch("/docs/a", entries)!.params).toEqual({ slug: "a" });
+  });
+
+  it(":name* surfaces the joined remainder at params[name]", () => {
+    const entries = [createRouteEntry("", { blog: "/blog/:rest*" })];
+    expect(findMatch("/blog/a/b", entries)!.params).toEqual({ rest: "a/b" });
+  });
+
+  it("carries params bound before the catch-all", () => {
+    const entries = [createRouteEntry("", { u: "/users/:id/:rest+" })];
+    expect(findMatch("/users/5/a/b", entries)!.params).toEqual({
+      id: "5",
+      rest: "a/b",
+    });
+  });
+
+  it("decodes the remainder", () => {
+    const entries = [createRouteEntry("", { docs: "/docs/:slug+" })];
+    expect(findMatch("/docs/a%20b/c", entries)!.params).toEqual({
+      slug: "a b/c",
+    });
+  });
+
+  // Review F6: a named `:slug*` binds "" for the bare prefix in the regex
+  // fallback instead of emitting a corrupt slice-off redirect (`/docs` -> `/doc`).
+  it(":name* matches the bare prefix binding '' (no corrupt redirect)", () => {
+    const entries = [createRouteEntry("", { docs: "/docs/:slug*" })];
+    const r = findMatch("/docs", entries);
+    expect(r).not.toBeNull();
+    expect(r!.redirectTo).toBeUndefined();
+    expect(r!.params).toEqual({ slug: "" });
   });
 });

@@ -22,12 +22,14 @@ lives.
 - **Per-route cache configuration** - `cache({ ttl, swr, store })` DSL for route definitions
 - **Store-level defaults** - `MemorySegmentCacheStore({ defaults: { ttl, swr } })`
 - **Per-section stores** - `cache({ store })` for dedicated stores per route section
+- **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) and `VercelCacheStore` (Vercel Runtime Cache via `getCache`) from `@rangojs/router/cache`
+- **Cache invalidation API** - `cache()` / cache profiles accept `tags`, and `cacheTag(...tags)` tags entries at runtime inside `"use cache"`. Built-in stores index by tag and invalidate via store-level `invalidateTags()`. Consumers call `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)` (background). Both hard-purge.
+- **Proactive caching** - Background re-resolve of null-component segments via `waitUntil` (`src/router/match-middleware/cache-store.ts`) so partial navigations get complete cache entries
 
 ### 🚧 Remaining
 
-- **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) is shipped from `@rangojs/router/cache`. Redis and other adapters are still future work.
-- **Cache invalidation API** - ✅ Shipped. `cache()` / cache profiles accept `tags`, and `cacheTag(...tags)` tags entries at runtime inside `"use cache"`. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag and invalidate via the store-level `invalidateTags()` primitive (it receives the whole tag batch in one call). Consumers call `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or `revalidateTag(...tags)` (background, non-blocking; for webhooks/route handlers). Both hard-purge — the only difference is awaitability; neither serves stale content. The CF store keeps its tag-invalidation markers in its own KV namespace (no separate store). A manual whole-store purge API is still future work.
-- **Proactive caching** - Render null-component segments in background for complete cache entries
+- **Redis (and other adapters)** - no first-party Redis `SegmentCacheStore` yet
+- **Manual whole-store purge API** - store-level wipe-all is still future work (`clear()` is optional / test-only on most backends)
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 
 ### Performance (Dev)
@@ -801,6 +803,8 @@ To invalidate on demand, call one of (both variadic, server-only, exported from 
 - `revalidateTag(...tags): void` - **background (non-blocking)**. Runs invalidation in the background (`waitUntil`); use it in route handlers / webhooks. NOT stale-while-revalidate: like `updateTag` it hard-purges, so the next read after the invalidation lands is a fresh miss. The only difference from `updateTag` is awaitability.
 
 Both fan out across the app-level store (`ctx._cacheStore`) and any explicit `cache({ store })` stores the handler resolved, calling the store-level `invalidateTags()` primitive (passing the whole tag batch in one call). The CF store records tag-invalidation markers in its own KV namespace and compares each entry's `taggedAt` against them on read - there is no separate tag-invalidation store. Note that the separate `revalidate()` export is a client-update axis (which segments re-render on a navigation or action), not a cache bust.
+
+The CF store also has an opt-in **purge mode** (`tagPurge: { zoneId, apiToken }`, or a custom purge function — `createCloudflareZonePurge` is the underlying client): tagged L1 entries carry namespaced `Cache-Tag` headers, `invalidateTags()` awaits one batched Cloudflare purge-by-tag call, and L1 hits skip the per-read marker lookup (KV L2 and PPR shells keep the marker check — purge cannot reach them). Semantics, credentials setup, trade-offs, and the environments/previews zone-scoping guide: [cache-tags-flow.md](./cache-tags-flow.md) "Purge mode".
 
 ---
 

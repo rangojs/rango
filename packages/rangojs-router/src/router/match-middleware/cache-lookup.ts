@@ -118,6 +118,9 @@ let prerenderStoreInstance: PrerenderStore | null | undefined;
 let _deserializeSegments:
   | typeof import("../../cache/segment-codec.js").deserializeSegments
   | undefined;
+let _fragmentSegments:
+  | typeof import("../../cache/segment-codec.js").fragmentSegments
+  | undefined;
 let _restoreHandles:
   | typeof import("../../cache/handle-snapshot.js").restoreHandles
   | undefined;
@@ -141,6 +144,7 @@ async function ensurePrerenderDeps() {
       import("../../prerender/store.js"),
     ]);
     _deserializeSegments = codec.deserializeSegments;
+    _fragmentSegments = codec.fragmentSegments;
     _restoreHandles = snapshot.restoreHandles;
     _decodeHandles = snapshot.decodeHandles;
     _hashParams = paramHash.hashParams;
@@ -243,6 +247,7 @@ async function* yieldFromStore<TEnv>(
 
   if (
     !_deserializeSegments ||
+    !_fragmentSegments ||
     !_restoreHandles ||
     !_decodeHandles ||
     !_hashParams ||
@@ -251,7 +256,13 @@ async function* yieldFromStore<TEnv>(
     throw new Error("yieldFromStore called before ensurePrerenderDeps");
   }
 
-  const segments = await _deserializeSegments(entry.segments);
+  // Shell-HIT tail (issue #700): a Prerender+ppr route's tail serves from THIS
+  // store (the prerender lookup runs before the cache scope), so the fragment
+  // splice must apply here too — otherwise producer B entries re-serialize the
+  // whole tree per request while producer A entries do not.
+  const segments = _getRequestContext()?._shellFragmentPayload
+    ? await _fragmentSegments(entry.segments)
+    : await _deserializeSegments(entry.segments);
 
   // Replay handle data (same as runtime cache hit path). entry.handles is a
   // Flight-encoded string ("" when none) — decode before restore so

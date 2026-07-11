@@ -98,6 +98,147 @@ function extractNamePrefixFromInclude(node: ts.CallExpression): string | null {
 }
 
 /**
+ * True when the thunk transforms its dynamic import via a `.then(cb)` whose
+ * callback selects a NAMED export other than `default` (e.g.
+ * `import("./x").then((m) => m.routes)`). The static resolver walks the module's
+ * `export default`, so such a selector would resolve the WRONG export — the
+ * caller must treat it as unresolvable instead of silently mis-resolving. Returns
+ * false for the supported shapes (no `.then`, `.then((m) => m)`,
+ * `.then((m) => m.default)`) and for any shape it cannot positively identify as a
+ * non-default member selection (those keep the existing resolve-via-default path).
+ */
+function thenSelectsNonDefaultMember(expr: ts.Expression): boolean {
+  const findThenCall = (e: ts.Expression): ts.CallExpression | null => {
+    if (
+      ts.isCallExpression(e) &&
+      ts.isPropertyAccessExpression(e.expression) &&
+      e.expression.name.text === "then"
+    ) {
+      return e;
+    }
+    if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+      return findThenCall(e.expression.expression);
+    }
+    if (ts.isPropertyAccessExpression(e)) return findThenCall(e.expression);
+    if (ts.isParenthesizedExpression(e)) return findThenCall(e.expression);
+    if (ts.isAwaitExpression(e)) return findThenCall(e.expression);
+    return null;
+  };
+
+  const thenCall = findThenCall(expr);
+  if (!thenCall || thenCall.arguments.length === 0) return false;
+  const cb = thenCall.arguments[0];
+  if (!ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb)) return false;
+
+  let ret: ts.Expression | undefined;
+  if (ts.isBlock(cb.body)) {
+    for (const stmt of cb.body.statements) {
+      if (ts.isReturnStatement(stmt) && stmt.expression) {
+        ret = stmt.expression;
+        break;
+      }
+    }
+  } else {
+    ret = cb.body;
+  }
+  if (!ret) return false;
+
+  if (ts.isPropertyAccessExpression(ret)) {
+    return ret.name.text !== "default";
+  }
+  return false;
+}
+
+/**
+ * Extract the module specifier from an async include thunk
+ * (`() => import("./mod")`). Handles arrow and function-expression thunks,
+ * concise or block bodies, and `import("./mod").then(...)` chains. Returns the
+ * specifier string, or null when the second arg is not a dynamic-import thunk
+ * (so the caller can fall through to identifier / factory-call / dynamic-expr
+ * classification).
+ */
+function extractDynamicImportSpecifier(node: ts.Expression): string | null {
+  let body: ts.ConciseBody | undefined;
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    body = node.body;
+  }
+  if (!body) return null;
+
+  // Concise body is the expression itself; block body: first `return <expr>`.
+  let expr: ts.Expression | undefined;
+  if (ts.isBlock(body)) {
+    for (const stmt of body.statements) {
+      if (ts.isReturnStatement(stmt) && stmt.expression) {
+        expr = stmt.expression;
+        break;
+      }
+    }
+  } else {
+    expr = body;
+  }
+  if (!expr) return null;
+
+  // Descend `import("./mod").then(...)` / parenthesized / await wrappers down to
+  // the `import(...)` call itself.
+  const findImportCall = (e: ts.Expression): ts.CallExpression | null => {
+    if (
+      ts.isCallExpression(e) &&
+      e.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      return e;
+    }
+    if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+      return findImportCall(e.expression.expression);
+    }
+    if (ts.isPropertyAccessExpression(e)) return findImportCall(e.expression);
+    if (ts.isParenthesizedExpression(e)) return findImportCall(e.expression);
+    if (ts.isAwaitExpression(e)) return findImportCall(e.expression);
+    return null;
+  };
+
+  const importCall = findImportCall(expr);
+  if (!importCall || importCall.arguments.length === 0) return null;
+  // A `.then()` selecting a non-default named export can't be statically
+  // resolved to `export default`; return null so the caller emits a diagnostic
+  // rather than silently generating types for the wrong export.
+  if (thenSelectsNonDefaultMember(expr)) return null;
+  return getStringValue(importCall.arguments[0]);
+}
+
+/**
+ * Resolve a module's `export default` to either a same-file `urls()` variable
+ * name (`export default shopPatterns`) or the inline call block
+ * (`export default urls(...)`). Used to walk async include modules
+ * (`() => import("./mod")`), whose convention is `export default urls(...)`.
+ */
+function resolveDefaultExportTarget(
+  code: string,
+  sourceFile: ts.SourceFile,
+): { variableName?: string; inlineBlock?: string } | null {
+  let result: { variableName?: string; inlineBlock?: string } | null = null;
+
+  function visit(node: ts.Node) {
+    if (result) return;
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      const expr = node.expression;
+      if (ts.isIdentifier(expr)) {
+        result = { variableName: expr.text };
+      } else if (ts.isCallExpression(expr)) {
+        const callee = expr.expression;
+        if (ts.isIdentifier(callee) && callee.text === "urls") {
+          result = { inlineBlock: expr.getText(sourceFile) };
+        }
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return result;
+}
+
+/**
  * Extract include() calls with diagnostics for unresolvable ones.
  * Returns both resolved includes (identifier second args) and unresolvable
  * includes (factory calls, etc.) with reasons.
@@ -108,7 +249,12 @@ export function extractIncludesWithDiagnostics(
 ): {
   resolved: Array<{
     pathPrefix: string;
-    variableName: string;
+    // Exactly one of variableName / moduleSpecifier is set. variableName is the
+    // classic `include("/api", apiUrls)` identifier form; moduleSpecifier is the
+    // async `include("/api", () => import("./api"))` form, carrying the imported
+    // module path so resolution can walk its `export default`.
+    variableName?: string;
+    moduleSpecifier?: string;
     namePrefix: string | null;
   }>;
   unresolvable: Array<{
@@ -130,7 +276,8 @@ export function extractIncludesWithDiagnostics(
     );
   const resolved: Array<{
     pathPrefix: string;
-    variableName: string;
+    variableName?: string;
+    moduleSpecifier?: string;
     namePrefix: string | null;
   }> = [];
   const unresolvable: Array<{
@@ -158,10 +305,20 @@ export function extractIncludesWithDiagnostics(
         const secondArg = node.arguments[1];
         const namePrefix = extractNamePrefixFromInclude(node);
 
+        const dynamicImportSpec = extractDynamicImportSpecifier(secondArg);
+
         if (ts.isIdentifier(secondArg)) {
           resolved.push({
             pathPrefix,
             variableName: secondArg.text,
+            namePrefix,
+          });
+        } else if (dynamicImportSpec !== null) {
+          // Async include: `include("/api", () => import("./api"))`. Resolvable
+          // statically by walking the imported module's `export default`.
+          resolved.push({
+            pathPrefix,
+            moduleSpecifier: dynamicImportSpec,
             namePrefix,
           });
         } else if (ts.isCallExpression(secondArg)) {
@@ -348,65 +505,120 @@ function buildRouteMapFromBlock(
     }
   }
 
-  for (const { pathPrefix, variableName, namePrefix } of includes) {
+  for (const inc of includes) {
+    const { pathPrefix, namePrefix } = inc;
     let childResult: {
       routes: Record<string, string>;
       searchSchemas: Record<string, Record<string, string>>;
     };
 
-    // Try import resolution first
-    const imported = resolveImportedVariable(fullSource, variableName);
-    if (imported) {
-      const targetFile = resolveImportPath(imported.specifier, filePath);
+    if (inc.moduleSpecifier) {
+      // Async include `() => import("./mod")`: resolve the imported module's
+      // `export default` (convention: `export default urls(...)`), then recurse
+      // into it exactly like an identifier include. Nested include()s inside the
+      // async module — eager or async — resolve through the same recursion.
+      const targetFile = resolveImportPath(inc.moduleSpecifier, filePath);
       if (!targetFile) {
-        if (diagnosticsOut) {
-          diagnosticsOut.push({
-            pathPrefix,
-            namePrefix,
-            reason: "file-not-found",
-            sourceFile: filePath,
-            detail: `import "${imported.specifier}" resolved to no file`,
-          });
-        }
+        diagnosticsOut?.push({
+          pathPrefix,
+          namePrefix,
+          reason: "file-not-found",
+          sourceFile: filePath,
+          detail: `import("${inc.moduleSpecifier}") resolved to no file`,
+        });
         continue;
       }
-      childResult = buildCombinedRouteMapWithSearch(
-        targetFile,
-        imported.exportedName,
+      let targetSource: string;
+      try {
+        targetSource = readSourceMemoized(memo, resolve(targetFile));
+      } catch (err) {
+        // Every other failure path in this function emits a diagnostic; a bare
+        // `continue` here would drop the group from generated types with no
+        // signal at all. Emit one like the siblings do.
+        diagnosticsOut?.push({
+          pathPrefix,
+          namePrefix,
+          reason: "file-not-found",
+          sourceFile: filePath,
+          detail: `import("${inc.moduleSpecifier}") resolved to "${targetFile}" but reading it failed: ${(err as Error)?.message ?? String(err)}`,
+        });
+        continue;
+      }
+      const def = resolveDefaultExportTarget(
+        targetSource,
+        parseBlock(memo, targetSource),
+      );
+      if (!def) {
+        diagnosticsOut?.push({
+          pathPrefix,
+          namePrefix,
+          reason: "unresolvable-import",
+          sourceFile: filePath,
+          detail: `import("${inc.moduleSpecifier}") has no resolvable \`export default urls(...)\``,
+        });
+        continue;
+      }
+      if (def.inlineBlock) {
+        // `export default urls(...)` — recurse into the inline call block.
+        childResult = buildCombinedRouteMapWithSearch(
+          targetFile,
+          undefined,
+          visited,
+          diagnosticsOut,
+          def.inlineBlock,
+          memo,
+        );
+      } else {
+        // `export default <name>`. That name may be a same-file
+        // `const name = urls(...)` OR itself re-exported from an import
+        // (`import { name } from "./x"; export default name`). The shared helper
+        // resolves the import chain first, then falls back to same-file
+        // extraction — without this a re-exported default silently yields empty
+        // routes. Resolution scope is the imported module (targetFile); the
+        // diagnostic is still attributed to the file with the async include.
+        const variableName = def.variableName!;
+        const resolved = resolveIncludedVariable({
+          variableName,
+          resolutionFile: targetFile,
+          resolutionSource: targetSource,
+          reportFile: filePath,
+          memo,
+          visited,
+          diagnosticsOut,
+          pathPrefix,
+          namePrefix,
+          fileNotFoundDetail: (specifier) =>
+            `import("${inc.moduleSpecifier}") default re-exports "${variableName}" from "${specifier}", which resolved to no file`,
+          notFoundDetail: () =>
+            `import("${inc.moduleSpecifier}") default "${variableName}" not found in its imports or same-file scope`,
+        });
+        if (!resolved) continue;
+        childResult = resolved;
+      }
+    } else if (inc.variableName) {
+      // Identifier include `include(prefix, patterns)`: resolve `patterns`
+      // (imported or same-file) through the same shared helper as the async
+      // `export default <name>` form above.
+      const variableName = inc.variableName;
+      const resolved = resolveIncludedVariable({
+        variableName,
+        resolutionFile: filePath,
+        resolutionSource: fullSource,
+        reportFile: filePath,
+        memo,
         visited,
         diagnosticsOut,
-        undefined,
-        memo,
-      );
+        pathPrefix,
+        namePrefix,
+        fileNotFoundDetail: (specifier) =>
+          `import "${specifier}" resolved to no file`,
+        notFoundDetail: () =>
+          `variable "${variableName}" not found in imports or same-file scope`,
+      });
+      if (!resolved) continue;
+      childResult = resolved;
     } else {
-      // Check if variable exists as a same-file urls() definition. Share the
-      // full-source SourceFile parse via the memo (block === fullSource hits the
-      // same cache entry already used above).
-      const sameFileBlock = extractUrlsBlockForVariable(
-        fullSource,
-        variableName,
-        parseBlock(memo, fullSource),
-      );
-      if (!sameFileBlock) {
-        if (diagnosticsOut) {
-          diagnosticsOut.push({
-            pathPrefix,
-            namePrefix,
-            reason: "unresolvable-import",
-            sourceFile: filePath,
-            detail: `variable "${variableName}" not found in imports or same-file scope`,
-          });
-        }
-        continue;
-      }
-      childResult = buildCombinedRouteMapWithSearch(
-        filePath,
-        variableName,
-        visited,
-        diagnosticsOut,
-        undefined,
-        memo,
-      );
+      continue;
     }
 
     // Includes without a name keep their child names private to the mounted
@@ -436,6 +648,94 @@ function buildRouteMapFromBlock(
   }
 
   return routeMap;
+}
+
+/**
+ * Resolve an include's target VARIABLE to its child route map. The variable may
+ * be imported (`import { name } from "./x"`) or defined in the same file
+ * (`const name = urls(...)`). Shared by the identifier include branch and the
+ * async-include `export default <name>` branch so a future import-resolution fix
+ * cannot silently miss one form. Returns null (with a diagnostic pushed) when
+ * the variable is unresolvable — the caller should skip the include.
+ *
+ * `resolutionFile`/`resolutionSource` is the module whose import + same-file
+ * scope is searched; `reportFile` is the file the diagnostic is attributed to
+ * (the one containing the include() call), which differs for async includes.
+ */
+function resolveIncludedVariable(opts: {
+  variableName: string;
+  resolutionFile: string;
+  resolutionSource: string;
+  reportFile: string;
+  memo: ScanMemo | undefined;
+  visited: Set<string> | undefined;
+  diagnosticsOut: UnresolvableInclude[] | undefined;
+  pathPrefix: string;
+  namePrefix: string | null;
+  fileNotFoundDetail: (specifier: string) => string;
+  notFoundDetail: () => string;
+}): {
+  routes: Record<string, string>;
+  searchSchemas: Record<string, Record<string, string>>;
+} | null {
+  const {
+    variableName,
+    resolutionFile,
+    resolutionSource,
+    reportFile,
+    memo,
+    visited,
+    diagnosticsOut,
+    pathPrefix,
+    namePrefix,
+  } = opts;
+  const imported = resolveImportedVariable(resolutionSource, variableName);
+  if (imported) {
+    const targetFile = resolveImportPath(imported.specifier, resolutionFile);
+    if (!targetFile) {
+      diagnosticsOut?.push({
+        pathPrefix,
+        namePrefix,
+        reason: "file-not-found",
+        sourceFile: reportFile,
+        detail: opts.fileNotFoundDetail(imported.specifier),
+      });
+      return null;
+    }
+    return buildCombinedRouteMapWithSearch(
+      targetFile,
+      imported.exportedName,
+      visited,
+      diagnosticsOut,
+      undefined,
+      memo,
+    );
+  }
+  // Not imported: it must be a same-file `const name = urls(...)`. Confirm it
+  // exists so an undefined name emits a diagnostic instead of empty routes.
+  const sameFileBlock = extractUrlsBlockForVariable(
+    resolutionSource,
+    variableName,
+    parseBlock(memo, resolutionSource),
+  );
+  if (!sameFileBlock) {
+    diagnosticsOut?.push({
+      pathPrefix,
+      namePrefix,
+      reason: "unresolvable-import",
+      sourceFile: reportFile,
+      detail: opts.notFoundDetail(),
+    });
+    return null;
+  }
+  return buildCombinedRouteMapWithSearch(
+    resolutionFile,
+    variableName,
+    visited,
+    diagnosticsOut,
+    undefined,
+    memo,
+  );
 }
 
 /**

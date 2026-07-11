@@ -38,3 +38,16 @@ export const CookieReaderLoader = createLoader(async () => {
   const session = cookies().get("csg-session")?.value;
   return { session: session ?? "no-cookie" };
 });
+
+// Writes a cookie, but is consumed ONLY via ctx.use from a handler — never
+// registered with loader() in the route config. Under cache() this must THROW
+// (#725): a handler-invoked loader runs on the MISS but is skipped with its
+// handler on a HIT, so the Set-Cookie would land only on the MISS and vanish on
+// hits. Contrast CookieWriterLoader (DSL-registered, re-runs every hit,
+// ALLOWED).
+export const HandlerInvokedCookieWriterLoader = createLoader(async () => {
+  "use server";
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  cookies().set("csg-hil-cookie", "written-by-handler-loader", { path: "/" });
+  return { wrote: true };
+});

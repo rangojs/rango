@@ -5,12 +5,17 @@ import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
+import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+  isValidDevDiscoveryEpoch,
+} from "./dev-discovery-protocol.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
 import { VERSION } from "@rangojs/router:version";
 import { createPrerenderTrigger } from "./prerender/create-prerender-trigger.js";
+import { createMemoryPrerenderStore } from "./prerender/memory-prerender-store.js";
 import {
   registerRouteMap,
-  getPrecomputedEntries,
   getRouterManifest,
   getRouterPrecomputedEntries,
   ensureRouterManifest,
@@ -161,7 +166,6 @@ export function createRouter<TEnv = any>(
     prefetchConcurrency: prefetchConcurrencyOption,
     stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
-    allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
     tracing: tracingOption,
     ssr: ssrOption,
@@ -171,8 +175,20 @@ export function createRouter<TEnv = any>(
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
     debugCacheSignal: debugCacheSignalOption = false,
+    debugShellCapture: debugShellCaptureOption,
     strictMode: strictModeOption = true,
   } = options;
+
+  const defaultDevPrerenderStore = prerenderConfigOption
+    ? undefined
+    : createMemoryPrerenderStore();
+  const effectivePrerenderConfigOption =
+    prerenderConfigOption ??
+    ((() =>
+      typeof globalThis.__PRERENDER_DEV_URL === "string" &&
+      defaultDevPrerenderStore
+        ? { store: defaultDevPrerenderStore }
+        : undefined) as RangoOptions<TEnv>["prerender"]);
 
   // Debug cache signal gate (DEVELOPMENT/TEST ONLY). Enabled by the
   // debugCacheSignal option OR the RANGO_TEST_SIGNALS=1 env flag. When off,
@@ -232,6 +248,14 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+  const rawDevDiscoveryEpoch = (
+    globalThis as typeof globalThis & {
+      __RANGO_DEV_DISCOVERY_EPOCH?: unknown;
+    }
+  ).__RANGO_DEV_DISCOVERY_EPOCH;
+  const devDiscoveryEpoch = isValidDevDiscoveryEpoch(rawDevDiscoveryEpoch)
+    ? rawDevDiscoveryEpoch
+    : undefined;
 
   // Resolve the rango state cookie name once, here, so the two cookie writers
   // (the client document.cookie writer and the server Set-Cookie writer)
@@ -408,8 +432,7 @@ export function createRouter<TEnv = any>(
     string,
     Record<string, string>
   > | null {
-    const current =
-      getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
+    const current = getRouterPrecomputedEntries(routerId);
     if (current !== precomputedSource) {
       precomputedSource = current;
       // buildPrecomputedByPrefix drops any staticPrefix owned by more than one
@@ -423,14 +446,17 @@ export function createRouter<TEnv = any>(
 
   // Wrapper to pass debugPerformance to external createMetricsStore.
   // Also checks per-request flag set by ctx.debugPerformance() in middleware.
+  // With no active request context there is nowhere to hang the store, so return
+  // undefined: an orphan store would collect metrics no reader can reach (nothing
+  // holds it, and appendMetric(undefined, ...) is already a no-op).
   const getMetricsStore = () => {
     const reqCtx = _getRequestContext();
     const enabled = debugPerformance || !!reqCtx?._debugPerformance;
-    if (!enabled) return undefined;
-    if (!reqCtx) {
-      return createMetricsStore(true);
-    }
-    reqCtx._metricsStore ??= createMetricsStore(true);
+    if (!enabled || !reqCtx) return undefined;
+    // Anchor a mid-request store to the true request entry (reqCtx._handlerStart),
+    // not this call's performance.now(); undefined falls back to now() inside
+    // createMetricsStore (metrics.ts).
+    reqCtx._metricsStore ??= createMetricsStore(true, reqCtx._handlerStart);
     return reqCtx._metricsStore;
   };
 
@@ -440,11 +466,6 @@ export function createRouter<TEnv = any>(
 
   const findNearestNotFoundBoundary = (entry: EntryData | null) =>
     findNotFoundBoundary(entry, defaultNotFoundBoundary);
-
-  // Helper to get handleStore from request context
-  const getHandleStore = (): HandleStore | undefined => {
-    return _getRequestContext()?._handleStore;
-  };
 
   // Track a pending handler promise (non-blocking).
   // Attaches a side-effect .catch() to report streaming handler errors to onError
@@ -456,13 +477,14 @@ export function createRouter<TEnv = any>(
       segmentType?: string;
     },
   ): Promise<T> => {
-    const store = getHandleStore();
+    // One ALS read serves both the store lookup and the onError closure.
+    const reqCtx = _getRequestContext();
+    const store = reqCtx?._handleStore;
     const tracked = store ? store.track(promise) : promise;
 
     // Report streaming handler errors to onError as a side-effect.
     // The rejection still propagates to the RSC stream for client error boundaries.
     // Captures request context eagerly (closure) so the catch handler has full context.
-    const reqCtx = _getRequestContext();
     if (reqCtx && onError) {
       tracked.catch((error) => {
         callOnError(error, "handler", {
@@ -504,8 +526,12 @@ export function createRouter<TEnv = any>(
         ? getRequestId(errorContext.request)
         : undefined
       : undefined;
+    // Derived once here for both the loader.start and loader.end emits (the
+    // loader.error emit uses ctx.loaderName from wrapLoaderWithErrorHandling).
+    const loaderName = telemetrySink
+      ? segmentId.split(".").pop() || "unknown"
+      : "";
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       safeEmit(telemetry, {
         type: "loader.start",
         timestamp: loaderStart,
@@ -559,7 +585,6 @@ export function createRouter<TEnv = any>(
 
     // Emit loader.end after the promise settles (fire-and-forget)
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       result.then((r) => {
         safeEmit(telemetry, {
           type: "loader.end",
@@ -623,8 +648,15 @@ export function createRouter<TEnv = any>(
     routerId,
   };
 
-  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
-    _evaluateLazyEntry(entry, lazyEvalDeps);
+  // Must return the Promise from _evaluateLazyEntry: an async include provider
+  // (`() => import("./routes")`) resolves off the startup path, and createFindMatch
+  // awaits this to know when the import + expansion have completed. Dropping it
+  // (typing this `void`) makes the import fire-and-forget, so findMatch spins the
+  // lazy-eval retry loop to its cap and returns null on the first request to any
+  // async include whose prefix isn't already covered by a unique precomputed entry
+  // (nested includes, shared prefixes, regex fallback).
+  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void | Promise<void> {
+    return _evaluateLazyEntry(entry, lazyEvalDeps);
   }
 
   // Create findMatch with single-entry cache, bound to router state
@@ -663,6 +695,7 @@ export function createRouter<TEnv = any>(
 
   // Prerender/static match deps (bind closure state for extracted functions)
   const prerenderDeps = {
+    routerId,
     findMatch,
     buildRouterContext,
     mergedRouteMap,
@@ -694,6 +727,7 @@ export function createRouter<TEnv = any>(
     routeName?: string,
     buildEnv?: TEnv,
     devMode?: boolean,
+    rootScoped?: boolean,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
@@ -702,6 +736,8 @@ export function createRouter<TEnv = any>(
       routeName,
       buildEnv,
       devMode,
+      routerId,
+      rootScoped,
     );
   }
 
@@ -723,7 +759,7 @@ export function createRouter<TEnv = any>(
     isDev: () => typeof globalThis.__PRERENDER_DEV_URL === "string",
     ensureManifest: () => ensureRouterManifest(routerId),
     resolveConfig: (env, ctx) => {
-      const opt = prerenderConfigOption;
+      const opt = effectivePrerenderConfigOption;
       if (!opt) return undefined;
       return typeof opt === "function" ? opt(env, ctx) : opt;
     },
@@ -734,8 +770,8 @@ export function createRouter<TEnv = any>(
         return undefined;
       }
     },
-    matchRoute: (pathname) => {
-      const m = findMatch(pathname);
+    matchRoute: async (pathname) => {
+      const m = await findMatch(pathname);
       if (!m) return null;
       return {
         routeName: m.routeKey,
@@ -834,6 +870,7 @@ export function createRouter<TEnv = any>(
           parent: syntheticMapRoot,
           counters: {},
           mountIndex: currentMountIndex,
+          routerId,
           cacheProfiles: resolvedCacheProfiles,
           // basename sets the initial URL prefix so all path() patterns
           // are registered with the prefix (e.g. "/admin" + "/users" = "/admin/users").
@@ -1035,7 +1072,7 @@ export function createRouter<TEnv = any>(
     // Expose the prerender store config (durable overlay) for the RSC handler to
     // resolve per request. Stored under _prerenderConfig because `prerender` on
     // the instance is the trigger method (router.prerender()).
-    _prerenderConfig: prerenderConfigOption,
+    _prerenderConfig: effectivePrerenderConfigOption,
 
     // On-demand prerender trigger: router.prerender(target, { env, ctx }),
     // plus .many() and .invalidateTags().
@@ -1069,11 +1106,18 @@ export function createRouter<TEnv = any>(
     // Expose router-wide performance debugging for request-level metrics setup
     debugPerformance,
 
+    // Expose the PPR shell-capture debug sink for the render layer
+    // (rsc-rendering resolves it into the capture descriptor)
+    debugShellCapture: debugShellCaptureOption,
+
     // Expose resolved span tracing for the handler (Cloudflare custom spans)
     tracing: resolvedTracing,
 
-    // Expose debug manifest flag for handler
-    allowDebugManifest: allowDebugManifestOption,
+    // Expose the raw telemetry sink so handler-level emitters (timeout, origin
+    // rejection, late-handle handler.error) can emit outside the match ALS.
+    // Raw (not the resolveSink no-op wrapper) so router.telemetry stays
+    // undefined when unconfigured and call sites gate on truthiness.
+    telemetry: telemetrySink,
 
     // Expose origin check configuration for handler (default: enabled)
     originCheck: originCheckOption ?? true,
@@ -1133,6 +1177,9 @@ export function createRouter<TEnv = any>(
     // Expose basename for runtime manifest generation
     __basename: basename,
 
+    // Pin payload metadata to the worker generation that created this router.
+    __devDiscoveryEpoch: devDiscoveryEpoch,
+
     // Expose router-level boundary defaults for build-time clientChunks
     // discovery (so a "use client" default boundary lands in app-fallback).
     // These are createRouter options, never pushed onto EntryData.
@@ -1151,6 +1198,18 @@ export function createRouter<TEnv = any>(
         | null = null;
 
       return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+        if (
+          devDiscoveryEpoch !== undefined &&
+          request.headers.get(DEV_DISCOVERY_PROBE_HEADER) ===
+            String(devDiscoveryEpoch)
+        ) {
+          return new Response(null, {
+            headers: {
+              [DEV_DISCOVERY_EPOCH_HEADER]: String(devDiscoveryEpoch),
+            },
+          });
+        }
+
         // Trigger lazy import of per-router manifest data before route matching.
         // No-op if data is already loaded or no loader is registered.
         await ensureRouterManifest(routerId);

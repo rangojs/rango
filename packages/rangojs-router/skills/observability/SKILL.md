@@ -1,6 +1,6 @@
 ---
 name: observability
-description: Debug Rango request performance with debugPerformance, Server-Timing, structured telemetry, and tracing
+description: Debug Rango request performance with debugPerformance, Server-Timing, structured telemetry, and tracing. Use when a request feels slow and you need to see where time is spent, or wiring up tracing/telemetry for production requests.
 argument-hint:
 ---
 
@@ -58,6 +58,14 @@ Read the timeline as intervals:
 - Cache, route matching, middleware pre/post, RSC serialization, and SSR phases
   appear as separate spans, so the slow phase is visible without guessing.
 
+**Deployed Cloudflare caveat**: on production Workers, timers are frozen
+during request execution (Spectre mitigation), so `Server-Timing` durations
+read as ~0 on the deployed edge — they only advance across genuine awaited
+I/O. The waterfall is a LOCAL diagnostic (dev, `vite preview`,
+`wrangler dev`); for deployed workers, measure from the client
+(`PerformanceResourceTiming`, TTFB) and use structured telemetry below for
+server-side events.
+
 ## Structured telemetry
 
 Use telemetry when you want durable production events rather than a one-request
@@ -112,7 +120,29 @@ const router = createRouter({
 });
 ```
 
-Both factories return a `RouterTracingConfig` for the same `tracing` slot;
+On **Vercel Functions** (Node runtime), use `createVercelTracing` — a thin
+wrapper over `createOTelTracing` that reads the global OTel tracer
+`@vercel/otel`'s `registerOTel()` installs, so you do not call `trace.getTracer`
+yourself. Custom spans are Node-only (unsupported on the Edge runtime):
+
+```typescript
+// instrumentation.ts — install the provider, then export the tracing config.
+// Importing this module is what runs registerOTel() — a Rango/Vite app does not
+// auto-load instrumentation.ts like Next.js, so a standalone registerOTel() that
+// nothing imports is a silent no-op.
+import { registerOTel } from "@vercel/otel";
+import { createVercelTracing } from "@rangojs/router/vercel";
+registerOTel({ serviceName: "my-app" });
+export const tracing = createVercelTracing(); // { enabled, spans, tracerName, tracer }
+
+// router.tsx — importing `tracing` runs instrumentation.ts
+import { createRouter } from "@rangojs/router";
+import { tracing } from "./instrumentation.js";
+
+const router = createRouter({ document: Document, urls: urlpatterns, tracing });
+```
+
+These factories return a `RouterTracingConfig` for the same `tracing` slot;
 `telemetry` stays independent (events only, no phase spans). Phase spans:
 `rango.request`, `rango.middleware`, `rango.action`, `rango.loader`,
 `rango.render`, `rango.ssr` — the same phases the `debugPerformance` timeline

@@ -30,7 +30,13 @@ import {
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
+import { renderRscFlightStage, renderRscResponse } from "./render-pipeline.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
+import {
+  resolveSoftRedirectUrl,
+  resolveExternalRedirect,
+  safeSameOriginLanding,
+} from "../redirect-origin.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import {
   isWebSocketUpgradeResponse,
@@ -52,8 +58,6 @@ import {
 import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
-  getRouteTrie,
-  getPrecomputedEntries,
   waitForManifestReady,
   getRouterManifest,
   getRouterTrie,
@@ -76,19 +80,22 @@ import {
 import { handleRscRendering } from "./rsc-rendering.js";
 import {
   withTimeout,
+  isTimeoutEnabled,
   RouterTimeoutError,
   createDefaultTimeoutResponse,
   type TimeoutPhase,
+  type RenderTimeoutContext,
 } from "../router/timeout.js";
 import {
   createMetricsStore,
   appendMetric,
   buildMetricsTiming,
 } from "../router/metrics.js";
-import { observePhase, observeEvent, PHASES } from "../router/instrument.js";
+import { observePhase, PHASES } from "../router/instrument.js";
+import { safeEmit, resolveSink, getRequestId } from "../router/telemetry.js";
 import {
   startSSRSetup,
-  getSSRSetup,
+  createSsrHtmlStage,
   mayNeedSSR,
   isRscRequest,
   SSR_SETUP_VAR,
@@ -235,7 +242,25 @@ export function createRSCHandler<
     actionId?: string,
   ): Promise<Response> {
     const timeoutError = new RouterTimeoutError(phase, durationMs);
+    const cursor = _getRequestContext<TEnv>()?._renderForeground;
+    const render: RenderTimeoutContext | undefined =
+      phase === "render-start" && cursor
+        ? {
+            mode: cursor.mode,
+            phase: cursor.phase,
+            state: cursor.state,
+            completed: cursor.completed,
+            total: cursor.total,
+            ...(cursor.phaseStartedAt !== undefined && {
+              phaseDurationMs: performance.now() - cursor.phaseStartedAt,
+            }),
+          }
+        : undefined;
 
+    // Each surface gets its OWN shallow copy of the snapshot. onError, telemetry,
+    // and onTimeout are independent consumers; a consumer that mutates its
+    // `render` (e.g. an onError redacting metadata) must not corrupt what the
+    // other two observe.
     callOnError(timeoutError, phase === "action" ? "action" : "handler", {
       request,
       url,
@@ -243,19 +268,28 @@ export function createRSCHandler<
       routeKey,
       actionId,
       handledByBoundary: false,
-      metadata: { timeout: true, phase, durationMs },
+      metadata: {
+        timeout: true,
+        phase,
+        durationMs,
+        ...(render && { render: { ...render } }),
+      },
     });
 
-    observeEvent({
-      type: "request.timeout",
-      timestamp: performance.now(),
-      phase,
-      pathname: url.pathname,
-      routeKey,
-      actionId,
-      durationMs,
-      customHandler: !!router.onTimeout,
-    });
+    if (router.telemetry) {
+      safeEmit(resolveSink(router.telemetry), {
+        type: "request.timeout",
+        timestamp: performance.now(),
+        requestId: getRequestId(request),
+        phase,
+        pathname: url.pathname,
+        routeKey,
+        actionId,
+        durationMs,
+        customHandler: !!router.onTimeout,
+        ...(render && { render: { ...render } }),
+      });
+    }
 
     if (router.onTimeout) {
       try {
@@ -267,6 +301,7 @@ export function createRSCHandler<
           routeKey,
           actionId,
           durationMs,
+          ...(render && { render: { ...render } }),
         });
       } catch (e) {
         if (process.env.NODE_ENV !== "production") {
@@ -283,31 +318,66 @@ export function createRSCHandler<
    * Build a 200 Flight response that carries a redirect URL and optional state.
    * Used when a partial/action request results in a redirect -- fetch
    * auto-follows 3xx so we send the redirect as payload metadata instead.
+   *
+   * The redirect URL is resolved with {@link resolveSoftRedirectUrl} against
+   * the current request origin so an unsafe target never leaves as Flight
+   * metadata (client validators remain defense-in-depth).
    */
   function createRedirectFlightResponse(
     redirectUrl: string,
     locationState?: Record<string, unknown>,
     external?: boolean,
   ): Response {
+    const reqCtx = _getRequestContext<TEnv>();
+    const requestOrigin =
+      reqCtx?.url.origin ?? new URL("http://localhost").origin;
+    // Resolve with the same policy as 3xx guardOutgoingRedirect. Keep
+    // external:true only when the external scheme check passed; a neutralized
+    // landing (javascript:/blocked) must not advertise external.
+    let resolvedUrl: string;
+    let resolvedExternal = false;
+    if (external) {
+      const ext = resolveExternalRedirect(redirectUrl, requestOrigin);
+      if (ext !== null) {
+        resolvedUrl = ext;
+        resolvedExternal = true;
+      } else {
+        resolvedUrl = safeSameOriginLanding(router.basename);
+      }
+    } else {
+      resolvedUrl = resolveSoftRedirectUrl(
+        redirectUrl,
+        requestOrigin,
+        router.basename,
+        false,
+      );
+    }
     const redirectPayload: RscPayload = {
       metadata: {
-        pathname: redirectUrl,
+        pathname: resolvedUrl,
         segments: [],
-        redirect: { url: redirectUrl, ...(external && { external: true }) },
+        redirect: {
+          url: resolvedUrl,
+          ...(resolvedExternal && { external: true }),
+        },
         ...(locationState && { locationState }),
       },
     };
-    const rscStream = renderToReadableStream<RscPayload>(redirectPayload, {
-      onError: (error: unknown) => {
-        const reqCtx = _getRequestContext<TEnv>();
-        if (!reqCtx) return;
-        callOnError(error, "rendering", {
+    const rscStream = reqCtx
+      ? renderRscFlightStage({
+          ctx: { renderToReadableStream, callOnError },
           request: reqCtx.request,
           url: reqCtx.url,
           env: reqCtx.env,
-        });
-      },
-    });
+          payload: redirectPayload,
+          tracking: {
+            mode: reqCtx.url.searchParams.has("_rsc_action")
+              ? "action-revalidation"
+              : "partial",
+            routeKey: reqCtx._routeName,
+          },
+        }).stream
+      : renderToReadableStream<RscPayload>(redirectPayload);
     return createResponseWithMergedHeaders(rscStream, {
       status: 200,
       headers: { "content-type": "text/x-component;charset=utf-8" },
@@ -319,6 +389,7 @@ export function createRSCHandler<
   const handlerCtx: HandlerContext<TEnv> = {
     router,
     version,
+    devDiscoveryEpoch: router.__devDiscoveryEpoch,
     renderToReadableStream,
     decodeReply,
     createTemporaryReferenceSet,
@@ -485,6 +556,17 @@ export function createRSCHandler<
       stateCookieName: router.resolvedStateCookieName,
       version,
     });
+    // Gate on the SAME enabled-semantics withTimeout uses (isTimeoutEnabled):
+    // a `renderStartMs: 0` / negative opt-out disables the timeout, so the
+    // driver's cursor bookkeeping (which only the timeout reads) must be off too.
+    requestContext._renderDiagnosticsEnabled = isTimeoutEnabled(
+      router.timeouts.renderStartMs,
+    );
+    // Thread the true request entry timestamp onto the context so a metrics
+    // store created MID-request (ctx.debugPerformance() / getMetricsStore) anchors
+    // to the real start, not the opt-in moment — phases that began earlier then
+    // report non-negative offsets. Set unconditionally: debug may be enabled later.
+    requestContext._handlerStart = handlerStart;
     if (earlyMetricsStore) {
       requestContext._debugPerformance = true;
       requestContext._metricsStore = earlyMetricsStore;
@@ -525,6 +607,7 @@ export function createRSCHandler<
     // - Streaming
     // Store basename on request context (scoped per-request via existing ALS)
     requestContext._basename = router.basename;
+    requestContext._routerId = router.id;
 
     // Resolved span tracing for this request (read at each traced phase).
     requestContext._tracing = router.tracing;
@@ -568,6 +651,7 @@ export function createRSCHandler<
             const intercepted = interceptRedirectForPartial(
               mwResponse,
               createRedirectFlightResponse,
+              { requestOrigin: url.origin, basename: router.basename },
             );
             response = intercepted ?? finalizeResponse(mwResponse);
           } else {
@@ -592,8 +676,10 @@ export function createRSCHandler<
         if (metricsStore) {
           // When the store was created at handler start (earlyMetricsStore),
           // handler:total covers the full request. When ctx.debugPerformance()
-          // created the store mid-request, use its requestStart to avoid a
-          // negative startTime offset.
+          // created the store mid-request its requestStart is now the threaded
+          // _handlerStart (== handlerStart), so both branches yield the true
+          // request entry; reading the store's own anchor keeps this correct even
+          // if a store ever lands without the threading (falls back to its start).
           const totalStart = earlyMetricsStore
             ? handlerStart
             : metricsStore.requestStart;
@@ -613,7 +699,13 @@ export function createRSCHandler<
 
         const fullTiming = timingParts.join(", ");
         if (fullTiming && !isWebSocketUpgradeResponse(response)) {
-          response.headers.set("Server-Timing", fullTiming);
+          try {
+            response.headers.set("Server-Timing", fullTiming);
+          } catch {
+            // Immutable headers (e.g. a passed-through platform Response) — drop
+            // the timing header, never the response. Instrumentation must not
+            // 500 a request.
+          }
         }
 
         // Single open-redirect chokepoint: every response (PE, full-page,
@@ -637,35 +729,6 @@ export function createRSCHandler<
     nonce: string | undefined,
   ): Promise<Response> {
     const handlerTiming: string[] = variables.__handlerTiming || [];
-
-    // Debug manifest endpoint: handled before classification since it
-    // doesn't need a route match and needs trie access from the closure.
-    const isDev = process.env.NODE_ENV !== "production";
-    if (
-      url.searchParams.has("__debug_manifest") &&
-      (isDev || router.allowDebugManifest)
-    ) {
-      const trie = getRouterTrie(router.id) ?? getRouteTrie();
-      const routeManifest = getRequiredRouteMap();
-      const { extractAncestryFromTrie } =
-        await import("../build/route-trie.js");
-      return new Response(
-        JSON.stringify(
-          {
-            routerId: router.id,
-            routeManifest,
-            routeAncestry: trie ? extractAncestryFromTrie(trie) : {},
-            routeTrie: trie,
-            precomputedEntries: getPrecomputedEntries(),
-          },
-          null,
-          2,
-        ),
-        {
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
 
     // ---- 1. Classify ----
     // classifyRequest may throw RouteNotFoundError for unknown routes.
@@ -760,15 +823,18 @@ export function createRSCHandler<
           },
         });
 
-        observeEvent({
-          type: "request.origin-rejected",
-          timestamp: performance.now(),
-          method: request.method,
-          pathname: url.pathname,
-          phase: originPhase,
-          origin: request.headers.get("origin"),
-          host: request.headers.get("host"),
-        });
+        if (router.telemetry) {
+          safeEmit(resolveSink(router.telemetry), {
+            type: "request.origin-rejected",
+            timestamp: performance.now(),
+            requestId: getRequestId(request),
+            method: request.method,
+            pathname: url.pathname,
+            phase: originPhase,
+            origin: request.headers.get("origin"),
+            host: request.headers.get("host"),
+          });
+        }
 
         return originResult;
       }
@@ -810,15 +876,18 @@ export function createRSCHandler<
         params: reqCtx.params as Record<string, string>,
         handledByBoundary: true,
       });
-      observeEvent({
-        type: "handler.error",
-        timestamp: performance.now(),
-        error,
-        handledByBoundary: true,
-        pathname: url.pathname,
-        routeKey: reqCtx._routeName,
-        params: reqCtx.params as Record<string, string>,
-      });
+      if (router.telemetry) {
+        safeEmit(resolveSink(router.telemetry), {
+          type: "handler.error",
+          timestamp: performance.now(),
+          requestId: getRequestId(request),
+          error,
+          handledByBoundary: true,
+          pathname: url.pathname,
+          routeKey: reqCtx._routeName,
+          params: reqCtx.params as Record<string, string>,
+        });
+      }
     };
 
     // Set route params early so all execution paths can access ctx.params.
@@ -885,14 +954,16 @@ export function createRSCHandler<
     // submissions always render HTML (handleProgressiveEnhancement renders via
     // getSSRSetup regardless of Accept). For full/partial-render and action,
     // the render-time HTML decision is exactly !isRscRequest — mayNeedSSR is
-    // the coarse transport pre-filter, isRscRequest is the precise Accept call
-    // (it, unlike mayNeedSSR, treats a MISSING Accept as RSC). Both must pass.
+    // the coarse transport pre-filter, isRscRequest adds the partial/__rsc
+    // flags; both share the same Accept rule (acceptsFlightExplicitly in
+    // ssr-setup.ts), so the Accept call cannot drift between them. Both must
+    // pass.
     const willRenderHtml =
       plan.mode === "pe-render" ||
       (mayNeedSSR(request, url) &&
         !isRscRequest(request, url, plan.mode === "partial-render"));
     if (plan.mode !== "loader" && willRenderHtml) {
-      variables[SSR_SETUP_VAR] = startSSRSetup(
+      const ssrSetup = startSSRSetup(
         handlerCtx,
         request,
         env,
@@ -901,6 +972,15 @@ export function createRSCHandler<
           ? () => getRequestContext()._metricsStore
           : undefined,
       );
+      variables[SSR_SETUP_VAR] = ssrSetup;
+
+      // A handler can short-circuit before HTML rendering consumes this promise
+      // (for example, by returning a redirect). Workerd cancels untracked dynamic
+      // imports at the request boundary; retaining that cancelled promise in the
+      // production SSR module memo makes every later document request hang.
+      // Extending the request lifetime lets the shared setup settle without
+      // delaying the short-circuit response.
+      getRequestContext().executionContext?.waitUntil(ssrSetup);
     }
 
     // ---- Loader fetch ----
@@ -1107,6 +1187,7 @@ export function createRSCHandler<
             const intercepted = interceptRedirectForPartial(
               error,
               createRedirectFlightResponse,
+              { requestOrigin: url.origin, basename: router.basename },
             );
             if (intercepted) return intercepted;
           }
@@ -1169,40 +1250,57 @@ export function createRSCHandler<
             },
           };
 
-          const rscStream = renderToReadableStream(payload, {
-            onError: (error: unknown) => {
-              callOnError(error, "rendering", { request, url, env });
-            },
-          });
-
-          if (isRscRequest(request, url, isPartial)) {
-            return createResponseWithMergedHeaders(rscStream, {
-              status: 404,
-              headers: {
-                "content-type": "text/x-component;charset=utf-8",
-                // Router identity for the client's pre-decode integrity check; a
-                // same-app 404 matches and applies in place. See response-adapter.
-                "X-RSC-Router-Id": router.id,
-              },
-            });
-          }
-
-          const [ssrModule, streamMode] = await getSSRSetup(
-            handlerCtx,
+          const isNotFoundFlightResponse = isRscRequest(
             request,
-            env,
             url,
-            getRequestContext()._metricsStore,
+            isPartial,
           );
-          const htmlStream = await ssrModule.renderHTML(rscStream, {
-            nonce,
-            streamMode,
-          });
-
-          return createResponseWithMergedHeaders(htmlStream, {
-            status: 404,
-            headers: { "content-type": "text/html;charset=utf-8" },
-          });
+          const notFoundStageTracking = {
+            mode: isPartial ? ("partial" as const) : ("full" as const),
+            routeKey,
+          };
+          return renderRscResponse(
+            {
+              ctx: handlerCtx,
+              request,
+              url,
+              env,
+              payload,
+              // The 404 path historically records no rsc-serialize metric (it
+              // used the standalone Flight constructor, whose gate was opt-in);
+              // opt out explicitly since renderRscResponse defaults the gate on.
+              recordSerializeMetric: false,
+              init: isNotFoundFlightResponse
+                ? {
+                    status: 404,
+                    headers: {
+                      "content-type": "text/x-component;charset=utf-8",
+                      // Router identity for the client's pre-decode integrity
+                      // check; a same-app 404 applies in place.
+                      "X-RSC-Router-Id": router.id,
+                    },
+                  }
+                : {
+                    status: 404,
+                    headers: {
+                      "content-type": "text/html;charset=utf-8",
+                    },
+                  },
+              tracking: notFoundStageTracking,
+            },
+            isNotFoundFlightResponse
+              ? undefined
+              : {
+                  html: createSsrHtmlStage({
+                    ctx: handlerCtx,
+                    request,
+                    env,
+                    url,
+                    metricsStore: getRequestContext()._metricsStore,
+                    render: { nonce },
+                  }),
+                },
+          );
         }
 
         // Report unhandled errors
@@ -1233,6 +1331,7 @@ export function createRSCHandler<
           const intercepted = interceptRedirectForPartial(
             mwResponse,
             createRedirectFlightResponse,
+            { requestOrigin: url.origin, basename: router.basename },
           );
           if (intercepted) return intercepted;
         }

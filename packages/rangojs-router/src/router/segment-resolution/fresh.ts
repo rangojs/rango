@@ -20,6 +20,10 @@ import type {
 import type { SegmentResolutionDeps } from "../types.js";
 import { resolveLoaderData } from "./loader-cache.js";
 import {
+  isShellCaptureActive,
+  entryLoadingMasksLoaders,
+} from "./loader-mask.js";
+import {
   handleHandlerResult,
   tryStaticHandler,
   tryStaticSlot,
@@ -36,6 +40,8 @@ import {
   track,
   RangoContext,
   runInsideLoaderScope,
+  latchCachedHeaderScope,
+  latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
@@ -60,6 +66,24 @@ export async function resolveLoaders<TEnv>(
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 
+  // Emit the streaming (non-awaiting) loader shape when loading is enabled OR
+  // during a PPR shell capture. In capture, LIVE-lane loaders are masked with
+  // never-resolving promises (loader-mask.ts); the loading-disabled branch below
+  // AWAITS the loader promises, which would hang the capture render's match()
+  // forever on those masked promises. Forcing the streaming shape lets match()
+  // complete so the prerender can postpone the loader subtrees as holes. The
+  // `!loadingDisabled` short-circuit keeps the ALS check off the hot path (only
+  // loading-disabled entries consult it), so normal requests are unchanged.
+  const emitStreaming = !loadingDisabled || isShellCaptureActive();
+
+  // PPR lane decision for this entry's loaders (loader-container-bake): an
+  // entry WITHOUT renderable loading() puts its loaders on the BAKE lane —
+  // executed at capture (container bakes, nested pending promises hole at the
+  // consumer's Suspense) and overlay-pinned from the shell snapshot on a HIT.
+  // Renderable loading() keeps the LIVE lane (masked at capture, always
+  // fresh). Computed per entry; resolveLoaderData applies the policy.
+  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
+
   // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
   // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
   // telemetry event — wrapLoaderPromise only builds the onError/telemetry path
@@ -67,7 +91,7 @@ export async function resolveLoaders<TEnv>(
   // loader failures the same way handlers/actions/routing/fetchable-loaders do.
   const errorContext = buildLoaderErrorContext(ctx);
 
-  if (!loadingDisabled) {
+  if (emitStreaming) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
     const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
@@ -82,7 +106,12 @@ export async function resolveLoaders<TEnv>(
         loaderId: loader.$$id,
         loaderData: deps.wrapLoaderPromise(
           runInsideLoaderScope(() =>
-            resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+            resolveLoaderData(
+              loaderEntry,
+              ctx,
+              ctx.pathname,
+              bakeLane ? segmentId : null,
+            ),
           ),
           entry,
           segmentId,
@@ -111,7 +140,12 @@ export async function resolveLoaders<TEnv>(
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
     const wrapped = deps.wrapLoaderPromise(
       runInsideLoaderScope(() =>
-        resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+        resolveLoaderData(
+          loaderEntry,
+          ctx,
+          ctx.pathname,
+          bakeLane ? segmentId : null,
+        ),
       ),
       entry,
       segmentId,
@@ -618,6 +652,12 @@ export async function resolveAllSegments<TEnv>(
   const allSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
 
+  // ppr routes are document-scoped cached territory: the whole chain (root
+  // layout down to the page) bakes into the shared shell, so the header-write
+  // guard latches BEFORE any entry resolves (unlike the positional cache()
+  // latch below). See assertCachedHeaderWriteAllowed (server/context.ts).
+  latchPprHeaderScopeForEntries(entries, routeKey);
+
   // Safe request access: during build-time prerendering, context.request
   // is a throwing getter. Use undefined when unavailable.
   let safeRequest: Request | undefined;
@@ -633,11 +673,13 @@ export async function resolveAllSegments<TEnv>(
 
   for (const entry of entries) {
     // Set ALS flag when entering a cache() boundary so that ctx.get()
-    // can guard non-cacheable variable reads. Also guards response-level
-    // side effects (headers.set). Persists for all descendant entries.
+    // can guard non-cacheable variable reads. Also latch the header-write
+    // scope (response-level side effects — headers/cookies/status).
+    // Persists for all descendant entries.
     if (entry.type === "cache") {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
+      latchCachedHeaderScope("cache", routeKey);
     }
     const doneEntry = track(`segment:${entry.id}`, 1);
     const resolvedSegments = await resolveWithErrorBoundary(
@@ -685,6 +727,15 @@ export async function resolveLoadersOnly<TEnv>(
 ): Promise<ResolvedSegment[]> {
   const loaderSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
+
+  // Loader-only serves (cached non-loader segments) still run loaders live —
+  // on a ppr route their header writes are dead letters (headers flushed with
+  // the shell), so the guard latches here too. cache() needs no latch: loader
+  // writes are exempt under cache() (see assertCachedHeaderWriteAllowed).
+  latchPprHeaderScopeForEntries(
+    entries,
+    (context as InternalHandlerContext<any, TEnv>)._routeName,
+  );
 
   async function collectEntryLoaders(
     entry: EntryData,

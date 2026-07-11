@@ -126,8 +126,11 @@ forces them into `"react"`/`"router"`, deduped across apps).
 ### The unifying rule [CONFIRMED]
 
 **Client-chunk granularity == RSC server-chunk granularity == dynamic-import-boundary granularity
-of the server module graph.** A single `include()` is a _static_ mount (`why-includes-is-sync.md`),
-so it does NOT create a boundary → no split. A host sub-app loaded via `.lazy(import())` DOES.
+of the server module graph.** An _eager_ `include("/x", patterns)` is a static mount, so it does
+NOT create a boundary → no split. A host sub-app loaded via `.lazy(import())` DOES.
+(Superseded in part: `include("/x", () => import("./x"))` — the async include form, see
+`packages/rangojs-router/docs/internal/async-includes.md` — also creates a dynamic-import
+boundary and splits the route group into its own chunk.)
 
 ### CSS handling [CONFIRMED — source]
 

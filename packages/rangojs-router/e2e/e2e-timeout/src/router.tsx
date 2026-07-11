@@ -28,6 +28,14 @@ export function resetLastOnErrorCall() {
 export const router = createRouter({
   document: Document,
   timeout: 10000,
+  ssr: {
+    resolveStreaming: async ({ url }) => {
+      if (url.pathname === "/timeout/slow-html-setup") {
+        await new Promise((resolve) => setTimeout(resolve, 20000));
+      }
+      return "stream";
+    },
+  },
   onError: (context) => {
     globalThis.__testOnErrorCall = {
       phase: context.phase,

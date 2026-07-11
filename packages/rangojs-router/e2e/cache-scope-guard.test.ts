@@ -161,6 +161,27 @@ test.describe("cache-scope-guard", () => {
     );
   });
 
+  test("handler-invoked loader writing a cookie inside cache() should throw (#725)", async ({
+    page,
+  }) => {
+    const response = await page.goto(
+      f.url("/cache-scope-guard/handler-loader-cookie-blocked"),
+    );
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "cache() boundary",
+    );
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "from a loader",
+    );
+    // Divergence pin: the MISS-only Set-Cookie never reaches the wire.
+    expect(response?.headers()["set-cookie"] ?? "").not.toContain(
+      "csg-hil-cookie",
+    );
+  });
+
   test("ctx.headers.set() inside cache() should throw (SSR)", async ({
     request,
   }) => {
@@ -338,6 +359,22 @@ test.describe("cache-scope-guard (production)", () => {
     await expect(page.getByTestId("csg-loader-cookie-page")).toBeVisible();
     await expect(page.getByTestId("csg-loader-cookie-value")).toHaveText(
       "cookie-written",
+    );
+  });
+
+  test("handler-invoked loader writing a cookie inside cache() should render error boundary (#725)", async ({
+    page,
+  }) => {
+    // Production redacts the error message, so assert the boundary rendered and
+    // pin the divergence: the MISS-only Set-Cookie never reaches the wire.
+    const response = await page.goto(
+      f.url("/cache-scope-guard/handler-loader-cookie-blocked"),
+    );
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    expect(response?.headers()["set-cookie"] ?? "").not.toContain(
+      "csg-hil-cookie",
     );
   });
 

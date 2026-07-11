@@ -37,7 +37,8 @@ async function exerciseOnDemandRefresh(f: Fixture, page: Page) {
   // { ok: true, status: "rendered" }, serialized as JSON by the trigger route.
   const triggerRes = await page.request.get(f.url(`/od-trigger/${slug}`));
   expect(triggerRes.ok()).toBe(true);
-  expect(await triggerRes.json()).toMatchObject({
+  const triggerJson = await triggerRes.json();
+  expect(triggerJson, JSON.stringify(triggerJson)).toMatchObject({
     ok: true,
     status: "rendered",
   });
@@ -71,6 +72,38 @@ async function exerciseOnDemandRefresh(f: Fixture, page: Page) {
   ).toHaveText("true");
 }
 
+async function exerciseKnownPrerender(f: Fixture, page: Page) {
+  await page.goto(f.url("/on-demand/baked"));
+  await waitForHydration(page);
+
+  await expect(page.locator('[data-testid="od-source"]')).toHaveText(
+    "prerender",
+  );
+  await expect(page.locator('[data-testid="od-slug"]')).toHaveText("baked");
+}
+
+async function exercisePersonalizationGuard(f: Fixture, page: Page) {
+  const slug = `personalized-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const source = page.locator('[data-testid="od-personalized-source"]');
+
+  await page.goto(f.url(`/on-demand-personalized/${slug}`));
+  await waitForHydration(page);
+  await expect(source).toHaveText(`live:${slug}`);
+
+  const response = await page.request.get(
+    f.url(`/od-personalized-trigger/${slug}`),
+  );
+  expect(response.ok()).toBe(true);
+  await expect(response.json()).resolves.toMatchObject({
+    ok: false,
+    status: "skipped-personalized",
+  });
+
+  await page.goto(f.url(`/on-demand-personalized/${slug}`));
+  await waitForHydration(page);
+  await expect(source).toHaveText(`live:${slug}`);
+}
+
 test.describe("on-demand prerender (dev mode)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
 
@@ -79,6 +112,18 @@ test.describe("on-demand prerender (dev mode)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await exerciseOnDemandRefresh(f, page);
+  });
+
+  test("known slug serves prerender without any trigger", async ({ page }) => {
+    using _ = expectNoPageError(page);
+    await exerciseKnownPrerender(f, page);
+  });
+
+  test("personalized producer is skipped and live fallback remains", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await exercisePersonalizationGuard(f, page);
   });
 });
 
@@ -95,17 +140,15 @@ test.describe("on-demand prerender (production)", () => {
   // (e) The "baked" slug was returned by getParams() and pre-rendered at build
   // time, so it serves the prerender payload with no trigger. Build renders have
   // ctx.onDemand false (static build, not an on-demand refresh).
-  test("build-baked slug serves prerender without any trigger", async ({
+  test("known slug serves prerender without any trigger", async ({ page }) => {
+    using _ = expectNoPageError(page);
+    await exerciseKnownPrerender(f, page);
+  });
+
+  test("personalized producer is skipped and live fallback remains", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/on-demand/baked"));
-    await waitForHydration(page);
-
-    await expect(page.locator('[data-testid="od-source"]')).toHaveText(
-      "prerender",
-    );
-    await expect(page.locator('[data-testid="od-slug"]')).toHaveText("baked");
+    await exercisePersonalizationGuard(f, page);
   });
 });

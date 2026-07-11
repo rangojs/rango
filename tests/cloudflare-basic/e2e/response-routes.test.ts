@@ -21,6 +21,15 @@ test.describe("response routes", () => {
     expect(body.timestamp).toBeDefined();
   });
 
+  test("a handler-thrown Response is served as response control flow", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/api/health?throw-response=1"));
+    expect(response.status()).toBe(202);
+    expect(response.headers()["x-thrown-response"]).toBe("merged");
+    expect(await response.json()).toMatchObject({ status: "accepted" });
+  });
+
   test("GET /api/products returns bare JSON with array", async ({
     request,
   }) => {
@@ -128,6 +137,15 @@ test.describe("response routes (production)", () => {
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
     expect(body.status).toBe("ok");
+  });
+
+  test("a handler-thrown Response is served in production", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/api/health?throw-response=1"));
+    expect(response.status()).toBe(202);
+    expect(response.headers()["x-thrown-response"]).toBe("merged");
+    expect(await response.json()).toMatchObject({ status: "accepted" });
   });
 
   test("GET /robots.txt returns plain text in production build", async ({

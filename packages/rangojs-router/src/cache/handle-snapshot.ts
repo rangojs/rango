@@ -83,14 +83,35 @@ export async function decodeHandleValue<T>(encoded: string): Promise<T | null> {
 /**
  * Capture handle data for a set of segments from the handle store.
  * Used when caching segments to preserve their handle data.
+ *
+ * `exclude` (shell captures: RequestContext._shellCaptureLoaderHandleValues)
+ * drops DSL-loader-scoped push values from the CACHE WRITE only: loaders
+ * re-run fresh on every HIT, so replaying their captured values would
+ * duplicate the fresh push — and their masked nested promises would stall the
+ * Flight handle encode to its timeout. Threaded as an explicit argument so
+ * every other getDataForSegment consumer (the render-barrier snapshot,
+ * prerender) provably sees every push.
  */
 export function captureHandles(
   segments: ResolvedSegment[],
   handleStore: HandleStore,
+  exclude?: WeakSet<object>,
 ): Record<string, SegmentHandleData> {
   const handles: Record<string, SegmentHandleData> = {};
   for (const seg of segments) {
-    handles[seg.id] = handleStore.getDataForSegment(seg.id);
+    const data = handleStore.getDataForSegment(seg.id);
+    if (!exclude) {
+      handles[seg.id] = data;
+      continue;
+    }
+    const filtered: SegmentHandleData = {};
+    for (const [handleName, values] of Object.entries(data)) {
+      const kept = values.filter(
+        (v) => typeof v !== "object" || v === null || !exclude.has(v),
+      );
+      if (kept.length > 0) filtered[handleName] = kept;
+    }
+    handles[seg.id] = filtered;
   }
   return handles;
 }

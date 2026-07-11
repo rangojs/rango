@@ -1,0 +1,155 @@
+---
+title: 5. Actions & Revalidation
+description: Add a cookie-backed cart with a "use server" action, a form driven by useActionState, and a cart badge that revalidates after cart mutations.
+type: tutorial
+---
+
+Where we are: the product page streams live stock through `StockLoader` and the shop grid has search-as-you-type — all reads, no writes yet.
+
+Time for the first mutation: an add-to-cart button. In Rango, writes are **server actions** — plain `"use server"` functions, React's RSC mutation primitive with no framework wrapper. The flow to internalize: _action mutates, loaders re-read, UI updates_.
+
+## The cart action
+
+Create `src/actions/cart.ts`. To keep the tutorial runnable without a database, the cart lives in a cookie; in a real app this would be a D1 or KV write, and the action shape would not change:
+
+```ts
+// src/actions/cart.ts
+"use server";
+
+import { cookies } from "@rangojs/router";
+
+export type CartState = { added?: string } | null;
+
+function readCart(): string[] {
+  const raw = cookies().get("cart")?.value;
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as string[];
+  } catch {
+    return [];
+  }
+}
+
+export async function addToCart(
+  _prev: CartState,
+  formData: FormData,
+): Promise<CartState> {
+  const slug = formData.get("slug") as string;
+  const cart = readCart();
+  cart.push(slug);
+  cookies().set("cart", JSON.stringify(cart), { path: "/" });
+  return { added: slug };
+}
+```
+
+With `"use server"` at the top of the module, every exported async function becomes a callable server action. The `(prevState, formData)` signature is deliberate — it lets the same function be passed straight to a `<form action={...}>` and to `useActionState`, with no client-side wrapper.
+
+## The form
+
+```tsx
+// src/components/add-to-cart.tsx
+"use client";
+import { useActionState } from "react";
+import { addToCart, type CartState } from "../actions/cart";
+
+export function AddToCart({ slug }: { slug: string }) {
+  const [state, formAction, isPending] = useActionState<CartState, FormData>(
+    addToCart,
+    null,
+  );
+
+  return (
+    <form action={formAction}>
+      <input type="hidden" name="slug" value={slug} />
+      <button type="submit" disabled={isPending}>
+        {isPending ? "Adding…" : "Add to cart"}
+      </button>
+      {state?.added && <p role="status">Added to cart.</p>}
+    </form>
+  );
+}
+```
+
+`useActionState` is the standard React 19 hook: the action's return value becomes `state`, and `isPending` covers the round trip. Render `<AddToCart slug={product.slug} />` on the product page.
+
+## A cart badge in the shop layout
+
+The cart count belongs in `ShopLayout`, so every shop page shows it. That is a read, so it is a loader — and reading the cookie inside a loader is explicitly allowed, because loaders always run fresh per request:
+
+```ts
+// src/loaders/cart.ts
+import { cookies, createLoader } from "@rangojs/router";
+
+export const CartLoader = createLoader(async (ctx) => {
+  "use server";
+
+  const raw = cookies().get("cart")?.value;
+  let items: string[] = [];
+  try {
+    items = raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    // malformed cookie — treat as empty
+  }
+  return { count: items.length };
+});
+```
+
+```tsx
+// src/components/cart-badge.tsx
+"use client";
+import { useLoader } from "@rangojs/router/client";
+import { CartLoader } from "../loaders/cart";
+
+export function CartBadge() {
+  const { data } = useLoader(CartLoader);
+  return <span>Cart ({data.count})</span>;
+}
+```
+
+Render `<CartBadge />` in the `ShopLayout` header, then register the loader on the layout so all shop routes share it:
+
+```tsx
+// src/urls.tsx — the shop group
+import * as CartActions from "./actions/cart";
+import { CartLoader } from "./loaders/cart";
+
+export const urlpatterns = urls(
+  ({ path, layout, loader, loading, revalidate }) => [
+    path("/", HomePage, { name: "home" }),
+
+    layout(<ShopLayout />, () => [
+      loader(CartLoader, () => [
+        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      ]),
+      path("/shop", ShopPage, { name: "shop" }),
+      path("/shop/:slug", ProductPage, { name: "product" }, () => [
+        loader(StockLoader),
+        loading(<ProductSkeleton />),
+      ]),
+    ]),
+  ],
+);
+```
+
+## How revalidation works
+
+After an action finishes, Rango runs a server-side revalidation render for the matched route: segments and loaders that opt in re-run, and the client receives fresh output. The `revalidate()` rule on `CartLoader` reads:
+
+```ts
+revalidate((ctx) => ctx.isAction(CartActions) || undefined);
+```
+
+- `ctx.isAction(CartActions)` matches any action exported from `src/actions/cart.ts` **by reference** — a renamed or moved action becomes a type error instead of a silently broken string comparison. It also accepts a single action (`ctx.isAction(addToCart)`) or several.
+- `|| undefined` matters. A boolean return — including `false` — is a hard decision that overrides the loader's defaults. `undefined` defers, which preserves the permissive defaults: loaders still refetch on param and search changes during navigation, and after other actions. Writing `?? false` here would quietly stop the badge from ever updating on navigation. Use `|| undefined` to add a signal on top of the defaults; reserve `?? false` for when you genuinely want a loader to refetch on nothing but your matched action.
+
+So the loop closes: submit the form on a product page, `addToCart` updates the cookie, `CartLoader` re-resolves, and the badge in the layout ticks up — no manual refresh logic anywhere.
+
+One scoping note for later: route-level `middleware()` in the DSL does not wrap action execution — only global `router.use()` middleware does. Auth checks that must guard actions belong in `router.use()` or inside the action body.
+
+## It works without JavaScript
+
+Because `AddToCart` renders a real `<form>` whose `action` is the server action itself, the same POST works with JavaScript disabled: the browser submits a normal HTTP request, `addToCart` runs, and the page re-renders server-side with the new cart count. `useActionState` and the pending state only enhance the experience once JS loads. This is also why we pass the action directly instead of wrapping it in a client-side closure — a wrapper is not a server reference, so the form would have no real `action` URL before hydration.
+
+Validation with structured errors, `useOptimistic`, redirects from actions, and file uploads are covered in [Server Actions](/docs/rango/guides/server-actions); the full revalidation contract is in [Loaders](/docs/rango/features/loaders).
+
+Next: [6. Caching & Deployment](/docs/rango/tutorial/caching-and-deployment)

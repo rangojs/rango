@@ -76,7 +76,9 @@ export interface PrerenderTriggerDeps<TEnv = any> {
     params: Record<string, string>,
   ) => string | undefined;
   /** Match a pathname to route metadata; null when nothing matches. */
-  matchRoute: (pathname: string) => PrerenderMatchInfo | null;
+  matchRoute: (
+    pathname: string,
+  ) => PrerenderMatchInfo | null | Promise<PrerenderMatchInfo | null>;
   /** Run the requestless producer (matchForPrerender with onDemand). May throw. */
   runProducer: (input: {
     pathname: string;
@@ -182,7 +184,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     await deps.ensureManifest();
 
-    const match = deps.matchRoute(resolved.pathname);
+    const match = await deps.matchRoute(resolved.pathname);
     if (!match) {
       return { ok: false, status: "no-match", target: display };
     }

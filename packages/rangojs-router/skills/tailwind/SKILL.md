@@ -1,6 +1,6 @@
 ---
 name: tailwind
-description: Set up Tailwind CSS v4 with the Document component and CSS imports
+description: Set up Tailwind CSS v4 with the Document component and CSS imports. Use when adding Tailwind CSS to a Rango app, or Tailwind classes aren't being applied or generated.
 argument-hint: [setup]
 ---
 

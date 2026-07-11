@@ -1,0 +1,312 @@
+---
+title: Hooks
+description: Client-side React hooks for navigation, loader data, URL generation, history state, and outlets.
+type: reference
+---
+
+Import everything on this page from `@rangojs/router/client` — the root `@rangojs/router` entrypoint is for server/RSC APIs and shared types. All hooks are client-only: call them from `"use client"` components. The one non-hook listed here, `invalidateClientCache()`, imports from the root entry.
+
+Data fetching itself happens in server-side [loaders](/docs/rango/features/loaders); client hooks like `useLoader()` only consume what a loader resolved.
+
+## Summary
+
+| Hook                      | Purpose                                | Returns                                                            |
+| ------------------------- | -------------------------------------- | ------------------------------------------------------------------ |
+| `useNavigation()`         | Reactive navigation state              | state, location, isStreaming                                       |
+| `useRouter()`             | Stable router actions                  | push, replace, refresh, prefetch, back, forward                    |
+| `useSegments()`           | URL path & segment IDs                 | path, segmentIds, location                                         |
+| `useLinkStatus()`         | Link pending state                     | `{ pending }`                                                      |
+| `useLoader()`             | Loader data (strict)                   | data, isLoading, error, load, refetch                              |
+| `useFetchLoader()`        | Loader with on-demand fetch            | data, load, isLoading, error, refetch                              |
+| `useRefreshLoaders()`     | Refresh cross-loader group(s)          | `(groups: string \| string[]) => Promise<void>`                    |
+| `useParams()`             | Route params                           | `Readonly<T>` (default `Record<string, string>`) or selected value |
+| `usePathname()`           | Current pathname                       | `string`                                                           |
+| `useSearchParams()`       | URL search params                      | `ReadonlyURLSearchParams`                                          |
+| `useHref()`               | Mount-aware href                       | `(path) => string`                                                 |
+| `useMount()`              | Current `include()` mount path         | `string`                                                           |
+| `useReverse(routes)`      | Local reverse for imported routes      | `(name, params?, search?) => string`                               |
+| `useHandle()`             | Accumulated handle data                | `T` (handle type)                                                  |
+| `useAction()`             | Server action state                    | state, error, result                                               |
+| `useLocationState()`      | History state (persistent or flash)    | `T \| undefined`                                                   |
+| `useOutlet()`             | Outlet content                         | `ReactNode \| null`                                                |
+| `invalidateClientCache()` | Force client caches to miss (function) | `void`                                                             |
+
+## Navigation
+
+### useNavigation()
+
+Reactive navigation state — state only, no actions. Selector form re-renders only when the selected value changes.
+
+```tsx
+"use client";
+import { useNavigation } from "@rangojs/router/client";
+
+function NavIndicator() {
+  const nav = useNavigation();
+  // nav.state: 'idle' | 'loading'    nav.isStreaming: boolean
+  // nav.location: current URL        nav.pendingUrl: target URL or null
+  return nav.state === "loading" ? <Spinner /> : null;
+}
+const isLoading = useNavigation((nav) => nav.state === "loading"); // selector
+```
+
+### useRouter()
+
+Stable router actions. Never causes re-renders.
+
+```tsx
+"use client";
+import { useRouter } from "@rangojs/router/client";
+
+const router = useRouter();
+router.push("/products"); // navigate (adds history entry)
+router.replace("/login"); // navigate (replaces history entry)
+router.refresh(); // re-fetch current route data
+router.prefetch("/dashboard"); // prefetch for faster navigation
+router.back(); // go back / forward in history
+router.push("/products?color=blue", { revalidate: false });
+```
+
+`revalidate: false` skips the RSC server fetch for same-pathname navigations (search param or hash changes): the URL updates and hooks re-render, but server components stay as-is. Silently ignored when the pathname changes. Also available as `<Link revalidate={false}>`; plain `<a>` tags opt in via `data-revalidate="false"`.
+
+### useSegments()
+
+Current URL path and matched route segments. Supports the selector form.
+
+```tsx
+"use client";
+import { useSegments } from "@rangojs/router/client";
+
+const { path, segmentIds, location } = useSegments();
+// path: ["shop", "products", "123"] (split on "/")
+// segmentIds: opaque internal short-codes, not route names
+// location: URL object
+```
+
+### useLinkStatus()
+
+Pending state inside a `<Link>`. Must render inside a `Link` component.
+
+```tsx
+"use client";
+import { Link, useLinkStatus } from "@rangojs/router/client";
+
+function LoadingIndicator() {
+  const { pending } = useLinkStatus();
+  return pending ? <Spinner /> : null;
+}
+// <Link to="/dashboard">Dashboard <LoadingIndicator /></Link>
+```
+
+## Data
+
+### useLoader(loader, options?)
+
+Strict loader access — `data` is guaranteed (throws if the loader is not in context). Precondition: the loader is registered on an active route via the `loader()` helper. Loaders can also be passed as props from server to client components (`loader: typeof ProductLoader` infers the data type).
+
+```tsx
+"use client";
+import { useLoader } from "@rangojs/router/client";
+import { ProductLoader } from "../loaders/product";
+
+function ProductPrice() {
+  const { data, isLoading, error } = useLoader(ProductLoader);
+  return <span>${data.price}</span>;
+}
+```
+
+A plain `load()` (no options) on a route-registered loader broadcasts its result to every component reading the same loader id — layout, page, and parallel-slot reads converge on the new value. `isLoading` and `error` share the same scope.
+
+### useFetchLoader(loader, options?)
+
+Loader access with on-demand fetching — `data` is `T | undefined` until `load()` resolves. The loader must be fetchable: `createLoader(fn, true)`.
+
+```tsx
+"use client";
+import { useFetchLoader } from "@rangojs/router/client";
+import { SearchLoader } from "../loaders/search";
+
+const { data, load, isLoading, error } = useFetchLoader(SearchLoader);
+await load({ params: { query } }); // refetch is an alias for load
+```
+
+- `load({ params })`, `load({ method: "POST", body })`, and any `load()` on a loader not registered on the current route stay **local** (per-hook state).
+- A `key` option partitions the shared refresh store: only same-`key` readers refresh together. It also lets parameterized GETs and unregistered loaders share one result (mutations stay local even with a key).
+- Body encoding auto-switches: `FormData` bodies go as `multipart/form-data` (server reads `ctx.formData`); anything else is JSON-serialized (server reads `ctx.body`).
+
+### useRefreshLoaders()
+
+Refreshes **different** loaders together. Tag reads with a shared `refreshGroup` (one name or an array); the hook takes no argument and returns the trigger function.
+
+```tsx
+"use client";
+import { useLoader, useRefreshLoaders } from "@rangojs/router/client";
+
+const { data } = useLoader(OrdersLoader, {
+  key: userId,
+  refreshGroup: ["account", "orders"],
+});
+
+const refresh = useRefreshLoaders();
+await refresh("account"); // every mounted member of the group
+await refresh(["account", "orders"]); // union — shared members fetched once
+```
+
+`refresh(groups)` re-runs each member with a plain GET (no params, no body), resolves when all settle, and rejects with an `AggregateError` if any fail — it never render-throws, so handle failures at the await site. Keep parameterized loaders on the single-loader `key` instead.
+
+## URL generation
+
+### useParams()
+
+Merged params from all matched route segments as a `Readonly<T>` map (default `Record<string, string>`). Updates on navigation commit, not during pending navigation. Supports the selector form.
+
+```tsx
+"use client";
+import { useParams } from "@rangojs/router/client";
+
+// Route: /product/:productId
+const { productId } = useParams<{ productId: string }>();
+```
+
+### usePathname()
+
+Current pathname string, without search params or hash. Updates on navigation commit.
+
+```tsx
+"use client";
+import { usePathname } from "@rangojs/router/client";
+
+const pathname = usePathname(); // "/product/123"
+```
+
+### useSearchParams()
+
+Current URL search params as `ReadonlyURLSearchParams` (`URLSearchParams` without mutation methods). During SSR returns empty params, then syncs from the browser URL on mount.
+
+```tsx
+"use client";
+import { useSearchParams } from "@rangojs/router/client";
+
+const query = useSearchParams().get("q");
+```
+
+### useHref()
+
+Mount-aware href function — auto-prepends the `include()` mount prefix. Use the bare `href()` function for absolute paths outside the current mount.
+
+```tsx
+"use client";
+import { useHref, Link } from "@rangojs/router/client";
+
+// Inside include("/shop", shopPatterns)
+const href = useHref();
+<Link to={href("/cart")}>Cart</Link>; // "/shop/cart"
+```
+
+### useMount()
+
+Current `include()` mount path — `"/shop"` inside `include("/shop", ...)`, `"/"` at root. Reads `MountContext`, set automatically by `include()`.
+
+```tsx
+"use client";
+import { useMount } from "@rangojs/router/client";
+
+const mount = useMount();
+```
+
+### useReverse(routes)
+
+Typed, mount-aware local reverse for a `routes` map imported from a `urls()` module's generated `.gen.ts`. Auto-fills params from `useParams()` (explicit params override); the leading dot is optional. Per-module `*.gen.ts` files are CLI opt-in and not Vite-watched — see the [CLI reference](/docs/rango/reference/cli).
+
+```tsx
+"use client";
+import { Link, useReverse } from "@rangojs/router/client";
+import { routes as blogRoutes } from "../urls/blog.gen.js";
+
+const reverse = useReverse(blogRoutes);
+<Link to={reverse("post", { postId: "hello" })}>Post</Link>;
+```
+
+`ctx.reverse()` is server-only. See [Named Routes & Links](/docs/rango/features/named-routes) for the full URL generation surface.
+
+## Handles and actions
+
+### useHandle(handle, selector?)
+
+Accumulated handle data from route segments. Handles can be passed as props from server to client components (`handle: typeof Breadcrumbs` infers the full `Handle<T>` type); RSC serialization strips the `collect` function, which `useHandle()` recovers from the module-level registry.
+
+```tsx
+"use client";
+import { useHandle, Breadcrumbs } from "@rangojs/router/client";
+
+const crumbs = useHandle(Breadcrumbs); // array of { label, href } from layouts/routes
+const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
+```
+
+### useAction(action, selector?)
+
+State of server action invocations — for actions called outside a `<form action={...}>` flow; for the full action surface see [Server Actions](/docs/rango/guides/server-actions).
+
+```tsx
+"use client";
+import { useAction } from "@rangojs/router/client";
+import { addToCart } from "../actions/cart";
+
+const { state, error, result } = useAction(addToCart);
+// state: 'idle' | 'loading' | 'streaming'; also actionId, payload
+
+// Match by string suffix (convenient but may be ambiguous)
+const isLoading = useAction("addToCart", (s) => s.state === "loading");
+```
+
+## State and cache control
+
+### useLocationState(definition)
+
+Type-safe history state. Define a slot with `createLocationState<T>()` (keys are auto-injected by the Vite plugin); the hook returns `T | undefined`.
+
+```tsx
+"use client";
+import {
+  useLocationState,
+  createLocationState,
+  Link,
+} from "@rangojs/router/client";
+
+export const ProductState = createLocationState<{
+  name: string;
+  price: number;
+}>();
+
+const state = useLocationState(ProductState); // { name; price } | undefined
+
+<Link to="/product/123" state={[ProductState({ name: "Widget", price: 99 })]}>
+  View
+</Link>;
+```
+
+`createLocationState<T>({ flash: true })` makes read-once flash state that auto-clears after first render (back/forward will not re-show it) — set it from the server via `redirect(url, { state: [...] })` or `ctx.setLocationState(...)`. Static access: `.read()` returns a snapshot (`undefined` during SSR — call post-mount, not during initial render); `.write()` / `.delete()` mutate `history.state` via `replaceState`, are client-only (throw on the server), and do not trigger `useLocationState` re-renders.
+
+### invalidateClientCache()
+
+Not a hook — a plain function from the root entry, usable in module-level callbacks. Forces the client's caches to miss after a mutation the router can't see (a REST call, a WebSocket push, a login). Export conditions pick the implementation: in a client component it marks the caches stale immediately; from a handler/server component it writes a rotated `Set-Cookie`.
+
+```ts
+import { invalidateClientCache } from "@rangojs/router";
+
+socket.on("catalog-updated", () => invalidateClientCache());
+```
+
+## Outlets
+
+### useOutlet()
+
+Outlet content as `ReactNode | null`, for conditional rendering around child content. The companion components `Outlet` and `ParallelOutlet` (`<ParallelOutlet name="@sidebar" />`) render child and named-slot content in layouts — see [Parallel Routes](/docs/rango/guides/parallel-routes).
+
+```tsx
+"use client";
+import { useOutlet } from "@rangojs/router/client";
+
+const outlet = useOutlet();
+return outlet ? <div className="with-content">{outlet}</div> : <Empty />;
+```

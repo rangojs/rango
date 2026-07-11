@@ -7,11 +7,13 @@ import {
 } from "@rangojs/router/testing";
 
 // The cache-status primitives. The HEADER path (assertCacheStatus on a real
-// response) and telemetry capture both require a RUNNING app with the debug
+// response) and cache.decision capture both require a RUNNING app with the debug
 // gate on (createRouter({ debugCacheSignal: true }) or RANGO_TEST_SIGNALS=1) and
-// the full RSC render path — `dispatch` does not emit cache decisions, and the
-// full app router cannot be imported in bare vitest (see test/FINDINGS.md). So
-// the end-to-end hit/miss/stale assertions live in the e2e suite; here we pin
+// the full RSC render path — `dispatch` emits the request.start/end/error
+// lifecycle (see telemetry-emission.test.ts) but NOT cache.decision or loader.*,
+// which originate in the match()/RSC pipeline it deliberately does not run, and
+// the full app router cannot be imported in bare vitest (see test/FINDINGS.md).
+// So the end-to-end hit/miss/stale assertions live in the e2e suite; here we pin
 // the pure, runtime-free pieces a consumer relies on.
 describe("cache-status primitives (pure pieces)", () => {
   describe("parseCacheHeader", () => {

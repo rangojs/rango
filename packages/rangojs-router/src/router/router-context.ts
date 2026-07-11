@@ -55,7 +55,9 @@ export interface InterceptResult {
  * Instead of passing 20+ parameters, middleware calls getRouterContext() to access them.
  */
 export interface RouterContext<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult | null | Promise<RouteMatchResult | null>;
 
   loadManifest: (
     entry: any,
@@ -98,6 +100,7 @@ export interface RouterContext<TEnv = any> {
       parent: any,
       fn: () => T,
     ) => T;
+    runIsolated: <T>(forRoute: string, fn: () => T) => T;
   };
 
   getMetricsStore: () => MetricsStore | undefined;

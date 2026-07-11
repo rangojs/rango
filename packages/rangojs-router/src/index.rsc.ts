@@ -88,6 +88,12 @@ export type {
   OriginCheckPhase,
 } from "./rsc/origin-guard.js";
 
+// PPR shell-capture debug sink types (RangoOptions.debugShellCapture)
+export type {
+  ShellCaptureDebug,
+  ShellCaptureDebugEvent,
+} from "./rsc/shell-capture.js";
+
 // Server-side createLoader and redirect
 export {
   createLoader,
@@ -157,6 +163,7 @@ export {
   urls,
   type PathHelpers,
   type PathOptions,
+  type PartialPrerenderProps,
   type UrlPatterns,
   type IncludeOptions,
   type IncludeItem,
@@ -307,6 +314,7 @@ export type {
   RouterTracingConfig,
   TracePhase,
   TracePhaseToggles,
+  TracingToggleOptions,
 } from "./router/tracing.js";
 
 // Timeout types and error class
@@ -315,4 +323,5 @@ export type {
   RouterTimeouts,
   TimeoutPhase,
   TimeoutContext,
+  RenderTimeoutContext,
 } from "./router/timeout.js";

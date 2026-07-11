@@ -1,6 +1,6 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender and Passthrough live fallback
+description: Pre-render route segments at build time with Prerender and Passthrough live fallback. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
@@ -10,6 +10,13 @@ Pre-rendering is **caching at build time**. Same serialization format, same
 deserialization path, same segment system. The worker handles every request --
 there are NO static .html or .rsc files served from assets. The worker reads
 pre-computed Flight payloads instead of executing handler code.
+
+## Not this skill if…
+
+- You want a cached HTML shell captured at runtime, with holes and loaders
+  staying live per request — see `/ppr`.
+- You want runtime segment caching with TTL/SWR — that is the `cache()` DSL:
+  see `/caching`. Prerender is the same cache filled at build time.
 
 ## API: Prerender
 
@@ -131,6 +138,7 @@ interface BuildContext<TParams> {
     search?: Record<string, unknown>,
   ): string; // URL generation
   passthrough(): PrerenderPassthroughResult; // Skip local artifact (Passthrough routes only)
+  dynamic(): void; // No-op in Prerender/Static handlers; use middleware for PPR shell opt-out
   env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
   // NOT available: request, headers, cookies (always throw)
 }
@@ -250,13 +258,55 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 | `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                         |
 | `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                     |
 | `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                             |
-| `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                                                                                                                                                |
+| `middleware()` | Skipped while collecting build-time Flight payloads (no request). For `Prerender` + `ppr`, producer B replays global and route middleware during build-shell capture with `ctx.build === true`; `ctx.dynamic()` skips that shell. Runs at request time for loaders.      |
 | `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                   |
 | `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
 
 When Passthrough revalidation is enabled, remember that revalidation is
 still partial: opting a child segment into revalidation does not
 implicitly re-run outer prerender-derived handlers/layouts.
+
+## Prerender + PPR Build Shells
+
+A `Prerender` page may also declare `ppr` on the path option. The build still
+stores the Flight payload first. After that, producer B tries to bake the HTML
+shell for each generated URL so the first document request can be an
+`x-rango-shell: HIT`.
+
+That shell capture is request-shaped enough to run middleware safely:
+
+- global and route middleware run before shell capture;
+- middleware sees `ctx.build === true`;
+- `ctx.waitUntil()` is inert during build;
+- `ctx.dynamic()` skips the baked shell for that URL.
+
+Use `ctx.build` inside middleware to avoid runtime-only side effects during
+build shell capture, or call `ctx.dynamic()` to leave that route to runtime
+PPR. Runtime requests still run the normal middleware chain.
+
+### Freshness of a build shell
+
+A build-baked shell is not on a wall clock the way a pure runtime `ppr` shell is.
+It serves from the first request after a deploy and keeps serving until one of:
+
+- **a redeploy** — the `buildVersion` gate retires every build entry (like a
+  React-version bump); the new build re-bakes;
+- **`updateTag`** on a tag the shell carries — drops it, so the next request
+  MISSes and a runtime capture takes over.
+
+`ppr.ttl` / `swr` are staleness-only here, NOT an expiry: past `ttl` the baked
+entry STILL serves and a runtime recapture is scheduled that upgrades it in place
+(SWR is the upgrade path from build entry → fresher runtime entry). Because the
+`Prerender` handler is evicted from the production bundle, that recapture never
+re-runs the handler — it replays the same build-time segments and only refreshes
+`cache()`-scoped data baked into the shell. **If nothing in the shell is
+`cache()`-backed, `ttl` has nothing to refresh** — reach for `updateTag` (or a
+redeploy) instead of a shorter `ttl`.
+
+`ctx.dynamic()` opts a request off the shell axis ONLY. A `Prerender` route has
+no live handler to fall back to (it was evicted), so a `dynamic()` request still
+serves the build-baked B-segments — fresh loaders in their holes, not a fresh
+handler render. There is no "fully dynamic" render for a prerendered route.
 
 ## Dev Mode
 

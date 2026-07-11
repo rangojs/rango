@@ -13,6 +13,9 @@ export interface LazyIncludeContext {
   >;
   /** Root scope flag for dot-local reverse resolution */
   rootScoped?: boolean;
+  /** Owning router id; scopes search-schema/root-scope registration during
+   *  lazy include evaluation (route-map-builder.ts registries) */
+  routerId?: string;
   /**
    * Positional include scope token composed from the parent scope plus this
    * include's sibling index (`${parentScope}I${idx}`). Applied to direct-

@@ -41,7 +41,7 @@ import { runThenSettle } from "./tracing.js";
 import type {
   RouterTracingConfig,
   SpanRunner,
-  TracePhaseToggles,
+  TracingToggleOptions,
 } from "./tracing.js";
 
 // ---------------------------------------------------------------------------
@@ -92,13 +92,11 @@ const STATUS_ERROR = 2;
 // Tracing adapter: phase spans via startActiveSpan (the `tracing` slot)
 // ---------------------------------------------------------------------------
 
-/** Options for createOTelTracing. */
-export interface OTelTracingOptions {
-  /** Master switch. Defaults to true. */
-  enabled?: boolean;
-  /** Per-phase span toggles. Omitted phases default to enabled. */
-  spans?: TracePhaseToggles;
-}
+/**
+ * Options for createOTelTracing. Alias of the shared {@link TracingToggleOptions}
+ * (`enabled` master switch + per-phase `spans` toggles); the name is public API.
+ */
+export type OTelTracingOptions = TracingToggleOptions;
 
 /**
  * Create the tracing config that maps the router's phases onto OTel spans via
@@ -229,6 +227,17 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
           };
           if (event.routeKey) attrs["rango.route_key"] = event.routeKey;
           if (event.actionId) attrs["rango.action_id"] = event.actionId;
+          if (event.render) {
+            attrs["rango.render.mode"] = event.render.mode;
+            attrs["rango.render.phase"] = event.render.phase;
+            attrs["rango.render.state"] = event.render.state;
+            attrs["rango.render.completed"] = event.render.completed;
+            attrs["rango.render.total"] = event.render.total;
+            if (event.render.phaseDurationMs !== undefined) {
+              attrs["rango.render.phase_duration_ms"] =
+                event.render.phaseDurationMs;
+            }
+          }
           const span = instant("rango.request.timeout", attrs);
           span.setStatus({
             code: STATUS_ERROR,

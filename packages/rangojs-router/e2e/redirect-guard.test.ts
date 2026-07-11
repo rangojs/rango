@@ -59,6 +59,49 @@ function redirectGuardTests(f: Fixture) {
     expect(res.headers()["x-rango-redirect-external"]).toBeUndefined();
   });
 
+  // Soft (partial) channel: middleware 3xx becomes 204 + X-RSC-Redirect after
+  // server-side origin resolve (interceptRedirectForPartial).
+  test("soft partial: same-origin redirect becomes 204 + absolute X-RSC-Redirect", async ({
+    request,
+  }) => {
+    const res = await request.get(goUrl("/dashboard") + "&_rsc_partial=1", {
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(204);
+    const soft = res.headers()["x-rsc-redirect"];
+    expect(soft).toBeTruthy();
+    expect(new URL(soft!).pathname).toBe("/dashboard");
+    expect(res.headers()["location"]).toBeUndefined();
+  });
+
+  test("soft partial: cross-origin without external is neutralized to /", async ({
+    request,
+  }) => {
+    const res = await request.get(goUrl(EVIL) + "&_rsc_partial=1", {
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(204);
+    const soft = res.headers()["x-rsc-redirect"];
+    expect(soft).toBeTruthy();
+    expect(soft).toBe("/");
+  });
+
+  test("soft partial: external opt-in returns Flight redirect (not document Location)", async ({
+    request,
+  }) => {
+    // Production routes external soft redirects through createRedirectFlightResponse
+    // (200 text/x-component + metadata.redirect.external), not 204 X-RSC-Redirect.
+    const res = await request.get(goUrl(EXTERNAL, true) + "&_rsc_partial=1", {
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["content-type"] ?? "").toContain("text/x-component");
+    expect(res.headers()["location"]).toBeUndefined();
+    expect(res.headers()["x-rango-redirect-external"]).toBeUndefined();
+    const body = await res.text();
+    expect(body).toContain(EXTERNAL);
+  });
+
   // No-JS PE: the browser natively follows the form POST's redirect, so the
   // guard is the only protection. A cross-origin action redirect must land the
   // user on the app root, never on the off-host target.

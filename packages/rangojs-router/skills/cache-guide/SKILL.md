@@ -1,6 +1,6 @@
 ---
 name: cache-guide
-description: When to use cache() DSL vs "use cache" directive — key differences and decision guide
+description: When to use cache() DSL vs "use cache" directive — key differences and decision guide. Use when unsure which caching mechanism fits a given problem, comparing route/segment caching, function-level caching, and document-level caching, or asking "which cache API should I use".
 argument-hint:
 ---
 
@@ -20,7 +20,9 @@ caching:
 1. **Stored-value freshness** — _is a cached value still good?_
    → `"use cache"` (fn/component), `cache()` (segment), loader `cache()` (loader data).
    Entries expire by **TTL/SWR** and can be tagged (`cache({ tags })` or runtime
-   `cacheTag(...tags)`). Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`)
+   `cacheTag(...tags)` — inside `"use cache"` it tags that entry; called during a
+   request render outside `"use cache"` it tags the document/shell artifact).
+   Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`)
    index by tag; invalidate on demand with `updateTag(...tags)` (awaitable,
    read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking).
    Both hard-purge; the difference is awaitability, not stale-serving.
@@ -484,3 +486,4 @@ overrides — see `/loader` for the full reference.
 - `/caching` — cache() DSL setup, stores, nested boundaries
 - `/use-cache` — "use cache" directive details, profiles, transforms, guards
 - `/document-cache` — Edge caching with Cache-Control headers (different layer)
+- `/ppr` — PPR shell caching: cached HTML shell + live loader holes (different layer)

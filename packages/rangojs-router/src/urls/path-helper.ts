@@ -6,6 +6,7 @@ import {
   getNamePrefix,
   getRootScoped,
   requireDslContext,
+  stampStaticDefScope,
 } from "../server/context";
 import { invariant, DataNotFoundError } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
@@ -188,10 +189,18 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       ...(resolveResponseType(options)
         ? { responseType: resolveResponseType(options) }
         : {}),
+      // PPR shell-caching opt-in (document-level). Stored raw; the integrated
+      // serve path normalizes it via resolvePprConfig (rsc/shell-serve.ts).
+      ...(options?.ppr !== undefined && options.ppr !== false
+        ? { ppr: options.ppr }
+        : {}),
     };
 
-    if (isStaticHandler(handler) && handler.$$id && ctx.namePrefix) {
-      (handler as any).$$routePrefix = ctx.namePrefix;
+    if (isStaticHandler(handler) && handler.$$id) {
+      if (ctx.namePrefix) {
+        (handler as any).$$routePrefix = ctx.namePrefix;
+      }
+      stampStaticDefScope(handler, routeName);
     }
 
     invariant(
@@ -201,7 +210,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     ctx.manifest.set(routeName, entry);
 
-    registerRouteRootScope(routeName, getRootScoped());
+    registerRouteRootScope(routeName, getRootScoped(), ctx.routerId);
 
     if (ctx.patterns) {
       ctx.patterns.set(routeName, prefixedPattern);
@@ -223,7 +232,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       if (ctx.searchSchemas) {
         ctx.searchSchemas.set(routeName, options.search);
       }
-      registerSearchSchema(routeName, options.search);
+      registerSearchSchema(routeName, options.search, ctx.routerId);
     }
 
     if (mergedUse) {

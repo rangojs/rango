@@ -8,7 +8,7 @@
  * - Supports hash link scrolling
  */
 
-import { debugLog } from "./logging.js";
+import { debugLog, IS_BROWSER_DEBUG } from "./logging.js";
 
 /**
  * Defers a callback to the next animation frame.
@@ -150,10 +150,12 @@ export function initScrollRestoration(options?: {
 
   window.addEventListener("pagehide", handlePageHide);
 
-  debugLog(
-    "[Scroll] Initialized, loaded positions:",
-    Object.keys(savedScrollPositions).length,
-  );
+  if (IS_BROWSER_DEBUG) {
+    debugLog(
+      "[Scroll] Initialized, loaded positions:",
+      Object.keys(savedScrollPositions).length,
+    );
+  }
 
   return () => {
     cancelScrollRestorationPolling();

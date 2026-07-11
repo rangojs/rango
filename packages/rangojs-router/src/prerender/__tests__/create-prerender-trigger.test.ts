@@ -93,6 +93,22 @@ describe("createPrerenderTrigger", () => {
     );
   });
 
+  it("awaits asynchronous route matching", async () => {
+    const match = vi.fn(async () => ({
+      routeName: "products.detail",
+      params: { id: "42" },
+      isOnDemand: true,
+      isPassthrough: false,
+    }));
+    const { trigger, store } = harness({ match });
+
+    const result = await trigger("/products/42", { env: {} });
+
+    expect(match).toHaveBeenCalledWith("/products/42");
+    expect(result.ok).toBe(true);
+    expect(store.size).toBe(1);
+  });
+
   it("accepts a typed object target and reverses it", async () => {
     const reverse = vi.fn(
       (route: string, params: Record<string, string>) =>

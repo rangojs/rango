@@ -1,6 +1,6 @@
 ---
 name: streams-and-websockets
-description: Long-lived Response handlers — Server-Sent Events (SSE) via path.stream and WebSocket upgrades via path.any on Cloudflare Workers, including middleware interaction and runtime caveats.
+description: Long-lived Response handlers — Server-Sent Events (SSE) via path.stream and WebSocket upgrades via path.any on Cloudflare Workers, including middleware interaction and runtime caveats. Use when streaming live updates to the browser, or opening a WebSocket connection from a route on Cloudflare Workers.
 argument-hint: "[sse | websocket | agents]"
 ---
 

@@ -27,8 +27,6 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 // Manifest is always "available" so the handler does not short-circuit.
 vi.mock("../../route-map-builder.js", () => ({
   hasCachedManifest: () => true,
-  getRouteTrie: () => null,
-  getPrecomputedEntries: () => undefined,
   waitForManifestReady: () => null,
   getRouterManifest: () => ({ home: "/" }),
   getRouterTrie: () => null,
@@ -81,6 +79,7 @@ function createNotFoundRouter(): RangoInternal<unknown, any> {
     prefetchCacheTTL: 4242,
     prefetchCacheSize: 7,
     prefetchConcurrency: 5,
+    __devDiscoveryEpoch: 17,
   } as any;
 }
 
@@ -115,5 +114,6 @@ describe("not-found Flight payload shape", () => {
     // full render, so prefetch config survives a not-found initial load.
     expect(payload.metadata.prefetchCacheSize).toBe(7);
     expect(payload.metadata.prefetchConcurrency).toBe(5);
+    expect(payload.metadata.devDiscoveryEpoch).toBe(17);
   });
 });

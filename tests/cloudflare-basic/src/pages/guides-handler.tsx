@@ -1,4 +1,4 @@
-import { Prerender, Passthrough } from "@rangojs/router";
+import { Prerender, Passthrough, cookies } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 
 // Known slugs that get pre-rendered at build time.
@@ -93,3 +93,21 @@ export const GuidesDetail = Passthrough(GuidesDetailDef, async (ctx) => {
     </div>
   );
 });
+
+async function PersonalizedGuideChild({ slug }: { slug: string }) {
+  cookies().get("session");
+  return <p>{slug}</p>;
+}
+
+const PersonalizedGuideDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => <PersonalizedGuideChild slug={ctx.params.slug} />,
+  { onDemand: true },
+);
+
+export const PersonalizedGuide = Passthrough(
+  PersonalizedGuideDef,
+  async (ctx) => (
+    <p data-testid="guide-personalized-source">live:{ctx.params.slug}</p>
+  ),
+);

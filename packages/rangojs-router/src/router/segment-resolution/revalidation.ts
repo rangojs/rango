@@ -50,6 +50,8 @@ import {
   track,
   RangoContext,
   runInsideLoaderScope,
+  latchCachedHeaderScope,
+  latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
 
 /**
@@ -249,6 +251,9 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   const allLoaderSegments: ResolvedSegment[] = [];
   const allMatchedIds: string[] = [];
   const seenIds = new Set<string>();
+
+  // ppr header-write guard latch — see resolveAllSegments (fresh.ts).
+  latchPprHeaderScopeForEntries(entries, routeKey);
 
   async function collectEntryLoaders(
     entry: EntryData,
@@ -1260,6 +1265,9 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   const seenSegIds = new Set<string>();
   const seenMatchIds = new Set<string>();
 
+  // ppr header-write guard latch — see resolveAllSegments (fresh.ts).
+  latchPprHeaderScopeForEntries(entries, routeKey);
+
   const telemetry = getRouterContext()?.telemetry;
 
   for (const entry of entries) {
@@ -1283,6 +1291,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     if (entry.type === "cache") {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
+      latchCachedHeaderScope("cache", routeKey);
     }
     const doneEntry = track(`segment:${entry.id}`, 1);
     const resolved = await resolveWithErrorBoundary(

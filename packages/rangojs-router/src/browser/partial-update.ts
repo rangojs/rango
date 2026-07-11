@@ -20,7 +20,11 @@ import {
 } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
-import { debugLog, isBrowserDebugEnabled } from "./logging.js";
+import {
+  debugLog,
+  isBrowserDebugEnabled,
+  IS_BROWSER_DEBUG,
+} from "./logging.js";
 import {
   validateRedirectOrigin,
   validateExternalRedirect,
@@ -147,9 +151,11 @@ export function createPartialUpdater(
         currentCached.filter(isInterceptSegment).map((s) => s.id),
       );
       segments = currentSegments.filter((id) => !interceptIds.has(id));
-      debugLog(
-        `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
-      );
+      if (IS_BROWSER_DEBUG) {
+        debugLog(
+          `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
+        );
+      }
     } else {
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
@@ -159,12 +165,14 @@ export function createPartialUpdater(
         ? segmentState.currentUrl || tx.currentUrl
         : interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
 
-    debugLog(`\n[Browser] >>> NAVIGATION`);
-    debugLog(`[Browser] From: ${previousUrl}`);
-    debugLog(`[Browser] To: ${url}`);
-    debugLog(`[Browser] Segments to send: ${segments.join(", ")}`);
-    if (interceptSourceUrl) {
-      debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+    if (IS_BROWSER_DEBUG) {
+      debugLog(`\n[Browser] >>> NAVIGATION`);
+      debugLog(`[Browser] From: ${previousUrl}`);
+      debugLog(`[Browser] To: ${url}`);
+      debugLog(`[Browser] Segments to send: ${segments.join(", ")}`);
+      if (interceptSourceUrl) {
+        debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+      }
     }
 
     const targetCache =
@@ -173,9 +181,11 @@ export function createPartialUpdater(
         : undefined;
     const cachedSegs = targetCache ?? getCurrentCachedSegments();
     const cachedSegsSource = targetCache ? "history-cache" : "current-page";
-    debugLog(
-      `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
-    );
+    if (IS_BROWSER_DEBUG) {
+      debugLog(
+        `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
+      );
+    }
 
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
     fetchResult = await client.fetchPartial({
@@ -258,8 +268,10 @@ export function createPartialUpdater(
         return;
       }
 
-      debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
-      debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
+      if (IS_BROWSER_DEBUG) {
+        debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
+        debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
+      }
 
       if (!diff || diff.length === 0) {
         const matchedIds = matched || [];
@@ -383,6 +395,13 @@ export function createPartialUpdater(
           return;
         }
         if (mode.type === "action") {
+          // An action refetch that lands on missing segments (navigated away /
+          // consolidation / HMR) drops rather than refetch-all: the action flow
+          // is storeOnly / skipLoadingState, so a full refetch here would fight
+          // it. Keep the stale-but-consistent tree; log so the drop is visible.
+          debugLog(
+            `[Browser] Action refetch: ${missingCount} segments missing; dropping (stale-but-consistent tree kept).`,
+          );
           return;
         }
         console.warn(
@@ -531,20 +550,13 @@ export function createPartialUpdater(
           });
         });
       } else {
-        // Normal commit (cold/partial nav AND fully-prefetched nav). For a
-        // fully-prefetched nav, renderOptions.forceAwait (above) unwrapped the
-        // already-resolved ROUTER loader data AND route content during render, so
-        // the new tree carries it inline with no loading()/fallback frame — yet we
-        // still commit NORMALLY here rather than in a transition. A transition
-        // holds the OLD UI until ALL suspense in the new tree settles, including a
-        // CLIENT component that starts its own data request only when mounted
-        // (post-commit) under a persistent boundary; that would retain the
-        // previous page indefinitely with no feedback. A normal commit lets such
-        // client-initiated suspense reveal a fallback (correct) while the router
-        // data — genuinely ready — never flashes. Cold/partial navs
-        // (fullyPrefetched=false) do not forceAwait, so they stream their
-        // fallbacks. Explicit transition() routes keep the broader content-hold
-        // via the hasTransition branch above (the documented opt-in).
+        // Normal commit for ALL navs here, never a transition (see the
+        // forceAwait comment above for why prefetched router data lands
+        // without fallback frames). A transition would hold the OLD UI until
+        // every suspense in the new tree settles — including a client
+        // component that only starts fetching post-mount, retaining the
+        // previous page indefinitely. Explicit transition() routes keep the
+        // content-hold via the hasTransition branch above (the opt-in).
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,

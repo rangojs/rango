@@ -11,7 +11,16 @@ import MapRootLayout from "../server/root-layout";
 import { joinPrefix } from "./pattern-matching.js";
 import type { RouteEntry } from "../types";
 import type { UrlPatterns } from "../urls";
+import {
+  isIncludeProvider,
+  resolveIncludeModule,
+} from "../urls/include-provider.js";
 import { VERSION } from "@rangojs/router:version";
+
+// Tags an error thrown while dynamically importing an async include's module
+// (`() => import("./routes")`) so loadManifest's outer catch re-raises it as a
+// server error rather than masking it as a RouteNotFoundError (404).
+const MODULE_LOAD_FAILURE = Symbol.for("rango.moduleLoadFailure");
 
 // Module-level manifest cache: avoids re-executing DSL handler on every request.
 // Handler execution is deterministic (components, loaders, middleware are module-level
@@ -73,10 +82,14 @@ export async function loadManifest(
     Store.mountIndex = mountIndex;
     Store.isSSR = isSSR;
     if (metricsStore) Store.metrics = metricsStore;
-    // Restore cached manifest into Store
-    for (const [k, v] of cached) {
-      Store.manifest.set(k, v);
-    }
+    // Alias the request-scoped Store to the cached Map instead of copying it
+    // entry-by-entry. At request time this Store is throwaway (no ambient
+    // RangoContext store spans classify->match->render, so getOrCreateStore
+    // returns a fresh detached store here), so nothing mutates it in place after
+    // loadManifest returns. The fresh path below REASSIGNS Store.manifest rather
+    // than clearing it in place, so a later fresh load sharing this Store cannot
+    // poison the cached Map.
+    Store.manifest = cached;
     pushMetric?.("manifest:cache-hit", cacheStart);
     return cached.get(routeKey)!;
   }
@@ -94,7 +107,11 @@ export async function loadManifest(
   pushMetric?.("manifest:store-setup", storeSetupStart);
 
   const clearStart = performance.now();
-  Store.manifest.clear();
+  // Reassign rather than clear() in place: a prior cache-hit may have aliased
+  // Store.manifest to a shared module-cache Map (see cache-hit branch above),
+  // and clearing it in place would poison that cache. A fresh Map isolates this
+  // build; the cache still receives an independent copy at the end.
+  Store.manifest = new Map();
   pushMetric?.("manifest:clear", clearStart);
 
   try {
@@ -165,6 +182,29 @@ export async function loadManifest(
         // not exist in the non-lazy (root handler) path and would produce
         // mismatched shortCodes.
         if (entry.lazy && entry.lazyPatterns) {
+          // Resolve an async include provider (`() => import("./routes")`) before
+          // running its handler. The match-time precomputed shortcut can skip
+          // evaluateLazyEntry's resolution, so render-time must resolve it here;
+          // cache the resolved patterns on the entry so later renders reuse them.
+          if (isIncludeProvider(entry.lazyPatterns)) {
+            try {
+              entry.lazyPatterns = resolveIncludeModule(
+                await entry.lazyPatterns(),
+                entry.staticPrefix,
+              ) as unknown as UrlPatterns<any>;
+            } catch (err) {
+              // A failed dynamic import of a REAL, matched route's module is a
+              // server error, not a missing route. Tag it so the outer catch
+              // surfaces it as a 5xx instead of masking it as a
+              // RouteNotFoundError — which renders the 404 page (monitoring
+              // misses the failure and a CDN could cache the 404).
+              if (err && typeof err === "object") {
+                (err as Record<PropertyKey, unknown>)[MODULE_LOAD_FAILURE] =
+                  true;
+              }
+              throw err;
+            }
+          }
           const lazyPatterns = entry.lazyPatterns as UrlPatterns<any>;
           const includePrefix = (entry as any)._lazyPrefix || "";
           // Slash-collapsing join so a trailing-slash parent prefix does not
@@ -192,12 +232,7 @@ export async function loadManifest(
 
         if (promiseResult !== null) {
           const load = await (promiseResult as Promise<any>);
-          if (
-            load &&
-            load !== null &&
-            typeof load === "object" &&
-            "default" in load
-          ) {
+          if (load && typeof load === "object" && "default" in load) {
             // Promise<{ default: () => Array }> - e.g., dynamic import
             if (typeof load.default !== "function") {
               throw new Error(
@@ -255,6 +290,16 @@ export async function loadManifest(
 
     return Store.manifest.get(routeKey)!;
   } catch (e) {
+    // A tagged async-include module-load failure is a server error for a REAL
+    // matched route — re-raise it unchanged (becomes a 5xx) instead of masking
+    // it as a RouteNotFoundError (which renders/caches a 404).
+    if (
+      e &&
+      typeof e === "object" &&
+      (e as Record<PropertyKey, unknown>)[MODULE_LOAD_FAILURE]
+    ) {
+      throw e;
+    }
     throw new RouteNotFoundError(
       `Failed to load route handlers for ${path}: ${(e as Error).message}`,
       {

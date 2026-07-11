@@ -33,6 +33,7 @@ export {
   findNestedRouterConflict,
   formatNestedRouterConflictError,
   findRouterFiles,
+  findHostRouterFiles,
   writeCombinedRouteTypes,
   genFileTsPath,
   resolveSearchSchemas,

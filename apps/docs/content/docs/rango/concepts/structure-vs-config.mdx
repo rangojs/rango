@@ -1,0 +1,175 @@
+---
+title: Structure vs Config
+description: Why path() and include() stay visible in urls() while everything else extracts into reusable factories.
+type: concept
+---
+
+There is one design rule behind the whole route tree, and it answers every "can I extract this?" question before you ask it:
+
+**Does it define a URL? Then it's structure and stays in `urls()`. Does it modify a node? Then it's config, and you can compose it freely.**
+
+Two helpers are structure: `path()` places a leaf, `include()` composes a whole module under a prefix. Everything else — `cache`, `loader`, `loading`, `middleware`, `revalidate`, `parallel`, `intercept`, `errorBoundary`, … — is config that attaches to a node.
+
+## Structure stays visible
+
+`path()` and `include()` exist only on the `urls()` callback parameter:
+
+```tsx
+urls(({ path, include }) => [
+  path("/blog", BlogPage, { name: "blog" }),
+  include("/shop", shopPatterns, { name: "shop" }),
+]);
+```
+
+This is deliberate. When you scan a URL file, the `path()` and `include()` calls show what renders where — which URLs exist and how they nest, at a glance. If structure could hide inside factories, answering "does `/shop/checkout` exist?" would mean chasing imports. Config doesn't have that problem: extracting a `cache()` or a `middleware()` into a factory changes nothing about which URLs exist.
+
+## Config is importable
+
+The config helpers import directly from the package and work outside the `urls()` callback parameter:
+
+```tsx
+import {
+  layout,
+  cache,
+  middleware,
+  revalidate,
+  loader,
+  loading,
+  parallel,
+  intercept,
+  errorBoundary,
+  notFoundBoundary,
+} from "@rangojs/router";
+```
+
+They work because they resolve their context at **call time**, not import time (AsyncLocalStorage under the hood). The corollary: you can define a factory anywhere, but the helpers inside it only execute when the factory is called inside a `urls()` context — within a `path()` or `layout()` use callback. Calling one outside a `urls()` context throws.
+
+## Factories: name a concern, return an array
+
+A factory is just a function returning an array of use items. The arrays are flattened automatically (up to 3 levels), so factories nest:
+
+```tsx
+import {
+  cache,
+  revalidate,
+  loading,
+  errorBoundary,
+  middleware,
+} from "@rangojs/router";
+
+// Shared caching configuration
+const withCaching = () => [
+  cache({ ttl: 600 }),
+  // Defer on navigation (|| undefined) so each route keeps its own default;
+  // only force a re-run when an action ran.
+  revalidate(({ actionId }) => (actionId ? true : undefined)),
+];
+
+// Shared loading and error handling
+const withLoadingAndError = (skeleton: ReactNode) => [
+  loading(skeleton),
+  errorBoundary(() => <div>Something went wrong</div>),
+];
+
+// Shared auth middleware
+const withAuth = () => [
+  middleware(authMiddleware),
+  middleware(loggingMiddleware),
+];
+```
+
+Used in routes, they sit next to inline config:
+
+```tsx
+export const urlpatterns = urls(({ path, layout }) => [
+  layout(<AppLayout />, () => [
+    withAuth(),
+
+    path("/blog", BlogIndex, { name: "blog" }, () => [
+      withCaching(),
+      withLoadingAndError(<BlogSkeleton />),
+    ]),
+
+    path("/shop", ShopIndex, { name: "shop" }, () => [
+      withCaching(),
+      withLoadingAndError(<ShopSkeleton />),
+    ]),
+  ]),
+]);
+```
+
+Factories live in shared modules and reuse across separate `urls()` definitions — a `withPublicDefaults()` in `src/route-config.ts` can serve both `src/urls/blog.ts` and `src/urls/admin.ts`.
+
+### Factories amplify footguns
+
+A factory composes **logic**, not just values — a `revalidate()` predicate in a shared factory applies to every route that composes it, so a mistake here is multiplied across the app. Two rules that come from real breakage:
+
+1. **Use `|| undefined` (defer), not `?? false` (hard short-circuit), in shared predicates.** A hard `false` ends the chain, overrides each consuming route's own default, and a downstream revalidator never runs.
+2. **Match actions with `ctx.isAction(Action)`, not an inline `actionId.includes("…")` buried in a factory.** It resolves the action from an imported reference, so a rename is a compile error in one place instead of silent drift across every consumer. See [Type Safety](/docs/rango/concepts/typesafety).
+
+And remember the axes: a factory's `revalidate()` controls client-update selection, its `cache()` controls stored-value freshness. They stay independent even when bundled in the same factory — see [Freshness](/docs/rango/concepts/freshness).
+
+### Keep factories small and intention-named
+
+The anti-pattern that kills readability is over-bundling — a `withDefaults()` that secretly adds five things — and factory-of-factories nesting that leans on the flattener. Surprising config stays inline; extract only the boring, repeated parts; compose by naming concerns (`withAuth()`, `withCaching()`), not by hiding them.
+
+For typed factories, the composition types are exported:
+
+```tsx
+import type { RouteUseItem, LayoutUseItem, UseItems } from "@rangojs/router";
+
+const withCaching = (): RouteUseItem[] => [cache({ ttl: 600 })]; // for path() use callbacks
+const withAuth = (): LayoutUseItem[] => [middleware(authMiddleware)]; // for layout() use callbacks
+const withEverything = (): UseItems<RouteUseItem> => [
+  // nests other factories
+  withCaching(),
+  loading(<Skeleton />),
+];
+```
+
+## include(): composing modules, and code-splitting them
+
+`include()` is how structure composes across files: a whole route module mounts under a prefix. It takes the module two ways. Eager — the module is already in the graph:
+
+```tsx
+import { shopPatterns } from "./shop-patterns";
+
+urls(({ include }) => [include("/shop", shopPatterns, { name: "shop" })]);
+```
+
+Async — the module is code-split behind a `() => import()` thunk. It becomes its own chunk that is not evaluated at startup; the router imports it on the first request that reaches the prefix, then caches it:
+
+```tsx
+urls(({ include }) => [
+  include("/shop", () => import("./shop-patterns"), { name: "shop" }),
+]);
+```
+
+The split module exposes its `urls()` value as the default export (the convention the async form resolves):
+
+```tsx
+// src/shop-patterns.ts
+import { urls } from "@rangojs/router";
+
+export const shopPatterns = urls(({ path, include }) => [
+  path("/", ShopHome, { name: "home" }),
+  include("/product", productPatterns, { name: "product" }), // nesting is fine
+]);
+
+export default shopPatterns;
+```
+
+Prefer the async form for any group that is a natural, independently-loadable unit — an admin area, a localized section, an API surface with heavy handlers. The eager form stays fully valid for small groups or ones that share most of their module graph with the entry. Both match identically at runtime; only evaluation timing differs.
+
+What you do **not** lose by splitting: build-time discovery awaits the thunk, so `href()`, `reverse()`, generated route types, and prerender still see every route in the group — including nested `include()`s inside the split module. `rango generate` resolves the `() => import()` the same way, so a code-split group is still fully typed ([CLI reference](/docs/rango/reference/cli)).
+
+The first request into an async group pays that group's chunk import; every request after is flat, and warm-path matching is O(path segments) regardless of layout. Measured on a deployed Cloudflare worker with 26k routes: ~240 routes cost ~75 ms on first hit, ~9,000 routes ~188 ms, and a 3-level nested async chain ~464 ms (levels import sequentially). Three rules fall out: prefer more, smaller groups over few giant ones; keep async-include chains shallow on latency-sensitive paths; and give sibling groups distinct static prefixes — siblings sharing a prefix all import on the first hit, because the router can't tell which one matches before loading them.
+
+<Cards>
+  <Card href="/docs/rango/features/routing" title="Routing">
+    The feature reference for urls(), path(), and include().
+  </Card>
+  <Card href="/docs/rango/concepts/data-flow" title="Data Flow">
+    The four rungs for passing per-request data down the tree.
+  </Card>
+</Cards>

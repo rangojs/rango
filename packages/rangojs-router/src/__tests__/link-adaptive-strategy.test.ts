@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveAdaptiveStrategy } from "../browser/react/Link.js";
+import type { resolveAdaptiveStrategy as ResolveAdaptiveStrategy } from "../browser/react/Link.js";
 
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
   globalThis,
@@ -16,20 +16,32 @@ function restoreWindow(): void {
 }
 
 /**
- * Install a window whose matchMedia("(hover: none)") result is driven by the
- * mutable `hoverNone` flag, so a test can flip touch capability between calls.
+ * Install a window whose matchMedia("(hover: none)") returns a MediaQueryList
+ * whose `.matches` is a LIVE getter driven by the mutable `getHoverNone` flag —
+ * modelling the real browser object Link caches once and re-reads per render.
+ * Returns the matchMedia spy so a test can assert the query is created once.
  */
-function installWindow(getHoverNone: () => boolean): void {
+function installWindow(getHoverNone: () => boolean): ReturnType<typeof vi.fn> {
+  const matchMedia = vi.fn((query: string) => ({
+    media: query,
+    get matches() {
+      return query === "(hover: none)" ? getHoverNone() : false;
+    },
+  }));
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     writable: true,
-    value: {
-      matchMedia: vi.fn((query: string) => ({
-        matches: query === "(hover: none)" ? getHoverNone() : false,
-        media: query,
-      })),
-    },
+    value: { matchMedia },
   });
+  return matchMedia;
+}
+
+// resolveAdaptiveStrategy caches the MediaQueryList at module scope, so each test
+// re-imports the module fresh (resetModules) to start from an empty cache.
+async function freshResolve(): Promise<typeof ResolveAdaptiveStrategy> {
+  vi.resetModules();
+  const mod = await import("../browser/react/Link.js");
+  return mod.resolveAdaptiveStrategy;
 }
 
 describe("resolveAdaptiveStrategy (F5)", () => {
@@ -38,34 +50,38 @@ describe("resolveAdaptiveStrategy (F5)", () => {
     vi.restoreAllMocks();
   });
 
-  it("passes non-adaptive strategies through unchanged", () => {
+  it("passes non-adaptive strategies through unchanged", async () => {
     installWindow(() => true);
+    const resolveAdaptiveStrategy = await freshResolve();
     expect(resolveAdaptiveStrategy("hover")).toBe("hover");
     expect(resolveAdaptiveStrategy("viewport")).toBe("viewport");
     expect(resolveAdaptiveStrategy("render")).toBe("render");
     expect(resolveAdaptiveStrategy("none")).toBe("none");
   });
 
-  it("resolves adaptive to hover on a pointer (hover-capable) device", () => {
+  it("resolves adaptive to hover on a pointer (hover-capable) device", async () => {
     installWindow(() => false);
+    const resolveAdaptiveStrategy = await freshResolve();
     expect(resolveAdaptiveStrategy("adaptive")).toBe("hover");
   });
 
-  it("resolves adaptive to viewport on a touch (no-hover) device", () => {
+  it("resolves adaptive to viewport on a touch (no-hover) device", async () => {
     installWindow(() => true);
+    const resolveAdaptiveStrategy = await freshResolve();
     expect(resolveAdaptiveStrategy("adaptive")).toBe("viewport");
   });
 
   /**
-   * The core F5 regression: the touch capability is read at the point of use,
-   * not captured once at module load. If the input capability flips (hybrid
-   * device gaining/losing a pointer, or SSR -> hydrate), a later call must
-   * reflect the CURRENT value. A module-load snapshot would freeze the first
-   * value and return the same strategy on the second call.
+   * The core F5 regression: touch capability is read at the point of use, not
+   * captured once. Caching the MediaQueryList must NOT freeze the value — the
+   * MQL's `.matches` is live, so a capability flip (hybrid device, SSR ->
+   * hydrate) is still reflected. This asserts BOTH the live re-read AND that the
+   * query object itself is created only once and reused across renders.
    */
-  it("reflects the current touch capability, not a module-load snapshot", () => {
+  it("caches the MediaQueryList once yet still reflects a live capability flip", async () => {
     let hoverNone = false; // start as a pointer device
-    installWindow(() => hoverNone);
+    const matchMedia = installWindow(() => hoverNone);
+    const resolveAdaptiveStrategy = await freshResolve();
 
     // First evaluation: pointer device -> hover.
     expect(resolveAdaptiveStrategy("adaptive")).toBe("hover");
@@ -73,11 +89,16 @@ describe("resolveAdaptiveStrategy (F5)", () => {
     // Capability flips to touch (e.g. keyboard/mouse detached).
     hoverNone = true;
 
-    // Second evaluation must reflect the new capability -> viewport.
+    // Second evaluation reflects the new capability through the same cached MQL.
     expect(resolveAdaptiveStrategy("adaptive")).toBe("viewport");
+
+    // matchMedia is invoked exactly once despite two resolves — the query is
+    // cached, not re-created per render.
+    expect(matchMedia).toHaveBeenCalledTimes(1);
   });
 
-  it("returns a stable hover default when window is undefined (SSR guard)", () => {
+  it("returns a stable hover default when window is undefined (SSR guard)", async () => {
+    const resolveAdaptiveStrategy = await freshResolve();
     restoreWindow();
     delete (globalThis as Record<string, unknown>).window;
     expect(resolveAdaptiveStrategy("adaptive")).toBe("hover");

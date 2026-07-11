@@ -1,4 +1,4 @@
-import { getRequestContext, urls } from "@rangojs/router";
+import { cookies, getRequestContext, urls } from "@rangojs/router";
 
 /**
  * Response cache test routes URL patterns.
@@ -13,7 +13,11 @@ export const responseCachePatterns = urls(({ path, cache, middleware }) => [
   cache({ ttl: 600 }, () => [
     path.json(
       "/cached-json",
-      () => {
+      (ctx) => {
+        if (ctx.url.searchParams.has("throw-response")) {
+          ctx.header("X-Thrown-Response", "merged");
+          throw Response.json({ source: "thrown-response", ts: Date.now() });
+        }
         return { source: "cached-json", ts: Date.now() };
       },
       { name: "responseCache.json" },
@@ -61,6 +65,16 @@ export const responseCachePatterns = urls(({ path, cache, middleware }) => [
         };
       },
       { name: "responseCache.jsonQuery" },
+    ),
+
+    // Per-client Set-Cookie must not be stored (or replayed) on a shared hit.
+    path.json(
+      "/cached-cookie",
+      () => {
+        cookies().set("session", "tok", { path: "/" });
+        return { source: "cached-cookie", ts: Date.now() };
+      },
+      { name: "responseCache.cookie" },
     ),
   ]),
 

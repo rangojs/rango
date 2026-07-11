@@ -20,6 +20,11 @@ import {
   isExternalRedirect,
 } from "../../redirect-origin.js";
 
+const SOFT_OPTS = {
+  requestOrigin: "https://example.com",
+  basename: undefined as string | undefined,
+};
+
 describe("createResponseWithMergedHeaders", () => {
   it("should create response without context", () => {
     const response = createResponseWithMergedHeaders("body", { status: 200 });
@@ -292,11 +297,13 @@ describe("redirect + cookie/header preservation", () => {
     ctx.header("X-From-Middleware", "yes");
 
     const response = runWithRequestContext(ctx, () =>
-      createSimpleRedirectResponse("/target"),
+      createSimpleRedirectResponse("/target", SOFT_OPTS),
     );
 
     expect(response.status).toBe(204);
-    expect(response.headers.get("X-RSC-Redirect")).toBe("/target");
+    expect(response.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/target",
+    );
     const cookies = response.headers.getSetCookie();
     expect(cookies.some((c) => c.includes("session=val"))).toBe(true);
     expect(response.headers.get("X-From-Middleware")).toBe("yes");
@@ -514,12 +521,15 @@ describe("content negotiation edge cases", () => {
             status: 204,
             headers: { "X-RSC-Redirect": url },
           }),
+        SOFT_OPTS,
       );
     });
 
     expect(result).not.toBeNull();
     expect(result!.status).toBe(204);
-    expect(result!.headers.get("X-RSC-Redirect")).toBe("/dashboard");
+    expect(result!.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/dashboard",
+    );
     const cookies = result!.headers.getSetCookie();
     expect(cookies.some((c) => c.includes("session=renewed"))).toBe(true);
     expect(result!.headers.get("X-Custom-Tracking")).toBe("track-123");
@@ -545,14 +555,19 @@ describe("content negotiation edge cases", () => {
         },
       });
 
-      return interceptRedirectForPartial(redirectResponse, (url) =>
-        // The createSimpleRedirectResponse path — uses merged headers
-        createSimpleRedirectResponse(url),
+      return interceptRedirectForPartial(
+        redirectResponse,
+        (url) =>
+          // The createSimpleRedirectResponse path — uses merged headers
+          createSimpleRedirectResponse(url, SOFT_OPTS),
+        SOFT_OPTS,
       );
     });
 
     expect(result).not.toBeNull();
-    expect(result!.headers.get("X-RSC-Redirect")).toBe("/next");
+    expect(result!.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/next",
+    );
     const cookies = result!.headers.getSetCookie();
     // Both ctx-set and redirect-set cookies should be present
     expect(cookies.some((c) => c.includes("middleware-cookie=mw-val"))).toBe(
@@ -596,9 +611,36 @@ describe("content negotiation edge cases", () => {
 
   it("createSimpleRedirectResponse always produces 204 with X-RSC-Redirect", () => {
     // Without request context
-    const response = createSimpleRedirectResponse("/target-path");
+    const response = createSimpleRedirectResponse("/target-path", SOFT_OPTS);
     expect(response.status).toBe(204);
-    expect(response.headers.get("X-RSC-Redirect")).toBe("/target-path");
+    expect(response.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/target-path",
+    );
+  });
+
+  it("createSimpleRedirectResponse neutralizes cross-origin without external", () => {
+    const response = createSimpleRedirectResponse(
+      "https://evil.example/phish",
+      SOFT_OPTS,
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get("X-RSC-Redirect")).toBe("/");
+  });
+
+  it("createSimpleRedirectResponse allows external https and neutralizes javascript:", () => {
+    const allowed = createSimpleRedirectResponse(
+      "https://accounts.example.com/oauth",
+      { ...SOFT_OPTS, external: true },
+    );
+    expect(allowed.headers.get("X-RSC-Redirect")).toBe(
+      "https://accounts.example.com/oauth",
+    );
+
+    const blocked = createSimpleRedirectResponse("javascript:alert(1)", {
+      ...SOFT_OPTS,
+      external: true,
+    });
+    expect(blocked.headers.get("X-RSC-Redirect")).toBe("/");
   });
 
   it("non-200 ctx.setStatus overrides createSimpleRedirectResponse 204 status", () => {
@@ -614,10 +656,12 @@ describe("content negotiation edge cases", () => {
     ctx.setStatus(401);
 
     const response = runWithRequestContext(ctx, () =>
-      createSimpleRedirectResponse("/login"),
+      createSimpleRedirectResponse("/login", SOFT_OPTS),
     );
 
-    expect(response.headers.get("X-RSC-Redirect")).toBe("/login");
+    expect(response.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/login",
+    );
     expect(response.status).toBe(401);
   });
 });
@@ -822,13 +866,21 @@ describe("onResponse callback drain semantics", () => {
 describe("interceptRedirectForPartial", () => {
   it("returns null for non-redirect responses", () => {
     const response = new Response("ok", { status: 200 });
-    const result = interceptRedirectForPartial(response, () => new Response());
+    const result = interceptRedirectForPartial(
+      response,
+      () => new Response(),
+      SOFT_OPTS,
+    );
     expect(result).toBeNull();
   });
 
   it("returns null for redirect without Location header", () => {
     const response = new Response(null, { status: 302 });
-    const result = interceptRedirectForPartial(response, () => new Response());
+    const result = interceptRedirectForPartial(
+      response,
+      () => new Response(),
+      SOFT_OPTS,
+    );
     expect(result).toBeNull();
   });
 
@@ -849,11 +901,14 @@ describe("interceptRedirectForPartial", () => {
       interceptRedirectForPartial(
         response,
         (url) => new Response(`flight:${url}`),
+        SOFT_OPTS,
       ),
     );
 
     expect(result).not.toBeNull();
-    expect(result!.headers.get("X-RSC-Redirect")).toBe("/new-page");
+    expect(result!.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/new-page",
+    );
   });
 
   it("preserves Set-Cookie from original redirect response", () => {
@@ -874,6 +929,7 @@ describe("interceptRedirectForPartial", () => {
       interceptRedirectForPartial(
         response,
         (url) => new Response(`flight:${url}`),
+        SOFT_OPTS,
       ),
     );
 
@@ -904,6 +960,7 @@ describe("interceptRedirectForPartial", () => {
       interceptRedirectForPartial(
         response,
         (url) => new Response(`flight:${url}`),
+        SOFT_OPTS,
       ),
     );
 
@@ -948,6 +1005,7 @@ describe("interceptRedirectForPartial", () => {
           new Response(`flight:${url}`, {
             headers: { "content-type": "text/x-component" },
           }),
+        SOFT_OPTS,
       ),
     );
 
@@ -980,11 +1038,14 @@ describe("interceptRedirectForPartial", () => {
       interceptRedirectForPartial(
         response,
         (url) => new Response(`flight:${url}`),
+        SOFT_OPTS,
       ),
     );
 
     expect(result).not.toBeNull();
-    expect(result!.headers.get("X-RSC-Redirect")).toBe("/target");
+    expect(result!.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/target",
+    );
   });
 
   it("routes an externally-branded redirect through the Flight path with external=true", () => {
@@ -1004,17 +1065,23 @@ describe("interceptRedirectForPartial", () => {
 
     let captured: { url: string; external?: boolean } | undefined;
     const result = runWithRequestContext(ctx, () =>
-      interceptRedirectForPartial(response, (url, _state, external) => {
-        captured = { url, external };
-        return new Response(`flight:${url}`, {
-          headers: { "content-type": "text/x-component" },
-        });
-      }),
+      interceptRedirectForPartial(
+        response,
+        (url, _state, external) => {
+          captured = { url, external };
+          return new Response(`flight:${url}`, {
+            headers: { "content-type": "text/x-component" },
+          });
+        },
+        SOFT_OPTS,
+      ),
     );
 
     expect(result).not.toBeNull();
     // External redirects must take the Flight payload path (so the client does
     // a hard navigation), NOT the X-RSC-Redirect simple path.
+    // The factory receives the raw Location; createRedirectFlightResponse
+    // (handler) resolves it before writing Flight metadata.
     expect(captured).toEqual({
       url: "https://accounts.example.com/oauth",
       external: true,
@@ -1044,16 +1111,19 @@ describe("interceptRedirectForPartial", () => {
 
     let factoryCalled = false;
     const result = runWithRequestContext(ctx, () =>
-      interceptRedirectForPartial(response, (url) => {
-        factoryCalled = true;
-        return new Response(`flight:${url}`);
-      }),
+      interceptRedirectForPartial(
+        response,
+        (url) => {
+          factoryCalled = true;
+          return new Response(`flight:${url}`);
+        },
+        SOFT_OPTS,
+      ),
     );
 
     expect(factoryCalled).toBe(false);
-    expect(result!.headers.get("X-RSC-Redirect")).toBe(
-      "https://evil.example/phish",
-    );
+    // Server resolves the soft target: unbranded cross-origin -> safe landing.
+    expect(result!.headers.get("X-RSC-Redirect")).toBe("/");
     expect(result!.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
   });
 
@@ -1072,16 +1142,22 @@ describe("interceptRedirectForPartial", () => {
 
     let factoryCalled = false;
     const result = runWithRequestContext(ctx, () =>
-      interceptRedirectForPartial(response, (url) => {
-        factoryCalled = true;
-        return new Response(`flight:${url}`);
-      }),
+      interceptRedirectForPartial(
+        response,
+        (url) => {
+          factoryCalled = true;
+          return new Response(`flight:${url}`);
+        },
+        SOFT_OPTS,
+      ),
     );
 
     // No location state and no external marker -> simple path; the Flight
     // factory is never invoked.
     expect(factoryCalled).toBe(false);
-    expect(result!.headers.get("X-RSC-Redirect")).toBe("/dashboard");
+    expect(result!.headers.get("X-RSC-Redirect")).toBe(
+      "https://example.com/dashboard",
+    );
   });
 });
 

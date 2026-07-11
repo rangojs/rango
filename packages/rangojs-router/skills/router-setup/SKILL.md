@@ -1,6 +1,6 @@
 ---
 name: router-setup
-description: Create and configure the RSC router with createRouter
+description: Create and configure the RSC router with createRouter. Use when bootstrapping a new Rango app, or configuring top-level router options like base path, cache store, or environment.
 argument-hint: [option]
 ---
 
@@ -398,6 +398,18 @@ export const urlpatterns = urls(({ path, include }) => [
 ]);
 ```
 
+`include()` also accepts an async provider to code-split that group into its own
+chunk, imported on the first request reaching the prefix instead of at startup:
+
+```typescript
+// urls/shop.tsx: `export default shopPatterns`
+include("/shop", () => import("./urls/shop"), { name: "shop" }),
+```
+
+Build-time discovery still `await`s the provider, so route types, `href()`, and
+prerender see every route in the split group. Reach for it when a group is a
+large, independently-loadable unit — see `/composability`.
+
 ## Environment Types
 
 ```typescript
@@ -493,6 +505,7 @@ const router = createRouter({
 ```typescript
 // On Cloudflare Workers, swap the tracing factory for native custom spans
 // (no @opentelemetry/api dependency); the telemetry slot is unchanged.
+// On Vercel (Node runtime) use createVercelTracing() from @rangojs/router/vercel.
 import { createCloudflareTracing } from "@rangojs/router/cloudflare";
 
 const router = createRouter({

@@ -571,7 +571,7 @@ export interface PassthroughHandlerDefinition<
   /** Live handler for runtime fallback on unknown params. */
   liveHandler: (
     ctx: HandlerContext<TParams, TEnv>,
-  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+  ) => ReactNode | Response | Promise<ReactNode | Response>;
   /** Composable default DSL items merged when the handler is mounted. */
   use?: () => UseItems<HandlerUseItem>;
 }
@@ -583,7 +583,7 @@ export function Passthrough<
   prerenderDef: PrerenderHandlerDefinition<TParams>,
   liveHandler: (
     ctx: HandlerContext<TParams, TEnv>,
-  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>,
+  ) => ReactNode | Response | Promise<ReactNode | Response>,
 ): PassthroughHandlerDefinition<TParams, TEnv>;
 
 // Implementation
@@ -594,7 +594,7 @@ export function Passthrough<
   prerenderDef: PrerenderHandlerDefinition<TParams>,
   liveHandler: (
     ctx: HandlerContext<TParams, TEnv>,
-  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>,
+  ) => ReactNode | Response | Promise<ReactNode | Response>,
 ): PassthroughHandlerDefinition<TParams, TEnv> {
   if (!isPrerenderHandler(prerenderDef)) {
     throw new Error(

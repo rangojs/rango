@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Test @rangojs/router apps — unit (loaders/middleware/reverse/components), integration (dispatch/Flight), and e2e (dev+prod parity, progressive enhancement)
+description: Test @rangojs/router apps — unit (loaders/middleware/reverse/components), integration (dispatch/Flight), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader or middleware, or asking how to test a route end-to-end in dev and production.
 argument-hint: [layer]
 ---
 
@@ -97,6 +97,7 @@ Each primitive links to its sub-file (API + recipe + caveats).
 | a real route **handler** `(ctx) => rsc` (params/loaders/vars -> rendered RSC + effects)                                            | RSC unit     | [`renderHandler`](./render-handler.md)                                                        | `@rangojs/router/testing/flight` |
 | navigation, hydration, PE parity, view transitions, real SSR                                                                       | e2e          | [`createRangoE2E` -> `parityDescribe`/`expectParity`](./e2e-parity.md)                        | `@rangojs/router/testing/e2e`    |
 | cache hit/miss/stale, prerender (= a cache hit by design)                                                                          | e2e + signal | [`assertCacheStatus` (header) / `assertCacheDecision` (telemetry sink)](./cache-prerender.md) | `@rangojs/router/testing[/e2e]`  |
+| PPR shell HIT/MISS (`ppr` path option), shell store key / getShell after flush                                                     | e2e + signal | [`assertShellStatus` / `shellCacheKey` + store](./cache-prerender.md#ppr-shell-x-rango-shell) | `@rangojs/router/testing[/e2e]`  |
 | generated route map drift vs runtime                                                                                               | unit (node)  | [`assertGeneratedRoutesMatch`](./reverse-and-types.md)                                        | `@rangojs/router/testing`        |
 | a platform binding (`env.DB` / Durable Object / `env.R2`)                                                                          | unit/integr. | [your own double via `env`](./bindings.md)                                                    | (any primitive's `env` option)   |
 

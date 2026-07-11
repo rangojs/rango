@@ -1,6 +1,6 @@
 ---
 name: scripts
-description: Inject third-party scripts (GTM, analytics, widgets) into the document head/body via the Script handle
+description: Inject third-party scripts (GTM, analytics, widgets) into the document head/body via the Script handle. Use when adding Google Tag Manager, an analytics snippet, or a third-party widget script to the page.
 argument-hint: "[vendor]"
 ---
 

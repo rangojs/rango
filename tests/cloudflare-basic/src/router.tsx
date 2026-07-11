@@ -1,4 +1,5 @@
 import { createRouter } from "@rangojs/router";
+import type { TimeoutContext } from "@rangojs/router";
 import {
   createDocumentCacheMiddleware,
   CFCacheStore,
@@ -32,6 +33,38 @@ export const router = createRouter<AppBindings>({
   // size 100 / concurrency 2).
   prefetchCacheSize: 25,
   prefetchConcurrency: 3,
+  // Render-timeout diagnostics fixture (e2e/render-timeout-stage.test.ts). Gated
+  // behind RANGO_E2E_RENDER_TIMEOUT (inlined by vite.config.ts `define`, set on
+  // the e2e webServers in playwright.config.ts) so the 15s render-start deadline
+  // + onTimeout bookkeeping applies ONLY under the e2e run — never on a real
+  // `vite dev`/`preview`/`wrangler deploy`, and never on the vitest unit suite
+  // (which builds its own router). Router-level `timeouts` cannot be scoped
+  // per-test on the shared e2e webServer, so all e2e requests see the 15s
+  // deadline; that is well above any healthy request and never reaches a deploy.
+  ...(process.env.RANGO_E2E_RENDER_TIMEOUT
+    ? {
+        timeouts: { renderStartMs: 15000 },
+        onTimeout: (context: TimeoutContext<AppBindings>) =>
+          new Response(JSON.stringify(context.render ?? null), {
+            status: 504,
+            headers: { "content-type": "application/json;charset=utf-8" },
+          }),
+      }
+    : {}),
+  ssr: {
+    resolveStreaming: async ({ url }) => {
+      // Same gate as the timeouts above: the 20s stall that trips the render
+      // deadline only arms under the e2e flag, so `?__render_timeout_stage` is
+      // inert on a real deploy.
+      if (
+        process.env.RANGO_E2E_RENDER_TIMEOUT &&
+        url.searchParams.has("__render_timeout_stage")
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20000));
+      }
+      return "stream" as const;
+    },
+  },
   // Enable theme support with system detection
   theme: {
     defaultTheme: "light",
@@ -61,6 +94,12 @@ export const router = createRouter<AppBindings>({
   // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the
   // entry in the stale-serve range so the background revalidation path runs.
   cacheProfiles: {
+    // PPR capture-data-snapshot drift fixture (pages/ppr-drift.tsx): a cached
+    // shell value that expires fast (ttl 2, swr 0 so it is fully gone after 2s;
+    // sub-60s items live only in the L1 Cache API tier). The underlying entry
+    // drifts between capture and a later HIT, exercising the snapshot's parity
+    // guarantee on the real CFCacheStore. See ppr-shell-resume.md.
+    drift: { ttl: 2, swr: 0 },
     "swr-ctx": { ttl: 2, swr: 120 },
     // Opt-in: a stale entry re-executes in the foreground during an action's
     // revalidation render (fresh action response) instead of SWR.
@@ -72,11 +111,25 @@ export const router = createRouter<AppBindings>({
     // Test-only: record { phase, message } so the redirect onError e2e can
     // read it back via /__test/last-error. The console.error above is kept so
     // a real consumer's logging path stays exercised.
-    onErrorLog.push({ phase: ctx.phase, message: ctx.error.message });
+    onErrorLog.push({
+      phase: ctx.phase,
+      message: ctx.error.message,
+      metadata: ctx.metadata,
+    });
   },
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
+  // Per-request perf-debug opt-in (docs/telemetry.md "Per-request opt-in"):
+  // ?__perf_debug=1 turns on the metrics store for THIS request only, so the
+  // suite is not spammed with [RSC Perf] logs. Must run before next() so
+  // downstream phases record into the store.
+  .use(async (ctx, next) => {
+    if (ctx.url.searchParams.has("__perf_debug")) {
+      ctx.debugPerformance();
+    }
+    await next();
+  })
   // Regression repro: top-level middleware throwing a Response must short-circuit
   // under miniflare the same way it does on Node — before the fix, the throw
   // leaked past executeMiddleware and miniflare stringified it as 500.

@@ -1,0 +1,89 @@
+---
+title: CSS
+description: Import stylesheets in the Document head with ?url and a precedence-managed link — loaded before paint, no flash of unstyled content.
+type: guide
+---
+
+You need your app's global stylesheet applied before the first paint, in dev and production alike. In Rango, document-level CSS lives in the Document `<head>`, loaded with Vite's `?url` import and a `precedence`-managed `<link rel="stylesheet">`. This page explains the pattern and why it's shaped this way; the [Tailwind guide](/docs/rango/guides/tailwind) is the concrete setup for Tailwind v4.
+
+## The pattern
+
+```tsx
+// document.tsx
+"use client";
+
+import type { ReactNode } from "react";
+import { MetaTags } from "@rangojs/router/client";
+import styles from "./index.css?url";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <link rel="preload" href={styles} as="style" precedence="default" />
+        <link rel="stylesheet" href={styles} precedence="default" />
+        <MetaTags />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+Two pieces carry the weight here.
+
+### Why `?url`
+
+A plain CSS import injects styles as a side effect. Adding `?url` instead makes Vite return the processed file's **hashed URL** as the import's value, so you can render it wherever you want — here, as an explicit `<link>` in the Document `<head>`. The path is stable and works the same in development and production.
+
+### Why `precedence`
+
+The `precedence` prop opts the `<link rel="stylesheet">` into React 19's managed stylesheet model. React then:
+
+- **de-duplicates** the stylesheet by `href` — the same sheet rendered twice yields one `<link>`;
+- **orders** it by precedence relative to other managed sheets — the value is any string; it only decides cascade order, so `"default"` is fine until you have multiple managed sheets to order;
+- **loads it before paint** — so there is no flash of unstyled content.
+
+This is the recommended way to render a stylesheet link.
+
+## Side-effect imports vs `?url`
+
+You may wonder whether a bare `import "./index.css"` — no `?url`, no `<link>` — works too. It does produce _managed_ CSS: `@vitejs/plugin-rsc` collects it via `import.meta.viteRsc.loadCss` and injects it with a precedence. That is fine for **component-local** CSS that loads with its client chunk.
+
+For **document-level** CSS, prefer the explicit `?url` + `<link precedence>` form above. The difference: a side-effect import is not guaranteed to be in the initial streamed `<head>` (an SSR-streaming caveat), whereas the explicit `<link>` is.
+
+| Approach                     | Managed by React?              | Good for               | Caveat                                          |
+| ---------------------------- | ------------------------------ | ---------------------- | ----------------------------------------------- |
+| `?url` + `<link precedence>` | Yes                            | Document/app-level CSS | None — guaranteed in the initial `<head>`       |
+| Bare `import "./index.css"`  | Yes (via `@vitejs/plugin-rsc`) | Component-local CSS    | Not guaranteed in the initial streamed `<head>` |
+
+## Cross-app navigation (host router)
+
+If you're mounting multiple apps under one [host router](/docs/rango/guides/host-router), you do **not** need to coordinate CSS across apps. A client-side navigation that crosses an app boundary is a **full document load** — the server returns `X-RSC-Reload` on an app switch — so the target app's entire document (its stylesheets, theme, meta) is re-established by the target app's own load. Each app owns its document; how one app renders a stylesheet has no effect on another.
+
+Some scar tissue on why this is a hard boundary: an earlier design did a soft cross-app swap. Under it, a stylesheet shared across apps by `href` — classically every app's `@import "tailwindcss"` compiling to one hashed asset — could be silently dropped by React's by-`href` resource dedup when the apps disagreed on `precedence` (one unmanaged, one managed). The full reload removes that footgun entirely, which is the main reason cross-app navigation is a full document load.
+
+## Pitfalls
+
+- **Don't use a bare side-effect import for document CSS.** It can miss the initial streamed `<head>`; use `?url` plus an explicit `<link precedence>`.
+- **Don't leave `precedence` off the document `<link>`.** Without it the stylesheet is outside React's managed resource model — no dedup, no ordering, no before-paint guarantee.
+- **Don't try to coordinate stylesheet `href`s or `precedence` across host-router apps.** Cross-app navigation is a full document load; each app's document re-establishes its own CSS.
+
+## Related guides
+
+This page is the why; these are the concrete setups built on it.
+
+<Cards>
+  <Card href="/docs/rango/guides/tailwind" title="Tailwind">
+    Tailwind v4 setup using this exact pattern.
+  </Card>
+  <Card href="/docs/rango/guides/host-router" title="Host Router">
+    Multi-app routing — why cross-app navigation is a full reload.
+  </Card>
+  <Card href="/docs/rango/guides/theme" title="Theme">
+    Dark mode and the theme attribute.
+  </Card>
+  <Card href="/docs/rango/guides/fonts" title="Fonts">
+    Self-hosted fonts via @fontsource.
+  </Card>
+</Cards>

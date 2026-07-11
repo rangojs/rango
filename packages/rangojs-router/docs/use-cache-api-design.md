@@ -221,7 +221,12 @@ Caching is active in development (backed by `MemorySegmentCacheStore`). This mat
 
 All three write to the same `SegmentCacheStore`.
 
-**Tags**: `CacheProfile.tags`, `CacheOptions.tags`, and runtime `cacheTag(...tags)` inside a `"use cache"` function all tag the stored entry. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes; server actions) or `revalidateTag(...tags)` (background, non-blocking; route handlers/webhooks). Both hard-purge — the only difference is awaitability; neither serves stale. For `CFCacheStore` the markers live in its own KV namespace.
+**Tags**: `CacheProfile.tags`, `CacheOptions.tags`, and runtime `cacheTag(...tags)` all tag the stored entry. `cacheTag()` has two forms depending on what is active when it runs:
+
+- Inside a `"use cache"` function it tags that cache entry (the default).
+- Render-callable (no `"use cache"` scope active, but a request render is in progress) it records the tags onto the request's DOCUMENT artifact (`_requestTags`) instead of throwing. The PPR shell capture and the document cache middleware both collect `_requestTags`, so a plain server component can call `cacheTag("campaign:spring")` — with zero `cache()`/`"use cache"` in its tree — and `revalidateTag("campaign:spring")` will drop the shell / document it rendered into. Inside a `cache()` DSL segment the render-callable form records at the DOCUMENT level (only the `"use cache"` runtime enters the tag scope). With neither a scope nor a request context, `cacheTag()` throws.
+
+The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes; server actions) or `revalidateTag(...tags)` (background, non-blocking; route handlers/webhooks). Both hard-purge — the only difference is awaitability; neither serves stale. For `CFCacheStore` the markers live in its own KV namespace.
 
 ## Remaining / Future
 

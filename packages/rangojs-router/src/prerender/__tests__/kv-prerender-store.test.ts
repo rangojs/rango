@@ -102,6 +102,16 @@ describe("createKVPrerenderStore", () => {
       fakeKVWith(JSON.stringify({ v: 1, meta: null })),
     );
     expect(await store3.get(key(), { params: { id: "42" } })).toBeNull();
+    const store4 = createKVPrerenderStore(
+      fakeKVWith(
+        JSON.stringify({
+          v: 1,
+          entry: null,
+          meta: { buildId: "b1", params: { id: "42" } },
+        }),
+      ),
+    );
+    expect(await store4.get(key(), { params: { id: "42" } })).toBeNull();
   });
 
   it("marks an entry stale (not deleted) when a tag marker is newer", async () => {

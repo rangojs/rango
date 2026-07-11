@@ -139,7 +139,10 @@ export async function discoverAndWriteRouteTypes(
     for (const [id, router] of registry) {
       if (!router.urlpatterns) continue;
 
-      const manifest = generateManifest(router.urlpatterns, routerMountIndex);
+      const manifest = await generateManifest(
+        router.urlpatterns,
+        routerMountIndex,
+      );
       routerMountIndex++;
 
       // Filter out auto-generated route names that the runtime creates for

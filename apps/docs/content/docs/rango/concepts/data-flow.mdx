@@ -1,0 +1,169 @@
+---
+title: Data Flow
+description: The four rungs for passing per-request data down the tree, ordered safest-first — and the silent failure mode the ladder exists to prevent.
+type: concept
+---
+
+You have per-request data — a user, a cart, a product — produced somewhere up the tree, and a segment below that needs it. Rango gives you four ways to hand it down, and they are not interchangeable: they form a ladder, ordered safest-first. Reach for the next rung only when the one above doesn't fit.
+
+## The failure mode the ladder prevents
+
+Here's what goes wrong without it. After a server action, revalidation is partial: only selected segments recompute. Non-revalidated ancestors do **not** re-run just to rebuild their `ctx.set()` state, and the router does not preserve a prior-pass snapshot of their context writes (see [Execution Model](/docs/rango/concepts/execution-model) for the defaults).
+
+So imagine an outer layout that sets a context variable, and a child route that reads it. On the initial render, everything works. Then an action fires: the child re-runs, the outer layout doesn't — it's parent-chain-skipped by default — and the child's `ctx.get()` reads `undefined`. Your `product?.name` renders nothing; your `user ? <Dashboard/> : <LoginPrompt/>` shows the login prompt to a logged-in user. **Fallback UI silently replaces good UI after an action.** No error, no warning — just a page that quietly got worse.
+
+The ladder is ordered by how it handles this. Rungs 1–3 make the desync _unrepresentable by construction_. Rung 4 can't — so it makes the dependency a stated, greppable contract instead.
+
+## Rung 1: a loader
+
+If the data can be a loader, make it a loader. Loaders resolve fresh on **every** pass — full renders, action revalidations, even cache hits (they stay live inside a cached render). There is nothing to keep in sync, because there is no stored producer state to go stale. They also run concurrently and stream, so their latency overlaps rendering instead of blocking it.
+
+```tsx
+export const urlpatterns = urls(({ path, layout, loader }) => [
+  layout(<ShopLayout />, () => [
+    loader(CartLoader), // fresh on every render pass, no contract needed
+    path("/shop", ShopIndex, { name: "shop" }),
+    path("/shop/cart", CartPage, { name: "cart" }),
+  ]),
+]);
+```
+
+Consume the data with `useLoader()` in a client component. See [Loaders](/docs/rango/features/loaders).
+
+## Rung 2: middleware `ctx.set()`
+
+Route middleware wraps **every** render pass — normal renders, post-action revalidation renders, and no-JS progressive-enhancement re-renders. Its context variables are therefore never stale: whatever render is about to happen, the middleware just ran. This is the right rung for request-shaped context — auth, session, locale.
+
+```ts
+import { createVar } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
+
+interface AuthUser {
+  id: string;
+  email: string;
+  role: string;
+}
+export const CurrentUser = createVar<AuthUser>();
+
+export const authMiddleware: Middleware = async (ctx, next) => {
+  const token = ctx.request.headers.get("Authorization");
+  if (!token) throw new Response("Unauthorized", { status: 401 });
+
+  ctx.set(CurrentUser, await verifyToken(token)); // type-checked write
+  await next();
+};
+```
+
+Any handler, layout, or parallel slot in the render pass reads it back with `ctx.get(CurrentUser)`, typed. One boundary to keep in mind: middleware guarantees the freshness of _its own_ writes — it does not change the partial-revalidation boundaries between handler, layout, and parallel segments. See [Middleware](/docs/rango/features/middleware).
+
+## Rung 3: handler `ctx.set()` to its own children
+
+A handler can set context for the segments nested inside its own `path()` — orphan layouts and their parallels. These children _belong to the route entry_, and on an action the whole entry re-runs together by default (route segment, loaders, and entry children all revalidate, with handler-first ordering preserved). Producer and consumer live in the same revalidation unit, so they cannot desync — zero configuration.
+
+This is the rung for data the page must compute anyway. Pagination is the canonical case: the handler's search params decide how many pages exist, and the layout chrome renders that count.
+
+```tsx
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+
+urls(({ path, layout, parallel }) => [
+  path(
+    "/product/:slug",
+    async (ctx) => {
+      const product = await fetchProduct(ctx.params.slug);
+      ctx.set("product", product);
+      return <ProductPage product={product} />;
+    },
+    { name: "product" },
+    () => [
+      layout(
+        (ctx) => {
+          const product = ctx.get("product"); // handler always ran first
+          return (
+            <div>
+              <Breadcrumb name={product?.name} />
+              <Outlet />
+              <ParallelOutlet name="@related" />
+            </div>
+          );
+        },
+        () => [
+          parallel({
+            "@related": (ctx) => {
+              const product = ctx.get("product");
+              return <RelatedProducts category={product?.category} />;
+            },
+          }),
+        ],
+      ),
+    ],
+  ),
+]);
+```
+
+One rule keeps this rung safe: if you narrow the entry's revalidation with a `revalidate()` predicate that can return a hard `false`, put the same contract on the entry's children too. A hard `false` on one side of a producer/consumer pair is exactly the desync the ladder exists to prevent. See [Layouts](/docs/rango/guides/layouts) for the orphan-layout pattern in full.
+
+## Rung 4: cross-entry sharing, with named revalidation contracts
+
+The bottom rung: an **outer** `layout()` entry feeding descendants below its own entry. Outer entries do not revalidate on actions by default — the revalidation trace calls this `action:parent-chain-skip` — so nothing structural keeps producer and consumer in step. This rung therefore always requires a shared revalidation contract: the same named `revalidate()` function on the producer and on every consumer.
+
+Before writing one, check whether the producer can move down a rung — into the consumer's own entry as an orphan layout, into middleware, or into a loader. When the data genuinely must flow from an outer entry, name the contract:
+
+```ts
+// revalidation-contracts.ts
+import { addToCart } from "./actions/cart";
+
+export const revalidateCartData = (ctx) => ctx.isAction(addToCart) || undefined;
+```
+
+```tsx
+layout(<CartLayout />, () => [
+  revalidate(revalidateCartData), // producer reruns
+  path("/cart", CartPage, { name: "cart" }, () => [
+    revalidate(revalidateCartData), // consumer reruns
+  ]),
+]);
+```
+
+Two details carry weight here. `ctx.isAction(addToCart)` matches the action **by reference**, so the contract survives renames. And the `|| undefined` turns the boolean into "mine, else let the default decide" — a bare `false` would suppress revalidation for unrelated actions too, which is rarely what a shared contract should do.
+
+Because the contract is one named function used at every site, the dependency is greppable: search for `revalidateCartData` and you see the producer and every consumer. To avoid repeating `revalidate(...)` at each callsite, package contracts as handoff helpers that spread into any segment:
+
+```ts
+// revalidation-contracts.ts
+import { revalidate } from "@rangojs/router";
+import * as AuthActions from "./actions/auth";
+
+export const revalidateAuthData = (ctx) =>
+  ctx.isAction(AuthActions) || undefined;
+export const revalidateAuth = () => [revalidate(revalidateAuthData)];
+```
+
+```tsx
+layout(<ShellLayout />, () => [
+  revalidateAuth(),
+  path("/account", AccountPage, { name: "account" }, () => [revalidateAuth()]),
+]);
+```
+
+A segment that depends on multiple upstream domains composes multiple contracts — `revalidateAuth()` and `revalidateCart()` side by side on the same segment.
+
+## Picking a rung
+
+| The data is…                                         | Rung                                    |
+| ---------------------------------------------------- | --------------------------------------- |
+| Fetchable per request (cart contents, product, feed) | 1 — loader                              |
+| Request-shaped context (auth, session, locale)       | 2 — middleware `ctx.set()`              |
+| Computed by the page anyway (pagination from search) | 3 — handler `ctx.set()` to own children |
+| Genuinely produced by an outer entry                 | 4 — named revalidation contract         |
+
+If you're unsure, start at the top: the higher rungs are immune to partial-revalidation staleness by construction, and each step down trades that immunity for flexibility you should only pay for when you need it.
+
+<Cards>
+  <Card href="/docs/rango/concepts/execution-model" title="Execution Model">
+    The revalidation defaults and handler-first ordering this ladder is built
+    on.
+  </Card>
+  <Card href="/docs/rango/guides/layouts" title="Layouts">
+    Orphan layouts, layout revalidation, and the contract pattern in practice.
+  </Card>
+</Cards>

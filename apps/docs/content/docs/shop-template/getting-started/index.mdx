@@ -1,0 +1,108 @@
+---
+description: Set up Shopify, create a project, and run Vercel Shop locally.
+title: Setup
+type: guide
+---
+
+## Step 1: Set up Shopify for headless
+
+If you don't already have a Shopify store, create one at [shopify.com](https://www.shopify.com). Then set up the Headless channel:
+
+1. In your Shopify admin, go to **Settings → Apps and sales channels → Develop apps**
+2. Install the **Headless** channel from the Shopify App Store
+3. Open the Headless channel and create a new storefront
+4. Copy the **Storefront API access token** - you'll need this for your environment variables
+5. Under **Storefront API permissions**, enable the scopes required by the template
+
+The default storefront needs product listings, inventory, collection listings, checkout, and content access. For the exact scope names, plus optional scopes for Shopify Auth and Shopify CMS, see [Storefront API permissions](/docs/shop-template/reference/storefront-api-permissions).
+
+## Step 2: Create your project
+
+There are three ways to get started:
+
+### Deploy with Vercel
+
+The fastest way - deploy directly to Vercel and it will create the repository for you.
+
+<a href="https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fshop%2Ftree%2Fmain%2Fapps%2Ftemplate&env=SHOPIFY_STOREFRONT_ACCESS_TOKEN,SHOPIFY_STORE_DOMAIN,VITE_SITE_NAME&envDescription=Required%20values%20to%20work%20with%20Shopify&envLink=https%3A%2F%2Fvercel.shop%2Fdocs%2Freference%2Fenv-vars&products=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22shopify%22%2C%22productSlug%22%3A%22shopify%22%2C%22protocol%22%3A%22other%22%7D%5D">
+  <img src="https://vercel.com/button" alt="Deploy with Vercel" />
+</a>
+
+### Clone with create-vercel-shop
+
+```bash
+npx create-vercel-shop@latest my-store
+```
+
+`create-vercel-shop` also installs the `vercel-shop`, `vercel-plugin`, and `shopify-ai-toolkit` plugins in project scope so a coding agent can start working with the project immediately.
+
+### Add the agent setup to an existing project
+
+If you already have a repo and only want the project-scoped agent plugins, run this from the project root:
+
+```bash
+npx create-vercel-shop@latest --no-template
+```
+
+This skips the storefront scaffold and only installs the `vercel-shop`, `vercel-plugin`, and `shopify-ai-toolkit` plugins in project scope.
+
+### Start from v0
+
+You can also use [v0](https://v0.dev) to generate a storefront and iterate on the design before connecting it to Shopify.
+
+## Step 3: Add your environment variables
+
+Create a `.env.local` file in your project root:
+
+```bash
+SHOPIFY_STORE_DOMAIN="your-store.myshopify.com"
+SHOPIFY_STOREFRONT_ACCESS_TOKEN="your-storefront-access-token"
+VITE_SITE_NAME="Your Store Name"
+```
+
+You can find the storefront token in **Settings → Apps and sales channels → Headless**. For the full variable list, see [Environment Variables](/docs/shop-template/reference/env-vars).
+
+## Step 4: Run locally
+
+If you scaffolded the storefront, `create-vercel-shop` uses the package manager you used to scaffold the project. Start the dev server with the matching command:
+
+```bash
+pnpm dev
+npm run dev
+yarn dev
+bun dev
+```
+
+Your store is now running at [localhost:3000](http://localhost:3000).
+
+## Next steps
+
+<Cards>
+  <Card
+    title="Environment Variables"
+    href="/docs/shop-template/reference/env-vars"
+  >
+    Full reference for required and optional environment variables.
+  </Card>
+  <Card
+    title="Storefront API Permissions"
+    href="/docs/shop-template/reference/storefront-api-permissions"
+  >
+    Required Shopify scopes for the default storefront and optional skills.
+  </Card>
+  <Card
+    title="Storefront API"
+    href="/docs/shop-template/reference/storefront-api"
+  >
+    How the template structures Shopify queries, caching, and transforms.
+  </Card>
+  <Card title="Shopify Integration" href="/docs/shop-template/shopify">
+    How the template maps Shopify products, collections, menus, and webhooks.
+  </Card>
+  <Card
+    title="Extending with Agents"
+    href="/docs/shop-template/getting-started/extending-with-agents"
+  >
+    Extend and customize the storefront with Claude Code or Cursor.
+  </Card>
+</Cards>

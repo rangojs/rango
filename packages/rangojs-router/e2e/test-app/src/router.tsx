@@ -8,6 +8,7 @@ import {
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
 import { urlpatterns } from "./urls.js";
+import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
 
 // App-level cache store with defaults
@@ -65,6 +66,9 @@ export interface AppVariables {
   childData?: string;
   // Action → ctx.set → handler reads test variable
   actionCtxValue?: string;
+  // PPR scope-fidelity: set by the /shell-secure auth middleware, rendered by
+  // the shell layout (urls/shell-secure.tsx)
+  shellMwVar?: string;
 }
 
 export type AppEnv = AppBindings;
@@ -183,6 +187,11 @@ export const router = createRouter<AppEnv>({
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },
+    // PPR capture-data-snapshot drift fixture (urls/shell-cache.tsx): a cached
+    // shell value that expires FAST (ttl 1, swr 0 so it is fully gone after 1s,
+    // not merely stale) — the underlying entry drifts between capture and a later
+    // HIT, exercising the snapshot's parity guarantee. See ppr-shell-resume.md.
+    drift: { ttl: 1, swr: 0 },
     // Opt-in: a stale entry re-executes in the foreground during an action's
     // revalidation render (fresh action response), instead of SWR. ttl=2 so the
     // stale window opens fast.
@@ -193,6 +202,19 @@ export const router = createRouter<AppEnv>({
   // reach the client payload metadata (defaults are size 100 / concurrency 2).
   prefetchCacheSize: 25,
   prefetchConcurrency: 3,
+  // Render-timeout diagnostics are opt-in per server. Only the render-timeout
+  // stage suite (an isolatedServer that sets RANGO_E2E_RENDER_TIMEOUT) exercises
+  // the 15s renderStartMs bound. Baking it unconditionally leaks onto the SHARED
+  // dev/preview webServer every other suite uses: a >15s cold render in an
+  // unrelated suite would then 504, and render diagnostics would flip on for
+  // every request. Read through globalThis so the bundler never statically folds
+  // it (only process.env.NODE_ENV is a build-time define) — the production build
+  // reuses the shared build output, and the isolated preview process supplies
+  // the env var at runtime. Mirrors the RANGO_STRICT gate above.
+  ...((globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env?.RANGO_E2E_RENDER_TIMEOUT
+    ? { timeouts: { renderStartMs: 15000 } }
+    : {}),
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],
@@ -202,7 +224,10 @@ export const router = createRouter<AppEnv>({
     enableColorScheme: true,
   },
   ssr: {
-    resolveStreaming: ({ request }) => {
+    resolveStreaming: async ({ request }) => {
+      if (new URL(request.url).searchParams.has("__render_timeout_stage")) {
+        await new Promise((resolve) => setTimeout(resolve, 20000));
+      }
       const ua = request.headers.get("user-agent") ?? "";
       if (ua.includes("StreamBot")) return "allReady";
       return "stream";
@@ -213,9 +238,20 @@ export const router = createRouter<AppEnv>({
       phase: context.phase,
       message: context.error.message,
       actionId: context.actionId,
+      metadata: context.metadata,
     });
   },
 })
+  // Per-request perf-debug opt-in (docs/telemetry.md "Per-request opt-in"):
+  // ?__perf_debug=1 turns on the metrics store for THIS request only, so the
+  // suite is not spammed with [RSC Perf] logs. Must run before next() so
+  // downstream phases record into the store.
+  .use(async (ctx, next) => {
+    if (ctx.url.searchParams.has("__perf_debug")) {
+      ctx.debugPerformance();
+    }
+    await next();
+  })
   // Bug-repro: cookies set AFTER await next() in the outermost middleware.
   // Registered before globalMiddleware so no outer early-return merge can mask the bug.
   .use("/middleware-test/cookies-after-next", async (_ctx, next) => {
@@ -317,6 +353,15 @@ export const router = createRouter<AppEnv>({
     });
     await next();
   })
+  // PPR guarding fixture (docs/design/ppr-shell-resume.md): a GLOBAL auth
+  // middleware upstream of the ppr /shell-secure route. The PPR commit point is
+  // after the whole middleware chain, so an unauthorized request gets its 401
+  // with zero shell bytes even when the shell is warm; an authorized request's
+  // post-middleware ctx state (shellMwVar) is inherited by the background
+  // capture and photographed into the shared shell (scope fidelity). PPR itself
+  // needs NO middleware — serving is integral; routes opt in via the `ppr` path
+  // option (see urls/shell-cache.tsx, urls/shell-secure.tsx).
+  .use("/shell-secure/*", shellSecureAuthMiddleware)
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

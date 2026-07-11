@@ -21,6 +21,7 @@ import type { RouterContext } from "./router-context.js";
 import type { ResolveSegmentOptions } from "./segment-resolution.js";
 import { runWithRouterContext } from "./router-context.js";
 import type { EntryData, InterceptEntry } from "../server/context";
+import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type {
   HandlerContext,
   InternalHandlerContext,
@@ -35,7 +36,12 @@ import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 
 export interface PrerenderMatchDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  /** Owning router id; scopes bake-time root-scope/search-schema lookups the
+   *  same way reqCtx._routerId does at runtime (issue #762). */
+  routerId?: string;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
   resolveAllSegments: (
@@ -85,9 +91,16 @@ export async function matchForPrerender<TEnv = any>(
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
+  /**
+   * The matched route entry's `ppr` path option, surfaced so the build
+   * collection can flag Prerender+ppr routes as build-time shell candidates
+   * (issue #699 producer B). Runtime-only today; the build otherwise never
+   * sees the option (it lives on EntryData, not the trie).
+   */
+  ppr?: boolean | PartialPrerenderProps;
 } | null> {
   // 1. Find the matching route entry
-  const matched = deps.findMatch(pathname);
+  const matched = await deps.findMatch(pathname);
   if (!matched) return null;
 
   // Use params from trie match if available, fall back to provided params
@@ -108,380 +121,425 @@ export async function matchForPrerender<TEnv = any>(
     passthrough: true as const,
   });
 
-  return runWithRouterContext(routerCtx, async () => {
-    // 2. Load the manifest entry tree
-    const manifestEntry = await loadManifest(
-      matched.entry,
-      matched.routeKey,
-      pathname,
-      undefined,
-      false,
-    );
-
-    // 3. Build ancestor chain [root, ..., route]
-    const entries: EntryData[] = [];
-    for (const entry of traverseBack(manifestEntry)) {
-      entries.push(entry);
-    }
-
-    // On-demand refresh: read the route's onDemand config (ttl/tags) off the
-    // retained route entry. `tags` is a function, so it can't ride the trie; the
-    // trigger resolves it from here. Only an object literal carries config;
-    // `onDemand: true` uses router-level defaults (config stays undefined).
-    let onDemandConfig: OnDemandRouteConfig | undefined;
-    if (onDemand) {
-      const routeEntry = entries.find(
-        (e) =>
-          e.type === "route" &&
-          !!(e as { prerenderDef?: unknown }).prerenderDef,
-      ) as { prerenderDef?: { options?: { onDemand?: unknown } } } | undefined;
-      const od = routeEntry?.prerenderDef?.options?.onDemand;
-      if (od && typeof od === "object") {
-        onDemandConfig = od as OnDemandRouteConfig;
-      }
-    }
-
-    // 3b. Dev-mode passthrough shortcut: if the route is a Passthrough route
-    // and has getParams(), check if the matched params are in the known list.
-    // In production, only known params are pre-rendered; unknown params fall
-    // through to the live handler. Mirror that behavior in dev mode to avoid
-    // rendering unknown params with build: true.
-    // Vars collected from getParams() probe — merged into render context below.
-    let devProbeBuildVars: Record<string, any> | undefined;
-
-    // On-demand refresh renders exactly the requested param set, even one not
-    // returned by getParams() (that is the point of an explicit refresh), so the
-    // dev getParams() passthrough probe is skipped for onDemand.
-    if (devMode && matchedPassthroughRoute && !onDemand) {
-      const routeEntry = entries.find(
-        (
-          e,
-        ): e is EntryData & {
-          type: "route";
-          prerenderDef: { getParams: (ctx: any) => Promise<any[]> | any[] };
-        } =>
-          e.type === "route" &&
-          !!(e as any).isPassthrough &&
-          !!(e as any).prerenderDef?.getParams,
-      );
-      if (routeEntry) {
-        try {
-          const probeBuildVars: Record<string, any> = {};
-          const knownParamsList = await routeEntry.prerenderDef.getParams({
-            build: true as const,
-            dev: true,
-            set: ((keyOrVar: any, value: any) => {
-              contextSet(probeBuildVars, keyOrVar, value);
-            }) as any,
-            reverse: createReverseFunction(deps.mergedRouteMap),
-            get env() {
-              if (buildEnv !== undefined) return buildEnv;
-              throw new Error(
-                "[rango] ctx.env is not available during dev-mode getParams(). " +
-                  "Configure buildEnv in your rango() plugin options to enable build-time env access.",
-              );
-            },
-          });
-          // Compare only the keys returned by getParams — ignore mount params
-          // from include() prefixes that aren't part of the handler's params.
-          const isKnown = knownParamsList.some((known: Record<string, any>) => {
-            const knownKeys = Object.keys(known);
-            return knownKeys.every(
-              (k) => String(known[k]) === String(matchedParams[k]),
-            );
-          });
-          if (!isKnown) {
-            return passthroughResult();
-          }
-          // Preserve vars set by getParams() for the render context
-          if (hasContextVars(probeBuildVars)) {
-            devProbeBuildVars = probeBuildVars;
-          }
-        } catch (err: any) {
-          // Mirror production semantics (prerender-collection.ts):
-          // Skip errors are intentional — treat as passthrough.
-          // All other errors propagate so dev surfaces them.
-          if (err?.name === "Skip") {
-            return passthroughResult();
-          }
-          throw err;
-        }
-      }
-    }
-
-    // 4. Create handle store for collecting handle data
-    const handleStore = createHandleStore();
-
-    // 5. Create a minimal request context with the handle store
-    // Shallow-copy getParams vars so each param set is independent.
-    // In dev mode, merge vars from the getParams() probe if the caller
-    // didn't provide buildVars (production passes them from expandPrerenderRoutes).
-    const effectiveBuildVars = buildVars ?? devProbeBuildVars;
-    const variables: Record<string, any> = effectiveBuildVars
-      ? { ...effectiveBuildVars }
-      : {};
-    const stubRes = new Response(null, { status: 200 });
-    const minimalRequestContext: RequestContext<TEnv> = {
-      env: buildEnv ?? ({} as TEnv),
-      // Requestless refresh: arm the personalization guard so standalone
-      // cookies()/headers() (and the cache-directive helpers) throw a
-      // PrerenderPersonalizationError, which the producer maps to
-      // skipped-personalized. Build/dev prerender leave this unset.
-      ...(onDemand ? { _onDemandProducer: true as const } : {}),
-      request: new Request("http://prerender" + pathname),
-      url: new URL("http://prerender" + pathname),
-      originalUrl: new URL("http://prerender" + pathname),
-      pathname,
-      searchParams: new URLSearchParams(),
-      _variables: variables,
-      get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
-      set: ((keyOrVar: any, value: any) => {
-        contextSet(variables, keyOrVar, value);
-      }) as any,
-      params: matchedParams,
-      res: stubRes,
-      cookie: () => undefined,
-      cookies: () => ({}),
-      setCookie: () => {},
-      deleteCookie: () => {},
-      header: () => {},
-      setStatus: () => {},
-      _setStatus: () => {},
-      _rotateStateCookie: () => {},
-      _setKeepCacheDirective: () => {},
-      use: (() => {
-        throw new Error("use() not available during pre-rendering");
-      }) as any,
-      method: "GET",
-      _handleStore: handleStore,
-      _requestTags: new Set<string>(),
-      waitUntil: () => {},
-      onResponse: () => {},
-      _onResponseCallbacks: [],
-      setLocationState() {},
-      _locationState: undefined,
-      _renderBarrier: Promise.resolve(),
-      _resolveRenderBarrier: () => {},
-      _reportedErrors: new WeakSet<object>(),
-      reverse: createReverseFunction(
-        deps.mergedRouteMap,
+  return runWithRouterContext(routerCtx, () =>
+    routerCtx.getContext().runIsolated(matched.routeKey, async () => {
+      // 2. Load the manifest entry tree
+      const manifestEntry = await loadManifest(
+        matched.entry,
         matched.routeKey,
-        matchedParams,
-        matched.routeKey ? isRouteRootScoped(matched.routeKey) : undefined,
-      ),
-    };
-
-    return runWithRequestContext(minimalRequestContext, async () => {
-      // 6. Create prerender context with synthetic URL.
-      // Prerender handlers get params, pathname, url, searchParams, search,
-      // reverse, use(handle), and optionally env (when buildEnv is configured).
-      const buildCtx = createPrerenderContext<TEnv>(
-        matchedParams,
         pathname,
-        deps.mergedRouteMap,
-        matched.routeKey,
-        variables,
-        matchedPassthroughRoute,
-        buildEnv,
-        devMode,
-        onDemand,
+        undefined,
+        false,
       );
 
-      // 7. Wire use() for handles only (loaders throw)
-      setupBuildUse(buildCtx);
-
-      // 8. Resolve all segments with skipLoaders
-      const loaderPromises = new Map<string, Promise<any>>();
-      const allSegments = await deps.resolveAllSegments(
-        entries,
-        matched.routeKey,
-        matchedParams,
-        buildCtx,
-        loaderPromises,
-        // throwOnError: a render failure (or `throw new Skip()`) must reach the
-        // build/dev caller, not be baked into a frozen error page (issue #587).
-        { skipLoaders: true, throwOnError: true },
-      );
-
-      // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
-      // When the route declares loading(), the handler result is deferred so the
-      // component is a thenable resolving to the sentinel — detectPrerenderPassthrough
-      // resolves thenables before testing (a sync check would miss it and bake a
-      // corrupt artifact).
-      if (await detectPrerenderPassthrough(allSegments)) {
-        return passthroughResult();
+      // 3. Build ancestor chain [root, ..., route]
+      const entries: EntryData[] = [];
+      for (const entry of traverseBack(manifestEntry)) {
+        entries.push(entry);
       }
 
-      // 10. Filter out any loader segments (belt-and-suspenders)
-      const nonLoaderSegments = allSegments.filter((s) => s.type !== "loader");
-
-      // 11. Wait for handles to settle
-      handleStore.seal();
-      await handleStore.settled;
-
-      // 12. Serialize segments using the cache serializer.
-      // On-demand refresh: capture errors thrown DURING Flight encoding — a deep
-      // async child calling cookies()/headers() throws here, not in
-      // resolveAllSegments, and React would otherwise embed it as a Flight error
-      // row and complete the stream, baking a personalized/failed render into the
-      // shared payload as a healthy 200. Surface the captured error so the trigger
-      // maps it to skipped-personalized / render-failed and keeps the old entry.
-      const { serializeSegments } = await import("../cache/segment-codec.js");
-      const { encodeHandles } = await import("../cache/handle-snapshot.js");
-      const serializationErrors: unknown[] = [];
-      const serializedSegments = await serializeSegments(
-        nonLoaderSegments,
-        onDemand ? { onError: (e) => serializationErrors.push(e) } : undefined,
-      );
-      // Surface ONLY a personalization error (the cross-user-leak vector this
-      // guards). Other serialization errors are left to React's existing
-      // embed-error-row behavior — same as build-time prerender, which bakes an
-      // error/notFound boundary's fallback as a valid render; treating those as
-      // failures would regress routes that legitimately render a boundary.
-      const personalized = serializationErrors.find((e) =>
-        isPrerenderPersonalizationError(e),
-      );
-      if (onDemand && personalized) {
-        throw personalized;
-      }
-
-      // 13. Collect handle data per segment (skip segments with no handle data).
-      // Encoded through the Flight codec (not stored raw) so Promise/ReactNode
-      // handle values survive the JSON-serialized build artifact / dev wire —
-      // the same fix the runtime cache uses. Encode happens here, in the RSC
-      // environment where the codec resolves; the node-side sinks only persist.
-      const handlesRecord: Record<string, SegmentHandleData> = {};
-      for (const seg of nonLoaderSegments) {
-        const segHandles = handleStore.getDataForSegment(seg.id);
-        if (Object.keys(segHandles).length > 0) {
-          // Resolve deferred values before encoding so the baked artifact holds
-          // resolved data (prerender = build-time cache).
-          handlesRecord[seg.id] = await resolveSegmentHandleValues(segHandles);
+      // On-demand refresh: read the route's onDemand config (ttl/tags) off the
+      // retained route entry. `tags` is a function, so it can't ride the trie; the
+      // trigger resolves it from here. Only an object literal carries config;
+      // `onDemand: true` uses router-level defaults (config stays undefined).
+      let onDemandConfig: OnDemandRouteConfig | undefined;
+      if (onDemand) {
+        const routeEntry = entries.find(
+          (e) =>
+            e.type === "route" &&
+            !!(e as { prerenderDef?: unknown }).prerenderDef,
+        ) as
+          | { prerenderDef?: { options?: { onDemand?: unknown } } }
+          | undefined;
+        const od = routeEntry?.prerenderDef?.options?.onDemand;
+        if (od && typeof od === "object") {
+          onDemandConfig = od as OnDemandRouteConfig;
         }
       }
-      const handles = await encodeHandles(handlesRecord);
 
-      // Use the trie-level route key (e.g., "docs", "docs.article")
-      const routeName = matched.routeKey;
+      // 3b. Dev-mode passthrough shortcut: if the route is a Passthrough route
+      // and has getParams(), check if the matched params are in the known list.
+      // In production, only known params are pre-rendered; unknown params fall
+      // through to the live handler. Mirror that behavior in dev mode to avoid
+      // rendering unknown params with build: true.
+      // Vars collected from getParams() probe — merged into render context below.
+      let devProbeBuildVars: Record<string, any> | undefined;
 
-      // 14. Resolve intercept segments for this route (if any ancestor defines
-      //     an intercept targeting this route). At build time we skip when()
-      //     evaluation -- we pre-render all intercepts unconditionally and let
-      //     runtime matching decide which to serve.
-      let interceptSegments: SerializedSegmentData[] | undefined;
-      let interceptHandles: string | undefined;
-
-      const foundIntercepts: {
-        intercept: InterceptEntry;
-        entry: EntryData;
-      }[] = [];
-      let current: EntryData | null = manifestEntry;
-      while (current) {
-        // Flatten the entry and its sibling layouts into one source list, the
-        // same traversal findInterceptForRoute uses; the build keeps ALL matches
-        // (not just the innermost) and skips when(). intercept/layout are
-        // non-optional arrays, so empty ones are a no-op here.
-        for (const source of [current, ...current.layout]) {
-          for (const ic of source.intercept) {
-            if (ic.routeName === matched.routeKey) {
-              foundIntercepts.push({ intercept: ic, entry: source });
+      // On-demand refresh renders exactly the requested param set, even one not
+      // returned by getParams() (that is the point of an explicit refresh), so the
+      // dev getParams() passthrough probe is skipped for onDemand.
+      if (devMode && matchedPassthroughRoute && !onDemand) {
+        const routeEntry = entries.find(
+          (
+            e,
+          ): e is EntryData & {
+            type: "route";
+            prerenderDef: { getParams: (ctx: any) => Promise<any[]> | any[] };
+          } =>
+            e.type === "route" &&
+            !!(e as any).isPassthrough &&
+            !!(e as any).prerenderDef?.getParams,
+        );
+        if (routeEntry) {
+          try {
+            const probeBuildVars: Record<string, any> = {};
+            const knownParamsList = await routeEntry.prerenderDef.getParams({
+              build: true as const,
+              dev: true,
+              set: ((keyOrVar: any, value: any) => {
+                contextSet(probeBuildVars, keyOrVar, value);
+              }) as any,
+              reverse: createReverseFunction(deps.mergedRouteMap),
+              get env() {
+                if (buildEnv !== undefined) return buildEnv;
+                throw new Error(
+                  "[rango] ctx.env is not available during dev-mode getParams(). " +
+                    "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+                );
+              },
+            });
+            // Compare only the keys returned by getParams — ignore mount params
+            // from include() prefixes that aren't part of the handler's params.
+            const isKnown = knownParamsList.some(
+              (known: Record<string, any>) => {
+                const knownKeys = Object.keys(known);
+                return knownKeys.every(
+                  (k) => String(known[k]) === String(matchedParams[k]),
+                );
+              },
+            );
+            if (!isKnown) {
+              return passthroughResult();
             }
-          }
-        }
-        current = current.parent;
-      }
-
-      if (foundIntercepts.length > 0) {
-        const interceptResolvedSegments: typeof nonLoaderSegments = [];
-
-        for (const { intercept, entry: parentEntry } of foundIntercepts) {
-          // setupBuildUse keys handle pushes by ctx._currentSegmentId. The main
-          // resolveAllSegments pass left it on the route's segment id, so pin it
-          // to THIS intercept's slot id before resolving the handler/layout --
-          // otherwise the intercept's ctx.use() handle pushes land in the wrong
-          // bucket and getDataForSegment(seg.id) below drops them from the baked
-          // artifact. Re-pinned per iteration so multiple intercepts targeting
-          // the same route each get their own id (mirrors fresh.ts parallel-slot
-          // pinning).
-          const interceptSegmentId = `${parentEntry.shortCode}.${intercept.slotName}`;
-          (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-            interceptSegmentId;
-
-          // Resolve handler
-          const handlerRaw =
-            typeof intercept.handler === "function"
-              ? intercept.handler(buildCtx)
-              : intercept.handler;
-          const handlerResolved =
-            handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
-          if (handlerResolved instanceof Response) {
-            // Handler returned a redirect/response -- skip this intercept
-            continue;
-          }
-          const component: ReactNode = handlerResolved;
-
-          // Resolve layout (if any)
-          let layoutElement: ReactNode | undefined;
-          if (intercept.layout) {
-            if (typeof intercept.layout === "function") {
-              const layoutResult = await intercept.layout(buildCtx);
-              if (layoutResult instanceof Response) continue;
-              layoutElement = layoutResult;
-            } else {
-              layoutElement = intercept.layout;
+            // Preserve vars set by getParams() for the render context
+            if (hasContextVars(probeBuildVars)) {
+              devProbeBuildVars = probeBuildVars;
             }
-          }
-
-          interceptResolvedSegments.push({
-            id: interceptSegmentId,
-            namespace: `intercept:${intercept.routeName}`,
-            type: "parallel" as const,
-            index: 0,
-            component,
-            loading: intercept.loading === false ? null : intercept.loading,
-            layout: layoutElement,
-            params: matchedParams,
-            slot: intercept.slotName,
-            belongsToRoute: true,
-            parallelName: `intercept:${intercept.routeName}.${intercept.slotName}`,
-          });
-        }
-
-        if (interceptResolvedSegments.length > 0) {
-          // Wait for handles again (intercept handlers may have called use())
-          await handleStore.settled;
-          interceptSegments = await serializeSegments(
-            interceptResolvedSegments,
-          );
-          const interceptHandlesRecord: Record<string, SegmentHandleData> = {};
-          for (const seg of interceptResolvedSegments) {
-            const segHandles = handleStore.getDataForSegment(seg.id);
-            if (Object.keys(segHandles).length > 0) {
-              interceptHandlesRecord[seg.id] =
-                await resolveSegmentHandleValues(segHandles);
+          } catch (err: any) {
+            // Mirror production semantics (prerender-collection.ts):
+            // Skip errors are intentional — treat as passthrough.
+            // All other errors propagate so dev surfaces them.
+            if (err?.name === "Skip") {
+              return passthroughResult();
             }
+            throw err;
           }
-          // The intercept artifact serves main + intercept segments together, so
-          // encode the MERGED handle map here (the sinks no longer merge raw
-          // records — they store this pre-encoded string as-is).
-          interceptHandles = await encodeHandles({
-            ...handlesRecord,
-            ...interceptHandlesRecord,
-          });
         }
       }
 
-      return {
-        segments: serializedSegments,
-        handles,
-        routeName,
+      // 4. Create handle store for collecting handle data
+      const handleStore = createHandleStore();
+
+      // 5. Create a minimal request context with the handle store
+      // Shallow-copy getParams vars so each param set is independent.
+      // In dev mode, merge vars from the getParams() probe if the caller
+      // didn't provide buildVars (production passes them from expandPrerenderRoutes).
+      const effectiveBuildVars = buildVars ?? devProbeBuildVars;
+      const variables: Record<string, any> = effectiveBuildVars
+        ? { ...effectiveBuildVars }
+        : {};
+      const stubRes = new Response(null, { status: 200 });
+      const minimalRequestContext: RequestContext<TEnv> = {
+        env: buildEnv ?? ({} as TEnv),
+        // Requestless refresh: arm the personalization guard so standalone
+        // cookies()/headers() (and the cache-directive helpers) throw a
+        // PrerenderPersonalizationError, which the producer maps to
+        // skipped-personalized. Build/dev prerender leave this unset.
+        ...(onDemand ? { _onDemandProducer: true as const } : {}),
+        request: new Request("http://prerender" + pathname),
+        url: new URL("http://prerender" + pathname),
+        originalUrl: new URL("http://prerender" + pathname),
+        pathname,
+        searchParams: new URLSearchParams(),
+        _variables: variables,
+        build: true,
+        // Inert here: the prerender-collect / static-render pass has no live
+        // PPR-shell decision to gate; dynamic() reaches the shell axis only on a
+        // live request or a shell capture.
+        dynamic: () => {},
+        get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
+        set: ((keyOrVar: any, value: any) => {
+          contextSet(variables, keyOrVar, value);
+        }) as any,
         params: matchedParams,
-        interceptSegments,
-        interceptHandles,
-        onDemandConfig,
+        res: stubRes,
+        cookie: () => undefined,
+        cookies: () => ({}),
+        setCookie: () => {},
+        deleteCookie: () => {},
+        header: () => {},
+        setStatus: () => {},
+        _setStatus: () => {},
+        _rotateStateCookie: () => {},
+        _setKeepCacheDirective: () => {},
+        use: (() => {
+          throw new Error("use() not available during pre-rendering");
+        }) as any,
+        method: "GET",
+        _handleStore: handleStore,
+        _requestTags: new Set<string>(),
+        waitUntil: () => {},
+        onResponse: () => {},
+        _onResponseCallbacks: [],
+        setLocationState() {},
+        _locationState: undefined,
+        _renderBarrier: Promise.resolve(),
+        _resolveRenderBarrier: () => {},
+        _reportedErrors: new WeakSet<object>(),
+        reverse: createReverseFunction(
+          deps.mergedRouteMap,
+          matched.routeKey,
+          matchedParams,
+          matched.routeKey
+            ? isRouteRootScoped(matched.routeKey, deps.routerId)
+            : undefined,
+        ),
+        // Scope the bake context's own lookups (createPrerenderContext reads it
+        // through the request ALS) per router as well.
+        _routerId: deps.routerId,
       };
-    });
-  });
+
+      return runWithRequestContext(minimalRequestContext, async () => {
+        // 6. Create prerender context with synthetic URL.
+        // Prerender handlers get params, pathname, url, searchParams, search,
+        // reverse, use(handle), and optionally env (when buildEnv is configured).
+        const buildCtx = createPrerenderContext<TEnv>(
+          matchedParams,
+          pathname,
+          deps.mergedRouteMap,
+          matched.routeKey,
+          variables,
+          matchedPassthroughRoute,
+          buildEnv,
+          devMode,
+          onDemand,
+        );
+
+        // 7. Wire use() for handles only (loaders throw)
+        setupBuildUse(buildCtx);
+
+        // 8. Resolve all segments with skipLoaders
+        const loaderPromises = new Map<string, Promise<any>>();
+        const allSegments = await deps.resolveAllSegments(
+          entries,
+          matched.routeKey,
+          matchedParams,
+          buildCtx,
+          loaderPromises,
+          // throwOnError: a render failure (or `throw new Skip()`) must reach the
+          // build/dev caller, not be baked into a frozen error page (issue #587).
+          { skipLoaders: true, throwOnError: true },
+        );
+
+        // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
+        // When the route declares loading(), the handler result is deferred so the
+        // component is a thenable resolving to the sentinel — detectPrerenderPassthrough
+        // resolves thenables before testing (a sync check would miss it and bake a
+        // corrupt artifact).
+        if (await detectPrerenderPassthrough(allSegments)) {
+          return passthroughResult();
+        }
+
+        // 10. Filter out any loader segments (belt-and-suspenders)
+        const nonLoaderSegments = allSegments.filter(
+          (s) => s.type !== "loader",
+        );
+
+        // 11. Wait for handles to settle
+        handleStore.seal();
+        await handleStore.settled;
+
+        // 12. Serialize segments using the cache serializer.
+        // On-demand refresh: capture errors thrown DURING Flight encoding — a deep
+        // async child calling cookies()/headers() throws here, not in
+        // resolveAllSegments, and React would otherwise embed it as a Flight error
+        // row and complete the stream, baking a personalized/failed render into the
+        // shared payload as a healthy 200. Surface the captured error so the trigger
+        // maps it to skipped-personalized / render-failed and keeps the old entry.
+        const { serializeSegments } = await import("../cache/segment-codec.js");
+        const { encodeHandles } = await import("../cache/handle-snapshot.js");
+        const serializationErrors: unknown[] = [];
+        const serializedSegments = await serializeSegments(
+          nonLoaderSegments,
+          onDemand
+            ? {
+                onError: (error) => {
+                  serializationErrors.push(error);
+                },
+              }
+            : undefined,
+        );
+        // Surface ONLY a personalization error (the cross-user-leak vector this
+        // guards). Other serialization errors are left to React's existing
+        // embed-error-row behavior — same as build-time prerender, which bakes an
+        // error/notFound boundary's fallback as a valid render; treating those as
+        // failures would regress routes that legitimately render a boundary.
+        const personalized = serializationErrors.find((e) =>
+          isPrerenderPersonalizationError(e),
+        );
+        if (onDemand && serializationErrors.length > 0) {
+          throw personalized ?? serializationErrors[0];
+        }
+
+        // 13. Collect handle data per segment (skip segments with no handle data).
+        // Encoded through the Flight codec (not stored raw) so Promise/ReactNode
+        // handle values survive the JSON-serialized build artifact / dev wire —
+        // the same fix the runtime cache uses. Encode happens here, in the RSC
+        // environment where the codec resolves; the node-side sinks only persist.
+        const handlesRecord: Record<string, SegmentHandleData> = {};
+        for (const seg of nonLoaderSegments) {
+          const segHandles = handleStore.getDataForSegment(seg.id);
+          if (Object.keys(segHandles).length > 0) {
+            // Resolve deferred values before encoding so the baked artifact holds
+            // resolved data (prerender = build-time cache).
+            handlesRecord[seg.id] =
+              await resolveSegmentHandleValues(segHandles);
+          }
+        }
+        const handles = await encodeHandles(handlesRecord);
+
+        // Use the trie-level route key (e.g., "docs", "docs.article")
+        const routeName = matched.routeKey;
+
+        // Surface the matched route entry's ppr option for the build collection
+        // (leaf-first: the deepest type:"route" entry in the ancestor chain is
+        // the matched page route; ancestors are layouts/includes).
+        let routePpr: boolean | PartialPrerenderProps | undefined;
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const e = entries[i]!;
+          if (e.type === "route") {
+            // A durable segment refresh cannot atomically replace the separate
+            // document shell. Keep on-demand routes on axis 1 so a refreshed
+            // payload cannot be paired with a stale shell prelude.
+            routePpr = e.isOnDemand === true ? undefined : e.ppr;
+            break;
+          }
+        }
+
+        // 14. Resolve intercept segments for this route (if any ancestor defines
+        //     an intercept targeting this route). At build time we skip when()
+        //     evaluation -- we pre-render all intercepts unconditionally and let
+        //     runtime matching decide which to serve.
+        let interceptSegments: SerializedSegmentData[] | undefined;
+        let interceptHandles: string | undefined;
+
+        const foundIntercepts: {
+          intercept: InterceptEntry;
+          entry: EntryData;
+        }[] = [];
+        let current: EntryData | null = manifestEntry;
+        while (current) {
+          // Flatten the entry and its sibling layouts into one source list, the
+          // same traversal findInterceptForRoute uses; the build keeps ALL matches
+          // (not just the innermost) and skips when(). intercept/layout are
+          // non-optional arrays, so empty ones are a no-op here.
+          for (const source of [current, ...current.layout]) {
+            for (const ic of source.intercept) {
+              if (ic.routeName === matched.routeKey) {
+                foundIntercepts.push({ intercept: ic, entry: source });
+              }
+            }
+          }
+          current = current.parent;
+        }
+
+        // V1 writes only the main variant. Do not execute intercept producers
+        // whose output would be discarded (and whose personalization/errors
+        // must not block an otherwise valid main refresh).
+        if (!onDemand && foundIntercepts.length > 0) {
+          const interceptResolvedSegments: typeof nonLoaderSegments = [];
+
+          for (const { intercept, entry: parentEntry } of foundIntercepts) {
+            // setupBuildUse keys handle pushes by ctx._currentSegmentId. The main
+            // resolveAllSegments pass left it on the route's segment id, so pin it
+            // to THIS intercept's slot id before resolving the handler/layout --
+            // otherwise the intercept's ctx.use() handle pushes land in the wrong
+            // bucket and getDataForSegment(seg.id) below drops them from the baked
+            // artifact. Re-pinned per iteration so multiple intercepts targeting
+            // the same route each get their own id (mirrors fresh.ts parallel-slot
+            // pinning).
+            const interceptSegmentId = `${parentEntry.shortCode}.${intercept.slotName}`;
+            (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+              interceptSegmentId;
+
+            // Resolve handler
+            const handlerRaw =
+              typeof intercept.handler === "function"
+                ? intercept.handler(buildCtx)
+                : intercept.handler;
+            const handlerResolved =
+              handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
+            if (handlerResolved instanceof Response) {
+              // Handler returned a redirect/response -- skip this intercept
+              continue;
+            }
+            const component: ReactNode = handlerResolved;
+
+            // Resolve layout (if any)
+            let layoutElement: ReactNode | undefined;
+            if (intercept.layout) {
+              if (typeof intercept.layout === "function") {
+                const layoutResult = await intercept.layout(buildCtx);
+                if (layoutResult instanceof Response) continue;
+                layoutElement = layoutResult;
+              } else {
+                layoutElement = intercept.layout;
+              }
+            }
+
+            interceptResolvedSegments.push({
+              id: interceptSegmentId,
+              namespace: `intercept:${intercept.routeName}`,
+              type: "parallel" as const,
+              index: 0,
+              component,
+              loading: intercept.loading === false ? null : intercept.loading,
+              layout: layoutElement,
+              params: matchedParams,
+              slot: intercept.slotName,
+              belongsToRoute: true,
+              parallelName: `intercept:${intercept.routeName}.${intercept.slotName}`,
+            });
+          }
+
+          if (interceptResolvedSegments.length > 0) {
+            // Wait for handles again (intercept handlers may have called use())
+            await handleStore.settled;
+            interceptSegments = await serializeSegments(
+              interceptResolvedSegments,
+            );
+            const interceptHandlesRecord: Record<string, SegmentHandleData> =
+              {};
+            for (const seg of interceptResolvedSegments) {
+              const segHandles = handleStore.getDataForSegment(seg.id);
+              if (Object.keys(segHandles).length > 0) {
+                interceptHandlesRecord[seg.id] =
+                  await resolveSegmentHandleValues(segHandles);
+              }
+            }
+            // The intercept artifact serves main + intercept segments together, so
+            // encode the MERGED handle map here (the sinks no longer merge raw
+            // records — they store this pre-encoded string as-is).
+            interceptHandles = await encodeHandles({
+              ...handlesRecord,
+              ...interceptHandlesRecord,
+            });
+          }
+        }
+
+        return {
+          segments: serializedSegments,
+          handles,
+          routeName,
+          params: matchedParams,
+          interceptSegments,
+          interceptHandles,
+          onDemandConfig,
+          ppr: routePpr,
+        };
+      });
+    }),
+  );
 }
 
 /**
@@ -497,6 +555,8 @@ export async function renderStaticSegment<TEnv = any>(
   routeName?: string,
   buildEnv?: TEnv,
   devMode?: boolean,
+  routerId?: string,
+  rootScoped?: boolean,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -514,6 +574,8 @@ export async function renderStaticSegment<TEnv = any>(
     pathname: "/",
     searchParams: syntheticUrl.searchParams,
     _variables: {},
+    build: true,
+    dynamic: () => {},
     get: () => undefined as any,
     set: () => {},
     params: {},
@@ -545,8 +607,15 @@ export async function renderStaticSegment<TEnv = any>(
       mergedRouteMap,
       routeName,
       {},
-      routeName ? isRouteRootScoped(routeName) : undefined,
+      // Def-stamped value first: the collector passes the mount-time
+      // root-scope captured on the Static definition (stampStaticDefScope),
+      // which needs no registry lookup and survives name-prefix arguments.
+      rootScoped ??
+        (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
     ),
+    // Scope the bake context's own lookups (createStaticContext reads it
+    // through the request ALS) per router as well.
+    _routerId: routerId,
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {

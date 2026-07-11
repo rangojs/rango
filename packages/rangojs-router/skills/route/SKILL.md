@@ -1,6 +1,6 @@
 ---
 name: route
-description: Define routes with path() in @rangojs/router
+description: Define routes with path() in @rangojs/router. Use when creating a new page or route, or asking how to define a URL path and its handler.
 argument-hint: [pattern]
 ---
 
@@ -52,6 +52,49 @@ For the common pattern of an optional locale prefix
 (`include("/:locale?", routes)`) and the wider react-intl integration —
 locale detection, fallback chains, URL generation with absent locale —
 see `/i18n`.
+
+### Named catch-all params (`:name+` / `:name*`)
+
+A catch-all consumes the **rest of the path** and exposes it as a single
+decoded string at `ctx.params.<name>`, with the internal `/` separators kept.
+It must be the **last** segment of the pattern.
+
+- `:name+` — **one-or-more** segments (Next `[...name]`, React-Router splat).
+  `/docs/:slug+` matches `/docs/a` and `/docs/a/b/c`, but **not** the bare
+  `/docs`.
+- `:name*` — **zero-or-more** segments (Next `[[...name]]`). `/docs/:slug*`
+  additionally matches the bare `/docs`, binding `ctx.params.slug` to `""`.
+
+```typescript
+urls(({ path }) => [
+  // /shop/electronics/phones -> ctx.params.path === "electronics/phones"
+  path("/shop/:path+", ShopCatchAll, { name: "shopCatchAll" }),
+
+  // /docs         -> ctx.params.slug === ""
+  // /docs/intro   -> ctx.params.slug === "intro"
+  // /docs/a/b     -> ctx.params.slug === "a/b"
+  path("/docs/:slug*", (ctx) => {
+    const parts = ctx.params.slug === "" ? [] : ctx.params.slug.split("/");
+    return <Docs segments={parts} />;
+  }, { name: "docs" }),
+]);
+```
+
+`ctx.params.<name>` is always a `string` for a catch-all (never `undefined`) —
+`:name*` binds `""` for the empty case, so read it directly. `reverse()` /
+`ctx.reverse()` rebuild the URL with separators preserved:
+`reverse("docs", { slug: "a/b" })` -> `/docs/a/b`.
+
+The value is the URL-decoded remainder. `split("/")` recovers the segments in the
+common case, but note that a segment containing an encoded slash (`%2F`) decodes
+to a literal `/` and is therefore indistinguishable from a separator — the same
+trade-off the bare `*` splat has. If you need to distinguish those, match on the
+raw pathname instead.
+
+The bare unnamed wildcard `path("/files/*", …)` still works and is read at
+`ctx.params["*"]`; prefer a named catch-all when you want a typed param key.
+Combining a modifier with `?`, a literal suffix, or a constraint
+(`:slug*?`, `:slug*.html`, `:slug(a|b)+`) is rejected at build time.
 
 ## Route Handler Patterns
 
@@ -154,6 +197,13 @@ first. Use `ctx.set(key, value)` to share data with children, who read it
 via `ctx.get(key)`. Caching wraps all segments together, so either all run
 or none do.
 
+This pattern is also safe under partial action revalidation: on an action,
+the route entry re-runs as a unit by default — route segment, loaders, and
+`belongsToRoute` children (orphan layouts, entry parallels) all seed
+revalidate-true, with handler-first ordering preserved. Handler-set data
+stays consistent with no configuration. See `/rango` → "Passing data down
+the tree" for the safest-first ladder.
+
 ### Typed context variables with createVar
 
 Use `createVar<T>()` to create a typed token for `ctx.set()`/`ctx.get()`.
@@ -240,9 +290,18 @@ Cacheable vars (the default) can be read freely inside cache scopes.
 > decides hit/miss/ttl/swr independently and never reads `revalidate()`. See
 > `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
 
-Handler-first guarantees apply within a single full render pass. For partial
-action revalidation, define named revalidation contracts and reuse them on both
-the producer route and the consumer child segments.
+With no `revalidate()` configured, an entry needs no contract: on an action
+the route handler and its children re-run together by default, so handler
+data stays consistent on its own. Contracts matter in two cases:
+
+1. **You narrow the entry's revalidation** with a predicate that can return a
+   hard `false` (e.g. bare `ctx.isAction(X)`). A hard `false` on one side of a
+   producer/consumer pair desyncs it — the child re-runs by default and reads
+   `undefined`, or vice versa. Put the same named contract on the route and
+   its dependent children so they narrow together.
+2. **The producer is an outer entry** (a standalone `layout()` above this
+   route). Outer entries skip action revalidation by default, so the shared
+   contract is mandatory — see `/layout` → "Revalidation Contracts".
 
 ```typescript
 // revalidation-contracts.ts
@@ -419,6 +478,20 @@ urls(({ path, layout }) => [
   ]),
 ])
 ```
+
+For composing whole route MODULES, reach for `include()` — and prefer the
+code-split form `include("/shop", () => import("./shop-patterns"))` for any
+group that is a natural unit: it keeps the group off the cold-start path, and
+measured first-hit cost scales with routes-per-chunk, so many small groups
+beat one giant one. Sizing rules and the numbers behind them:
+[skills/composability](../composability/SKILL.md) → "Sizing async include
+groups (measured)".
+
+`include()` has three name modes: omit `{ name }` for a private local route-name
+scope, pass a non-empty name to namespace children globally, or pass
+`{ name: "" }` to flatten globally unique child names into the parent map. URL
+matching works in all three modes; the option controls name visibility, not
+whether the routes mount.
 
 ## View Transitions
 

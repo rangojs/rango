@@ -1,0 +1,47 @@
+---
+title: Navigation & Prefetching
+description: Fully-prefetched navigations commit instantly — and turning prefetch up is safe because invalidation always fails toward freshness.
+type: guide
+---
+
+A fully-prefetched navigation commits with no loading flash: if the prefetch stream drained and decoded cleanly, the router renders the resolved payload synchronously instead of suspending into skeletons.
+
+```tsx
+<Link to={href("/shop/:slug", { slug })} prefetch="viewport">
+  {name}
+</Link>
+```
+
+## Why aggressive prefetch is safe
+
+Aggressive client caching is only as good as its invalidation, and that is where client routers usually lose user trust. Rango's client cache is invalidated automatically and coherently:
+
+- **Every server action invalidates by default.** History entries are marked stale (back/forward still paints instantly, then revalidates in the background), the prefetch cache flushes, and a rotating `X-Rango-State` value — sent on every prefetch and keyed into the browser HTTP cache via `Vary` — strands every HTTP-cached payload from before the mutation.
+- **Sibling tabs are notified.** The state cookie itself is the cross-tab sync channel, so a mutation in one tab cannot serve pre-mutation data in another.
+
+<TwoTabsDemo />
+
+## The escape hatch is per-invocation
+
+An action that turns out to be a no-op keeps the caches warm by saying so:
+
+```ts
+export async function addToCart(productId: string) {
+  "use server";
+  const result = await tryAddToCart(productId);
+  if (!result.ok) {
+    keepClientCache(); // this invocation mutated nothing — keep prefetches
+  }
+  return result;
+}
+```
+
+Forget the call and you merely lose warmth — the default invalidation covers you. Every failure direction in this subsystem points toward freshness, never toward staleness.
+
+## Connection warmup
+
+Enabled by default. After 60 seconds without interaction the connection is marked cold; when the user returns, a `HEAD` warmup request re-establishes TLS before the next navigation, so navigations after idle periods don't pay handshake costs. Disable with `createRouter({ warmup: false })`.
+
+## JS and no-JS are the same contract
+
+A form POST without JavaScript and the same action with it must produce matching middleware effects, cookies, and rendered state. Divergence is classified as a bug, not a caveat — the guarantee is pinned by the router's semantic matrix suite in both dev and production.

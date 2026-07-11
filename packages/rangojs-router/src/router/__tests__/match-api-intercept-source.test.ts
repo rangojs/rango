@@ -56,6 +56,7 @@ vi.mock("../../server/context", () => ({
 
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: vi.fn(),
+  _getRequestContext: vi.fn(),
   setRequestContextPrevRouteKey: vi.fn(),
 }));
 
@@ -67,6 +68,7 @@ vi.mock("../logging.js", () => ({
 vi.mock("../../cache/cache-scope.js", () => ({
   CacheScope: vi.fn(),
   createCacheScope: vi.fn(() => null),
+  resolveShellImplicitCacheScope: vi.fn((scope) => scope),
 }));
 
 vi.mock("../error-handling.js", () => ({
@@ -85,7 +87,10 @@ vi.mock("../../errors", () => ({
 }));
 
 import { createMatchContextForPartial } from "../match-api.js";
-import { setRequestContextPrevRouteKey } from "../../server/request-context.js";
+import {
+  getRequestContext,
+  setRequestContextPrevRouteKey,
+} from "../../server/request-context.js";
 import type { MatchApiDeps } from "../types.js";
 
 function routeKeyForPath(pathname: string): string {
@@ -116,6 +121,7 @@ function makeDeps(overrides?: Partial<MatchApiDeps<unknown>>): MatchApiDeps {
 describe("createMatchContextForPartial intercept source", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getRequestContext).mockReset();
   });
 
   it("uses interceptSourceUrl for selector context from and segments.path", async () => {

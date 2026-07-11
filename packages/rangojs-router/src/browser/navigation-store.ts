@@ -1,29 +1,13 @@
 import type {
-  NavigationState,
   NavigationLocation,
   SegmentState,
   NavigationStore,
   NavigationUpdate,
   UpdateSubscriber,
-  StateListener,
   ResolvedSegment,
-  InflightAction,
-  TrackedActionState,
-  ActionStateListener,
   HandleData,
 } from "./types.js";
 import { clearPrefetchCache } from "./prefetch/cache.js";
-
-/**
- * Default action state (idle with no payload)
- */
-const DEFAULT_ACTION_STATE: TrackedActionState = {
-  state: "idle",
-  actionId: null,
-  payload: null,
-  error: null,
-  result: null,
-};
 
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
@@ -53,18 +37,24 @@ type HistoryCacheEntry = [
 ];
 
 /**
- * Shallow clone handleData to avoid reference sharing between cache entries.
- * Only clones the structure (objects and arrays), not the data items themselves,
- * since mutations happen at the array level, not on individual data objects.
- * This preserves any non-serializable types (React elements, functions, etc.)
+ * Clone the handleData CONTAINERS (the handle-name map and each segment map) so
+ * a cache entry is decoupled from the live map that eventController mutates — it
+ * adds/deletes segment keys and REPLACES bucket arrays in place. The bucket
+ * arrays themselves are shared by reference, NOT copied: a bucket array is only
+ * ever replaced wholesale (eventController.setHandleData reassigns it,
+ * resolveDeferredHandleValues builds a fresh one) and collect functions read it
+ * without mutating, so sharing is safe and skips an O(elements) copy on every
+ * cache write — the per-yield streaming hot path. This also preserves any
+ * non-serializable bucket contents (React elements, functions, etc.).
  */
 export function cloneHandleData(handleData: HandleData): HandleData {
   const cloned: HandleData = {};
   for (const [handleKey, segmentMap] of Object.entries(handleData)) {
-    cloned[handleKey] = {};
+    const clonedMap: Record<string, unknown[]> = {};
     for (const [segmentId, dataArray] of Object.entries(segmentMap)) {
-      cloned[handleKey][segmentId] = [...dataArray];
+      clonedMap[segmentId] = dataArray;
     }
+    cloned[handleKey] = clonedMap;
   }
   return cloned;
 }
@@ -171,11 +161,10 @@ function createLocation(loc: { href: string }): NavigationLocation {
 }
 
 /**
- * Create a navigation store for managing browser-side navigation state
+ * Create a navigation store for browser-side segment and history state.
  *
- * The store manages two types of state:
- * - NavigationState: Public state exposed via useNavigation hook
- * - SegmentState: Internal segment management for partial RSC updates
+ * The public navigation lifecycle lives in EventController; this store owns
+ * segment reconciliation, history snapshots, and cross-tab cache invalidation.
  *
  * @param config - Initial configuration
  * @returns NavigationStore instance
@@ -186,15 +175,6 @@ function createLocation(loc: { href: string }): NavigationLocation {
  *   initialLocation: window.location,
  *   initialSegmentIds: [],
  * });
- *
- * // Subscribe to state changes (for useNavigation hook)
- * const unsubscribe = store.subscribe(() => {
- *   const state = store.getState();
- *   console.log('Navigation state:', state);
- * });
- *
- * // Update state
- * store.setState({ state: 'loading' });
  *
  * // Subscribe to UI updates (for re-rendering)
  * store.onUpdate((update) => {
@@ -210,19 +190,6 @@ export function createNavigationStore(
     typeof window !== "undefined"
       ? createLocation(window.location)
       : new URL("/", "http://localhost");
-
-  // Public navigation state (for useNavigation hook)
-  // isStreaming starts false to match SSR and avoid hydration mismatch
-  // After hydration, entry.browser.tsx sets it to true if stream is still open
-  let navState: NavigationState = {
-    state: "idle",
-    isStreaming: false,
-    location: config?.initialLocation
-      ? createLocation(config.initialLocation)
-      : defaultLocation,
-    pendingUrl: null,
-    inflightActions: [],
-  };
 
   // Resolve the initial location for segment state
   const initialLoc = config?.initialLocation
@@ -244,9 +211,6 @@ export function createNavigationStore(
   // Cross-tab refresh callback (set by navigation bridge)
   let crossTabRefreshCallback: (() => void) | null =
     config?.onCrossTabRefresh ?? null;
-
-  // Track pending cross-tab refresh to prevent duplicate refreshes
-  let pendingCrossTabRefresh = false;
 
   // History-based segment cache: array of [url-key, segments] tuples
   // Each URL gets its own complete snapshot of segments for back/forward and partial merging
@@ -277,14 +241,8 @@ export function createNavigationStore(
     ]);
   }
 
-  // State change listeners (for useNavigation subscriptions)
-  const stateListeners = new Set<StateListener>();
-
   // UI update subscribers (for re-rendering)
   const updateSubscribers = new Set<UpdateSubscriber>();
-
-  // Internal flag to track if a server action is in progress
-  let actionInProgress = false;
 
   // Intercept source URL - tracks where the intercept was triggered from
   // Used to maintain intercept context during action revalidation
@@ -294,63 +252,6 @@ export function createNavigationStore(
   // When this changes on a partial response, the client forces a full
   // tree replacement instead of reconciling with stale segments.
   let currentRouterId: string | undefined;
-
-  // Action state tracking (for useAction hook)
-  // Maps action function ID to its tracked state
-  const actionStates = new Map<string, TrackedActionState>();
-
-  // Action state listeners (per action ID)
-  // Maps action function ID to set of listeners
-  const actionListeners = new Map<string, Set<ActionStateListener>>();
-
-  /**
-   * Create a debounced function that batches rapid calls
-   */
-  // A non-keyed notifier is the keyed one restricted to a single constant key;
-  // its own keyed instance means the "" key never collides with action keys.
-  function createDebouncedNotifier<T extends (...args: any[]) => void>(
-    fn: T,
-    ms: number = 20,
-  ): T {
-    const keyed = createKeyedDebouncedNotifier(
-      (_key: string, ...args: any[]) => fn(...args),
-      ms,
-    );
-    return ((...args: Parameters<T>) => keyed("", ...args)) as T;
-  }
-
-  /**
-   * Create a keyed debounced function (separate timers per key)
-   */
-  function createKeyedDebouncedNotifier<
-    T extends (key: string, ...args: any[]) => void,
-  >(fn: T, ms: number = 20): T {
-    const timeouts = new Map<string, ReturnType<typeof setTimeout>>();
-    return ((key: string, ...args: any[]) => {
-      const existing = timeouts.get(key);
-      if (existing !== undefined) clearTimeout(existing);
-      timeouts.set(
-        key,
-        setTimeout(() => {
-          timeouts.delete(key);
-          fn(key, ...args);
-        }, ms),
-      );
-    }) as T;
-  }
-
-  const notifyStateListeners = createDebouncedNotifier(() => {
-    stateListeners.forEach((listener) => listener());
-  });
-
-  const notifyActionListeners = createKeyedDebouncedNotifier(
-    (actionId: string, state: TrackedActionState) => {
-      const listeners = actionListeners.get(actionId);
-      if (listeners) {
-        listeners.forEach((listener) => listener(state));
-      }
-    },
-  );
 
   /**
    * Clear the history cache (internal - does not broadcast)
@@ -444,22 +345,7 @@ export function createNavigationStore(
 
           // Auto-refresh if enabled and callback is registered
           if (crossTabAutoRefresh && crossTabRefreshCallback) {
-            // If idle, refresh immediately. If loading, wait for idle then refresh.
-            if (navState.state === "idle") {
-              crossTabRefreshCallback();
-            } else if (!pendingCrossTabRefresh) {
-              // Only queue one refresh, ignore subsequent events while loading
-              pendingCrossTabRefresh = true;
-              // Subscribe to state changes, refresh when idle
-              const listener: StateListener = () => {
-                if (navState.state === "idle") {
-                  stateListeners.delete(listener);
-                  pendingCrossTabRefresh = false;
-                  crossTabRefreshCallback?.();
-                }
-              };
-              stateListeners.add(listener);
-            }
+            crossTabRefreshCallback();
           }
         }
       };
@@ -467,80 +353,6 @@ export function createNavigationStore(
   }
 
   return {
-    // ========================================================================
-    // Public State (for useNavigation hook)
-    // ========================================================================
-
-    /**
-     * Get current navigation state
-     */
-    getState(): NavigationState {
-      return navState;
-    },
-
-    /**
-     * Update navigation state and notify listeners
-     */
-    setState(partial: Partial<NavigationState>): void {
-      navState = { ...navState, ...partial };
-      notifyStateListeners();
-    },
-
-    /**
-     * Subscribe to state changes
-     * Returns unsubscribe function
-     */
-    subscribe(listener: StateListener): () => void {
-      stateListeners.add(listener);
-      return () => {
-        stateListeners.delete(listener);
-      };
-    },
-
-    // ========================================================================
-    // Inflight Action Management
-    // ========================================================================
-
-    /**
-     * Add an inflight action to the list
-     */
-    addInflightAction(action: InflightAction): void {
-      navState = {
-        ...navState,
-        inflightActions: [...navState.inflightActions, action],
-      };
-      notifyStateListeners();
-    },
-
-    /**
-     * Remove an inflight action by ID
-     */
-    removeInflightAction(id: string): void {
-      navState = {
-        ...navState,
-        inflightActions: navState.inflightActions.filter((a) => a.id !== id),
-      };
-      notifyStateListeners();
-    },
-
-    // ========================================================================
-    // Action State (for controlling update behavior during server actions)
-    // ========================================================================
-
-    /**
-     * Check if a server action is currently in progress
-     */
-    isActionInProgress(): boolean {
-      return actionInProgress;
-    },
-
-    /**
-     * Set the action in progress flag
-     */
-    setActionInProgress(value: boolean): void {
-      actionInProgress = value;
-    },
-
     // ========================================================================
     // Internal Segment State (for bridges)
     // ========================================================================
@@ -601,17 +413,6 @@ export function createNavigationStore(
      */
     getNavInstance(): number {
       return navInstance;
-    },
-
-    /**
-     * The nav-instance token recorded on a specific cache entry, or undefined if
-     * no entry exists for that key. Because the history key is URL-only, this is
-     * how a late resolution tells "the entry I seeded is still mine" from "a
-     * newer same-URL visit replaced my entry".
-     */
-    getCacheEntryInstance(historyKey: string): number | undefined {
-      const entry = historyCache.find(([key]) => key === historyKey);
-      return entry ? entry[5] : undefined;
     },
 
     /**
@@ -738,11 +539,37 @@ export function createNavigationStore(
     },
 
     /**
-     * Mark all cache entries as stale
-     * Called after server actions to indicate data may be outdated
+     * Owner-guarded handle-data write: locate the entry, and write ONLY when it
+     * is still owned by `ownerInstance` (the nav-instance token that seeded it).
+     * Folds the streaming hot path's separate getCacheEntryInstance() ownership
+     * probe and updateCacheHandleData() write into a SINGLE historyCache scan
+     * (processHandles calls this per yield). Semantics otherwise match
+     * updateCacheHandleData: no-op on a missing entry, clone the handleData
+     * containers, and preserve stale / handlesPending when the flag is omitted.
      */
-    markCacheAsStale(): void {
-      markCacheAsStaleInternal();
+    updateCacheHandleDataIfOwned(
+      historyKey: string,
+      handleData: HandleData,
+      ownerInstance: number,
+      stale?: boolean,
+      handlesPending?: boolean,
+    ): void {
+      const existingIndex = historyCache.findIndex(
+        ([key]) => key === historyKey,
+      );
+      if (existingIndex === -1) return;
+      const entry = historyCache[existingIndex];
+      if (entry[5] !== ownerInstance) return;
+      const clonedHandleData = cloneHandleData(handleData);
+      historyCache[existingIndex] = [
+        entry[0],
+        entry[1],
+        stale ?? entry[2],
+        clonedHandleData,
+        entry[4],
+        entry[5],
+        handlesPending ?? entry[6],
+      ];
     },
 
     /**
@@ -830,60 +657,6 @@ export function createNavigationStore(
       updateSubscribers.forEach((callback) => {
         callback(update);
       });
-    },
-
-    // ========================================================================
-    // Action State Tracking (for useAction hook)
-    // ========================================================================
-
-    /**
-     * Get the current state for a tracked action
-     * Returns default idle state if action hasn't been tracked
-     */
-    getActionState(actionId: string): TrackedActionState {
-      return actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
-    },
-
-    /**
-     * Update the state for a tracked action
-     * Merges partial state with existing state and notifies listeners
-     */
-    setActionState(
-      actionId: string,
-      partial: Partial<TrackedActionState>,
-    ): void {
-      const current = actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
-      const updated: TrackedActionState = {
-        ...current,
-        ...partial,
-        actionId, // Always set the actionId
-      };
-      actionStates.set(actionId, updated);
-      notifyActionListeners(actionId, updated);
-    },
-
-    /**
-     * Subscribe to state changes for a specific action
-     * Returns unsubscribe function
-     */
-    subscribeToAction(
-      actionId: string,
-      listener: ActionStateListener,
-    ): () => void {
-      let listeners = actionListeners.get(actionId);
-      if (!listeners) {
-        listeners = new Set();
-        actionListeners.set(actionId, listeners);
-      }
-      listeners.add(listener);
-
-      return () => {
-        listeners!.delete(listener);
-        // Clean up empty listener sets
-        if (listeners!.size === 0) {
-          actionListeners.delete(actionId);
-        }
-      };
     },
   };
 }

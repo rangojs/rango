@@ -55,6 +55,30 @@ export function NavLayout() {
         <Link to={href("/docs")} data-testid="nav-docs">
           Docs
         </Link>
+        {/* PPR shell-cache routes — clickable for manual testing. */}
+        <Link to={href("/ppr-shell")} data-testid="nav-ppr-shell">
+          PPR shell
+        </Link>
+        <Link to={href("/ppr-shell/stream")} data-testid="nav-ppr-stream">
+          PPR stream (live/nested)
+        </Link>
+        <Link to={href("/ppr-shell/no-hole")} data-testid="nav-ppr-no-hole">
+          PPR no-hole (negative)
+        </Link>
+        <Link
+          to="/ppr-shell/exec-matrix"
+          data-testid="nav-ppr-exec"
+          prefetch="none"
+        >
+          PPR navigation replay
+        </Link>
+        <Link
+          to="/ppr-shell/inline-action?probe=ppr-inline-nav"
+          data-testid="nav-ppr-inline-action"
+          prefetch="none"
+        >
+          PPR inline action
+        </Link>
       </nav>
       <BreadcrumbNav />
       <Outlet />

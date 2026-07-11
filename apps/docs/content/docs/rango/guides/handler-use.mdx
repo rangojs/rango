@@ -1,0 +1,190 @@
+---
+title: handler.use
+description: Attach default loaders, middleware, and other use items directly to a handler so every mount site gets them for free.
+type: guide
+---
+
+You have a handler — a page, a layout, a parallel slot, a modal — that needs the same loader, skeleton, or middleware everywhere it's mounted, and you're tired of repeating the wiring at every `use()` callback. Attach a `.use` callback to the handler itself: the mount-site DSL (`path()`, `layout()`, `parallel()`, `intercept()`) merges those defaults with any explicit `use()` supplied at the registration site.
+
+## Define a handler with .use
+
+Attach `.use` to the function (or to the branded definition for `Static()` / `Prerender()` / `Passthrough()`):
+
+```tsx
+import {
+  loader,
+  middleware,
+  loading,
+  createLoader,
+  type Handler,
+} from "@rangojs/router";
+
+export const ProductLoader = createLoader(async (ctx) =>
+  fetchProduct(ctx.params.slug),
+);
+
+const ProductPage: Handler<"/product/:slug"> = async (ctx) => {
+  const product = await ctx.use(ProductLoader);
+  return <ProductView product={product} />;
+};
+
+ProductPage.use = () => [
+  loader(ProductLoader),
+  loading(<ProductSkeleton />),
+  middleware(async (ctx, next) => {
+    await next();
+    ctx.headers.set("Cache-Control", "private, max-age=60");
+  }),
+];
+```
+
+`ProductPage` now carries its loader, loading state, and response-header middleware wherever it's mounted.
+
+## What each mount site allows
+
+The `.use` callback has the same shape everywhere, but the runtime validates its items against the mount site:
+
+| Mount site                                        | Allowed item types                                                                                                                                                                        |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path()` / `route()`                              | `layout`, `parallel`, `intercept`, `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `cache`, `transition`                                            |
+| `layout()`                                        | All of the above, plus `route`, `include`                                                                                                                                                 |
+| `parallel()` (per slot)                           | `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `transition`                                                                                                      |
+| `intercept()`                                     | `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `layout`, `route`, `transition` — conditional activation is config-only: `intercept(..., { when })` |
+| Response routes (`path.json()`, `path.text()`, …) | `middleware`, `cache`                                                                                                                                                                     |
+
+The narrowest contract is `parallel()` — slots cannot bring their own middleware or layout, only data, loading, boundaries, revalidation, and transitions. A disallowed item throws at registration with the offending type and mount site named:
+
+```
+handler.use() returned middleware() which is not valid inside parallel().
+Allowed types: revalidate, loader, loading, errorBoundary, notFoundBoundary, transition.
+```
+
+## Merge order: handler defaults first, explicit second
+
+Every mount site that takes a `use` callback merges `handler.use()` items first, then explicit `use()` items. Same-kind items then follow that item type's own rules:
+
+- **`loading()`** — last definition wins, so explicit `loading()` replaces the handler's default.
+- **`parallel({ "@slot": ... })`** — last `parallel()` call wins per slot name; other slots from earlier calls are preserved.
+- **`loader()`, `middleware()`, etc.** — accumulate; both the handler's and the explicit ones run.
+
+```tsx
+const SidebarSlot: Handler = async (ctx) => {
+  const data = await ctx.use(SidebarLoader);
+  return <Sidebar data={data} />;
+};
+SidebarSlot.use = () => [
+  loader(SidebarLoader),
+  loading(<DefaultSidebarSkeleton />),
+];
+
+parallel({ "@sidebar": SidebarSlot }, () => [
+  // Replaces the default skeleton; SidebarLoader from handler.use still runs.
+  loading(<SiteSpecificSidebarSkeleton />),
+]);
+```
+
+If neither `handler.use` nor explicit `use()` is provided, no merge happens.
+
+## The main pay-off: composable parallel slots
+
+Without `handler.use`, every layout that wants a `@cart` slot repeats the same loader/loading/revalidate triplet. With it, the slot owns its dependencies and mount sites declare just the name:
+
+```tsx
+const CartSummary: Handler = async (ctx) => {
+  const cart = await ctx.use(CartLoader);
+  return <CartSummaryView cart={cart} />;
+};
+CartSummary.use = () => [
+  loader(CartLoader),
+  loading(<CartSkeleton />),
+  revalidate(revalidateCartData),
+];
+
+layout(<DashboardLayout />, () => [
+  parallel({ "@cart": CartSummary }),
+  path("/dashboard", DashboardIndex, { name: "dashboard.index" }),
+]);
+
+layout(<AccountLayout />, () => [
+  // Same slot, same defaults, zero re-wiring.
+  parallel({ "@cart": CartSummary }),
+  path("/account", AccountIndex, { name: "account.index" }),
+]);
+```
+
+Streaming stays per-slot: a slot's `loading()` (from `handler.use` or explicit) makes it an independent streaming unit that doesn't block the parent layout. A slot with no `loading()` anywhere is awaited before paint. See [Parallel Routes](/docs/rango/guides/parallel-routes).
+
+A handler can also publish a default `parallel({...})` set via its own `.use`, and the mount site can replace individual slots by re-declaring them:
+
+```tsx
+ProductPage.use = () => [
+  parallel({
+    "@related": DefaultRelatedProducts,
+    "@reviews": DefaultReviews,
+  }),
+];
+
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  // Override @related only; @reviews keeps the default from handler.use.
+  parallel({ "@related": SiteSpecificRelated }),
+]);
+```
+
+## loading() is single-assignment — scope it deliberately
+
+Most items accumulate on merge; `loading()` mutates the entry directly and the last call wins. For pages, layouts, and intercepts that's simple: explicit `loading()` at the mount site is the last writer.
+
+For parallel slots, the shared `parallel(..., () => [...])` callback is **broadcast** to every slot in the call — a single `loading()` there overwrites every slot's `handler.use` default. To scope it to one slot, use the slot descriptor form `{ handler, use }`:
+
+```tsx
+// @cart gets a custom skeleton; @notifs keeps its handler.use default.
+parallel({
+  "@cart": {
+    handler: Cart,
+    use: () => [loading(<CustomCartSkeleton />)],
+  },
+  "@notifs": Notifs,
+});
+
+// Opt one slot out of streaming while siblings still stream the broadcast.
+parallel(
+  {
+    "@cart": { handler: Cart, use: () => [loading(false)] },
+    "@notifs": Notifs,
+  },
+  () => [loading(<BroadcastSkeleton />)],
+);
+```
+
+Per-slot merge order is **handler.use → shared use → slot-local use**; slot-local is the narrowest scope and wins for last-write-wins items. Accumulating items (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`) compose across all three layers.
+
+Two rules of thumb:
+
+- Only put `loading()` in `handler.use` if you genuinely want every mount site to stream by default. Any `loading()` makes the segment a streaming unit; opt back out at a mount site with `loading(false)` — via the slot descriptor for parallels so the opt-out doesn't broadcast.
+- Shared `use()` is for items that legitimately apply to every slot; slot-local `use` is for per-slot precision.
+
+## Gotchas
+
+- **ReactNode handlers cannot have `.use`.** A bare JSX element passed as a handler (e.g. `path("/about", <About />)`) has no function to attach properties to. Pass a function or branded definition instead.
+- **Branded handlers**: `Static()`, `Prerender()`, and `Passthrough()` are positional constructors. Construct first, then attach `.use` to the returned definition:
+
+  ```tsx
+  const ProductPage = Prerender(async (ctx) => {
+    const product = await fetchProduct(ctx.params.slug);
+    return <ProductView product={product} />;
+  });
+  ProductPage.use = () => [loader(ProductLoader)];
+  ```
+
+- **Flat or nested arrays both work.** `handler.use()` results are flattened with `.flat(3)` before validation, so factory helpers returning arrays inline behave like regular `use()` items.
+- **Validation runs at registration / first match**, not at definition. The same handler mounted in both a `path()` and an `intercept()` is validated against each mount's allowed set when registered.
+- **No silent shadowing.** A disallowed item that slips through throws with the offending type and mount site named.
+
+<Cards>
+  <Card href="/docs/rango/guides/parallel-routes" title="Parallel Routes">
+    Slot semantics, override rules, and streaming behavior.
+  </Card>
+  <Card href="/docs/rango/features/loaders" title="Loaders">
+    Defining loaders with createLoader and reading them via ctx.use().
+  </Card>
+</Cards>

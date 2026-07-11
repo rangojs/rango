@@ -209,7 +209,7 @@ export async function handleLoaderFetch<TEnv>(
           const cleanUrl = stripInternalParams(url);
           const cleanSearchParams = cleanUrl.searchParams;
           const searchSchema = reqCtx._routeName
-            ? getSearchSchema(reqCtx._routeName)
+            ? getSearchSchema(reqCtx._routeName, reqCtx._routerId)
             : undefined;
           const loaderCtx: any = {
             ...reqCtx,
@@ -228,7 +228,7 @@ export async function handleLoaderFetch<TEnv>(
               reqCtx._routeName,
               mergedParams,
               reqCtx._routeName
-                ? isRouteRootScoped(reqCtx._routeName)
+                ? isRouteRootScoped(reqCtx._routeName, reqCtx._routerId)
                 : undefined,
             ),
             ...(loaderFormData ? { formData: loaderFormData } : {}),

@@ -1,12 +1,20 @@
 ---
 name: document-cache
-description: Cache full HTTP responses at the edge with Cache-Control headers
+description: Cache the whole HTTP response at the edge with Cache-Control headers. Use when caching an entire page or response at a CDN edge, setting Cache-Control headers, or cutting origin hits for public pages — not for caching a single segment or function.
 argument-hint: [setup]
 ---
 
 # Document Cache
 
 Caches complete HTTP responses (HTML/RSC) at the edge based on Cache-Control headers. Routes opt-in by setting `s-maxage`.
+
+## Not this skill if…
+
+- You want loaders to stay live while rendered segments are reused — document
+  caching freezes the WHOLE response, loader output included; segment caching
+  is `cache()`: see `/caching`.
+- You want a cached HTML shell with per-request live holes — see `/ppr`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## Setup
 

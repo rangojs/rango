@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveHostRouterHandlers,
   formatNoRoutersError,
+  describeDiscoveryFailure,
   DiscoveryError,
   type CaughtDiscoveryError,
 } from "../discovery-errors";
@@ -307,5 +308,70 @@ describe("DiscoveryError", () => {
     expect(err.message).toBe(
       "[rango] No routers found in registry after importing /app/router.tsx",
     );
+  });
+});
+
+describe("describeDiscoveryFailure", () => {
+  it("genuine empty registry (no reoptimize) is a loud, actionable error", () => {
+    const err = new DiscoveryError("/app/router.tsx", []);
+
+    const report = describeDiscoveryFailure(err, { reoptimizeObserved: false });
+
+    expect(report.level).toBe("error");
+    // The pinned base message is preserved so message-matching callers/tests
+    // and the Vite overlay keep working.
+    expect(report.message).toContain(
+      "[rango] No routers found in registry after importing /app/router.tsx",
+    );
+    // ...plus an actionable next step.
+    expect(report.message).toContain("createRouter()");
+    // Not framed as transient.
+    expect(report.message).not.toContain("re-optimizing");
+  });
+
+  it("empty registry during a re-optimization is a downgraded, transient warning", () => {
+    const err = new DiscoveryError("/app/router.tsx", []);
+
+    const report = describeDiscoveryFailure(err, { reoptimizeObserved: true });
+
+    expect(report.level).toBe("warn");
+    expect(report.message).toContain("re-optimizing dependencies");
+    expect(report.message).toContain("transient");
+    // Still points at the entry so a real misconfig is not fully hidden.
+    expect(report.message).toContain("/app/router.tsx");
+    expect(report.message).toContain("createRouter()");
+  });
+
+  it("host-handler failures stay loud even when a reoptimize was observed", () => {
+    // caught.length > 0 means a concrete cause was captured: never downgrade.
+    const err = new DiscoveryError("/app/worker.tsx", [
+      {
+        context: 'host "shop" route handler',
+        error: new Error("Cannot find module './broken-sub-app'"),
+      },
+    ]);
+
+    const report = describeDiscoveryFailure(err, { reoptimizeObserved: true });
+
+    expect(report.level).toBe("error");
+    expect(report.message).toContain("Cannot find module './broken-sub-app'");
+  });
+
+  it("non-DiscoveryError failures are reported loudly with their detail", () => {
+    const err = new Error("acquireBuildEnv exploded");
+
+    const report = describeDiscoveryFailure(err);
+
+    expect(report.level).toBe("error");
+    expect(report.message).toContain("Router discovery failed");
+    expect(report.message).toContain("acquireBuildEnv exploded");
+  });
+
+  it("defaults reoptimizeObserved to false (loud) when omitted", () => {
+    const err = new DiscoveryError("/app/router.tsx", []);
+
+    const report = describeDiscoveryFailure(err);
+
+    expect(report.level).toBe("error");
   });
 });

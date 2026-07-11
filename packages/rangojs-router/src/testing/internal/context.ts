@@ -56,6 +56,14 @@ export interface CreateTestContextOptions<TEnv> {
   routeName?: string;
   params?: Record<string, string>;
   /**
+   * Seed `ctx.build` (default false). Set `true` to unit-test middleware or a
+   * handler that branches on the build-time PPR shell-capture pass — e.g.
+   * `if (ctx.build) ctx.dynamic()`. Mirrors the synthetic build request the
+   * shell-capture producer creates; also makes `ctx.waitUntil()` inert, as at
+   * build time.
+   */
+  build?: boolean;
+  /**
    * Router basename for this request (what the RSC handler stores on the
    * context). Drives redirect() prefixing. Normalized exactly like
    * createRouter({ basename }) (leading slash forced, trailing stripped, bare
@@ -150,6 +158,7 @@ export function createTestRequestContext<TEnv>(
     request,
     url,
     variables,
+    build: opts.build,
     themeConfig:
       opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
     cacheStore: opts.cacheStore,

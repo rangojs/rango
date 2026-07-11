@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.0.0-experimental.137",
+  "version": "0.1.0",
   "description": "Django-inspired RSC router with composable URL patterns",
   "keywords": [
     "react",
@@ -37,149 +37,165 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.rsc.ts",
+      "types": "./dist/types/index.rsc.d.ts",
       "react-server": "./src/index.rsc.ts",
       "default": "./src/index.ts"
     },
     "./server": {
-      "types": "./src/server.ts",
+      "types": "./dist/types/server.d.ts",
       "import": "./src/server.ts"
     },
     "./client": {
-      "types": "./src/client.tsx",
+      "types": "./dist/types/client.d.ts",
       "react-server": "./src/client.rsc.tsx",
       "default": "./src/client.tsx"
     },
     "./browser": {
-      "types": "./src/browser/index.ts",
+      "types": "./dist/types/browser/index.d.ts",
       "default": "./src/browser/index.ts"
     },
     "./ssr": {
-      "types": "./src/ssr/index.tsx",
+      "types": "./dist/types/ssr/index.d.ts",
       "default": "./src/ssr/index.tsx"
     },
     "./rsc": {
-      "types": "./src/rsc/index.ts",
+      "types": "./dist/types/rsc/index.d.ts",
       "react-server": "./src/rsc/index.ts",
       "default": "./src/rsc/index.ts"
     },
     "./vite": {
-      "types": "./src/vite/index.ts",
+      "types": "./dist/types/vite/index.d.ts",
       "import": "./dist/vite/index.js"
     },
     "./types": {
       "types": "./src/vite/plugins/version.d.ts"
     },
     "./__internal": {
-      "types": "./src/__internal.ts",
+      "types": "./dist/types/__internal.d.ts",
       "default": "./src/__internal.ts"
     },
     "./internal/deps/browser": {
-      "types": "./src/deps/browser.ts",
+      "types": "./dist/types/deps/browser.d.ts",
       "default": "./src/deps/browser.ts"
     },
     "./internal/deps/ssr": {
-      "types": "./src/deps/ssr.ts",
+      "types": "./dist/types/deps/ssr.d.ts",
       "default": "./src/deps/ssr.ts"
     },
     "./internal/deps/rsc": {
-      "types": "./src/deps/rsc.ts",
+      "types": "./dist/types/deps/rsc.d.ts",
       "react-server": "./src/deps/rsc.ts",
       "default": "./src/deps/rsc.ts"
     },
     "./internal/deps/html-stream-client": {
-      "types": "./src/deps/html-stream-client.ts",
+      "types": "./dist/types/deps/html-stream-client.d.ts",
       "default": "./src/deps/html-stream-client.ts"
     },
     "./internal/deps/html-stream-server": {
-      "types": "./src/deps/html-stream-server.ts",
+      "types": "./dist/types/deps/html-stream-server.d.ts",
       "default": "./src/deps/html-stream-server.ts"
     },
     "./internal/rsc-handler": {
-      "types": "./src/rsc/handler.ts",
+      "types": "./dist/types/rsc/handler.d.ts",
       "react-server": "./src/rsc/handler.ts",
       "default": "./src/rsc/handler.ts"
     },
+    "./internal/browser/dev-discovery": {
+      "types": "./dist/types/browser/dev-discovery.d.ts",
+      "default": "./src/browser/dev-discovery.ts"
+    },
     "./cache": {
-      "types": "./src/cache/index.ts",
+      "types": "./dist/types/cache/index.d.ts",
       "react-server": "./src/cache/index.ts",
       "default": "./src/cache/index.ts"
     },
     "./cache-runtime": {
-      "types": "./src/cache/cache-runtime.ts",
+      "types": "./dist/types/cache/cache-runtime.d.ts",
       "react-server": "./src/cache/cache-runtime.ts",
       "default": "./src/cache/cache-runtime.ts"
     },
     "./cloudflare": {
-      "types": "./src/cloudflare/index.ts",
+      "types": "./dist/types/cloudflare/index.d.ts",
       "react-server": "./src/cloudflare/index.ts",
       "default": "./src/cloudflare/index.ts"
     },
     "./prerender": {
-      "types": "./src/prerender/index.ts",
+      "types": "./dist/types/prerender/index.d.ts",
       "react-server": "./src/prerender/index.ts",
       "default": "./src/prerender/index.ts"
     },
     "./prerender/cloudflare": {
-      "types": "./src/prerender/cloudflare.ts",
+      "types": "./dist/types/prerender/cloudflare.d.ts",
       "react-server": "./src/prerender/cloudflare.ts",
       "default": "./src/prerender/cloudflare.ts"
     },
+    "./vercel": {
+      "types": "./dist/types/vercel/index.d.ts",
+      "react-server": "./src/vercel/index.ts",
+      "default": "./src/vercel/index.ts"
+    },
     "./theme": {
-      "types": "./src/theme/index.ts",
+      "types": "./dist/types/theme/index.d.ts",
       "default": "./src/theme/index.ts"
     },
     "./build": {
-      "types": "./src/build/index.ts",
+      "types": "./dist/types/build/index.d.ts",
       "import": "./src/build/index.ts"
     },
+    "./build/shell-capture": {
+      "types": "./dist/types/prerender/build-shell-capture.d.ts",
+      "react-server": "./src/prerender/build-shell-capture.ts",
+      "import": "./src/prerender/build-shell-capture.ts"
+    },
     "./host": {
-      "types": "./src/host/index.ts",
+      "types": "./dist/types/host/index.d.ts",
       "react-server": "./src/host/index.ts",
       "default": "./src/host/index.ts"
     },
     "./host/testing": {
-      "types": "./src/host/testing.ts",
+      "types": "./dist/types/host/testing.d.ts",
       "default": "./src/host/testing.ts"
     },
     "./testing": {
-      "types": "./src/testing/index.ts",
+      "types": "./dist/types/testing/index.d.ts",
       "default": "./src/testing/index.ts"
     },
     "./testing/vitest": {
-      "types": "./src/testing/vitest.ts",
+      "types": "./dist/types/testing/vitest.d.ts",
       "default": "./dist/testing/vitest.js"
     },
     "./testing/dom": {
-      "types": "./src/testing/dom.entry.ts",
+      "types": "./dist/types/testing/dom.entry.d.ts",
       "default": "./src/testing/dom.entry.ts"
     },
     "./testing/e2e": {
-      "types": "./src/testing/e2e/index.ts",
+      "types": "./dist/types/testing/e2e/index.d.ts",
       "default": "./src/testing/e2e/index.ts"
     },
     "./testing/flight": {
-      "types": "./src/testing/flight.entry.ts",
+      "types": "./dist/types/testing/flight.entry.d.ts",
       "react-server": "./src/testing/flight.entry.ts",
       "default": "./src/testing/flight.entry.ts"
     },
     "./testing/flight-matchers": {
-      "types": "./src/testing/flight-matchers.ts",
+      "types": "./dist/types/testing/flight-matchers.d.ts",
       "default": "./src/testing/flight-matchers.ts"
     }
   },
   "publishConfig": {
     "access": "public",
-    "tag": "experimental"
+    "tag": "latest"
   },
   "scripts": {
-    "build": "pnpm exec esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm exec esbuild src/testing/vitest.ts --bundle --format=esm --outfile=dist/testing/vitest.js --platform=node --packages=external && pnpm exec esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js",
+    "build": "pnpm run build:types && pnpm exec esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm exec esbuild src/testing/vitest.ts --bundle --format=esm --outfile=dist/testing/vitest.js --platform=node --packages=external && pnpm exec esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js",
+    "build:types": "rm -rf dist/types && pnpm exec tsc -p tsconfig.types.json",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.strict-check.json --noEmit && tsc -p tsconfig.augment-check.json --noEmit",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
-    "test:hmr-local": "playwright test --project=dev-warmup --project=hmr-routes --project=hmr-basename --project=hmr-prerender --no-deps --workers=1",
-    "test:unit": "vitest run",
+    "test:hmr-local": "playwright test --project=dev-warmup --project=hmr-basename --project=hmr-prerender --no-deps --workers=1 && RANGO_E2E_ROUTE_HMR_ONLY=1 playwright test --project=hmr-routes --no-deps --workers=1",
+    "test:hmr-routes-local": "RANGO_E2E_ROUTE_HMR_ONLY=1 playwright test --project=hmr-routes --no-deps --workers=1",
+    "test:unit": "pnpm run build:types && vitest run",
     "test:unit:watch": "vitest",
     "test:unit:rsc": "vitest run --config vitest.rsc.config.ts"
   },
@@ -190,9 +206,13 @@
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",
     "rsc-html-stream": "^0.0.7",
+    "srvx": "^0.11.15",
     "tinyexec": "^0.3.2"
   },
   "devDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/context-async-hooks": "^2.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
     "@playwright/test": "^1.49.1",
     "@shared/e2e": "workspace:*",
     "@testing-library/dom": "^10.4.1",
@@ -202,7 +222,7 @@
     "@types/react-dom": "catalog:",
     "esbuild": "^0.28.1",
     "happy-dom": "^20.10.1",
-    "jiti": "^2.6.1",
+    "jiti": "^2.7.0",
     "react": "catalog:",
     "react-dom": "catalog:",
     "typescript": "^5.3.0",
@@ -210,8 +230,10 @@
   },
   "peerDependencies": {
     "@cloudflare/vite-plugin": "^1.42.1",
+    "@opentelemetry/api": "^1.9.0",
     "@playwright/test": "^1.49.1",
     "@testing-library/react": ">=16",
+    "@vercel/functions": "^3.0.0",
     "@vitejs/plugin-rsc": "^0.5.27",
     "react": ">=19.2.6 <20",
     "react-dom": ">=19.2.6 <20",
@@ -222,10 +244,16 @@
     "@cloudflare/vite-plugin": {
       "optional": true
     },
+    "@opentelemetry/api": {
+      "optional": true
+    },
     "@playwright/test": {
       "optional": true
     },
     "@testing-library/react": {
+      "optional": true
+    },
+    "@vercel/functions": {
       "optional": true
     },
     "vite": {
@@ -236,6 +264,6 @@
     }
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=24.0.0"
   }
 }

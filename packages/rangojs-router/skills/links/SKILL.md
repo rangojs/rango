@@ -1,6 +1,6 @@
 ---
 name: links
-description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, useReverse, and scopedReverse
+description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, useReverse, and scopedReverse. Use when generating a link to a route by name instead of hardcoding a path, or a link breaks after routes move or get mounted elsewhere.
 argument-hint: [ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]
 ---
 
@@ -37,6 +37,18 @@ export const shopPatterns = urls(({ path, layout }) => [
 
 - **`.name`** — local route, resolved within the current `include()` scope
 - **`name`** — global route, from the named-routes definition
+
+The include site decides which global names exist:
+
+| Include site                                       | App-wide names                                     |
+| -------------------------------------------------- | -------------------------------------------------- |
+| `include("/shop", shopPatterns)`                   | none from the child; use `.name` inside the module |
+| `include("/shop", shopPatterns, { name: "shop" })` | `shop.index`, `shop.product`, ...                  |
+| `include("/shop", shopPatterns, { name: "" })`     | `index`, `product`, ... at the parent scope        |
+
+Flatten only when those names are intentionally unique across the whole parent
+map. Private includes are useful for reusable modules and still support
+mount-aware dot-local reversal.
 
 ```typescript
 // Inside a handler within shopPatterns (mounted at /shop)

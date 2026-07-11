@@ -1,0 +1,34 @@
+---
+title: Testing
+description: Every consumer-touchable feature is reachable through shipped testing primitives — real handlers, real middleware, real Flight serialization.
+type: guide
+---
+
+Every feature a consumer can touch is reachable through shipped testing primitives — real handlers, real middleware chains, real Flight serialization, no framework mocks:
+
+```ts
+import { findElements, renderHandler } from "@rangojs/router/testing";
+
+const { tree, headers } = await renderHandler(ProductPage, {
+  params: { slug: "widget" },
+  loaders: [[ProductLoader, { name: "Widget" }]],
+});
+expect(findElements(tree, { tag: "h1" })[0].text).toContain("Widget");
+```
+
+## The primitives
+
+| Primitive         | Exercises                                                      |
+| ----------------- | -------------------------------------------------------------- |
+| `renderHandler()` | A handler with params, loaders, and context — returns the tree |
+| `runLoader()`     | A loader against a request context                             |
+| `runMiddleware()` | A middleware chain, including short-circuits                   |
+| `renderRoute()`   | A route through the tree, layouts included                     |
+| `dispatch()`      | A full request through matching, middleware, and rendering     |
+| `flight()`        | Real Flight serialization of what a client would receive       |
+
+These cover the tiers below end-to-end: unit tests for handlers and loaders, integration tests through `dispatch()`, and Flight-level assertions for what actually crosses the wire.
+
+## The dogfood guarantee
+
+The router's own rule: if a feature cannot be tested through these primitives, the primitive gets extended in the same PR. What we use to test the router is what you get to test your app.

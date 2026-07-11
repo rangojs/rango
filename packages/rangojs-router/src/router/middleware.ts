@@ -104,11 +104,20 @@ export function compileMiddlewarePattern(pattern: string): {
     const segment = segments[i];
 
     if (segment.type === "wildcard") {
-      // Optional subtree match (parity with the original middleware parser,
-      // which compiled every `*` as `(?:/.*)?`). A trailing `*` matches the
-      // subtree; a non-trailing `*` matches zero-or-more intermediate segments,
-      // so `/a/<star>/b` still matches `/a/b`.
-      regexStr += "(?:/.*)?";
+      if (segment.value === "*") {
+        // Bare `*`: optional subtree match, no capture (parity with the original
+        // middleware parser). A trailing `*` matches the subtree; a non-trailing
+        // `*` matches zero-or-more intermediate segments, so `/a/<star>/b` still
+        // matches `/a/b`.
+        regexStr += "(?:/.*)?";
+      } else {
+        // Named catch-all `:name+` / `:name*`: capture the remainder under the
+        // name so a scoping middleware sees `ctx.params.<name>`, and respect the
+        // one-or-more arity (`+` must not match the bare prefix), mirroring the
+        // route matcher instead of collapsing to the bare-`*` subtree.
+        paramNames.push(segment.value);
+        regexStr += segment.oneOrMore ? "/(.+)" : "(?:/(.*))?";
+      }
       if (i === segments.length - 1) {
         hasTrailingWildcard = true;
       }
@@ -177,7 +186,15 @@ export function createMiddlewareContext<TEnv>(
     search?: Record<string, unknown>,
   ) => string,
 ): MiddlewareContext<TEnv> {
-  const url = stripInternalParams(new URL(request.url));
+  // Reuse the request context's clean URL when available. Each middleware still
+  // gets its OWN URL clone (a middleware may mutate ctx.url / ctx.searchParams),
+  // but cloning the already-clean URL is cheaper than re-parsing + re-stripping
+  // request.url per middleware. Fall back to parsing when no ALS context.
+  const reqCtx = _getRequestContext();
+  const ctxUrl = reqCtx?.url;
+  const url = ctxUrl
+    ? new URL(ctxUrl)
+    : stripInternalParams(new URL(request.url));
 
   // Track the initial response to detect pre/post-next() phase.
   // Before next(): responseHolder.response === initialResponse (the stub).
@@ -208,12 +225,11 @@ export function createMiddlewareContext<TEnv>(
     return responseHolder.response;
   };
 
-  // Capture reqCtx once: the request-scoped platform fields
+  // reqCtx captured once above: the request-scoped platform fields
   // (originalUrl, executionContext, waitUntil) are immutable per request,
   // so snapshotting beats re-reading ALS on every access. The lazy getters
   // below (routeName, theme, setTheme) stay lazy because those can change
   // during `await next()`.
-  const reqCtx = _getRequestContext();
   return {
     request,
     url,
@@ -222,6 +238,10 @@ export function createMiddlewareContext<TEnv>(
     searchParams: url.searchParams,
     env: env as MiddlewareContext<TEnv>["env"],
     params,
+    build: reqCtx?.build ?? false,
+    dynamic(): void {
+      reqCtx?.dynamic();
+    },
     executionContext: reqCtx?.executionContext,
     waitUntil: reqCtx ? reqCtx.waitUntil.bind(reqCtx) : fireAndForgetWaitUntil,
     // Getter: re-derives from request context on each access so that global
@@ -296,7 +316,10 @@ export function createMiddlewareContext<TEnv>(
       const reqCtx = _getRequestContext();
       if (reqCtx) {
         reqCtx._debugPerformance = true;
-        reqCtx._metricsStore ??= createMetricsStore(true);
+        // Anchor to the true request entry (reqCtx._handlerStart) so phases that
+        // began before this opt-in report non-negative offsets; undefined falls
+        // back to performance.now() in createMetricsStore.
+        reqCtx._metricsStore ??= createMetricsStore(true, reqCtx._handlerStart);
       }
     },
   };
@@ -534,22 +557,28 @@ export async function executeMiddleware<TEnv>(
     // when neither surface is active.
     let result: Response | void;
     try {
-      result = await observePhase(PHASES.middleware(metricLabel), () =>
-        entry.handler(ctx, wrappedNext),
-      );
-    } catch (error) {
-      // Thrown Response is short-circuit control flow, not an error.
-      // Fall through to the `if (result instanceof Response)` branch below
-      // so stub headers and request-context cookies merge as they do for
-      // an explicit `return new Response(...)`. Real errors propagate.
-      if (error instanceof Response) {
-        result = error;
-      } else {
-        finishMiddleware();
-        throw error;
-      }
+      result = await observePhase(PHASES.middleware(metricLabel), async () => {
+        try {
+          return await entry.handler(ctx, wrappedNext);
+        } catch (error) {
+          // Thrown Response is short-circuit control flow, not an error —
+          // absorb it INSIDE the span so the tracing runner settles the
+          // rango.middleware span as success, not STATUS_ERROR (every auth
+          // redirect would otherwise inflate trace error rates). Returning it
+          // routes through the `if (result instanceof Response)` branch below,
+          // so stub headers and request-context cookies merge identically to an
+          // explicit `return new Response(...)`. Segment handlers already follow
+          // this convention (segment-resolution/helpers.ts keeps result handling
+          // outside the span). Real errors propagate past the span.
+          if (error instanceof Response) return error;
+          throw error;
+        }
+      });
+    } finally {
+      // Settle the middleware own-time metric once on both the success and
+      // error paths (idempotent guard in finishMiddleware).
+      finishMiddleware();
     }
-    finishMiddleware();
 
     // Record post-next() processing time when middleware did work after
     // the downstream chain resolved (e.g. adding headers, logging).
@@ -709,20 +738,21 @@ export async function executeInterceptMiddleware<TEnv>(
       ordinal,
     );
 
-    let result: Response | void;
-    try {
-      result = await observePhase(PHASES.middleware(label), () =>
-        middleware(ctx, guardedNext),
-      );
-    } catch (error) {
-      // Thrown Response is short-circuit control flow, parity with the
-      // explicit-return path below. Real errors propagate.
-      if (error instanceof Response) {
-        result = error;
-      } else {
-        throw error;
-      }
-    }
+    const result: Response | void = await observePhase(
+      PHASES.middleware(label),
+      async () => {
+        try {
+          return await middleware(ctx, guardedNext);
+        } catch (error) {
+          // Thrown Response is short-circuit control flow, parity with the
+          // explicit-return path below. Absorb it INSIDE the span so the tracing
+          // runner settles rango.middleware as success, not STATUS_ERROR (same
+          // reasoning as executeMiddleware's main chain). Real errors propagate.
+          if (error instanceof Response) return error;
+          throw error;
+        }
+      },
+    );
 
     if (result instanceof Response) {
       earlyResponse = result;

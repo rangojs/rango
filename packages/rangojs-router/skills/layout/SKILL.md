@@ -1,6 +1,6 @@
 ---
 name: layout
-description: Define layout routes that wrap child routes in @rangojs/router
+description: Define layout routes that wrap child routes in @rangojs/router. Use when sharing a persistent UI shell (nav, sidebar) across nested routes, or asking how to wrap child pages with a common layout.
 argument-hint: [component]
 ---
 
@@ -147,12 +147,21 @@ A layout as a child of `path()` wraps the route content and can read
 data set by the route handler via `ctx.get()`. The handler always
 executes before its children.
 
-This handler-first guarantee applies to a single full render pass
-(initial render, prerender, or full HTML re-render). During partial
-action revalidation, only the segments that revalidate are recomputed.
-If an orphan layout depends on data established by an outer handler or
-layout, that outer segment must also revalidate, or the orphan must
-guard/reload the data independently.
+This is the recommended way to pass handler data downward, and it is
+safe under partial action revalidation with zero configuration: orphan
+layouts (and their parallels) belong to the route entry, and on an
+action the whole entry re-runs together by default — route segment,
+loaders, and `belongsToRoute` children all seed revalidate-true, with
+handler-first ordering preserved. Producer and consumer cannot desync
+unless you narrow one side with a predicate that returns a hard `false`
+(then put the same contract on both — see "Revalidation Contracts").
+
+Data from an **outer** handler or layout entry is the opposite case:
+outer entries do not revalidate on actions by default (parent-chain
+skip). If an orphan layout depends on data established above its own
+route entry, that outer segment must share a revalidation contract, or
+the orphan must guard/reload the data independently. See `/rango` →
+"Passing data down the tree" for the full safest-first ladder.
 
 ```typescript
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
@@ -191,7 +200,10 @@ orphan layouts to read them.
 
 ## Layout Revalidation
 
-Layouts don't revalidate by default. Control with `revalidate()`:
+Standalone `layout()` entries don't revalidate by default — on an action,
+parent-chain segments are skipped unless a `revalidate()` opts them in.
+(Orphan layouts inside a `path()` are the opposite: they ride along with
+the route entry by default.) Control with `revalidate()`:
 
 ```typescript
 layout(<ShopLayout />, () => [
@@ -218,8 +230,13 @@ their `ctx.set()` state.
 
 ### Revalidation Contracts
 
-For shared upstream data, define named revalidation functions and reuse
-them on both producer and consumer segments:
+Contracts are the tool for cross-entry sharing — the bottom rung of the
+data-passing ladder (`/rango` → "Passing data down the tree"). Before
+writing one, check whether the producer can move down a rung: into the
+consumer's own entry as an orphan layout, into middleware, or into a
+loader. When the data genuinely must flow from an outer entry, define
+named revalidation functions and reuse them on both producer and
+consumer segments:
 
 ```typescript
 // revalidation-contracts.ts

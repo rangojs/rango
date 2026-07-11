@@ -49,8 +49,20 @@ jobs:
       - name: Check e2e dev/prod bucketing
         run: pnpm check:e2e-bucketing
 
+      - name: Check e2e dev/prod parity
+        run: node tools/check-e2e-parity.mjs --strict
+
       - name: Check internal doc links
         run: pnpm check:doc-links
+
+      - name: Check positioning-doc API references
+        run: pnpm check:docs-api
+
+      - name: Check skills frontmatter and cross-references
+        run: pnpm check:skills
+
+      - name: Check skills catalog is current
+        run: pnpm check:skills-catalog
 
   format:
     needs: [debounce]
@@ -73,6 +85,38 @@ jobs:
 
       - name: Check formatting
         run: pnpm format
+
+  # Bundle guards (issue #761): builds cloudflare-basic, cloudflare-stress-demo
+  # and the e2e test-app with RANGO_ANALYZE=1, then asserts (1) no server-only
+  # module contributes bytes to any client bundle beyond the allowlist in
+  # tools/check-bundle-guards.mjs, (2) the client router chunk gzip ratchet,
+  # (3) the stress-demo eager routes-manifest ceiling.
+  bundle-guards:
+    needs: [debounce]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The check builds cloudflare-basic, whose vite config loads the
+      # workspace router's ./vite entry from dist/.
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Run the bundle guards
+        run: pnpm check:bundle-guards
 
   install-playwright:
     needs: [debounce]
@@ -126,8 +170,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # No router build: typecheck resolves @rangojs/router types from src
-      # (the exports map `types` points at ./src/*), so dist/ is not needed.
+      # Package type conditions point at dist/types. Turbo's ^build dependency
+      # also builds the workspace router before consumer typechecks, but keep
+      # declaration generation explicit here so this CI contract cannot drift
+      # with a future task-graph change.
+      - name: Build rangojs-router declarations
+        run: pnpm --filter @rangojs/router build:types
+
       - name: Run typecheck
         run: pnpm typecheck
 
@@ -278,6 +327,151 @@ jobs:
           path: packages/rangojs-router/playwright-report/
           retention-days: 7
 
+  # Validates the Vercel preset's Build Output (.vercel/output) for a multi-app
+  # host router: builds the app, then drives the isolated function with Host
+  # headers, asserting each sub-app renders and an unmatched host returns 404
+  # through the generated host entry. Pure Node (no Playwright).
+  vercel-smoke:
+    needs: [debounce]
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Smoke the Vercel host Build Output
+        run: pnpm --filter rangojs-vercel-multi-router smoke
+
+  vercel-basic-e2e:
+    needs: [install-playwright]
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-
+
+      - name: Install Playwright system deps
+        run: pnpm --filter rangojs-vercel-basic exec playwright install-deps chromium
+
+      # Real @vercel/otel registerOTel() path: builds and serves the isolated
+      # .vercel/output, asserting it bundles + initializes without a cold-start
+      # failure (the e2e below exercises the recording-tracer path instead).
+      - name: Smoke the Vercel Build Output
+        run: pnpm --filter rangojs-vercel-basic smoke
+
+      - name: Run vercel-basic e2e tests (dev + production)
+        run: pnpm --filter rangojs-vercel-basic test:e2e
+        env:
+          TEST_DEBUG: "1"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report-vercel-basic
+          path: examples/vercel-basic/playwright-report/
+          retention-days: 7
+
+  # Host-router coverage on the node/vercel preset: routing by Host header
+  # (a.localhost / b.localhost sub-apps) plus the generated entry's
+  # NoRouteMatchError -> 404 catch, in dev AND against the served
+  # .vercel/output. The deploy-shape bundling of the same output is covered
+  # by vercel-smoke above.
+  vercel-multi-router-e2e:
+    needs: [install-playwright]
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-
+
+      - name: Install Playwright system deps
+        run: pnpm --filter rangojs-vercel-multi-router exec playwright install-deps chromium
+
+      - name: Run vercel-multi-router e2e tests (dev + production)
+        run: pnpm --filter rangojs-vercel-multi-router test:e2e
+        env:
+          TEST_DEBUG: "1"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report-vercel-multi-router
+          path: examples/vercel-multi-router/playwright-report/
+          retention-days: 7
+
   rangojs-router-e2e:
     needs: [install-playwright]
     if: |
@@ -333,6 +527,11 @@ jobs:
             workers: 1
           - project: hmr-intercept
             workers: 1
+          # Host-routing runs in its own project + servers (gated by
+          # RANGO_E2E_HOST below), so the sharded dev/production jobs above no
+          # longer each boot the two host Vite servers (OOM-sensitive) or the
+          # host:build, and a host-fixture breakage fails only this job.
+          - project: host
 
     steps:
       - uses: actions/checkout@v5
@@ -366,6 +565,9 @@ jobs:
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         env:
           CHOKIDAR_USEPOLLING: ${{ matrix.workers && 'true' || '' }}
+          # Only the dedicated host job starts the host fixture servers (and, via
+          # HOST_ONLY in playwright.config.ts, skips the heavy test-app servers).
+          RANGO_E2E_HOST: ${{ matrix.project == 'host' && '1' || '' }}
         run: |
           WORKERS_FLAG=""
           if [ -n "${{ matrix.workers }}" ]; then
@@ -399,7 +601,52 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20 (unchanged, was a single un-sharded job): the suite grew from ~7.1m
+    # (Jun 20) to ~11.6m (Jul 4) running the ENTIRE dev -> production -> hmr
+    # chain sequentially in one runner at workers=1, making it the pipeline's
+    # critical path. It is now sharded (dev x2 / production x2 / hmr) so each
+    # job runs only a fraction of the 14m playwright globalTimeout
+    # (playwright.config.ts), leaving ample headroom under this cap for the
+    # ~3-4m of setup (install, router build, browser deps). Tightening the cap
+    # is a data-driven follow-up once the sharded run times are measured — do
+    # NOT pre-optimize.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Dev tests sharded across 2 jobs, WITHOUT --no-deps: the dev project
+          # depends on the dev-warmup setup project (the #659 cold-miniflare
+          # warmup), and Playwright runs a project's dependencies fully in every
+          # shard — so keeping deps preserves the warmup on each runner.
+          - project: dev
+            shard: 1
+            shardTotal: 2
+          - project: dev
+            shard: 2
+            shardTotal: 2
+          # Production tests sharded across 2 jobs WITH --no-deps: the production
+          # project depends on the FULL dev project (~284 tests), so without
+          # --no-deps every production shard would also drag the entire dev suite
+          # (the 208-vs-1 blowup documented in AGENTS.md). --no-deps severs that;
+          # the production webServer still builds dist/ and serves preview.
+          - project: production
+            shard: 1
+            shardTotal: 2
+            noDeps: true
+          - project: production
+            shard: 2
+            shardTotal: 2
+            noDeps: true
+          # HMR runs in its own job: --no-deps (its deps are the full dev +
+          # production suites) and workers=1. workers=1 is load-bearing, not
+          # cosmetic: hmr.test.ts and hmr-route-mutations.test.ts both git-checkout
+          # and rewrite src/ files, so two parallel workers corrupt each other's
+          # fixtures. (On CI hmr-route-mutations is test.skip(isCI)'d, but the cap
+          # matches the local test:e2e:hmr-local script and guards the invariant.)
+          - project: hmr
+            workers: 1
+            noDeps: true
 
     steps:
       - uses: actions/checkout@v5
@@ -430,16 +677,32 @@ jobs:
       - name: Install Playwright system deps
         run: pnpm --filter cloudflare-basic exec playwright install-deps chromium
 
-      - name: Run cloudflare-basic e2e tests
-        run: pnpm --filter cloudflare-basic test:e2e
+      - name: Run cloudflare-basic e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         env:
           TEST_DEBUG: "1"
+        run: |
+          SHARD_FLAG=""
+          if [ -n "${{ matrix.shard }}" ]; then
+            SHARD_FLAG="--shard=${{ matrix.shard }}/${{ matrix.shardTotal }}"
+          fi
+          WORKERS_FLAG=""
+          if [ -n "${{ matrix.workers }}" ]; then
+            WORKERS_FLAG="--workers=${{ matrix.workers }}"
+          fi
+          # production depends on the full dev project and hmr depends on
+          # dev+production; --no-deps severs those so a shard runs only its own
+          # tests. The webServer still builds/serves regardless of --no-deps.
+          NO_DEPS_FLAG=""
+          if [ -n "${{ matrix.noDeps }}" ]; then
+            NO_DEPS_FLAG="--no-deps"
+          fi
+          pnpm --filter cloudflare-basic test:e2e --project=${{ matrix.project }} $SHARD_FLAG $WORKERS_FLAG $NO_DEPS_FLAG
 
       - name: Upload test results
         uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: playwright-report-cloudflare-basic
+          name: playwright-report-cloudflare-basic-${{ matrix.project }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
           path: tests/cloudflare-basic/playwright-report/
           retention-days: 7
 

@@ -1,6 +1,6 @@
 ---
 name: handler-use
-description: Attach default loaders, middleware, parallels, and other use items directly to handlers via handler.use, and compose them with explicit use() at mount sites
+description: Attach default loaders, middleware, parallels, and other use items directly to handlers via handler.use, and compose them with explicit use() at mount sites. Use when a handler needs its own default middleware/loader without repeating use() at every mount site, or deciding between handler-level defaults and per-route use().
 argument-hint: "[handler]"
 ---
 

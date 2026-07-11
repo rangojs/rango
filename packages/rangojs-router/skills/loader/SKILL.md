@@ -1,6 +1,6 @@
 ---
 name: loader
-description: Define data loaders for fetching data in routes with createLoader
+description: Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, or client components need reactive server data.
 argument-hint: [loader]
 ---
 
@@ -10,6 +10,13 @@ Loaders fetch data on the server and stream it to the client. For mutations
 (writes triggered by forms or buttons), use server actions instead — see
 `/server-actions`. Loaders re-resolve after an action runs, so the typical
 flow is _action mutates → loader re-reads → UI updates_.
+
+## Not this skill if…
+
+- You want to mutate state — mutations are `"use server"` actions: see
+  `/server-actions`. Loaders read per-request live data.
+- You want to cache a function's return value — loaders are fresh every request
+  by default; caching one function is `"use cache"`: see `/use-cache`.
 
 ## Creating a Loader
 
@@ -140,6 +147,11 @@ same memoized result — loaders never run twice per request.
 - The handler output depends on the loader data. If the route is inside
   `cache()`, the handler is cached with the loader result baked in —
   defeating the live data guarantee.
+- The same holds under a PPR shell capture (`/ppr`): handler consumption is
+  the BAKED lane — the loader executes at capture (identity reads permitted)
+  and the rendered value is a capture-time copy; `useLoader` client-side is
+  the live lane. One rule across `cache()`, `"use cache"`, and PPR: the
+  consumption-lane rule (`/rango` → Invariants).
 - Non-cacheable variable reads (`createVar({ cache: false })`) inside the
   handler still throw, even if the data came from a loader.
 - Prefer DSL `loader()` + client `useLoader()` for data that depends on

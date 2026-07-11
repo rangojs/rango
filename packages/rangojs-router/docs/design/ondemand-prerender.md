@@ -29,6 +29,10 @@ result union: `skipped-passthrough`, returned when a `Passthrough + onDemand`
 route's build handler returns `ctx.passthrough()` for the refreshed param (no
 shared payload to persist; the live handler keeps serving it).
 
+On-demand routes stay off the separate PPR shell lane in v1. A refresh can
+replace the durable segment payload, but it cannot atomically replace a cached
+document shell; serving both would pair a fresh tail with a stale prelude.
+
 Start from the existing prerender mental model: prerendering is cached RSC
 segment payloads, not static HTML. Build-time prerender writes immutable payloads
 into the bundled manifest; runtime requests read those payloads before normal

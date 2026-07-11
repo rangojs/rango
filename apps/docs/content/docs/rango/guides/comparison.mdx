@@ -1,0 +1,107 @@
+---
+title: Comparison
+description: Rango placed next to Next.js App Router, TanStack Start, and Waku — where its design leads, and where the others still do.
+type: guide
+---
+
+This page compares Rango against the three frameworks people most often weigh it against, on capabilities and design — the things that stay true regardless of how old each project is. Where another framework leads (ecosystem, integrations, hiring), that's stated plainly; a comparison that only lists wins isn't useful for a real decision. Identifiers below (`urls()`, `revalidate()`, `createLoader`, `debugPerformance`, …) are the actual public API, so you can grep for them.
+
+## TL;DR
+
+Rango is **RSC-first on Vite** (like Waku) but **batteries-included** (like Next.js), with **type-safe, code-defined routing** (competing with TanStack Start), a **composable graph of named render slots**, and a **single unified caching/prerender model**. Its **loader** is a genuinely new primitive rather than a renamed Remix/TanStack loader: a designated live data slot that punches through an otherwise cache-first RSC tree, not a before-render data phase that feeds a loader cache.
+
+The practical advantage is range: an application can start as one route and one component, then gain type-safe links, live data, caching, partial rendering, and multi-region composition without replacing its routing or data model.
+
+## At a glance
+
+| Dimension               | **Rango**                                                                                                  | Next.js (App Router)                                                           | TanStack Start                                                                     | Waku                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Routing model           | Code DSL (`urls()`/`include()`), named + `reverse()`                                                       | File-system convention                                                         | File or code, type-first                                                           | File-system (+ `createPages`)                                           |
+| Foundation              | Vite + plugin-rsc                                                                                          | Turbopack (default in 16; Webpack opt-in)                                      | [Vite or Rsbuild](https://tanstack.com/start/latest/docs/framework/react/overview) | Vite + plugin-rsc                                                       |
+| RSC model               | RSC-first                                                                                                  | RSC-first                                                                      | SSR/client-first; RSC opt-in (experimental)                                        | RSC-first                                                               |
+| Type-safe routes/params | Generated names, params, search, `reverse()`, response MIME                                                | Stable typed links; route-local param types                                    | Best-in-class                                                                      | Typed path params                                                       |
+| Client render selection | Per-segment/loader `revalidate()` policy; typed action and result matching                                 | Automatic segment reuse; refresh/invalidation APIs                             | Match/loader reload policy                                                         | Route refetch/reload                                                    |
+| Slots and intercepts    | Code-defined named slots with their own loaders/policy; conditional alternate soft-navigation compositions | File-system `@slot` + intercept conventions                                    | Route masking, no parallel RSC slot graph                                          | No equivalent route-slot graph                                          |
+| Caching                 | One segment store = runtime + build-time + `"use cache"`, tags, SWR                                        | Cache Components plus distinct server/client cache lifecycles                  | Router loader cache + Query integration + HTTP/CDN policy                          | Minimal                                                                 |
+| Request/cache safety    | Tainted request contexts, non-cacheable typed vars, guarded effects                                        | Runtime APIs isolated from `"use cache"`; optional React client-boundary taint | Application policy                                                                 | Application policy                                                      |
+| Prerender               | Build-time cache; worker serves every request; per-param `Passthrough()`                                   | SSG/ISR + Cache Components/PPR                                                 | Static prerender + HTTP/CDN ISR patterns                                           | Static prerender                                                        |
+| No-JS parity            | First-class, tested (semantic matrix)                                                                      | Forms/Server Actions supported; no parity harness                              | Server functions support forms; no parity harness                                  | Server Actions/forms; no parity harness                                 |
+| Middleware              | Global + segment-scoped subtree                                                                            | Single root Proxy (matcher filters paths); no subtree scope                    | Request/server-function middleware                                                 | [Hono middleware + handler interceptors](https://waku.gg/#interceptors) |
+| Observability           | Built-in CF + Vercel OTel phase spans, `Server-Timing`, perf waterfall                                     | Built-in OTel spans; no equivalent router-phase waterfall                      | Client/data devtools                                                               | No equivalent built-in phase model                                      |
+| Deploy targets          | Node, Cloudflare, Vercel — all with presets                                                                | Node/Vercel first; other platforms through adapters                            | Broad Vite/Rsbuild runtime support                                                 | Node plus adapters                                                      |
+| Deployment skew         | Automatic build-version handshake for navigation, prefetch, and actions; safe reload on mismatch           | `deploymentId` mismatch reload; Vercel can pin clients to an immutable deploy  | Application/platform policy                                                        | Build-id mismatch reload (v1.0-beta)                                    |
+| Multi-tenant            | `createHostRouter()` built-in                                                                              | Roll your own                                                                  | Roll your own                                                                      | Roll your own                                                           |
+| Testing primitives      | Ships `@rangojs/router/testing` (handlers/loaders/mw/Flight/e2e)                                           | No comparable handler/Flight primitives                                        | Documented patterns; no shipped utils                                              | No comparable handler/Flight primitives                                 |
+| Client runtime          | ~50 KB Rango + ~115 KB React/RSC, per-route chunks                                                         | Configuration-dependent                                                        | Configuration-dependent                                                            | Deliberately light                                                      |
+| Ecosystem               | Smaller                                                                                                    | Largest                                                                        | Growing                                                                            | Small                                                                   |
+
+## Start simple; grow without changing models
+
+Rango's advanced features aren't setup requirements. The smallest useful app is still a route tree and a component:
+
+```tsx
+const router = createRouter().routes(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+]);
+```
+
+Each requirement adds one local primitive to that same tree — nothing forces a migration to a second router, client data library, or static-versus-dynamic application mode:
+
+| When you need to…                          | Add…                              |
+| ------------------------------------------ | --------------------------------- |
+| make navigation refactor-safe              | a route `name` and `reverse()`    |
+| split the application into modules         | `urls()` and `include()`          |
+| keep request data live beneath cached UI   | `loader()`                        |
+| cache or prerender a shared shell          | `cache()` or `Prerender()`        |
+| choose what updates after an action        | `revalidate()`                    |
+| render independent regions                 | `parallel()` and named slots      |
+| open a route as a modal on soft navigation | `intercept()`                     |
+| inspect where request time went            | `debugPerformance` or `telemetry` |
+
+## Where Rango's design leads
+
+- **One caching model, and prerender is part of it.** `cache({ ttl, swr, tags })`, `"use cache"`, and pre-rendering share one store abstraction and one tag-invalidation API (`cacheTag`/`revalidateTag`/`updateTag`). Next's Cache Components are powerful, but server output lifetime and the client router cache still follow distinct rules; TanStack has its own loader cache plus optional Query integration; Waku keeps caching minimal.
+- **`Passthrough()`: prerender the common case, live-render the rest.** A prerender handler can decide per param set whether to bake an artifact or fall through to the live handler — statically generate the top 1,000 products, serve the long tail dynamically, from one definition. Next approximates this with `generateStaticParams` + `dynamicParams` as two separate knobs.
+- **Progressive enhancement is a tested contract**, not an assumption. Forms and server actions work with JavaScript disabled, and the JS/no-JS parity is pinned by an explicit semantic matrix test covering middleware scope, handler-first ordering, and context visibility.
+- **CSP nonce plumbing is integrated.** `nonce: () => true` generates a per-request nonce that's propagated consistently across SSR, hydration, and streaming — framework-owned plumbing most strict-CSP setups have to hand-roll.
+- **Default CSRF protection on mutation channels.** `originCheck` is on by default: before a Server Action, fetchable loader request, or progressively-enhanced form submission executes, Rango compares the browser's `Origin` (or `Referer`) against the request's protocol and `Host`, failing closed with `403` on a mismatch.
+- **A deterministic execution model.** Handler-first ordering, two middleware scopes (request-level `router.use()` versus segment-scoped subtree — more granular than Next's single root `proxy.ts` matcher), and structural context visibility (`ctx.set()`/`ctx.get()` flow down only, never across parallel siblings).
+- **Observability you don't wire yourself.** `createCloudflareTracing()` / `createVercelTracing()` emit nested phase spans out of the box, and the same instrumentation site powers `debugPerformance`'s per-request waterfall.
+- **Multi-target deploy plus built-in multi-tenancy.** Node, Cloudflare, and Vercel presets each with their own cache store, and `createHostRouter()` routes by domain/subdomain to independent sub-apps — none of the other three offer multi-tenancy as a first-class primitive.
+- **Deployment skew is detected before stale code executes.** A build-version handshake covers navigation, prefetch, and actions; an old tab reaching a newer server gets a clean reload instead of decoding stale Flight or invoking a dead action id.
+- **A shipped testing harness for server code.** `@rangojs/router/testing/*` gives you `runLoader`, `runMiddleware`, `dispatch`, `renderHandler`, real Flight rendering, and a Playwright e2e harness with dev/prod parity helpers — Next and Waku ship no comparable primitives; TanStack documents patterns but ships no package.
+- **Bundle discipline.** ~50 KB Rango + ~115 KB React/RSC baseline, per-route client chunks by default, and a build guard that fails if React's development bundle leaks into production.
+
+## Coming from a specific framework
+
+**From Next.js.** You keep RSC, Server Actions, parallel/intercepting routes, and prerendering, but trade file-convention plus the historically confusing cache layers for a code-defined, refactor-safe router and one caching model. You gain Cloudflare as a first-class target and phase spans for free. You give up the largest ecosystem and talent pool in the React world — the real cost.
+
+**From TanStack Start.** You get comparable type-safe routing (`reverse()`, typed params/search, even typed response MIME via `.json()`/`.text()`/`.image()`), plus a true RSC-first model (zero-bundle server components, Flight) that TanStack's client-first core added later and opt-in. You give up TanStack's best-in-class search-param ergonomics and its devtools/Query integration.
+
+**From Waku.** Same RSC-first-on-Vite spirit and light footprint, but Rango is the batteries-included version: unified caching + prerender, segment-scoped middleware, observability, host router, typed named routes, and a testing harness, where Waku stays deliberately minimal. If you've outgrown Waku for a complex production app, Rango is the natural step up.
+
+## Where the others still lead
+
+- **Ecosystem and hiring (Next.js).** Next dwarfs all three in plugins, tutorials, Stack Overflow answers, and developers who already know it — a genuine, non-technical advantage that often decides framework choice on its own.
+- **Search-param ergonomics and client/data devtools (TanStack Start).** TanStack's validated, fully-typed search-param state and its Router/Query devtools are the gold standard; Rango is strong but TanStack set the bar.
+- **Minimal surface area (Waku).** Rango doesn't require its advanced features, but Waku has fewer framework primitives to learn when an application intends to stay small.
+- **The DSL has a learning curve.** Code-defined routing is more powerful and refactor-safe, but file-based routing is more discoverable for newcomers ("the URL is the folder") — a real onboarding tradeoff.
+
+## Bottom line
+
+Rango starts comfortably at route-and-component scale. Its advantage becomes more visible as requirements accumulate: type-safe routing, live data beneath cached UI, partial updates, named compositions, working no-JS forms, tracing, and testable server code all extend the same model rather than replacing it. That makes its ceiling particularly useful for complex, production, multi-runtime applications — especially edge/Cloudflare or multi-tenant systems — without making that complexity the entry price. Ecosystem breadth remains the main advantage you trade away when leaving Next.js.
+
+<Cards>
+  <Card
+    href="/docs/rango/guides/migrate-from-nextjs"
+    title="Migrate from Next.js"
+  >
+    App Router concepts mapped to Rango, concept by concept.
+  </Card>
+  <Card
+    href="/docs/rango/guides/migrate-from-react-router"
+    title="Migrate from React Router"
+  >
+    Loaders, actions, and routes mapped to their Rango equivalents.
+  </Card>
+</Cards>

@@ -19,6 +19,7 @@ import {
 import {
   CacheNonCachedLoaderHandler,
   CacheCachedLoaderHandler,
+  CacheHandlerConsumedHandler,
   CacheInterceptIndexHandler,
   CacheInterceptDetailHandler,
   CacheUseLoaderIndexHandler,
@@ -58,6 +59,16 @@ export const cachePatterns = urls(
       { name: "cacheTest.cachedLoader" },
       () => [loader(CachedTestLoader, () => [cache({ ttl: 600 })])],
     ),
+
+    // Consumption-lane rule, cache() tier: a route-level cache() scope whose
+    // HANDLER consumes an UNCACHED loader via ctx.use — the value is a BAKED
+    // copy, frozen into the cached segments on every hit. PPR twin:
+    // /shell-cache/slot-use (semantic matrix row PPR3).
+    cache({ ttl: 600 }, () => [
+      path("/cache-test/handler-consumed", CacheHandlerConsumedHandler, {
+        name: "cacheTest.handlerConsumed",
+      }),
+    ]),
 
     // Cache intercept test routes
     layout(CacheInterceptLayout, () => [

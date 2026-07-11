@@ -1,0 +1,193 @@
+---
+title: use cache
+description: Function-level caching with the "use cache" directive — profiles, tags, and the guards that keep per-request data out of shared entries.
+type: guide
+---
+
+You have one expensive async function — a query, an API call, an RSC component — that should memoize its own output instead of re-running on every request. That's the `"use cache"` directive: function-level caching with TTL + stale-while-revalidate, complementary to the segment-level `cache()` DSL and the build-time `Static()`/`Prerender()` handlers.
+
+If you want to cache a whole route or a rendered subtree of segments, you want segment `cache()` instead — see [Caching & Revalidation](/docs/rango/features/caching).
+
+## The shortest path
+
+Add the directive at the top of a file to cache every export with the default profile, or inside a function body to pick a profile per function:
+
+```ts
+// File-level: all exports cached with the default profile
+"use cache";
+
+export async function getProducts() {
+  return await db.query("SELECT * FROM products");
+}
+```
+
+```ts
+// Function-level: per-function profile
+export async function getProducts() {
+  "use cache: short";
+  return await db.query("SELECT * FROM products");
+}
+```
+
+RSC components cache the same way:
+
+```tsx
+export async function ProductCard({ id }: { id: string }) {
+  "use cache: products";
+  const product = await db.query("SELECT * FROM products WHERE id = ?", [id]);
+  return <div>{product.name}</div>;
+}
+```
+
+A Vite plugin (`rango:use-cache`) detects the directive and wraps the function with `registerCachedFunction()` at build time — you never call the runtime yourself. This works in dev too: functions cache normally against a local `MemorySegmentCacheStore`, so you can test cache behavior before deploying.
+
+## Profiles
+
+Profile names map to `"use cache: <name>"`. Define them on [createRouter](/docs/rango/reference/create-router):
+
+```ts
+createRouter({
+  cacheProfiles: {
+    default: { ttl: 900, swr: 1800 },
+    short: { ttl: 60, swr: 120 },
+    long: { ttl: 3600, swr: 7200 },
+    products: { ttl: 300, swr: 600, tags: ["products"] },
+    cms: { ttl: 300, swr: 600, foregroundOnAction: true },
+  },
+});
+```
+
+- `"use cache"` with no name resolves to `default`; `"use cache: short"` resolves to `short`.
+- The DSL `cache()` does not accept a string profile name — it takes an options object (`cache({ ttl: 60 })`). Profile names belong to the directive.
+- `foregroundOnAction: true` (default false) changes what a _stale_ entry does during a server action's revalidation render: instead of serving stale + revalidating in the background (SWR), it re-executes in the foreground so the action response reflects a fresh value (only the store write is deferred). Use it for mutation-related data; for strong read-your-own-writes after a mutation, prefer `updateTag()` — a hard purge, so the action's own re-render is a fresh foreground miss.
+- Unknown profile names throw at runtime on the first invocation of the cached function, not at build or boot. The error names the missing profile and shows the `cacheProfiles` entry to add.
+
+## What makes the cache key
+
+```
+use-cache:{functionId}:{serializedArgs}
+```
+
+`functionId` is a stable ID from the Vite transform (module path + export name); `serializedArgs` is the key-generating arguments serialized via RSC `encodeReply()`. Two consequences worth knowing:
+
+- **Different functions never share entries**, even on the same URL. An intercepted route's path handler and intercept handler each have their own `functionId`, so each caches separately with no extra work.
+- **Route context is folded into the key.** If you pass `ctx`, the tainted object itself is excluded from serialization, but the route-identifying fields read off it are extracted into the key: `url.host`, route name, `pathname`, `params`, response type, and the user-facing sorted search params. The same cached function on different routes, params, or query variants gets distinct entries — not one shared one.
+
+## Passing ctx: tainted arguments and handles
+
+Request-scoped objects (`ctx`, `env`, `req`) are branded with `Symbol.for('rango:nocache')`. Passing them is safe: they're excluded from the key, and side effects pushed through `ctx.use(Handle)` are captured on a miss and replayed on a hit:
+
+```ts
+export async function getProductData(ctx) {
+  "use cache: short";
+  const breadcrumb = ctx.use(Breadcrumbs);
+  breadcrumb({ label: "Products", href: "/products" });
+  return await db.query("SELECT * FROM products");
+}
+// On hit: return value restored, breadcrumb replayed.
+```
+
+`ctx.use(Handle)` is the sanctioned way to pass data out of a cached function.
+
+## What throws inside "use cache"
+
+The guards are correctness-first: anything that would bake one user's request into a shared entry, or silently lose an effect on a hit, throws instead.
+
+| Call                                                                                        | Inside `"use cache"` | Why                                                                              |
+| ------------------------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------- |
+| `cookies()`, `headers()`                                                                    | Throws               | Per-request values aren't in the cache key — one user's data would serve another |
+| `ctx.set()`, `ctx.header()`, `ctx.setTheme()`, `ctx.setLocationState()`, `ctx.onResponse()` | Throws               | Effects are lost on a hit (the body is skipped)                                  |
+| `ctx.get()`                                                                                 | Allowed              | It's a read                                                                      |
+| `ctx.use(Handle)`                                                                           | Allowed              | Captured on miss, replayed on hit                                                |
+
+For cookie- or header-dependent data, extract the value first and pass it as an argument so it lands in the key:
+
+```ts
+const locale = cookies().get("locale")?.value ?? "en";
+const data = await getCachedData(locale); // locale is now in the cache key
+```
+
+And keep ctx side effects outside the cached function:
+
+```tsx
+// Cached data fetch (pure)
+async function getNavData() {
+  "use cache: short";
+  return await db.query("SELECT * FROM nav_items");
+}
+
+// Handler (uncached, calls ctx methods freely)
+async function NavLayout(ctx) {
+  const navData = await getNavData();
+  ctx.set("navItems", navData); // fine — outside "use cache"
+  return (
+    <Nav items={navData}>
+      <Outlet />
+    </Nav>
+  );
+}
+```
+
+One nuance: the read guard doesn't reach into loader bodies consumed inside the cached function (`await ctx.use(loader)`) — loaders always run fresh, so their reads are exempt. But the _consumed value_ is captured into the shared entry like any other computed data. If loader data must stay per-request live, consume it client-side with `useLoader` instead — see [Loaders](/docs/rango/features/loaders).
+
+## Where the directive is rejected
+
+Three placements throw at boot because caching there is either wrong or redundant:
+
+- **`middleware()`** — middleware runs on every request (onion model) and must not be cached. Call the cached function _inside_ the middleware body instead.
+- **`Static()` handlers** — Static renders once at build time; it already is the cache.
+- **`Prerender()` handlers and `getParams`** — same reason; see [Prerender](/docs/rango/guides/prerender).
+
+## Tags and invalidation
+
+Everything writes to the same `SegmentCacheStore` as the `cache()` DSL, `Static()`, and `Prerender()` — one store, one configuration. Tag entries via a profile's `tags`, `cache({ tags })`, or runtime `cacheTag(...tags)` inside the cached function. Then invalidate:
+
+- `updateTag(...tags)` — awaitable, read-your-own-writes; for server actions.
+- `revalidateTag(...tags)` — background, non-blocking; for route handlers and webhooks.
+
+Both hard-purge; the difference is awaitability, not stale-serving. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag; for `CFCacheStore`, distributed invalidation needs a `kv` namespace (markers live in that same namespace).
+
+Don't confuse this with the `revalidate()` export — that's the client-update axis (which segments re-render after a navigation or action), not a cache bust. The two compose; see [Caching & Revalidation](/docs/rango/features/caching).
+
+## What blocks the response
+
+| Phase                                | Blocks response? |
+| ------------------------------------ | ---------------- |
+| Function execution (miss)            | Yes              |
+| Result serialization (miss)          | Yes              |
+| Cache store write (miss)             | No (waitUntil)   |
+| Stale value return (stale hit)       | No (immediate)   |
+| Background revalidation (stale)      | No (waitUntil)   |
+| Cache lookup + deserialization (hit) | Yes (fast)       |
+
+A useful composition falls out of this: put the cached call _inside_ a loader. The loader runs on every request (so [revalidation](/docs/rango/guides/server-actions) and streaming behave normally), but the data fetch inside is memoized:
+
+```ts
+export async function getProductData(slug: string) {
+  "use cache";
+  return await db.query("SELECT * FROM products WHERE slug = ?", [slug]);
+}
+
+export const ProductLoader = createLoader(async (ctx) => {
+  return getProductData(ctx.params.slug);
+});
+```
+
+## Where it fits
+
+| Mechanism            | Granularity        | When       | Use case                                        |
+| -------------------- | ------------------ | ---------- | ----------------------------------------------- |
+| `"use cache"`        | Function/component | Runtime    | Cache individual data fetches or components     |
+| `cache()` DSL        | Route segment      | Runtime    | Cache entire route subtrees with children       |
+| `cache({ ttl })` DSL | Route segment      | Runtime    | Cache a route subtree with explicit options     |
+| `Static()`           | Route segment      | Build-time | Render once, never re-render                    |
+| `Prerender()`        | Route segment      | Build-time | Pre-render known params, optional live fallback |
+
+<Cards>
+  <Card href="/docs/rango/features/caching" title="Caching & Revalidation">
+    The two freshness axes and the segment cache() DSL.
+  </Card>
+  <Card href="/docs/rango/guides/document-cache" title="Document Cache">
+    Cache the whole HTTP response at the edge instead.
+  </Card>
+</Cards>

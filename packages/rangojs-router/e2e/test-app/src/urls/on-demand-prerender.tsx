@@ -1,4 +1,10 @@
-import { urls, Prerender, Passthrough, type Handler } from "@rangojs/router";
+import {
+  urls,
+  Prerender,
+  Passthrough,
+  cookies,
+  type Handler,
+} from "@rangojs/router";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 // Type-only (erased — no runtime cycle with router.tsx). This app declares an
@@ -67,7 +73,42 @@ export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
   const result = await router.prerender(`/on-demand/${ctx.params.slug}`, {
     env: ctx.env as AppEnv,
   });
-  return Response.json(result);
+  return Response.json(
+    !result.ok && result.error instanceof Error
+      ? { ...result, error: result.error.message }
+      : result,
+  );
+};
+
+async function PersonalizedOnDemandChild({ slug }: { slug: string }) {
+  cookies().get("session");
+  return <p>{slug}</p>;
+}
+
+const PersonalizedOnDemandDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => <PersonalizedOnDemandChild slug={ctx.params.slug} />,
+  { onDemand: true },
+);
+
+const PersonalizedOnDemand = Passthrough(
+  PersonalizedOnDemandDef,
+  async (ctx) => (
+    <p data-testid="od-personalized-source">live:{ctx.params.slug}</p>
+  ),
+);
+
+const PersonalizedOnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("../router.js");
+  const result = await router.prerender(
+    `/on-demand-personalized/${ctx.params.slug}`,
+    { env: ctx.env as AppEnv },
+  );
+  return Response.json(
+    !result.ok && result.error instanceof Error
+      ? { ...result, error: result.error.message }
+      : result,
+  );
 };
 
 export const onDemandPatterns = urls(({ path, loader }) => [
@@ -75,4 +116,10 @@ export const onDemandPatterns = urls(({ path, loader }) => [
     loader(PrerenderTestLoader),
   ]),
   path("/od-trigger/:slug", OnDemandTrigger, { name: "onDemandTrigger" }),
+  path("/on-demand-personalized/:slug", PersonalizedOnDemand, {
+    name: "onDemandPersonalized",
+  }),
+  path("/od-personalized-trigger/:slug", PersonalizedOnDemandTrigger, {
+    name: "onDemandPersonalizedTrigger",
+  }),
 ]);

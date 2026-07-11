@@ -21,18 +21,18 @@ describe("generated-routes primitive against vite-rsc-demo's NamedRoutes", () =>
     expect(NamedRoutes["todos.detail"]).toBe("/todos/:id");
   });
 
-  it("reports a clean diff when runtime == generated", () => {
+  it("reports a clean diff when runtime == generated", async () => {
     const fakeRuntime = { routeMap: { ...NamedRoutes } };
-    expect(() =>
+    await expect(
       assertGeneratedRoutesMatch(fakeRuntime, NamedRoutes),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it("reports a pattern mismatch when a runtime pattern drifts", () => {
+  it("reports a pattern mismatch when a runtime pattern drifts", async () => {
     const fakeRuntime = {
       routeMap: { ...NamedRoutes, "blog.post": "/blog/posts/:slug" },
     };
-    const diff = diffGeneratedRoutes(fakeRuntime, NamedRoutes);
+    const diff = await diffGeneratedRoutes(fakeRuntime, NamedRoutes);
     expect(diff.ok).toBe(false);
     expect(diff.mismatch).toContainEqual([
       "blog.post",

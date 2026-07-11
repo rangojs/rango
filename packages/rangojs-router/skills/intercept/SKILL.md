@@ -1,12 +1,19 @@
 ---
 name: intercept
-description: Define intercept routes for modals, slide-overs, and soft navigation patterns in @rangojs/router
+description: Define intercept routes for modals, slide-overs, and soft navigation patterns in @rangojs/router. Use when opening a route as a modal/overlay on top of the current page while keeping the URL shareable, or asking "how do I show this page in a modal".
 argument-hint: [@slot-name] [route-to-intercept]
 ---
 
 # Intercept Routes
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
+
+## Not this skill if…
+
+- You want a slot that ALWAYS renders alongside the page (sidebar, multi-column
+  layout) — that is a permanent `parallel()` slot: see `/parallel`.
+- You want the same component regardless of soft vs hard navigation —
+  intercepts only swap on soft navigation; see `/parallel`.
 
 ## Basic Intercept
 

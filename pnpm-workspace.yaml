@@ -1,4 +1,5 @@
 packages:
+  - "apps/*"
   - "packages/*"
   - "packages/rangojs-router/e2e/test-app"
   - "packages/rangojs-router/e2e/e2e-basic"
@@ -30,7 +31,7 @@ overrides:
   # move before every sibling package for that build has finished publishing.
   "react-experimental>react": 0.0.0-experimental-247fbb45-20260622
   "react-experimental>react-dom": 0.0.0-experimental-247fbb45-20260622
-  rollup: ^4.54.0
+  rollup: ^4.59.0
   esbuild: ^0.28.1
   form-data: ^4.0.6
   undici: ^7.28.0
@@ -52,6 +53,11 @@ allowBuilds:
 publicHoistPattern:
   - "@vitejs/plugin-rsc"
   - rsc-html-stream
+  # apps/docs imports the unified `radix-ui` package, which re-exports many
+  # `@radix-ui/react-*` subpackages; the client-reference bundling resolves
+  # those bare specifiers from the project root, which pnpm's default
+  # non-hoisted layout doesn't expose.
+  - "@radix-ui/*"
 
 # Supply-chain hardening (pnpm 11).
 # Quarantine newly published versions for 1 day before they can be installed.

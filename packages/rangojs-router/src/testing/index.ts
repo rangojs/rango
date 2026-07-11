@@ -28,7 +28,7 @@
  * Layers:
  * - Unit:        runMiddleware, runLoader
  * - Integration: dispatch (request -> Response)
- * - Cross-cut:   assertCacheStatus, assertGeneratedRoutesMatch
+ * - Cross-cut:   assertCacheStatus, assertShellStatus, assertGeneratedRoutesMatch
  * - Component:   see @rangojs/router/testing/dom (renderRoute)
  * - E2E:         see @rangojs/router/testing/e2e
  * - RSC:         see @rangojs/router/testing/flight
@@ -93,6 +93,14 @@ export type {
   CacheSegmentSignal,
   CacheSegmentStatus,
 } from "../router/telemetry.js";
+
+export {
+  assertShellStatus,
+  parseShellStatus,
+  shellCacheKey,
+  SHELL_STATUS_HEADER,
+} from "./shell-status.js";
+export type { ShellStatus, ShellStatusTarget } from "./shell-status.js";
 
 export { collectHandle } from "./collect-handle.js";
 

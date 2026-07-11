@@ -20,6 +20,27 @@ const Tenant = createVar<{ name: string }>();
 const ProductLoader = createLoader(async () => ({ name: "Wine", price: 9 }));
 
 describe("renderHandler", () => {
+  test("accepts one inferred async handler with React and Response branches", async () => {
+    const MixedPage = async (ctx: HandlerContext<{ slug: string }>) =>
+      ctx.params.slug === "redirect" ? (
+        redirect("/login")
+      ) : (
+        <main>{ctx.params.slug}</main>
+      );
+
+    const rendered = await renderHandler(MixedPage, {
+      params: { slug: "article" },
+    });
+    expect(JSON.stringify(rendered.tree)).toContain("article");
+
+    const redirected = await renderHandler(MixedPage, {
+      params: { slug: "redirect" },
+    });
+    expect(redirected.tree).toBeUndefined();
+    expect(redirected.response.status).toBe(302);
+    expect(redirected.response.headers.get("location")).toBe("/login");
+  });
+
   test("runs a real handler: params + ctx.use(Loader) + ctx.get + renders RSC", async () => {
     async function ProductPage(ctx: HandlerContext<{ slug: string }>) {
       const product = await ctx.use(ProductLoader);
@@ -47,6 +68,23 @@ describe("renderHandler", () => {
     expect(json).toContain("Wine");
     expect(json).toContain("wine"); // the slug param
     expect(json).toContain("9");
+  });
+
+  test("ctx.dynamic() + ctx.headers.set() compose in one handler (#735 markSfraProxy collapse)", async () => {
+    // The consumer collapse from issue #735: a dynamic() route can write its
+    // control-flow header straight from the handler (no middleware relay). Both
+    // effects are observable through the public primitive — result.dynamic AND
+    // the header on result.headers. (The ppr-latch re-permit itself is pinned at
+    // the unit seam + dev/prod e2e; renderHandler runs no funnel latch.)
+    function SfraProxyPage(ctx: HandlerContext) {
+      ctx.dynamic();
+      ctx.headers.set("x-rango-sfra-proxy", "catalog");
+      return <div>proxied</div>;
+    }
+
+    const { dynamic, headers } = await renderHandler(SfraProxyPage);
+    expect(dynamic).toBe(true);
+    expect(headers["x-rango-sfra-proxy"]).toBe("catalog");
   });
 
   test("seeded ctx.use(Loader) returns a Promise (production parity)", async () => {
@@ -533,5 +571,26 @@ describe("renderHandler: ctx.use(Handle).defer()", () => {
     expect(observed).toBeUndefined();
     expect(hadSetter).toBe(false);
     expect(cookies.theme).toBeUndefined();
+  });
+
+  test("ctx.build reflects opts.build and ctx.dynamic() surfaces on result.dynamic", async () => {
+    // A handler branching on ctx.build (the build-time PPR pass) and opting the
+    // request out of shell capture on a MISS must be unit-testable through the
+    // public primitive; result.dynamic surfaces the opt-out without reading the
+    // @internal ctx._dynamic.
+    let observedBuild: boolean | undefined;
+    function Page(ctx: HandlerContext) {
+      observedBuild = ctx.build;
+      if (ctx.build) ctx.dynamic();
+      return <main>ok</main>;
+    }
+
+    const built = await renderHandler(Page, { build: true });
+    expect(observedBuild).toBe(true);
+    expect(built.dynamic).toBe(true);
+
+    const live = await renderHandler(Page, {});
+    expect(observedBuild).toBe(false);
+    expect(live.dynamic).toBe(false);
   });
 });

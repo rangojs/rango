@@ -1,0 +1,168 @@
+---
+title: 1. Project Setup
+description: Install the toolchain, wire Vite and Wrangler, and render Brew's first route from a Cloudflare Worker.
+type: tutorial
+---
+
+**Where we are:** an empty directory. By the end of this part, a Rango app serves its first page from the Workers runtime on your machine.
+
+## Install dependencies
+
+Create the project and install the runtime dependencies, then the build tooling:
+
+```bash
+mkdir brew && cd brew
+pnpm init
+pnpm add @rangojs/router react react-dom
+pnpm add -D vite @vitejs/plugin-react @cloudflare/vite-plugin wrangler
+```
+
+Add a dev script while you're in `package.json`:
+
+```jsonc
+// package.json (scripts section)
+{
+  "scripts": {
+    "dev": "vite",
+  },
+}
+```
+
+## Vite configuration
+
+Three plugins, in this order:
+
+```ts
+// vite.config.ts
+import { cloudflare } from "@cloudflare/vite-plugin";
+import { rango } from "@rangojs/router/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [
+    react(),
+    rango({ preset: "cloudflare" }),
+    cloudflare({
+      configPath: "./wrangler.json",
+      viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+    }),
+  ],
+});
+```
+
+- `react()` handles JSX and React fast refresh.
+- `rango({ preset: "cloudflare" })` wires the router into Vite's RSC, SSR, and client environments, preconfigured for Workers.
+- `cloudflare()` reads your `wrangler.json` and runs the app in the Workers runtime — dev traffic goes through your actual Worker, not a Node shim. The `viteEnvironment` block tells it the Worker entry lives in the `rsc` environment with `ssr` as a child; copy it as-is.
+
+## Wrangler configuration
+
+The Worker itself is described by `wrangler.json`:
+
+```jsonc
+// wrangler.json
+{
+  "name": "brew",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": ["nodejs_compat", "nodejs_als"],
+  "assets": {
+    "directory": "./dist/client",
+  },
+}
+```
+
+`name` is what the Worker will be called when you deploy in part 6, `main` points at the entry file you'll write below, and `assets.directory` is where the client build lands so Cloudflare can serve static files. The two compatibility flags enable the Node APIs the RSC runtime relies on.
+
+## The document shell
+
+Rango renders your entire app inside a `Document` component — it owns the `<html>` element, and every route renders into `children`:
+
+```tsx
+// src/document.tsx
+import type { ReactNode } from "react";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Brew</title>
+      </head>
+      <body>
+        <div id="root">{children}</div>
+      </body>
+    </html>
+  );
+}
+```
+
+## The first route
+
+Routes live in one place: a `urls()` tree, Django-style. Each `path()` takes a pattern, a handler, and a name. Start with a placeholder home page:
+
+```tsx
+// src/pages/home.tsx
+export function HomePage() {
+  return (
+    <section>
+      <h1>Brew</h1>
+      <p>Gear for better coffee.</p>
+    </section>
+  );
+}
+```
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import { HomePage } from "./pages/home";
+
+export const urlpatterns = urls(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+]);
+```
+
+The `name` looks redundant right now. It pays off in part 2, when you start generating URLs from route names instead of hardcoding paths.
+
+## The router
+
+`createRouter()` ties the document and the URL tree together:
+
+```tsx
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { Document } from "./document";
+import { urlpatterns } from "./urls";
+
+export const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+});
+```
+
+## The worker entry
+
+Finally, the file `wrangler.json` points at. Every request that reaches the Worker is handed to `router.fetch()`, which matches the URL, renders, and returns the response. Passing `env` and `ctx` through means route handlers can reach your Cloudflare bindings later:
+
+```ts
+// src/worker.ts
+import { router } from "./router";
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return router.fetch(request, { env, ctx });
+  },
+};
+```
+
+## Run it
+
+```bash
+pnpm dev
+```
+
+Open `http://localhost:5173`. You should see the Brew heading — server-rendered React, served by a Cloudflare Worker running locally. Seven small files, and the skeleton is done: `urls.tsx` will grow as the app does, while `router.tsx`, `document.tsx`, and `worker.ts` barely change again.
+
+Next: [2. Routes & Pages](/docs/rango/tutorial/routes-and-pages)

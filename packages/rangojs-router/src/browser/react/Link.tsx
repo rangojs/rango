@@ -32,16 +32,23 @@ export type LinkState =
   | LocationStateEntry[]
   | StateOrGetter<Record<string, unknown>>;
 
-import { prefetchDirect, prefetchQueued } from "../prefetch/fetch.js";
-import { getAppVersion } from "../app-version.js";
 import {
   observeForPrefetch,
-  unobserveForPrefetch,
-} from "../prefetch/observer.js";
+  prefetchDirect,
+  prefetchQueued,
+} from "../prefetch/loader.js";
+import { getAppVersion } from "../app-version.js";
+
+// The (hover: none) MediaQueryList, created lazily on first client read and
+// reused across every Link render. matchMedia allocates and registers a live
+// query object; a fresh one per render (Link renders can be very frequent) is
+// wasteful when the same object's `.matches` is already live. Left null on the
+// server (no window).
+let hoverNoneQuery: MediaQueryList | null = null;
 
 /**
- * Read current touch/no-hover capability. Evaluated at the point of use (per
- * render) rather than once at module load, so `prefetch="adaptive"` reacts to
+ * Read current touch/no-hover capability from the cached MediaQueryList. The
+ * `.matches` read is live, so `prefetch="adaptive"` still reacts to
  * input-capability changes on hybrid devices (touch laptops, tablets gaining or
  * losing a pointer) and after SSR -> hydrate. The SSR guard returns a stable
  * `false` (pointer/hover default) so the resolved strategy doesn't drift on the
@@ -49,7 +56,10 @@ import {
  */
 function isTouchDevice(): boolean {
   if (typeof window === "undefined") return false;
-  return window.matchMedia("(hover: none)").matches;
+  if (!hoverNoneQuery) {
+    hoverNoneQuery = window.matchMedia("(hover: none)");
+  }
+  return hoverNoneQuery.matches;
 }
 
 /**
@@ -384,7 +394,7 @@ export const Link: ForwardRefExoticComponent<
 
     let cancelled = false;
     let unsubIdle: (() => void) | undefined;
-    let observedElement: Element | null = null;
+    let stopObserving: (() => void) | undefined;
 
     const triggerPrefetch = () => {
       if (cancelled) return;
@@ -421,8 +431,7 @@ export const Link: ForwardRefExoticComponent<
     } else if (isViewport) {
       const element = internalRef.current;
       if (!element) return;
-      observedElement = element;
-      observeForPrefetch(element, () => {
+      stopObserving = observeForPrefetch(element, () => {
         scheduleWhenIdle(triggerPrefetch);
       });
     }
@@ -430,9 +439,7 @@ export const Link: ForwardRefExoticComponent<
     return () => {
       cancelled = true;
       unsubIdle?.();
-      if (isViewport && observedElement) {
-        unobserveForPrefetch(observedElement);
-      }
+      stopObserving?.();
     };
   }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 

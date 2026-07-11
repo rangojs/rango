@@ -32,6 +32,36 @@ export function RootLayout(ctx: any) {
         <Link to="/" data-testid="nav-home">
           Home
         </Link>
+        {/* PPR shell-cache routes — clickable for manual testing. */}
+        <Link to="/shell-cache" data-testid="nav-ppr-shell">
+          PPR shell
+        </Link>
+        <Link to="/shell-cache/stream" data-testid="nav-ppr-stream">
+          PPR stream (live/nested)
+        </Link>
+        <Link to="/shell-cache/no-hole" data-testid="nav-ppr-no-hole">
+          PPR no-hole (negative)
+        </Link>
+        <Link to="/shell-cache-dsl" data-testid="nav-ppr-dsl">
+          PPR DSL (middleware())
+        </Link>
+        <Link to="/shell-cache-action" data-testid="nav-ppr-action">
+          PPR actions (hole/shell/PE)
+        </Link>
+        <Link
+          to="/shell-cache/exec-matrix"
+          data-testid="nav-ppr-exec"
+          prefetch="none"
+        >
+          PPR navigation replay
+        </Link>
+        <Link
+          to="/inline-bound-action?probe=ppr-nav"
+          data-testid="nav-ppr-inline-action"
+          prefetch="none"
+        >
+          PPR inline action
+        </Link>
         <NavigationStatus testId="nav-status" />
       </nav>
       <BreadcrumbNav testId="breadcrumbs" />

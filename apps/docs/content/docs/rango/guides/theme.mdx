@@ -1,0 +1,113 @@
+---
+title: Theme
+description: Opt-in light/dark mode with FOUC prevention, persisted on the server and the client.
+type: guide
+---
+
+You need a light/dark toggle that remembers the user's choice and never flashes the wrong theme on first paint. Rango ships an opt-in theme system that covers the whole loop: an inline script that applies the stored theme before anything renders, server-side reads in loaders and middleware, and a client hook for the toggle.
+
+## Enable it
+
+Turn the system on in `createRouter`:
+
+```ts
+import { createRouter } from "@rangojs/router";
+
+const router = createRouter<Env>({
+  document: Document,
+  urls: urlpatterns,
+  theme: true,
+});
+```
+
+`theme: true` enables everything with defaults. Pass an object instead to customize:
+
+```ts
+const router = createRouter<Env>({
+  document: Document,
+  urls: urlpatterns,
+  theme: {
+    defaultTheme: "system", // "light" | "dark" | "system"
+    themes: ["light", "dark"],
+    attribute: "class", // or "data-theme"
+    storageKey: "theme",
+  },
+});
+```
+
+| Option         | Values                              | What it controls                                |
+| -------------- | ----------------------------------- | ----------------------------------------------- |
+| `defaultTheme` | `"light"` \| `"dark"` \| `"system"` | The theme before the user picks one             |
+| `themes`       | `string[]`                          | The set of selectable themes                    |
+| `attribute`    | `"class"` or `"data-theme"`         | How the active theme is written to the document |
+| `storageKey`   | `string`                            | The key the choice is persisted under           |
+
+## Wire up your Document
+
+Two things your document component must do:
+
+1. Render `<MetaTags />` in the head. It auto-renders the inline script that applies the stored theme before first paint — that script is the FOUC prevention, so skipping it brings the flash back. See [Metadata & Handles](/docs/rango/features/metadata) for `<MetaTags />` itself.
+2. Add `suppressHydrationWarning` to `<html>`, since the inline script sets the theme before React hydrates.
+
+```tsx
+<html lang="en" suppressHydrationWarning>
+  <head>
+    <MetaTags />
+  </head>
+  <body>{children}</body>
+</html>
+```
+
+## Toggle it on the client
+
+`useTheme` from `@rangojs/router/theme` drives the switcher:
+
+```tsx
+"use client";
+import { useTheme } from "@rangojs/router/theme";
+
+function ThemeToggle() {
+  const { theme, setTheme, resolvedTheme, systemTheme, themes } = useTheme();
+
+  return (
+    <select value={theme} onChange={(e) => setTheme(e.target.value)}>
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  );
+}
+```
+
+Alongside `theme` and `setTheme`, the hook exposes `resolvedTheme`, `systemTheme`, and the configured `themes` list.
+
+## Read and set it on the server
+
+The theme persists in localStorage plus a cookie; the cookie is what makes the value visible during SSR. `ctx.theme` reads it, `ctx.setTheme()` writes it:
+
+```ts
+import { createLoader } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
+
+// In a loader
+export const SettingsLoader = createLoader(async (ctx) => {
+  const currentTheme = ctx.theme; // read from cookie
+  return { theme: currentTheme };
+});
+
+// In middleware
+export const themeMiddleware: Middleware = async (ctx, next) => {
+  // Set theme based on user preference
+  ctx.setTheme("dark");
+  await next();
+};
+```
+
+Setting the theme in [middleware](/docs/rango/features/middleware) is the right spot when the preference lives in your user record rather than the browser.
+
+## Pitfalls
+
+| Symptom                                         | Fix                                                                                |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Page flashes the wrong theme on load            | Render `<MetaTags />` in the document head — it carries the FOUC-prevention script |
+| React hydration warning on the `<html>` element | Add `suppressHydrationWarning` to `<html>`                                         |

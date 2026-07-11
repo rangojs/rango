@@ -12,7 +12,7 @@ export interface BuildEnvFactoryContext {
   /** Vite command ("serve" for dev, "build" for production). */
   command: "serve" | "build";
   /** Router deployment preset. */
-  preset: "node" | "cloudflare";
+  preset: "node" | "cloudflare" | "vercel";
 }
 
 /**
@@ -108,6 +108,11 @@ export type ClientChunks =
 // -- Plugin options ---------------------------------------------------------
 
 /**
+ * Document script strategy. See {@link RangoBaseOptions.headScripts}.
+ */
+export type HeadScriptsOption = "preinit" | "preload";
+
+/**
  * Base options shared by all presets
  */
 interface RangoBaseOptions {
@@ -125,6 +130,34 @@ interface RangoBaseOptions {
    * @default true
    */
   clientChunks?: ClientChunks;
+
+  /**
+   * How the document ships its JavaScript.
+   *
+   * - `"preinit"` (**default**): client-reference chunks render as EXECUTING
+   *   `<script type="module" async>` tags hoisted into `<head>` (upgrading
+   *   plugin-rsc's modulepreload hints in place), and the browser entry ships
+   *   as Fizz `bootstrapModules` — a head `modulepreload fetchpriority=low`
+   *   hint plus the executing end-of-shell `id="_R_"` module script. Chunk
+   *   execution overlaps body streaming instead of waiting for the hydration
+   *   import walk; under PPR everything lands in the stored shell prelude.
+   * - `"preload"`: the previous behavior — `<link rel="modulepreload">` hints
+   *   only, entry as an inline `import()` script at end of shell. Chunks
+   *   fetch+compile early but execute only when hydration imports them.
+   *
+   * Build-only for the chunk half: plugin-rsc resolves no JS deps per client
+   * reference in dev, so dev documents carry no head chunk scripts in either
+   * mode (the bootstrap conversion does apply in dev). Trades and upstream
+   * limits are documented in src/ssr/preinit-client-references.ts.
+   *
+   * Wired in the generated virtual SSR entry
+   * (`src/ssr/preinit-client-references.ts` has the mechanism); apps with a
+   * custom SSR entry choose per-handler via `SSRDependencies.headScripts` and
+   * `installClientReferencePreinit`.
+   *
+   * @default "preinit"
+   */
+  headScripts?: HeadScriptsOption;
 
   /**
    * Filter which files route discovery scans, by glob. Paths are matched
@@ -176,6 +209,20 @@ export interface RangoNodeOptions extends RangoBaseOptions {
   preset?: "node";
 
   /**
+   * Path to a host-router entry (a module that calls `createHostRouter()` and
+   * exports the instance) to serve instead of a single `createRouter()` app.
+   * Root-relative (e.g. `"./src/worker.rsc.tsx"`).
+   *
+   * Set this when the app is a multi-app host router: auto-discovery otherwise
+   * finds the sub-apps' multiple `createRouter()` files and cannot pick an entry.
+   * When omitted, rango auto-detects a single `createHostRouter()` file if the
+   * app has several `createRouter()` files. The host module must export the
+   * `HostRouter` instance (default export or a named `hostRouter`/`router`
+   * export), not a Cloudflare-style `{ fetch }` object.
+   */
+  hostRouter?: string;
+
+  /**
    * Environment bindings available to Prerender and Static handlers at build
    * time via `ctx.env`. Shared across all prerender invocations for the build.
    *
@@ -216,6 +263,74 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
 }
 
 /**
+ * Per-function knobs for the Vercel deployment, written into the generated
+ * `.vc-config.json` (and `config.json` for `functionName`).
+ */
+export interface VercelPresetOptions {
+  /** Node runtime for the function. @default "nodejs22.x" */
+  runtime?: string;
+  /** Max execution time in seconds. @default 30 */
+  maxDuration?: number;
+  /** Function memory in MB (platform default when omitted). */
+  memory?: number;
+  /** Regions to pin the function to (platform default when omitted). */
+  regions?: string[];
+  /**
+   * Function name — the `<name>.func` directory and the `config.json` route
+   * destination. @default "index"
+   */
+  functionName?: string;
+}
+
+/**
+ * Options for Vercel Functions deployment.
+ *
+ * Builds like the node preset (Vercel runs Node Functions, not Workers): rango
+ * owns the RSC entry, `process.env.NODE_ENV` is folded for the build, and after
+ * the build a `.vercel/output` directory (Build Output API v3) is assembled from
+ * `dist/` — a single streaming Node Function plus the static client assets. The
+ * app must install `@vercel/functions` (used by `VercelCacheStore` and the
+ * generated function launcher).
+ */
+export interface RangoVercelOptions extends RangoBaseOptions {
+  /**
+   * Deployment preset for Vercel Functions.
+   */
+  preset: "vercel";
+
+  /**
+   * Path to a host-router entry (a module that calls `createHostRouter()` and
+   * exports the instance) to serve instead of a single `createRouter()` app.
+   * Root-relative (e.g. `"./src/worker.rsc.tsx"`).
+   *
+   * Set this when the app is a multi-app host router: auto-discovery otherwise
+   * finds the sub-apps' multiple `createRouter()` files and cannot pick an entry.
+   * When omitted, rango auto-detects a single `createHostRouter()` file if the
+   * app has several `createRouter()` files. The host module must export the
+   * `HostRouter` instance (default export or a named `hostRouter`/`router`
+   * export), not a Cloudflare-style `{ fetch }` object. The Vercel function then
+   * runs `hostRouter.match()` for every request (single-function deploy).
+   */
+  hostRouter?: string;
+
+  /**
+   * Environment bindings available to Prerender and Static handlers at build
+   * time via `ctx.env`. `"auto"` is Cloudflare-only; pass an object or a factory.
+   *
+   * @default false
+   */
+  buildEnv?: Exclude<BuildEnvOption, "auto">;
+
+  /**
+   * Vercel function configuration written into the Build Output.
+   */
+  vercel?: VercelPresetOptions;
+}
+
+/**
  * Options for rango() Vite plugin
  */
-export type RangoOptions = RangoNodeOptions | RangoCloudflareOptions;
+export type RangoOptions =
+  | RangoNodeOptions
+  | RangoCloudflareOptions
+  | RangoVercelOptions;

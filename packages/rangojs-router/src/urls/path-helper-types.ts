@@ -69,7 +69,7 @@ export type PathFn<TEnv> = <
     | ReactNode
     | ((
         ctx: HandlerContext<TParams, TEnv, TSearch>,
-      ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
+      ) => ReactNode | Response | Promise<ReactNode | Response>)
     | PrerenderHandlerDefinition<TParams>
     | PassthroughHandlerDefinition<TParams, TEnv>
     | StaticHandlerDefinition<TParams>,
@@ -153,6 +153,30 @@ export type TextResponsePathFn<TEnv> = <
 ) => TypedRouteItem<TName, TPattern, string, TSearch>;
 
 /**
+ * What an async include() provider resolves to. Route types (`TRoutes`) are
+ * inferred from the resolved `urls()` value so `href()` and named routes stay
+ * type-safe through a code-split module (`() => import("./routes")`).
+ */
+type IncludeResolved<
+  TEnv,
+  TRoutes extends Record<string, any>,
+  TResponses extends Record<string, unknown>,
+> =
+  | UrlPatterns<TEnv, TRoutes, TResponses>
+  | { default: UrlPatterns<TEnv, TRoutes, TResponses> };
+
+/** include() argument: an eager `urls()` value or an async provider thunk. */
+export type IncludeArg<
+  TEnv,
+  TRoutes extends Record<string, any>,
+  TResponses extends Record<string, unknown>,
+> =
+  | UrlPatterns<TEnv, TRoutes, TResponses>
+  | (() =>
+      | IncludeResolved<TEnv, TRoutes, TResponses>
+      | Promise<IncludeResolved<TEnv, TRoutes, TResponses>>);
+
+/**
  * Base include function signature.
  */
 export type IncludeFn<TEnv> = <
@@ -162,7 +186,7 @@ export type IncludeFn<TEnv> = <
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 >(
   prefix: TUrlPrefix,
-  patterns: UrlPatterns<TEnv, TRoutes, TResponses>,
+  patterns: IncludeArg<TEnv, TRoutes, TResponses>,
   options?: IncludeOptions<TNamePrefix>,
 ) => TypedIncludeItem<TRoutes, TNamePrefix, TUrlPrefix, TResponses>;
 
@@ -244,9 +268,16 @@ export type PathHelpers<TEnv> = {
    * `{ handler, use? }` whose `use` is scoped to that slot only. Per-slot
    * merge order is `handler.use` → shared `use` → slot-local `use`, with
    * narrowest scope winning for last-write-wins items like `loading()`.
+   *
+   * Not generic over the slots record: an inferred type parameter makes the
+   * object literal an inference site, which suppresses contextual typing of
+   * arrow slot handlers (`(ctx) => ...` was implicit any). Bare handlers infer
+   * now; a descriptor's `handler:` arrow still needs an explicit ctx annotation
+   * because StaticHandlerDefinition's own `.handler` joins the contextual union
+   * (two callables — see parallel-slot-handler-types.test.ts).
    */
-  parallel: <
-    TSlots extends Record<
+  parallel: (
+    slots: Record<
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
@@ -259,8 +290,6 @@ export type PathHelpers<TEnv> = {
           use?: () => ParallelUseItem[];
         }
     >,
-  >(
-    slots: TSlots,
     use?: () => ParallelUseItem[],
   ) => ParallelItem;
 

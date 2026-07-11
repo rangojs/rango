@@ -32,11 +32,15 @@ route was pre-rendered.
 - **Render-error handling** - a build-time render throw surfaces to the build (fail
   by default, or `prerender.onError: "warn"` to skip the URL); `throw new Skip()`
   in a render fn skips one URL. See [Render Errors](#render-errors).
-
-### Remaining
-
-- **Revalidation with Passthrough** - Background re-render of stale prerender data
-- **ISR-style revalidation** - Time-based or on-demand re-rendering without full rebuild
+- **Build-time PPR shells (producer B, #699)** - a `Prerender` route that also
+  declares the `ppr` path option gets its complete PPR shell entry (HTML prelude +
+  postponed state) produced at `vite build` and served from the very first
+  request. On-demand routes stay on the normal document lane because the
+  writable segment overlay and shell store cannot be replaced atomically. See
+  [Build-time PPR shells](#build-time-ppr-shells-producer-b).
+- **ISR-style revalidation** - `Prerender(..., { onDemand })` plus
+  `router.prerender()` refreshes a writable durable overlay without a deploy;
+  `Passthrough` remains the live fallback until an entry exists.
 
 ---
 
@@ -207,8 +211,28 @@ a pathname) and adds `passthrough=1` for `Passthrough()` routes so unknown
 params defer to the live handler in dev, mirroring production. `intercept=1`
 requests the intercept (modal slot) variant.
 
-In Node.js dev mode, `__PRERENDER_DEV_URL` is undefined and handlers run
-in-process.
+The Node preset sets `__PRERENDER_DEV_URL` too — both presets round-trip
+through the endpoint (a loopback fetch in the Node preset), so prerender
+rendering always happens Node-side with the build env available.
+
+The endpoint memoizes rendered payloads between HMR edits (#654), keyed by
+router-instance identity (`vite/discovery/dev-prerender-cache.ts`). It
+re-imports the user's entry through a module runner on every request — the
+Node preset on the main RSC environment, the Cloudflare preset on the shared
+temp Node server — so an edit anywhere in the entry → router → urls → handler
+chain re-runs `createRouter()`, registers a NEW router instance, and thereby
+strands the old instance's cache bucket (a WeakMap: stale generations are
+garbage-collected). A warm request is a module-cache hit plus a Map lookup;
+one render warms both the main and `intercept=1` variant keys.
+`x-rango-prerender-cache: HIT | MISS` reports the outcome per response.
+Between edits the endpoint serves frozen results — matching production, where
+artifacts freeze at build time — so `getParams()`/handler side effects (fs,
+DB via buildEnv) run once per edit generation, not once per request. The
+per-request re-import on the Cloudflare temp server is also the freshness
+fix for handler-only edits (files without `urls()`/`createRouter()` that the
+main watcher's route-file sniff ignores): the temp server's own watcher
+invalidates its graph, and the re-import re-evaluates exactly the dirty
+subgraph.
 
 ---
 
@@ -283,6 +307,98 @@ defined way to keep a live fallback. So a render error is either "fail" or "warn
 The same `matchForPrerender` powers the dev `/__rsc_prerender` endpoint, so a render
 error in dev surfaces there too: the endpoint logs it and falls through to a live
 render rather than serving a frozen error page.
+
+---
+
+## Build-time PPR shells (producer B)
+
+Pre-rendering is caching at build time — and for a route that ALSO declares the
+`ppr` path option, that now extends one layer up: the build additionally
+produces the route's complete PPR shell entry (`ShellCacheEntry`: HTML prelude,
+postponed resume state, snapshot, tag union), so the FIRST request after a
+deploy serves `x-rango-shell: HIT` with zero runtime capture. One entry format,
+two producers (runtime capture / build), one consumer — the worker cannot tell
+where an entry came from. Design: `docs/design/shell-fast-path.md`.
+
+### Build flow
+
+1. `expandPrerenderRoutes` records each Prerender+ppr URL as a shell candidate
+   (`matchForPrerender` now surfaces the matched route entry's `ppr` option)
+   and retains the Flight payload JSON in memory.
+2. The shell prerender phase (`vite/discovery/shell-prerender-phase.ts`, a
+   `buildApp` post hook) runs AFTER every environment bundle is written — the
+   prelude embeds the BUILT client bootstrap URL, which does not exist at
+   buildStart. It reuses the buildStart temp server (kept alive on discovery
+   state), seeds an in-realm prerender store from the retained payloads, then
+   runs global and route middleware before producer A's capture core
+   (`prerender/build-shell-capture.ts`, built on `deriveShellCaptureContext` +
+   `captureAndStoreShell`) per URL. Middleware sees `ctx.build === true`;
+   `ctx.waitUntil()` is inert so build capture cannot enqueue live response
+   work, and `ctx.dynamic()` skips the shell for that URL. After middleware,
+   the capture's `match()` HITs the prerender store and REPLAYS the build-time
+   segments — no handler execution — with live-lane loaders masked into holes,
+   identical to runtime capture. The fizz half runs in the temp server's SSR
+   environment runner; production-hashed client references bridge to dev
+   refKeys through a wrapped `__vite_rsc_client_require__` (same
+   `computeProductionHash`).
+3. Entries are stamped with the MAIN build's version (the version plugin's
+   value folded into the shipped worker) and staged as `__ps-*.js` asset
+   modules under `dist/rsc/assets/`, with a lazy `__shell-manifest.js` and a
+   `globalThis.__loadShellManifestModule` injection into the RSC entry —
+   mirroring the prerender payload manifest. No static file serving; the
+   worker handles every request.
+4. A capture that is refused (identity guard, rejected bake-lane loader),
+   produces no shell, or never consulted the prerender store is SKIPPED with a
+   loud `SHELL SKIP` build line — the route keeps runtime-capture semantics,
+   never a wrong-lane bake. Manifest keys are pathname-only (router ids hash
+   transformed source positions and differ across realms); pathname collisions
+   across routers are declined at build.
+
+### Runtime flow
+
+On a runtime shell-store MISS, the serve path consults the build manifest
+(`rsc/shell-build-manifest.ts` `lookupBuildShell`) and serves a valid entry
+through the SAME `serveShellHit`. Gates: search-less requests only (the build
+captured the bare pathname; a search-bearing URL has its own shell identity,
+owned by runtime capture), `reactVersion`/`buildVersion` validity, payload
+integrity, and tag markers (below). The runtime store is always read FIRST, so
+a captured entry supersedes the baked one as soon as it lands.
+
+`ctx.dynamic()` is the per-request opt-out. If middleware calls it, the PPR
+commit point does not read stored shells and the request stays on axis 1. If a
+handler calls it later during an axis-1 MISS render, the response is still axis 1
+and no follow-up shell capture is scheduled. Build shell capture uses the same
+flag: a build middleware call returns a `dynamic` shell outcome and the URL is
+left for runtime.
+
+### Lifecycle semantics
+
+| Event                    | Effect on the baked entry                                                                                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| deploy (new build)       | retired: buildVersion gate + a fresh manifest replace it                                                                                                               |
+| `ppr.ttl` elapses        | STALENESS only: still serves, but a runtime recapture is scheduled — SWR is the upgrade path from baked entry to fresher runtime entry, never the bootstrap path       |
+| `updateTag()` on its tag | evicted WITHOUT tombstones: the manifest is immutable, so `isTagsInvalidatedSince(tags, entry.createdAt)` (new optional store method) compares the store's tag markers |
+| store lacks the method   | TAGGED baked entries are not served (warned once — updateTag could never evict them); untagged entries are unaffected                                                  |
+
+`isTagsInvalidatedSince` implementations: CFCacheStore wraps its existing KV
+tag-marker check; MemorySegmentCacheStore records per-tag invalidation
+instants; VercelCacheStore writes its own `tm`-family markers on
+`invalidateTags` (the platform's `expireTag` deletes entries and keeps no
+queryable history).
+
+### Dev mode
+
+No build manifest exists in dev, so producer B runs ON DEMAND: the
+read-through's dev branch fetches `/__rsc_shell` (a dev-server endpoint
+mirroring `/__rsc_prerender`), which runs the same capture core in the dev
+realms — main-server environments on the Node preset, the shared temp Node
+server on Cloudflare (whose `virtual:entry-ssr` now resolves to the REAL
+rango SSR entry, lazily) — memoized per router HMR generation and per caller
+version. The endpoint is policy-free: the serve gate sends the resolved
+`ttl`/`swr`/`tags`/version. Only trie `pr`-flagged routes arm the dev branch
+(production's exact candidate set), and a `/__rsc_prerender` pre-flight
+refuses non-prerenderable routes so a live-handler render can never be served
+as a baked shell. First dev request: `x-rango-shell: HIT`, same as production.
 
 ---
 
@@ -487,12 +603,14 @@ At runtime, the cache-lookup middleware uses these flags:
 
 ## Key Files
 
-| File                                                                                                                                                                 | Role                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                              |
-| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                        |
-| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                   |
-| `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                            |
-| `src/cache/cache-scope.ts`                                                                                                                                           | RSC serialize/deserialize for segments                                                                                                                |
-| `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel) |
-| `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                |
+| File                                                                                                                                                                 | Role                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                                 |
+| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                           |
+| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                      |
+| `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                               |
+| `src/cache/cache-scope.ts`                                                                                                                                           | RSC serialize/deserialize for segments                                                                                                                   |
+| `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel)    |
+| `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                   |
+| `src/vite/discovery/shell-prerender-phase.ts` (buildApp post) + `src/prerender/build-shell-capture.ts` (`captureShellForBuild`)                                      | Producer B: build-time PPR shell capture + `__ps` asset/manifest staging (#699); replays middleware with `ctx.build === true` and honors `ctx.dynamic()` |
+| `src/rsc/shell-build-manifest.ts` (`lookupBuildShell`) + `src/prerender/shell-manifest-key.ts`                                                                       | Runtime read-through for baked shell entries (production manifest / dev `/__rsc_shell` on-demand)                                                        |

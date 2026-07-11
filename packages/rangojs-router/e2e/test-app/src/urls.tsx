@@ -8,6 +8,7 @@ import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
 import { clientSuspensePatterns } from "./urls/client-suspense.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
+
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,
@@ -23,6 +24,10 @@ import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
+import { shellCachePatterns } from "./urls/shell-cache.js";
+import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
+import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
+import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
@@ -57,6 +62,7 @@ import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { clientReversePatterns } from "./urls/client-reverse.js";
+import { catchAllPatterns } from "./urls/catch-all.js";
 import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
@@ -853,11 +859,34 @@ export const urlpatterns = urls(
       // Cache test patterns (includes intercepts with layouts)
       include("/", cachePatterns, { name: "" }),
 
+      // PPR shell caching (docs/design/ppr-shell-resume.md). Opt-in per route
+      // via the `ppr` path option — serving is integral to the router (no
+      // middleware); the loader behind loading() is the live hole that resumes
+      // into the frozen prelude on a HIT.
+      include("/", shellCachePatterns, { name: "" }),
+      // ppr header-write guard fixtures (issue #713) — isolated routes; the
+      // guard routes error deterministically and are only fetched by their
+      // own tests (ppr-header-guard.test.ts).
+      include("/ppr-header-guard", pprHeaderGuardPatterns, {
+        name: "pprHeaderGuard",
+      }),
+
+      // PPR action-correctness fixtures — /shell-cache-action.
+      include("/", shellCacheActionPatterns, { name: "" }),
+
+      // PPR guarding + scope-fidelity fixtures — /shell-secure (global auth
+      // middleware, mounted in router.tsx) and /shell-secure-dsl (route DSL
+      // middleware rejection); the commit point is after ALL middleware.
+      include("/", shellSecurePatterns, { name: "" }),
+
       // Theme patterns
       include("/theme", themePatterns, { name: "theme" }),
 
       // Href test patterns
       include("/href", hrefPatterns, { name: "href" }),
+
+      // Named catch-all (:slug* / :path+) probes (issue #634)
+      include("/catch-all", catchAllPatterns, { name: "catchall" }),
 
       // Include scoping reverse behavior probes
       include("/unnamed-reverse", unnamedIncludeReversePatterns),
