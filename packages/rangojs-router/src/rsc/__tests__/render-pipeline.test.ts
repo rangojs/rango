@@ -71,6 +71,24 @@ describe("RSC render pipeline", () => {
     expect(renderToReadableStream).not.toHaveBeenCalled();
   });
 
+  it("stamps Flight with the router's captured dev discovery epoch", () => {
+    const renderToReadableStream: HandlerContext["renderToReadableStream"] =
+      vi.fn(() => new ReadableStream<Uint8Array>());
+    const { input } = makeInput(renderToReadableStream);
+
+    renderRscFlightStage({
+      ...input,
+      ctx: { ...input.ctx, devDiscoveryEpoch: 17 },
+    });
+
+    expect(renderToReadableStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ devDiscoveryEpoch: 17 }),
+      }),
+      expect.any(Object),
+    );
+  });
+
   it("drives Flight, HTML, and response in order without reading the streams", async () => {
     const flight = new ReadableStream<Uint8Array>();
     const html = new ReadableStream<Uint8Array>();
