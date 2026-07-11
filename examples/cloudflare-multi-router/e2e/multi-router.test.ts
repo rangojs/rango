@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { blockPrefetch } from "@rangojs/router/testing/e2e";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
@@ -627,6 +628,7 @@ test.describe("multi-router (dev)", () => {
       const tab1 = await context.newPage();
       const tab2 = await context.newPage();
       try {
+        await blockPrefetch(tab1);
         await tab1.goto(f.url("/app-a"));
         await waitForHydration(tab1);
         await tab2.goto(f.url("/app-a"));
@@ -1242,6 +1244,7 @@ test.describe("multi-router (production)", () => {
       const tab1 = await context.newPage();
       const tab2 = await context.newPage();
       try {
+        await blockPrefetch(tab1);
         await tab1.goto(f.url("/app-a"));
         await waitForHydration(tab1);
         await tab2.goto(f.url("/app-a"));
