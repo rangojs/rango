@@ -60,6 +60,7 @@ export const NamedRoutes = {
   pprNonce: "/ppr-nonce",
   pprShell: "/ppr-shell",
   pprShellExecMatrix: "/ppr-shell/exec-matrix",
+  pprShellInlineAction: "/ppr-shell/inline-action",
   pprShellLayoutLoader: "/ppr-shell/layout-loader",
   pprShellLayoutLoaderBare: "/ppr-shell/layout-loader-bare",
   pprShellNoHole: "/ppr-shell/no-hole",

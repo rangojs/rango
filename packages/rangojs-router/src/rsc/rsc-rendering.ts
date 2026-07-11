@@ -10,6 +10,7 @@ import {
   getRequestContext,
   setRequestContextParams,
   runWithRequestContext,
+  wireRenderBarrier,
 } from "../server/request-context.js";
 import {
   SeededShellStore,
@@ -682,6 +683,15 @@ function serveShellHit(
       : null;
   const tailT0 = tailTiming ? performance.now() : 0;
 
+  const createTailContext = (): RequestContext<any> => {
+    const tailCtx: RequestContext<any> = Object.create(reqCtx);
+    // Matching writes render state onto the derived context. Its barrier must
+    // close over that same context or a streaming tail inherits the base
+    // context's premature non-streaming handle snapshot.
+    wireRenderBarrier(tailCtx, handleStore);
+    return tailCtx;
+  };
+
   const renderTail = async (
     activeCtx: RequestContext<any>,
   ): Promise<ReadableStream<Uint8Array> | { redirect: string }> => {
@@ -759,7 +769,7 @@ function serveShellHit(
     // stay live. The overlay lives on a DERIVED context so the shared reqCtx is
     // untouched.
     if (entry.snapshot && entry.snapshot.length > 0) {
-      const seededCtx: RequestContext<any> = Object.create(reqCtx);
+      const seededCtx = createTailContext();
       if (reqCtx._cacheStore) {
         seededCtx._cacheStore = new SeededShellStore(
           reqCtx._cacheStore,
@@ -813,7 +823,7 @@ function serveShellHit(
     // fragment splice on a derived context — never the shared reqCtx, from which
     // scheduleShellCapture derives the capture context (the flag must not be
     // inherited there).
-    const fragmentCtx: RequestContext<any> = Object.create(reqCtx);
+    const fragmentCtx = createTailContext();
     fragmentCtx._shellFragmentPayload = true;
     return runWithRequestContext(fragmentCtx, () => renderTail(fragmentCtx));
   })();

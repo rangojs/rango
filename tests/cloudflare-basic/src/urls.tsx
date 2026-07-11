@@ -44,6 +44,7 @@ import {
   PprExecLayout,
   PprExecBadgeSlot,
   PprExecPage,
+  PprInlineActionPage,
   PprPrerenderedArticle,
   PprPrerenderedEvictArticle,
   PprPrerenderSeqSlot,
@@ -698,6 +699,10 @@ export const urlpatterns = urls(
             ]),
           ],
         ),
+        path("/ppr-shell/inline-action", PprInlineActionPage, {
+          name: "pprShellInlineAction",
+          ppr: { ttl: 300, swr: 120 },
+        }),
         // Prerender + ppr composition (docs/design/shell-fast-path.md):
         // build-time segments are the frozen prelude; the slot-owned loader
         // is the badge-sized streaming hole. See pages/ppr-shell.tsx.

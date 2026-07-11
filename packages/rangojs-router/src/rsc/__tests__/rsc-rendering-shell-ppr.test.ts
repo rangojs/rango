@@ -16,6 +16,10 @@ vi.mock("../shell-capture.js", async (importOriginal) => {
 });
 
 import React from "react";
+import { createRouter } from "../../router.js";
+import { createLoader } from "../../loader.rsc.js";
+import { createHandle } from "../../handle.js";
+import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
 import { scheduleShellCapture } from "../shell-capture.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
@@ -128,6 +132,7 @@ interface RunOpts {
     HandlerContext<unknown>["router"]["matchPartial"]
   >;
   arm?: (reqCtx: RequestContext<unknown>) => void;
+  router?: HandlerContext<unknown>["router"];
 }
 
 async function run(opts: RunOpts): Promise<{
@@ -137,6 +142,7 @@ async function run(opts: RunOpts): Promise<{
   store: MemorySegmentCacheStore;
 }> {
   const { ctx } = makeCtx(opts.ssrModule, opts.streamMode ?? "stream");
+  if (opts.router) (ctx as any).router = opts.router;
   if (opts.matchPartial) {
     (ctx.router.matchPartial as ReturnType<typeof vi.fn>).mockImplementation(
       opts.matchPartial,
@@ -389,6 +395,64 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     // Fresh hit: no recapture.
     expect(scheduleMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["seeded", [{ family: "item", key: "seed", value: { value: "x" } }]],
+    ["fragment-only", undefined],
+  ] as const)(
+    "%s tail gives ctx.rendered() the streamed handle snapshot from its own render",
+    async (_label, snapshot) => {
+      const TailHandle = createHandle<string, string[]>(
+        (values) => values.flat(),
+        "test#ShellHitTailHandle",
+      );
+      const seen: string[][] = [];
+      const TailLoader = (createLoader as Function)(
+        async (loaderCtx: any) => {
+          await loaderCtx.rendered();
+          seen.push(loaderCtx.use(TailHandle));
+          return null;
+        },
+        undefined,
+        "test#ShellHitTailLoader",
+      );
+      const StreamingSlot = async (handlerCtx: any) => {
+        const push = handlerCtx.use(TailHandle);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        push("tail-stream");
+        return React.createElement("div", null, "slot");
+      };
+      const router = createRouter({} as any);
+      router.routes(({ layout, loader, loading, parallel, path }: any) => [
+        layout(React.createElement("main"), () => [
+          parallel({ "@side": StreamingSlot }, () => [
+            loading(React.createElement("span", null, "loading")),
+          ]),
+          path(
+            "/p",
+            () => React.createElement("div", null, "page"),
+            { name: "shellHitTail" },
+            () => [loader(TailLoader)],
+          ),
+        ]),
+      ]);
+      await buildRouterTrieFromUrlpatterns(router);
+
+      const ssrModule = fullSsrModule();
+      const { response } = await run({
+        ssrModule,
+        ppr: true,
+        router: router as unknown as HandlerContext<unknown>["router"],
+        shell: shellEntry({
+          snapshot: snapshot as ShellSnapshotRecord[] | undefined,
+        }),
+      });
+
+      await readAll(response.body!);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(seen).toEqual([["tail-stream"]]);
+    },
+  );
 
   it("ctx.dynamic() during the HIT tail render does NOT un-commit the shell (stays HIT, no recapture)", async () => {
     // The commit already happened by the time the tail renders, so a dynamic()

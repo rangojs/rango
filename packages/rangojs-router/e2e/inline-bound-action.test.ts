@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
@@ -17,6 +18,40 @@ import {
 // value, so a correct round-trip proves bound-arg serialization end to end.
 // This is the path most exposed to a transformHoistInlineDirective refactor in a
 // future @vitejs/plugin-rsc bump. Dev + production.
+// Runtime PPR is intentionally covered separately from the build-time
+// Static/Prerender replay blocked in #584 on plugin-rsc #1246: shell HIT and
+// partial-navigation replay must not inherit that external dependency.
+
+const HTML_HEADERS = { Accept: "text/html" };
+
+async function warmToHit(request: Page["request"], url: string): Promise<void> {
+  await expect(async () => {
+    const response = await request.get(url, { headers: HTML_HEADERS });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-shell"]).toBe("HIT");
+  }).toPass({ timeout: 10_000 });
+}
+
+async function expectBoundActionRoundTrip(page: Page): Promise<void> {
+  await expect(testId(page, "inline-bound-action-page")).toBeVisible();
+  const rendered = await testId(
+    page,
+    "inline-bound-action-rendered-captured",
+  ).textContent();
+  const capturedValue = rendered!.replace(/^rendered:/, "");
+  expect(capturedValue).toMatch(/^server-token-/);
+
+  await expect(testId(page, "inline-bound-action-captured")).toHaveText(
+    "captured:none",
+  );
+  await testId(page, "inline-bound-action-submit").click();
+  await expect(testId(page, "inline-bound-action-captured")).toHaveText(
+    `captured:${capturedValue}`,
+  );
+  await expect(testId(page, "inline-bound-action-submitted")).toHaveText(
+    "submitted:from-client",
+  );
+}
 
 function defineSpec(label: string, mode: "dev" | "build") {
   test.describe(`inline bound action (${label})`, () => {
@@ -34,35 +69,38 @@ function defineSpec(label: string, mode: "dev" | "build") {
       await waitForHydration(page);
       await using __ = await expectNoReload(page);
 
-      await expect(testId(page, "inline-bound-action-page")).toBeVisible();
+      await expectBoundActionRoundTrip(page);
+    });
 
-      // The captured value is generated on the server at render time. Read what
-      // was actually rendered so the assertion is independent of the (dynamic)
-      // token value.
-      const rendered = await testId(
-        page,
-        "inline-bound-action-rendered-captured",
-      ).textContent();
-      const capturedValue = rendered!.replace(/^rendered:/, "");
-      expect(capturedValue).toMatch(/^server-token-/);
+    test("runtime shell HIT preserves an embedded bound action", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const url = f.url("/inline-bound-action?probe=ppr-hit");
+      await warmToHit(page.request, url);
 
-      // Before submit, useActionState has no result yet.
-      await expect(testId(page, "inline-bound-action-captured")).toHaveText(
-        "captured:none",
+      const response = await page.goto(url);
+      expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await expectBoundActionRoundTrip(page);
+    });
+
+    test("partial PPR navigation preserves an embedded bound action", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await warmToHit(
+        page.request,
+        f.url("/inline-bound-action?probe=ppr-nav"),
       );
 
-      // Invoke the action via the client form. The server must decrypt the
-      // bound arg and echo it back.
-      await testId(page, "inline-bound-action-submit").click();
-
-      // The action's returned state carries the captured (bound) value and the
-      // submitted form field. Both must round-trip.
-      await expect(testId(page, "inline-bound-action-captured")).toHaveText(
-        `captured:${capturedValue}`,
-      );
-      await expect(testId(page, "inline-bound-action-submitted")).toHaveText(
-        "submitted:from-client",
-      );
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "nav-ppr-inline-action").click();
+      await expect(page).toHaveURL(/inline-bound-action\?probe=ppr-nav$/);
+      await expectBoundActionRoundTrip(page);
     });
   });
 }

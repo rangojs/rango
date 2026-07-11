@@ -15,7 +15,11 @@ import { PprShellSettled } from "../components/PprShellSettled.js";
 import { PprBakeSlow } from "../components/PprBakeSlow.js";
 import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
-import { PprShellExecMatrix } from "../components/PprShellExecMatrix.js";
+import {
+  PprInlineActionForm,
+  PprShellExecMatrix,
+  type PprInlineActionState,
+} from "../components/PprShellExecMatrix.js";
 import { PprPrerenderSeq } from "../components/PprPrerenderSeq.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
@@ -170,6 +174,22 @@ export function PprExecBadgeSlot() {
 export function PprExecPage() {
   pprExecCounters.path += 1;
   return <PprShellExecMatrix loader={PprShellExecLoader} />;
+}
+
+export function PprInlineActionPage() {
+  const captured = `cf-server-token-${crypto.randomUUID()}`;
+  async function submit(
+    _previous: PprInlineActionState,
+    formData: FormData,
+  ): Promise<PprInlineActionState> {
+    "use server";
+    return {
+      captured,
+      submitted: String(formData.get("value")),
+    };
+  }
+
+  return <PprInlineActionForm action={submit} renderedCaptured={captured} />;
 }
 
 // Prerender + ppr composition (docs/design/shell-fast-path.md): build-time

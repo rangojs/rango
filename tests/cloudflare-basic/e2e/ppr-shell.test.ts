@@ -29,6 +29,9 @@ import type { PprExecCounters } from "../src/loaders/ppr-shell";
 // pins the whole tree and the sanity gate refuses to store (eternal MISS — the
 // shape this suite was first written in). See docs/design/ppr-shell-resume.md
 // ("The hole contract").
+// The inline-action rows distinguish runtime PPR from build-time
+// Static/Prerender replay (#584, blocked on plugin-rsc #1246): a KV shell HIT and
+// partial navigation must preserve the embedded bound server reference.
 
 const LOADER_DELAY_MS = 400;
 
@@ -65,6 +68,24 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
       "HIT",
     );
   }).toPass({ timeout: 20000 });
+}
+
+async function expectInlineActionRoundTrip(page: Page): Promise<void> {
+  await expect(testId(page, "ppr-inline-action-page")).toBeVisible();
+  const rendered = await testId(
+    page,
+    "ppr-inline-action-rendered",
+  ).textContent();
+  const captured = rendered!.replace(/^rendered:/, "");
+  expect(captured).toMatch(/^cf-server-token-/);
+
+  await testId(page, "ppr-inline-action-submit").click();
+  await expect(testId(page, "ppr-inline-action-captured")).toHaveText(
+    `captured:${captured}`,
+  );
+  await expect(testId(page, "ppr-inline-action-submitted")).toHaveText(
+    "submitted:from-client",
+  );
 }
 
 /** Native fetch + incremental reader: first-chunk latency and the full HTML body. */
@@ -110,6 +131,39 @@ function describePprShell(mode: "dev" | "build") {
 
   test.describe(`ppr-shell caching (${label})`, () => {
     const f = useFixture({ root: ".", mode });
+
+    test("runtime shell HIT preserves an embedded bound action", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const url = f.url("/ppr-shell/inline-action?probe=ppr-inline-hit");
+      await warmToHit(page.request, url);
+
+      const response = await page.goto(url);
+      expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await expectInlineActionRoundTrip(page);
+    });
+
+    test("partial PPR navigation preserves an embedded bound action", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await warmToHit(
+        page.request,
+        f.url("/ppr-shell/inline-action?probe=ppr-inline-nav"),
+      );
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "nav-ppr-inline-action").click();
+      await expect(page).toHaveURL(
+        /ppr-shell\/inline-action\?probe=ppr-inline-nav$/,
+      );
+      await expectInlineActionRoundTrip(page);
+    });
 
     // --- Working today: engagement, bypass matrix, axis-1 render/hydration. ---
 

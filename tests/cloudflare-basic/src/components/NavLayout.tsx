@@ -72,6 +72,13 @@ export function NavLayout() {
         >
           PPR navigation replay
         </Link>
+        <Link
+          to="/ppr-shell/inline-action?probe=ppr-inline-nav"
+          data-testid="nav-ppr-inline-action"
+          prefetch="none"
+        >
+          PPR inline action
+        </Link>
       </nav>
       <BreadcrumbNav />
       <Outlet />
