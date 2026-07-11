@@ -12,6 +12,7 @@ import { guardHydrationErrors } from "@shared/e2e";
 import {
   assertPprReplayStatus,
   assertShellStatus,
+  parsePprReplayStatus,
 } from "@rangojs/router/testing/e2e";
 import type { ShellExecCounters } from "./test-app/src/urls/shell-cache.defs";
 
@@ -1167,10 +1168,15 @@ function runShellCacheSpec(f: Fixture): void {
     );
     await testId(page, "shell-stale-replay-2").click();
     const returnToTwo = await returnToTwoPromise;
-    assertPprReplayStatus(
-      { headers: new Headers(returnToTwo.headers()) },
+    const returnToTwoStatus = parsePprReplayStatus({
+      headers: new Headers(returnToTwo.headers()),
+    });
+    // The first /2 visit schedules capture. This return can race that background
+    // work; PPR5 separately pins that a later request eventually becomes a HIT.
+    expect([
       { outcome: "BYPASS", reason: "no-entry" },
-    );
+      { outcome: "HIT", freshness: "fresh" },
+    ]).toContainEqual(returnToTwoStatus);
     await expect(testId(page, "shell-stale-replay-data")).toContainText(
       /^shell-stale-2-execution-\d+$/,
     );

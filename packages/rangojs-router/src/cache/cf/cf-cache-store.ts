@@ -295,6 +295,8 @@ interface KVShellEnvelope {
   lh?: boolean;
   /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
   tw?: true;
+  /** ShellCacheEntry.navigationOnly; its partial-context prelude is not document-safe. */
+  no?: true;
 }
 
 /**
@@ -1819,6 +1821,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           snapshot: envelope.sn,
           handlerLiveHoles: envelope.lh,
           transitionWhen: envelope.tw,
+          navigationOnly: envelope.no,
           createdAt: envelope.c,
         },
         shouldRevalidate,
@@ -1907,6 +1910,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             sn: entry.snapshot,
             lh: entry.handlerLiveHoles,
             tw: entry.transitionWhen,
+            no: entry.navigationOnly,
           };
           await this.kv!.put(kvKey, JSON.stringify(envelope), {
             expirationTtl: retentionTtl,
