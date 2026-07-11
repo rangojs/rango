@@ -5,10 +5,11 @@ import {
   expectNoPageError,
   testId,
   expectNoReload,
+  waitForNavigation,
 } from "./helper";
+import { guardHydrationErrors, writeFileAndAwaitHmr } from "@shared/e2e";
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
 
 test.describe("hmr", () => {
   const f = useFixture({
@@ -16,16 +17,51 @@ test.describe("hmr", () => {
     mode: "dev",
   });
 
-  // Restore git-tracked sources in case a prior timed-out test left
-  // modified files on disk (afterEach does not run when workers crash).
+  const pprShellPath = path.join(f.root, "src/pages/ppr-shell.tsx");
+  let pprShellOriginal = "";
+
   test.beforeAll(() => {
-    try {
-      execSync("git checkout -- src/pages/", {
-        cwd: f.root,
-        stdio: "ignore",
-      });
-    } catch {}
+    pprShellOriginal = fs.readFileSync(pprShellPath, "utf-8");
   });
+
+  const HTML_HEADERS = { Accept: "text/html" };
+  const RSC_VERSION_PATTERN = /\[rango\] RSC module changed, version updated:/;
+
+  async function warmPprToHit(
+    request: Page["request"],
+    url: string,
+  ): Promise<void> {
+    await expect(async () => {
+      const response = await request.get(url, { headers: HTML_HEADERS });
+      expect(response.status()).toBe(200);
+      await response.text();
+      expect(response.headers()["x-rango-shell"]).toBe("HIT");
+    }).toPass({ timeout: 30_000 });
+  }
+
+  async function writeAndApplyHmr(
+    page: Page,
+    content: string,
+    waitForApplied: () => Promise<void>,
+  ): Promise<void> {
+    await writeFileAndAwaitHmr(page, pprShellPath, content, {
+      totalTimeoutMs: 30_000,
+      getServerOutput: () => f.proc().stdout(),
+      serverOutputPattern: RSC_VERSION_PATTERN,
+      waitForApplied,
+    });
+  }
+
+  async function writeAndWaitForHmr(
+    page: Page,
+    content: string,
+  ): Promise<void> {
+    await writeFileAndAwaitHmr(page, pprShellPath, content, {
+      totalTimeoutMs: 30_000,
+      getServerOutput: () => f.proc().stdout(),
+      serverOutputPattern: RSC_VERSION_PATTERN,
+    });
+  }
 
   // Store original file contents for cleanup
   const originalContents = new Map<string, string>();
@@ -215,5 +251,102 @@ test.describe("hmr", () => {
     await expect(testId(page, "counter-page")).toBeVisible();
     const countAfter = await testId(page, "counter-value").textContent();
     expect(countAfter).toBe(countBefore);
+  });
+
+  // HMR is dev-only and parity-allowlisted. The underlying document and
+  // partial-navigation PPR contracts run in dev + production in ppr-shell.test.
+  test("PPR document HMR rejects the old shell and recaptures fresh content", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const url = f.url("/ppr-shell?probe=hmr-document");
+    const baseline = "PPR Shell Demo";
+    const updated = "PPR Shell Demo (HMR Updated)";
+    const modified = pprShellOriginal.replace(baseline, updated);
+    expect(modified).not.toBe(pprShellOriginal);
+
+    await warmPprToHit(page.request, url);
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const navigation = await page.goto(url);
+    expect(navigation?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(testId(page, "ppr-shell-header")).toHaveText(baseline);
+
+    try {
+      await using ___ = await expectNoReload(page);
+      await writeAndApplyHmr(page, modified, async () => {
+        await expect(testId(page, "ppr-shell-header")).toHaveText(updated);
+      });
+
+      const miss = await page.request.get(url, { headers: HTML_HEADERS });
+      expect(miss.status()).toBe(200);
+      expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+      expect(await miss.text()).toContain(updated);
+
+      await expect(async () => {
+        const hit = await page.request.get(url, { headers: HTML_HEADERS });
+        expect(hit.status()).toBe(200);
+        const html = await hit.text();
+        expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+        const preludeEnd = html.indexOf("</html>");
+        expect(preludeEnd).toBeGreaterThan(-1);
+        expect(html.slice(0, preludeEnd)).toContain(updated);
+      }).toPass({ timeout: 30_000 });
+    } finally {
+      await writeAndApplyHmr(page, pprShellOriginal, async () => {
+        await expect(testId(page, "ppr-shell-header")).toHaveText(baseline);
+      });
+    }
+  });
+
+  test("PPR partial navigation rejects an old shell snapshot after HMR", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const sourceUrl = f.url("/ppr-shell?probe=hmr-partial-source");
+    const targetUrl = f.url("/ppr-shell/exec-matrix");
+    const baseline = "Exec matrix static chrome";
+    const updated = "Exec matrix static chrome (HMR Updated)";
+    const modified = pprShellOriginal.replace(baseline, updated);
+    expect(modified).not.toBe(pprShellOriginal);
+
+    await warmPprToHit(page.request, sourceUrl);
+    await warmPprToHit(page.request, targetUrl);
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const sourceNavigation = await page.goto(sourceUrl);
+    expect(sourceNavigation?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+
+    try {
+      await using ___ = await expectNoReload(page);
+      await writeAndWaitForHmr(page, modified);
+
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/exec-matrix" &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
+      await testId(page, "nav-ppr-exec").click();
+      const partialResponse = await partialResponsePromise;
+      await waitForNavigation(page, /\/ppr-shell\/exec-matrix$/);
+
+      expect(partialResponse.status()).toBe(200);
+      expect(
+        partialResponse.request().headers()["x-rsc-router-client-path"],
+      ).toBeTruthy();
+      expect(partialResponse.headers()["x-rango-shell"]).toBeUndefined();
+      expect(await partialResponse.text()).toContain(updated);
+      await expect(testId(page, "ppr-exec-chrome")).toHaveText(updated);
+    } finally {
+      await writeAndApplyHmr(page, pprShellOriginal, async () => {
+        await expect(testId(page, "ppr-exec-chrome")).toHaveText(baseline);
+      });
+    }
   });
 });
