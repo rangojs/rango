@@ -247,6 +247,40 @@ describe("SeededShellStore", () => {
     expect(await seeded.get("live-seg")).toBeNull();
   });
 
+  it("can seed only segments so navigation loaders keep item and response reads live", async () => {
+    const inner = new MemorySegmentCacheStore();
+    await inner.setItem("item1", "LIVE-ITEM", { ttl: 60 });
+    await inner.putResponse("res1", new Response("LIVE-RESPONSE"), 60);
+    const seeded = new SeededShellStore(inner, snapshotOf(), {
+      segmentsOnly: true,
+    });
+
+    expect((await seeded.get("seg1"))?.data.tags).toEqual(["pinned"]);
+    expect((await seeded.getItem("item1"))?.value).toBe("LIVE-ITEM");
+    expect(await (await seeded.getResponse("res1"))?.response.text()).toBe(
+      "LIVE-RESPONSE",
+    );
+  });
+
+  it("isolates all segment reads and mutations in segmentsOnly mode", async () => {
+    const inner = new MemorySegmentCacheStore();
+    await inner.set("seg1", segData("original"), 60);
+    await inner.set("unseeded", segData("inner"), 60);
+    const seeded = new SeededShellStore(inner, snapshotOf(), {
+      segmentsOnly: true,
+    });
+
+    expect(await seeded.delete("seg1")).toBe(true);
+    expect(await seeded.get("seg1")).toBeNull();
+    expect(await seeded.get("unseeded")).toBeNull();
+
+    await seeded.set("unseeded", segData("fresh"), 60);
+
+    expect((await seeded.get("unseeded"))?.data.tags).toEqual(["fresh"]);
+    expect((await inner.get("seg1"))?.data.tags).toEqual(["original"]);
+    expect((await inner.get("unseeded"))?.data.tags).toEqual(["inner"]);
+  });
+
   it("passes ALL writes through to the real store unchanged (a live hole may write)", async () => {
     const inner = new MemorySegmentCacheStore();
     const setItemSpy = vi.spyOn(inner, "setItem");

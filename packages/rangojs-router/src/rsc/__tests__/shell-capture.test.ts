@@ -13,6 +13,7 @@ import {
   type ShellCaptureDebugEvent,
 } from "../shell-capture.js";
 import { RecordingShellStore } from "../../cache/shell-snapshot.js";
+import type { ShellCacheEntry } from "../../cache/types.js";
 import { createHandleStore } from "../../server/handle-store.js";
 import {
   createRequestContext,
@@ -225,14 +226,7 @@ function makePutShell() {
   return vi.fn(
     async (
       _key: string,
-      _entry: {
-        prelude: string;
-        postponed: string | null;
-        reactVersion: string;
-        buildVersion?: string;
-        initialTheme?: string;
-        createdAt: number;
-      },
+      _entry: ShellCacheEntry,
       _ttl?: number,
       _swr?: number,
       _tags?: string[],
@@ -303,6 +297,65 @@ describe("captureAndStoreShell", () => {
     );
     const opts = vi.mocked(ssrModule.captureShellHTML!).mock.calls[0]![1];
     expect(opts.maxWaitMs).toBe(15_000);
+  });
+
+  it("marks request-dependent transition gates on the stored shell", async () => {
+    const putShell = makePutShell();
+    const reqCtx = makeReqCtx(putShell);
+    reqCtx._transitionWhen = [{ id: "R0", when: () => true }];
+
+    await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/transition-when:shell", buildVersion: "test-build", ttl: 300 },
+    );
+
+    expect(putShell).toHaveBeenCalledOnce();
+    expect(putShell.mock.calls[0]![1].transitionWhen).toBe(true);
+  });
+
+  it("refuses and reports a shell invalidated by its own capture render", async () => {
+    const store = new MemorySegmentCacheStore();
+    const reqCtx = makeReqCtx();
+    reqCtx._cacheStore = store;
+    const stats: Pick<ShellCaptureDebugEvent, "storeWrite"> = {};
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const captureStartedAt = Date.now();
+    const ssrModule = {
+      ...makeShellSsrModule(),
+      captureShellHTML: vi.fn(async () => {
+        await store.invalidateTags(["own-shell"]);
+        return {
+          prelude: enc("<html><body>shell</body></html>"),
+          postponed: null,
+        };
+      }),
+    } as unknown as SSRModule;
+
+    const outcome = await captureAndStoreShell(
+      ssrModule,
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      {
+        key: "/self-invalidating:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        tags: ["own-shell"],
+      },
+      stats,
+      captureStartedAt,
+    );
+
+    expect(outcome).toBe("refused");
+    expect(stats.storeWrite).toBe("invalidated");
+    expect(await store.getShell("/self-invalidating:shell")).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("store rejected the write"),
+    );
+    warnSpy.mockRestore();
   });
 
   // Identity guard (loader-container-bake): the cookies()/headers() capture

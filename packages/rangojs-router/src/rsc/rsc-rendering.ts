@@ -51,9 +51,13 @@ import {
   describeShellTailTiming,
   publishShellTailTiming,
   takeShellTailTimingForServerTiming,
+  type ResolvedPprConfig,
   type ShellTailTiming,
 } from "./shell-serve.js";
-import { lookupBuildShell } from "./shell-build-manifest.js";
+import {
+  lookupBuildShell,
+  type DevShellLookup,
+} from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
 import {
   resolveSameOriginRedirect,
@@ -62,7 +66,52 @@ import {
 import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
-import type { ShellCacheEntry } from "../cache/types.js";
+import type { ShellCacheEntry, ShellSnapshotRecord } from "../cache/types.js";
+
+function resolveDevShellLookup(
+  reqCtx: RequestContext<any>,
+  pprConfig: ResolvedPprConfig,
+): DevShellLookup | undefined {
+  if (process.env.NODE_ENV === "production") return undefined;
+  return {
+    isPrerenderRoute: reqCtx._classifiedRoute?.matched?.pr === true,
+    routeName: reqCtx._classifiedRoute?.routeKey,
+    ttl: pprConfig.ttl,
+    swr: pprConfig.swr,
+    tags: pprConfig.tags,
+    maxSnapshotBytes: pprConfig.maxSnapshotBytes,
+    captureTimeout: pprConfig.captureTimeout,
+  };
+}
+
+function replayableShellSnapshot(
+  entry: ShellCacheEntry | undefined,
+  buildVersion: string,
+): ShellSnapshotRecord[] | undefined {
+  if (
+    !entry ||
+    !isValidShellHit(entry, buildVersion) ||
+    entry.handlerLiveHoles ||
+    entry.transitionWhen
+  ) {
+    return undefined;
+  }
+  const snapshot = entry.snapshot;
+  const hasSegments = snapshot?.some((record) => {
+    if (
+      !record ||
+      typeof record !== "object" ||
+      record.family !== "segment" ||
+      typeof record.value !== "object" ||
+      record.value === null
+    ) {
+      return false;
+    }
+    const segments = (record.value as { segments?: unknown }).segments;
+    return Array.isArray(segments) && segments.length > 0;
+  });
+  return hasSegments ? snapshot : undefined;
+}
 
 export function handleRscRendering<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -293,18 +342,7 @@ async function handleRscRenderingInner<TEnv>(
             // the dev server's /__rsc_shell endpoint for PRERENDERED routes
             // only (production's exact candidate set). Folded away in
             // production builds (NODE_ENV is a compile-time constant).
-            process.env.NODE_ENV !== "production"
-              ? {
-                  isPrerenderRoute:
-                    reqCtx._classifiedRoute?.matched?.pr === true,
-                  routeName: reqCtx._classifiedRoute?.routeKey,
-                  ttl: pprConfig.ttl,
-                  swr: pprConfig.swr,
-                  tags: pprConfig.tags,
-                  maxSnapshotBytes: pprConfig.maxSnapshotBytes,
-                  captureTimeout: pprConfig.captureTimeout,
-                }
-              : undefined,
+            resolveDevShellLookup(reqCtx, pprConfig),
           );
           if (buildHit) {
             // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
@@ -320,7 +358,14 @@ async function handleRscRenderingInner<TEnv>(
 
   if (isPartial) {
     // Partial render (navigation)
-    const result = await ctx.router.matchPartial(request, { env });
+    const result = await matchPartialWithPprReplay(
+      ctx,
+      request,
+      env,
+      url,
+      reqCtx,
+      nonce,
+    );
 
     if (!result) {
       // Fall back to full render
@@ -514,6 +559,78 @@ async function handleRscRenderingInner<TEnv>(
 }
 
 /**
+ * Reuse a PPR capture's canonical segment record for a partial navigation.
+ * The ordinary matchPartial pipeline remains authoritative: it projects the
+ * cached target tree against the client's segment ids, evaluates revalidation,
+ * and resolves every loader fresh. Only segment-family records are seeded;
+ * captured item/response/loader values belong to document parity and must not
+ * pin navigation data.
+ */
+async function matchPartialWithPprReplay<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  reqCtx: RequestContext<any>,
+  nonce: string | undefined,
+) {
+  const runMatch = () => ctx.router.matchPartial(request, { env });
+  const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
+  const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
+  const store = reqCtx._cacheStore;
+
+  if (
+    request.method !== "GET" ||
+    !pprConfig ||
+    reqCtx._dynamic ||
+    activeNonce !== undefined ||
+    !hasShellFamily(store) ||
+    store.supportsPassiveShellReads !== true
+  ) {
+    return runMatch();
+  }
+
+  const key = buildShellKey(url);
+  let cached: Awaited<ReturnType<typeof store.getShell>> = null;
+  try {
+    cached = await store.getShell(key, { claimRevalidation: false });
+  } catch (error) {
+    reportCacheError(error, "cache-read", "[NavigationPPR] getShell");
+    return runMatch();
+  }
+
+  let snapshot = cached?.shouldRevalidate
+    ? undefined
+    : replayableShellSnapshot(cached?.entry, ctx.version);
+
+  if (!snapshot) {
+    // Production build manifests are local module data. In dev, resolving a
+    // missing build shell would foreground-fetch /__rsc_shell and block an
+    // otherwise ordinary navigation on capture, so replay remains runtime-only.
+    const buildHit = await lookupBuildShell(url, ctx.version, store);
+    if (!buildHit?.stale) {
+      snapshot = replayableShellSnapshot(buildHit?.entry, ctx.version);
+    }
+  }
+
+  if (!snapshot) return runMatch();
+
+  const previousImplicitCache = reqCtx._shellImplicitCache;
+  reqCtx._shellImplicitCache = {
+    ttl: pprConfig.ttl,
+    swr: pprConfig.swr,
+    store: new SeededShellStore(store, snapshot, { segmentsOnly: true }),
+    keyPrefix: "doc",
+  };
+
+  try {
+    return await runMatch();
+  } finally {
+    reqCtx._shellImplicitCache = previousImplicitCache;
+  }
+}
+
+/**
  * Neutralize the shell-HIT degradation redirect target. The inline
  * `location.replace` in a committed 200 body bypasses the 3xx chokepoint
  * (guardOutgoingRedirect only sees 3xx + Location), so this reuses the same
@@ -669,10 +786,11 @@ function serveShellHit(
       // cache lookup HITs the seeded doc entry — the handler layer is REPLAYED,
       // not re-executed (loaders still run fresh). Anything else degrades to
       // the full tail automatically.
-      if (!entry.handlerLiveHoles) {
+      if (!entry.handlerLiveHoles && !entry.transitionWhen) {
         seededCtx._shellImplicitCache = {
           ttl: descriptor.ttl,
           swr: descriptor.swr,
+          keyPrefix: "doc",
         };
         if (INTERNAL_RANGO_DEBUG) {
           console.log(
@@ -681,7 +799,7 @@ function serveShellHit(
         }
       } else if (INTERNAL_RANGO_DEBUG) {
         console.log(
-          `[Server][ppr] shell HIT: fast path declined — handler-live holes; tail re-runs handlers (abs ${Math.round(performance.now())})`,
+          `[Server][ppr] shell HIT: fast path declined — request-dependent handler/transition state; tail re-runs handlers (abs ${Math.round(performance.now())})`,
         );
       }
       // Fragment splice (issue #700): store hits in THIS tail emit their stored

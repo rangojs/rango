@@ -188,6 +188,7 @@ const DEFAULT_MAX_ENTRIES = 1000;
 export class MemorySegmentCacheStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
+  readonly supportsPassiveShellReads: true = true;
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
   private itemCache: Map<string, CachedItemEntry>;
@@ -197,11 +198,9 @@ export class MemorySegmentCacheStore<
   /** prefixed cache key -> set of tags (reverse index for O(tags) unregister) */
   private keyTags: Map<string, Set<string>>;
   /**
-   * tag -> epoch ms of its latest invalidateTags() call. The build-shell
-   * read-through's isTagsInvalidatedSince gate: baked shell entries are
-   * immutable in the build manifest, so eviction is answered by comparing
-   * these markers against the entry's build-time createdAt. Per-isolate,
-   * like every other map here — matching this store's tag semantics.
+   * tag -> epoch ms of its latest invalidateTags() call. Runtime capture races
+   * and immutable build shells are gated by comparing these markers with the
+   * shell generation start. Per-isolate, like every other map here.
    */
   private tagInvalidatedAt: Map<string, number>;
   readonly defaults?: CacheDefaults;
@@ -459,7 +458,14 @@ export class MemorySegmentCacheStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<void> {
+  ): Promise<"stored" | "invalidated"> {
+    if (
+      tags &&
+      tags.length > 0 &&
+      this.tagsInvalidatedSince(tags, entry.createdAt)
+    ) {
+      return "invalidated";
+    }
     const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
     const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
@@ -470,12 +476,17 @@ export class MemorySegmentCacheStore<
     if (tags && tags.length > 0) {
       this.registerTags(tags, prefixedKey);
     }
+    return "stored";
   }
 
   async isTagsInvalidatedSince(
     tags: string[],
     sinceMs: number,
   ): Promise<boolean> {
+    return this.tagsInvalidatedSince(tags, sinceMs);
+  }
+
+  private tagsInvalidatedSince(tags: string[], sinceMs: number): boolean {
     for (const tag of tags) {
       const at = this.tagInvalidatedAt.get(tag);
       // >= so a same-millisecond invalidation wins (freshness over staleness),
