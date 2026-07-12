@@ -762,7 +762,10 @@ cache"` value baked into the shell is PINNED at capture (the capture data
   it: call `cacheTag(...)` from the shell-material render code (the render-time
   lever), or add the tag to `ppr.tags` (operational tags the render cannot know —
   a tenant id, a deploy marker). Ring-1/ring-3 tag invalidation does NOT drop the
-  shell.
+  shell. Tags are optional: if TTL/SWR is the complete freshness policy, leave
+  the shell untagged. Rango does not warn for that choice; with
+  `debugShellCapture` enabled, a stored event reports `untaggedBake: true` when
+  bake-lane loader material uses TTL/SWR-only invalidation.
 - **Uncached nondeterminism in the shell is a hydration hazard**: a raw
   `Date.now()` / `Math.random()` / uncached `fetch` rendered directly in shell
   material (outside any cache ring) drifts between capture and hit and the

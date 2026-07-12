@@ -450,8 +450,10 @@ empty inherited snapshot on a shell HIT.
 The freshness DOCTRINE, and it is deliberate: **within a shell's lifetime, shell
 regions intentionally show CAPTURE-time data.** Parity beats freshness INSIDE the
 shell; freshness comes from the holes, from the shell's own ttl/swr, and from tag
-invalidation of the SHELL (`ppr.tags`). Ring-1/ring-3 tag invalidation does NOT
-invalidate a shell — if you need that coupling, put the same tag in `ppr.tags`.
+invalidation of the SHELL (`cacheTag()` / `ppr.tags`). Tags are optional: an
+untagged shell intentionally uses TTL/SWR-only invalidation. Ring-1/ring-3 tag
+invalidation does NOT invalidate a shell — if you need that coupling, put the
+same tag on the shell.
 
 Two edges worth stating out loud:
 
@@ -520,10 +522,15 @@ context's `_requestTags`, which the capture unions with the route's static
 drops that shell. The document cache reads the same set, so every document-level
 artifact shares the contract.
 
+Leaving the shell untagged is valid when TTL/SWR is the complete freshness
+policy. Rango emits no warning for that choice. Operators who enable
+`debugShellCapture` can observe `untaggedBake: true` on a stored attempt when a
+bake-lane loader contributed material to an untagged shell.
+
 The expiry invariant holds BY CONSTRUCTION, no filtering logic:
 
-- **baked ⇒ evicts** — a component/loader that bakes into the shell executes
-  during capture, so its `cacheTag()` records and the tag rides onto the entry.
+- **tagged bake ⇒ evicts** — a component/loader that bakes into the shell executes
+  during capture, so any `cacheTag()` call records and rides onto the entry.
 - **hole ⇒ fresh** — a subtree behind a renderable `loading()` is masked during
   capture (its loaders never run), so nothing under a hole can tag the shell; it
   stays live and re-renders per request regardless of tag invalidation.
