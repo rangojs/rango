@@ -8,6 +8,7 @@ import {
   isCaptureBackedOff,
   markCaptureBackoff,
   clearCaptureBackoff,
+  describeShellCaptureEvent,
   takeCaptureDebugEventForTiming,
   REFUSED_CAPTURE_DEV_MAX_MS,
   type ShellCaptureDebugEvent,
@@ -1010,6 +1011,73 @@ describe("runShellCapture", () => {
     expect(takeCaptureDebugEventForTiming("/debug-stored:shell")).toBe(
       undefined,
     );
+  });
+
+  it("reports TTL-only loader baking only through opt-in capture diagnostics", async () => {
+    const events: ShellCaptureDebugEvent[] = [];
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { ctx, ssrModule } = makeCtx(
+        okMatch,
+        vi.fn(async () => ({
+          prelude: enc("<html><body>captured</body></html>"),
+          postponed: null,
+        })),
+      );
+      (ctx as any).renderToReadableStream = vi.fn(() => {
+        getRequestContext()._shellCaptureLoaderRecords?.set(
+          "M0D0.app/x#L",
+          Promise.resolve({ data: 1 }),
+        );
+        return emptyStream();
+      });
+
+      await runShellCapture(
+        ctx,
+        new Request("http://localhost/untagged"),
+        {},
+        new URL("http://localhost/untagged"),
+        makeReqCtx(),
+        ssrModule,
+        {
+          key: "/untagged:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          store: { putShell: makePutShell() } as any,
+          debugSink: (event) => events.push(event),
+        },
+      );
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        outcome: "stored",
+        untaggedBake: true,
+      });
+      expect(describeShellCaptureEvent(events[0]!)).toContain("untagged-bake");
+
+      events.length = 0;
+      await runShellCapture(
+        ctx,
+        new Request("http://localhost/tagged"),
+        {},
+        new URL("http://localhost/tagged"),
+        makeReqCtx(),
+        ssrModule,
+        {
+          key: "/tagged:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          tags: ["products"],
+          store: { putShell: makePutShell() } as any,
+          debugSink: (event) => events.push(event),
+        },
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]?.untaggedBake).toBeUndefined();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("emits an event per retry attempt and never fails the capture on a throwing sink", async () => {
