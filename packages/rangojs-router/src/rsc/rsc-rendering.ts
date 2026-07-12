@@ -63,7 +63,6 @@ import {
 import { contextGet } from "../context-var.js";
 import {
   getNavigationContextHeader,
-  getInterceptSourceHeader,
   prerenderStoreShortCircuits,
 } from "../router/navigation-snapshot.js";
 import {
@@ -93,6 +92,7 @@ type PprReplayBypassReason =
   | "passive-read-unsupported"
   | "no-navigation-context"
   | "prerender-store"
+  | "intercept"
   | "cache-disabled"
   | "read-error"
   | "no-entry"
@@ -162,6 +162,45 @@ function shouldHealReplayMiss(
     reason === "invalid-version" ||
     reason === "corrupt-entry" ||
     reason === "stale-build-entry"
+  );
+}
+
+/**
+ * Post-match truth override for a pre-match BYPASS classification. The gate
+ * decides before matchPartial runs, but two facts only the match can settle:
+ * whether the prerender store ACTUALLY served (either artifact variant — the
+ * gate's probe reads only the non-intercept one), and whether the navigation
+ * resolved to an intercept (findInterceptForRoute runs during the match; the
+ * intercept-source header proves nothing in either direction). Both are
+ * stamped on the request context by withCacheLookup. A replay HIT is never
+ * overridden — the seeded record was demonstrably consumed, so neither fact
+ * can be true.
+ */
+function reclassifyReplayStatus(
+  reqCtx: RequestContext<any>,
+  status: PprReplayStatus | undefined,
+): PprReplayStatus | undefined {
+  if (!status || status.outcome === "HIT") return status;
+  if (reqCtx._servedFromPrerenderStore) {
+    return { outcome: "BYPASS", reason: "prerender-store" };
+  }
+  if (reqCtx._resolvedIntercept) {
+    return { outcome: "BYPASS", reason: "intercept" };
+  }
+  return status;
+}
+
+/**
+ * Heal captures are pointless when the match served from the prerender store
+ * (its captures record no doc segment record, so the healed snapshot could
+ * never become consumable) or resolved an intercept (replay is never armed
+ * for intercept navigations — match-api keeps their normal cache path).
+ * Read AFTER matchPartial resolves; see reclassifyReplayStatus.
+ */
+function replayHealSuppressed(reqCtx: RequestContext<any>): boolean {
+  return (
+    reqCtx._servedFromPrerenderStore === true ||
+    reqCtx._resolvedIntercept === true
   );
 }
 
@@ -742,8 +781,11 @@ async function matchPartialWithPprReplay<TEnv>(
   };
   const runMatch = async (status?: PprReplayStatus) => {
     const result = await ctx.router.matchPartial(request, { env });
-    if (status) recordReplayStatus(status);
-    return { result, status };
+    // The match may have settled a fact the pre-match gate could only guess
+    // at (prerender serve, intercept resolution) — report the truth.
+    const finalStatus = reclassifyReplayStatus(reqCtx, status);
+    if (finalStatus) recordReplayStatus(finalStatus);
+    return { result, status: finalStatus };
   };
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
   const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
@@ -792,16 +834,15 @@ async function matchPartialWithPprReplay<TEnv>(
   // Shared predicate with the middleware (it declines on dev HMR — such
   // partials fall through to the ordinary replay decision here too).
   //
-  // An X-RSC-Router-Intercept-Source header also falls through: whether the
-  // navigation IS an intercept is only resolved post-match (match-api's
-  // findInterceptForRoute — the header may resolve to no intercept at all),
-  // so the gate cannot know which prerender variant (`paramHash` vs
-  // `paramHash + "/i"`) the middleware will read. Pre-deciding on the header
-  // probed the wrong artifact for header-carrying non-intercept navigations
-  // and wrongly suppressed replay/healing. Resolved intercepts keep their
-  // normal cache path anyway (match-api never arms replay for them).
+  // The probe is a PRE-match fast path, not the truth: it reads only the
+  // non-intercept artifact, and whether the navigation IS an intercept (and
+  // therefore whether tryPrerenderLookup reads `paramHash` or
+  // `paramHash + "/i"`) is resolved during the match by match-api's
+  // findInterceptForRoute — an intercept-source header proves nothing in
+  // either direction. runMatch reclassifies every BYPASS from the stamped
+  // post-match facts (reclassifyReplayStatus), so a wrong guess here can
+  // skip the two getShell reads but never mis-report or mis-heal.
   if (
-    getInterceptSourceHeader(request) === null &&
     prerenderStoreShortCircuits(routeSnapshot?.matched?.pr, request) &&
     (await prerenderEntryExists(
       routeSnapshot?.matched?.routeKey,
@@ -929,19 +970,32 @@ async function matchPartialWithPprReplay<TEnv>(
       };
       try {
         const result = await ctx.router.matchPartial(request, { env });
-        const status: PprReplayStatus = explicitCacheBypass
+        const preStatus: PprReplayStatus = explicitCacheBypass
           ? { outcome: "BYPASS", reason: "cache-disabled" }
           : explicitCacheHit
             ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
             : { outcome: "BYPASS", reason: bypassReason ?? "no-entry" };
+        const status = reclassifyReplayStatus(reqCtx, preStatus) ?? preStatus;
         recordReplayStatus(status);
         return {
           result,
           status,
-          // A lookup-time opt-out makes every heal snapshot unusable; the
-          // other outcomes keep the original heal decision.
+          // A lookup-time opt-out makes every heal snapshot unusable
+          // (recordShellCaptureDocRecord refuses under the same predicate),
+          // and a prerender-served or intercept match never consults a heal
+          // snapshot at all. Otherwise heal the shouldHealReplayMiss set PLUS
+          // `no-segment-snapshot`: an entry captured while condition() was
+          // false legitimately lacks a snapshot, and a later request whose
+          // lookup did NOT refuse (condition true now) can heal it — the
+          // capture derives from THIS request's context, so its doc record
+          // records. Excluding it left replay dead until the document
+          // recaptured. The always-false route stays protected: its every
+          // lookup refuses, so explicitCacheBypass suppresses the heal.
           captureNeeded:
-            !explicitCacheBypass && shouldHealReplayMiss(bypassReason),
+            !explicitCacheBypass &&
+            !replayHealSuppressed(reqCtx) &&
+            (shouldHealReplayMiss(bypassReason) ||
+              bypassReason === "no-segment-snapshot"),
         };
       } finally {
         reqCtx._shellImplicitCache = previousImplicitCache;
@@ -951,7 +1005,11 @@ async function matchPartialWithPprReplay<TEnv>(
       outcome: "BYPASS",
       reason: bypassReason ?? "no-entry",
     });
-    return { ...match, captureNeeded: shouldHealReplayMiss(bypassReason) };
+    return {
+      ...match,
+      captureNeeded:
+        !replayHealSuppressed(reqCtx) && shouldHealReplayMiss(bypassReason),
+    };
   }
 
   const previousImplicitCache = reqCtx._shellImplicitCache;
@@ -985,13 +1043,18 @@ async function matchPartialWithPprReplay<TEnv>(
 
   try {
     const result = await ctx.router.matchPartial(request, { env });
-    const status: PprReplayStatus = segmentReplayHit
+    const preStatus: PprReplayStatus = segmentReplayHit
       ? { outcome: "HIT", freshness }
       : explicitCacheHit
         ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
         : explicitCacheBypass
           ? { outcome: "BYPASS", reason: "cache-disabled" }
           : { outcome: "BYPASS", reason: "snapshot-miss" };
+    // A prerender serve or intercept resolution leaves the seeded record
+    // unconsulted (prerender short-circuits before the scope; intercepts
+    // keep snapshot.cacheScope) — the "snapshot-miss" guess would blame the
+    // capture for a lane that was never in play.
+    const status = reclassifyReplayStatus(reqCtx, preStatus) ?? preStatus;
     recordReplayStatus(status);
     return { result, status };
   } finally {

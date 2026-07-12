@@ -280,6 +280,10 @@ async function* yieldFromStore<TEnv>(
   // Set streaming flag (once) and resolve render barrier.
   const reqCtx = handleStoreRef ? undefined : _lazyGetRequestContext?.();
   const barrierReqCtx = reqCtx ?? _getRequestContext();
+  // Post-match serve-source truth for the PPR replay reporter: the store
+  // ACTUALLY served (this covers both artifact variants — the replay gate's
+  // pre-match probe cannot know which one tryPrerenderLookup will read).
+  if (barrierReqCtx) barrierReqCtx._servedFromPrerenderStore = true;
   if (barrierReqCtx) {
     if (barrierReqCtx._treeHasStreaming === undefined) {
       barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
@@ -346,10 +350,12 @@ export async function prerenderEntryExists(
     ).createPrerenderStore();
   }
   if (!prerenderStoreInstance) return false;
-  // Non-intercept variant only: the replay gate falls through whenever an
-  // intercept-source header is present (whether the navigation IS an
-  // intercept resolves post-match), so the `paramHash + "/i"` artifact is
-  // never probed here.
+  // Non-intercept variant only: whether the navigation IS an intercept (and
+  // therefore whether tryPrerenderLookup reads `paramHash + "/i"`) resolves
+  // during the match, so this pre-match fast path can only guess the normal
+  // artifact. A wrong guess is reclassified post-match from the
+  // `_servedFromPrerenderStore` / `_resolvedIntercept` stamps
+  // (reclassifyReplayStatus in rsc-rendering.ts).
   const entry = await prerenderStoreInstance.get(
     routeKey,
     _hashParams!(params),
@@ -430,7 +436,14 @@ export function withCacheLookup<TEnv>(
     // can disrupt AsyncLocalStorage, causing getRequestContext() to return
     // undefined afterward. Capturing the reference early ensures handle replay
     // and handler handle-push work regardless of ALS state.
-    const handleStoreRef = _getRequestContext()?._handleStore;
+    const pipelineReqCtx = _getRequestContext();
+    const handleStoreRef = pipelineReqCtx?._handleStore;
+    // Post-match intercept truth for the PPR replay reporter: interception is
+    // resolved by match-api's findInterceptForRoute while BUILDING this match
+    // context — with or without an intercept-source header — so only the
+    // match itself can answer it. Stamped unconditionally (false resets a
+    // stale value from an earlier match on the same request context).
+    if (pipelineReqCtx) pipelineReqCtx._resolvedIntercept = ctx.isIntercept;
 
     const {
       evaluateRevalidation,

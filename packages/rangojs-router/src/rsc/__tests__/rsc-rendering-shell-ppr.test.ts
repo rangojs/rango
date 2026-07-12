@@ -1287,12 +1287,13 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(scheduleMock).toHaveBeenCalledTimes(1);
   });
 
-  it("an intercept-source partial to a prerender route falls through — the variant is only known post-match", async () => {
+  it("an intercept-source partial to a pr route with an unbaked artifact keeps replay + heal (probe is a safe fast path)", async () => {
     // Whether the navigation IS an intercept resolves in match-api's
-    // findInterceptForRoute, after this gate; the header may resolve to no
-    // intercept, and the middleware then reads the non-/i artifact.
-    // Pre-deciding on the header probed the wrong variant and wrongly
-    // suppressed replay and its heal capture. The gate must not probe at all.
+    // findInterceptForRoute, after this gate — the header proves nothing in
+    // either direction, so the gate probes the normal artifact regardless
+    // and relies on post-match reclassification to correct a wrong guess.
+    // With no baked artifact the ordinary path runs: shell reads happen,
+    // no-entry is honest, and the heal capture stays scheduled.
     prerenderStoreGetMock.mockClear();
     const store = new MemorySegmentCacheStore();
     const getShell = vi.spyOn(store, "getShell");
@@ -1312,12 +1313,85 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       },
     });
 
-    expect(prerenderStoreGetMock).not.toHaveBeenCalled();
+    expect(prerenderStoreGetMock).toHaveBeenCalled();
     expect(response.headers.get("x-rango-ppr-replay")).toBe(
       "BYPASS; reason=no-entry",
     );
     expect(getShell).toHaveBeenCalled();
     expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reclassifies a cold-shell miss to prerender-store when the store actually served, and suppresses the heal", async () => {
+    // The pre-match probe reads only the non-intercept artifact; a baked /i
+    // variant serves inside the match (tryPrerenderLookup stamps
+    // _servedFromPrerenderStore). Reporting no-entry and scheduling a heal
+    // would blame a cold capture for a lane the prerender store owns — its
+    // captures record no doc record, so the healed snapshot could never
+    // become consumable.
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      headers: { "X-RSC-Router-Intercept-Source": "/photos" },
+      matchPartial: async () => {
+        getRequestContext()._servedFromPrerenderStore = true;
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=prerender-store",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("reports intercept when the match resolved an intercept, and suppresses the heal", async () => {
+    // Intercepts keep their normal cache path (match-api never arms replay
+    // for them), so neither the no-entry token nor a background document
+    // capture belongs to this navigation.
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      matchPartial: async () => {
+        getRequestContext()._resolvedIntercept = true;
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=intercept",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("corrects a pre-match prerender-store guess to intercept when the match resolved an intercept that rendered live", async () => {
+    // The probe found the NORMAL artifact, but the match resolved an
+    // intercept whose /i variant is unbaked — the store did not serve.
+    // The reported token follows the match, not the guess.
+    prerenderStoreGetMock.mockResolvedValueOnce({ segments: [] });
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      headers: { "X-RSC-Router-Intercept-Source": "/photos" },
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).matched = {
+          pr: true,
+          routeKey: "p",
+          params: {},
+        };
+      },
+      matchPartial: async () => {
+        getRequestContext()._resolvedIntercept = true;
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=intercept",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
   });
 
   it("a false condition() with no replayable snapshot reports cache-disabled through the report-only marker and suppresses the heal", async () => {
@@ -1380,6 +1454,61 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       key: NAVIGATION_KEY,
       navigationOnly: true,
     });
+  });
+
+  it("heals a snapshot-less entry once the scope's lookup no longer refuses (condition false -> true)", async () => {
+    // An entry captured while condition() was false legitimately lacks a
+    // snapshot (the doc-record write refusal is absolute). When a later
+    // request's lookup does NOT refuse, the heal capture derives from THAT
+    // request's context — its doc record records, and replay becomes
+    // available without waiting for the document to recapture.
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [] }),
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: { ttl: 30, condition: () => true },
+        };
+      },
+      matchPartial: async () => emptyMatchResult(),
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=no-segment-snapshot",
+    );
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+      key: NAVIGATION_KEY,
+      navigationOnly: true,
+    });
+  });
+
+  it("does NOT heal a snapshot-less entry while the scope's lookup still refuses (condition false)", async () => {
+    // The always-false route's every lookup refuses; healing it would burn a
+    // background document render per navigation for a snapshot that can
+    // never become consumable.
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [] }),
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: { ttl: 30, condition: () => false },
+        };
+      },
+      matchPartial: async () => {
+        getRequestContext()._shellImplicitCache?.onExplicitBypass?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=cache-disabled",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
   });
 
   it("an HMR partial to a prerender route falls through to the ordinary replay decision", async () => {
