@@ -372,11 +372,21 @@ export function withCacheStore<TEnv>(
  * Records nothing when:
  * - not a capture render, or the route derived no scope (the implicit doc
  *   scope's own cacheRoute below already records the doc record);
- * - the scope refuses the write — cache(false) or a false condition():
- *   consumer opt-outs are absolute, and a dead record would only invite a
- *   later misuse (replay reports `cache-disabled` before any read);
+ * - the scope is STATICALLY disabled (cache(false)) — the replay gate
+ *   pre-decides that shape as `cache-disabled` before any shell read, so a
+ *   record would be dead weight;
  * - the prerender store supplied the match: those partials are served from
  *   build-time segments and report `prerender-store`.
+ *
+ * A false condition() does NOT suppress the record: the shell entry already
+ * bakes this very render's handler output as the served HTML prelude, so the
+ * doc record adds no exposure — and it is the ARMING VEHICLE for the
+ * lookup-time refusal contract (replay eligibility requires the record; the
+ * marker's onExplicitBypass then reports `cache-disabled` when the lookup's
+ * own condition() evaluation refuses). Suppressing it made an always-false
+ * condition() unreachable for that contract: eligibility failed first and the
+ * header lied `no-segment-snapshot`. Serving stays lookup-gated either way —
+ * nothing is ever SERVED from cache while condition() refuses.
  *
  * Wrapped in requestCtx.waitUntil — during a capture that is the tracked-write
  * override, so captureAndStoreShell's settleWrites awaits the record before
@@ -395,7 +405,7 @@ function recordShellCaptureDocRecord<TEnv>(
   if (!scope || scope.isShellImplicitDocScope) return;
   if (ctx.isAction || ctx.isIntercept || ctx.request.method !== "GET") return;
   if (state.cacheSource === "prerender") return;
-  if (!scope.allowsCache("write")) return;
+  if (!scope.enabled) return;
 
   const docScope = createShellImplicitDocScope(marker);
   requestCtx.waitUntil(() =>

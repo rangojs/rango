@@ -1168,7 +1168,7 @@ function describePprShell(mode: "dev" | "build") {
       expect(warm.stamp.match(/\d+$/)![0]).not.toBe(docStamp);
     });
 
-    test("storefront shape: cache(false) and condition() opt-outs report cache-disabled before any shell read", async ({
+    test("storefront shape: cache(false) and condition() opt-outs both report cache-disabled and render fresh", async ({
       request,
     }) => {
       for (const [path, testid] of [

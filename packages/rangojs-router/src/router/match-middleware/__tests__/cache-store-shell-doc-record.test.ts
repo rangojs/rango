@@ -209,12 +209,23 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(h.reqCtx._shellImplicitCache?.docKey).toBeUndefined();
   });
 
-  it("records nothing when the scope's condition() refuses the write", async () => {
+  it("records the doc record even when the scope's condition() refuses the write (arming vehicle for lookup-time cache-disabled)", async () => {
+    // The shell entry already bakes this render's handler output as the
+    // served HTML prelude, so the snapshot-only record adds no exposure. It
+    // must exist or replay eligibility fails first and an always-false
+    // condition() reports no-segment-snapshot instead of the lookup-time
+    // cache-disabled the composition contract promises. Serving stays
+    // lookup-gated: condition() is re-evaluated by lookupRouteDetailed.
     const h = makeHarness();
-    await h.run(new CacheScope({ ttl: 30, condition: () => false }));
+    const explicit = new CacheScope({ ttl: 30, condition: () => false });
+    await h.run(explicit);
 
-    expect(h.drainSnapshot()).toBeUndefined();
-    expect(h.reqCtx._shellImplicitCache?.docKey).toBeUndefined();
+    const doc = docRecords(h.drainSnapshot());
+    expect(doc).toHaveLength(1);
+    expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
+    // The explicit tier's own write stays refused by its condition — only the
+    // snapshot-only doc record is recorded.
+    expect(await h.inner.get("doc:localhost/p")).toBeNull();
   });
 
   it("records nothing when the prerender store supplied the match", async () => {
