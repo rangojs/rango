@@ -269,25 +269,44 @@ export class CacheScope {
    * operation) when the predicate returns false or throws; returns true when
    * there is no condition or no request context to evaluate it against.
    */
+  /**
+   * One WRITE decision per (scope, request), memoized on the request context.
+   * A capture render has TWO writers consulting the same predicate — the
+   * explicit tier's cacheRoute and the snapshot-only doc record gate
+   * (recordShellCaptureDocRecord) — and a true→false flap between the two
+   * evaluations recorded a REPLAYABLE canonical snapshot for a render whose
+   * real write was refused. The first evaluation pins the answer for the
+   * whole render (the capture's derived context during captures). READ
+   * decisions stay per-lookup by design: pre-deciding a flappable predicate
+   * at the replay gate was the round-2 regression.
+   */
+  private readonly writeConditionMemo = new WeakMap<RequestContext, boolean>();
+
   private conditionAllows(op: "read" | "write"): boolean {
     if (this.config === false || !this.config.condition) return true;
     const requestCtx = getRequestContext();
     if (!requestCtx) return true;
+    if (op === "write") {
+      const memoized = this.writeConditionMemo.get(requestCtx);
+      if (memoized !== undefined) return memoized;
+    }
+    let allowed: boolean;
     try {
-      if (!this.config.condition(requestCtx)) {
+      allowed = !!this.config.condition(requestCtx);
+      if (!allowed) {
         debugCacheLog(
           `[CacheScope] condition returned false, skipping cache ${op}`,
         );
-        return false;
       }
-      return true;
     } catch (error) {
       console.error(
         `[CacheScope] condition function threw, skipping cache ${op}:`,
         error,
       );
-      return false;
+      allowed = false;
     }
+    if (op === "write") this.writeConditionMemo.set(requestCtx, allowed);
+    return allowed;
   }
 
   /**

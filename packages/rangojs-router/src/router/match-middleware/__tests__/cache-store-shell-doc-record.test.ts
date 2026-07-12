@@ -224,6 +224,35 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(h.reqCtx._shellImplicitCache?.docKey).toBeUndefined();
   });
 
+  it("a flapping condition() cannot split the two writers: one write decision per render (true first)", async () => {
+    // recordShellCaptureDocRecord and the explicit tier's cacheRoute both
+    // consult condition("write"). Without the per-request memo a true→false
+    // flap recorded the REPLAYABLE doc record while refusing the real write.
+    // The first evaluation pins the render's decision: true-first means BOTH
+    // writes land, and the predicate runs exactly once.
+    const h = makeHarness();
+    const condition = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    await h.run(
+      new CacheScope({ ttl: 30, key: () => "consumer-key", condition }),
+    );
+
+    expect(condition).toHaveBeenCalledTimes(1);
+    expect(docRecords(h.drainSnapshot())).toHaveLength(1);
+    expect(await h.inner.get("consumer-key")).not.toBeNull();
+  });
+
+  it("a flapping condition() cannot split the two writers: one write decision per render (false first)", async () => {
+    const h = makeHarness();
+    const condition = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    await h.run(
+      new CacheScope({ ttl: 30, key: () => "consumer-key", condition }),
+    );
+
+    expect(condition).toHaveBeenCalledTimes(1);
+    expect(h.drainSnapshot()).toBeUndefined();
+    expect(await h.inner.get("consumer-key")).toBeNull();
+  });
+
   it("records nothing when the prerender store supplied the match", async () => {
     const h = makeHarness();
     const explicit = new CacheScope({ ttl: 30 });
