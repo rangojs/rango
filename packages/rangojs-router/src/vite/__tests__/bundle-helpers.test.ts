@@ -88,7 +88,7 @@ describe("extractHandlerExportsFromChunk", () => {
     });
   });
 
-  it("detects an onDemand: true literal", () => {
+  it("marks onDemand when the extracted $$id is in the authoritative set", () => {
     const chunk = [
       `const Page = Prerender(() => null, { onDemand: !0 });`,
       `Page.$$id = "abc12345#Page";`,
@@ -99,15 +99,15 @@ describe("extractHandlerExportsFromChunk", () => {
       modules,
       "Prerender",
       false,
-      true,
+      new Map([["abc12345#Page", "pages.detail"]]),
     );
     expect(result[0].onDemand).toBe(true);
     expect(result[0].passthrough).toBe(false);
   });
 
-  it("detects an onDemand object literal", () => {
+  it("marks onDemand for a non-literal spelling (imported options object) — the map, not the call text, decides", () => {
     const chunk = [
-      `const Page = Prerender(() => null, { onDemand: { ttl: 60 } });`,
+      `const Page = Prerender(() => null, sharedOdOptions);`,
       `Page.$$id = "abc12345#Page";`,
     ].join("\n");
     const modules = new Map([["src/pages.ts", ["Page"]]]);
@@ -116,44 +116,14 @@ describe("extractHandlerExportsFromChunk", () => {
       modules,
       "Prerender",
       false,
-      true,
+      new Map([["abc12345#Page", "pages.detail"]]),
     );
     expect(result[0].onDemand).toBe(true);
   });
 
-  it('detects a quoted onDemand key (`{ "onDemand": true }`)', () => {
-    const chunk = [
-      `const Page = Prerender(() => null, { "onDemand": true });`,
-      `Page.$$id = "abc12345#Page";`,
-    ].join("\n");
-    const modules = new Map([["src/pages.ts", ["Page"]]]);
-    const result = extractHandlerExportsFromChunk(
-      chunk,
-      modules,
-      "Prerender",
-      false,
-      true,
-    );
-    expect(result[0].onDemand).toBe(true);
-  });
-
-  it("detects a single-quoted onDemand object literal (`{ 'onDemand': { ttl: 60 } }`)", () => {
-    const chunk = [
-      `const Page = Prerender(() => null, { 'onDemand': { ttl: 60 } });`,
-      `Page.$$id = "abc12345#Page";`,
-    ].join("\n");
-    const modules = new Map([["src/pages.ts", ["Page"]]]);
-    const result = extractHandlerExportsFromChunk(
-      chunk,
-      modules,
-      "Prerender",
-      false,
-      true,
-    );
-    expect(result[0].onDemand).toBe(true);
-  });
-
-  it("does NOT flag onDemand for `onDemand: false` (opt-out, not a literal opt-in)", () => {
+  it("does NOT mark onDemand when the $$id is absent from the set, even with onDemand text in the body", () => {
+    // Source eval said onDemand is falsy (e.g. `onDemand: false` or a falsy
+    // const); a body mentioning the key must not retain the producer.
     const chunk = [
       `const Page = Prerender(() => null, { onDemand: !1 });`,
       `Page.$$id = "abc12345#Page";`,
@@ -164,28 +134,12 @@ describe("extractHandlerExportsFromChunk", () => {
       modules,
       "Prerender",
       false,
-      true,
+      new Map([["other#Def", "other.route"]]),
     );
     expect(result[0].onDemand).toBe(false);
   });
 
-  it("does NOT flag onDemand for a ternary `x ? onDemand : y` in the body", () => {
-    const chunk = [
-      `const Page = Prerender(() => (cond ? onDemand : fallback));`,
-      `Page.$$id = "abc12345#Page";`,
-    ].join("\n");
-    const modules = new Map([["src/pages.ts", ["Page"]]]);
-    const result = extractHandlerExportsFromChunk(
-      chunk,
-      modules,
-      "Prerender",
-      false,
-      true,
-    );
-    expect(result[0].onDemand).toBe(false);
-  });
-
-  it("reports onDemand: false when detection is off", () => {
+  it("reports onDemand: false when no set is provided", () => {
     const chunk = [
       `const Page = Prerender(() => null, { onDemand: true });`,
       `Page.$$id = "abc12345#Page";`,

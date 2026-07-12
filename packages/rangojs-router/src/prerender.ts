@@ -129,12 +129,10 @@ export interface PrerenderOptions {
    * `router.prerender()`. `true` uses the router-level `prerender` defaults; an
    * object overrides them per route.
    *
-   * MUST be a static literal in the `Prerender()` call (not a computed value):
-   * the bundle-eviction pass detects it textually to retain the producer code in
-   * the deployed bundle. A computed value (e.g. `onDemand: someBooleanVar`) still
-   * marks the route on-demand at runtime, but its producer is evicted from the
-   * production bundle, so every `router.prerender()` refresh returns
-   * `render-failed`. Write `true` or an object literal.
+   * Any truthy value opts in — a literal, a spread, or an imported const:
+   * producer retention in the production bundle is driven by the evaluated
+   * route manifest (the same source that sets the runtime od flag), not a
+   * textual scan of the call.
    *
    * @example
    * ```typescript

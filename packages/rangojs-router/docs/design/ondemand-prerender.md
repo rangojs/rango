@@ -191,27 +191,25 @@ This opt-in has two effects:
    into a separate producer bundle in a later implementation.
 
 `onDemand` lands in the existing `PrerenderOptions` object (which already
-carries `concurrency`). Two implementation constraints follow. Retention
-piggybacks on the existing eviction mechanism: handler eviction is a
-post-bundle pass that already skips a names set for Passthrough handlers
-(`src/vite/utils/bundle-analysis.ts`), so discovery emits an
-`onDemandRouteNames` set and eviction skips those exports the same way. That in
-turn means `onDemand` must be statically detectable in the `Prerender()` call
-at discovery time — a literal in the options object, not a computed value.
+carries `concurrency`). Retention piggybacks on the existing eviction
+mechanism: handler eviction is a post-bundle pass that already skips a names
+set for Passthrough handlers (`src/vite/utils/bundle-analysis.ts`), and the
+chunk scan marks onDemand exports the same way.
 
-**Accepted constraint (static literal required).** There are two independent
-detection surfaces and they are NOT cross-checked at build time: the runtime
-`od` trie flag is set from the manifest's _value_ of `onDemand` (any truthy
-value works), while producer _retention_ is a regex over the bundled call body
-(`/onDemand\s*:\s*(?:true|!0|\{)/`) that only matches a literal. So a
-boolean-typed identifier — `Prerender(..., { onDemand: SOME_CONST })` — gets
-`od: true` at runtime but has its producer evicted from the bundle, and every
-`router.prerender()` refresh of that route then returns `render-failed` with no
-build-time diagnostic. This is an accepted v1 constraint: write `onDemand` as a
-literal (`true` or `{ … }`), which the JSDoc and every example do. A build-time
-error when the manifest-derived onDemand-route set and the regex-derived
-retention set disagree (joinable via each route's `prerenderDef.$$id`) is the
-right closing move and is tracked as a follow-up.
+**One derivation, no spelling restriction.** Producer retention and the
+runtime `od` trie flag share a single source of truth: discovery evaluates the
+routes module and records each onDemand route's `prerenderDef.$$id` in
+`state.onDemandHandlerIds` (`discover-routers.ts`); the generateBundle chunk
+scan then marks an export onDemand iff its extracted `$$id` is in that set
+(`extractHandlerExportsFromChunk`). Because both sides read the evaluated
+value — not the call-site text — any truthy spelling works (`onDemand: true`,
+an options spread, an imported const), and retention can never disagree with
+the trie flag. An earlier design detected the option with a regex over the
+bundled call body, which silently evicted non-literal opt-ins; the map-driven
+scan replaced it (there is deliberately no textual fallback). A def whose
+`$$id` never appears in a chunk simply stays retained — eviction is
+opt-in-by-match, so an id mismatch degrades to bundle bytes, never to a
+broken refresh.
 
 Plain `Prerender()` remains build-only and can still be evicted from production
 bundles. `Passthrough()` alone is not an on-demand opt-in. If a `Passthrough()`

@@ -118,9 +118,9 @@ export type PrerenderResult =
     };
 
 /**
- * Per-route on-demand opt-in, carried inside `PrerenderOptions.onDemand`. Must
- * be a static literal in the `Prerender()` call so the bundle-eviction pass can
- * detect it and retain the producer code.
+ * Per-route on-demand opt-in, carried inside `PrerenderOptions.onDemand`. Any
+ * truthy spelling works (literal, spread, imported const): producer retention
+ * is driven by the evaluated route manifest, not a textual scan of the call.
  */
 export interface OnDemandRouteConfig {
   /** Soft TTL (seconds) for entries refreshed for this route. Overrides router `defaultTtl`. */

@@ -29,7 +29,8 @@ export function findMatchingParenInBundle(
 
 /**
  * Scan a bundled chunk for handler exports and extract their names + $$id values.
- * Optionally detects the passthrough and onDemand flags by parsing the call body.
+ * Optionally detects the passthrough flag by parsing the call body, and marks
+ * onDemand from the authoritative discovery-derived handlerId set.
  * @internal Exported for testing only.
  */
 export function extractHandlerExportsFromChunk(
@@ -37,7 +38,12 @@ export function extractHandlerExportsFromChunk(
   handlerModules: Map<string, string[]>,
   fnName: string,
   detectPassthrough: boolean,
-  detectOnDemand = false,
+  // handlerIds ($$id) of routes the evaluated source marks onDemand — the
+  // single source of truth shared with the runtime od trie flag. Keyed on the
+  // same $$id the chunk scan extracts, so any spelling of the option (literal,
+  // spread, imported const) retains the producer; a textual scan of the call
+  // body cannot see non-literal spellings and silently evicted them.
+  onDemandHandlerIds?: ReadonlyMap<string, string>,
 ): Array<{
   name: string;
   handlerId: string;
@@ -53,10 +59,9 @@ export function extractHandlerExportsFromChunk(
 
   // Only parse a call body (an O(callBody) paren walk per export) when the whole
   // chunk actually contains the marker we're detecting — the common case (no
-  // passthrough/onDemand opt-in anywhere in the chunk) skips the walk entirely.
+  // passthrough opt-in anywhere in the chunk) skips the walk entirely.
   const scanPassthrough =
     detectPassthrough && chunkCode.includes("passthrough");
-  const scanOnDemand = detectOnDemand && chunkCode.includes("onDemand");
 
   for (const [, handlerNames] of handlerModules) {
     for (const name of handlerNames) {
@@ -68,8 +73,7 @@ export function extractHandlerExportsFromChunk(
       if (!match) continue;
 
       let isPassthrough = false;
-      let isOnDemand = false;
-      if (scanPassthrough || scanOnDemand) {
+      if (scanPassthrough) {
         const eFnName = escapeRegExp(fnName);
         const callStartRe = new RegExp(
           `(?:const|let|var)\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
@@ -80,24 +84,7 @@ export function extractHandlerExportsFromChunk(
           const closePos = findMatchingParenInBundle(chunkCode, afterOpen);
           if (closePos !== -1) {
             const callBody = chunkCode.slice(callStart.index, closePos);
-            if (scanPassthrough) {
-              isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody); // !0 is minified true
-            }
-            if (scanOnDemand) {
-              // onDemand opts in only as a literal `true` (minified `!0`) or an
-              // object literal. Requiring one of those values (rather than bare
-              // key presence) avoids retaining a producer whose body merely
-              // contains an `onDemand:` key — e.g. `{ onDemand: false }` or a
-              // ternary — while still matching every valid opt-in (a computed
-              // value is unsupported by design, so a miss there is intended —
-              // and caught by postprocessBundle's retention cross-check).
-              // The optional quotes cover `{ "onDemand": true }`: still a
-              // static literal, and server bundles are not syntax-minified,
-              // so quoted keys survive to the chunk.
-              isOnDemand = /["']?onDemand["']?\s*:\s*(?:true|!0|\{)/.test(
-                callBody,
-              );
-            }
+            isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody); // !0 is minified true
           }
         }
       }
@@ -105,7 +92,7 @@ export function extractHandlerExportsFromChunk(
         name,
         handlerId: match[1],
         passthrough: isPassthrough,
-        onDemand: isOnDemand,
+        onDemand: onDemandHandlerIds?.has(match[1]) ?? false,
       });
     }
   }

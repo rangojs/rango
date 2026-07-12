@@ -142,10 +142,12 @@ export interface DiscoveryState {
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   /**
    * handlerId ($$id) -> route name for every route the evaluated source marks
-   * onDemand. Written during discovery, read by postprocessBundle to verify
-   * the chunk scan's regex-detected onDemand flags before eviction: the two
-   * are derived independently (source eval vs bundle regex), and a silent
-   * disagreement evicts a producer router.prerender() still needs.
+   * onDemand. Written during discovery (buildStart), consumed by the
+   * generateBundle chunk scan (extractHandlerExportsFromChunk) as the
+   * authoritative onDemand set driving producer retention — the same source
+   * that sets the runtime od trie flag, so any truthy onDemand spelling
+   * (literal, spread, imported const) both marks the route and retains its
+   * producer.
    */
   onDemandHandlerIds: Map<string, string>;
   rscEntryFileName: string | null;

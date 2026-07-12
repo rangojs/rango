@@ -135,6 +135,13 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
 // SWR fixture: ttl 1s so a triggered overlay entry goes stale fast. A stale
 // overlay hit still serves but (router prerender config: swr + onRevalidate)
 // schedules a revalidation, observable via /od-swr-log.
+//
+// Deliberately a NON-literal onDemand spelling: retention is driven by the
+// evaluated route manifest ($$id set), not a textual scan of the call — this
+// route's whole production e2e flow (refresh, stale serve, swr) pins that a
+// shared options const retains the producer.
+const SWR_OD_OPTIONS = { onDemand: { ttl: 1 } };
+
 const OnDemandSwrDef = Prerender<{ slug: string }>(
   async () => [{ slug: "swr" }],
   async (ctx) => (
@@ -142,7 +149,7 @@ const OnDemandSwrDef = Prerender<{ slug: string }>(
       <p data-testid="od-swr-slug">{ctx.params.slug}</p>
     </div>
   ),
-  { onDemand: { ttl: 1 } },
+  SWR_OD_OPTIONS,
 );
 
 const OnDemandSwrTrigger: Handler<{ slug: string }> = async (ctx) => {

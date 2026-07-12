@@ -331,8 +331,9 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - `router.prerender(target, { env, ctx })` performs a requestless refresh from
   fetch, cron, queues, workflows, webhooks, or server actions. `.many()` adds
   bounded concurrency and `.invalidateTags()` marks durable entries stale.
-- `Prerender(..., { onDemand })` is the explicit route opt-in. The option must
-  be a static literal so producer retention and the runtime `od` trie flag agree.
+- `Prerender(..., { onDemand })` is the explicit route opt-in. Any truthy
+  spelling works: producer retention and the runtime `od` trie flag are both
+  derived from the evaluated route manifest (`state.onDemandHandlerIds`).
 - The `prerender` router option resolves a `PrerenderConfig` per request or call:
   `{ store, defaultTtl, swr, onRevalidate }`.
 - Serving checks the writable overlay before the bundled manifest. A stale
