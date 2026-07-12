@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Meta, Prerender } from "@rangojs/router";
+import { Meta, Prerender, Passthrough } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -274,6 +274,41 @@ export const PprPrerenderedArticle = Prerender(
           {`Prerendered shell content for ${ctx.params.slug}`}
         </p>
         <ParallelOutlet name="@ppSeq" />
+      </div>
+    );
+  },
+);
+
+/**
+ * Passthrough + Prerender + ppr fixture for the replay gate's existence
+ * probe on the real CFCacheStore/KV path: only "baked" bakes at build time;
+ * every other slug misses the prerender store and renders LIVE through the
+ * Passthrough handler. The trie still marks the route pr:true, so the gate
+ * must probe the store instead of trusting the flag — live params keep
+ * navigation replay (their captures record the doc segment record), baked
+ * params keep the prerender-store bypass.
+ */
+let pprPpPassthroughExec = 0;
+
+export const PprPrerenderedPassthroughDef = Prerender<{ slug: string }>(
+  async () => [{ slug: "baked" }],
+  async (ctx) => (
+    <div data-testid="ppr-ppp-article">
+      <p data-testid="ppr-ppp-source">baked</p>
+      <p data-testid="ppr-ppp-content">{`PPR-PPP content for ${ctx.params.slug}`}</p>
+    </div>
+  ),
+);
+
+export const PprPrerenderedPassthroughArticle = Passthrough(
+  PprPrerenderedPassthroughDef,
+  async (ctx) => {
+    pprPpPassthroughExec += 1;
+    return (
+      <div data-testid="ppr-ppp-article">
+        <p data-testid="ppr-ppp-source">live</p>
+        <p data-testid="ppr-ppp-content">{`PPR-PPP content for ${ctx.params.slug}`}</p>
+        <p data-testid="ppr-ppp-exec">{`ppr-ppp-exec-${pprPpPassthroughExec}`}</p>
       </div>
     );
   },

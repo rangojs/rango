@@ -34,7 +34,9 @@ import type {
   ShellSnapshotItemValue,
   ShellSnapshotResponseValue,
   ShellSnapshotLoaderValue,
+  CacheReadError,
 } from "./types.js";
+import { CACHE_READ_ERROR } from "./types.js";
 import { bufferToBase64, base64ToBuffer } from "./cf/cf-base64.js";
 import { isPerClientSignalHeader } from "../browser/cookie-name.js";
 
@@ -158,9 +160,11 @@ export class RecordingShellStore<
     return this.records.size > 0 ? [...this.records.values()] : undefined;
   }
 
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     const result = await this.inner.get(key);
-    if (result) this.record("segment", key, result.data);
+    if (result && result !== CACHE_READ_ERROR) {
+      this.record("segment", key, result.data);
+    }
     return result;
   }
 
@@ -283,7 +287,7 @@ export class SnapshotOnlySegmentStore<
     return this.recording.keyGenerator;
   }
 
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     return this.recording.get(key);
   }
 
@@ -417,7 +421,7 @@ export class SeededShellStore<
     return this.inner.supportsPassiveShellReads;
   }
 
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     const seeded = this.segments.get(key);
     if (seeded) return { data: seeded, shouldRevalidate: false };
     if (this.segmentsOnly) return null;

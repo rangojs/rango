@@ -54,6 +54,7 @@ import {
   PprScopedConditionPage,
   PprInlineActionPage,
   PprPrerenderedArticle,
+  PprPrerenderedPassthroughArticle,
   PprPrerenderedEvictArticle,
   PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
@@ -803,6 +804,13 @@ export const urlpatterns = urls(
             }),
           ],
         ),
+        // Passthrough + Prerender + ppr (replay gate existence probe): only
+        // "baked" bakes; other slugs render live and must keep navigation
+        // replay on the real CFCacheStore/KV path.
+        path("/ppr-shell/passthrough/:slug", PprPrerenderedPassthroughArticle, {
+          name: "pprShellPassthrough",
+          ppr: { ttl: 300, swr: 120 },
+        }),
         // Build-shell eviction fixture (#699): its own route + tag so the
         // eviction e2e's updateTag cannot blast the sibling prerendered
         // entries (baked manifest entries are immutable — eviction is a tag

@@ -131,7 +131,12 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(bakedReplay.headers()["x-rango-ppr-replay"]).toBe(
       "BYPASS; reason=prerender-store",
     );
-    expect(await bakedReplay.text()).toContain("PPP content for baked");
+    const bakedBody = await bakedReplay.text();
+    // Build-time segments supplied the partial: the BAKED handler's source
+    // marker, never the live Passthrough handler's execution stamp.
+    expect(bakedBody).toContain("PPP content for baked");
+    expect(bakedBody).toContain("baked");
+    expect(bakedBody).not.toContain("ppp-exec-");
 
     // Live param: the document warm-up captured the shell (live render, so
     // the doc segment record was recorded), and the partial navigation
@@ -147,7 +152,11 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(liveReplay.headers()["x-rango-ppr-replay"]).toBe(
       "HIT; freshness=fresh",
     );
-    expect(await liveReplay.text()).toContain("PPP content for live-one");
+    const liveBody = await liveReplay.text();
+    // The LIVE Passthrough handler rendered the capture this replay serves.
+    expect(liveBody).toContain("PPP content for live-one");
+    expect(liveBody).toContain("live");
+    expect(liveBody).toContain("ppp-exec-");
   });
 
   // Fragment splice (issue #700) on the Prerender+ppr composition: the HIT

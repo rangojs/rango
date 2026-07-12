@@ -305,6 +305,14 @@ export interface RequestContext<
      * `BYPASS; reason=explicit-cache-hit`, never a false replay HIT.
      */
     onExplicitHit?: () => void;
+    /**
+     * @internal Companion to onExplicitHit, same lifecycle: fired when the
+     * route-derived scope's lookup REFUSED the read (`bypass` outcome — a
+     * false condition() or no store). The gate only pre-decides the static
+     * cache(false) case; a predicate refusal is known only at lookup time and
+     * reports `BYPASS; reason=cache-disabled` post-match.
+     */
+    onExplicitBypass?: () => void;
   };
 
   /**

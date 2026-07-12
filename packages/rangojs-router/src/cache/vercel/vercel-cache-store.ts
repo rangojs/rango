@@ -40,7 +40,9 @@ import type {
   CacheItemOptions,
   ShellCacheEntry,
   ShellSnapshotRecord,
+  CacheReadError,
 } from "../types.js";
+import { CACHE_READ_ERROR } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
 import { isPerClientSignalHeader } from "../../browser/cookie-name.js";
 import {
@@ -398,7 +400,7 @@ export class VercelCacheStore<
 
   // --- Segment family (get/set/delete) ---
 
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     const storeKey = this.toStoreKey(key, "s");
     const started = Date.now();
     let raw: unknown;
@@ -407,7 +409,9 @@ export class VercelCacheStore<
     } catch (error) {
       reportCacheError(error, "cache-read", "[VercelCacheStore] get");
       this.emitDebug({ op: "get", key, outcome: "error" });
-      return null;
+      // Distinct from a miss so the PPR replay composition renders uncached
+      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
+      return CACHE_READ_ERROR;
     }
     const readMs = Date.now() - started;
 

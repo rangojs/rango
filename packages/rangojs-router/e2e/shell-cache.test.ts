@@ -1225,9 +1225,13 @@ function runShellCacheSpec(f: Fixture): void {
     expect(warm.stamp.match(/\d+$/)![0]).not.toBe(docStamp);
   });
 
-  test("storefront shape: cache(false) and condition() opt-outs report cache-disabled before any shell read", async ({
+  test("storefront shape: cache(false) and condition() opt-outs both report cache-disabled and render fresh", async ({
     request,
   }) => {
+    // cache(false) is static and bypasses before any shell read; a false
+    // condition() is request-time state, refused by the lookup itself and
+    // reported post-match — same header, same absolute opt-out, different
+    // decision point (the gate must not pre-decide a flappable predicate).
     for (const [path, testid] of [
       ["/shell-cache/scoped-optout", "shell-scoped-optout"],
       ["/shell-cache/scoped-condition", "shell-scoped-condition"],

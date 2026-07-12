@@ -332,6 +332,7 @@ export async function prerenderEntryExists(
   params: Record<string, string>,
   pathname: string,
   entries: EntryData[],
+  isIntercept: boolean,
 ): Promise<boolean> {
   if (!routeKey) return false;
   // Deliberately NOT ensurePrerenderDeps(): the probe needs only the store
@@ -346,16 +347,16 @@ export async function prerenderEntryExists(
     ).createPrerenderStore();
   }
   if (!prerenderStoreInstance) return false;
-  const entry = await prerenderStoreInstance.get(
-    routeKey,
-    _hashParams!(params),
-    {
-      pathname,
-      isPassthroughRoute: entries.some(
-        (entry) => entry.type === "route" && entry.isPassthrough === true,
-      ),
-    },
-  );
+  // Same variant rule as tryPrerenderLookup: intercept navigations consult
+  // only the intercept-specific artifact.
+  const paramHash = _hashParams!(params);
+  const lookupHash = isIntercept ? paramHash + "/i" : paramHash;
+  const entry = await prerenderStoreInstance.get(routeKey, lookupHash, {
+    pathname,
+    isPassthroughRoute: entries.some(
+      (entry) => entry.type === "route" && entry.isPassthrough === true,
+    ),
+  });
   return entry != null;
 }
 
@@ -524,7 +525,14 @@ export function withCacheLookup<TEnv>(
         cacheResult = await createShellImplicitDocScope(
           replayMarker,
         ).lookupRoute(ctx.pathname, ctx.matched.params, ctx.isIntercept);
+      } else if (explicitLookup.status === "bypass") {
+        // condition() refused at lookup time (the gate only pre-decides the
+        // static cache(false) case) — report cache-disabled truthfully.
+        replayMarker.onExplicitBypass?.();
       }
+      // "error" stays unreported: the render is fresh and the seeded record
+      // was not consulted, which is exactly what snapshot-miss describes; the
+      // store already routed the failure through reportCacheError.
     }
 
     if (!cacheResult) {

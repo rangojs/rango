@@ -35,7 +35,9 @@ import type {
   CacheItemResult,
   CacheItemOptions,
   ShellCacheEntry,
+  CacheReadError,
 } from "../types.js";
+import { CACHE_READ_ERROR } from "../types.js";
 import {
   _getRequestContext,
   type RequestContext,
@@ -891,7 +893,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * On L1 miss, falls back to KV (L2) if configured.
    * KV hits are promoted to L1 in the background.
    */
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     if (this.isReservedSegmentKey(key, "cache-read")) return null;
     try {
       const cache = await this.getCache();
@@ -1106,7 +1108,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // emit is the separate wrangler-tail signal. Keep both observability paths.
       reportCacheError(error, "cache-read", "[CFCacheStore] get");
       if (this.debug) this.emitDebug({ op: "get", key, outcome: "error" });
-      return null;
+      // Distinct from a miss so the PPR replay composition renders uncached
+      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
+      return CACHE_READ_ERROR;
     }
   }
 

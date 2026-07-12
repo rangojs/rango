@@ -1492,42 +1492,75 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["cache(false)", false as const],
-    ["a false condition()", { ttl: 30, condition: () => false }],
-  ])(
-    "bypasses a route whose scope refuses cached serves (%s) as cache-disabled: zero shell reads, no capture",
-    async (_label, cacheOptions) => {
-      const store = new MemorySegmentCacheStore();
-      const getShell = vi.spyOn(store, "getShell");
-      let replayArmed = false;
+  it("bypasses a cache(false) route as cache-disabled: zero shell reads, no capture", async () => {
+    // Statically disabled — the only opt-out the gate may pre-decide.
+    const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell");
+    let replayArmed = false;
 
-      const { response } = await run({
-        ssrModule: fullSsrModule(),
-        partial: true,
-        ppr: true,
-        store,
-        shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
-        arm: (reqCtx) => {
-          (reqCtx._classifiedRoute as any).manifestEntry.cache = {
-            options: cacheOptions,
-          };
-        },
-        matchPartial: async () => {
-          replayArmed =
-            getRequestContext()._shellImplicitCache?.keyPrefix === "doc";
-          return emptyMatchResult();
-        },
-      });
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: false,
+        };
+      },
+      matchPartial: async () => {
+        replayArmed =
+          getRequestContext()._shellImplicitCache?.keyPrefix === "doc";
+        return emptyMatchResult();
+      },
+    });
 
-      expect(response.headers.get("x-rango-ppr-replay")).toBe(
-        "BYPASS; reason=cache-disabled",
-      );
-      expect(replayArmed).toBe(false);
-      expect(getShell).not.toHaveBeenCalled();
-      expect(scheduleMock).not.toHaveBeenCalled();
-    },
-  );
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=cache-disabled",
+    );
+    expect(replayArmed).toBe(false);
+    expect(getShell).not.toHaveBeenCalled();
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("a false condition() is decided at the lookup, not the gate: replay arms, and the refusal reports cache-disabled post-match", async () => {
+    // A predicate is request-time state — pre-deciding it at the gate would
+    // let a false-then-true flap report cache-disabled while the explicit
+    // tier serves. The gate lets the request through (shell reads happen);
+    // withCacheLookup's own evaluation refuses the read and fires
+    // onExplicitBypass, and the header still says cache-disabled.
+    const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell");
+    let replayArmed = false;
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: { ttl: 30, condition: () => false },
+        };
+      },
+      matchPartial: async () => {
+        const marker = getRequestContext()._shellImplicitCache;
+        replayArmed = marker?.keyPrefix === "doc";
+        // What withCacheLookup does on a `bypass` lookup outcome.
+        marker?.onExplicitBypass?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=cache-disabled",
+    );
+    expect(replayArmed).toBe(true);
+    expect(getShell).toHaveBeenCalled();
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
 
   it("an app-wide cache() scope (enabled, no condition) does NOT gate replay off", async () => {
     // The storefront shape: the route inherits a cache() from an ancestor.

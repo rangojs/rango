@@ -195,10 +195,12 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   semantics, reported as `BYPASS; reason=explicit-cache-hit`; ONLY a true miss
   of that tier lets the shell snapshot's canonical doc segment record supply
   the match (the replay HIT). A `bypass` (cache(false), a false `condition()`,
-  no store) or `error` (throwing consumer `key()`/store failure) outcome of the
-  explicit lookup never falls back — opt-outs are absolute, and a key failure
-  keeps its render-uncached contract instead of serving across a broken key
-  partition (`CacheScope.lookupRouteDetailed` outcomes). To make composition
+  no store) or `error` outcome of the explicit lookup never falls back —
+  opt-outs are absolute, and an errored read (throwing consumer `key()`, a
+  store failure, or a built-in store's internally swallowed backend error,
+  signaled via `CACHE_READ_ERROR`) keeps its render-uncached contract instead
+  of serving across a key partition the tier never resolved
+  (`CacheScope.lookupRouteDetailed` outcomes). To make composition
   possible, a capture of such a route records the canonical doc segment record
   into the shell snapshot IN ADDITION to the scope's normal store write
   (snapshot-only — never the real store), and stamps its key on the entry
@@ -206,11 +208,17 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   Three decisions bypass before any shell-store read: a partial without
   navigation context (`no-navigation-context`), a route whose baked prerender
   artifact EXISTS (`prerender-store` — probed through the memoized prerender
-  store, because the trie's `pr` flag alone is not a serve guarantee for
-  `Passthrough(Prerender())` params that render live), and a scope refusing
-  cached serves (`cache-disabled`). Pinned by `[PPR6]`, the storefront-shape
-  dev+production e2e cases in both apps (`shell-cache`, `ppr-shell`), the
-  passthrough existence-probe case in `prerender-ppr`, and the
+  store on the variant the middleware will read, intercepts included, because
+  the trie's `pr` flag alone is not a serve guarantee for
+  `Passthrough(Prerender())` params that render live), and a STATICALLY
+  disabled scope (`cache(false)` → `cache-disabled`). A `condition()`
+  predicate is deliberately NOT pre-decided — evaluating it at the gate and
+  again at the lookup would let a false-then-true flap report cache-disabled
+  while the explicit tier serves; the lookup's own refusal is reported
+  post-match as the same `cache-disabled` (marker `onExplicitBypass`). Pinned
+  by `[PPR6]`, the storefront-shape dev+production e2e cases in both apps
+  (`shell-cache`, `ppr-shell`), the passthrough existence-probe cases in
+  `prerender-ppr` and `ppr-shell`, and the
   `cache-lookup-shell-replay-fallback` / `cache-store-shell-doc-record` units.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
   `invalidated` when a tag marker rejects a capture that started before the

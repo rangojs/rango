@@ -62,6 +62,18 @@ export function prerenderStoreShortCircuits(
   return pr === true && !request.headers.get("X-RSC-HMR");
 }
 
+/**
+ * The intercept-source header for a partial request, or null when the request
+ * carries none. Shared by resolveNavigation and the PPR replay gate's
+ * prerender probe: intercept navigations consult the intercept-specific
+ * prerender artifact (`paramHash + "/i"`), so the probe must check the same
+ * variant the middleware will — probing the bare hash for an intercept
+ * request would report `prerender-store` for an artifact that cannot serve.
+ */
+export function getInterceptSourceHeader(request: Request): string | null {
+  return request.headers.get("X-RSC-Router-Intercept-Source");
+}
+
 export async function resolveNavigation(
   request: Request,
   url: URL,
@@ -72,9 +84,7 @@ export async function resolveNavigation(
     url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
   const stale = url.searchParams.get("_rsc_stale") === "true";
   const previousUrl = getNavigationContextHeader(request);
-  const interceptSourceUrl = request.headers.get(
-    "X-RSC-Router-Intercept-Source",
-  );
+  const interceptSourceUrl = getInterceptSourceHeader(request);
   const isHmr = !!request.headers.get("X-RSC-HMR");
 
   if (!previousUrl) {

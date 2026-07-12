@@ -991,6 +991,54 @@ function describePprShell(mode: "dev" | "build") {
       );
     });
 
+    test("passthrough prerender: a baked param reports prerender-store, a live param keeps replay", async ({
+      request,
+    }) => {
+      // /ppr-shell/passthrough/:slug is Passthrough(Prerender()) + ppr on the
+      // real CFCacheStore/KV path: the trie marks every param pr:true, but
+      // only "baked" holds an artifact. The gate probes the store -- a live
+      // param must not misreport prerender-store (that would permanently skip
+      // eligible shells and never schedule the heal capture).
+      const partialHeaders = {
+        headers: { "X-RSC-Router-Client-Path": f.url("/") },
+      };
+
+      const bakedUrl = f.url("/ppr-shell/passthrough/baked?probe=cf-ppp-baked");
+      await warmToHit(request, bakedUrl);
+      const bakedReplay = await request.get(
+        `${bakedUrl}&_rsc_partial=true&_rsc_segments=`,
+        partialHeaders,
+      );
+      expect(bakedReplay.status()).toBe(200);
+      expect(bakedReplay.headers()["x-rango-ppr-replay"]).toBe(
+        "BYPASS; reason=prerender-store",
+      );
+      const bakedBody = await bakedReplay.text();
+      // Build-time segments supplied the partial: the BAKED handler's source
+      // marker, never the live Passthrough handler's execution stamp.
+      expect(bakedBody).toContain("PPR-PPP content for baked");
+      expect(bakedBody).toContain("baked");
+      expect(bakedBody).not.toContain("ppr-ppp-exec-");
+
+      const liveUrl = f.url(
+        "/ppr-shell/passthrough/live-one?probe=cf-ppp-live",
+      );
+      await warmToHit(request, liveUrl);
+      const liveReplay = await request.get(
+        `${liveUrl}&_rsc_partial=true&_rsc_segments=`,
+        partialHeaders,
+      );
+      expect(liveReplay.status()).toBe(200);
+      expect(liveReplay.headers()["x-rango-ppr-replay"]).toBe(
+        "HIT; freshness=fresh",
+      );
+      const liveBody = await liveReplay.text();
+      // The LIVE handler rendered the capture this replay serves.
+      expect(liveBody).toContain("PPR-PPP content for live-one");
+      expect(liveBody).toContain("live");
+      expect(liveBody).toContain("ppr-ppp-exec-");
+    });
+
     // --- Storefront shape: replay composed with an ancestor cache() scope
     // (src/urls.tsx `cache({ ttl: 30, swr })` wrapping the /ppr-scoped ppr
     // routes) on the real CFCacheStore/KV path. Before the composition fix

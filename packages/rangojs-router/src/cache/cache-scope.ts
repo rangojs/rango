@@ -11,6 +11,7 @@
 import type { PartialCacheOptions } from "../types.js";
 import type { ResolvedSegment } from "../types.js";
 import type { SegmentCacheStore, CachedEntryData } from "./types.js";
+import { CACHE_READ_ERROR } from "./types.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import {
   getRequestContext,
@@ -353,6 +354,14 @@ export class CacheScope {
       key = await this.resolveKey(pathname, params, isIntercept);
 
       const result = await store.get(key);
+
+      // Built-in stores swallow backend read failures internally and signal
+      // them with CACHE_READ_ERROR — classify as `error`, not `miss`, so the
+      // replay composition renders uncached instead of substituting the
+      // seeded doc record for a tier whose backend never answered.
+      if (result === CACHE_READ_ERROR) {
+        return { status: "error" };
+      }
 
       if (!result) {
         debugCacheLog(`[CacheScope] MISS: ${key}`);

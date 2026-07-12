@@ -13,6 +13,22 @@ import type { ResolvedSegment } from "../types.js";
 import type { RequestContext } from "../server/request-context.js";
 
 /**
+ * Sentinel a `SegmentCacheStore.get` MAY return instead of `null` when the
+ * read FAILED (backend error) rather than genuinely missing. For the render
+ * outcome the two are identical — render fresh, re-cache — so hit/miss-only
+ * consumers can treat it as a miss. The PPR replay composition needs the
+ * distinction: an errored explicit-tier read must render uncached
+ * (`lookupRouteDetailed` classifies it `error`), never be substituted by the
+ * seeded doc record — the built-in stores swallow backend errors internally,
+ * so without this signal their failures read as replayable misses. Third-party
+ * stores returning plain `null` on error keep the miss classification.
+ */
+export const CACHE_READ_ERROR: unique symbol = Symbol.for(
+  "rango.cache.readError",
+);
+export type CacheReadError = typeof CACHE_READ_ERROR;
+
+/**
  * Result from cache get() including data and revalidation status
  */
 export interface CacheGetResult {
@@ -90,9 +106,10 @@ export interface SegmentCacheStore<TEnv = unknown> {
 
   /**
    * Get cached entry data by key
-   * @returns Cache result with data and staleness, or null if not found/expired
+   * @returns Cache result with data and staleness, null if not found/expired,
+   * or CACHE_READ_ERROR when the read failed (optional — see the sentinel).
    */
-  get(key: string): Promise<CacheGetResult | null>;
+  get(key: string): Promise<CacheGetResult | null | CacheReadError>;
 
   /**
    * Store entry data with TTL

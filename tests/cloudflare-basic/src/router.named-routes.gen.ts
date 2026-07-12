@@ -67,6 +67,7 @@ export const NamedRoutes = {
   pprShellLayoutLoader: "/ppr-shell/layout-loader",
   pprShellLayoutLoaderBare: "/ppr-shell/layout-loader-bare",
   pprShellNoHole: "/ppr-shell/no-hole",
+  pprShellPassthrough: "/ppr-shell/passthrough/:slug",
   pprShellPrerendered: "/ppr-shell/prerendered/:slug",
   pprShellPrerenderedEvict: "/ppr-shell/prerendered-evict/:slug",
   pprShellSettled: "/ppr-shell/settled",

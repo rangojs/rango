@@ -47,6 +47,7 @@ import type {
   CachedEntryData,
   ShellSnapshotRecord,
 } from "../../../cache/types.js";
+import { CACHE_READ_ERROR } from "../../../cache/types.js";
 
 // Serve-side composition: on a PPR navigation replay (marker.onExplicitHit
 // set), a route-derived cache() scope stays authoritative — its hit reports
@@ -78,6 +79,7 @@ interface DrainResult {
   state: MatchPipelineState;
   onHit: ReturnType<typeof vi.fn>;
   onExplicitHit: ReturnType<typeof vi.fn>;
+  onExplicitBypass: ReturnType<typeof vi.fn>;
   reqCtx: RequestContext<any>;
 }
 
@@ -124,13 +126,14 @@ async function drain(options: {
     : [];
   const onHit = vi.fn();
   const onExplicitHit = vi.fn();
+  const onExplicitBypass = vi.fn();
   reqCtx._shellImplicitCache = {
     ttl: 300,
     swr: 60,
     store: new SeededShellStore(store, snapshot, { segmentsOnly: true }),
     keyPrefix: "doc",
     onHit,
-    ...(options.armReplay === false ? {} : { onExplicitHit }),
+    ...(options.armReplay === false ? {} : { onExplicitHit, onExplicitBypass }),
   };
 
   const ctx = {
@@ -165,7 +168,7 @@ async function drain(options: {
     }),
   );
 
-  return { yielded, state, onHit, onExplicitHit, reqCtx };
+  return { yielded, state, onHit, onExplicitHit, onExplicitBypass, reqCtx };
 }
 
 describe("withCacheLookup — PPR replay composed with a route-derived cache() scope", () => {
@@ -226,9 +229,34 @@ describe("withCacheLookup — PPR replay composed with a route-derived cache() s
       expect(result.state.cacheHit).toBe(false);
       expect(result.onHit).not.toHaveBeenCalled();
       expect(result.onExplicitHit).not.toHaveBeenCalled();
+      expect(result.onExplicitBypass).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("a store backend read failure renders uncached — swallowed store errors are not replayable misses", async () => {
+    // CFCacheStore/VercelCacheStore catch backend read errors internally and
+    // signal them with CACHE_READ_ERROR instead of null. The composition must
+    // classify that `error` — never substitute the seeded doc record for a
+    // tier whose backend never answered (execution-model.md, replay
+    // composition).
+    const failingStore = {
+      get: async () => CACHE_READ_ERROR,
+      set: async () => {},
+      delete: async () => true,
+    } as unknown as import("../../../cache/types.js").SegmentCacheStore;
+
+    const result = await drain({
+      seededEntry: await entryData(["seeded-R0"]),
+      scopeOptions: { ttl: 30, store: failingStore },
+    });
+
+    expect(result.yielded).toEqual([]);
+    expect(result.state.cacheHit).toBe(false);
+    expect(result.onHit).not.toHaveBeenCalled();
+    expect(result.onExplicitHit).not.toHaveBeenCalled();
+    expect(result.onExplicitBypass).not.toHaveBeenCalled();
   });
 
   it("a condition() refusing the read is absolute — no seeded fallback", async () => {
@@ -244,6 +272,8 @@ describe("withCacheLookup — PPR replay composed with a route-derived cache() s
     expect(result.state.cacheHit).toBe(false);
     expect(result.onHit).not.toHaveBeenCalled();
     expect(result.onExplicitHit).not.toHaveBeenCalled();
+    // The refusal is reported so the replay header can say cache-disabled.
+    expect(result.onExplicitBypass).toHaveBeenCalledTimes(1);
   });
 
   it("intercept navigations keep their normal cache path — no fallback, no explicit-hit report", async () => {

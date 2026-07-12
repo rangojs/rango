@@ -205,9 +205,15 @@ possible, a capture of such a route records the doc segment record into the
 shell snapshot IN ADDITION to the scope's normal store write; the record rides
 only inside the shell entry, never the real store. Two opt-outs stay absolute:
 `cache(false)` and a `condition()` returning false mean "do not serve this
-request's segments from any cache" — replay reports
-`BYPASS; reason=cache-disabled` before performing a single shell read, and no
-doc record is captured for them.
+request's segments from any cache" — no doc record is captured for them and
+the seeded fallback never rescues a refused read. `cache(false)` is static, so
+replay reports `BYPASS; reason=cache-disabled` before performing a single
+shell read; a `condition()` refusal is request-time state, decided at the
+lookup itself and reported as the same `cache-disabled` post-match (the gate
+must not pre-decide a predicate that could flap between the two evaluations).
+An errored explicit read — a throwing `key()`, or a built-in store's swallowed
+backend failure (`CACHE_READ_ERROR`) — also never falls back: it renders
+uncached, exactly as without ppr.
 
 `transition({ when })` is evaluated from the
 matched manifest before route handlers on every PPR match, so it can vary by
@@ -260,16 +266,16 @@ the HTML `prelude`/`postponed` bytes.
 
 The bounded bypass tokens, grouped by when they are decided:
 
-| Token                                                                             | Decided     | Meaning                                                                                                                            |
-| --------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `method`, `dynamic`, `nonce`, `store-unavailable`, `passive-read-unsupported`     | pre-read    | request/route/store ineligible for replay                                                                                          |
-| `no-navigation-context`                                                           | pre-read    | no `X-RSC-Router-Client-Path`/`Referer`; a partial match is impossible                                                             |
-| `prerender-store`                                                                 | pre-read    | `Prerender()` route; the build-time store serves the partial                                                                       |
-| `cache-disabled`                                                                  | pre-read    | `cache(false)` or `condition()` false; consumer opt-out is absolute                                                                |
-| `read-error`, `no-entry`, `invalid-version`, `corrupt-entry`, `stale-build-entry` | shell read  | no usable shell entry (`no-entry`/`invalid-version`/`corrupt-entry`/`stale-build-entry` schedule the navigation-only heal capture) |
-| `handler-live-holes`, `transition-when`, `no-segment-snapshot`                    | eligibility | entry exists but its snapshot cannot replay (no canonical doc record, or handler/transition liveness)                              |
-| `explicit-cache-hit`                                                              | match       | the route's own `cache()` tier supplied the match                                                                                  |
-| `snapshot-miss`                                                                   | match       | an eligible snapshot was seeded but matching did not consume it                                                                    |
+| Token                                                                             | Decided           | Meaning                                                                                                                            |
+| --------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `method`, `dynamic`, `nonce`, `store-unavailable`, `passive-read-unsupported`     | pre-read          | request/route/store ineligible for replay                                                                                          |
+| `no-navigation-context`                                                           | pre-read          | no `X-RSC-Router-Client-Path`/`Referer`; a partial match is impossible                                                             |
+| `prerender-store`                                                                 | pre-read          | `Prerender()` route whose baked artifact exists (probed, intercept-aware); the build-time store serves the partial                 |
+| `cache-disabled`                                                                  | pre-read or match | `cache(false)` (pre-read, static) or `condition()` false (decided at the lookup); consumer opt-out is absolute                     |
+| `read-error`, `no-entry`, `invalid-version`, `corrupt-entry`, `stale-build-entry` | shell read        | no usable shell entry (`no-entry`/`invalid-version`/`corrupt-entry`/`stale-build-entry` schedule the navigation-only heal capture) |
+| `handler-live-holes`, `transition-when`, `no-segment-snapshot`                    | eligibility       | entry exists but its snapshot cannot replay (no canonical doc record, or handler/transition liveness)                              |
+| `explicit-cache-hit`                                                              | match             | the route's own `cache()` tier supplied the match                                                                                  |
+| `snapshot-miss`                                                                   | match             | an eligible snapshot was seeded but matching did not consume it                                                                    |
 
 ### Capture-generation invalidation
 

@@ -63,6 +63,7 @@ import {
 import { contextGet } from "../context-var.js";
 import {
   getNavigationContextHeader,
+  getInterceptSourceHeader,
   prerenderStoreShortCircuits,
 } from "../router/navigation-snapshot.js";
 import {
@@ -792,16 +793,23 @@ async function matchPartialWithPprReplay<TEnv>(
       routeSnapshot?.params ?? {},
       url.pathname,
       routeSnapshot?.entries ?? [],
+      // Intercept navigations consult the `paramHash + "/i"` artifact — probe
+      // the variant the middleware will actually read.
+      getInterceptSourceHeader(request) !== null,
     ))
   ) {
     return runMatch({ outcome: "BYPASS", reason: "prerender-store" });
   }
-  // Consumer cache opt-outs are absolute (cache(false), condition() false for
-  // this request): the route refused cached serves, so neither the explicit
-  // tier nor the seeded fallback may supply the match. Decided before any
-  // shell read; no heal capture (its snapshot would be equally unusable).
+  // Consumer cache opt-outs are absolute: a STATICALLY disabled scope
+  // (cache(false)) bypasses before any shell read — no heal capture (its
+  // snapshot would be equally unusable). A `condition()` predicate is
+  // request-time state and must NOT be pre-decided here: evaluating it at the
+  // gate and again at the lookup lets a false-then-true flap report
+  // cache-disabled while the explicit tier serves. The lookup's own
+  // evaluation governs (withCacheLookup fires the marker's onExplicitBypass,
+  // reported as cache-disabled post-match).
   const routeCacheScope = routeSnapshot?.cacheScope ?? null;
-  if (routeCacheScope && !routeCacheScope.allowsCache("read")) {
+  if (routeCacheScope && !routeCacheScope.enabled) {
     return runMatch({ outcome: "BYPASS", reason: "cache-disabled" });
   }
 
@@ -887,6 +895,7 @@ async function matchPartialWithPprReplay<TEnv>(
   const previousImplicitCache = reqCtx._shellImplicitCache;
   let segmentReplayHit = false;
   let explicitCacheHit = false;
+  let explicitCacheBypass = false;
   reqCtx._shellImplicitCache = {
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
@@ -904,6 +913,12 @@ async function matchPartialWithPprReplay<TEnv>(
     onExplicitHit: () => {
       explicitCacheHit = true;
     },
+    // Lookup-time condition() refusal (or a scope with no store): the gate
+    // deliberately does not pre-decide predicates, so the truthful
+    // cache-disabled report comes from the lookup that actually refused.
+    onExplicitBypass: () => {
+      explicitCacheBypass = true;
+    },
   };
 
   try {
@@ -912,7 +927,9 @@ async function matchPartialWithPprReplay<TEnv>(
       ? { outcome: "HIT", freshness }
       : explicitCacheHit
         ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
-        : { outcome: "BYPASS", reason: "snapshot-miss" };
+        : explicitCacheBypass
+          ? { outcome: "BYPASS", reason: "cache-disabled" }
+          : { outcome: "BYPASS", reason: "snapshot-miss" };
     recordReplayStatus(status);
     return { result, status };
   } finally {
