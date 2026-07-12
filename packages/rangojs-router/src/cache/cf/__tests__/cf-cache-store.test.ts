@@ -1126,6 +1126,50 @@ describe("CFCacheStore", () => {
 
       matchSpy.mockRestore();
     });
+
+    it("returns CACHE_READ_ERROR when L1 match rejects and no KV is configured", async () => {
+      // The L1 rejection is the only signal the read produced; without a KV
+      // tier there is nothing to overrule it, and returning null classified
+      // it a REAL miss that enabled the PPR seeded fallback.
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockRejectedValue(new Error("match boom"));
+      const store = new CFCacheStore({ ctx: createMockCtx() });
+
+      expect(await store.get("l1-fail-no-kv")).toBe(CACHE_READ_ERROR);
+
+      matchSpy.mockRestore();
+    });
+
+    it("returns CACHE_READ_ERROR when L1 match rejects and KV genuinely misses", async () => {
+      // A KV miss under a rejected L1 match is NOT proof of absence -- the
+      // key may exist in the tier that failed.
+      const kv = {
+        get: vi.fn(async () => null),
+        put: vi.fn(),
+        delete: vi.fn(),
+      };
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockRejectedValue(new Error("match boom"));
+      const store = new CFCacheStore({ ctx: createMockCtx(), kv: kv as any });
+
+      expect(await store.get("l1-fail-kv-miss")).toBe(CACHE_READ_ERROR);
+      expect(kv.get).toHaveBeenCalled();
+
+      matchSpy.mockRestore();
+    });
+
+    it("a genuine L1 miss without KV stays a plain miss (null, not an error)", async () => {
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockResolvedValue(undefined);
+      const store = new CFCacheStore({ ctx: createMockCtx() });
+
+      expect(await store.get("plain-miss")).toBeNull();
+
+      matchSpy.mockRestore();
+    });
   });
 
   describe("non-finite timeout budgets", () => {

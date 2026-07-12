@@ -47,6 +47,7 @@ const PPR_REPLAY_BYPASS_REASONS = [
   "passive-read-unsupported",
   "no-navigation-context",
   "prerender-store",
+  "intercept",
   "cache-disabled",
   "read-error",
   "no-entry",

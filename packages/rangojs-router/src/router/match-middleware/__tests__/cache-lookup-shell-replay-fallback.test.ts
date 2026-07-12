@@ -311,4 +311,18 @@ describe("withCacheLookup — PPR replay composed with a route-derived cache() s
     expect(result.onHit).not.toHaveBeenCalled();
     expect(result.onExplicitHit).not.toHaveBeenCalled();
   });
+
+  it("stamps _resolvedIntercept from the match context (post-match replay truth)", async () => {
+    // The replay reporter reads this AFTER matchPartial resolves
+    // (reclassifyReplayStatus in rsc-rendering.ts): only the match knows
+    // whether findInterceptForRoute resolved an intercept — the
+    // intercept-source header proves nothing in either direction.
+    const intercept = await drain({ isIntercept: true });
+    expect(intercept.reqCtx._resolvedIntercept).toBe(true);
+
+    // Stamped unconditionally: false resets a stale value from an earlier
+    // match on the same request context.
+    const normal = await drain({});
+    expect(normal.reqCtx._resolvedIntercept).toBe(false);
+  });
 });

@@ -907,27 +907,40 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const matchMs = Date.now() - matchStart;
 
       if (!response) {
-        // A transient L1 match error (matchError set) is reported as cache-read
-        // but, like a genuine miss or an abandoned slow match (timedOut), still
-        // degrades to L2/KV rather than failing the read.
-        if (matchError)
+        if (matchError) {
+          // A match REJECTION is reported as cache-read and still degrades to
+          // L2/KV -- a real KV value (or KV's own CACHE_READ_ERROR) stands on
+          // its own. But a null KV result (unconfigured namespace, kv-miss,
+          // kv-timeout) is NOT proof of absence under a rejected L1 match:
+          // the only real signal this read produced is the failure, so
+          // surface CACHE_READ_ERROR instead of a replayable miss (the PPR
+          // seeded fallback must render uncached, not substitute the doc
+          // record for a partition the store could not actually read).
           reportCacheError(
             matchError,
             "cache-read",
             "[CFCacheStore] get L1 match",
           );
+          if (this.debug)
+            this.emitDebug({
+              op: "get",
+              key,
+              // Distinct from a genuine absence: surface it as match-error so
+              // debug agrees with the cache-read already routed to onError,
+              // instead of masquerading as l1-miss.
+              outcome: "match-error",
+              matchMs,
+            });
+          const kvResult = await this.kvGetSegment(key);
+          return kvResult ?? CACHE_READ_ERROR;
+        }
+        // An abandoned slow match (timedOut) keeps the fail-open latency-budget
+        // policy: degrade to L2/KV, and a KV null stays a miss.
         if (this.debug)
           this.emitDebug({
             op: "get",
             key,
-            // A match REJECTION (matchError) is distinct from a genuine absence:
-            // surface it as match-error so debug agrees with the cache-read
-            // already routed to onError, instead of masquerading as l1-miss.
-            outcome: matchError
-              ? "match-error"
-              : timedOut
-                ? "match-timeout"
-                : "l1-miss",
+            outcome: timedOut ? "match-timeout" : "l1-miss",
             matchMs,
           });
         return this.kvGetSegment(key);

@@ -209,15 +209,28 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   navigation context (`no-navigation-context`), a route whose baked prerender
   artifact EXISTS (`prerender-store` — probed through the memoized prerender
   store, because the trie's `pr` flag alone is not a serve guarantee for
-  `Passthrough(Prerender())` params that render live; a request carrying
-  `X-RSC-Router-Intercept-Source` falls through instead, since whether it IS
-  an intercept — and therefore which artifact variant the middleware reads —
-  only resolves post-match), and a STATICALLY disabled scope (`cache(false)`
-  → `cache-disabled`). A `condition()`
+  `Passthrough(Prerender())` params that render live), and a STATICALLY
+  disabled scope (`cache(false)` → `cache-disabled`). The probe is a fast
+  path, not the truth: it reads only the non-intercept artifact, and whether
+  the navigation IS an intercept — and therefore which artifact variant the
+  middleware reads — is resolved DURING the match (`findInterceptForRoute`;
+  the `X-RSC-Router-Intercept-Source` header proves nothing in either
+  direction). The match pipeline stamps the post-match facts on the request
+  context (`_servedFromPrerenderStore` from the prerender lookup that
+  actually served, `_resolvedIntercept` from the match context) and every
+  BYPASS is reclassified from them (`reclassifyReplayStatus`): a prerender
+  serve reports `prerender-store`, an intercept resolution reports
+  `intercept`, and both suppress the heal capture (a prerender capture
+  records no doc record; an intercept never consults replay). A `condition()`
   predicate is deliberately NOT pre-decided — evaluating it at the gate and
   again at the lookup would let a false-then-true flap report cache-disabled
   while the explicit tier serves; the lookup's own refusal is reported
-  post-match as the same `cache-disabled` (marker `onExplicitBypass`). Pinned
+  post-match as the same `cache-disabled` (marker `onExplicitBypass`).
+  The reverse flap heals: an entry captured while `condition()` was false
+  legitimately lacks a snapshot (`no-segment-snapshot`), and a later request
+  whose lookup did NOT refuse schedules the navigation-only heal capture —
+  the capture derives from that request's context, so its doc record records
+  and replay becomes available without waiting for a document recapture. Pinned
   by `[PPR6]`, the storefront-shape dev+production e2e cases in both apps
   (`shell-cache`, `ppr-shell`), the passthrough existence-probe cases in
   `prerender-ppr` and `ppr-shell`, and the
