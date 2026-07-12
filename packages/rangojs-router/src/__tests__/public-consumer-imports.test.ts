@@ -53,6 +53,10 @@ function runConsumerTypecheck(files: Record<string, string>) {
             "@rangojs/router/client": [publicTypeEntry("./client")],
             "@rangojs/router/cache": [publicTypeEntry("./cache")],
             "@rangojs/router/cloudflare": [publicTypeEntry("./cloudflare")],
+            "@rangojs/router/prerender": [publicTypeEntry("./prerender")],
+            "@rangojs/router/prerender/cloudflare": [
+              publicTypeEntry("./prerender/cloudflare"),
+            ],
             "@rangojs/router/host": [publicTypeEntry("./host")],
             "@rangojs/router/host/testing": [publicTypeEntry("./host/testing")],
             "@rangojs/router/theme": [publicTypeEntry("./theme")],
@@ -184,6 +188,13 @@ const config: RouterTracingConfig = createCloudflareTracing(opts);
 const phases: TracePhaseToggles = { loader: true };
 void config;
 void phases;
+`,
+      "prerender-consumer.ts": `
+import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
+
+void createMemoryPrerenderStore;
+void createKVPrerenderStore;
 `,
       "host-consumer.ts": `
 import { NoRouteMatchError, createHostRouter } from "@rangojs/router/host";

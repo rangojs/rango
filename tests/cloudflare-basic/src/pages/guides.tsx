@@ -1,6 +1,7 @@
 import { urls } from "@rangojs/router";
-import { GuidesDetail } from "./guides-handler.js";
+import { GuidesDetail, PersonalizedGuide } from "./guides-handler.js";
 
 export const guidesPatterns = urls(({ path }) => [
+  path("/personalized/:slug", PersonalizedGuide, { name: "personalized" }),
   path("/:slug", GuidesDetail, { name: "detail" }),
 ]);

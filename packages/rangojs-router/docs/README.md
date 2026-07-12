@@ -59,6 +59,9 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 
 - [Prerender design](./prerender-api-design.md) - build-time rendering and
   runtime cache lookup model
+- [On-demand prerender design](./design/ondemand-prerender.md) - implemented
+  ISR-style durable prerender refresh from fetch, cron, queues, workflows, and
+  webhooks
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching and cache profiles
 - [Segment caching design](../../../docs/design/caching.md) - the canonical

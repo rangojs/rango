@@ -181,6 +181,28 @@ export interface Rango<
    * ```
    */
   fetch(request: Request, input?: RouterRequestInput<TEnv>): Promise<Response>;
+
+  /**
+   * Trigger an on-demand (ISR-style) prerender refresh from a running app —
+   * fetch handler, cron, queue, workflow, webhook, or server action.
+   *
+   * Requestless: the producer renders with route params and env only, never the
+   * caller's cookies/headers/session. Only routes that opted in via
+   * `Prerender(..., { onDemand })` are persistable; others return a skipped
+   * result. Configure the store via the `prerender` router option.
+   *
+   * @example
+   * ```ts
+   * await router.prerender("/products/42", { env, ctx });
+   * await router.prerender(
+   *   { route: "products.detail", params: { id: "42" } },
+   *   { env, ctx, throwOnError: true },
+   * );
+   * await router.prerender.many(targets, { env, ctx, concurrency: 4 });
+   * await router.prerender.invalidateTags(["product:42"], { env, ctx });
+   * ```
+   */
+  prerender: import("../prerender/on-demand.js").PrerenderFn<TEnv, TRoutes>;
 }
 
 /**
@@ -270,6 +292,13 @@ export interface RangoInternal<
    * Cache configuration
    */
   readonly cache?: RangoOptions<TEnv>["cache"];
+
+  /**
+   * Prerender store configuration (the writable durable overlay for on-demand
+   * prerender). Stored separately from the `prerender` trigger method so the RSC
+   * handler can resolve it per request. @internal
+   */
+  readonly _prerenderConfig?: RangoOptions<TEnv>["prerender"];
 
   /**
    * Not found component to render when no route matches
@@ -558,6 +587,9 @@ export interface RangoInternal<
    * Handle an RSC request.
    */
   fetch(request: Request, input?: RouterRequestInput<TEnv>): Promise<Response>;
+
+  /** On-demand prerender trigger (router.prerender / .many / .invalidateTags). */
+  prerender: import("../prerender/on-demand.js").PrerenderFn<TEnv, TRoutes>;
 }
 
 /**

@@ -53,6 +53,8 @@ export interface GeneratedManifest {
   prerenderRoutes?: string[];
   /** Route names wrapped with Passthrough() (live handler for runtime fallback) */
   passthroughRoutes?: string[];
+  /** Route names opted into on-demand prerender (Prerender(..., { onDemand })) */
+  onDemandRoutes?: string[];
   /** Route name → response type for non-RSC routes */
   responseTypeRoutes?: Record<string, string>;
   /** Route name -> search schema descriptor for typed URL helpers */
@@ -113,6 +115,7 @@ async function buildPrefixTreeNode(
   prerenderRoutes?: string[],
   prerenderDefs?: Record<string, any>,
   passthroughRoutes?: string[],
+  onDemandRoutes?: string[],
   responseTypeRoutes?: Record<string, string>,
   routeSearchSchemas?: Record<string, Record<string, string>>,
   routerId?: string,
@@ -202,6 +205,13 @@ async function buildPrefixTreeNode(
             passthroughRoutes.push(name);
           }
         }
+        if (
+          onDemandRoutes &&
+          entry.type === "route" &&
+          entry.isOnDemand === true
+        ) {
+          onDemandRoutes.push(name);
+        }
       }
     }
 
@@ -227,6 +237,7 @@ async function buildPrefixTreeNode(
         prerenderRoutes,
         prerenderDefs,
         passthroughRoutes,
+        onDemandRoutes,
         responseTypeRoutes,
         routeSearchSchemas,
         routerId,
@@ -380,6 +391,7 @@ export async function generateManifestFull<TEnv>(
   const prerenderRoutes: string[] = [];
   const prerenderDefs: Record<string, any> = {};
   const passthroughRoutes: string[] = [];
+  const onDemandRoutes: string[] = [];
   const responseTypeRoutes: Record<string, string> = {};
   for (const [name, entry] of manifest) {
     if (entry.type === "route" && entry.isPrerender) {
@@ -389,6 +401,9 @@ export async function generateManifestFull<TEnv>(
       }
       if (entry.isPassthrough === true) {
         passthroughRoutes.push(name);
+      }
+      if (entry.isOnDemand === true) {
+        onDemandRoutes.push(name);
       }
     }
     if (entry.type === "route" && entry.responseType) {
@@ -410,6 +425,7 @@ export async function generateManifestFull<TEnv>(
       prerenderRoutes,
       prerenderDefs,
       passthroughRoutes,
+      onDemandRoutes,
       responseTypeRoutes,
       routeSearchSchemas,
       options?.routerId,
@@ -426,6 +442,7 @@ export async function generateManifestFull<TEnv>(
     prerenderRoutes: prerenderRoutes.length > 0 ? prerenderRoutes : undefined,
     passthroughRoutes:
       passthroughRoutes.length > 0 ? passthroughRoutes : undefined,
+    onDemandRoutes: onDemandRoutes.length > 0 ? onDemandRoutes : undefined,
     responseTypeRoutes:
       Object.keys(responseTypeRoutes).length > 0
         ? responseTypeRoutes

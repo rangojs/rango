@@ -259,7 +259,7 @@ test.describe("bundle-analysis", () => {
       expect(allIds.length).toBeGreaterThan(0);
 
       for (const id of allIds) {
-        expect(id).toMatch(/^[0-9a-f]+#[A-Za-z]\w*$/);
+        expect(id).toMatch(/^[0-9a-f]+#[A-Za-z_]\w*$/);
       }
     });
   });

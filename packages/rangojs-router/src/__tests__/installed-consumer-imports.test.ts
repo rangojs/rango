@@ -86,6 +86,8 @@ import type {
 import { Link } from "@rangojs/router/client";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
 import { createHostRouter } from "@rangojs/router/host";
 import {
   createTestRequest,
@@ -133,6 +135,8 @@ type _OTelInstallTypes = [
 void Link;
 void MemorySegmentCacheStore;
 void createCloudflareTracing;
+void createMemoryPrerenderStore;
+void createKVPrerenderStore;
 void createHostRouter;
 void createTestRequest;
 void testPattern;

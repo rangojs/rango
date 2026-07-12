@@ -35,12 +35,12 @@ route was pre-rendered.
 - **Build-time PPR shells (producer B, #699)** - a `Prerender` route that also
   declares the `ppr` path option gets its complete PPR shell entry (HTML prelude +
   postponed state) produced at `vite build` and served from the very first
-  request. See [Build-time PPR shells](#build-time-ppr-shells-producer-b).
-
-### Remaining
-
-- **Revalidation with Passthrough** - Background re-render of stale prerender data
-- **ISR-style revalidation** - Time-based or on-demand re-rendering without full rebuild
+  request. On-demand routes stay on the normal document lane because the
+  writable segment overlay and shell store cannot be replaced atomically. See
+  [Build-time PPR shells](#build-time-ppr-shells-producer-b).
+- **ISR-style revalidation** - `Prerender(..., { onDemand })` plus
+  `router.prerender()` refreshes a writable durable overlay without a deploy;
+  `Passthrough` remains the live fallback until an entry exists.
 
 ---
 

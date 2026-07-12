@@ -84,7 +84,88 @@ describe("extractHandlerExportsFromChunk", () => {
       name: "myLoader",
       handlerId: "abc12345#myLoader",
       passthrough: false,
+      onDemand: false,
     });
+  });
+
+  it("detects an onDemand: true literal", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { onDemand: !0 });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      true,
+    );
+    expect(result[0].onDemand).toBe(true);
+    expect(result[0].passthrough).toBe(false);
+  });
+
+  it("detects an onDemand object literal", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { onDemand: { ttl: 60 } });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      true,
+    );
+    expect(result[0].onDemand).toBe(true);
+  });
+
+  it("does NOT flag onDemand for `onDemand: false` (opt-out, not a literal opt-in)", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { onDemand: !1 });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      true,
+    );
+    expect(result[0].onDemand).toBe(false);
+  });
+
+  it("does NOT flag onDemand for a ternary `x ? onDemand : y` in the body", () => {
+    const chunk = [
+      `const Page = Prerender(() => (cond ? onDemand : fallback));`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      true,
+    );
+    expect(result[0].onDemand).toBe(false);
+  });
+
+  it("reports onDemand: false when detection is off", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { onDemand: true });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+    );
+    expect(result[0].onDemand).toBe(false);
   });
 
   it("skips handler without $$id assignment", () => {
@@ -209,6 +290,20 @@ describe("evictHandlerCode", () => {
       ],
       "Static",
       "static",
+    );
+    expect(result).toBeNull();
+  });
+
+  it("skips onDemand handlers (retains the producer body)", () => {
+    const code = [
+      `const Page = Prerender({$$id: "abc12345#Page", fetch() {} });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const result = evictHandlerCode(
+      code,
+      [{ name: "Page", handlerId: "abc12345#Page", onDemand: true }],
+      "Prerender",
+      "prerenderHandler",
     );
     expect(result).toBeNull();
   });

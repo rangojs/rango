@@ -15,6 +15,7 @@ import {
   isInsideHandlerInvokedLoaderBody,
 } from "./context.js";
 import { INSIDE_CACHE_EXEC } from "../cache/taint.js";
+import { assertNotInsidePrerenderProducer } from "../prerender/producer-guard.js";
 
 /**
  * A single cookie entry returned by get() and getAll().
@@ -65,6 +66,7 @@ export interface CookieStore {
  */
 export function cookies(): CookieStore {
   const ctx = getRequestContext();
+  assertNotInsidePrerenderProducer(ctx, "cookies()");
   assertNotInsideCacheContext(ctx, "cookies");
   assertNotInsideShellCapture(ctx, "cookies");
   return createCookieStore(ctx);
@@ -222,6 +224,7 @@ const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);
  */
 export function headers(): ReadonlyHeaders {
   const ctx = getRequestContext();
+  assertNotInsidePrerenderProducer(ctx, "headers()");
   assertNotInsideCacheContext(ctx, "headers");
   assertNotInsideShellCapture(ctx, "headers");
   return new Proxy(ctx.request.headers, {
@@ -262,6 +265,7 @@ export function invalidateClientCache(): void {
     }
     return;
   }
+  assertNotInsidePrerenderProducer(ctx, "invalidateClientCache()");
   assertNotInsideCacheContext(ctx, "invalidateClientCache");
   ctx._rotateStateCookie();
 }
@@ -287,6 +291,7 @@ export function keepClientCache(): void {
     }
     return;
   }
+  assertNotInsidePrerenderProducer(ctx, "keepClientCache()");
   assertNotInsideCacheContext(ctx, "keepClientCache");
   ctx._setKeepCacheDirective();
 }

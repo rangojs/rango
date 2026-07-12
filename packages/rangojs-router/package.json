@@ -119,6 +119,16 @@
       "react-server": "./src/cloudflare/index.ts",
       "default": "./src/cloudflare/index.ts"
     },
+    "./prerender": {
+      "types": "./dist/types/prerender/index.d.ts",
+      "react-server": "./src/prerender/index.ts",
+      "default": "./src/prerender/index.ts"
+    },
+    "./prerender/cloudflare": {
+      "types": "./dist/types/prerender/cloudflare.d.ts",
+      "react-server": "./src/prerender/cloudflare.ts",
+      "default": "./src/prerender/cloudflare.ts"
+    },
     "./vercel": {
       "types": "./dist/types/vercel/index.d.ts",
       "react-server": "./src/vercel/index.ts",

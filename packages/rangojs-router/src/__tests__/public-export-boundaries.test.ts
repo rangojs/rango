@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { PrerenderError } from "../prerender/index.js";
 import type { PublicRequestContext } from "../server/request-context.js";
 
 type InternalOnlyContextKey =
   | "_pendingBackgroundTasks"
+  | "_prerender"
+  | "_onDemandProducer"
   | "_shellCaptureLoaderHandleValues"
   | "_shellCaptureGuardTripped"
   | "_tracing";
@@ -25,6 +28,10 @@ const rscEntry = resolve(srcRoot, "index.rsc.ts");
 describe("public export boundaries", () => {
   it("keeps internal-only fields out of the public request context type", () => {
     expect(publicContextHidesInternalFields).toBe(true);
+  });
+
+  it("exports the on-demand prerender error from the public subpath", () => {
+    expect(PrerenderError).toBeTypeOf("function");
   });
 
   // The server-only cache-tag APIs are real in the react-server entry and must

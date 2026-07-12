@@ -316,6 +316,37 @@ export interface RangoOptions<TEnv = any> {
       });
 
   /**
+   * Writable prerender store for on-demand (ISR-style) prerender refresh.
+   *
+   * A durable overlay in front of the bundled build manifest. When provided,
+   * `router.prerender(target, { env, ctx })` renders a route requestlessly and
+   * writes a versioned payload here; the serve path reads the overlay before the
+   * bundled manifest. Same union shape as `cache`: a plain config object or a
+   * factory resolved per request/per call (never at `createRouter()` time), so
+   * multi-tenant apps never memoize one request's binding for another.
+   *
+   * @example Cloudflare KV overlay with SWR revalidation
+   * ```typescript
+   * import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
+   *
+   * const router = createRouter<AppEnv>({
+   *   prerender: (env) => ({
+   *     store: createKVPrerenderStore(env.PRERENDER_KV),
+   *     defaultTtl: 3600,
+   *     swr: true,
+   *     onRevalidate: (target, e) => e.PRERENDER_QUEUE.send({ target }),
+   *   }),
+   * });
+   * ```
+   */
+  prerender?:
+    | import("../prerender/on-demand.js").PrerenderConfig<TEnv>
+    | ((
+        env: TEnv,
+        ctx?: ExecutionContext,
+      ) => import("../prerender/on-demand.js").PrerenderConfig<TEnv>);
+
+  /**
    * Named cache profiles for "use cache" directive.
    * Profile names map to TTL/SWR configuration.
    *

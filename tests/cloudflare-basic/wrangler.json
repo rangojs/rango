@@ -11,6 +11,10 @@
     {
       "binding": "KV",
       "id": "89ed1b5fe9ac46949c0ded3b5ae2d7e0"
+    },
+    {
+      "binding": "PRERENDER_KV",
+      "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
     }
   ]
 }

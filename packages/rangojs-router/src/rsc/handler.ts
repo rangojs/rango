@@ -472,6 +472,28 @@ export function createRSCHandler<
       }
     }
 
+    // Resolve the writable prerender store (durable overlay) for the serve path.
+    // Same factory-or-object shape as cache, resolved per request from env/ctx
+    // (never memoized). buildId = version, so entries are deploy-scoped. The
+    // trigger method (router.prerender) resolves the same config independently.
+    let resolvedPrerender:
+      | import("../prerender/on-demand.js").ResolvedPrerender<any>
+      | undefined;
+    const prerenderOption = router._prerenderConfig;
+    if (prerenderOption) {
+      const prerenderConfig =
+        typeof prerenderOption === "function"
+          ? prerenderOption(env, executionCtx)
+          : prerenderOption;
+      if (prerenderConfig?.store) {
+        resolvedPrerender = {
+          config: prerenderConfig,
+          routerId: router.id,
+          buildId: version,
+        };
+      }
+    }
+
     // Route manifest is populated at startup via the virtual module
     // (virtual:rsc-router/routes-manifest). In build/production, it's inlined
     // into the bundle. In dev mode (Node), the discovery plugin populates it
@@ -526,6 +548,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      prerender: resolvedPrerender,
       explicitTaggedStores,
       cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,

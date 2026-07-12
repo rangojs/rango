@@ -7,6 +7,7 @@ import {
   cookies,
   getRequestContext,
   redirect,
+  type Handler,
 } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
 import { Suspense } from "react";
@@ -21,12 +22,6 @@ import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
 import type { AppBindings } from "./env.js";
-
-declare global {
-  var __loadPrerenderManifestModule:
-    | (() => Promise<{ default: Record<string, string> }>)
-    | undefined;
-}
 
 // Page handlers
 import { HomePage } from "./pages/home.js";
@@ -150,6 +145,39 @@ import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
+// On-demand prerender trigger handler. Explicitly typed as Handler so the lazy
+// `import("./router.js")` inside it does not force TypeScript to infer this
+// module's type from the router (which is built from urlpatterns) — that would
+// be a circular type. Returns the PrerenderResult as JSON for the e2e.
+const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("./router.js");
+  const result = await router.prerender(
+    { route: "guides.detail", params: { slug: ctx.params.slug } },
+    { env: ctx.env, ctx: ctx.executionContext },
+  );
+  return Response.json(
+    !result.ok && result.error instanceof Error
+      ? { ...result, error: result.error.message }
+      : result,
+  );
+};
+
+const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("./router.js");
+  const result = await router.prerender(
+    {
+      route: "guides.personalized",
+      params: { slug: ctx.params.slug },
+    },
+    { env: ctx.env, ctx: ctx.executionContext },
+  );
+  return Response.json(
+    !result.ok && result.error instanceof Error
+      ? { ...result, error: result.error.message }
+      : result,
+  );
+};
+
 /**
  * Main URL patterns - Django-style routing API
  */
@@ -186,6 +214,17 @@ export const urlpatterns = urls(
       },
       { name: "testClearErrorLog" },
     ),
+
+    // On-demand (ISR-style) prerender trigger. Renders the guides.detail build
+    // handler requestlessly and stores it in the KV overlay so the next
+    // /guides/:slug request is served from the overlay, short-circuiting the
+    // Passthrough live handler. Defined as a top-level typed Handler (below) so
+    // its lazy `import("./router.js")` does not create a type cycle with the
+    // router (which is initialized from these urlpatterns).
+    path("/guide-trigger/:slug", GuidesTrigger, { name: "guidesTrigger" }),
+    path("/guide-personalized-trigger/:slug", PersonalizedGuideTrigger, {
+      name: "guidesPersonalizedTrigger",
+    }),
 
     // robots.txt (response route)
     path.text(

@@ -123,6 +123,29 @@ export interface PrerenderOptions {
    * ```
    */
   concurrency?: number;
+
+  /**
+   * Opt this route into on-demand (ISR-style) prerender refresh via
+   * `router.prerender()`. `true` uses the router-level `prerender` defaults; an
+   * object overrides them per route.
+   *
+   * MUST be a static literal in the `Prerender()` call (not a computed value):
+   * the bundle-eviction pass detects it textually to retain the producer code in
+   * the deployed bundle. A computed value (e.g. `onDemand: someBooleanVar`) still
+   * marks the route on-demand at runtime, but its producer is evicted from the
+   * production bundle, so every `router.prerender()` refresh returns
+   * `render-failed`. Write `true` or an object literal.
+   *
+   * @example
+   * ```typescript
+   * export const ProductPage = Prerender(
+   *   async () => [{ id: "featured" }],
+   *   async (ctx) => <Product data={await ctx.env.PRODUCTS.get(ctx.params.id)} />,
+   *   { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
+   * );
+   * ```
+   */
+  onDemand?: import("./prerender/on-demand.js").OnDemandOption;
 }
 
 /**
@@ -143,6 +166,14 @@ export interface BuildContext<TParams> {
    * changing build semantics.
    */
   dev: boolean;
+
+  /**
+   * True when this render is a requestless on-demand refresh driven by
+   * `router.prerender()` (rather than a build-time or dev prerender). The
+   * producer is still requestless — cookies/headers are unavailable — but
+   * `ctx.env` is the live trigger binding, not the shared build env.
+   */
+  onDemand: boolean;
 
   /**
    * Build-time environment bindings (KV, D1, etc.) supplied by the Vite plugin.

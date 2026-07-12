@@ -42,6 +42,12 @@ export interface TrieLeaf {
   pr?: true;
   /** Passthrough: handler kept in bundle for live fallback on unknown params */
   pt?: true;
+  /**
+   * On-demand prerender eligible: the route opted into router.prerender()
+   * refresh. Distinct from `pr` — an od route may have no build-baked entry yet
+   * still needs a writable-overlay lookup at serve time.
+   */
+  od?: true;
   /** Response type for non-RSC routes (json, text, image, any) */
   rt?: string;
   /** Negotiate variants: response-type routes sharing this path */
@@ -77,6 +83,7 @@ export interface TrieNode {
  * @param prerenderRouteNames - Optional set of prerendered route names (sets leaf.pr)
  * @param passthroughRouteNames - Optional set of passthrough route names (sets leaf.pt)
  * @param responseTypeRoutes - Optional map of route name to response type (sets leaf.rt)
+ * @param onDemandRouteNames - Optional set of on-demand-eligible route names (sets leaf.od)
  */
 export function buildRouteTrie(
   routeManifest: Record<string, string>,
@@ -85,6 +92,7 @@ export function buildRouteTrie(
   prerenderRouteNames?: Set<string>,
   passthroughRouteNames?: Set<string>,
   responseTypeRoutes?: Record<string, string>,
+  onDemandRouteNames?: Set<string>,
 ): TrieNode {
   const root: TrieNode = {};
 
@@ -104,6 +112,7 @@ export function buildRouteTrie(
       ...(trailingSlash ? { ts: trailingSlash } : {}),
       ...(prerenderRouteNames?.has(routeName) ? { pr: true } : {}),
       ...(passthroughRouteNames?.has(routeName) ? { pt: true } : {}),
+      ...(onDemandRouteNames?.has(routeName) ? { od: true } : {}),
       ...(responseType ? { rt: responseType } : {}),
     });
   }
@@ -184,6 +193,7 @@ export function buildPerRouterTrie(manifest: FullManifest): TrieNode | null {
       ? new Set(manifest.passthroughRoutes)
       : undefined,
     manifest.responseTypeRoutes,
+    manifest.onDemandRoutes ? new Set(manifest.onDemandRoutes) : undefined,
   );
 }
 

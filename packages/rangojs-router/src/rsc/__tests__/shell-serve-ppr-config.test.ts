@@ -67,6 +67,15 @@ describe("resolvePprConfig — captureTimeout parsing (issue #715)", () => {
     ).toBeNull();
     expect(resolvePprConfig(routeEntry(false))).toBeNull();
   });
+
+  it("keeps on-demand prerender routes off the shell lane", () => {
+    expect(
+      resolvePprConfig({
+        ...routeEntry(true),
+        isOnDemand: true,
+      } as EntryData),
+    ).toBeNull();
+  });
 });
 
 describe("nameless path() keeps ppr on its manifest entry (issue #714)", () => {

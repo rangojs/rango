@@ -222,8 +222,13 @@ export type EntryData =
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
       prerenderDef?: {
         getParams?: (ctx: any) => Promise<any[]> | any[];
-        options?: { concurrency?: number };
+        options?: {
+          concurrency?: number;
+          onDemand?: import("../prerender/on-demand.js").OnDemandOption;
+        };
       };
+      /** Set when the route opted into on-demand prerender (Prerender(..., { onDemand })) */
+      isOnDemand?: true;
       /** Set when route is wrapped with Passthrough() — has a separate live handler */
       isPassthrough?: true;
       /** Live handler for runtime fallback (only set on Passthrough routes) */
@@ -389,6 +394,7 @@ export const getContext = (): {
   getStore: () => HelperContext;
   getParent: () => EntryData | null;
   getOrCreateStore: (forRoute?: string) => HelperContext;
+  runIsolated: <T>(forRoute: string, callback: () => T) => T;
   getNextIndex: (
     type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate",
   ) => string;
@@ -408,26 +414,29 @@ export const getContext = (): {
   ) => T;
 } => {
   const context = RangoContext;
+  const createStore = (forRoute?: string): HelperContext => ({
+    manifest: new Map<string, EntryData>(),
+    namespace: "",
+    parent: null,
+    forRoute,
+    counters: {},
+    patterns: new Map<string, string>(),
+    patternsByPrefix: new Map<string, Map<string, string>>(),
+    trailingSlash: new Map<string, "never" | "always" | "ignore">(),
+    searchSchemas: new Map<string, Record<string, string>>(),
+  });
 
   return {
     context,
     getOrCreateStore: (forRoute?: string): HelperContext => {
       let store = RangoContext.getStore();
       if (!store) {
-        store = {
-          manifest: new Map<string, EntryData>(),
-          namespace: "",
-          parent: null,
-          forRoute,
-          counters: {},
-          patterns: new Map<string, string>(),
-          patternsByPrefix: new Map<string, Map<string, string>>(),
-          trailingSlash: new Map<string, "never" | "always" | "ignore">(),
-          searchSchemas: new Map<string, Record<string, string>>(),
-        } satisfies HelperContext;
+        store = createStore(forRoute);
       }
       return store;
     },
+    runIsolated: <T>(forRoute: string, callback: () => T): T =>
+      context.run(createStore(forRoute), callback),
     getStore: (): HelperContext => {
       const store = context.getStore();
       if (!store) {
@@ -894,7 +903,10 @@ function isInsideAnyLoaderScope(): boolean {
 
 /**
  * The one ppr opt-in predicate: a page route entry that DECLARED `ppr`
- * (`false` and undefined mean plain axis 1). Shared by the serve path
+ * (`false`, undefined, and on-demand routes mean plain axis 1). A writable
+ * prerender refresh cannot atomically replace the separate document shell, so
+ * combining those lanes would pair a fresh tail with a stale prelude. Shared by
+ * the serve path
  * (rsc/shell-serve.ts resolvePprConfig) and the header-write latch below so
  * the two layers can never drift on what counts as a ppr route.
  */
@@ -903,7 +915,10 @@ export function isPprEntry(entry: EntryData): entry is EntryData & {
   ppr: true | import("../urls/pattern-types.js").PartialPrerenderProps;
 } {
   return (
-    entry.type === "route" && entry.ppr !== undefined && entry.ppr !== false
+    entry.type === "route" &&
+    entry.isOnDemand !== true &&
+    entry.ppr !== undefined &&
+    entry.ppr !== false
   );
 }
 

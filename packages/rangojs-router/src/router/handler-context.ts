@@ -337,6 +337,7 @@ export function createPrerenderContext<TEnv>(
   isPassthroughRoute?: boolean,
   buildEnv?: TEnv,
   devMode?: boolean,
+  onDemand?: boolean,
 ): InternalHandlerContext<any, TEnv> {
   const syntheticUrl = new URL(`http://prerender${pathname}`);
   const variables = buildVars ?? {};
@@ -355,6 +356,7 @@ export function createPrerenderContext<TEnv>(
     // gate. dynamic() only reaches the shell axis on a live request or capture.
     dynamic: () => {},
     dev: devMode ?? false,
+    onDemand: onDemand ?? false,
     get request(): Request {
       return throwUnavailable("request");
     },

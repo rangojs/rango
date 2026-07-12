@@ -2166,6 +2166,9 @@ export function createRouterDiscoveryPlugin(
             s.resolvedPrerenderModules,
             "Prerender",
             false,
+            // Detect onDemand to retain the producer body: router.prerender()
+            // must be able to invoke it at runtime.
+            true,
           );
           if (handlers.length > 0) {
             const existing = s.handlerChunkInfoMap.get(fileName);

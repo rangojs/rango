@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { generateManifest } from "../generate-manifest";
 import { urls, type UrlPatterns } from "../../urls";
+import { Prerender } from "../../prerender";
 
 describe("generateManifest", () => {
   it("should extract routes from simple urlpatterns", async () => {
@@ -55,6 +56,26 @@ describe("generateManifest", () => {
     expect(manifest.routeManifest).toHaveProperty("home", "/");
     expect(manifest.routeManifest).toHaveProperty("shop.items", "/shop/items");
     expect(manifest.prefixTree).toHaveProperty("/shop");
+  });
+
+  it("should preserve on-demand metadata from async includes", async () => {
+    const lazyPatterns = urls(({ path }) => [
+      path(
+        "/items/:id",
+        Prerender<{ id: string }>(() => null, { onDemand: true }),
+        { name: "detail" },
+      ),
+    ]);
+    const urlpatterns = urls(({ include }) => [
+      include("/shop", async () => ({ default: lazyPatterns }), {
+        name: "shop",
+      }),
+    ]);
+
+    const manifest = await generateManifest(urlpatterns);
+
+    expect(manifest.routeManifest["shop.detail"]).toBe("/shop/items/:id");
+    expect(manifest.onDemandRoutes).toEqual(["shop.detail"]);
   });
 
   it("should handle nested includes with proper prefixes", async () => {
