@@ -332,7 +332,6 @@ export async function prerenderEntryExists(
   params: Record<string, string>,
   pathname: string,
   entries: EntryData[],
-  isIntercept: boolean,
 ): Promise<boolean> {
   if (!routeKey) return false;
   // Deliberately NOT ensurePrerenderDeps(): the probe needs only the store
@@ -347,16 +346,20 @@ export async function prerenderEntryExists(
     ).createPrerenderStore();
   }
   if (!prerenderStoreInstance) return false;
-  // Same variant rule as tryPrerenderLookup: intercept navigations consult
-  // only the intercept-specific artifact.
-  const paramHash = _hashParams!(params);
-  const lookupHash = isIntercept ? paramHash + "/i" : paramHash;
-  const entry = await prerenderStoreInstance.get(routeKey, lookupHash, {
-    pathname,
-    isPassthroughRoute: entries.some(
-      (entry) => entry.type === "route" && entry.isPassthrough === true,
-    ),
-  });
+  // Non-intercept variant only: the replay gate falls through whenever an
+  // intercept-source header is present (whether the navigation IS an
+  // intercept resolves post-match), so the `paramHash + "/i"` artifact is
+  // never probed here.
+  const entry = await prerenderStoreInstance.get(
+    routeKey,
+    _hashParams!(params),
+    {
+      pathname,
+      isPassthroughRoute: entries.some(
+        (entry) => entry.type === "route" && entry.isPassthrough === true,
+      ),
+    },
+  );
   return entry != null;
 }
 
@@ -521,7 +524,11 @@ export function withCacheLookup<TEnv>(
     ) {
       if (explicitLookup.status === "hit") {
         replayMarker.onExplicitHit();
-      } else if (explicitLookup.status === "miss") {
+      } else if (explicitLookup.status === "miss" && replayMarker.store) {
+        // The store gate keeps report-only markers (installed on the
+        // no-eligible-snapshot path purely for truthful status) inert: a
+        // store-less marker minting a doc scope here would resolve the APP
+        // store and read the REAL doc: partition — a cross-partition serve.
         cacheResult = await createShellImplicitDocScope(
           replayMarker,
         ).lookupRoute(ctx.pathname, ctx.matched.params, ctx.isIntercept);

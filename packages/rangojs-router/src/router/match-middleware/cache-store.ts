@@ -378,15 +378,16 @@ export function withCacheStore<TEnv>(
  * - the prerender store supplied the match: those partials are served from
  *   build-time segments and report `prerender-store`.
  *
- * A false condition() does NOT suppress the record: the shell entry already
- * bakes this very render's handler output as the served HTML prelude, so the
- * doc record adds no exposure — and it is the ARMING VEHICLE for the
- * lookup-time refusal contract (replay eligibility requires the record; the
- * marker's onExplicitBypass then reports `cache-disabled` when the lookup's
- * own condition() evaluation refuses). Suppressing it made an always-false
- * condition() unreachable for that contract: eligibility failed first and the
- * header lied `no-segment-snapshot`. Serving stays lookup-gated either way —
- * nothing is ever SERVED from cache while condition() refuses.
+ * A false condition() suppresses the record too — the consumer's write
+ * refusal is absolute. The prelude-already-bakes-it argument does NOT excuse
+ * recording: a NAVIGATION-ONLY capture's prelude is never served as a
+ * document, so for those entries the segment record would be the sole
+ * persisted copy of a render the consumer refused to cache — and a later
+ * request where condition() flips true could consume it through the seeded
+ * fallback. The lookup-time `cache-disabled` report stays reachable without
+ * the record: matchPartialWithPprReplay installs a REPORT-ONLY marker (no
+ * store) on the no-eligible-snapshot path, so the lookup's own refusal is
+ * still surfaced while the fallback has nothing to serve.
  *
  * Wrapped in requestCtx.waitUntil — during a capture that is the tracked-write
  * override, so captureAndStoreShell's settleWrites awaits the record before
@@ -405,7 +406,7 @@ function recordShellCaptureDocRecord<TEnv>(
   if (!scope || scope.isShellImplicitDocScope) return;
   if (ctx.isAction || ctx.isIntercept || ctx.request.method !== "GET") return;
   if (state.cacheSource === "prerender") return;
-  if (!scope.enabled) return;
+  if (!scope.allowsCache("write")) return;
 
   const docScope = createShellImplicitDocScope(marker);
   requestCtx.waitUntil(() =>

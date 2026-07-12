@@ -786,16 +786,23 @@ async function matchPartialWithPprReplay<TEnv>(
   // probe goes through the same memoized store the middleware serves from.
   // Shared predicate with the middleware (it declines on dev HMR — such
   // partials fall through to the ordinary replay decision here too).
+  //
+  // An X-RSC-Router-Intercept-Source header also falls through: whether the
+  // navigation IS an intercept is only resolved post-match (match-api's
+  // findInterceptForRoute — the header may resolve to no intercept at all),
+  // so the gate cannot know which prerender variant (`paramHash` vs
+  // `paramHash + "/i"`) the middleware will read. Pre-deciding on the header
+  // probed the wrong artifact for header-carrying non-intercept navigations
+  // and wrongly suppressed replay/healing. Resolved intercepts keep their
+  // normal cache path anyway (match-api never arms replay for them).
   if (
+    getInterceptSourceHeader(request) === null &&
     prerenderStoreShortCircuits(routeSnapshot?.matched?.pr, request) &&
     (await prerenderEntryExists(
       routeSnapshot?.matched?.routeKey,
       routeSnapshot?.params ?? {},
       url.pathname,
       routeSnapshot?.entries ?? [],
-      // Intercept navigations consult the `paramHash + "/i"` artifact — probe
-      // the variant the middleware will actually read.
-      getInterceptSourceHeader(request) !== null,
     ))
   ) {
     return runMatch({ outcome: "BYPASS", reason: "prerender-store" });
@@ -885,6 +892,50 @@ async function matchPartialWithPprReplay<TEnv>(
   }
 
   if (!snapshot) {
+    // Report-only marker for routes with an ENABLED route-derived scope: the
+    // lookup's own outcome must stay reportable even without a replayable
+    // snapshot. An always-false condition() route never produces a doc
+    // record (the consumer's write refusal is absolute — see
+    // recordShellCaptureDocRecord), so without this its lookup-time refusal
+    // would be misreported as the eligibility reason and heal captures would
+    // be scheduled for snapshots that can never become consumable. The
+    // marker carries NO store: the seeded fallback in withCacheLookup
+    // requires one, so nothing can be served through it — it only reports.
+    // Bare routes never see it (an installed marker would otherwise mint an
+    // implicit scope over the REAL doc: partition in
+    // resolveShellImplicitCacheScope).
+    if (routeCacheScope?.enabled) {
+      let explicitCacheHit = false;
+      let explicitCacheBypass = false;
+      const previousImplicitCache = reqCtx._shellImplicitCache;
+      reqCtx._shellImplicitCache = {
+        onExplicitHit: () => {
+          explicitCacheHit = true;
+        },
+        onExplicitBypass: () => {
+          explicitCacheBypass = true;
+        },
+      };
+      try {
+        const result = await ctx.router.matchPartial(request, { env });
+        const status: PprReplayStatus = explicitCacheBypass
+          ? { outcome: "BYPASS", reason: "cache-disabled" }
+          : explicitCacheHit
+            ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
+            : { outcome: "BYPASS", reason: bypassReason ?? "no-entry" };
+        recordReplayStatus(status);
+        return {
+          result,
+          status,
+          // A lookup-time opt-out makes every heal snapshot unusable; the
+          // other outcomes keep the original heal decision.
+          captureNeeded:
+            !explicitCacheBypass && shouldHealReplayMiss(bypassReason),
+        };
+      } finally {
+        reqCtx._shellImplicitCache = previousImplicitCache;
+      }
+    }
     const match = await runMatch({
       outcome: "BYPASS",
       reason: bypassReason ?? "no-entry",

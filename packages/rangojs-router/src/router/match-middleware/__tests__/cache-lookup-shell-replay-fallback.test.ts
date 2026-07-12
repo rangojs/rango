@@ -90,6 +90,8 @@ async function drain(options: {
   seededEntry?: CachedEntryData;
   /** Omit the marker's onExplicitHit (capture-shaped marker). */
   armReplay?: boolean;
+  /** Omit the marker's store (report-only marker, no-eligible-snapshot path). */
+  markerStore?: boolean;
   isIntercept?: boolean;
   /** Explicit scope options (default `{ ttl: 30 }`). */
   scopeOptions?: import("../../../types.js").PartialCacheOptions;
@@ -130,7 +132,13 @@ async function drain(options: {
   reqCtx._shellImplicitCache = {
     ttl: 300,
     swr: 60,
-    store: new SeededShellStore(store, snapshot, { segmentsOnly: true }),
+    ...(options.markerStore === false
+      ? {}
+      : {
+          store: new SeededShellStore(store, snapshot, {
+            segmentsOnly: true,
+          }),
+        }),
     keyPrefix: "doc",
     onHit,
     ...(options.armReplay === false ? {} : { onExplicitHit, onExplicitBypass }),
@@ -192,6 +200,22 @@ describe("withCacheLookup — PPR replay composed with a route-derived cache() s
     expect(result.yielded).toEqual(["explicit-R0"]);
     expect(result.state.cacheHit).toBe(true);
     expect(result.onExplicitHit).toHaveBeenCalledTimes(1);
+    expect(result.onHit).not.toHaveBeenCalled();
+  });
+
+  it("a report-only marker (no store) never engages the fallback on an explicit miss", async () => {
+    // matchPartialWithPprReplay installs a store-less marker on the
+    // no-eligible-snapshot path purely for truthful status. Minting a doc
+    // scope from it would resolve the APP store and read the REAL doc:
+    // partition — a cross-partition serve of entries written by document
+    // renders.
+    const result = await drain({
+      seededEntry: await entryData(["seeded-R0"]),
+      markerStore: false,
+    });
+
+    expect(result.yielded).toEqual([]);
+    expect(result.state.cacheHit).toBe(false);
     expect(result.onHit).not.toHaveBeenCalled();
   });
 

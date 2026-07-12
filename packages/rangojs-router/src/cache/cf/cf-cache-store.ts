@@ -2831,7 +2831,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async kvGetSegment(
     key: string,
     opts?: { suppressRevalidate?: boolean },
-  ): Promise<CacheGetResult | null> {
+  ): Promise<CacheGetResult | null | CacheReadError> {
     if (!this.kv) return null;
 
     try {
@@ -2900,7 +2900,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetSegment");
       if (this.debug) this.emitDebug({ op: "get", key, outcome: "error" });
-      return null;
+      // A KV failure is NOT proof of absence: returning null classified it a
+      // real miss and let the PPR seeded fallback substitute the doc record
+      // for a key partition the store could not actually read. Same sentinel
+      // as get()'s own catch — lookupRouteDetailed classifies it `error` and
+      // the render stays uncached. (A kvGetOrEvict TIMEOUT above stays null
+      // by design: it is a bounded-latency degrade of a likely-healthy read,
+      // and serving the equivalent seeded record there is the fallback
+      // working as intended, not a masked failure.)
+      return CACHE_READ_ERROR;
     }
   }
 

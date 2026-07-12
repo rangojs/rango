@@ -209,23 +209,19 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(h.reqCtx._shellImplicitCache?.docKey).toBeUndefined();
   });
 
-  it("records the doc record even when the scope's condition() refuses the write (arming vehicle for lookup-time cache-disabled)", async () => {
-    // The shell entry already bakes this render's handler output as the
-    // served HTML prelude, so the snapshot-only record adds no exposure. It
-    // must exist or replay eligibility fails first and an always-false
-    // condition() reports no-segment-snapshot instead of the lookup-time
-    // cache-disabled the composition contract promises. Serving stays
-    // lookup-gated: condition() is re-evaluated by lookupRouteDetailed.
+  it("records nothing when the scope's condition() refuses the write — the opt-out is absolute", async () => {
+    // The consumer said "do not cache this render"; a NAVIGATION-ONLY
+    // capture's prelude is never served as a document, so the doc record
+    // would be the sole persisted copy of that refused render — and a later
+    // request where the condition flips true could consume it through the
+    // seeded fallback. The lookup-time cache-disabled report stays reachable
+    // via the report-only marker on the no-eligible-snapshot path
+    // (matchPartialWithPprReplay), which carries no store to serve from.
     const h = makeHarness();
-    const explicit = new CacheScope({ ttl: 30, condition: () => false });
-    await h.run(explicit);
+    await h.run(new CacheScope({ ttl: 30, condition: () => false }));
 
-    const doc = docRecords(h.drainSnapshot());
-    expect(doc).toHaveLength(1);
-    expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
-    // The explicit tier's own write stays refused by its condition — only the
-    // snapshot-only doc record is recorded.
-    expect(await h.inner.get("doc:localhost/p")).toBeNull();
+    expect(h.drainSnapshot()).toBeUndefined();
+    expect(h.reqCtx._shellImplicitCache?.docKey).toBeUndefined();
   });
 
   it("records nothing when the prerender store supplied the match", async () => {

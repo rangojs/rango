@@ -1100,6 +1100,32 @@ describe("CFCacheStore", () => {
 
       matchSpy.mockRestore();
     });
+
+    it("returns CACHE_READ_ERROR (not a miss) when the KV segment read itself fails", async () => {
+      // kvGetSegment's swallowed failure used to surface as null: the PPR
+      // replay composition classified it a REAL miss and the seeded doc
+      // record substituted for a key partition the store could not actually
+      // read. The sentinel keeps lookupRouteDetailed's `error` contract —
+      // render uncached, no fallback. (Deliberately asserted WITHOUT the
+      // hit() normalizer: normalizing the sentinel to null is exactly how
+      // this regression stayed invisible.)
+      const kv = {
+        get: vi.fn(async () => {
+          throw new Error("KV boom");
+        }),
+        put: vi.fn(),
+        delete: vi.fn(),
+      };
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockResolvedValue(undefined);
+      const store = new CFCacheStore({ ctx: createMockCtx(), kv: kv as any });
+
+      expect(await store.get("kv-fail-seg")).toBe(CACHE_READ_ERROR);
+      expect(kv.get).toHaveBeenCalled();
+
+      matchSpy.mockRestore();
+    });
   });
 
   describe("non-finite timeout budgets", () => {

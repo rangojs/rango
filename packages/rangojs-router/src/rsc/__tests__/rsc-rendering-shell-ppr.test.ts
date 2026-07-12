@@ -1287,6 +1287,101 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(scheduleMock).toHaveBeenCalledTimes(1);
   });
 
+  it("an intercept-source partial to a prerender route falls through — the variant is only known post-match", async () => {
+    // Whether the navigation IS an intercept resolves in match-api's
+    // findInterceptForRoute, after this gate; the header may resolve to no
+    // intercept, and the middleware then reads the non-/i artifact.
+    // Pre-deciding on the header probed the wrong variant and wrongly
+    // suppressed replay and its heal capture. The gate must not probe at all.
+    prerenderStoreGetMock.mockClear();
+    const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell");
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      headers: { "X-RSC-Router-Intercept-Source": "/photos" },
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).matched = {
+          pr: true,
+          routeKey: "p",
+          params: {},
+        };
+      },
+    });
+
+    expect(prerenderStoreGetMock).not.toHaveBeenCalled();
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=no-entry",
+    );
+    expect(getShell).toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a false condition() with no replayable snapshot reports cache-disabled through the report-only marker and suppresses the heal", async () => {
+    // An always-false condition() route never produces a doc record (the
+    // write opt-out is absolute), so the eligible-snapshot path can never
+    // arm. The report-only marker (no store — nothing can serve through it)
+    // still surfaces the lookup's refusal, and the heal capture is
+    // suppressed: its snapshot would be equally unusable.
+    let markerStore: unknown = "unset";
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: { ttl: 30, condition: () => false },
+        };
+      },
+      matchPartial: async () => {
+        const marker = getRequestContext()._shellImplicitCache;
+        markerStore = marker?.store;
+        // What withCacheLookup does when lookupRouteDetailed classifies the
+        // explicit lookup `bypass` (condition refused).
+        marker?.onExplicitBypass?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(markerStore).toBeUndefined();
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=cache-disabled",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("an explicit-tier hit with no shell entry reports explicit-cache-hit and still schedules the heal", async () => {
+    // The consumer's tier served (truthful token), but the shell itself is
+    // cold — the navigation-only heal capture stays scheduled so replay can
+    // engage once the tier expires.
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: { ttl: 30 },
+        };
+      },
+      matchPartial: async () => {
+        getRequestContext()._shellImplicitCache?.onExplicitHit?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=explicit-cache-hit",
+    );
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+      key: NAVIGATION_KEY,
+      navigationOnly: true,
+    });
+  });
+
   it("an HMR partial to a prerender route falls through to the ordinary replay decision", async () => {
     // withCacheLookup declines the prerender-store lookup on X-RSC-HMR (the
     // memoized build entry may be stale mid-edit), so the gate must share

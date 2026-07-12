@@ -208,10 +208,12 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   Three decisions bypass before any shell-store read: a partial without
   navigation context (`no-navigation-context`), a route whose baked prerender
   artifact EXISTS (`prerender-store` — probed through the memoized prerender
-  store on the variant the middleware will read, intercepts included, because
-  the trie's `pr` flag alone is not a serve guarantee for
-  `Passthrough(Prerender())` params that render live), and a STATICALLY
-  disabled scope (`cache(false)` → `cache-disabled`). A `condition()`
+  store, because the trie's `pr` flag alone is not a serve guarantee for
+  `Passthrough(Prerender())` params that render live; a request carrying
+  `X-RSC-Router-Intercept-Source` falls through instead, since whether it IS
+  an intercept — and therefore which artifact variant the middleware reads —
+  only resolves post-match), and a STATICALLY disabled scope (`cache(false)`
+  → `cache-disabled`). A `condition()`
   predicate is deliberately NOT pre-decided — evaluating it at the gate and
   again at the lookup would let a false-then-true flap report cache-disabled
   while the explicit tier serves; the lookup's own refusal is reported
