@@ -12,6 +12,18 @@ import {
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 import { runWithRequestContext } from "../../../server/request-context";
+import {
+  CACHE_READ_ERROR,
+  type CacheReadError as CacheReadErrorT,
+} from "../../types.js";
+
+// get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
+// these tests assert hit/miss shapes, so narrow the sentinel away up front.
+function hit(
+  r: import("../../types.js").CacheGetResult | null | CacheReadErrorT,
+): import("../../types.js").CacheGetResult | null {
+  return r === CACHE_READ_ERROR ? null : r;
+}
 
 // ============================================================================
 // Mock Cloudflare Cache API
@@ -142,7 +154,7 @@ describe("CFCacheStore", () => {
   describe("get/set", () => {
     it("should return null for missing key", async () => {
       const store = new CFCacheStore({ ctx: createMockCtx() });
-      const result = await store.get("missing-key");
+      const result = hit(await store.get("missing-key"));
       expect(result).toBeNull();
     });
 
@@ -155,7 +167,7 @@ describe("CFCacheStore", () => {
       // Execute waitUntil callback
       await mockCtx.waitUntil.mock.results[0].value;
 
-      const result = await store.get("test-key");
+      const result = hit(await store.get("test-key"));
 
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
@@ -244,7 +256,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       // Now the entry should be in cache
-      const result = await store.get("test-key");
+      const result = hit(await store.get("test-key"));
       expect(result).not.toBeNull();
     });
   });
@@ -300,7 +312,7 @@ describe("CFCacheStore", () => {
       // Still fresh
       vi.advanceTimersByTime(30 * 1000);
 
-      const result = await store.get("test-key");
+      const result = hit(await store.get("test-key"));
       expect(result?.shouldRevalidate).toBe(false);
     });
 
@@ -318,7 +330,7 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(120 * 1000);
 
       // First get should return shouldRevalidate=true and mark as REVALIDATING
-      const result = await store.get("test-key");
+      const result = hit(await store.get("test-key"));
       expect(result?.shouldRevalidate).toBe(true);
 
       // Verify the entry is now marked as REVALIDATING
@@ -344,11 +356,11 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(120 * 1000);
 
       // First get - atomically marks as REVALIDATING
-      const result1 = await store.get("test-key");
+      const result1 = hit(await store.get("test-key"));
       expect(result1?.shouldRevalidate).toBe(true);
 
       // Second get - already REVALIDATING, should not trigger again
-      const result2 = await store.get("test-key");
+      const result2 = hit(await store.get("test-key"));
       expect(result2?.shouldRevalidate).toBe(false);
       // The guarded read is served from the re-serialized REVALIDATING re-put;
       // pin that the round-trip preserved the payload byte-for-byte.
@@ -372,17 +384,17 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(120 * 1000);
 
       // Sequential requests - first triggers revalidation
-      const result1 = await store.get("test-key");
+      const result1 = hit(await store.get("test-key"));
       expect(result1?.shouldRevalidate).toBe(true);
       expect(result1?.data).toEqual(data);
 
       // Subsequent requests see REVALIDATING status and are served from the
       // re-serialized re-put; assert the data survives the round-trip.
-      const result2 = await store.get("test-key");
+      const result2 = hit(await store.get("test-key"));
       expect(result2?.shouldRevalidate).toBe(false);
       expect(result2?.data).toEqual(data);
 
-      const result3 = await store.get("test-key");
+      const result3 = hit(await store.get("test-key"));
       expect(result3?.shouldRevalidate).toBe(false);
       expect(result3?.data).toEqual(data);
     });
@@ -402,7 +414,7 @@ describe("CFCacheStore", () => {
         .spyOn(mockCaches.default, "put")
         .mockRejectedValue(new Error("cache.put boom"));
 
-      const result = await store.get("marker-fail");
+      const result = hit(await store.get("marker-fail"));
 
       // A failed marker write must not turn a good stale read into a null/miss.
       expect(result).not.toBeNull();
@@ -427,7 +439,7 @@ describe("CFCacheStore", () => {
 
       expect(deleted).toBe(true);
 
-      const result = await store.get("test-key");
+      const result = hit(await store.get("test-key"));
       expect(result).toBeNull();
     });
 
@@ -448,7 +460,7 @@ describe("CFCacheStore", () => {
       await store.set(key, data, 60);
       await mockCtx.waitUntil.mock.results[0].value;
 
-      const result = await store.get(key);
+      const result = hit(await store.get(key));
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
     });
@@ -467,7 +479,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       // Verify round-trip works with custom baseUrl
-      const result = await store.get("custom-key");
+      const result = hit(await store.get("custom-key"));
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
     });
@@ -482,7 +494,7 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       // Verify round-trip works with fallback baseUrl
-      const result = await store.get("fallback-key");
+      const result = hit(await store.get("fallback-key"));
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
     });
@@ -548,7 +560,7 @@ describe("CFCacheStore", () => {
       const store = new CFCacheStore({ ctx: createMockCtx() });
       const resultPromise = store.get("slow-key");
       await vi.advanceTimersByTimeAsync(EDGE_LOOKUP_TIMEOUT_MS);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       // No KV configured -> "not hit" resolves to a full miss.
       expect(result).toBeNull();
@@ -569,7 +581,7 @@ describe("CFCacheStore", () => {
       await store.set("fast-key", data, 60);
       await mockCtx.waitUntil.mock.results[0].value;
 
-      const result = await store.get("fast-key");
+      const result = hit(await store.get("fast-key"));
 
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
@@ -596,7 +608,7 @@ describe("CFCacheStore", () => {
 
       // At 50ms it does, and the warning reports the configured budget.
       await vi.advanceTimersByTimeAsync(40);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       expect(result).toBeNull();
       expect(warnSpy).toHaveBeenCalledWith(
@@ -663,7 +675,7 @@ describe("CFCacheStore", () => {
       const store = new CFCacheStore({ ctx: createMockCtx() });
       const resultPromise = store.get("slow-body");
       await vi.advanceTimersByTimeAsync(EDGE_READ_TIMEOUT_MS);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       // No KV configured -> body timeout resolves to a full miss.
       expect(result).toBeNull();
@@ -709,7 +721,7 @@ describe("CFCacheStore", () => {
 
       // The configured 50ms budget fires (and overrides the lower default).
       await vi.advanceTimersByTimeAsync(50);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       expect(result).toBeNull();
       expect(warnSpy).toHaveBeenCalledWith(
@@ -755,7 +767,7 @@ describe("CFCacheStore", () => {
         ctx: createMockCtx(),
         debug: (e) => events.push(e),
       });
-      const result = await store.get("err-entry");
+      const result = hit(await store.get("err-entry"));
 
       // A cached error/foreign response must not be parsed and served as a hit.
       expect(result).toBeNull();
@@ -793,7 +805,7 @@ describe("CFCacheStore", () => {
       await store.set("dbg", data, 60);
       await mockCtx.waitUntil.mock.results[0].value;
 
-      const result = await store.get("dbg");
+      const result = hit(await store.get("dbg"));
       expect(result!.data).toEqual(data);
 
       const fresh = events.find((e) => e.op === "get" && e.key === "dbg");
@@ -841,7 +853,7 @@ describe("CFCacheStore", () => {
       const store = new CFCacheStore({ ctx: createMockCtx() });
       const resultPromise = store.get("stale-hung");
       await vi.advanceTimersByTimeAsync(EDGE_READ_TIMEOUT_MS);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       expect(result).toBeNull();
       expect(putSpy).not.toHaveBeenCalled();
@@ -867,7 +879,7 @@ describe("CFCacheStore", () => {
       });
       const resultPromise = store.get("slow-match");
       await vi.advanceTimersByTimeAsync(EDGE_LOOKUP_TIMEOUT_MS);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       // An abandoned slow match is reported distinctly from a genuine miss.
       expect(result).toBeNull();
@@ -887,7 +899,7 @@ describe("CFCacheStore", () => {
         debug: (e) => events.push(e),
       });
 
-      const result = await store.get("absent");
+      const result = hit(await store.get("absent"));
 
       // No entry and no KV -> a genuine miss, distinct from match-timeout.
       expect(result).toBeNull();
@@ -920,19 +932,19 @@ describe("CFCacheStore", () => {
 
       // t = 120s: stale, within SWR. First get re-puts the REVALIDATING marker.
       vi.advanceTimersByTime(120 * 1000);
-      expect((await store.get("seg-stuck"))!.shouldRevalidate).toBe(true);
+      expect(hit(await store.get("seg-stuck"))!.shouldRevalidate).toBe(true);
       // Remaining window = 360 - 120 = 240, NOT the original full-window 360.
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=240");
 
       // t = 150s: the guard lapses at MAX_REVALIDATION_INTERVAL, re-arm re-puts.
       vi.advanceTimersByTime(MAX_REVALIDATION_INTERVAL * 1000);
-      expect((await store.get("seg-stuck"))!.shouldRevalidate).toBe(true);
+      expect(hit(await store.get("seg-stuck"))!.shouldRevalidate).toBe(true);
       // Keeps shrinking (210), proving retention is not restarted to 360.
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=210");
 
       // At the hard-expiry boundary the remaining floors to 1, never resets.
       vi.advanceTimersByTime(210 * 1000); // t = 360s
-      await store.get("seg-stuck");
+      hit(await store.get("seg-stuck"));
       expect(maxAgeOf(lastPutCacheControl(putSpy))).toBeLessThanOrEqual(1);
 
       putSpy.mockRestore();
@@ -980,7 +992,7 @@ describe("CFCacheStore", () => {
       const store = new CFCacheStore({ ctx: mockCtx, kv: kv as any });
 
       // Cold L1: the read falls to KV and promotes to L1 (carrying the deadline).
-      const result = await store.get("promoted");
+      const result = hit(await store.get("promoted"));
       expect(result!.data).toEqual(data);
       // Drain the promote waitUntil so the L1 entry is written.
       for (const r of mockCtx.waitUntil.mock.results) await r.value;
@@ -990,7 +1002,7 @@ describe("CFCacheStore", () => {
       // t = 120s: the promoted entry is now stale; its re-put must use the
       // remaining window derived from the carried deadline (240), not floor to 1.
       vi.advanceTimersByTime(120 * 1000);
-      expect((await store.get("promoted"))!.shouldRevalidate).toBe(true);
+      expect(hit(await store.get("promoted"))!.shouldRevalidate).toBe(true);
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=240");
 
       putSpy.mockRestore();
@@ -1029,7 +1041,7 @@ describe("CFCacheStore", () => {
         debug: (e) => events.push(e),
       });
 
-      const result = await store.get("corrupt-seg");
+      const result = hit(await store.get("corrupt-seg"));
 
       // A corrupt/foreign-200 L1 body degrades to L2 instead of a total miss.
       expect(result).not.toBeNull();
@@ -1079,11 +1091,37 @@ describe("CFCacheStore", () => {
         .mockRejectedValue(new Error("match boom"));
       const store = new CFCacheStore({ ctx: createMockCtx(), kv: kv as any });
 
-      const result = await store.get("match-fail-seg");
+      const result = hit(await store.get("match-fail-seg"));
 
       // A fast match rejection is a miss that consults L2, not the outer catch.
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(kvData);
+      expect(kv.get).toHaveBeenCalled();
+
+      matchSpy.mockRestore();
+    });
+
+    it("returns CACHE_READ_ERROR (not a miss) when the KV segment read itself fails", async () => {
+      // kvGetSegment's swallowed failure used to surface as null: the PPR
+      // replay composition classified it a REAL miss and the seeded doc
+      // record substituted for a key partition the store could not actually
+      // read. The sentinel keeps lookupRouteDetailed's `error` contract —
+      // render uncached, no fallback. (Deliberately asserted WITHOUT the
+      // hit() normalizer: normalizing the sentinel to null is exactly how
+      // this regression stayed invisible.)
+      const kv = {
+        get: vi.fn(async () => {
+          throw new Error("KV boom");
+        }),
+        put: vi.fn(),
+        delete: vi.fn(),
+      };
+      const matchSpy = vi
+        .spyOn(mockCaches.default, "match")
+        .mockResolvedValue(undefined);
+      const store = new CFCacheStore({ ctx: createMockCtx(), kv: kv as any });
+
+      expect(await store.get("kv-fail-seg")).toBe(CACHE_READ_ERROR);
       expect(kv.get).toHaveBeenCalled();
 
       matchSpy.mockRestore();
@@ -1112,7 +1150,7 @@ describe("CFCacheStore", () => {
 
       const resultPromise = store.get("nan-budget");
       await vi.advanceTimersByTimeAsync(EDGE_READ_TIMEOUT_MS);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       expect(result).toBeNull();
       // The budget falls back to the default 20ms, not a coerced NaN.
@@ -1167,7 +1205,7 @@ describe("CFCacheStore", () => {
 
       const resultPromise = store.get("degraded-seg");
       await vi.advanceTimersByTimeAsync(EDGE_READ_TIMEOUT_MS);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       // Stale KV data is served, but revalidation is withheld (no herd).
       expect(result!.data).toEqual(kvData);
@@ -1195,7 +1233,7 @@ describe("CFCacheStore", () => {
         debug: (e) => events.push(e),
       });
 
-      const result = await store.get("non200-seg");
+      const result = hit(await store.get("non200-seg"));
 
       expect(result!.data).toEqual(kvData);
       expect(result!.shouldRevalidate).toBe(false);
@@ -1217,7 +1255,7 @@ describe("CFCacheStore", () => {
         debug: (e) => events.push(e),
       });
 
-      const result = await store.get("missing-seg");
+      const result = hit(await store.get("missing-seg"));
 
       expect(result!.data).toEqual(kvData);
       expect(result!.shouldRevalidate).toBe(true);
@@ -1241,7 +1279,7 @@ describe("CFCacheStore", () => {
         debug: (e) => events.push(e),
       });
 
-      const result = await store.get("corrupt-stale-seg");
+      const result = hit(await store.get("corrupt-stale-seg"));
 
       // A corrupt L1 body must still revalidate so a fresh render overwrites it.
       expect(result!.data).toEqual(kvData);
@@ -1969,7 +2007,7 @@ describe("CFCacheStore", () => {
         // Clear L1 to simulate cold colo
         mockCaches.clear();
 
-        const result = await store.get("seg-key");
+        const result = hit(await store.get("seg-key"));
         expect(result).not.toBeNull();
         expect(result!.data).toEqual(data);
         expect(result!.shouldRevalidate).toBe(false);
@@ -1994,7 +2032,7 @@ describe("CFCacheStore", () => {
 
         // Still within TTL: the KV entry is fresh.
         vi.advanceTimersByTime(30 * 1000);
-        const result = await store.get("seg-fresh");
+        const result = hit(await store.get("seg-fresh"));
 
         expect(result!.shouldRevalidate).toBe(false);
         expect(events.at(-1)).toMatchObject({
@@ -2023,7 +2061,7 @@ describe("CFCacheStore", () => {
 
         // Past TTL but within SWR: the KV entry is stale and needs revalidation.
         vi.advanceTimersByTime(120 * 1000);
-        const result = await store.get("seg-stale");
+        const result = hit(await store.get("seg-stale"));
 
         expect(result!.shouldRevalidate).toBe(true);
         expect(events.at(-1)).toMatchObject({
@@ -2041,7 +2079,7 @@ describe("CFCacheStore", () => {
           debug: (e) => events.push(e),
         });
 
-        const result = await store.get("nowhere");
+        const result = hit(await store.get("nowhere"));
 
         // L1 miss then L2 miss: both tiers reported, final outcome kv-miss.
         expect(result).toBeNull();
@@ -2063,7 +2101,7 @@ describe("CFCacheStore", () => {
         expect(mockKV.store.has("short-ttl")).toBe(false);
 
         // L1 should still have it
-        const result = await store.get("short-ttl");
+        const result = hit(await store.get("short-ttl"));
         expect(result).not.toBeNull();
       });
 
@@ -2096,7 +2134,7 @@ describe("CFCacheStore", () => {
         mockCaches.clear();
         vi.advanceTimersByTime(120 * 1000);
 
-        const result = await store.get("seg-key");
+        const result = hit(await store.get("seg-key"));
         expect(result).not.toBeNull();
         expect(result!.data).toEqual(data);
         expect(result!.shouldRevalidate).toBe(true);
@@ -2118,7 +2156,7 @@ describe("CFCacheStore", () => {
         mockCaches.clear();
         vi.advanceTimersByTime(400 * 1000);
 
-        const result = await store.get("seg-key");
+        const result = hit(await store.get("seg-key"));
         expect(result).toBeNull();
       });
 
@@ -2138,7 +2176,7 @@ describe("CFCacheStore", () => {
         mockCaches.clear();
 
         // Read from KV (promotes to L1)
-        const kvResult = await store.get("seg-key");
+        const kvResult = hit(await store.get("seg-key"));
         expect(kvResult).not.toBeNull();
 
         // Wait for promote waitUntil
@@ -2150,7 +2188,7 @@ describe("CFCacheStore", () => {
         mockKV.clear();
 
         // Should now hit L1
-        const l1Result = await store.get("seg-key");
+        const l1Result = hit(await store.get("seg-key"));
         expect(l1Result).not.toBeNull();
         expect(l1Result!.data).toEqual(data);
       });
@@ -2166,7 +2204,7 @@ describe("CFCacheStore", () => {
           await result.value;
         }
 
-        await store.get("seg-key");
+        hit(await store.get("seg-key"));
         // KV.get should not have been called (L1 hit)
         expect(kvGetSpy).not.toHaveBeenCalled();
       });
@@ -2175,7 +2213,7 @@ describe("CFCacheStore", () => {
         const mockCtx = createMockCtx();
         const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
 
-        const result = await store.get("missing-key");
+        const result = hit(await store.get("missing-key"));
         expect(result).toBeNull();
       });
     });
@@ -2595,7 +2633,7 @@ describe("CFCacheStore", () => {
 
         expect(mockKV.store.has("del-key")).toBe(false);
 
-        const result = await store.get("del-key");
+        const result = hit(await store.get("del-key"));
         expect(result).toBeNull();
       });
     });
@@ -2613,7 +2651,7 @@ describe("CFCacheStore", () => {
           kv: failingKV as any,
         });
 
-        const result = await store.get("any-key");
+        const result = hit(await store.get("any-key"));
         expect(result).toBeNull();
       });
 
@@ -2638,7 +2676,7 @@ describe("CFCacheStore", () => {
         }
 
         // L1 should still have the data
-        const result = await store.get("seg-key");
+        const result = hit(await store.get("seg-key"));
         expect(result).not.toBeNull();
       });
     });
@@ -2665,7 +2703,7 @@ describe("CFCacheStore", () => {
 
         const resultPromise = store.get("slow-kv");
         await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS);
-        const result = await resultPromise;
+        const result = hit(await resultPromise);
 
         expect(result).toBeNull();
         expect(warnSpy).toHaveBeenCalledWith(
@@ -2694,7 +2732,7 @@ describe("CFCacheStore", () => {
           debug: (e) => events.push(e),
         });
 
-        const result = await store.get("err-kv");
+        const result = hit(await store.get("err-kv"));
 
         // A rejection is an error, NOT an abandoned-slow-read timeout nor a miss.
         expect(result).toBeNull();
@@ -2779,7 +2817,7 @@ describe("CFCacheStore", () => {
 
         const resultPromise = store.get("slow-kv");
         await vi.advanceTimersByTimeAsync(200);
-        const result = await resultPromise;
+        const result = hit(await resultPromise);
 
         expect(result).toBeNull();
         expect(warnSpy).toHaveBeenCalledWith(

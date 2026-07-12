@@ -62,6 +62,16 @@ import {
 } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
 import {
+  getNavigationContextHeader,
+  getInterceptSourceHeader,
+  prerenderStoreShortCircuits,
+} from "../router/navigation-snapshot.js";
+import {
+  ensureFullRouteSnapshot,
+  type RouteSnapshot,
+} from "../router/route-snapshot.js";
+import { prerenderEntryExists } from "../router/match-middleware/cache-lookup.js";
+import {
   resolveSameOriginRedirect,
   safeSameOriginLanding,
 } from "../redirect-origin.js";
@@ -80,6 +90,9 @@ type PprReplayBypassReason =
   | "nonce"
   | "store-unavailable"
   | "passive-read-unsupported"
+  | "no-navigation-context"
+  | "prerender-store"
+  | "cache-disabled"
   | "read-error"
   | "no-entry"
   | "invalid-version"
@@ -88,6 +101,7 @@ type PprReplayBypassReason =
   | "transition-when"
   | "no-segment-snapshot"
   | "snapshot-miss"
+  | "explicit-cache-hit"
   | "stale-build-entry";
 
 type PprReplayStatus =
@@ -173,21 +187,32 @@ function replayableShellSnapshot(
   if (!hasIntactShellPayload(entry)) return { reason: "corrupt-entry" };
   if (entry.handlerLiveHoles) return { reason: "handler-live-holes" };
   if (entry.transitionWhen) return { reason: "transition-when" };
+  // Eligibility requires the CANONICAL doc segment record (`docKey`), not just
+  // any segment record: captures under an explicit cache() scope also record
+  // that tier's reads/writes under keys a partial lookup can never resolve,
+  // and counting those declared entries "replayable" that then always missed
+  // (a timing-dependent snapshot-miss/no-segment-snapshot flip-flop). Entries
+  // captured before the field existed read as no-segment-snapshot and heal on
+  // recapture (pre-release, same treatment as the buildVersion field).
+  const docKey = entry.docKey;
   const snapshot = entry.snapshot;
-  const hasSegments = snapshot?.some((record) => {
-    if (
-      !record ||
-      typeof record !== "object" ||
-      record.family !== "segment" ||
-      typeof record.value !== "object" ||
-      record.value === null
-    ) {
-      return false;
-    }
-    const segments = (record.value as { segments?: unknown }).segments;
-    return Array.isArray(segments) && segments.length > 0;
-  });
-  return hasSegments && snapshot
+  const hasDocRecord =
+    docKey !== undefined &&
+    snapshot?.some((record) => {
+      if (
+        !record ||
+        typeof record !== "object" ||
+        record.family !== "segment" ||
+        record.key !== docKey ||
+        typeof record.value !== "object" ||
+        record.value === null
+      ) {
+        return false;
+      }
+      const segments = (record.value as { segments?: unknown }).segments;
+      return Array.isArray(segments) && segments.length > 0;
+    });
+  return hasDocRecord && snapshot
     ? { snapshot }
     : { reason: "no-segment-snapshot" };
 }
@@ -738,6 +763,62 @@ async function matchPartialWithPprReplay<TEnv>(
       reason: "passive-read-unsupported",
     });
   }
+  // A partial without navigation context (curl probes, synthetic monitors)
+  // can never produce a partial match — createMatchContextForPartial returns
+  // null and the seeded record could not have been consulted, which used to
+  // read as a misleading `snapshot-miss` AFTER two wasted getShell reads.
+  // Same predicate as resolveNavigation, decided before any store I/O.
+  if (!getNavigationContextHeader(request)) {
+    return runMatch({ outcome: "BYPASS", reason: "no-navigation-context" });
+  }
+  // The prerender probe and the cache-opt-out gate below both need the
+  // classified snapshot; resolve (and persist) it once.
+  const routeSnapshot = classifiedRouteSnapshot(reqCtx);
+  // Prerender routes short-circuit in withCacheLookup and serve the partial
+  // from build-time segments — a better-than-HIT outcome. Their captures
+  // record no doc segment record (withCacheStore skips on the prerender hit),
+  // so seeding could never succeed; skip the reads and report the store that
+  // actually serves instead of blaming a "broken" capture. Bypass ONLY when
+  // the baked artifact actually exists — the trie's pr flag alone is not a
+  // serve guarantee: a Passthrough(Prerender()) route with an unbaked or
+  // ctx.passthrough()-skipped param misses the store and renders live, and
+  // replay (including its heal capture) must stay available for it. The
+  // probe goes through the same memoized store the middleware serves from.
+  // Shared predicate with the middleware (it declines on dev HMR — such
+  // partials fall through to the ordinary replay decision here too).
+  //
+  // An X-RSC-Router-Intercept-Source header also falls through: whether the
+  // navigation IS an intercept is only resolved post-match (match-api's
+  // findInterceptForRoute — the header may resolve to no intercept at all),
+  // so the gate cannot know which prerender variant (`paramHash` vs
+  // `paramHash + "/i"`) the middleware will read. Pre-deciding on the header
+  // probed the wrong artifact for header-carrying non-intercept navigations
+  // and wrongly suppressed replay/healing. Resolved intercepts keep their
+  // normal cache path anyway (match-api never arms replay for them).
+  if (
+    getInterceptSourceHeader(request) === null &&
+    prerenderStoreShortCircuits(routeSnapshot?.matched?.pr, request) &&
+    (await prerenderEntryExists(
+      routeSnapshot?.matched?.routeKey,
+      routeSnapshot?.params ?? {},
+      url.pathname,
+      routeSnapshot?.entries ?? [],
+    ))
+  ) {
+    return runMatch({ outcome: "BYPASS", reason: "prerender-store" });
+  }
+  // Consumer cache opt-outs are absolute: a STATICALLY disabled scope
+  // (cache(false)) bypasses before any shell read — no heal capture (its
+  // snapshot would be equally unusable). A `condition()` predicate is
+  // request-time state and must NOT be pre-decided here: evaluating it at the
+  // gate and again at the lookup lets a false-then-true flap report
+  // cache-disabled while the explicit tier serves. The lookup's own
+  // evaluation governs (withCacheLookup fires the marker's onExplicitBypass,
+  // reported as cache-disabled post-match).
+  const routeCacheScope = routeSnapshot?.cacheScope ?? null;
+  if (routeCacheScope && !routeCacheScope.enabled) {
+    return runMatch({ outcome: "BYPASS", reason: "cache-disabled" });
+  }
 
   const key = buildShellKey(url);
   const navigationKey = buildNavigationShellKey(url);
@@ -811,6 +892,50 @@ async function matchPartialWithPprReplay<TEnv>(
   }
 
   if (!snapshot) {
+    // Report-only marker for routes with an ENABLED route-derived scope: the
+    // lookup's own outcome must stay reportable even without a replayable
+    // snapshot. An always-false condition() route never produces a doc
+    // record (the consumer's write refusal is absolute — see
+    // recordShellCaptureDocRecord), so without this its lookup-time refusal
+    // would be misreported as the eligibility reason and heal captures would
+    // be scheduled for snapshots that can never become consumable. The
+    // marker carries NO store: the seeded fallback in withCacheLookup
+    // requires one, so nothing can be served through it — it only reports.
+    // Bare routes never see it (an installed marker would otherwise mint an
+    // implicit scope over the REAL doc: partition in
+    // resolveShellImplicitCacheScope).
+    if (routeCacheScope?.enabled) {
+      let explicitCacheHit = false;
+      let explicitCacheBypass = false;
+      const previousImplicitCache = reqCtx._shellImplicitCache;
+      reqCtx._shellImplicitCache = {
+        onExplicitHit: () => {
+          explicitCacheHit = true;
+        },
+        onExplicitBypass: () => {
+          explicitCacheBypass = true;
+        },
+      };
+      try {
+        const result = await ctx.router.matchPartial(request, { env });
+        const status: PprReplayStatus = explicitCacheBypass
+          ? { outcome: "BYPASS", reason: "cache-disabled" }
+          : explicitCacheHit
+            ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
+            : { outcome: "BYPASS", reason: bypassReason ?? "no-entry" };
+        recordReplayStatus(status);
+        return {
+          result,
+          status,
+          // A lookup-time opt-out makes every heal snapshot unusable; the
+          // other outcomes keep the original heal decision.
+          captureNeeded:
+            !explicitCacheBypass && shouldHealReplayMiss(bypassReason),
+        };
+      } finally {
+        reqCtx._shellImplicitCache = previousImplicitCache;
+      }
+    }
     const match = await runMatch({
       outcome: "BYPASS",
       reason: bypassReason ?? "no-entry",
@@ -820,6 +945,8 @@ async function matchPartialWithPprReplay<TEnv>(
 
   const previousImplicitCache = reqCtx._shellImplicitCache;
   let segmentReplayHit = false;
+  let explicitCacheHit = false;
+  let explicitCacheBypass = false;
   reqCtx._shellImplicitCache = {
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
@@ -830,18 +957,58 @@ async function matchPartialWithPprReplay<TEnv>(
     onHit: () => {
       segmentReplayHit = true;
     },
+    // Arms the explicit-scope composition in withCacheLookup: a route-derived
+    // cache() scope stays authoritative, the seeded doc record supplies the
+    // match only on its miss. An explicit-tier hit must NOT report a replay
+    // HIT — it served under the consumer's own semantics.
+    onExplicitHit: () => {
+      explicitCacheHit = true;
+    },
+    // Lookup-time condition() refusal (or a scope with no store): the gate
+    // deliberately does not pre-decide predicates, so the truthful
+    // cache-disabled report comes from the lookup that actually refused.
+    onExplicitBypass: () => {
+      explicitCacheBypass = true;
+    },
   };
 
   try {
     const result = await ctx.router.matchPartial(request, { env });
     const status: PprReplayStatus = segmentReplayHit
       ? { outcome: "HIT", freshness }
-      : { outcome: "BYPASS", reason: "snapshot-miss" };
+      : explicitCacheHit
+        ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
+        : explicitCacheBypass
+          ? { outcome: "BYPASS", reason: "cache-disabled" }
+          : { outcome: "BYPASS", reason: "snapshot-miss" };
     recordReplayStatus(status);
     return { result, status };
   } finally {
     reqCtx._shellImplicitCache = previousImplicitCache;
   }
+}
+
+/**
+ * The full route snapshot for the classified route, or null when
+ * classification is unavailable (the gates then fall open to the ordinary
+ * replay decision). Persists the enriched snapshot back onto
+ * `_classifiedRoute` so the manifest-chain walk runs once per request:
+ * matchPartial's createMatchContextForPartial re-reads `_classifiedRoute` and
+ * calls ensureFullRouteSnapshot again, and the write-back lets that call hit
+ * the entries-already-built fast path and reuse this same scope chain instead
+ * of rebuilding it.
+ */
+function classifiedRouteSnapshot(
+  reqCtx: RequestContext<any>,
+): RouteSnapshot<any> | null {
+  const classified = reqCtx._classifiedRoute;
+  if (!classified?.manifestEntry) return null;
+  const full = ensureFullRouteSnapshot({
+    ...classified,
+    entries: classified.entries ?? [],
+  });
+  reqCtx._classifiedRoute = full;
+  return full;
 }
 
 /**

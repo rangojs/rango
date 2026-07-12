@@ -7,6 +7,18 @@ import {
   type VercelCacheReadDebugEvent,
 } from "../vercel-cache-store.js";
 import type { CachedEntryData, ShellCacheEntry } from "../../types.js";
+import {
+  CACHE_READ_ERROR,
+  type CacheReadError as CacheReadErrorT,
+} from "../../types.js";
+
+// get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
+// these tests assert hit/miss shapes, so narrow the sentinel away up front.
+function okHit(
+  r: import("../../types.js").CacheGetResult | null | CacheReadErrorT,
+): import("../../types.js").CacheGetResult | null {
+  return r === CACHE_READ_ERROR ? null : r;
+}
 
 /**
  * In-memory fake of Vercel's RuntimeCache. JSON round-trips every stored value
@@ -99,7 +111,7 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(), 60, 300);
-      const hit = await s.get("k");
+      const hit = okHit(await s.get("k"));
       expect(hit).not.toBeNull();
       expect(hit?.shouldRevalidate).toBe(false);
       expect(hit?.data.segments).toEqual([]);
@@ -108,7 +120,7 @@ describe("VercelCacheStore", () => {
     it("returns null on a miss", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
-      expect(await s.get("absent")).toBeNull();
+      expect(okHit(await s.get("absent"))).toBeNull();
     });
 
     it("delete reports success", async () => {
@@ -116,7 +128,7 @@ describe("VercelCacheStore", () => {
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(), 60);
       expect(await s.delete("k")).toBe(true);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("evicts and misses on a corrupt (non-envelope) stored value", async () => {
@@ -128,7 +140,7 @@ describe("VercelCacheStore", () => {
         expiresAt: null,
         tags: [],
       });
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
       expect(store.has("rg:s:k")).toBe(false); // self-healed
       expect(consoleError).toHaveBeenCalled();
     });
@@ -141,13 +153,13 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(), 60, 300); // staleAt=+60s, expiresAt=+360s
 
       vi.setSystemTime(new Date(T0 + 30_000));
-      expect((await s.get("k"))?.shouldRevalidate).toBe(false);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(false);
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect((await s.get("k"))?.shouldRevalidate).toBe(true);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(true);
 
       vi.setSystemTime(new Date(T0 + 400_000));
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("dampens the herd: a stale read re-stamps so the next read is fresh", async () => {
@@ -162,11 +174,11 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(), 60, 300);
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect((await s.get("k"))?.shouldRevalidate).toBe(true);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(true);
       await Promise.all(pending); // let the re-stamp settle
 
       // Same instant: staleAt was pushed forward, so this read is fresh again.
-      expect((await s.get("k"))?.shouldRevalidate).toBe(false);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(false);
     });
   });
 
@@ -175,9 +187,9 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(["blog"]), 60, 300);
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       await s.invalidateTags(["blog"]);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("invalidateTags rejects when expireTag fails (read-your-own-writes)", async () => {
@@ -223,9 +235,9 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(["ok", "a,b", longTag]), 60, 300);
       // The bad tags never reached the backend, so they cannot invalidate.
       await s.invalidateTags(["a,b"]);
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       await s.invalidateTags(["ok"]);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("drops tags with URL metacharacters (&, #, %, ?) Vercel cannot round-trip", async () => {
@@ -242,10 +254,10 @@ describe("VercelCacheStore", () => {
       for (const bad of ["sale&fall", "a#b", "x%y", "q?z"]) {
         await s.invalidateTags([bad]);
       }
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       // The one valid tag still invalidates.
       await s.invalidateTags(["ok"]);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("stores the CLAMPED tag list in the item envelope (dropped tags don't resurface on a hit)", async () => {
@@ -262,7 +274,7 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(["ok", "a&b"]), 60, 300);
-      const hit = await s.get("k");
+      const hit = okHit(await s.get("k"));
       // "a&b" was dropped from the backend tag index on write; it must not
       // ride back via env.d.tags into recordRequestTags (nor be re-clamped
       // with a spurious cache-write report on every stale read).
@@ -277,9 +289,9 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(tags), 60, 300);
       // The (cap+1)th tag is dropped on write, so it cannot invalidate.
       await s.invalidateTags([`t${VERCEL_MAX_TAGS_PER_ITEM}`]);
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       await s.invalidateTags(["t0"]); // kept (within the cap)
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("documents the per-item tag cap as Vercel's getCache limit (128)", () => {
@@ -465,7 +477,7 @@ describe("VercelCacheStore", () => {
       await s.set("same", segment(), 60, 300);
       await s.setItem("same", "item-value", { ttl: 60 });
       await s.putResponse("same", new Response("resp"), 60);
-      expect((await s.get("same"))?.data.segments).toEqual([]);
+      expect(okHit(await s.get("same"))?.data.segments).toEqual([]);
       expect((await s.getItem("same"))?.value).toBe("item-value");
       expect(await (await s.getResponse("same"))?.response.text()).toBe("resp");
     });
@@ -475,7 +487,7 @@ describe("VercelCacheStore", () => {
       const s = new VercelCacheStore({ cache });
       await s.set("same", segment(), 60, 300);
       await s.putShell("same", shellEntry(), 60, 300);
-      expect((await s.get("same"))?.data.segments).toEqual([]);
+      expect(okHit(await s.get("same"))?.data.segments).toEqual([]);
       expect((await s.getShell("same"))?.entry.prelude).toBe(
         shellEntry().prelude,
       );
@@ -540,6 +552,17 @@ describe("VercelCacheStore", () => {
       expect(entry?.handlerLiveHoles).toBe(true);
       expect(entry?.transitionWhen).toBe(true);
       expect(entry?.navigationOnly).toBe(true);
+    });
+
+    // docKey names the canonical doc segment record navigation replay
+    // consumes; dropping it in either direction reads back as "no consumable
+    // record" and every partial navigation reports no-segment-snapshot after
+    // a store round trip (the CF envelope had exactly this bug).
+    it("round-trips docKey", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry({ docKey: "doc:localhost/p" }), 60, 300);
+      expect((await s.getShell("k"))?.entry.docKey).toBe("doc:localhost/p");
     });
 
     it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {
@@ -693,7 +716,7 @@ describe("VercelCacheStore", () => {
         expiresAt: null,
         tags: [],
       });
-      const hit = await s.get("legacy");
+      const hit = okHit(await s.get("legacy"));
       expect(hit).not.toBeNull();
       expect(hit?.data.segments).toEqual([]);
     });

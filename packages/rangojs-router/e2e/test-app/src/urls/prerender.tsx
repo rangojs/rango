@@ -1,6 +1,7 @@
 import {
   urls,
   Prerender,
+  Passthrough,
   Static,
   createLoader,
   getRequestContext,
@@ -259,6 +260,41 @@ export const PrerenderPprEvictArticle = Prerender(
   },
 );
 
+/**
+ * Passthrough + Prerender + ppr fixture for the replay gate's existence
+ * probe: only "baked" bakes at build time; every other slug misses the
+ * prerender store and renders LIVE through the Passthrough handler. The trie
+ * still marks the route pr:true, so the gate must probe the store instead of
+ * trusting the flag — live params keep navigation replay (their captures
+ * record the doc segment record), baked params keep the prerender-store
+ * bypass.
+ */
+let ppPassthroughExec = 0;
+
+export const PrerenderPprPassthroughDef = Prerender<{ slug: string }>(
+  async () => [{ slug: "baked" }],
+  async (ctx) => (
+    <div data-testid="ppp-article">
+      <p data-testid="ppp-source">baked</p>
+      <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
+    </div>
+  ),
+);
+
+export const PrerenderPprPassthroughArticle = Passthrough(
+  PrerenderPprPassthroughDef,
+  async (ctx) => {
+    ppPassthroughExec += 1;
+    return (
+      <div data-testid="ppp-article">
+        <p data-testid="ppp-source">live</p>
+        <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
+        <p data-testid="ppp-exec">{`ppp-exec-${ppPassthroughExec}`}</p>
+      </div>
+    );
+  },
+);
+
 export const prerenderPatterns = urls(
   ({ path, loader, loading, parallel, middleware, notFoundBoundary }) => [
     path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
@@ -283,6 +319,12 @@ export const prerenderPatterns = urls(
         }),
       ],
     ),
+    // Passthrough + Prerender + ppr (replay gate existence probe): only
+    // "baked" bakes; other slugs render live and must keep navigation replay.
+    path("/ppp/:slug", PrerenderPprPassthroughArticle, {
+      name: "pp.passthrough",
+      ppr: { ttl: 300, swr: 120 },
+    }),
     // Build-shell eviction fixture (#699): tagged so updateTag can reject the
     // baked entry via the store's tag markers (manifest entries are immutable
     // — eviction is a marker comparison, not a deletion).

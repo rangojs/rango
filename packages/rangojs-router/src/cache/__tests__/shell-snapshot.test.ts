@@ -22,6 +22,18 @@ import type {
   CachedEntryData,
   ShellSnapshotRecord,
 } from "../types.js";
+import {
+  CACHE_READ_ERROR,
+  type CacheReadError as CacheReadErrorT,
+} from "../types.js";
+
+// get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
+// these tests assert hit/miss shapes, so narrow the sentinel away up front.
+function hit(
+  r: import("../types.js").CacheGetResult | null | CacheReadErrorT,
+): import("../types.js").CacheGetResult | null {
+  return r === CACHE_READ_ERROR ? null : r;
+}
 
 // The capture data snapshot: RecordingShellStore records the cache-store reads
 // and writes the CAPTURE render performed; SeededShellStore replays them AS
@@ -211,7 +223,7 @@ describe("SeededShellStore", () => {
       const getSpy = vi.spyOn(inner, "get");
       const seeded = new SeededShellStore(inner, snapshotOf());
 
-      const seg = await seeded.get("seg1");
+      const seg = hit(await seeded.get("seg1"));
       expect(seg).toEqual({
         data: (snapshotOf()[0] as any).value,
         shouldRevalidate: false,
@@ -244,7 +256,7 @@ describe("SeededShellStore", () => {
 
     const item = await seeded.getItem("live");
     expect(item!.value).toBe("LIVE-VALUE");
-    expect(await seeded.get("live-seg")).toBeNull();
+    expect(hit(await seeded.get("live-seg"))).toBeNull();
   });
 
   it("can seed only segments so navigation loaders keep item and response reads live", async () => {
@@ -255,7 +267,7 @@ describe("SeededShellStore", () => {
       segmentsOnly: true,
     });
 
-    expect((await seeded.get("seg1"))?.data.tags).toEqual(["pinned"]);
+    expect(hit(await seeded.get("seg1"))?.data.tags).toEqual(["pinned"]);
     expect((await seeded.getItem("item1"))?.value).toBe("LIVE-ITEM");
     expect(await (await seeded.getResponse("res1"))?.response.text()).toBe(
       "LIVE-RESPONSE",
@@ -271,14 +283,14 @@ describe("SeededShellStore", () => {
     });
 
     expect(await seeded.delete("seg1")).toBe(true);
-    expect(await seeded.get("seg1")).toBeNull();
-    expect(await seeded.get("unseeded")).toBeNull();
+    expect(hit(await seeded.get("seg1"))).toBeNull();
+    expect(hit(await seeded.get("unseeded"))).toBeNull();
 
     await seeded.set("unseeded", segData("fresh"), 60);
 
-    expect((await seeded.get("unseeded"))?.data.tags).toEqual(["fresh"]);
-    expect((await inner.get("seg1"))?.data.tags).toEqual(["original"]);
-    expect((await inner.get("unseeded"))?.data.tags).toEqual(["inner"]);
+    expect(hit(await seeded.get("unseeded"))?.data.tags).toEqual(["fresh"]);
+    expect(hit(await inner.get("seg1"))?.data.tags).toEqual(["original"]);
+    expect(hit(await inner.get("unseeded"))?.data.tags).toEqual(["inner"]);
   });
 
   it("passes ALL writes through to the real store unchanged (a live hole may write)", async () => {

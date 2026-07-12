@@ -11,6 +11,7 @@
 import type { PartialCacheOptions } from "../types.js";
 import type { ResolvedSegment } from "../types.js";
 import type { SegmentCacheStore, CachedEntryData } from "./types.js";
+import { CACHE_READ_ERROR } from "./types.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import {
   getRequestContext,
@@ -109,6 +110,17 @@ function getDefaultRouteCacheKey(
 // ============================================================================
 
 const CACHE_HIT_OBSERVERS = new WeakMap<CacheScope, () => void>();
+
+/**
+ * Discriminated outcome of a route cache lookup — see
+ * {@link CacheScope.lookupRouteDetailed} for what each status licenses.
+ */
+export type CacheRouteLookupOutcome =
+  | {
+      status: "hit";
+      result: { segments: ResolvedSegment[]; shouldRevalidate: boolean };
+    }
+  | { status: "miss" | "bypass" | "error" };
 
 /**
  * CacheScope represents a cache boundary in the route tree.
@@ -226,29 +238,75 @@ export class CacheScope {
   }
 
   /**
+   * @internal Whether a cache read/write is allowed for the current request:
+   * the scope is enabled AND its `condition` (if any) returns true. "read"
+   * is consulted by the PPR navigation-replay gate BEFORE any shell-store
+   * read so a cache(false)/condition-false route reports `cache-disabled`
+   * without spending getShell I/O; "write" gates the capture's snapshot-only
+   * doc record (cache-store middleware) under the same semantics as the
+   * scope's own store write. Consumer opt-outs are absolute — the seeded
+   * fallback must never serve where the consumer refused cached serves.
+   */
+  allowsCache(op: "read" | "write"): boolean {
+    return this.enabled && this.conditionAllows(op);
+  }
+
+  /**
+   * @internal True for scopes minted from the `_shellImplicitCache` marker
+   * (createShellImplicitDocScope) — the only construction path that passes
+   * the `doc` defaultKeyPrefix; route-derived scopes (createCacheScope) never
+   * do. withCacheLookup/withCacheStore use this to tell the implicit doc
+   * scope from a route-derived scope: the two compose on the replay serve
+   * path and only the route-derived kind gets the seeded fallback /
+   * doc-record treatment.
+   */
+  get isShellImplicitDocScope(): boolean {
+    return this.defaultKeyPrefix === "doc";
+  }
+
+  /**
    * Evaluate the cache `condition` predicate. Returns false (skip the cache
    * operation) when the predicate returns false or throws; returns true when
    * there is no condition or no request context to evaluate it against.
    */
+  /**
+   * One WRITE decision per (scope, request), memoized on the request context.
+   * A capture render has TWO writers consulting the same predicate — the
+   * explicit tier's cacheRoute and the snapshot-only doc record gate
+   * (recordShellCaptureDocRecord) — and a true→false flap between the two
+   * evaluations recorded a REPLAYABLE canonical snapshot for a render whose
+   * real write was refused. The first evaluation pins the answer for the
+   * whole render (the capture's derived context during captures). READ
+   * decisions stay per-lookup by design: pre-deciding a flappable predicate
+   * at the replay gate was the round-2 regression.
+   */
+  private readonly writeConditionMemo = new WeakMap<RequestContext, boolean>();
+
   private conditionAllows(op: "read" | "write"): boolean {
     if (this.config === false || !this.config.condition) return true;
     const requestCtx = getRequestContext();
     if (!requestCtx) return true;
+    if (op === "write") {
+      const memoized = this.writeConditionMemo.get(requestCtx);
+      if (memoized !== undefined) return memoized;
+    }
+    let allowed: boolean;
     try {
-      if (!this.config.condition(requestCtx)) {
+      allowed = !!this.config.condition(requestCtx);
+      if (!allowed) {
         debugCacheLog(
           `[CacheScope] condition returned false, skipping cache ${op}`,
         );
-        return false;
       }
-      return true;
     } catch (error) {
       console.error(
         `[CacheScope] condition function threw, skipping cache ${op}:`,
         error,
       );
-      return false;
+      allowed = false;
     }
+    if (op === "write") this.writeConditionMemo.set(requestCtx, allowed);
+    return allowed;
   }
 
   /**
@@ -267,11 +325,42 @@ export class CacheScope {
     segments: ResolvedSegment[];
     shouldRevalidate: boolean;
   } | null> {
-    if (!this.enabled) return null;
-    if (!this.conditionAllows("read")) return null;
+    const outcome = await this.lookupRouteDetailed(
+      pathname,
+      params,
+      isIntercept,
+    );
+    return outcome.status === "hit" ? outcome.result : null;
+  }
+
+  /**
+   * @internal lookupRoute with a discriminated outcome. The PPR replay
+   * composition (withCacheLookup) may substitute the seeded doc record ONLY on
+   * a true `miss` — the other non-hit outcomes must not be papered over:
+   *
+   * - `bypass`: the scope refused the read — cache(false), a false
+   *   `condition()`, or no resolvable store. Consumer opt-outs are absolute;
+   *   a fallback here would serve cached segments to a request the consumer
+   *   said must render fresh.
+   * - `error`: a throwing consumer key()/store keyGenerator/store.get. The
+   *   contract on that failure is "render uncached" (see the catch below) —
+   *   falling back would serve the canonical doc record across a broken key
+   *   partition, exactly the collision resolveCacheKey's no-default-fallback
+   *   rule exists to prevent.
+   *
+   * A corrupt entry that was evicted reads as `miss`: the store was consulted
+   * and holds nothing servable, which is the post-eviction truth.
+   */
+  async lookupRouteDetailed(
+    pathname: string,
+    params: Record<string, string>,
+    isIntercept?: boolean,
+  ): Promise<CacheRouteLookupOutcome> {
+    if (!this.enabled) return { status: "bypass" };
+    if (!this.conditionAllows("read")) return { status: "bypass" };
 
     const store = this.getStore();
-    if (!store) return null;
+    if (!store) return { status: "bypass" };
 
     // Resolve cache key INSIDE the try so a throwing consumer key() (or a
     // store.keyGenerator) degrades to a cache miss (return null -> render
@@ -285,9 +374,17 @@ export class CacheScope {
 
       const result = await store.get(key);
 
+      // Built-in stores swallow backend read failures internally and signal
+      // them with CACHE_READ_ERROR — classify as `error`, not `miss`, so the
+      // replay composition renders uncached instead of substituting the
+      // seeded doc record for a tier whose backend never answered.
+      if (result === CACHE_READ_ERROR) {
+        return { status: "error" };
+      }
+
       if (!result) {
         debugCacheLog(`[CacheScope] MISS: ${key}`);
-        return null;
+        return { status: "miss" };
       }
 
       const { data: cached, shouldRevalidate } = result;
@@ -320,7 +417,7 @@ export class CacheScope {
           .catch((e) =>
             reportCacheError(e, "cache-delete", `[CacheScope] ${key}: evict`),
           );
-        return null;
+        return { status: "miss" };
       }
 
       // A hit serves content that was tagged at write time, so the document
@@ -351,16 +448,18 @@ export class CacheScope {
       }
 
       CACHE_HIT_OBSERVERS.get(this)?.();
-      return { segments, shouldRevalidate };
+      return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
-      // (resolveKey). Either way degrade to a cache miss so the render proceeds.
+      // (resolveKey). Either way degrade to an uncached render — reported as
+      // `error`, not `miss`, so the replay composition cannot substitute the
+      // seeded doc record for a lookup that never resolved its key partition.
       reportCacheError(
         error,
         "cache-read",
         `[CacheScope] lookup ${key ?? "(key resolution failed)"}`,
       );
-      return null;
+      return { status: "error" };
     }
   }
 
@@ -421,6 +520,15 @@ export class CacheScope {
 
     // Resolve cache key early (while request context is available)
     const key = await this.resolveKey(pathname, params, isIntercept);
+
+    // Doc-namespaced scopes (the shell implicit scope and the capture's
+    // composed doc scope) publish the canonical document segment key so
+    // captureAndStoreShell can stamp it onto the shell entry (`docKey`).
+    // Replay eligibility then requires this exact record — "any segment
+    // record" previously counted unusable explicit-tier-keyed records too.
+    if (this.defaultKeyPrefix === "doc" && requestCtx._shellImplicitCache) {
+      requestCtx._shellImplicitCache.docKey = key;
+    }
 
     // Resolve tags early (while request context is available, before waitUntil)
     const tags = resolveCacheTags(this.config, requestCtx);
@@ -538,6 +646,31 @@ export function createCacheScope(
   return new CacheScope(config.options, parent);
 }
 
+type ShellImplicitCacheMarker = NonNullable<
+  RequestContext["_shellImplicitCache"]
+>;
+
+/**
+ * Mint the implicit doc-level scope for a `_shellImplicitCache` marker: key
+ * resolution under the marker's `doc` namespace against the marker's store,
+ * with the marker's onHit wired as the hit observer. Shared by
+ * {@link resolveShellImplicitCacheScope} (routes that derived no scope) and
+ * the explicit-scope composition sites (capture doc record in the cache-store
+ * middleware, seeded replay fallback in withCacheLookup) so both ends of the
+ * shell contract resolve the SAME canonical document key.
+ */
+export function createShellImplicitDocScope(
+  marker: ShellImplicitCacheMarker,
+): CacheScope {
+  const implicitScope = new CacheScope(
+    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
+    null,
+    marker.keyPrefix,
+  );
+  if (marker.onHit) CACHE_HIT_OBSERVERS.set(implicitScope, marker.onHit);
+  return implicitScope;
+}
+
 /**
  * Shell fast path: when the route tree derived NO cache scope and the current
  * request context carries the `_shellImplicitCache` marker (a shell capture,
@@ -548,9 +681,11 @@ export function createCacheScope(
  * (resolveFreshLoadersAndYield).
  *
  * An existing scope — including an explicit cache(false) opt-out — always
- * wins: the consumer's cache() semantics (their ttl/swr/store/condition) are
- * never overridden, and cache(false) keeps the tail on the full handler
- * re-run path.
+ * wins HERE: the consumer's cache() semantics (their ttl/swr/store/condition)
+ * are never overridden, and cache(false) keeps the tail on the full handler
+ * re-run path. On the navigation-replay serve path the marker still composes
+ * with an explicit scope downstream (withCacheLookup's seeded fallback after
+ * an explicit-tier miss) — see `onExplicitHit` on `_shellImplicitCache`.
  */
 export function resolveShellImplicitCacheScope(
   scope: CacheScope | null,
@@ -558,11 +693,5 @@ export function resolveShellImplicitCacheScope(
   if (scope) return scope;
   const marker = getRequestContext()?._shellImplicitCache;
   if (!marker) return null;
-  const implicitScope = new CacheScope(
-    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
-    null,
-    marker.keyPrefix,
-  );
-  if (marker.onHit) CACHE_HIT_OBSERVERS.set(implicitScope, marker.onHit);
-  return implicitScope;
+  return createShellImplicitDocScope(marker);
 }

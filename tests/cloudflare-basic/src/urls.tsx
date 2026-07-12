@@ -48,8 +48,13 @@ import {
   PprExecBadgeSlot,
   PprExecPage,
   PprStaleReplayPage,
+  PprScopedChromeLayout,
+  PprScopedHomePage,
+  PprScopedOptOutPage,
+  PprScopedConditionPage,
   PprInlineActionPage,
   PprPrerenderedArticle,
+  PprPrerenderedPassthroughArticle,
   PprPrerenderedEvictArticle,
   PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
@@ -596,6 +601,34 @@ export const urlpatterns = urls(
           name: "pprStaleReplay",
           ppr: { ttl: 4, swr: 120 },
         }),
+        // Storefront shape: ppr routes under an ancestor cache() scope (the
+        // real store-app shape — an app-wide cache() wrapping the tree).
+        // Navigation replay COMPOSES with the explicit tier on CFCacheStore:
+        // the tier's own hit reports `explicit-cache-hit`; on its miss the
+        // shell snapshot's doc record supplies the match (`HIT`). Short ttl
+        // keeps the tier's warm window test-controllable.
+        cache({ ttl: 30, swr: 604_800 }, () => [
+          layout(PprScopedChromeLayout, () => [
+            path("/ppr-scoped", PprScopedHomePage, {
+              name: "pprScoped",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
+          // Consumer opt-outs stay absolute on the replay path: cache(false)
+          // and a false condition() report `cache-disabled` pre-read.
+          cache(false, () => [
+            path("/ppr-scoped-optout", PprScopedOptOutPage, {
+              name: "pprScopedOptOut",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
+          cache({ ttl: 30, condition: () => false }, () => [
+            path("/ppr-scoped-condition", PprScopedConditionPage, {
+              name: "pprScopedCondition",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
+        ]),
         // Refusal semantics under a too-short budget (issue #715 negative):
         // ~3.5s material against an explicit 1500ms budget — the capture
         // refuses (stays MISS, no partial bake). Short tempo keeps the
@@ -771,6 +804,13 @@ export const urlpatterns = urls(
             }),
           ],
         ),
+        // Passthrough + Prerender + ppr (replay gate existence probe): only
+        // "baked" bakes; other slugs render live and must keep navigation
+        // replay on the real CFCacheStore/KV path.
+        path("/ppr-shell/passthrough/:slug", PprPrerenderedPassthroughArticle, {
+          name: "pprShellPassthrough",
+          ppr: { ttl: 300, swr: 120 },
+        }),
         // Build-shell eviction fixture (#699): its own route + tag so the
         // eviction e2e's updateTag cannot blast the sibling prerendered
         // entries (baked manifest entries are immutable — eviction is a tag

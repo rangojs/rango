@@ -450,8 +450,50 @@ function ShellSlowMetaLayout(ctx: HandlerContext) {
   );
 }
 
+// Storefront shape (PPR navigation replay composed with an explicit cache()):
+// static layout chrome; the page embeds a per-execution stamp so a replayed
+// serve (frozen stamp) is distinguishable from a fresh handler run.
+function ShellScopedChromeLayout() {
+  return (
+    <main data-testid="shell-scoped-page">
+      <p data-testid="shell-scoped-chrome">Scoped chrome static content</p>
+      <Outlet />
+    </main>
+  );
+}
+
+let shellScopedExecution = 0;
+
+function ShellScopedHomePage() {
+  shellScopedExecution += 1;
+  return (
+    <p data-testid="shell-scoped-home">
+      scoped-home-execution-{shellScopedExecution}
+    </p>
+  );
+}
+
+function ShellScopedOptOutPage() {
+  return <p data-testid="shell-scoped-optout">Scoped opt-out static content</p>;
+}
+
+function ShellScopedConditionPage() {
+  return (
+    <p data-testid="shell-scoped-condition">Scoped condition static content</p>
+  );
+}
+
 export const shellCachePatterns = urls(
-  ({ path, layout, loader, loading, middleware, parallel, transition }) => [
+  ({
+    path,
+    layout,
+    loader,
+    loading,
+    middleware,
+    parallel,
+    transition,
+    cache,
+  }) => [
     layout(ShellCacheLayout, () => [
       // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
       path(
@@ -676,6 +718,35 @@ export const shellCachePatterns = urls(
       name: "shellCacheStaleReplay",
       ppr: { ttl: 300, swr: 120 },
     }),
+    // Storefront shape: ppr routes under an ancestor cache() scope (the
+    // rsc-cloudflare-app diagnosis shape — an app-wide cache() wrapping the
+    // whole tree). Navigation replay COMPOSES with the explicit tier: the
+    // tier's own hit reports `explicit-cache-hit`; on its miss the shell
+    // snapshot's doc record supplies the match (`HIT`). Short ttl keeps the
+    // explicit tier's warm window test-controllable; long swr mirrors the
+    // storefront config.
+    cache({ ttl: 30, swr: 604_800 }, () => [
+      layout(ShellScopedChromeLayout, () => [
+        path("/shell-cache/scoped", ShellScopedHomePage, {
+          name: "shellCacheScoped",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+      ]),
+      // Consumer opt-outs stay absolute on the replay path: cache(false) and
+      // a false condition() report `cache-disabled` before any shell read.
+      cache(false, () => [
+        path("/shell-cache/scoped-optout", ShellScopedOptOutPage, {
+          name: "shellCacheScopedOptOut",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+      ]),
+      cache({ ttl: 30, condition: () => false }, () => [
+        path("/shell-cache/scoped-condition", ShellScopedConditionPage, {
+          name: "shellCacheScopedCondition",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+      ]),
+    ]),
     // NAMELESS ppr route (issue #714): `name` is orthogonal to shell caching —
     // the DSL registers the entry under a synthesized $path_* manifest key with
     // the ppr option intact, so this route must engage (MISS -> HIT) exactly

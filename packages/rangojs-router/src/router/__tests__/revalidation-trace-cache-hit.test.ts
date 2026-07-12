@@ -104,9 +104,9 @@ function makeCtx(
     actionContext: undefined,
     cacheScope: {
       enabled: true,
-      lookupRoute: async () => ({
-        segments: cacheSegments,
-        shouldRevalidate: false,
+      lookupRouteDetailed: async () => ({
+        status: "hit",
+        result: { segments: cacheSegments, shouldRevalidate: false },
       }),
       storeRoute: vi.fn(async () => {}),
     },

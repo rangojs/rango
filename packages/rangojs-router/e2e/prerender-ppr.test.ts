@@ -88,6 +88,77 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(seq2).toBe(seq1 + 1);
   });
 
+  test("partial navigation is served from the prerender store and reports BYPASS; reason=prerender-store", async ({
+    request,
+  }) => {
+    // The prerender short-circuit means a Prerender()+ppr capture never
+    // records a doc segment record, so navigation replay could never seed —
+    // the old flow spent two getShell reads to misreport
+    // `no-segment-snapshot`. The gate now decides before any read; the
+    // partial itself still serves from build-time segments.
+    const url = f.url("/pp/alpha?probe=partial-nav");
+    await warmToHit(request, url);
+
+    const replay = await request.get(
+      `${url}&_rsc_partial=true&_rsc_segments=`,
+      { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+    );
+    expect(replay.status()).toBe(200);
+    expect(replay.headers()["x-rango-ppr-replay"]).toBe(
+      "BYPASS; reason=prerender-store",
+    );
+    // Build-time segments supplied the partial match.
+    expect(await replay.text()).toContain(
+      "Prerendered shell content for alpha",
+    );
+  });
+
+  test("passthrough param with a baked artifact reports prerender-store; a live param keeps replay", async ({
+    request,
+  }) => {
+    // /ppp/:slug is Passthrough(Prerender()) + ppr: the trie marks the route
+    // pr:true for EVERY param, but only "baked" holds an artifact. The gate
+    // probes the store instead of trusting the flag — otherwise the live
+    // params would permanently misreport `prerender-store`, skip eligible
+    // shells, and never schedule the heal capture.
+    const bakedUrl = f.url("/ppp/baked?probe=ppp-baked");
+    await warmToHit(request, bakedUrl);
+    const bakedReplay = await request.get(
+      `${bakedUrl}&_rsc_partial=true&_rsc_segments=`,
+      { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+    );
+    expect(bakedReplay.status()).toBe(200);
+    expect(bakedReplay.headers()["x-rango-ppr-replay"]).toBe(
+      "BYPASS; reason=prerender-store",
+    );
+    const bakedBody = await bakedReplay.text();
+    // Build-time segments supplied the partial: the BAKED handler's source
+    // marker, never the live Passthrough handler's execution stamp.
+    expect(bakedBody).toContain("PPP content for baked");
+    expect(bakedBody).toContain("baked");
+    expect(bakedBody).not.toContain("ppp-exec-");
+
+    // Live param: the document warm-up captured the shell (live render, so
+    // the doc segment record was recorded), and the partial navigation
+    // replays it — the exact outcome the pr-flag gate used to make
+    // impossible.
+    const liveUrl = f.url("/ppp/live-one?probe=ppp-live");
+    await warmToHit(request, liveUrl);
+    const liveReplay = await request.get(
+      `${liveUrl}&_rsc_partial=true&_rsc_segments=`,
+      { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+    );
+    expect(liveReplay.status()).toBe(200);
+    expect(liveReplay.headers()["x-rango-ppr-replay"]).toBe(
+      "HIT; freshness=fresh",
+    );
+    const liveBody = await liveReplay.text();
+    // The LIVE Passthrough handler rendered the capture this replay serves.
+    expect(liveBody).toContain("PPP content for live-one");
+    expect(liveBody).toContain("live");
+    expect(liveBody).toContain("ppp-exec-");
+  });
+
   // Fragment splice (issue #700) on the Prerender+ppr composition: the HIT
   // tail serves its segments from the PRERENDER STORE (the lookup runs before
   // the cache scope), so the splice must engage there too — the hydration

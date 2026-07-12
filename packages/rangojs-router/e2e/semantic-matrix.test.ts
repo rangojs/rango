@@ -795,6 +795,70 @@ const matrixRows: SemanticMatrixRow[] = [
       assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
     },
   },
+  // Explicit-tier-first replay composition (the storefront shape: ppr routes
+  // under an ancestor cache() scope). The consumer's tier is ALWAYS consulted
+  // first and serves under its own key/ttl/swr semantics — reported as
+  // `explicit-cache-hit`, never a false replay HIT. Only a true miss of that
+  // tier lets the shell snapshot's canonical doc segment record supply the
+  // match (replay HIT). Opt-outs stay absolute: cache(false)/condition()
+  // false bypass as `cache-disabled` before any shell read (pinned in
+  // rsc-rendering-shell-ppr + cache-lookup-shell-replay-fallback units).
+  {
+    id: "PPR6",
+    contract:
+      "explicit-tier-first replay: a route-derived cache() hit reports explicit-cache-hit under its own semantics; only its miss lets the seeded doc record replay (HIT)",
+    transport: "request",
+    execution: "partial-render",
+    scope: "in-scope-child",
+    assert: async ({ request, baseUrl }) => {
+      const htmlHeaders = { headers: { Accept: "text/html" } };
+      const partialHeaders = {
+        headers: { "X-RSC-Router-Client-Path": baseUrl("/") },
+      };
+      const warmShell = async (url: string) => {
+        await expect(async () => {
+          const r = await request.get(url, htmlHeaders);
+          expect(r.headers()["x-rango-shell"]).toBe("HIT");
+        }).toPass({ timeout: 10000 });
+      };
+
+      // 1. Explicit tier warmed by a fresh partial render (shell cold:
+      //    bounded no-entry bypass; the render writes the ring-3 entry under
+      //    the consumer's ttl).
+      const probe = `matrix-scoped-${crypto.randomUUID()}`;
+      const url = baseUrl(`/shell-cache/scoped?probe=${probe}`);
+      const partialUrl = `${url}&_rsc_partial=true&_rsc_segments=`;
+      const cold = await request.get(partialUrl, partialHeaders);
+      assertPprReplayStatus(
+        { headers: new Headers(cold.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+
+      // 2. Shell captured; within the explicit ttl the consumer's tier stays
+      //    authoritative — never reported as a replay HIT.
+      await warmShell(url);
+      const warm = await request.get(partialUrl, partialHeaders);
+      assertPprReplayStatus(
+        { headers: new Headers(warm.headers()) },
+        { outcome: "BYPASS", reason: "explicit-cache-hit" },
+      );
+
+      // 3. A fresh probe (explicit partial tier cold, shell captured) is
+      //    supplied by the seeded doc record — the replay HIT that used to be
+      //    structurally impossible under an ancestor cache() scope.
+      const probe2 = `matrix-scoped-cold-${crypto.randomUUID()}`;
+      const url2 = baseUrl(`/shell-cache/scoped?probe=${probe2}`);
+      await warmShell(url2);
+      const replay = await request.get(
+        `${url2}&_rsc_partial=true&_rsc_segments=`,
+        partialHeaders,
+      );
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+    },
+  },
 ];
 
 function registerSemanticMatrixSuite(build: BuildAxis): void {
