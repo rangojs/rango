@@ -305,6 +305,7 @@ export const routes = {
   "slowProduct.detail": "/slow-product/:productId",
   slowStreaming: "/slow-streaming",
   slowStreamingSkipSsr: "/slow-streaming-skip-ssr",
+  "spk.spk.cached": "/spk/cached",
   "static-page": "/static-page",
   "static-reverse": "/static-reverse",
   "static-shell": "/static-shell/:tag",

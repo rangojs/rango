@@ -54,7 +54,7 @@ describe("cache.searchParams key filtering (dispatch)", () => {
   it("collapses excluded-param variants onto one cache slot (HIT across utm variants)", async () => {
     const store = new MemorySegmentCacheStore();
     const router = buildRouter(store, {
-      exclude: [...TRACKING_SEARCH_PARAMS],
+      exclude: TRACKING_SEARCH_PARAMS,
     });
 
     const first = await (

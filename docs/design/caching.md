@@ -315,7 +315,7 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 ```
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
-- **Search params**: User-facing params are included (sorted, URL-encoded). Internal `_rsc*` and `__*` params are excluded.
+- **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`, `__prerender_collect`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Determinism**: Both route params and search params are sorted alphabetically for stable keys regardless of insertion order.
 
 ```typescript
@@ -353,7 +353,7 @@ createRouter({
   document: Document,
   cache: {
     store: cacheStore,
-    searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] },
+    searchParams: { exclude: TRACKING_SEARCH_PARAMS },
   },
 });
 ```

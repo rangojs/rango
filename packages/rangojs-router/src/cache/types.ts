@@ -13,6 +13,22 @@ import type { ResolvedSegment } from "../types.js";
 import type { RequestContext } from "../server/request-context.js";
 
 /**
+ * Sentinel a `SegmentCacheStore.get` MAY return instead of `null` when the
+ * read FAILED (backend error) rather than genuinely missing. For the render
+ * outcome the two are identical — render fresh, re-cache — so hit/miss-only
+ * consumers can treat it as a miss. The PPR replay composition needs the
+ * distinction: an errored explicit-tier read must render uncached
+ * (`lookupRouteDetailed` classifies it `error`), never be substituted by the
+ * seeded doc record — the built-in stores swallow backend errors internally,
+ * so without this signal their failures read as replayable misses. Third-party
+ * stores returning plain `null` on error keep the miss classification.
+ */
+export const CACHE_READ_ERROR: unique symbol = Symbol.for(
+  "rango.cache.readError",
+);
+export type CacheReadError = typeof CACHE_READ_ERROR;
+
+/**
  * Result from cache get() including data and revalidation status
  */
 export interface CacheGetResult {
@@ -90,9 +106,10 @@ export interface SegmentCacheStore<TEnv = unknown> {
 
   /**
    * Get cached entry data by key
-   * @returns Cache result with data and staleness, or null if not found/expired
+   * @returns Cache result with data and staleness, null if not found/expired,
+   * or CACHE_READ_ERROR when the read failed (optional — see the sentinel).
    */
-  get(key: string): Promise<CacheGetResult | null>;
+  get(key: string): Promise<CacheGetResult | null | CacheReadError>;
 
   /**
    * Store entry data with TTL
@@ -305,6 +322,20 @@ export interface ShellCacheEntry {
    * heals it. See docs/design/ppr-shell-resume.md ("the capture data snapshot").
    */
   snapshot?: ShellSnapshotRecord[];
+  /**
+   * The key of the CANONICAL document segment record inside `snapshot` — the
+   * one navigation replay can actually consume (resolved under the implicit
+   * doc namespace at capture; see CacheScope.cacheRoute). Replay eligibility
+   * requires this exact record: the snapshot also carries incidentally
+   * recorded explicit-tier records (RecordingShellStore passthroughs) whose
+   * keys a partial lookup can never resolve, and counting those declared
+   * entries "replayable" that always missed (`snapshot-miss` flip-flop).
+   * Absent on entries captured before the field existed OR when the capture
+   * recorded no doc record (cache(false)/condition-false routes, prerender
+   * short-circuit) — both read as `no-segment-snapshot`; recapture heals the
+   * former.
+   */
+  docKey?: string;
   /**
    * The entry was captured from a partial request only to produce an eligible
    * segment snapshot. Document serving must treat its HTML prelude as a miss;

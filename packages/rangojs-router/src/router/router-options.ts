@@ -318,7 +318,7 @@ export interface RangoOptions<TEnv = any> {
    * const router = createRouter({
    *   cache: {
    *     store: cacheStore,
-   *     searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] },
+   *     searchParams: { exclude: TRACKING_SEARCH_PARAMS },
    *   },
    * });
    * ```

@@ -188,6 +188,40 @@ global middleware
   replay, fresh transition-decision, and `stale SWR navigation replays the
 captured handler promise, top-level handles, and Meta` dev+production e2e
   cases, plus `[PPR5]` for cold partial capture and prefetch replay.
+- **Replay composes with route-derived `cache()` scopes, explicit tier first.**
+  A ppr route under a `cache()` scope (including one inherited from an
+  ancestor — the app-wide storefront shape) still replays. The consumer's tier
+  is ALWAYS consulted first and serves under its own key/ttl/swr/tags/condition
+  semantics, reported as `BYPASS; reason=explicit-cache-hit`; ONLY a true miss
+  of that tier lets the shell snapshot's canonical doc segment record supply
+  the match (the replay HIT). A `bypass` (cache(false), a false `condition()`,
+  no store) or `error` outcome of the explicit lookup never falls back —
+  opt-outs are absolute, and an errored read (throwing consumer `key()`, a
+  store failure, or a built-in store's internally swallowed backend error,
+  signaled via `CACHE_READ_ERROR`) keeps its render-uncached contract instead
+  of serving across a key partition the tier never resolved
+  (`CacheScope.lookupRouteDetailed` outcomes). To make composition
+  possible, a capture of such a route records the canonical doc segment record
+  into the shell snapshot IN ADDITION to the scope's normal store write
+  (snapshot-only — never the real store), and stamps its key on the entry
+  (`ShellCacheEntry.docKey`); replay eligibility requires that exact record.
+  Three decisions bypass before any shell-store read: a partial without
+  navigation context (`no-navigation-context`), a route whose baked prerender
+  artifact EXISTS (`prerender-store` — probed through the memoized prerender
+  store, because the trie's `pr` flag alone is not a serve guarantee for
+  `Passthrough(Prerender())` params that render live; a request carrying
+  `X-RSC-Router-Intercept-Source` falls through instead, since whether it IS
+  an intercept — and therefore which artifact variant the middleware reads —
+  only resolves post-match), and a STATICALLY disabled scope (`cache(false)`
+  → `cache-disabled`). A `condition()`
+  predicate is deliberately NOT pre-decided — evaluating it at the gate and
+  again at the lookup would let a false-then-true flap report cache-disabled
+  while the explicit tier serves; the lookup's own refusal is reported
+  post-match as the same `cache-disabled` (marker `onExplicitBypass`). Pinned
+  by `[PPR6]`, the storefront-shape dev+production e2e cases in both apps
+  (`shell-cache`, `ppr-shell`), the passthrough existence-probe cases in
+  `prerender-ppr` and `ppr-shell`, and the
+  `cache-lookup-shell-replay-fallback` / `cache-store-shell-doc-record` units.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
   `invalidated` when a tag marker rejects a capture that started before the
   invalidation. The capture emits a `refused` event with

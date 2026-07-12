@@ -34,8 +34,8 @@
 export type CacheSearchParams =
   | "all"
   | "none"
-  | { include: readonly string[] }
-  | { exclude: readonly string[] };
+  | { include: readonly string[]; exclude?: never }
+  | { exclude: readonly string[]; include?: never };
 
 /**
  * Compiled form of a `CacheSearchParams` config: returns true when the param
@@ -48,7 +48,7 @@ export type SearchParamsFilter = (name: string) => boolean;
 /**
  * Well-known tracking/click-id params that fragment caches without changing
  * rendered output for (almost) every app. Exported so the common case is one
- * line: `searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] }`.
+ * line: `searchParams: { exclude: TRACKING_SEARCH_PARAMS }`.
  *
  * Sources: Google (gclid/gclsrc/dclid/gbraid/wbraid + utm_*), Meta (fbclid),
  * Microsoft (msclkid), TikTok (ttclid), Twitter/X (twclid), LinkedIn
@@ -112,7 +112,7 @@ export function compileSearchParamsFilter(
 ): SearchParamsFilter | undefined {
   if (config === undefined || config === "all") return undefined;
   if (config === "none") return NONE_FILTER;
-  if ("include" in config) return compileMatcher(config.include);
-  const excluded = compileMatcher(config.exclude);
+  if (config.include !== undefined) return compileMatcher(config.include);
+  const excluded = compileMatcher(config.exclude ?? []);
   return (name) => !excluded(name);
 }

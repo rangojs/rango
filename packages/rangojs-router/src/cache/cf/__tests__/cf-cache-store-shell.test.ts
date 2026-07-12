@@ -150,6 +150,24 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(entry?.navigationOnly).toBe(true);
   });
 
+  // docKey names the canonical doc segment record navigation replay consumes;
+  // dropping it in either direction reads back as "no consumable record" and
+  // every partial navigation reports no-segment-snapshot after a KV round trip
+  // (the memory store passes entries by reference, so only this envelope can
+  // lose it — exactly how the storefront-shape replay silently died on KV).
+  it("round-trips docKey through KV", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    await store.putShell(
+      "k",
+      shellEntry({ docKey: "doc:localhost/p" }),
+      300,
+      30,
+    );
+    await drain(mockCtx);
+
+    expect((await store.getShell("k"))?.entry.docKey).toBe("doc:localhost/p");
+  });
+
   // The build-shell read-through's eviction gate (#699): a baked manifest
   // entry is immutable, so updateTag reaches it by comparing the SAME KV tag
   // markers invalidateTags writes against the entry's build-time createdAt.

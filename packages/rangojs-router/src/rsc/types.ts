@@ -222,7 +222,7 @@ export interface HandlerCacheConfig {
    * ```typescript
    * cache: {
    *   store: cacheStore,
-   *   searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] },
+   *   searchParams: { exclude: TRACKING_SEARCH_PARAMS },
    * }
    * ```
    */

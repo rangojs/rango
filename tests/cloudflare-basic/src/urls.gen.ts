@@ -42,6 +42,7 @@ export const routes = {
   testNegotiateWildJson: "/test/negotiate-wild/*",
   testNegotiateXml: "/test/negotiate-xml",
   testNegotiateXmlApi: "/test/negotiate-xml",
+  testSpkCached: "/test/spk-cached",
   theme: "/theme",
 } as const;
 export type routes = typeof routes;

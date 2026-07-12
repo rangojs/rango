@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NOCACHE_SYMBOL } from "../taint.js";
+import { compileSearchParamsFilter } from "../search-params-filter.js";
 
 const encodeReply = vi.fn(async (args: unknown[], _opts?: unknown) =>
   JSON.stringify(args),
@@ -200,5 +201,37 @@ describe('"use cache" JSON-safe fast-path key (C2)', () => {
     expect(hit).toBe("r-1");
     // Route-derived key args are JSON-safe: the encoder was never used.
     expect(encodeReply).not.toHaveBeenCalled();
+  });
+
+  it("normalizes tainted ctx search params with the request cache filter", async () => {
+    const store = new MemorySegmentCacheStore();
+    const handleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+    seedCtx(store, {
+      _handleStore: handleStore,
+      _searchParamsFilter: compileSearchParamsFilter({ exclude: ["utm_*"] }),
+    });
+
+    let calls = 0;
+    const cached = registerCachedFunction(
+      async (_ctx: any) => `r-${++calls}`,
+      "fast-tainted-filtered",
+      "default",
+    );
+    const ctx = (utm: string) => ({
+      [NOCACHE_SYMBOL]: true,
+      params: {},
+      pathname: "/products",
+      searchParams: new URLSearchParams({ utm_source: utm }),
+      url: new URL(`https://example.com/products?utm_source=${utm}`),
+    });
+
+    expect(await cached(ctx("one"))).toBe("r-1");
+    await flush();
+    expect(await cached(ctx("two"))).toBe("r-1");
+    expect(calls).toBe(1);
   });
 });

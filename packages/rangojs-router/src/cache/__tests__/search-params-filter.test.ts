@@ -58,7 +58,7 @@ describe("compileSearchParamsFilter", () => {
 
   it("TRACKING_SEARCH_PARAMS covers the common click-id/tracking params via exclude", () => {
     const filter = compileSearchParamsFilter({
-      exclude: [...TRACKING_SEARCH_PARAMS],
+      exclude: TRACKING_SEARCH_PARAMS,
     })!;
     for (const name of [
       "utm_source",

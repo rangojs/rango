@@ -49,6 +49,9 @@ const PPR_REPLAY_BYPASS_REASONS = [
   "nonce",
   "store-unavailable",
   "passive-read-unsupported",
+  "no-navigation-context",
+  "prerender-store",
+  "cache-disabled",
   "read-error",
   "no-entry",
   "invalid-version",
@@ -57,6 +60,7 @@ const PPR_REPLAY_BYPASS_REASONS = [
   "transition-when",
   "no-segment-snapshot",
   "snapshot-miss",
+  "explicit-cache-hit",
   "stale-build-entry",
 ] as const;
 

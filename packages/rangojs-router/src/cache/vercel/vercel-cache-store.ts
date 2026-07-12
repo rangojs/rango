@@ -40,7 +40,9 @@ import type {
   CacheItemOptions,
   ShellCacheEntry,
   ShellSnapshotRecord,
+  CacheReadError,
 } from "../types.js";
+import { CACHE_READ_ERROR } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
 import { isPerClientSignalHeader } from "../../browser/cookie-name.js";
 import {
@@ -202,6 +204,13 @@ interface VercelShellEnvelope {
   i?: string;
   /** Capture data snapshot: recorded cache-store hits/writes for HIT parity. */
   sn?: ShellSnapshotRecord[];
+  /**
+   * ShellCacheEntry.docKey. Must round-trip: navigation-replay eligibility
+   * requires the exact canonical doc segment record named here — dropping the
+   * field reads back as "no consumable record" and every partial navigation
+   * reports `no-segment-snapshot` after a store round trip.
+   */
+  dk?: string;
   /**
    * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
    * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
@@ -391,7 +400,7 @@ export class VercelCacheStore<
 
   // --- Segment family (get/set/delete) ---
 
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     const storeKey = this.toStoreKey(key, "s");
     const started = Date.now();
     let raw: unknown;
@@ -400,7 +409,9 @@ export class VercelCacheStore<
     } catch (error) {
       reportCacheError(error, "cache-read", "[VercelCacheStore] get");
       this.emitDebug({ op: "get", key, outcome: "error" });
-      return null;
+      // Distinct from a miss so the PPR replay composition renders uncached
+      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
+      return CACHE_READ_ERROR;
     }
     const readMs = Date.now() - started;
 
@@ -816,6 +827,7 @@ export class VercelCacheStore<
         buildVersion: env.bv,
         initialTheme: env.i,
         snapshot: env.sn,
+        docKey: env.dk,
         handlerLiveHoles: env.lh,
         transitionWhen: env.tw,
         navigationOnly: env.no,
@@ -866,6 +878,7 @@ export class VercelCacheStore<
         t: safeTags.length > 0 ? safeTags : undefined,
         i: entry.initialTheme,
         sn: entry.snapshot,
+        dk: entry.docKey,
         lh: entry.handlerLiveHoles,
         tw: entry.transitionWhen,
         no: entry.navigationOnly,
@@ -1196,7 +1209,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, sn, lh, tw, no } = raw;
+    const { p, po, rv, bv, c, s, e, t, i, sn, dk, lh, tw, no } = raw;
     if (typeof p !== "string" || typeof rv !== "string") return null;
     if (po !== null && typeof po !== "string") return null;
     if (typeof c !== "number") return null;
@@ -1212,6 +1225,7 @@ export class VercelCacheStore<
       t: Array.isArray(t) ? (t as string[]) : undefined,
       i: typeof i === "string" ? i : undefined,
       sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
+      dk: typeof dk === "string" ? dk : undefined,
       lh: lh === true ? true : undefined,
       tw: tw === true ? true : undefined,
       no: no === true ? true : undefined,

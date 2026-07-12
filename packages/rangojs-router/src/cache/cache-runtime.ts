@@ -308,7 +308,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           if (ctx.searchParams instanceof URLSearchParams) {
             const normalized = sortedSearchString(
               ctx.searchParams,
-              ctx._searchParamsFilter,
+              requestCtx?._searchParamsFilter,
             );
             if (normalized) {
               keyArgs.push(normalized);

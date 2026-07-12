@@ -1707,6 +1707,11 @@ async function captureAndStoreShell(
           // ShellCacheEntry.initialTheme.
           initialTheme: reqCtx.theme,
           snapshot,
+          // The canonical doc segment record's key, published by the doc
+          // scope's cacheRoute during this capture's match (undefined when no
+          // doc record was recorded — the entry then never claims navigation
+          // replayability). Only meaningful alongside a snapshot.
+          docKey: snapshot ? reqCtx._shellImplicitCache?.docKey : undefined,
           navigationOnly: capture.navigationOnly,
           // Handler-layer liveness folded at the barrier: nested thenables in
           // handler-scoped pushes, handler pushes still pending (liveness

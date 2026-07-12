@@ -283,7 +283,7 @@ const router = createRouter({
   cache: {
     store,
     // "all" (default) | "none" | { include: string[] } | { exclude: string[] }
-    searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] },
+    searchParams: { exclude: TRACKING_SEARCH_PARAMS },
   },
 });
 ```

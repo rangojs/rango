@@ -23,6 +23,7 @@ import type {
   SegmentCacheStore,
   CachedEntryData,
   CacheGetResult,
+  CacheReadError,
   CacheItemResult,
   CacheItemOptions,
 } from "@rangojs/router/cache";
@@ -65,7 +66,11 @@ function resolveStore(): CFCacheStore {
 // skips caching when a store omits an optional family — a wrapper implementing
 // only the segment tier looks like "never caches" for response routes.
 export const purgeModeStore: SegmentCacheStore = {
-  get: (key: string): Promise<CacheGetResult | null> => resolveStore().get(key),
+  // CacheReadError: built-in stores signal a swallowed backend read failure
+  // (CACHE_READ_ERROR) distinctly from a miss; a delegating wrapper must
+  // forward it so the PPR replay composition can refuse the seeded fallback.
+  get: (key: string): Promise<CacheGetResult | null | CacheReadError> =>
+    resolveStore().get(key),
   set: (
     key: string,
     data: CachedEntryData,

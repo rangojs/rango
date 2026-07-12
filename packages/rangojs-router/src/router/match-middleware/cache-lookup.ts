@@ -92,6 +92,7 @@
  *   - Action context (if POST)
  */
 import type { ResolvedSegment } from "../../types.js";
+import type { EntryData } from "../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
 import { observeEvent } from "../instrument.js";
@@ -103,6 +104,8 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../../server/request-context.js";
+import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
+import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
@@ -314,6 +317,53 @@ async function* yieldFromStore<TEnv>(
 }
 
 /**
+ * Whether the prerender store holds a baked entry for this route + params.
+ * Consulted by the PPR replay gate (matchPartialWithPprReplay), which must
+ * only report `prerender-store` when the short-circuit below will actually
+ * serve: a Passthrough(Prerender()) route with an unbaked/passthrough param
+ * misses the store and renders live, and replay — including its heal
+ * capture — must stay available for it (withCacheStore records the doc
+ * record on that path; state.cacheSource is not "prerender"). The store
+ * memoizes per routeKey/paramHash, so this probe and tryPrerenderLookup's
+ * subsequent get() share one underlying load.
+ */
+export async function prerenderEntryExists(
+  routeKey: string | undefined,
+  params: Record<string, string>,
+  pathname: string,
+  entries: EntryData[],
+): Promise<boolean> {
+  if (!routeKey) return false;
+  // Deliberately NOT ensurePrerenderDeps(): the probe needs only the store
+  // and the param hasher — pulling segment-codec here would drag the
+  // @vitejs/plugin-rsc virtual module onto a path that never deserializes.
+  if (!_hashParams) {
+    _hashParams = (await import("../../prerender/param-hash.js")).hashParams;
+  }
+  if (prerenderStoreInstance === undefined) {
+    prerenderStoreInstance = (
+      await import("../../prerender/store.js")
+    ).createPrerenderStore();
+  }
+  if (!prerenderStoreInstance) return false;
+  // Non-intercept variant only: the replay gate falls through whenever an
+  // intercept-source header is present (whether the navigation IS an
+  // intercept resolves post-match), so the `paramHash + "/i"` artifact is
+  // never probed here.
+  const entry = await prerenderStoreInstance.get(
+    routeKey,
+    _hashParams!(params),
+    {
+      pathname,
+      isPassthroughRoute: entries.some(
+        (entry) => entry.type === "route" && entry.isPassthrough === true,
+      ),
+    },
+  );
+  return entry != null;
+}
+
+/**
  * Look up a prerendered (build-time cached) entry for the current route and, on
  * a hit, yield its segments. Returns true when an entry was served (the caller
  * should stop the pipeline) and false on a miss. Intercept navigations consult
@@ -389,8 +439,10 @@ export function withCacheLookup<TEnv>(
       resolveLoadersOnly,
     } = getRouterContext<TEnv>();
 
-    const isHmr = !!ctx.request.headers.get("X-RSC-HMR");
-    if (!ctx.isAction && !isHmr && ctx.matched.pr) {
+    if (
+      !ctx.isAction &&
+      prerenderStoreShortCircuits(ctx.matched.pr, ctx.request)
+    ) {
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
         const served = yield* tryPrerenderLookup(
@@ -437,11 +489,58 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
-    const cacheResult = await ctx.cacheScope.lookupRoute(
+    const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
       ctx.pathname,
       ctx.matched.params,
       ctx.isIntercept,
     );
+    let cacheResult =
+      explicitLookup.status === "hit" ? explicitLookup.result : null;
+
+    // PPR navigation replay composed with a route-derived cache() scope. The
+    // explicit tier stays authoritative: its hit serves under its own
+    // key/ttl/swr semantics and reports `explicit-cache-hit` — never a false
+    // replay HIT. ONLY a true `miss` lets the seeded doc record supply the
+    // match (the marker's onHit observer then reports the true HIT). The
+    // other outcomes render fresh: `bypass` (cache(false), a false
+    // condition() — absolute opt-outs even when the pre-read gate saw a
+    // different condition() result — or no store) and `error` (a throwing
+    // key()/keyGenerator/store.get keeps lookupRoute's render-uncached
+    // contract; the canonical record must not serve across a broken key
+    // partition). The outcome comes from the lookup itself, not a re-run of
+    // the condition, so a flapping predicate cannot re-admit the fallback.
+    // Gated on the marker's `onExplicitHit`, set ONLY on the
+    // navigation-replay serve path: a CAPTURE render must never fall back
+    // here — its marker store reads through to the real store, and a
+    // doc-keyed hit would replay the previous generation's segments instead
+    // of re-running handlers (breaking SWR recapture freshness). Intercepts
+    // stay source-dependent on their normal cache path (match-api never arms
+    // replay for them).
+    const replayMarker = _getRequestContext()?._shellImplicitCache;
+    if (
+      replayMarker?.onExplicitHit &&
+      !ctx.isIntercept &&
+      !ctx.cacheScope.isShellImplicitDocScope
+    ) {
+      if (explicitLookup.status === "hit") {
+        replayMarker.onExplicitHit();
+      } else if (explicitLookup.status === "miss" && replayMarker.store) {
+        // The store gate keeps report-only markers (installed on the
+        // no-eligible-snapshot path purely for truthful status) inert: a
+        // store-less marker minting a doc scope here would resolve the APP
+        // store and read the REAL doc: partition — a cross-partition serve.
+        cacheResult = await createShellImplicitDocScope(
+          replayMarker,
+        ).lookupRoute(ctx.pathname, ctx.matched.params, ctx.isIntercept);
+      } else if (explicitLookup.status === "bypass") {
+        // condition() refused at lookup time (the gate only pre-decides the
+        // static cache(false) case) — report cache-disabled truthfully.
+        replayMarker.onExplicitBypass?.();
+      }
+      // "error" stays unreported: the render is fresh and the seeded record
+      // was not consulted, which is exactly what snapshot-miss describes; the
+      // store already routed the failure through reportCacheError.
+    }
 
     if (!cacheResult) {
       yield* source;

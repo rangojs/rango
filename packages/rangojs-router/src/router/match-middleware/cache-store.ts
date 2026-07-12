@@ -106,6 +106,7 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
+import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
 import { getRouterContext } from "../router-context.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
@@ -133,6 +134,14 @@ export function withCacheStore<TEnv>(
     }
 
     const ownStart = performance.now();
+
+    // Shell capture composition (capture side): a route-derived cache() scope
+    // keeps its normal store write below, but the capture's shell entry still
+    // needs the CANONICAL doc segment record for navigation replay. Recorded
+    // before the skip check because it must run on the explicit tier's hit
+    // path too (state.cacheHit skips the normal write, yet the served
+    // segments were collected into allSegments either way).
+    recordShellCaptureDocRecord(ctx, state, allSegments);
 
     if (
       !ctx.cacheScope?.enabled ||
@@ -347,4 +356,65 @@ export function withCacheStore<TEnv>(
       });
     }
   };
+}
+
+/**
+ * During a SHELL CAPTURE of a route with a route-derived cache() scope, write
+ * the matched non-loader segments as the canonical doc segment record through
+ * the capture marker's SnapshotOnlySegmentStore — IN ADDITION to the explicit
+ * scope's normal real-store write. The record rides only inside the shell
+ * entry (a real doc-keyed write would poison the next capture's lookup; see
+ * RecordingShellStore.recordSegmentWrite), so no real-store behavior changes.
+ * Without it, navigation replay was structurally dead for any ppr route under
+ * a cache() scope (including an app-wide one): the snapshot held only
+ * explicit-tier-keyed records a partial lookup can never resolve.
+ *
+ * Records nothing when:
+ * - not a capture render, or the route derived no scope (the implicit doc
+ *   scope's own cacheRoute below already records the doc record);
+ * - the scope is STATICALLY disabled (cache(false)) — the replay gate
+ *   pre-decides that shape as `cache-disabled` before any shell read, so a
+ *   record would be dead weight;
+ * - the prerender store supplied the match: those partials are served from
+ *   build-time segments and report `prerender-store`.
+ *
+ * A false condition() suppresses the record too — the consumer's write
+ * refusal is absolute. The prelude-already-bakes-it argument does NOT excuse
+ * recording: a NAVIGATION-ONLY capture's prelude is never served as a
+ * document, so for those entries the segment record would be the sole
+ * persisted copy of a render the consumer refused to cache — and a later
+ * request where condition() flips true could consume it through the seeded
+ * fallback. The lookup-time `cache-disabled` report stays reachable without
+ * the record: matchPartialWithPprReplay installs a REPORT-ONLY marker (no
+ * store) on the no-eligible-snapshot path, so the lookup's own refusal is
+ * still surfaced while the fallback has nothing to serve.
+ *
+ * Wrapped in requestCtx.waitUntil — during a capture that is the tracked-write
+ * override, so captureAndStoreShell's settleWrites awaits the record before
+ * draining the snapshot.
+ */
+function recordShellCaptureDocRecord<TEnv>(
+  ctx: MatchContext<TEnv>,
+  state: MatchPipelineState,
+  segments: ResolvedSegment[],
+): void {
+  const requestCtx = getRequestContext();
+  if (!requestCtx?._shellCaptureRun) return;
+  const marker = requestCtx._shellImplicitCache;
+  if (!marker?.store) return;
+  const scope = ctx.cacheScope;
+  if (!scope || scope.isShellImplicitDocScope) return;
+  if (ctx.isAction || ctx.isIntercept || ctx.request.method !== "GET") return;
+  if (state.cacheSource === "prerender") return;
+  if (!scope.allowsCache("write")) return;
+
+  const docScope = createShellImplicitDocScope(marker);
+  requestCtx.waitUntil(() =>
+    docScope.cacheRoute(
+      ctx.pathname,
+      ctx.matched.params,
+      segments,
+      ctx.isIntercept,
+    ),
+  );
 }

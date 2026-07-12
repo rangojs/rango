@@ -7,7 +7,9 @@ export type {
   ShellCacheEntry,
   SerializedSegmentData,
   SegmentHandleData,
+  CacheReadError,
 } from "./types.js";
+export { CACHE_READ_ERROR } from "./types.js";
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 
