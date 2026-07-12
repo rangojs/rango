@@ -13,8 +13,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/vite-plugin": "^1.42.1",
-    "@cloudflare/workers-types": "^4.20260617.1",
+    "@cloudflare/vite-plugin": "^1.44.0",
+    "@cloudflare/workers-types": "^5.20260708.1",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@fontsource-variable/open-sans": "^5.2.7",
@@ -65,7 +65,7 @@
     "use-stick-to-bottom": "1.1.6",
     "vaul": "1.1.2",
     "vite": "catalog:",
-    "wrangler": "^4.103.0",
+    "wrangler": "^4.110.0",
     "zod": "4.4.3"
   }
 }
