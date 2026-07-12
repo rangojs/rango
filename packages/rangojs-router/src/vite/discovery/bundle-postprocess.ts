@@ -32,6 +32,35 @@ export function postprocessBundle(state: DiscoveryState): void {
     state.rscEntryFileName ?? "index.js",
   );
 
+  // 0. Retention cross-check. The trie od flag comes from evaluating the
+  // source routes module; producer retention comes from a regex over the
+  // bundled chunk (extractHandlerExportsFromChunk). They are derived
+  // independently, so a spelling the regex cannot see (spread options, an
+  // imported const) would evict a producer the manifest still marks
+  // on-demand — and the failure would be production-only and silent:
+  // router.prerender() reports render-failed (DataNotFoundError) while the
+  // route serves its fallback forever. Fail the build instead.
+  if (state.onDemandHandlerIds.size > 0) {
+    const undetected: string[] = [];
+    for (const info of state.handlerChunkInfoMap.values()) {
+      for (const exp of info.exports) {
+        const routeName = state.onDemandHandlerIds.get(exp.handlerId);
+        if (routeName && !exp.onDemand) {
+          undetected.push(`"${routeName}" (${exp.name})`);
+        }
+      }
+    }
+    if (undetected.length > 0) {
+      throw new Error(
+        `[rango] onDemand producer retention failed for route(s) ${undetected.join(", ")}: ` +
+          `the route opts into onDemand, but the option could not be statically detected ` +
+          `in the bundled Prerender() call, so the producer would be evicted and ` +
+          `router.prerender() would fail at runtime. Write onDemand as a static literal ` +
+          `(onDemand: true or onDemand: { ... }) directly in the Prerender() options object.`,
+      );
+    }
+  }
+
   // 1. Evict handler code from whichever chunks contain handler exports.
   // handlerChunkInfoMap/staticHandlerChunkInfoMap are populated by generateBundle
   // after the production RSC build. In Vite 6 multi-environment builds, the

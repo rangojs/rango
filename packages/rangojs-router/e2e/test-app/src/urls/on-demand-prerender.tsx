@@ -5,13 +5,26 @@ import {
   cookies,
   type Handler,
 } from "@rangojs/router";
-import { PrerenderTestLoader } from "../loaders.js";
+import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
+import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
+import { swrLog } from "../swr-log.js";
 // Type-only (erased — no runtime cycle with router.tsx). This app declares an
 // empty AppBindings, so DefaultEnv collapses to `unknown` and ctx.env needs an
 // explicit app-env annotation to satisfy router.prerender's TEnv slot. An app
 // with real bindings types ctx.env directly and needs no cast.
 import type { AppEnv } from "../router.js";
+import type { PrerenderResult } from "@rangojs/router/prerender";
+
+// Serialize a PrerenderResult for the e2e: Error instances don't survive
+// Response.json, so flatten to the message.
+function prerenderResultJson(result: PrerenderResult): Response {
+  return Response.json(
+    !result.ok && result.error instanceof Error
+      ? { ...result, error: result.error.message }
+      : result,
+  );
+}
 
 // On-demand (ISR-style) prerender fixture.
 //
@@ -73,11 +86,75 @@ export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
   const result = await router.prerender(`/on-demand/${ctx.params.slug}`, {
     env: ctx.env as AppEnv,
   });
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
+  return prerenderResultJson(result);
+};
+
+// PLAIN (no Passthrough) onDemand route. Production contract on a miss
+// (overlay + baked manifest): the retained producer must NOT run live —
+// gateOnDemandProducer throws DataNotFoundError -> 404. Dev keeps the live
+// fall-through. od-plain-stamp is captured once per render (frozen-payload
+// proof); the FreshStampLoader value differs per request (loaders-fresh proof).
+export const OnDemandPlainDef = Prerender<{ slug: string }>(
+  async () => [{ slug: "baked" }],
+  async (ctx) => {
+    const stamp = new Date().toISOString();
+    return (
+      <div data-testid="od-plain-detail">
+        <p data-testid="od-plain-source">prerender</p>
+        <p data-testid="od-plain-slug">{ctx.params.slug}</p>
+        <p data-testid="od-plain-stamp">{stamp}</p>
+        <OnDemandFreshStamp loader={FreshStampLoader} />
+      </div>
+    );
+  },
+  {
+    onDemand: { ttl: 3600, tags: ({ params }) => ["od-plain:" + params.slug] },
+  },
+);
+
+// Trigger for the plain route. Query switches exercise the trigger's
+// companions: ?onlyIfStale=1 (cron-sweep opt-in -> "already-fresh" on a fresh
+// entry) and ?invalidateTag=<tag> (marks matching entries stale).
+export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("../router.js");
+  const env = ctx.env as AppEnv;
+  const invalidateTag = ctx.searchParams.get("invalidateTag");
+  if (invalidateTag) {
+    await router.prerender.invalidateTags([invalidateTag], { env });
+    return Response.json({ invalidated: invalidateTag });
+  }
+  const result = await router.prerender(
+    `/on-demand-plain/${ctx.params.slug}`,
+    ctx.searchParams.get("onlyIfStale") === "1"
+      ? { env, onlyIfStale: true }
+      : { env },
   );
+  return prerenderResultJson(result);
+};
+
+// SWR fixture: ttl 1s so a triggered overlay entry goes stale fast. A stale
+// overlay hit still serves but (router prerender config: swr + onRevalidate)
+// schedules a revalidation, observable via /od-swr-log.
+const OnDemandSwrDef = Prerender<{ slug: string }>(
+  async () => [{ slug: "swr" }],
+  async (ctx) => (
+    <div data-testid="od-swr-detail">
+      <p data-testid="od-swr-slug">{ctx.params.slug}</p>
+    </div>
+  ),
+  { onDemand: { ttl: 1 } },
+);
+
+const OnDemandSwrTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("../router.js");
+  const result = await router.prerender(`/on-demand-swr/${ctx.params.slug}`, {
+    env: ctx.env as AppEnv,
+  });
+  return prerenderResultJson(result);
+};
+
+const SwrLogHandler: Handler = async () => {
+  return Response.json(swrLog);
 };
 
 async function PersonalizedOnDemandChild({ slug }: { slug: string }) {
@@ -104,11 +181,7 @@ const PersonalizedOnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
     `/on-demand-personalized/${ctx.params.slug}`,
     { env: ctx.env as AppEnv },
   );
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
-  );
+  return prerenderResultJson(result);
 };
 
 export const onDemandPatterns = urls(({ path, loader }) => [
@@ -116,6 +189,20 @@ export const onDemandPatterns = urls(({ path, loader }) => [
     loader(PrerenderTestLoader),
   ]),
   path("/od-trigger/:slug", OnDemandTrigger, { name: "onDemandTrigger" }),
+  path(
+    "/on-demand-plain/:slug",
+    OnDemandPlainDef,
+    { name: "onDemandPlain" },
+    () => [loader(FreshStampLoader)],
+  ),
+  path("/od-plain-trigger/:slug", OnDemandPlainTrigger, {
+    name: "onDemandPlainTrigger",
+  }),
+  path("/on-demand-swr/:slug", OnDemandSwrDef, { name: "onDemandSwr" }),
+  path("/od-swr-trigger/:slug", OnDemandSwrTrigger, {
+    name: "onDemandSwrTrigger",
+  }),
+  path("/od-swr-log", SwrLogHandler, { name: "onDemandSwrLog" }),
   path("/on-demand-personalized/:slug", PersonalizedOnDemand, {
     name: "onDemandPersonalized",
   }),

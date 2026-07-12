@@ -89,6 +89,17 @@ export const router = createRouter<AppBindings>({
   prerender: (env) => ({
     store: createKVPrerenderStore(env.PRERENDER_KV),
     defaultTtl: 3600,
+    // SWR scheduling: a STALE overlay hit still serves and schedules
+    // onRevalidate via waitUntil. Test fixture: write a KV marker keyed by the
+    // slug so the e2e can observe the schedule (a real app points this at a
+    // queue). `liveEnv` is the live request env, not the factory `env`.
+    swr: true,
+    onRevalidate: (target, liveEnv) => {
+      void liveEnv.PRERENDER_KV.put(
+        "swr-log:" + (target.params["slug"] ?? ""),
+        JSON.stringify(target),
+      );
+    },
   }),
   // Short-TTL profile for the SWR + getRequestContext() regression (see
   // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the

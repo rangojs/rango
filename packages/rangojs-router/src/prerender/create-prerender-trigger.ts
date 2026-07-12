@@ -197,13 +197,25 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       };
     }
 
-    const config = deps.resolveConfig(runtime.env, runtime.ctx);
+    // The prerender factory is user code like tags()/store.set: a throw (e.g.
+    // a missing binding tripping store construction) must map to a result, not
+    // escape run() — which would reject refresh() despite throwOnError: false
+    // and abort a many() batch with no per-target results. A throw leaves
+    // config undefined, so it funnels into the same no-store return.
+    let config: PrerenderConfig<TEnv> | undefined;
+    let configError: unknown;
+    try {
+      config = deps.resolveConfig(runtime.env, runtime.ctx);
+    } catch (err) {
+      configError = err;
+    }
     if (!config?.store) {
       return {
         ok: false,
         status: "no-store",
         target: display,
         routeName: match.routeName,
+        ...(configError !== undefined ? { error: configError } : {}),
       };
     }
 
@@ -356,7 +368,21 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   ): Promise<void> => {
     if (tags.length === 0) return;
     const config = deps.resolveConfig(runtime.env, runtime.ctx);
-    await config?.store.invalidateTags?.(tags);
+    if (!config?.store.invalidateTags) {
+      // void return means a misconfigured caller (no store, or a store
+      // without tag support) is indistinguishable from success — a dead CMS
+      // webhook with no signal. Say so where a developer will see it.
+      if (deps.isDev()) {
+        console.warn(
+          "[rango] prerender.invalidateTags() is a no-op: " +
+            (config?.store
+              ? "the configured store does not implement invalidateTags."
+              : "no prerender store is configured."),
+        );
+      }
+      return;
+    }
+    await config.store.invalidateTags(tags);
   };
 
   return trigger;
@@ -364,7 +390,11 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
 /**
  * Bounded-concurrency map preserving input order. Rejects on the first task
- * error (used so `many({ throwOnError })` stops the batch).
+ * error (used so `many({ throwOnError })` stops the batch). The abort flag is
+ * load-bearing: Promise.all rejects on the first worker error while the other
+ * workers are mid-await — without it they would drain the entire remaining
+ * batch (rendering and writing, results discarded) after the caller has
+ * already seen the throw. In-flight items still settle; no new item starts.
  */
 async function runWithConcurrency<T, R>(
   items: ReadonlyArray<T>,
@@ -373,10 +403,16 @@ async function runWithConcurrency<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
+  let aborted = false;
   async function worker(): Promise<void> {
-    while (next < items.length) {
+    while (!aborted && next < items.length) {
       const i = next++;
-      results[i] = await task(items[i]);
+      try {
+        results[i] = await task(items[i]);
+      } catch (err) {
+        aborted = true;
+        throw err;
+      }
     }
   }
   const workers = Array.from(

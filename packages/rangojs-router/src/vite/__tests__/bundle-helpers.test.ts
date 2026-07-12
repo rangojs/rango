@@ -121,6 +121,38 @@ describe("extractHandlerExportsFromChunk", () => {
     expect(result[0].onDemand).toBe(true);
   });
 
+  it('detects a quoted onDemand key (`{ "onDemand": true }`)', () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { "onDemand": true });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      true,
+    );
+    expect(result[0].onDemand).toBe(true);
+  });
+
+  it("detects a single-quoted onDemand object literal (`{ 'onDemand': { ttl: 60 } }`)", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { 'onDemand': { ttl: 60 } });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      true,
+    );
+    expect(result[0].onDemand).toBe(true);
+  });
+
   it("does NOT flag onDemand for `onDemand: false` (opt-out, not a literal opt-in)", () => {
     const chunk = [
       `const Page = Prerender(() => null, { onDemand: !1 });`,

@@ -7,7 +7,10 @@ import {
 } from "../create-prerender-trigger.js";
 import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import { PrerenderPersonalizationError } from "../producer-guard.js";
-import { serializePrerenderKey } from "../writable-store.js";
+import {
+  serializePrerenderKey,
+  type WritablePrerenderStore,
+} from "../writable-store.js";
 import { hashParams } from "../param-hash.js";
 import type { PrerenderConfig } from "../on-demand.js";
 
@@ -24,10 +27,12 @@ function output(overrides: Partial<ProducerOutput> = {}): ProducerOutput {
 
 interface HarnessOptions {
   config?: PrerenderConfig | undefined;
+  resolveConfig?: PrerenderTriggerDeps["resolveConfig"];
   match?: PrerenderTriggerDeps["matchRoute"];
   runProducer?: PrerenderTriggerDeps["runProducer"];
   reverse?: PrerenderTriggerDeps["reverse"];
   buildId?: string;
+  isDev?: () => boolean;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -40,9 +45,9 @@ function harness(opts: HarnessOptions = {}) {
   const deps: PrerenderTriggerDeps = {
     routerId: "r1",
     buildId: opts.buildId ?? "b1",
-    isDev: () => false,
+    isDev: opts.isDev ?? (() => false),
     ensureManifest,
-    resolveConfig: () => config,
+    resolveConfig: opts.resolveConfig ?? (() => config),
     reverse:
       opts.reverse ??
       ((route, params) =>
@@ -171,6 +176,39 @@ describe("createPrerenderTrigger", () => {
     const { trigger } = harness({ config: undefined });
     const result = await trigger("/products/42", { env: {} });
     expect(result).toMatchObject({ ok: false, status: "no-store" });
+  });
+
+  it("maps a resolveConfig factory throw to no-store instead of rejecting", async () => {
+    const { trigger, store } = harness({
+      resolveConfig: () => {
+        throw new Error("boom");
+      },
+    });
+
+    const result = await trigger("/products/42", { env: {} });
+    expect(result).toMatchObject({
+      ok: false,
+      status: "no-store",
+      routeName: "products.detail",
+    });
+    if (result.ok) throw new Error("expected fail");
+    expect((result.error as Error).message).toBe("boom");
+    expect(store.size).toBe(0);
+
+    let thrown: unknown;
+    try {
+      await trigger("/products/42", { env: {}, throwOnError: true });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PrerenderError);
+    expect((thrown as PrerenderError).result.status).toBe("no-store");
+
+    const many = await trigger.many(["/products/1", "/products/2"], {
+      env: {},
+    });
+    expect(many).toHaveLength(2);
+    expect(many.every((r) => !r.ok && r.status === "no-store")).toBe(true);
   });
 
   it("maps a render throw to render-failed and keeps the store untouched", async () => {
@@ -389,6 +427,44 @@ describe("createPrerenderTrigger", () => {
       expect(results[0].ok).toBe(true);
       expect(results[1]).toMatchObject({ ok: false, status: "no-match" });
     });
+
+    it("many with throwOnError and concurrency stops the batch", async () => {
+      const started: string[] = [];
+      const runProducer: PrerenderTriggerDeps["runProducer"] = async ({
+        pathname,
+      }) => {
+        started.push(pathname);
+        if (pathname === "/products/2") {
+          throw new Error("boom");
+        }
+        // Deferred settle: keeps the other in-flight workers alive long
+        // enough for the abort flag to land before they'd pick a next item.
+        await new Promise((r) => setTimeout(r, 10));
+        return output({ params: { id: pathname.split("/")[2] } });
+      };
+      const { trigger } = harness({ runProducer });
+      const targets = [
+        "/products/1",
+        "/products/2",
+        "/products/3",
+        "/products/4",
+        "/products/5",
+        "/products/6",
+      ];
+
+      await expect(
+        trigger.many(targets, {
+          throwOnError: true,
+          concurrency: 2,
+          env: {},
+        }),
+      ).rejects.toBeInstanceOf(PrerenderError);
+
+      // Let any in-flight producer settle before asserting nothing further started.
+      await new Promise((r) => setTimeout(r, 30));
+      expect(started.length).toBeLessThan(6);
+      expect(started.length).toBeLessThanOrEqual(3);
+    });
   });
 
   describe("invalidateTags()", () => {
@@ -405,6 +481,48 @@ describe("createPrerenderTrigger", () => {
       await expect(
         trigger.invalidateTags(["x"], { env: {} }),
       ).resolves.toBeUndefined();
+    });
+
+    it("warns in dev when no store is configured", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ config: undefined, isDev: () => true });
+        await trigger.invalidateTags(["x"], { env: {} });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain("invalidateTags");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns in dev when the configured store lacks invalidateTags", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const storeWithoutInvalidate: WritablePrerenderStore = {
+          get: async () => null,
+          set: async () => {},
+        };
+        const { trigger } = harness({
+          config: { store: storeWithoutInvalidate },
+          isDev: () => true,
+        });
+        await trigger.invalidateTags(["x"], { env: {} });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain("invalidateTags");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("does not warn outside dev even with no store configured", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ config: undefined, isDev: () => false });
+        await trigger.invalidateTags(["x"], { env: {} });
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 });

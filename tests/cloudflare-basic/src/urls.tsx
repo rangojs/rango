@@ -8,6 +8,7 @@ import {
   redirect,
   type Handler,
 } from "@rangojs/router";
+import type { PrerenderResult } from "@rangojs/router/prerender";
 import { Suspense } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
@@ -106,6 +107,8 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
+import { GuidePlainDef, GuideSwrDef } from "./pages/guide-plain.js";
+import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
@@ -141,6 +144,16 @@ import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
+// Serialize a PrerenderResult for the e2e: Error instances don't survive
+// Response.json, so flatten to the message.
+function prerenderResultJson(result: PrerenderResult): Response {
+  return Response.json(
+    !result.ok && result.error instanceof Error
+      ? { ...result, error: result.error.message }
+      : result,
+  );
+}
+
 // On-demand prerender trigger handler. Explicitly typed as Handler so the lazy
 // `import("./router.js")` inside it does not force TypeScript to infer this
 // module's type from the router (which is built from urlpatterns) — that would
@@ -151,11 +164,54 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
     { route: "guides.detail", params: { slug: ctx.params.slug } },
     { env: ctx.env, ctx: ctx.executionContext },
   );
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
+  return prerenderResultJson(result);
+};
+
+// Trigger for the PLAIN (non-Passthrough) on-demand route. Ops via query:
+//   default             -> plain refresh (always renders)
+//   ?onlyIfStale=1      -> cron-sweep opt-in; "already-fresh" when entry fresh
+//   ?invalidateTag=<t>  -> KV tag-marker invalidation (no render)
+const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("./router.js");
+  const invalidateTag = ctx.url.searchParams.get("invalidateTag");
+  if (invalidateTag) {
+    await router.prerender.invalidateTags([invalidateTag], {
+      env: ctx.env,
+      ctx: ctx.executionContext,
+    });
+    return Response.json({ invalidated: invalidateTag });
+  }
+  const onlyIfStale = ctx.url.searchParams.get("onlyIfStale") === "1";
+  const result = await router.prerender(
+    { route: "guidePlain", params: { slug: ctx.params.slug } },
+    {
+      env: ctx.env,
+      ctx: ctx.executionContext,
+      ...(onlyIfStale ? { onlyIfStale: true } : {}),
+    },
   );
+  return prerenderResultJson(result);
+};
+
+// Trigger for the SWR on-demand route. Ops via query:
+//   default       -> plain refresh of /guide-swr/:slug
+//   ?swrlog=1     -> read the KV marker written by the router-level onRevalidate
+//   ?swrclear=1   -> delete the marker (isolates re-runs on a reused server)
+const GuideSwrTrigger: Handler<{ slug: string }> = async (ctx) => {
+  if (ctx.url.searchParams.get("swrlog") === "1") {
+    const log = await ctx.env.PRERENDER_KV.get("swr-log:" + ctx.params.slug);
+    return Response.json({ log });
+  }
+  if (ctx.url.searchParams.get("swrclear") === "1") {
+    await ctx.env.PRERENDER_KV.delete("swr-log:" + ctx.params.slug);
+    return Response.json({ cleared: true });
+  }
+  const { router } = await import("./router.js");
+  const result = await router.prerender(
+    { route: "guideSwr", params: { slug: ctx.params.slug } },
+    { env: ctx.env, ctx: ctx.executionContext },
+  );
+  return prerenderResultJson(result);
 };
 
 const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
@@ -167,11 +223,7 @@ const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
     },
     { env: ctx.env, ctx: ctx.executionContext },
   );
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
-  );
+  return prerenderResultJson(result);
 };
 
 /**
@@ -220,6 +272,12 @@ export const urlpatterns = urls(
     path("/guide-trigger/:slug", GuidesTrigger, { name: "guidesTrigger" }),
     path("/guide-personalized-trigger/:slug", PersonalizedGuideTrigger, {
       name: "guidesPersonalizedTrigger",
+    }),
+    path("/guide-plain-trigger/:slug", GuidePlainTrigger, {
+      name: "guidePlainTrigger",
+    }),
+    path("/guide-swr-trigger/:slug", GuideSwrTrigger, {
+      name: "guideSwrTrigger",
     }),
 
     // robots.txt (response route)
@@ -1238,6 +1296,19 @@ export const urlpatterns = urls(
 
         // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
         include("/guides", guidesPatterns, { name: "guides" }),
+
+        // PLAIN (non-Passthrough) on-demand prerender: unbaked params 404 on a
+        // live production request (dev falls through to a live render). The
+        // loader stays fresh on overlay hits (loaders are never pre-rendered).
+        path(
+          "/guide-plain/:slug",
+          GuidePlainDef,
+          { name: "guidePlain" },
+          () => [loader(GuidePlainLoader)],
+        ),
+        // SWR on-demand fixture (ttl 1): a stale overlay hit serves and
+        // schedules the router-level onRevalidate via waitUntil.
+        path("/guide-swr/:slug", GuideSwrDef, { name: "guideSwr" }),
 
         // Pre-rendered releases page (uses node:fs at build time, evicted at deploy)
         include("/releases", releasesPatterns, { name: "releases" }),

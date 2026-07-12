@@ -393,6 +393,22 @@ test.describe("bundle-analysis", () => {
       return existsSync(RSC_INDEX) ? readFileSync(RSC_INDEX, "utf-8") : "";
     }
 
+    // Runtime code only (index.js + non-data asset chunks) — unlike the
+    // top-level getRscBundleContent, this excludes __pr-*/__st-* data assets,
+    // which carry rendered output and would match handler strings trivially.
+    function getRscRuntimeContent(): string {
+      const runtimeAssets = readdirSync(RSC_ASSETS_DIR)
+        .filter(
+          (f) =>
+            f.endsWith(".js") &&
+            !f.startsWith("__pr-") &&
+            !f.startsWith("__st-"),
+        )
+        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
+        .join("\n");
+      return getRscIndexContent() + "\n" + runtimeAssets;
+    }
+
     test("no separate __prerender-handlers or __static-handlers chunks in RSC bundle", async () => {
       // Handler code is bundled into index.js and evicted there;
       // no dedicated prerender or static chunk should exist.
@@ -407,24 +423,24 @@ test.describe("bundle-analysis", () => {
     });
 
     test("handler implementation strings evicted from RSC bundle", async () => {
-      // Check only runtime code (index.js + non-data asset chunks),
-      // not __pr-*/__st-* data assets which contain rendered output.
-      const rscIndex = getRscIndexContent();
-      const runtimeAssets = readdirSync(RSC_ASSETS_DIR)
-        .filter(
-          (f) =>
-            f.endsWith(".js") &&
-            !f.startsWith("__pr-") &&
-            !f.startsWith("__st-"),
-        )
-        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
-        .join("\n");
-      const rscRuntime = rscIndex + "\n" + runtimeAssets;
+      const rscRuntime = getRscRuntimeContent();
 
       // Non-passthrough handler body strings should be replaced with stubs.
       // Use strings unique to prerender handlers (not general route handlers).
       expect(rscRuntime).not.toContain("pre-rendered documentation");
       expect(rscRuntime).not.toContain("docs-article-content");
+    });
+
+    test("onDemand producer strings retained in RSC bundle", async () => {
+      // onDemand routes are exempt from producer eviction: router.prerender()
+      // must be able to run the producer at runtime. Same runtime-only scope as
+      // the eviction test above.
+      const rscRuntime = getRscRuntimeContent();
+
+      // Plain onDemand producer (urls/on-demand-prerender.tsx OnDemandPlainDef)
+      // stays live in the RSC runtime, while the plain non-onDemand Prerender
+      // producers remain evicted (pinned by the test above).
+      expect(rscRuntime).toContain("od-plain-source");
     });
 
     test("handler implementation strings NOT in client bundle", async () => {

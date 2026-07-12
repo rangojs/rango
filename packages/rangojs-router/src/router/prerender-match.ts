@@ -353,9 +353,9 @@ export async function matchForPrerender<TEnv = any>(
         // On-demand refresh: capture errors thrown DURING Flight encoding — a deep
         // async child calling cookies()/headers() throws here, not in
         // resolveAllSegments, and React would otherwise embed it as a Flight error
-        // row and complete the stream, baking a personalized/failed render into the
-        // shared payload as a healthy 200. Surface the captured error so the trigger
-        // maps it to skipped-personalized / render-failed and keeps the old entry.
+        // row and complete the stream, baking a personalized render into the
+        // shared payload as a healthy 200. Surface a personalization error so the
+        // trigger maps it to skipped-personalized and keeps the old entry.
         const { serializeSegments } = await import("../cache/segment-codec.js");
         const { encodeHandles } = await import("../cache/handle-snapshot.js");
         const serializationErrors: unknown[] = [];
@@ -377,8 +377,8 @@ export async function matchForPrerender<TEnv = any>(
         const personalized = serializationErrors.find((e) =>
           isPrerenderPersonalizationError(e),
         );
-        if (onDemand && serializationErrors.length > 0) {
-          throw personalized ?? serializationErrors[0];
+        if (onDemand && personalized) {
+          throw personalized;
         }
 
         // 13. Collect handle data per segment (skip segments with no handle data).

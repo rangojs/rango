@@ -89,8 +89,14 @@ export function extractHandlerExportsFromChunk(
               // key presence) avoids retaining a producer whose body merely
               // contains an `onDemand:` key — e.g. `{ onDemand: false }` or a
               // ternary — while still matching every valid opt-in (a computed
-              // value is unsupported by design, so a miss there is intended).
-              isOnDemand = /onDemand\s*:\s*(?:true|!0|\{)/.test(callBody);
+              // value is unsupported by design, so a miss there is intended —
+              // and caught by postprocessBundle's retention cross-check).
+              // The optional quotes cover `{ "onDemand": true }`: still a
+              // static literal, and server bundles are not syntax-minified,
+              // so quoted keys survive to the chunk.
+              isOnDemand = /["']?onDemand["']?\s*:\s*(?:true|!0|\{)/.test(
+                callBody,
+              );
             }
           }
         }

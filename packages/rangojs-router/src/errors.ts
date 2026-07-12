@@ -342,6 +342,18 @@ export function invariant(condition: any, message: string): asserts condition {
  * @param error - Error to sanitize
  * @returns Response suitable for sending to client
  */
+/**
+ * Vite replaces import.meta.env.DEV at compile time. The fallback covers
+ * non-Vite environments (plain Node, test runners without Vite transforms).
+ * SECURITY: fail closed — default to production when the environment is ambiguous.
+ */
+export function isDevEnvironment(): boolean {
+  return (
+    (import.meta as any).env?.DEV ??
+    globalThis.process?.env?.NODE_ENV === "development"
+  );
+}
+
 export function sanitizeError(error: unknown): Response {
   // CRITICAL: Consume stack trace to prevent memory leaks
   if (error && typeof error === "object" && "stack" in error) {
@@ -353,12 +365,7 @@ export function sanitizeError(error: unknown): Response {
     return error;
   }
 
-  // Vite replaces import.meta.env.DEV at compile time. The fallback covers
-  // non-Vite environments (plain Node, test runners without Vite transforms).
-  // SECURITY: fail closed — default to production when the environment is ambiguous.
-  const isDev =
-    (import.meta as any).env?.DEV ??
-    globalThis.process?.env?.NODE_ENV === "development";
+  const isDev = isDevEnvironment();
 
   if (isDev) {
     // Development: Send full error details for debugging

@@ -26,7 +26,12 @@ export interface PrerenderKey {
   routeName: string;
   /** DJB2 8-hex hash of the canonical params (see param-hash.ts). */
   paramHash: string;
-  /** Intercept variant (stored under a `:i` suffix), matching the manifest convention. */
+  /**
+   * Intercept variant (stored under a `:i` suffix), matching the manifest
+   * convention. Reserved for the deferred intercept-variant refresh: in v1
+   * nothing sets it — the trigger writes only the main variant and the serve
+   * path skips overlay reads for intercept navigations (cache-lookup.ts).
+   */
   intercept?: boolean;
 }
 

@@ -40,7 +40,13 @@ route was pre-rendered.
   [Build-time PPR shells](#build-time-ppr-shells-producer-b).
 - **ISR-style revalidation** - `Prerender(..., { onDemand })` plus
   `router.prerender()` refreshes a writable durable overlay without a deploy;
-  `Passthrough` remains the live fallback until an entry exists.
+  `Passthrough` remains the live fallback until an entry exists. Adding
+  `onDemand` to a `ppr` route makes `ppr` inert (the route leaves the shell
+  lane; dev warns). A plain (non-Passthrough) `onDemand` route keeps the
+  pr-miss contract in production: an overlay+manifest miss is a 404
+  (`DataNotFoundError`), never an in-request producer render. A refresh cannot
+  reach connected clients until their prefetch/HTTP caches expire — see the
+  staleness call-outs in `docs/design/ondemand-prerender.md`.
 
 ---
 

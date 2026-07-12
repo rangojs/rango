@@ -357,13 +357,15 @@ async function* tryPrerenderLookup<TEnv>(
   //    schedules a background refresh. Only on-demand routes are read: the
   //    overlay is written solely by router.prerender() (which refuses non-od
   //    routes), so a pr-only route would always miss here — skip its durable read.
-  if (overlay && ctx.matched.od) {
+  //    Intercept variants are skipped for the same reason: v1 writes only the
+  //    main-variant key, so an `:i` read is a guaranteed miss — a billed
+  //    durable read per intercept navigation for nothing.
+  if (overlay && ctx.matched.od && !ctx.isIntercept) {
     const key: PrerenderKey = {
       routerId: overlay.routerId,
       buildId: overlay.buildId,
       routeName: ctx.matched.routeKey,
       paramHash,
-      intercept: ctx.isIntercept || undefined,
     };
     // A transient store error (e.g. KV outage) must degrade to an overlay miss —
     // fall through to the bundled manifest / live handler below — not 500 every

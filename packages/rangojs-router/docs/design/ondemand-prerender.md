@@ -32,6 +32,37 @@ shared payload to persist; the live handler keeps serving it).
 On-demand routes stay off the separate PPR shell lane in v1. A refresh can
 replace the durable segment payload, but it cannot atomically replace a cached
 document shell; serving both would pair a fresh tail with a stale prelude.
+The exclusion is enforced by `isPprEntry` (`server/context.ts`) — the single
+predicate every shell entry point (capture, serve, replay, build collection)
+funnels through — so adding `onDemand` to a `ppr: true` route makes `ppr`
+inert: the route loses the shell fast path (cold-document LCP regresses from
+shell-serve to full SSR). Dev logs a warning for the combination
+(`path-helper.ts`); pick one of the two options per route.
+
+**Client-side staleness window.** A refresh cannot reach already-connected
+clients: it is requestless, so there is no response to rotate the state cookie
+on (`invalidateClientCache` is asserted unreachable inside the producer). A
+client that viewport-prefetched an on-demand route (default-on in production
+since #698) keeps serving the pre-refresh payload from its prefetch cache
+(default TTL 300s) and the browser HTTP cache (`prefetchCacheControl`, default
+max-age 300) until those expire or its own server action invalidates them.
+This matches ISR semantics elsewhere (Next.js's client router cache behaves
+the same); size `prefetchCacheTTL`/`prefetchCacheControl` down if a tighter
+window matters.
+
+**Serve-path read cost (KV store).** Every production request for an
+on-demand route pays one uncached KV `get` plus one KV read per tag stamped on
+the entry (tag markers are checked on every read, no L1 memo in v1) — reads a
+bundled-manifest route does in memory. Default viewport prefetch multiplies
+that by every od link entering the viewport. Keep tag counts per route small;
+an L1 marker memo (as the runtime cache's CFCacheStore has) is the follow-up
+if this shows up in KV analytics.
+
+**Tag namespaces are disjoint.** `prerender.invalidateTags()` marks only
+prerender-store entries (`__rango_pr_tag__/` markers). It does not reach
+runtime-cache tags (`updateTag`/`revalidateTag`), PPR shell entries, or
+`createCloudflareZonePurge` zone tags — a consumer stamping the same logical
+tag across layers must invalidate each layer explicitly.
 
 Start from the existing prerender mental model: prerendering is cached RSC
 segment payloads, not static HTML. Build-time prerender writes immutable payloads

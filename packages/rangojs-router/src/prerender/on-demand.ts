@@ -142,7 +142,13 @@ export interface PrerenderConfig<TEnv = any> {
   defaultTtl?: number;
   /** Schedule `onRevalidate` on a stale overlay hit (SWR scheduling policy). */
   swr?: boolean;
-  /** Invoked on a stale hit (when `swr`) with the JSON-serializable target + live env. */
+  /**
+   * Invoked on a stale hit (when `swr`) with the JSON-serializable target +
+   * live env. Fires on EVERY stale request with no built-in dedup — point it
+   * at a queue (which dedups/coalesces) rather than calling
+   * `router.prerender()` directly, or a hot stale page schedules one full
+   * render per request until the first refresh lands.
+   */
   onRevalidate?: (
     target: PrerenderTargetObject,
     env: TEnv,

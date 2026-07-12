@@ -10,6 +10,7 @@ import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
 import { urlpatterns } from "./urls.js";
 import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
+import { swrLog } from "./swr-log.js";
 
 // App-level cache store with defaults
 export const cacheStore = new MemorySegmentCacheStore({
@@ -183,7 +184,17 @@ export const router = createRouter<AppEnv>({
     (globalThis as { process?: { env?: Record<string, string | undefined> } })
       .process?.env?.RANGO_STRICT !== "off",
   cache: { store: cacheStore },
-  prerender: { store: prerenderStore, defaultTtl: 3600 },
+  // swr + onRevalidate: a STALE overlay hit still serves but schedules
+  // onRevalidate (scheduling-only — no built-in re-render). The e2e observes
+  // the scheduling through swrLog via /od-swr-log.
+  prerender: {
+    store: prerenderStore,
+    defaultTtl: 3600,
+    swr: true,
+    onRevalidate: (target) => {
+      swrLog.push(target);
+    },
+  },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },

@@ -308,6 +308,20 @@ export async function discoverRouters(
     (performance.now() - trieStart).toFixed(1),
   );
 
+  // handlerId -> route name for onDemand routes, from the evaluated source —
+  // the authoritative side of postprocessBundle's retention cross-check.
+  const newOnDemandHandlerIds = new Map<string, string>();
+  for (const { manifest } of allManifests) {
+    if (!manifest.onDemandRoutes) continue;
+    const defs = manifest._prerenderDefs || {};
+    for (const routeName of manifest.onDemandRoutes) {
+      const handlerId = defs[routeName]?.$$id;
+      if (typeof handlerId === "string") {
+        newOnDemandHandlerIds.set(handlerId, routeName);
+      }
+    }
+  }
+
   // Commit all local state to the shared discovery state atomically.
   // This ensures a failed re-discovery (e.g. from a transient module
   // evaluation error) preserves the last known-good state.
@@ -316,6 +330,7 @@ export async function discoverRouters(
   state.perRouterManifestDataMap = newPerRouterManifestDataMap;
   state.perRouterPrecomputedMap = newPerRouterPrecomputedMap;
   state.perRouterTrieMap = newPerRouterTrieMap;
+  state.onDemandHandlerIds = newOnDemandHandlerIds;
 
   // Install the route tries into the RSC realm BEFORE prerender collection.
   // matchForPrerender resolves each enumerated URL via findMatch, and without

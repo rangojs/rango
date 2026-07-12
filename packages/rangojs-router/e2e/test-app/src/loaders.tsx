@@ -39,6 +39,13 @@ export const PrerenderTestLoader = createLoader(async () => {
   return { test: true, message: "prerender-loader-data" };
 });
 
+// Per-call-unique stamp for the on-demand prerender "loaders resolve fresh on
+// overlay hit" e2e: the frozen overlay payload replays identically while this
+// value differs on every request.
+export const FreshStampLoader = createLoader(async () => {
+  return { stamp: Date.now() + ":" + Math.random().toString(36).slice(2) };
+});
+
 // 500ms delayed loader for SSR stream-mode tests
 export const StreamModeDelayedLoader = createLoader(async () => {
   await new Promise((resolve) => setTimeout(resolve, 500));

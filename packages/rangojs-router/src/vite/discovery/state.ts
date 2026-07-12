@@ -140,6 +140,14 @@ export interface DiscoveryState {
   shellPhaseTempServer: import("vite").ViteDevServer | null;
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
+  /**
+   * handlerId ($$id) -> route name for every route the evaluated source marks
+   * onDemand. Written during discovery, read by postprocessBundle to verify
+   * the chunk scan's regex-detected onDemand flags before eviction: the two
+   * are derived independently (source eval vs bundle regex), and a silent
+   * disagreement evicts a producer router.prerender() still needs.
+   */
+  onDemandHandlerIds: Map<string, string>;
   rscEntryFileName: string | null;
   resolvedPrerenderModules: Map<string, string[]> | undefined;
   resolvedStaticModules: Map<string, string[]> | undefined;
@@ -195,6 +203,7 @@ export function createDiscoveryState(
     shellPhaseTempServer: null,
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
+    onDemandHandlerIds: new Map(),
     rscEntryFileName: null,
     resolvedPrerenderModules: undefined,
     resolvedStaticModules: undefined,

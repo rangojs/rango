@@ -33,6 +33,7 @@ function createMinimalState(
     shellPhaseTempServer: null,
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
+    onDemandHandlerIds: new Map(),
     rscEntryFileName: "index.js",
     resolvedPrerenderModules: undefined,
     resolvedStaticModules: undefined,
@@ -144,5 +145,102 @@ describe("postprocessBundle - static asset hashing", () => {
     const assetsDir = join(tmpDir, "dist", "rsc", "assets");
     const assets = readdirSync(assetsDir).filter((f) => f.startsWith("__st-"));
     expect(assets.length).toBe(2);
+  });
+});
+
+describe("postprocessBundle - onDemand producer retention cross-check", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "bundle-postprocess-ondemand-"));
+    const rscDir = join(tmpDir, "dist", "rsc");
+    mkdirSync(rscDir, { recursive: true });
+    writeFileSync(join(rscDir, "index.js"), "// rsc entry\n");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function withPrerenderData(overrides: Partial<DiscoveryState>) {
+    return createMinimalState(tmpDir, {
+      prerenderManifestEntries: {
+        "some-key": stageBuildAssetModule(
+          tmpDir,
+          "__pr",
+          JSON.stringify({ segments: [], handles: "" }),
+        ),
+      },
+      ...overrides,
+    });
+  }
+
+  it("throws when an onDemand route's producer was not detected as onDemand in its chunk", () => {
+    const state = withPrerenderData({
+      onDemandHandlerIds: new Map([["od-id-1", "products.detail"]]),
+      handlerChunkInfoMap: new Map([
+        [
+          "chunk-a.js",
+          {
+            fileName: "chunk-a.js",
+            exports: [
+              {
+                name: "ProductDef",
+                handlerId: "od-id-1",
+                passthrough: false,
+                onDemand: false,
+              },
+            ],
+          },
+        ],
+      ]),
+    });
+
+    let thrown: unknown;
+    try {
+      postprocessBundle(state);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(
+      /onDemand producer retention failed/,
+    );
+    expect((thrown as Error).message).toContain("products.detail");
+  });
+
+  it("does not throw when the chunk scan detected the onDemand opt-in", () => {
+    const rscDir = join(tmpDir, "dist", "rsc");
+    writeFileSync(join(rscDir, "chunk-a.js"), "// chunk\n");
+    const state = withPrerenderData({
+      onDemandHandlerIds: new Map([["od-id-1", "products.detail"]]),
+      handlerChunkInfoMap: new Map([
+        [
+          "chunk-a.js",
+          {
+            fileName: "chunk-a.js",
+            exports: [
+              {
+                name: "ProductDef",
+                handlerId: "od-id-1",
+                passthrough: false,
+                onDemand: true,
+              },
+            ],
+          },
+        ],
+      ]),
+    });
+
+    expect(() => postprocessBundle(state)).not.toThrow();
+  });
+
+  it("does not throw when the onDemand handlerId never appears in any chunk export (retain-by-default)", () => {
+    const state = withPrerenderData({
+      onDemandHandlerIds: new Map([["od-id-1", "products.detail"]]),
+      handlerChunkInfoMap: new Map(),
+    });
+
+    expect(() => postprocessBundle(state)).not.toThrow();
   });
 });
