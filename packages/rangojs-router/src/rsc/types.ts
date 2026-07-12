@@ -210,6 +210,23 @@ export interface HandlerCacheConfig {
   store: import("../cache/types.js").SegmentCacheStore;
   /** Enable/disable caching (default: true) */
   enabled?: boolean;
+  /**
+   * Which query params key the cache (default: `"all"`). Affects cache keys
+   * ONLY -- handlers and loaders still see the full query string. Global by
+   * design: the per-route case is already reachable through `cache({ key })`.
+   *
+   * Excluding a param is a promise that rendered output does not depend on
+   * it; if it does, the first variant is cached and served to everyone.
+   *
+   * @example
+   * ```typescript
+   * cache: {
+   *   store: cacheStore,
+   *   searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] },
+   * }
+   * ```
+   */
+  searchParams?: import("../cache/search-params-filter.js").CacheSearchParams;
 }
 
 /**

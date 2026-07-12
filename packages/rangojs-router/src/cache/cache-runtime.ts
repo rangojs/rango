@@ -302,9 +302,14 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           if (ctx._responseType) {
             keyArgs.push(ctx._responseType);
           }
-          // Include user-facing search params (exclude internal _rsc*/__ params)
+          // Include user-facing search params (exclude internal _rsc*/__
+          // params, plus the request's cache.searchParams filter -- same
+          // normalization as the URL-keyed tiers).
           if (ctx.searchParams instanceof URLSearchParams) {
-            const normalized = sortedSearchString(ctx.searchParams);
+            const normalized = sortedSearchString(
+              ctx.searchParams,
+              ctx._searchParamsFilter,
+            );
             if (normalized) {
               keyArgs.push(normalized);
             }

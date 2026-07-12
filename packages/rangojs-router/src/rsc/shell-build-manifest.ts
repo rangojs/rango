@@ -27,6 +27,7 @@
 
 import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
+import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import {
   DEV_SHELL_PROBE_TIMEOUT_MS,
   hasIntactShellPayload,
@@ -252,12 +253,18 @@ async function fetchDevShellEntry(
  * version validity, payload integrity, and tag-invalidation markers. Returns
  * null on any gate failure — the caller degrades to the ordinary MISS path
  * (axis 1 + runtime capture), never a broken serve.
+ *
+ * "Search-less" is evaluated AFTER the request's `cache.searchParams` filter:
+ * a URL whose only params are excluded ones (`?fbclid=…` under a tracking
+ * exclusion) matches the baked shell — ad-click traffic is exactly the
+ * traffic the shell was prerendered for.
  */
 export async function lookupBuildShell(
   url: URL,
   buildVersion: string,
   store: SegmentCacheStore,
   dev?: DevShellLookup,
+  filter?: SearchParamsFilter,
 ): Promise<BuildShellHit | null> {
   try {
     // Source-presence first: with no manifest and no dev context this is the
@@ -265,7 +272,7 @@ export async function lookupBuildShell(
     // the searchParams sort/allocation below.
     const hasManifest = globalThis.__loadShellManifestModule !== undefined;
     if (!hasManifest && !dev) return null;
-    if (sortedSearchString(url.searchParams) !== "") return null;
+    if (sortedSearchString(url.searchParams, filter) !== "") return null;
     let record: BuildShellEntry | undefined;
     if (hasManifest) {
       const mod = await loadManifest();

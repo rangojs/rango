@@ -103,7 +103,7 @@ export async function serveResponseRouteWithCache(
   // Default key: response:{type}: + host-namespaced base (sorted search, reserved
   // _rsc*/__* params excluded). Same composition as document/segment tiers so
   // the host-namespacing and search-normalization rules cannot drift.
-  let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams)}`;
+  let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
 
   // Priority 1: route-level key() (full override). Priority 2: store-level
   // keyGenerator (modifies the default key).

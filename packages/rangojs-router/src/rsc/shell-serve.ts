@@ -19,6 +19,7 @@
 import React from "react";
 import { isPprEntry, type EntryData } from "../server/context.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
+import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
 
@@ -117,9 +118,14 @@ export function resolvePprConfig(
  * The key includes the request HOST: in a multi-tenant host-router deployment
  * (one worker, one shared KV/runtime-cache store) a host-less key would serve
  * tenant A's captured shell to tenant B's users.
+ *
+ * `filter` is the request's compiled `cache.searchParams` config
+ * (ctx._searchParamsFilter): excluded params collapse onto one shell slot.
+ * Callers on the serve/capture path MUST pass it -- key drift between capture
+ * and lookup makes every shell request a permanent miss.
  */
-export function buildShellKey(url: URL): string {
-  const sorted = sortedSearchString(url.searchParams);
+export function buildShellKey(url: URL, filter?: SearchParamsFilter): string {
+  const sorted = sortedSearchString(url.searchParams, filter);
   const searchSuffix = sorted ? `?${sorted}` : "";
   return `${url.host}${url.pathname}${searchSuffix}:shell`;
 }

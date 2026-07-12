@@ -267,6 +267,45 @@ const router = createRouter({
 });
 ```
 
+### Search param key filtering (`cache.searchParams`)
+
+By default every non-reserved query param keys the cache, so
+`?utm_source=tw` and `?utm_source=ig` occupy separate slots in every tier.
+The global `searchParams` option controls which params participate in default
+cache-key generation:
+
+```typescript
+import { createRouter, TRACKING_SEARCH_PARAMS } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  cache: {
+    store,
+    // "all" (default) | "none" | { include: string[] } | { exclude: string[] }
+    searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] },
+  },
+});
+```
+
+- **Key-only**: `ctx.searchParams` and the request URL are untouched — handlers
+  and loaders still see the full query string.
+- **Matching**: exact names plus a `*` SUFFIX wildcard (`"utm_*"`). No RegExp.
+- **All tiers**: segment, document, response, PPR shell capture/lookup, the
+  baked-shell manifest gate (a URL whose only params are excluded ones now
+  matches the prerendered shell), and `"use cache"` ctx key normalization.
+- **`cache({ key })` override wins**: a custom key bypasses the filter along
+  with the rest of default key generation.
+- **The footgun**: excluding a param promises the rendered output does not
+  depend on it. If it does, the first variant is cached and served to everyone.
+  That is why the default is `"all"`.
+- `TRACKING_SEARCH_PARAMS` (also exported from `@rangojs/router/cache`) covers
+  `utm_*`, `gclid`, `fbclid`, `msclkid`, `ttclid`, `mc_cid`/`mc_eid`, and the
+  other common click-id params.
+
+Global-only by design — the per-route "this page varies only by `q`" case is
+already expressible with `cache({ key })`.
+
 ## Cache Stores
 
 ### Memory Store

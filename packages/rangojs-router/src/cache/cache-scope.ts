@@ -101,7 +101,7 @@ function getDefaultRouteCacheKey(
     ? "intercept"
     : (prefixOverride ?? (isPartial ? "partial" : "doc"));
 
-  return `${prefix}:${cacheKeyBase(host, pathname, searchParams, params)}`;
+  return `${prefix}:${cacheKeyBase(host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
 }
 
 // ============================================================================

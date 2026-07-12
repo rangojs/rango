@@ -51,6 +51,7 @@ import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
+import { searchParamsKeyPatterns } from "./urls/search-params-key.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import {
   optionalIncludePatterns,
@@ -939,6 +940,9 @@ export const urlpatterns = urls(
       include("/response-cache", responseCachePatterns, {
         name: "responseCache",
       }),
+
+      // Global cache.searchParams key-filter test patterns
+      include("/spk", searchParamsKeyPatterns, { name: "spk" }),
 
       // Handler-first execution order + cache scope tests
       include("/handler-first", handlerFirstPatterns, { name: "handlerFirst" }),

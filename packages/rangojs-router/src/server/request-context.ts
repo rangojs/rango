@@ -215,6 +215,14 @@ export interface RequestContext<
   _cacheStore?: SegmentCacheStore;
 
   /**
+   * @internal Compiled `cache.searchParams` filter for default cache-key
+   * generation (undefined = "all", the byte-stable unfiltered format). Set
+   * once per request by handler.ts; every URL-keyed tier (segment, document,
+   * response, shell, "use cache") reads it so the tiers cannot drift.
+   */
+  _searchParamsFilter?: import("../cache/search-params-filter.js").SearchParamsFilter;
+
+  /**
    * @internal PPR shell-capture ACTIVE marker. True ONLY inside the background
    * capture task's derived request context (built by shell-capture.ts). This is
    * the switch every capture-specific behavior reads: loader masking
@@ -657,6 +665,7 @@ export type PublicRequestContext<
   | "_transitionWhen"
   | "_pprTransitionDecisions"
   | "_cacheStore"
+  | "_searchParamsFilter"
   | "_shellCaptureRun"
   | "_shellImplicitCache"
   | "_shellLoaderSeed"
@@ -843,6 +852,11 @@ export interface CreateRequestContextOptions<TEnv> {
   /** Optional cache store for segment caching (used by CacheScope) */
   cacheStore?: SegmentCacheStore;
   /**
+   * Compiled `cache.searchParams` filter from the resolved handler cache
+   * config (handler.ts). Stored as _searchParamsFilter.
+   */
+  searchParamsFilter?: import("../cache/search-params-filter.js").SearchParamsFilter;
+  /**
    * Handler-owned registry of explicit per-scope stores for cross-store tag
    * invalidation. Created once per handler, reused across requests.
    */
@@ -882,6 +896,7 @@ export function createRequestContext<TEnv>(
     variables,
     initialResponse,
     cacheStore,
+    searchParamsFilter,
     explicitTaggedStores,
     cacheProfiles,
     executionContext,
@@ -1176,6 +1191,7 @@ export function createRequestContext<TEnv>(
     _handleStore: handleStore,
     _transitionWhen: [],
     _cacheStore: cacheStore,
+    _searchParamsFilter: searchParamsFilter,
     _explicitTaggedStores: explicitTaggedStores,
     _requestTags: new Set<string>(),
     _cacheProfiles: cacheProfiles,

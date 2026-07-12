@@ -189,6 +189,10 @@ export {
 
 // RSC handler types (server-side)
 export type { HandlerCacheConfig } from "./rsc/types.js";
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./cache/search-params-filter.js";
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";

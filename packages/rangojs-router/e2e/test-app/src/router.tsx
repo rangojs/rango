@@ -175,7 +175,14 @@ export const router = createRouter<AppEnv>({
   strictMode:
     (globalThis as { process?: { env?: Record<string, string | undefined> } })
       .process?.env?.RANGO_STRICT !== "off",
-  cache: { store: cacheStore },
+  // searchParams: key-only filter -- utm_*/x_e2e_excluded never key the cache
+  // (exercised by search-params-cache-key.test.ts via /spk/cached). Byte-stable
+  // for every URL that carries none of these params, so other suites see the
+  // exact same keys as before.
+  cache: {
+    store: cacheStore,
+    searchParams: { exclude: ["utm_*", "x_e2e_excluded"] },
+  },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },

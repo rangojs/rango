@@ -39,6 +39,11 @@ export {
   VERCEL_MAX_TAG_BYTES,
 } from "./vercel/index.js";
 
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./search-params-filter.js";
+
 export { CacheScope, createCacheScope } from "./cache-scope.js";
 
 export {

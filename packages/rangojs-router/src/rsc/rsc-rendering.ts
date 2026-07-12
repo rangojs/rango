@@ -67,6 +67,7 @@ import {
 } from "../redirect-origin.js";
 import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
+import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type {
   SegmentCacheStore,
@@ -110,8 +111,11 @@ function describePprReplayStatus(status: PprReplayStatus): string {
     : `bypass:${status.reason}`;
 }
 
-function buildNavigationShellKey(url: URL): string {
-  return `${buildShellKey(url)}:navigation`;
+function buildNavigationShellKey(
+  url: URL,
+  filter?: SearchParamsFilter,
+): string {
+  return `${buildShellKey(url, filter)}:navigation`;
 }
 
 function createShellCaptureDescriptor(
@@ -263,7 +267,7 @@ async function handleRscRenderingInner<TEnv>(
       // the provider-only check missed the latter (issue #656).
       const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
       const store = reqCtx._cacheStore;
-      const key = buildShellKey(url);
+      const key = buildShellKey(url, reqCtx._searchParamsFilter);
       // Dev Server-Timing mirror (issue #651): a capture completes AFTER its
       // triggering response committed, so its outcome can only ride a LATER
       // response's header. Read-and-clear keeps one capture = one report;
@@ -417,6 +421,7 @@ async function handleRscRenderingInner<TEnv>(
             // only (production's exact candidate set). Folded away in
             // production builds (NODE_ENV is a compile-time constant).
             resolveDevShellLookup(reqCtx, pprConfig),
+            reqCtx._searchParamsFilter,
           );
           if (buildHit) {
             // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
@@ -671,7 +676,7 @@ async function handleRscRenderingInner<TEnv>(
       },
       createShellCaptureDescriptor(
         ctx,
-        buildNavigationShellKey(url),
+        buildNavigationShellKey(url, reqCtx._searchParamsFilter),
         pprConfig,
         store,
         true,
@@ -739,8 +744,11 @@ async function matchPartialWithPprReplay<TEnv>(
     });
   }
 
-  const key = buildShellKey(url);
-  const navigationKey = buildNavigationShellKey(url);
+  const key = buildShellKey(url, reqCtx._searchParamsFilter);
+  const navigationKey = buildNavigationShellKey(
+    url,
+    reqCtx._searchParamsFilter,
+  );
   let cached: Awaited<ReturnType<typeof store.getShell>> = null;
   try {
     cached = await store.getShell(key, { claimRevalidation: false });
@@ -794,7 +802,13 @@ async function matchPartialWithPprReplay<TEnv>(
     // Production build manifests are local module data. In dev, resolving a
     // missing build shell would foreground-fetch /__rsc_shell and block an
     // otherwise ordinary navigation on capture, so replay remains runtime-only.
-    const buildHit = await lookupBuildShell(url, ctx.version, store);
+    const buildHit = await lookupBuildShell(
+      url,
+      ctx.version,
+      store,
+      undefined,
+      reqCtx._searchParamsFilter,
+    );
     if (buildHit?.stale) {
       bypassReason ??= "stale-build-entry";
     } else if (buildHit) {

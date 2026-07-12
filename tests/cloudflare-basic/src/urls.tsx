@@ -213,6 +213,21 @@ export const urlpatterns = urls(
         name: "testTaggedJsonB",
       }),
     ]),
+    // Global cache.searchParams key filter (router.tsx excludes utm_*):
+    // dedicated route so the collapsed bare-path slot never collides with
+    // another suite's cache state. Exercised by search-params-cache-key.test.ts.
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/test/spk-cached",
+        (ctx) => ({
+          source: "spk-cached",
+          utm: ctx.url.searchParams.get("utm_source") ?? "",
+          page: ctx.url.searchParams.get("page") ?? "",
+          ts: Date.now(),
+        }),
+        { name: "testSpkCached" },
+      ),
+    ]),
     // Test fixture only: the tag comes from the URL param so the e2e can
     // exercise arbitrary tags. Never do this in production code - deriving
     // invalidation tags from untrusted input lets an attacker grow the

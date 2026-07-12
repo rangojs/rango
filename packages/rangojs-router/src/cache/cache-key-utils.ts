@@ -7,6 +7,7 @@
  */
 
 import { encodeKV } from "../encode-kv.js";
+import type { SearchParamsFilter } from "./search-params-filter.js";
 
 /**
  * Reserved URL query params that the router owns and must never key the cache
@@ -34,12 +35,22 @@ function isReservedSearchParam(key: string): boolean {
  * Build a sorted, deterministic query string from URLSearchParams,
  * excluding the router's reserved params (see isReservedSearchParam).
  *
- * Returns empty string when no user-facing params exist.
+ * `filter` is the compiled `cache.searchParams` config (search-params-filter.ts),
+ * applied AFTER the reserved-param exclusion and BEFORE the sort, so reserved
+ * params can never be re-included (`include: ["__no_cache"]` is a no-op) and
+ * surviving params stay order-insensitive. `undefined` means no filtering --
+ * that path must stay byte-identical to the pre-filter format (cacheKeyBase
+ * output is byte-stable by contract).
+ *
+ * Returns empty string when no user-facing params survive.
  */
-export function sortedSearchString(searchParams: URLSearchParams): string {
+export function sortedSearchString(
+  searchParams: URLSearchParams,
+  filter?: SearchParamsFilter,
+): string {
   const pairs: [string, string][] = [];
   for (const [k, v] of searchParams) {
-    if (!isReservedSearchParam(k)) {
+    if (!isReservedSearchParam(k) && (filter === undefined || filter(k))) {
       pairs.push([k, v]);
     }
   }
@@ -77,9 +88,12 @@ export function cacheKeyBase(
   pathname: string,
   searchParams?: URLSearchParams,
   params?: Record<string, string>,
+  filter?: SearchParamsFilter,
 ): string {
   const paramStr = sortedRouteParams(params);
-  const searchStr = searchParams ? sortedSearchString(searchParams) : "";
+  const searchStr = searchParams
+    ? sortedSearchString(searchParams, filter)
+    : "";
 
   let key = `${host}${pathname}`;
   if (paramStr) key += `:${paramStr}`;
