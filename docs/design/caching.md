@@ -31,6 +31,7 @@ lives.
 - **Redis (and other adapters)** - no first-party Redis `SegmentCacheStore` yet
 - **Manual whole-store purge API** - store-level wipe-all is still future work (`clear()` is optional / test-only on most backends)
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
+- **Search param filtering** - `cache.searchParams` include/exclude config for cache keys (design under Open Problems, not implemented)
 
 ### Performance (Dev)
 
@@ -314,7 +315,7 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 ```
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
-- **Search params**: User-facing params are included (sorted, URL-encoded). Internal `_rsc*` and `__*` params are excluded.
+- **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`, `__prerender_collect`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Determinism**: Both route params and search params are sorted alphabetically for stable keys regardless of insertion order.
 
 ```typescript
@@ -326,6 +327,9 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 ```
 
 For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
+
+A proposed consumer-facing include/exclude config for which search params
+key the cache is designed under Open Problems ("Search param filtering").
 
 ## Storage Backend
 
@@ -809,6 +813,68 @@ The CF store also has an opt-in **purge mode** (`tagPurge: { zoneId, apiToken }`
 ---
 
 ## Open Problems
+
+### Search param filtering (`cache.searchParams`) — proposed, not yet implemented
+
+Designed 2026-07-12. Consumers currently have no say in which query params key
+the cache: every non-reserved param produces a distinct cache slot. That hurts
+twice:
+
+1. **Fragmentation** — `/products?utm_source=tw` and `/products?utm_source=ig`
+   occupy separate entries in every tier (segment, document, response,
+   `"use cache"`), so tracking-tagged traffic never shares cache hits.
+2. **Prerendered-shell misses** — the shell build manifest
+   (`src/rsc/shell-build-manifest.ts`) only matches URLs whose filtered search
+   string is empty, so `?fbclid=…` skips the prerendered shell entirely. Ad-click
+   traffic is exactly the traffic you prerendered for, and it misses today.
+
+The fix is one global option on the existing `cache` config in `createRouter`:
+
+```typescript
+type CacheSearchParams =
+  | "all" // default — today's behavior
+  | "none" // query params never key the cache
+  | { include: string[] } // allowlist: only these key the cache
+  | { exclude: string[] }; // denylist: all except these
+
+createRouter({
+  document: Document,
+  cache: {
+    store: cacheStore,
+    searchParams: { exclude: [...TRACKING_SEARCH_PARAMS] },
+  },
+});
+```
+
+`TRACKING_SEARCH_PARAMS` is an exported constant (`utm_*`, `gclid`, `fbclid`,
+`msclkid`, `ttclid`, `mc_eid`, …) so the common case is one line without
+changing the default for anyone.
+
+Semantics:
+
+| Aspect                 | Behavior                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope of effect        | Cache key only. `ctx.searchParams` and the request URL are untouched — handlers and loaders still see the full query string.                                                                                                                                                                                                                   |
+| Matching               | Exact names plus `*` suffix wildcard (`utm_*`). No RegExp: keeps the config serializable, deterministic, and safe for the build-time shell manifest.                                                                                                                                                                                           |
+| `include` + `exclude`  | Unrepresentable — the union type forces exactly one mode.                                                                                                                                                                                                                                                                                      |
+| Router-internal params | Same exclusion as the shipped key format above (`_rsc*` prefix + the `__` allowlist), applied before this filter; `include: ["__no_cache"]` cannot re-key on them.                                                                                                                                                                             |
+| Ordering               | Filtering happens inside `sortedSearchString` before the existing codepoint sort (strip reserved, apply include/exclude, sort, encode) — surviving params stay order-insensitive exactly as today.                                                                                                                                             |
+| `key:` override        | Unchanged — a custom `key` on `cache()` still bypasses all default key generation, including this filter.                                                                                                                                                                                                                                      |
+| Tiers covered          | Segment (`cache-scope.ts`), document (`document-cache.ts`), response (`response-cache-serve.ts`), PPR shell lookup (`shell-serve.ts`) AND shell build manifest, `"use cache"` ctx normalization (`cache-runtime.ts`), testing `shellStatus`/`dispatch`. One filter threaded through `cacheKeyBase`/`sortedSearchString` so tiers cannot drift. |
+| Byte-stability         | A URL containing no filtered params produces the same key as today, so existing persisted entries stay valid; only previously-fragmented variants collapse.                                                                                                                                                                                    |
+| Shell manifest         | A URL whose only params are excluded ones now matches the prerendered shell — filtering happens before the emptiness check.                                                                                                                                                                                                                    |
+
+The footgun to document loudly: excluding a param is a promise that rendered
+output does not depend on it. If it does, the first variant gets cached and
+served to everyone (the classic CDN cache-key mistake). That is why the default
+stays `"all"` — correct by default, opt into collapsing.
+
+Deliberately global-only, no per-`cache()` override. The per-route "search page
+varies only by `q`/`page`/`sort`" case is already reachable through the
+existing `key:` override, and a static global config means the filter resolves
+once at `createRouter` time — no request-context resolution, no
+`defaults`-style inheritance, and the build-time shell manifest reads the same
+static value with no per-request ambiguity.
 
 ### Invalidation
 
