@@ -266,6 +266,7 @@ export const NamedRoutes = {
   "pp.article": "/pp/:slug",
   "pp.build-dynamic": "/pp-build-dynamic/:slug",
   "pp.evict": "/pp-evict/:slug",
+  "pp.passthrough": "/ppp/:slug",
   "pp.runtime-dynamic": "/pp-runtime-dynamic/:slug",
   "pprHeaderGuard.dynamic": "/ppr-header-guard/dynamic",
   "pprHeaderGuard.handler": "/ppr-header-guard/handler",

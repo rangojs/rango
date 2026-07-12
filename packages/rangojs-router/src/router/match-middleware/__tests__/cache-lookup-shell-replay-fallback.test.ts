@@ -89,6 +89,8 @@ async function drain(options: {
   /** Omit the marker's onExplicitHit (capture-shaped marker). */
   armReplay?: boolean;
   isIntercept?: boolean;
+  /** Explicit scope options (default `{ ttl: 30 }`). */
+  scopeOptions?: import("../../../types.js").PartialCacheOptions;
 }): Promise<DrainResult> {
   const store = new MemorySegmentCacheStore();
   if (options.explicitEntry) {
@@ -132,7 +134,7 @@ async function drain(options: {
   };
 
   const ctx = {
-    cacheScope: new CacheScope({ ttl: 30 }),
+    cacheScope: new CacheScope(options.scopeOptions ?? { ttl: 30 }),
     isAction: false,
     isIntercept: options.isIntercept ?? false,
     isFullMatch: false,
@@ -199,6 +201,49 @@ describe("withCacheLookup — PPR replay composed with a route-derived cache() s
     expect(result.yielded).toEqual([]);
     expect(result.state.cacheHit).toBe(false);
     expect(result.onHit).not.toHaveBeenCalled();
+  });
+
+  it("a throwing explicit key() renders uncached — the seeded record must not cross the key partition", async () => {
+    // lookupRoute's contract on a throwing consumer key()/keyGenerator is
+    // "degrade to an uncached render". The fallback must not reinterpret that
+    // `error` outcome as a miss and serve the canonical doc record under a key
+    // partition the explicit tier never resolved.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    try {
+      const result = await drain({
+        seededEntry: await entryData(["seeded-R0"]),
+        scopeOptions: {
+          ttl: 30,
+          key: () => {
+            throw new Error("consumer key() failure");
+          },
+        },
+      });
+
+      expect(result.yielded).toEqual([]);
+      expect(result.state.cacheHit).toBe(false);
+      expect(result.onHit).not.toHaveBeenCalled();
+      expect(result.onExplicitHit).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("a condition() refusing the read is absolute — no seeded fallback", async () => {
+    // The pre-read gate may have seen condition() return true; the lookup-time
+    // refusal is a `bypass` outcome, not a miss, so the seeded record must not
+    // rescue it (a flapping predicate cannot re-admit the fallback).
+    const result = await drain({
+      seededEntry: await entryData(["seeded-R0"]),
+      scopeOptions: { ttl: 30, condition: () => false },
+    });
+
+    expect(result.yielded).toEqual([]);
+    expect(result.state.cacheHit).toBe(false);
+    expect(result.onHit).not.toHaveBeenCalled();
+    expect(result.onExplicitHit).not.toHaveBeenCalled();
   });
 
   it("intercept navigations keep their normal cache path — no fallback, no explicit-hit report", async () => {

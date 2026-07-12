@@ -15,6 +15,17 @@ vi.mock("../shell-capture.js", async (importOriginal) => {
   };
 });
 
+// The replay gate's prerender-store probe (prerenderEntryExists in
+// cache-lookup.ts) consults the real prerender store singleton; stub the
+// store factory so tests control artifact existence per test. Default: no
+// baked artifact (get resolves null).
+const prerenderStoreGetMock = vi.hoisted(() =>
+  vi.fn(async (): Promise<unknown> => null),
+);
+vi.mock("../../prerender/store.js", () => ({
+  createPrerenderStore: () => ({ get: prerenderStoreGetMock }),
+}));
+
 import React from "react";
 import { createRouter } from "../../router.js";
 import { createLoader } from "../../loader.rsc.js";
@@ -1207,13 +1218,15 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(getShell).not.toHaveBeenCalled();
   });
 
-  it("bypasses a prerender route as prerender-store: zero shell reads, no capture, no dev endpoint fetch", async () => {
+  it("bypasses a baked prerender route as prerender-store: zero shell reads, no capture, no dev endpoint fetch", async () => {
     // A Prerender()+ppr partial is served from the build-time prerender store
     // inside withCacheLookup; its capture never records a doc segment record
     // (withCacheStore skips on the prerender hit), so replay seeding could
-    // never succeed. The gate decides before any getShell read and must not
-    // schedule heal captures (their snapshots would be equally unusable) or
-    // foreground-fetch the dev /__rsc_shell endpoint.
+    // never succeed. The gate probes the store for the baked artifact,
+    // decides before any getShell read, and must not schedule heal captures
+    // (their snapshots would be equally unusable) or foreground-fetch the dev
+    // /__rsc_shell endpoint.
+    prerenderStoreGetMock.mockResolvedValueOnce({ segments: [] });
     const store = new MemorySegmentCacheStore();
     const getShell = vi.spyOn(store, "getShell");
     const fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -1224,7 +1237,11 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       ppr: true,
       store,
       arm: (reqCtx) => {
-        (reqCtx._classifiedRoute as any).matched = { pr: true };
+        (reqCtx._classifiedRoute as any).matched = {
+          pr: true,
+          routeKey: "p",
+          params: {},
+        };
       },
     });
 
@@ -1236,6 +1253,38 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
     expect(ctx.loadSSRModule).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  it("a pr route whose baked artifact is missing falls through to the ordinary replay decision", async () => {
+    // The trie's pr flag is not a serve guarantee: Passthrough(Prerender())
+    // bakes only the listed params — the rest miss the prerender store and
+    // render live. Reporting prerender-store for them would blame a store
+    // that cannot serve and permanently disable replay AND its heal capture.
+    // With no baked artifact (probe resolves null) the ordinary path runs:
+    // shell reads happen, no-entry is honest, and the heal capture is
+    // scheduled so the NEXT navigation can replay.
+    const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell");
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).matched = {
+          pr: true,
+          routeKey: "p",
+          params: { slug: "unbaked" },
+        };
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=no-entry",
+    );
+    expect(getShell).toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
   });
 
   it("an HMR partial to a prerender route falls through to the ordinary replay decision", async () => {

@@ -111,6 +111,17 @@ function getDefaultRouteCacheKey(
 const CACHE_HIT_OBSERVERS = new WeakMap<CacheScope, () => void>();
 
 /**
+ * Discriminated outcome of a route cache lookup — see
+ * {@link CacheScope.lookupRouteDetailed} for what each status licenses.
+ */
+export type CacheRouteLookupOutcome =
+  | {
+      status: "hit";
+      result: { segments: ResolvedSegment[]; shouldRevalidate: boolean };
+    }
+  | { status: "miss" | "bypass" | "error" };
+
+/**
  * CacheScope represents a cache boundary in the route tree.
  *
  * When withCache encounters an entry with cache config, it creates
@@ -294,11 +305,42 @@ export class CacheScope {
     segments: ResolvedSegment[];
     shouldRevalidate: boolean;
   } | null> {
-    if (!this.enabled) return null;
-    if (!this.conditionAllows("read")) return null;
+    const outcome = await this.lookupRouteDetailed(
+      pathname,
+      params,
+      isIntercept,
+    );
+    return outcome.status === "hit" ? outcome.result : null;
+  }
+
+  /**
+   * @internal lookupRoute with a discriminated outcome. The PPR replay
+   * composition (withCacheLookup) may substitute the seeded doc record ONLY on
+   * a true `miss` — the other non-hit outcomes must not be papered over:
+   *
+   * - `bypass`: the scope refused the read — cache(false), a false
+   *   `condition()`, or no resolvable store. Consumer opt-outs are absolute;
+   *   a fallback here would serve cached segments to a request the consumer
+   *   said must render fresh.
+   * - `error`: a throwing consumer key()/store keyGenerator/store.get. The
+   *   contract on that failure is "render uncached" (see the catch below) —
+   *   falling back would serve the canonical doc record across a broken key
+   *   partition, exactly the collision resolveCacheKey's no-default-fallback
+   *   rule exists to prevent.
+   *
+   * A corrupt entry that was evicted reads as `miss`: the store was consulted
+   * and holds nothing servable, which is the post-eviction truth.
+   */
+  async lookupRouteDetailed(
+    pathname: string,
+    params: Record<string, string>,
+    isIntercept?: boolean,
+  ): Promise<CacheRouteLookupOutcome> {
+    if (!this.enabled) return { status: "bypass" };
+    if (!this.conditionAllows("read")) return { status: "bypass" };
 
     const store = this.getStore();
-    if (!store) return null;
+    if (!store) return { status: "bypass" };
 
     // Resolve cache key INSIDE the try so a throwing consumer key() (or a
     // store.keyGenerator) degrades to a cache miss (return null -> render
@@ -314,7 +356,7 @@ export class CacheScope {
 
       if (!result) {
         debugCacheLog(`[CacheScope] MISS: ${key}`);
-        return null;
+        return { status: "miss" };
       }
 
       const { data: cached, shouldRevalidate } = result;
@@ -347,7 +389,7 @@ export class CacheScope {
           .catch((e) =>
             reportCacheError(e, "cache-delete", `[CacheScope] ${key}: evict`),
           );
-        return null;
+        return { status: "miss" };
       }
 
       // A hit serves content that was tagged at write time, so the document
@@ -378,16 +420,18 @@ export class CacheScope {
       }
 
       CACHE_HIT_OBSERVERS.get(this)?.();
-      return { segments, shouldRevalidate };
+      return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
-      // (resolveKey). Either way degrade to a cache miss so the render proceeds.
+      // (resolveKey). Either way degrade to an uncached render — reported as
+      // `error`, not `miss`, so the replay composition cannot substitute the
+      // seeded doc record for a lookup that never resolved its key partition.
       reportCacheError(
         error,
         "cache-read",
         `[CacheScope] lookup ${key ?? "(key resolution failed)"}`,
       );
-      return null;
+      return { status: "error" };
     }
   }
 

@@ -65,8 +65,11 @@ import {
   getNavigationContextHeader,
   prerenderStoreShortCircuits,
 } from "../router/navigation-snapshot.js";
-import { ensureFullRouteSnapshot } from "../router/route-snapshot.js";
-import type { CacheScope } from "../cache/cache-scope.js";
+import {
+  ensureFullRouteSnapshot,
+  type RouteSnapshot,
+} from "../router/route-snapshot.js";
+import { prerenderEntryExists } from "../router/match-middleware/cache-lookup.js";
 import {
   resolveSameOriginRedirect,
   safeSameOriginLanding,
@@ -767,15 +770,29 @@ async function matchPartialWithPprReplay<TEnv>(
   if (!getNavigationContextHeader(request)) {
     return runMatch({ outcome: "BYPASS", reason: "no-navigation-context" });
   }
+  // The prerender probe and the cache-opt-out gate below both need the
+  // classified snapshot; resolve (and persist) it once.
+  const routeSnapshot = classifiedRouteSnapshot(reqCtx);
   // Prerender routes short-circuit in withCacheLookup and serve the partial
   // from build-time segments — a better-than-HIT outcome. Their captures
   // record no doc segment record (withCacheStore skips on the prerender hit),
   // so seeding could never succeed; skip the reads and report the store that
-  // actually serves instead of blaming a "broken" capture. Shared predicate
-  // with the middleware (it declines on dev HMR — such partials fall through
-  // to the ordinary replay decision here too).
+  // actually serves instead of blaming a "broken" capture. Bypass ONLY when
+  // the baked artifact actually exists — the trie's pr flag alone is not a
+  // serve guarantee: a Passthrough(Prerender()) route with an unbaked or
+  // ctx.passthrough()-skipped param misses the store and renders live, and
+  // replay (including its heal capture) must stay available for it. The
+  // probe goes through the same memoized store the middleware serves from.
+  // Shared predicate with the middleware (it declines on dev HMR — such
+  // partials fall through to the ordinary replay decision here too).
   if (
-    prerenderStoreShortCircuits(reqCtx._classifiedRoute?.matched?.pr, request)
+    prerenderStoreShortCircuits(routeSnapshot?.matched?.pr, request) &&
+    (await prerenderEntryExists(
+      routeSnapshot?.matched?.routeKey,
+      routeSnapshot?.params ?? {},
+      url.pathname,
+      routeSnapshot?.entries ?? [],
+    ))
   ) {
     return runMatch({ outcome: "BYPASS", reason: "prerender-store" });
   }
@@ -783,7 +800,7 @@ async function matchPartialWithPprReplay<TEnv>(
   // this request): the route refused cached serves, so neither the explicit
   // tier nor the seeded fallback may supply the match. Decided before any
   // shell read; no heal capture (its snapshot would be equally unusable).
-  const routeCacheScope = classifiedRouteCacheScope(reqCtx);
+  const routeCacheScope = routeSnapshot?.cacheScope ?? null;
   if (routeCacheScope && !routeCacheScope.allowsCache("read")) {
     return runMatch({ outcome: "BYPASS", reason: "cache-disabled" });
   }
@@ -904,18 +921,18 @@ async function matchPartialWithPprReplay<TEnv>(
 }
 
 /**
- * The route-derived cache scope for the classified route, or null when the
- * route derives none (or classification is unavailable — the gate then falls
- * open to the ordinary replay decision). Persists the enriched snapshot back
- * onto `_classifiedRoute` so the manifest-chain walk runs once per request:
+ * The full route snapshot for the classified route, or null when
+ * classification is unavailable (the gates then fall open to the ordinary
+ * replay decision). Persists the enriched snapshot back onto
+ * `_classifiedRoute` so the manifest-chain walk runs once per request:
  * matchPartial's createMatchContextForPartial re-reads `_classifiedRoute` and
  * calls ensureFullRouteSnapshot again, and the write-back lets that call hit
  * the entries-already-built fast path and reuse this same scope chain instead
  * of rebuilding it.
  */
-function classifiedRouteCacheScope(
+function classifiedRouteSnapshot(
   reqCtx: RequestContext<any>,
-): CacheScope | null {
+): RouteSnapshot<any> | null {
   const classified = reqCtx._classifiedRoute;
   if (!classified?.manifestEntry) return null;
   const full = ensureFullRouteSnapshot({
@@ -923,7 +940,7 @@ function classifiedRouteCacheScope(
     entries: classified.entries ?? [],
   });
   reqCtx._classifiedRoute = full;
-  return full.cacheScope;
+  return full;
 }
 
 /**

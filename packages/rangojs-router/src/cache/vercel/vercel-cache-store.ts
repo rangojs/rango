@@ -203,6 +203,13 @@ interface VercelShellEnvelope {
   /** Capture data snapshot: recorded cache-store hits/writes for HIT parity. */
   sn?: ShellSnapshotRecord[];
   /**
+   * ShellCacheEntry.docKey. Must round-trip: navigation-replay eligibility
+   * requires the exact canonical doc segment record named here — dropping the
+   * field reads back as "no consumable record" and every partial navigation
+   * reports `no-segment-snapshot` after a store round trip.
+   */
+  dk?: string;
+  /**
    * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
    * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
    * here silently fast-pathed handler-live entries after a store round trip —
@@ -816,6 +823,7 @@ export class VercelCacheStore<
         buildVersion: env.bv,
         initialTheme: env.i,
         snapshot: env.sn,
+        docKey: env.dk,
         handlerLiveHoles: env.lh,
         transitionWhen: env.tw,
         navigationOnly: env.no,
@@ -866,6 +874,7 @@ export class VercelCacheStore<
         t: safeTags.length > 0 ? safeTags : undefined,
         i: entry.initialTheme,
         sn: entry.snapshot,
+        dk: entry.docKey,
         lh: entry.handlerLiveHoles,
         tw: entry.transitionWhen,
         no: entry.navigationOnly,
@@ -1196,7 +1205,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, sn, lh, tw, no } = raw;
+    const { p, po, rv, bv, c, s, e, t, i, sn, dk, lh, tw, no } = raw;
     if (typeof p !== "string" || typeof rv !== "string") return null;
     if (po !== null && typeof po !== "string") return null;
     if (typeof c !== "number") return null;
@@ -1212,6 +1221,7 @@ export class VercelCacheStore<
       t: Array.isArray(t) ? (t as string[]) : undefined,
       i: typeof i === "string" ? i : undefined,
       sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
+      dk: typeof dk === "string" ? dk : undefined,
       lh: lh === true ? true : undefined,
       tw: tw === true ? true : undefined,
       no: no === true ? true : undefined,

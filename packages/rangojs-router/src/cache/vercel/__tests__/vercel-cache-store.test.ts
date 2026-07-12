@@ -542,6 +542,17 @@ describe("VercelCacheStore", () => {
       expect(entry?.navigationOnly).toBe(true);
     });
 
+    // docKey names the canonical doc segment record navigation replay
+    // consumes; dropping it in either direction reads back as "no consumable
+    // record" and every partial navigation reports no-segment-snapshot after
+    // a store round trip (the CF envelope had exactly this bug).
+    it("round-trips docKey", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry({ docKey: "doc:localhost/p" }), 60, 300);
+      expect((await s.getShell("k"))?.entry.docKey).toBe("doc:localhost/p");
+    });
+
     it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
