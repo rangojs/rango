@@ -299,7 +299,7 @@ directly from the CDN; everything else rewrites to the single RSC/SSR function.
 
 ```json
 {
-  "runtime": "nodejs22.x",
+  "runtime": "nodejs24.x",
   "handler": "index.js",
   "launcherType": "Nodejs",
   "supportsResponseStreaming": true

@@ -267,7 +267,7 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
  * `.vc-config.json` (and `config.json` for `functionName`).
  */
 export interface VercelPresetOptions {
-  /** Node runtime for the function. @default "nodejs22.x" */
+  /** Node runtime for the function. @default "nodejs24.x" */
   runtime?: string;
   /** Max execution time in seconds. @default 30 */
   maxDuration?: number;

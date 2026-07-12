@@ -104,7 +104,7 @@ and static serving. These require an actual Vercel deployment to confirm:
 3. Bundles a Node launcher (`index.func/index.mjs`) that wraps the Rango Web
    fetch handler with `srvx`'s `toNodeHandler` (the Node launcher needs a
    `(req, res)` handler) and forwards `process.env` + `waitUntil`.
-4. Writes `.vc-config.json` (`runtime: nodejs22.x`, `supportsResponseStreaming`)
+4. Writes `.vc-config.json` (`runtime: nodejs24.x`, `supportsResponseStreaming`)
    and `config.json` (`{ handle: "filesystem" }` then `/(.*) → /index`).
 
 Tune the function via `rango({ preset: "vercel", vercel: { runtime, maxDuration,
