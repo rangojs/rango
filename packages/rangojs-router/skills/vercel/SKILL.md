@@ -56,7 +56,7 @@ Per-function knobs go under `vercel` and are written into `.vc-config.json`:
 rango({
   preset: "vercel",
   vercel: {
-    runtime: "nodejs22.x", // default
+    runtime: "nodejs24.x", // default
     maxDuration: 30, // seconds, default
     memory: 1024, // MB (platform default when omitted)
     regions: ["fra1"], // pin regions (platform default when omitted)

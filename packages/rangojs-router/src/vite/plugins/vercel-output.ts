@@ -99,7 +99,7 @@ export function assertVercelNodeRuntime(runtime: string | undefined): void {
     throw new Error(
       `[rango] preset "vercel": runtime "${runtime}" is not supported. ` +
         `This preset emits a Node serverless function; use a "nodejs*" runtime ` +
-        `(default "nodejs22.x"). The Edge runtime is not supported.`,
+        `(default "nodejs24.x"). The Edge runtime is not supported.`,
     );
   }
 }
@@ -125,7 +125,7 @@ export function buildVercelVcConfig(
   vercel: VercelPresetOptions,
 ): Record<string, unknown> {
   const vcConfig: Record<string, unknown> = {
-    runtime: vercel.runtime ?? "nodejs22.x",
+    runtime: vercel.runtime ?? "nodejs24.x",
     handler: "index.mjs",
     launcherType: "Nodejs",
     shouldAddHelpers: false,

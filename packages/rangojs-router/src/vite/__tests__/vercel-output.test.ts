@@ -49,7 +49,7 @@ describe("buildVercelVcConfig", () => {
   it("emits a streaming Node serverless config with defaults", () => {
     const c = buildVercelVcConfig({});
     expect(c).toMatchObject({
-      runtime: "nodejs22.x",
+      runtime: "nodejs24.x",
       handler: "index.mjs",
       launcherType: "Nodejs",
       shouldAddHelpers: false,

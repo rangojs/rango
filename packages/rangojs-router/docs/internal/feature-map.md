@@ -49,6 +49,9 @@ same pure helpers for Playwright without pulling the Vite virtual module. A HIT
 means an eligible shell snapshot successfully decoded and supplied the partial
 match; otherwise the status carries a bounded bypass reason.
 
+The Vercel preset emits `runtime: "nodejs24.x"` by default, matching the
+package's Node 24 engine floor. `VercelPresetOptions.runtime` can override it.
+
 ### Internal (not user-facing)
 
 These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. They are not part of the public API and may change without notice.
