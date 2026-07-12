@@ -116,6 +116,11 @@ import {
   stripInternalParams,
 } from "../router/handler-context.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
+import {
+  compileSearchParamsFilter,
+  type CacheSearchParams,
+  type SearchParamsFilter,
+} from "../cache/search-params-filter.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
 // cache-scope is loaded LAZILY inside the response-route cache path (below):
@@ -193,11 +198,19 @@ interface DispatchableRouter<TEnv> {
   } | null>;
   basename?: string;
   cache?:
-    | { enabled?: boolean; store?: SegmentCacheStore }
+    | {
+        enabled?: boolean;
+        store?: SegmentCacheStore;
+        searchParams?: CacheSearchParams;
+      }
     | ((
         env: TEnv,
         executionContext: unknown,
-      ) => { enabled?: boolean; store?: SegmentCacheStore });
+      ) => {
+        enabled?: boolean;
+        store?: SegmentCacheStore;
+        searchParams?: CacheSearchParams;
+      });
   cacheProfiles?: Record<string, CacheProfile>;
 }
 
@@ -375,13 +388,17 @@ export async function dispatch<TEnv = any>(
   // "use cache" inside a response-route handler reaches the request-scope
   // (NOCACHE) detection below instead of bypassing on a missing store.
   let cacheStore: SegmentCacheStore | undefined;
+  let searchParamsFilter: SearchParamsFilter | undefined;
   const cacheOption = router.cache;
   if (cacheOption && !url.searchParams.has("__no_cache")) {
     const cacheConfig =
       typeof cacheOption === "function"
         ? cacheOption(env, undefined)
         : cacheOption;
-    if (cacheConfig.enabled !== false) cacheStore = cacheConfig.store;
+    if (cacheConfig.enabled !== false) {
+      cacheStore = cacheConfig.store;
+      searchParamsFilter = compileSearchParamsFilter(cacheConfig.searchParams);
+    }
   }
 
   const requestContext = createRequestContext<TEnv>({
@@ -390,6 +407,7 @@ export async function dispatch<TEnv = any>(
     url,
     variables,
     cacheStore,
+    searchParamsFilter,
     cacheProfiles: router.cacheProfiles,
   });
   // Wire background error reporting so cache degradation (reportCacheError ->

@@ -29,6 +29,10 @@
  */
 
 import { sortedSearchString } from "../cache/cache-key-utils.js";
+import {
+  compileSearchParamsFilter,
+  type CacheSearchParams,
+} from "../cache/search-params-filter.js";
 
 /** Production header name (`rsc/shell-serve.ts` `SHELL_STATUS_HEADER`). */
 export const SHELL_STATUS_HEADER: string = "x-rango-shell";
@@ -78,12 +82,20 @@ export type ShellStatusTarget = Response | { headers: Headers };
  * module (it pulls React). A parity test pins the two implementations.
  *
  * Accepts a `URL` or an absolute/relative request URL string (relative strings
- * resolve against `http://localhost`).
+ * resolve against `http://localhost`). Pass the router's `cache.searchParams`
+ * config as `searchParams` when the app under test sets one — the production
+ * key applies it, so the expected key must too.
  */
-export function shellCacheKey(url: URL | string): string {
+export function shellCacheKey(
+  url: URL | string,
+  searchParams?: CacheSearchParams,
+): string {
   const resolved =
     typeof url === "string" ? new URL(url, "http://localhost") : url;
-  const sorted = sortedSearchString(resolved.searchParams);
+  const sorted = sortedSearchString(
+    resolved.searchParams,
+    compileSearchParamsFilter(searchParams),
+  );
   const searchSuffix = sorted ? `?${sorted}` : "";
   return `${resolved.host}${resolved.pathname}${searchSuffix}:shell`;
 }

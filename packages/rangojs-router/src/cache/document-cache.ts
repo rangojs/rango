@@ -327,7 +327,13 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // existing keys and double any host they already include).
       const cacheKey = keyGenerator
         ? keyGenerator(url) + segmentHash + typeSuffix
-        : cacheKeyBase(url.host, url.pathname, url.searchParams) +
+        : cacheKeyBase(
+            url.host,
+            url.pathname,
+            url.searchParams,
+            undefined,
+            requestCtx?._searchParamsFilter,
+          ) +
           segmentHash +
           typeSuffix;
       // 1. Check cache

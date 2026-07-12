@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React from "react";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { compileSearchParamsFilter } from "../../cache/search-params-filter.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import {
   lookupBuildShell,
@@ -67,6 +68,29 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
     expect(
       await lookupBuildShell(url("/pp/a?x=1"), BUILD_VERSION, store),
+    ).toBeNull();
+  });
+
+  it("matches when the URL's only params are excluded by cache.searchParams", async () => {
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    const filter = compileSearchParamsFilter({ exclude: ["utm_*", "fbclid"] });
+    const hit = await lookupBuildShell(
+      url("/pp/a?fbclid=abc&utm_source=tw"),
+      BUILD_VERSION,
+      store,
+      undefined,
+      filter,
+    );
+    expect(hit).not.toBeNull();
+    // A surviving (non-excluded) param still skips the baked shell.
+    expect(
+      await lookupBuildShell(
+        url("/pp/a?fbclid=abc&page=2"),
+        BUILD_VERSION,
+        store,
+        undefined,
+        filter,
+      ),
     ).toBeNull();
   });
 

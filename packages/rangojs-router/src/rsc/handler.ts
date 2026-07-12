@@ -64,6 +64,10 @@ import {
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
+import {
+  compileSearchParamsFilter,
+  type SearchParamsFilter,
+} from "../cache/search-params-filter.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
@@ -460,6 +464,7 @@ export function createRSCHandler<
     // Priority: options.cache (handler override) > router.cache (router default)
     // Store is enabled only if: config provided, enabled, and no ?__no_cache query param
     let cacheStore: SegmentCacheStore | undefined;
+    let searchParamsFilter: SearchParamsFilter | undefined;
     const cacheOption = options.cache ?? router.cache;
     if (cacheOption && !url.searchParams.has("__no_cache")) {
       const cacheConfig =
@@ -469,6 +474,9 @@ export function createRSCHandler<
 
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;
+        searchParamsFilter = compileSearchParamsFilter(
+          cacheConfig.searchParams,
+        );
       }
     }
 
@@ -526,6 +534,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      searchParamsFilter,
       explicitTaggedStores,
       cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,

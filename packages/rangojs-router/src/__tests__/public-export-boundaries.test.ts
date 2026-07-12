@@ -43,6 +43,16 @@ describe("public export boundaries", () => {
     }
   });
 
+  it("default + react-server entries both export TRACKING_SEARCH_PARAMS", () => {
+    const rsc = readFileSync(rscEntry, "utf8");
+    const root = readFileSync(rootIndex, "utf8");
+    for (const source of [rsc, root]) {
+      expect(source).toMatch(
+        /export\s*\{[^}]*\bTRACKING_SEARCH_PARAMS\b[^}]*\}\s*from/,
+      );
+    }
+  });
+
   it("does not expose HostRouterRegistry from the public host subpath", () => {
     const source = readFileSync(hostIndex, "utf8");
     expect(source).not.toContain("HostRouterRegistry");

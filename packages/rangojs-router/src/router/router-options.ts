@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheSearchParams } from "../cache/search-params-filter.js";
 import type {
   ErrorBoundaryHandler,
   NotFoundBoundaryHandler,
@@ -304,15 +305,37 @@ export interface RangoOptions<TEnv = any> {
    *   }),
    * });
    * ```
+   *
+   * `searchParams` controls which query params key the cache (default:
+   * `"all"`). Cache keys only -- handlers still see the full query string.
+   * Excluding a param is a promise that rendered output does not depend on
+   * it; if it does, the first variant is cached and served to everyone.
+   *
+   * @example Ignore tracking params for cache keys
+   * ```typescript
+   * import { TRACKING_SEARCH_PARAMS } from "@rangojs/router";
+   *
+   * const router = createRouter({
+   *   cache: {
+   *     store: cacheStore,
+   *     searchParams: { exclude: TRACKING_SEARCH_PARAMS },
+   *   },
+   * });
+   * ```
    */
   cache?:
-    | { store: SegmentCacheStore; enabled?: boolean }
+    | {
+        store: SegmentCacheStore;
+        enabled?: boolean;
+        searchParams?: CacheSearchParams;
+      }
     | ((
         env: TEnv,
         ctx?: ExecutionContext,
       ) => {
         store: SegmentCacheStore;
         enabled?: boolean;
+        searchParams?: CacheSearchParams;
       });
 
   /**

@@ -84,6 +84,9 @@ export const router = createRouter<AppBindings>({
       ctx: ctx!, // Always provided in Cloudflare Workers
       kv: env.KV, // KV L2 for global persistence
     }),
+    // Key-only filter: utm_* never keys the cache (search-params-cache-key
+    // e2e via /test/spk-cached). Byte-stable for every URL without utm params.
+    searchParams: { exclude: ["utm_*"] },
   }),
   // Short-TTL profile for the SWR + getRequestContext() regression (see
   // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the

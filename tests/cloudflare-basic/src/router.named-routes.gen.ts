@@ -141,6 +141,7 @@ export const NamedRoutes = {
   testPurgeLog: "/__test/purge-log",
   testPurgeTaggedJson: "/test/purge-tagged-json",
   testRevalidateTag: "/test/revalidate-tag/:tag",
+  testSpkCached: "/test/spk-cached",
   testTaggedJson: "/test/tagged-json",
   testTaggedJsonB: "/test/tagged-json-b",
   testUncachedJson: "/test/uncached-json",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { compileSearchParamsFilter } from "../../cache/search-params-filter.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import { buildShellKey } from "../../rsc/shell-serve.js";
 import {
@@ -44,6 +45,19 @@ describe("shellCacheKey (production key identity)", () => {
     const bare = new URL("http://localhost/p?page=1");
     expect(shellCacheKey(withRsc)).toBe(shellCacheKey(bare));
     expect(shellCacheKey(withRsc)).toBe(buildShellKey(withRsc));
+  });
+
+  it("applies cache.searchParams the same way production buildShellKey does", () => {
+    const searchParams = { exclude: ["utm_*", "fbclid"] } as const;
+    const filter = compileSearchParamsFilter(searchParams);
+    const tracked = new URL("http://localhost/p?utm_source=tw&fbclid=1&q=x");
+    const bare = new URL("http://localhost/p?q=x");
+    expect(shellCacheKey(tracked, searchParams)).toBe(
+      buildShellKey(tracked, filter),
+    );
+    expect(shellCacheKey(tracked, searchParams)).toBe(shellCacheKey(bare));
+    // Without the config, tracked params stay in the key.
+    expect(shellCacheKey(tracked)).not.toBe(shellCacheKey(bare));
   });
 });
 
