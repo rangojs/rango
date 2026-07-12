@@ -103,6 +103,8 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../../server/request-context.js";
+import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
+import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
@@ -389,8 +391,10 @@ export function withCacheLookup<TEnv>(
       resolveLoadersOnly,
     } = getRouterContext<TEnv>();
 
-    const isHmr = !!ctx.request.headers.get("X-RSC-HMR");
-    if (!ctx.isAction && !isHmr && ctx.matched.pr) {
+    if (
+      !ctx.isAction &&
+      prerenderStoreShortCircuits(ctx.matched.pr, ctx.request)
+    ) {
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
         const served = yield* tryPrerenderLookup(
@@ -437,11 +441,42 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
-    const cacheResult = await ctx.cacheScope.lookupRoute(
+    let cacheResult = await ctx.cacheScope.lookupRoute(
       ctx.pathname,
       ctx.matched.params,
       ctx.isIntercept,
     );
+
+    // PPR navigation replay composed with a route-derived cache() scope. The
+    // explicit tier stays authoritative: its hit serves under its own
+    // key/ttl/swr semantics and reports `explicit-cache-hit` — never a false
+    // replay HIT. Only when it MISSes may the seeded doc record supply the
+    // match (the marker's onHit observer then reports the true HIT). Gated on
+    // the marker's `onExplicitHit`, set ONLY on the navigation-replay serve
+    // path: a CAPTURE render must never fall back here — its marker store
+    // reads through to the real store, and a doc-keyed hit would replay the
+    // previous generation's segments instead of re-running handlers (breaking
+    // SWR recapture freshness). Intercepts stay source-dependent on their
+    // normal cache path (match-api never arms replay for them).
+    const replayMarker = _getRequestContext()?._shellImplicitCache;
+    if (
+      replayMarker?.onExplicitHit &&
+      !ctx.isIntercept &&
+      !ctx.cacheScope.isShellImplicitDocScope
+    ) {
+      if (cacheResult) {
+        replayMarker.onExplicitHit();
+      } else if (ctx.cacheScope.allowsCache("read")) {
+        // allowsCache distinguishes a genuine explicit-tier miss from a
+        // condition() refusal: the consumer opt-out is absolute, so a refused
+        // read must not be rescued by the seeded record. (The replay gate
+        // already reports `cache-disabled` pre-read when classification is
+        // available; this keeps the invariant structural.)
+        cacheResult = await createShellImplicitDocScope(
+          replayMarker,
+        ).lookupRoute(ctx.pathname, ctx.matched.params, ctx.isIntercept);
+      }
+    }
 
     if (!cacheResult) {
       yield* source;

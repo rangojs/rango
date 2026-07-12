@@ -88,6 +88,31 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(seq2).toBe(seq1 + 1);
   });
 
+  test("partial navigation is served from the prerender store and reports BYPASS; reason=prerender-store", async ({
+    request,
+  }) => {
+    // The prerender short-circuit means a Prerender()+ppr capture never
+    // records a doc segment record, so navigation replay could never seed —
+    // the old flow spent two getShell reads to misreport
+    // `no-segment-snapshot`. The gate now decides before any read; the
+    // partial itself still serves from build-time segments.
+    const url = f.url("/pp/alpha?probe=partial-nav");
+    await warmToHit(request, url);
+
+    const replay = await request.get(
+      `${url}&_rsc_partial=true&_rsc_segments=`,
+      { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+    );
+    expect(replay.status()).toBe(200);
+    expect(replay.headers()["x-rango-ppr-replay"]).toBe(
+      "BYPASS; reason=prerender-store",
+    );
+    // Build-time segments supplied the partial match.
+    expect(await replay.text()).toContain(
+      "Prerendered shell content for alpha",
+    );
+  });
+
   // Fragment splice (issue #700) on the Prerender+ppr composition: the HIT
   // tail serves its segments from the PRERENDER STORE (the lookup runs before
   // the cache scope), so the splice must engage there too — the hydration

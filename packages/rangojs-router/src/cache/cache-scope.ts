@@ -226,6 +226,33 @@ export class CacheScope {
   }
 
   /**
+   * @internal Whether a cache read/write is allowed for the current request:
+   * the scope is enabled AND its `condition` (if any) returns true. "read"
+   * is consulted by the PPR navigation-replay gate BEFORE any shell-store
+   * read so a cache(false)/condition-false route reports `cache-disabled`
+   * without spending getShell I/O; "write" gates the capture's snapshot-only
+   * doc record (cache-store middleware) under the same semantics as the
+   * scope's own store write. Consumer opt-outs are absolute — the seeded
+   * fallback must never serve where the consumer refused cached serves.
+   */
+  allowsCache(op: "read" | "write"): boolean {
+    return this.enabled && this.conditionAllows(op);
+  }
+
+  /**
+   * @internal True for scopes minted from the `_shellImplicitCache` marker
+   * (createShellImplicitDocScope) — the only construction path that passes
+   * the `doc` defaultKeyPrefix; route-derived scopes (createCacheScope) never
+   * do. withCacheLookup/withCacheStore use this to tell the implicit doc
+   * scope from a route-derived scope: the two compose on the replay serve
+   * path and only the route-derived kind gets the seeded fallback /
+   * doc-record treatment.
+   */
+  get isShellImplicitDocScope(): boolean {
+    return this.defaultKeyPrefix === "doc";
+  }
+
+  /**
    * Evaluate the cache `condition` predicate. Returns false (skip the cache
    * operation) when the predicate returns false or throws; returns true when
    * there is no condition or no request context to evaluate it against.
@@ -422,6 +449,15 @@ export class CacheScope {
     // Resolve cache key early (while request context is available)
     const key = await this.resolveKey(pathname, params, isIntercept);
 
+    // Doc-namespaced scopes (the shell implicit scope and the capture's
+    // composed doc scope) publish the canonical document segment key so
+    // captureAndStoreShell can stamp it onto the shell entry (`docKey`).
+    // Replay eligibility then requires this exact record — "any segment
+    // record" previously counted unusable explicit-tier-keyed records too.
+    if (this.defaultKeyPrefix === "doc" && requestCtx._shellImplicitCache) {
+      requestCtx._shellImplicitCache.docKey = key;
+    }
+
     // Resolve tags early (while request context is available, before waitUntil)
     const tags = resolveCacheTags(this.config, requestCtx);
     recordRequestTags(tags, requestCtx);
@@ -538,6 +574,31 @@ export function createCacheScope(
   return new CacheScope(config.options, parent);
 }
 
+type ShellImplicitCacheMarker = NonNullable<
+  RequestContext["_shellImplicitCache"]
+>;
+
+/**
+ * Mint the implicit doc-level scope for a `_shellImplicitCache` marker: key
+ * resolution under the marker's `doc` namespace against the marker's store,
+ * with the marker's onHit wired as the hit observer. Shared by
+ * {@link resolveShellImplicitCacheScope} (routes that derived no scope) and
+ * the explicit-scope composition sites (capture doc record in the cache-store
+ * middleware, seeded replay fallback in withCacheLookup) so both ends of the
+ * shell contract resolve the SAME canonical document key.
+ */
+export function createShellImplicitDocScope(
+  marker: ShellImplicitCacheMarker,
+): CacheScope {
+  const implicitScope = new CacheScope(
+    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
+    null,
+    marker.keyPrefix,
+  );
+  if (marker.onHit) CACHE_HIT_OBSERVERS.set(implicitScope, marker.onHit);
+  return implicitScope;
+}
+
 /**
  * Shell fast path: when the route tree derived NO cache scope and the current
  * request context carries the `_shellImplicitCache` marker (a shell capture,
@@ -548,9 +609,11 @@ export function createCacheScope(
  * (resolveFreshLoadersAndYield).
  *
  * An existing scope — including an explicit cache(false) opt-out — always
- * wins: the consumer's cache() semantics (their ttl/swr/store/condition) are
- * never overridden, and cache(false) keeps the tail on the full handler
- * re-run path.
+ * wins HERE: the consumer's cache() semantics (their ttl/swr/store/condition)
+ * are never overridden, and cache(false) keeps the tail on the full handler
+ * re-run path. On the navigation-replay serve path the marker still composes
+ * with an explicit scope downstream (withCacheLookup's seeded fallback after
+ * an explicit-tier miss) — see `onExplicitHit` on `_shellImplicitCache`.
  */
 export function resolveShellImplicitCacheScope(
   scope: CacheScope | null,
@@ -558,11 +621,5 @@ export function resolveShellImplicitCacheScope(
   if (scope) return scope;
   const marker = getRequestContext()?._shellImplicitCache;
   if (!marker) return null;
-  const implicitScope = new CacheScope(
-    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
-    null,
-    marker.keyPrefix,
-  );
-  if (marker.onHit) CACHE_HIT_OBSERVERS.set(implicitScope, marker.onHit);
-  return implicitScope;
+  return createShellImplicitDocScope(marker);
 }

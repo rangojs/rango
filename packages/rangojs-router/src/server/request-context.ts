@@ -265,9 +265,13 @@ export interface RequestContext<
    * (b) a HIT tail's seeded context, and (c) an eligible normal-route partial
    * replay, where `store` is a request-local segment overlay. Handler-live holes
    * and conditional transitions decline replay.
-   * Routes with their own cache() config (including cache(false)) are never
-   * overridden: the marker only applies when the route tree derived NO cache
-   * scope.
+   * Routes with their own cache() config are never overridden — their scope's
+   * store/key/ttl/swr/condition semantics stay authoritative. On the
+   * navigation-replay serve path (`onExplicitHit` set) the marker COMPOSES with
+   * such a scope instead of being ignored: the seeded doc record supplies the match
+   * only when the explicit tier misses (withCacheLookup). cache(false) and a
+   * false condition() stay absolute opt-outs — replay bypasses before any
+   * shell read (`cache-disabled`).
    */
   _shellImplicitCache?: {
     ttl?: number;
@@ -281,6 +285,26 @@ export interface RequestContext<
     keyPrefix?: "doc";
     /** @internal Called only after the implicit cache hit decodes successfully. */
     onHit?: () => void;
+    /**
+     * @internal The resolved key of the canonical document segment record.
+     * Written during a CAPTURE render by CacheScope.cacheRoute when a
+     * doc-namespaced scope records the matched segments; captureAndStoreShell
+     * stamps it onto the ShellCacheEntry (`docKey`) so replay eligibility can
+     * require the exact consumable record instead of "any segment record".
+     */
+    docKey?: string;
+    /**
+     * @internal Set ONLY by matchPartialWithPprReplay on the navigation-replay
+     * serve path. Its presence arms the explicit-scope composition in
+     * withCacheLookup: a route-derived cache() scope stays authoritative, and
+     * only when its lookup MISSes does the seeded doc record supply the match.
+     * A capture render must never set this (its match must re-run handlers so
+     * SWR recapture stays fresh), which is why the fallback keys off this
+     * field and not off the marker itself. Fired when the route-derived
+     * scope's own lookup supplied the match — the header then reports
+     * `BYPASS; reason=explicit-cache-hit`, never a false replay HIT.
+     */
+    onExplicitHit?: () => void;
   };
 
   /**

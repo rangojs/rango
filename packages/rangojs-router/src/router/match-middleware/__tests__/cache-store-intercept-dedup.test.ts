@@ -7,42 +7,12 @@ import {
 } from "../../../server/request-context.js";
 import type { ResolvedSegment } from "../../../types.js";
 import type { MatchContext, MatchPipelineState } from "../../match-context.js";
+import { seg, gen, makeCacheStoreRouterContextStub } from "./helpers.js";
 
 // B4: on a fresh (cache-miss) intercept navigation, the intercept slot segments
 // flow through `source` into `allSegments` AND are also recorded on
 // state.interceptSegments. The direct-cache path must cache each segment ONCE,
 // not append the intercept segments a second time.
-
-function seg(
-  id: string,
-  overrides: Partial<ResolvedSegment> = {},
-): ResolvedSegment {
-  return {
-    id,
-    namespace: id,
-    type: "route",
-    index: 0,
-    component: {} as any, // non-null so hasNullComponents stays false (direct path)
-    params: {},
-    belongsToRoute: true,
-    ...overrides,
-  } as ResolvedSegment;
-}
-
-async function* gen(segments: ResolvedSegment[]) {
-  for (const s of segments) yield s;
-}
-
-function makeRouterContextStub() {
-  // The direct-cache path destructures these but never calls them; stub them.
-  return {
-    createHandlerContext: vi.fn(),
-    setupLoaderAccess: vi.fn(),
-    resolveAllSegments: vi.fn(),
-    resolveInterceptEntry: vi.fn(),
-    createHandleStore: vi.fn(),
-  } as any;
-}
 
 describe("withCacheStore — intercept segment dedup (B4)", () => {
   it("caches each segment once on a fresh intercept navigation", async () => {
@@ -90,7 +60,7 @@ describe("withCacheStore — intercept segment dedup (B4)", () => {
       } as any,
     });
 
-    await runWithRouterContext(makeRouterContextStub(), () =>
+    await runWithRouterContext(makeCacheStoreRouterContextStub(), () =>
       runWithRequestContext(reqCtx, async () => {
         const mw = withCacheStore(ctx, state);
         // Drain the middleware (collects allSegments, registers onResponse).

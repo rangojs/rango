@@ -306,6 +306,20 @@ export interface ShellCacheEntry {
    */
   snapshot?: ShellSnapshotRecord[];
   /**
+   * The key of the CANONICAL document segment record inside `snapshot` — the
+   * one navigation replay can actually consume (resolved under the implicit
+   * doc namespace at capture; see CacheScope.cacheRoute). Replay eligibility
+   * requires this exact record: the snapshot also carries incidentally
+   * recorded explicit-tier records (RecordingShellStore passthroughs) whose
+   * keys a partial lookup can never resolve, and counting those declared
+   * entries "replayable" that always missed (`snapshot-miss` flip-flop).
+   * Absent on entries captured before the field existed OR when the capture
+   * recorded no doc record (cache(false)/condition-false routes, prerender
+   * short-circuit) — both read as `no-segment-snapshot`; recapture heals the
+   * former.
+   */
+  docKey?: string;
+  /**
    * The entry was captured from a partial request only to produce an eligible
    * segment snapshot. Document serving must treat its HTML prelude as a miss;
    * the partial request's headers and middleware state are not document state.

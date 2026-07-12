@@ -192,8 +192,23 @@ replay its eligible snapshot. In both cases `matchPartial()`:
 This is deliberately invisible to the browser: the response is the same
 `RscPayload` shape as any other partial navigation. Captured item/response values
 and loader-container pins are NOT replayed on this path, so loader reads stay
-live. A route's own `cache()` scope still resolves its normal store, key, TTL,
-SWR, tags, and condition; only the implicit PPR scope sees this behavior.
+live.
+
+A route's own `cache()` scope — including one inherited from an ancestor, the
+common app-wide storefront shape — COMPOSES with replay instead of disabling
+it. The explicit tier stays authoritative: its lookup runs first with its
+normal store, key, TTL, SWR, tags, and condition, and when it supplies the
+match the response reports `BYPASS; reason=explicit-cache-hit` (never a false
+replay `HIT`). Only when the explicit tier misses does the shell snapshot's
+canonical doc segment record supply the match and report `HIT`. To make that
+possible, a capture of such a route records the doc segment record into the
+shell snapshot IN ADDITION to the scope's normal store write; the record rides
+only inside the shell entry, never the real store. Two opt-outs stay absolute:
+`cache(false)` and a `condition()` returning false mean "do not serve this
+request's segments from any cache" — replay reports
+`BYPASS; reason=cache-disabled` before performing a single shell read, and no
+doc record is captured for them.
+
 `transition({ when })` is evaluated from the
 matched manifest before route handlers on every PPR match, so it can vary by
 URL/params/action or middleware context without disabling replay; handler-set
@@ -201,6 +216,19 @@ context is unavailable by design. Intercepts, handler-live holes, an active
 nonce, and an absent/corrupt segment snapshot fall open to the ordinary partial
 path when encountered by the shell capture. A transition already replayed from
 an explicit cache tier remains frozen by that tier's normal semantics.
+
+Two more decisions are made before any shell-store read, so probes and
+prerendered routes never spend passive `getShell` I/O:
+
+- A partial request carrying neither `X-RSC-Router-Client-Path` nor `Referer`
+  (a curl probe, a synthetic monitor) can never produce a partial match; it
+  reports `BYPASS; reason=no-navigation-context`. Alert on replay hit-rate
+  with this in mind — such probes are not cache misses.
+- A `Prerender()` route's partial is served from the build-time prerender
+  store inside matching (a better-than-HIT outcome); it reports
+  `BYPASS; reason=prerender-store`. Its captures never record a doc segment
+  record (the prerender store short-circuits the cache write), so replay
+  seeding would be impossible anyway.
 
 Fresh and stale-within-SWR runtime shells replay. The stale read is passive: it
 uses `getShell(key, { claimRevalidation: false })`, does not claim SWR ownership,
@@ -226,8 +254,22 @@ performance metrics enabled, the same decision appears as
 `ppr-navigation-replay` in `Server-Timing`. `HIT` means matching consumed the
 seeded segment record after it decoded successfully, not merely that a snapshot
 existed. An explicit `cache()` scope that supplies the match cannot produce a
-false HIT. There is still no Flight resume API; this is segment replay followed
-by normal Flight streaming, not reuse of the HTML `prelude`/`postponed` bytes.
+false HIT — it reports `explicit-cache-hit`. There is still no Flight resume
+API; this is segment replay followed by normal Flight streaming, not reuse of
+the HTML `prelude`/`postponed` bytes.
+
+The bounded bypass tokens, grouped by when they are decided:
+
+| Token                                                                             | Decided     | Meaning                                                                                                                            |
+| --------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `method`, `dynamic`, `nonce`, `store-unavailable`, `passive-read-unsupported`     | pre-read    | request/route/store ineligible for replay                                                                                          |
+| `no-navigation-context`                                                           | pre-read    | no `X-RSC-Router-Client-Path`/`Referer`; a partial match is impossible                                                             |
+| `prerender-store`                                                                 | pre-read    | `Prerender()` route; the build-time store serves the partial                                                                       |
+| `cache-disabled`                                                                  | pre-read    | `cache(false)` or `condition()` false; consumer opt-out is absolute                                                                |
+| `read-error`, `no-entry`, `invalid-version`, `corrupt-entry`, `stale-build-entry` | shell read  | no usable shell entry (`no-entry`/`invalid-version`/`corrupt-entry`/`stale-build-entry` schedule the navigation-only heal capture) |
+| `handler-live-holes`, `transition-when`, `no-segment-snapshot`                    | eligibility | entry exists but its snapshot cannot replay (no canonical doc record, or handler/transition liveness)                              |
+| `explicit-cache-hit`                                                              | match       | the route's own `cache()` tier supplied the match                                                                                  |
+| `snapshot-miss`                                                                   | match       | an eligible snapshot was seeded but matching did not consume it                                                                    |
 
 ### Capture-generation invalidation
 

@@ -180,6 +180,39 @@ export function PprSlotHomePage() {
   return <p data-testid="ppr-slot-home">Slot home static content</p>;
 }
 
+// Storefront shape (PPR navigation replay composed with an explicit cache()):
+// static layout chrome; the page embeds a per-execution stamp so a replayed
+// serve (frozen stamp) is distinguishable from a fresh handler run.
+export function PprScopedChromeLayout() {
+  return (
+    <main data-testid="ppr-scoped-page">
+      <p data-testid="ppr-scoped-chrome">Scoped chrome static content</p>
+      <Outlet />
+    </main>
+  );
+}
+
+let pprScopedExecution = 0;
+
+export function PprScopedHomePage() {
+  pprScopedExecution += 1;
+  return (
+    <p data-testid="ppr-scoped-home">
+      scoped-home-execution-{pprScopedExecution}
+    </p>
+  );
+}
+
+export function PprScopedOptOutPage() {
+  return <p data-testid="ppr-scoped-optout">Scoped opt-out static content</p>;
+}
+
+export function PprScopedConditionPage() {
+  return (
+    <p data-testid="ppr-scoped-condition">Scoped condition static content</p>
+  );
+}
+
 // Shell fast-path execution matrix (docs/design/shell-fast-path.md): each
 // layer increments its module counter; the DSL loader (live lane) reports the
 // snapshot per serve. On a fast-path HIT, ONLY middleware + the loader may

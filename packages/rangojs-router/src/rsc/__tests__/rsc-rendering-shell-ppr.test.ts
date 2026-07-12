@@ -127,6 +127,14 @@ interface RunOpts {
   store?: unknown;
   url?: string;
   partial?: boolean;
+  /**
+   * Partial requests carry a navigation-context header by default (matching a
+   * real client navigation — the replay gate bypasses without one). Set false
+   * to model a context-less probe (curl, synthetic monitor).
+   */
+  navContext?: false;
+  /** Extra request headers (e.g. X-RSC-HMR). */
+  headers?: Record<string, string>;
   shell?: ShellCacheEntry;
   matchPartial?: () => ReturnType<
     HandlerContext<unknown>["router"]["matchPartial"]
@@ -156,6 +164,10 @@ async function run(opts: RunOpts): Promise<{
     {
       headers: {
         accept: opts.partial ? "text/x-component" : "text/html",
+        ...(opts.partial && opts.navContext !== false
+          ? { "X-RSC-Router-Client-Path": "/from" }
+          : {}),
+        ...opts.headers,
       },
     },
   );
@@ -178,6 +190,9 @@ async function run(opts: RunOpts): Promise<{
   (reqCtx as any)._classifiedRoute = {
     manifestEntry: {
       type: "route",
+      // Real manifest entries terminate their parent chain with null; the
+      // replay gate walks it (classifiedRouteCacheScope -> traverseBack).
+      parent: null,
       ...(opts.ppr !== undefined ? { ppr: opts.ppr } : {}),
     },
   };
@@ -1028,9 +1043,12 @@ describe("handleRscRendering — integrated PPR serve: bypasses", () => {
 });
 
 describe("handleRscRendering — PPR partial navigation replay", () => {
+  // The canonical doc segment key for /p — capture stamps it on the entry
+  // (docKey) and eligibility requires the exact record under it.
+  const DOC_KEY = "doc:localhost/p";
   const segmentRecord: ShellSnapshotRecord = {
     family: "segment",
-    key: "doc:localhost/p",
+    key: DOC_KEY,
     value: {
       segments: [
         {
@@ -1061,6 +1079,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       store: options.store,
       shell: shellEntry({
         snapshot: [segmentRecord],
+        docKey: DOC_KEY,
         ...options.entryOverrides,
       }),
       nonce: options.nonce,
@@ -1090,7 +1109,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
   it("passively replays a stale shell without claiming revalidation ownership", async () => {
     const store = new MemorySegmentCacheStore();
     const getShell = vi.spyOn(store, "getShell").mockResolvedValue({
-      entry: shellEntry({ snapshot: [segmentRecord] }),
+      entry: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
       shouldRevalidate: true,
     });
     let replayArmed = false;
@@ -1103,7 +1122,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       matchPartial: async () => {
         const active = getRequestContext();
         const replayStore = active._shellImplicitCache?.store;
-        replayArmed = (await replayStore?.get("doc:localhost/p")) !== null;
+        replayArmed = (await replayStore?.get(DOC_KEY)) !== null;
         if (replayArmed) active._shellImplicitCache?.onHit?.();
         return emptyMatchResult();
       },
@@ -1131,6 +1150,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       ppr: true,
       store,
       shell: shellEntry({
+        docKey: DOC_KEY,
         snapshot: [
           segmentRecord,
           {
@@ -1148,7 +1168,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
         const replayStore = active._shellImplicitCache!.store!;
         expect(active).toBe(baseContext);
         expect(active._cacheStore).toBe(store);
-        segmentHit = (await replayStore.get("doc:localhost/p")) !== null;
+        segmentHit = (await replayStore.get(DOC_KEY)) !== null;
         if (segmentHit) active._shellImplicitCache!.onHit?.();
         itemValue = (await replayStore.getItem!("loader-item"))?.value;
         marker = active._shellImplicitCache;
@@ -1187,8 +1207,15 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(getShell).not.toHaveBeenCalled();
   });
 
-  it("schedules a navigation-only capture without foreground-fetching the dev shell endpoint", async () => {
+  it("bypasses a prerender route as prerender-store: zero shell reads, no capture, no dev endpoint fetch", async () => {
+    // A Prerender()+ppr partial is served from the build-time prerender store
+    // inside withCacheLookup; its capture never records a doc segment record
+    // (withCacheStore skips on the prerender hit), so replay seeding could
+    // never succeed. The gate decides before any getShell read and must not
+    // schedule heal captures (their snapshots would be equally unusable) or
+    // foreground-fetch the dev /__rsc_shell endpoint.
     const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell");
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
     const { response, ctx } = await run({
@@ -1203,17 +1230,35 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=prerender-store",
+    );
+    expect(getShell).not.toHaveBeenCalled();
+    expect(scheduleMock).not.toHaveBeenCalled();
+    expect(ctx.loadSSRModule).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("an HMR partial to a prerender route falls through to the ordinary replay decision", async () => {
+    // withCacheLookup declines the prerender-store lookup on X-RSC-HMR (the
+    // memoized build entry may be stale mid-edit), so the gate must share
+    // that predicate (prerenderStoreShortCircuits): reporting
+    // `prerender-store` here would blame a store that never served.
+    const store = new MemorySegmentCacheStore();
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      headers: { "X-RSC-HMR": "1" },
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).matched = { pr: true };
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
       "BYPASS; reason=no-entry",
     );
-    expect(scheduleMock).toHaveBeenCalledTimes(1);
-    expect(ctx.loadSSRModule).not.toHaveBeenCalled();
-    expect(scheduleMock.mock.calls[0]![5]).toEqual(expect.any(Function));
-    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
-      key: NAVIGATION_KEY,
-      store,
-      navigationOnly: true,
-    });
-    fetchSpy.mockRestore();
   });
 
   it("resolves allReady policy lazily and declines background navigation capture", async () => {
@@ -1296,7 +1341,11 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     const store = new MemorySegmentCacheStore();
     await store.putShell(
       NAVIGATION_KEY,
-      shellEntry({ navigationOnly: true, snapshot: [segmentRecord] }),
+      shellEntry({
+        navigationOnly: true,
+        snapshot: [segmentRecord],
+        docKey: DOC_KEY,
+      }),
       300,
     );
     let replayArmed = false;
@@ -1356,13 +1405,169 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       ssrModule: fullSsrModule(),
       partial: true,
       ppr: true,
-      shell: shellEntry({ snapshot: [segmentRecord] }),
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
     });
 
     expect(response.headers.get("x-rango-ppr-replay")).toBe(
       "BYPASS; reason=snapshot-miss",
     );
   });
+
+  it("bypasses a context-less partial as no-navigation-context: zero shell reads, no seeding, no capture", async () => {
+    // curl probes and synthetic monitors carry neither X-RSC-Router-Client-Path
+    // nor Referer; such a partial can never match, so the old flow spent two
+    // getShell reads + seeding only to misreport `snapshot-miss`.
+    const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell");
+    let replayArmed = false;
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      navContext: false,
+      ppr: true,
+      store,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      matchPartial: async () => {
+        replayArmed =
+          getRequestContext()._shellImplicitCache?.keyPrefix === "doc";
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=no-navigation-context",
+    );
+    expect(replayArmed).toBe(false);
+    expect(getShell).not.toHaveBeenCalled();
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["cache(false)", false as const],
+    ["a false condition()", { ttl: 30, condition: () => false }],
+  ])(
+    "bypasses a route whose scope refuses cached serves (%s) as cache-disabled: zero shell reads, no capture",
+    async (_label, cacheOptions) => {
+      const store = new MemorySegmentCacheStore();
+      const getShell = vi.spyOn(store, "getShell");
+      let replayArmed = false;
+
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        partial: true,
+        ppr: true,
+        store,
+        shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+        arm: (reqCtx) => {
+          (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+            options: cacheOptions,
+          };
+        },
+        matchPartial: async () => {
+          replayArmed =
+            getRequestContext()._shellImplicitCache?.keyPrefix === "doc";
+          return emptyMatchResult();
+        },
+      });
+
+      expect(response.headers.get("x-rango-ppr-replay")).toBe(
+        "BYPASS; reason=cache-disabled",
+      );
+      expect(replayArmed).toBe(false);
+      expect(getShell).not.toHaveBeenCalled();
+      expect(scheduleMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("an app-wide cache() scope (enabled, no condition) does NOT gate replay off", async () => {
+    // The storefront shape: the route inherits a cache() from an ancestor.
+    // Replay must proceed to the shell reads and seed the overlay — the
+    // explicit tier composes downstream instead of disabling the tier.
+    let replayArmed = false;
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: { ttl: 30, swr: 604_800 },
+        };
+      },
+      matchPartial: async () => {
+        const active = getRequestContext();
+        replayArmed = active._shellImplicitCache?.keyPrefix === "doc";
+        active._shellImplicitCache?.onHit?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(replayArmed).toBe(true);
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
+  });
+
+  it("reports explicit-cache-hit when the route-derived tier supplied the match (no false replay HIT)", async () => {
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: { ttl: 30 },
+        };
+      },
+      matchPartial: async () => {
+        // withCacheLookup fires this when the explicit scope's own lookup
+        // hits; the seeded record was not consumed.
+        getRequestContext()._shellImplicitCache?.onExplicitHit?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=explicit-cache-hit",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("a consumed seeded record wins over a same-request explicit hit in the status precedence", async () => {
+    // Different cache() boundaries can resolve within one match (e.g. an
+    // intercept slot on its normal path). The replay header reports the doc
+    // record's consumption — the thing that actually replayed the shell.
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      matchPartial: async () => {
+        const marker = getRequestContext()._shellImplicitCache;
+        marker?.onExplicitHit?.();
+        marker?.onHit?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
+  });
+
+  it("declines an entry stored before the docKey field existed (no crash, honest no-segment-snapshot)", async () =>
+    expectReplayDeclined(
+      { entryOverrides: { docKey: undefined } },
+      "no-segment-snapshot",
+    ));
+
+  it("declines an entry whose docKey names a record the snapshot does not carry", async () =>
+    expectReplayDeclined(
+      { entryOverrides: { docKey: "doc:localhost/other" } },
+      "no-segment-snapshot",
+    ));
 });
 
 describe("handleRscRendering — no PPR flags is byte-identical axis 1", () => {

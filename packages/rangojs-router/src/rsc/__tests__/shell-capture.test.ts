@@ -318,6 +318,55 @@ describe("captureAndStoreShell", () => {
     expect(putShell.mock.calls[0]![1].transitionWhen).toBe(true);
   });
 
+  it("stamps the marker's docKey onto the stored entry alongside its snapshot record", async () => {
+    const putShell = makePutShell();
+    const recording = new RecordingShellStore({ putShell } as any);
+    const reqCtx = makeReqCtx();
+    reqCtx._cacheStore = recording;
+    // What the doc scope's cacheRoute does during the capture's match: record
+    // the canonical doc segment record and publish its key on the marker.
+    recording.recordSegmentWrite("doc:host/p", {
+      segments: [{ encoded: "", metadata: { id: "R0" } } as any],
+      handles: "",
+      expiresAt: Date.now() + 60_000,
+    });
+    reqCtx._shellImplicitCache = { docKey: "doc:host/p" };
+
+    await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/doc-key:shell", buildVersion: "test-build", ttl: 300 },
+    );
+
+    expect(putShell).toHaveBeenCalledOnce();
+    const entry = putShell.mock.calls[0]![1];
+    expect(entry.docKey).toBe("doc:host/p");
+    expect(entry.snapshot).toEqual([
+      expect.objectContaining({ family: "segment", key: "doc:host/p" }),
+    ]);
+  });
+
+  it("stores no docKey when the capture recorded no snapshot", async () => {
+    const putShell = makePutShell();
+    const reqCtx = makeReqCtx(putShell);
+    // A stale marker docKey without a snapshot must not mint a replayable
+    // claim — eligibility requires the record itself.
+    reqCtx._shellImplicitCache = { docKey: "doc:host/p" };
+
+    await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/doc-key-empty:shell", buildVersion: "test-build", ttl: 300 },
+    );
+
+    expect(putShell).toHaveBeenCalledOnce();
+    expect(putShell.mock.calls[0]![1].docKey).toBeUndefined();
+  });
+
   it("refuses and reports a shell invalidated by its own capture render", async () => {
     const store = new MemorySegmentCacheStore();
     const reqCtx = makeReqCtx();

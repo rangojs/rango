@@ -1097,6 +1097,179 @@ function runShellCacheSpec(f: Fixture): void {
     );
   });
 
+  // --- Storefront shape: replay composed with an ancestor cache() scope. ---
+  // (urls/shell-cache.tsx `cache({ ttl: 30, swr })` wrapping ppr routes — the
+  // rsc-cloudflare-app diagnosis shape, where replay used to be structurally
+  // dead: eternal `snapshot-miss` plus two wasted getShell reads per nav.)
+
+  test("storefront shape: cold explicit tier — navigation replays the shell snapshot (HIT) with the handler frozen", async ({
+    page,
+  }) => {
+    const probe = crypto.randomUUID();
+    const target = f.url(`/shell-cache/scoped?probe=${probe}`);
+    await warmToHit(page.request, target);
+
+    using _ = expectNoPageError(page);
+    const navigateFromFreshDocument = async () => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/shell-cache/scoped" &&
+          responseUrl.searchParams.get("probe") === probe &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
+      await page.evaluate((href) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.dataset.testid = "shell-scoped-entry";
+        link.textContent = "Enter scoped fixture";
+        document.body.append(link);
+      }, target);
+      await testId(page, "shell-scoped-entry").click();
+      const partialResponse = await partialResponsePromise;
+      await expect(testId(page, "shell-scoped-chrome")).toHaveText(
+        "Scoped chrome static content",
+      );
+      assertPprReplayStatus(
+        { headers: new Headers(partialResponse.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+      return (await testId(page, "shell-scoped-home").textContent())!;
+    };
+
+    // The ring-3 partial tier is cold for this probe (no partial rendered
+    // fresh), so BOTH navigations must be supplied by the seeded doc record —
+    // and the page handler stays frozen at its capture-time execution.
+    const first = await navigateFromFreshDocument();
+    const second = await navigateFromFreshDocument();
+    expect(first).toMatch(/^scoped-home-execution-\d+$/);
+    expect(second).toBe(first);
+  });
+
+  test("storefront shape: warm explicit tier serves the partial and reports explicit-cache-hit, never a false HIT", async ({
+    page,
+  }) => {
+    const probe = crypto.randomUUID();
+    const target = f.url(`/shell-cache/scoped?probe=${probe}`);
+    const waitForPartial = () =>
+      page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/shell-cache/scoped" &&
+          responseUrl.searchParams.get("probe") === probe &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
+    const enterFixture = async (suffix: string) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      const partialResponsePromise = waitForPartial();
+      await page.evaluate(
+        ([href, id]) => {
+          const link = document.createElement("a");
+          link.href = href!;
+          link.dataset.testid = id!;
+          link.textContent = "Enter scoped fixture";
+          document.body.append(link);
+        },
+        [target, `shell-scoped-entry-${suffix}`],
+      );
+      await testId(page, `shell-scoped-entry-${suffix}`).click();
+      const partialResponse = await partialResponsePromise;
+      await expect(testId(page, "shell-scoped-chrome")).toHaveText(
+        "Scoped chrome static content",
+      );
+      return {
+        response: partialResponse,
+        stamp: (await testId(page, "shell-scoped-home").textContent())!,
+      };
+    };
+
+    using _ = expectNoPageError(page);
+    // 1. Shell cold: the first navigation renders fresh (bounded no-entry
+    //    bypass) and WRITES the ring-3 partial entry (explicit scope, ttl 30).
+    const cold = await enterFixture("cold");
+    assertPprReplayStatus(
+      { headers: new Headers(cold.response.headers()) },
+      { outcome: "BYPASS", reason: "no-entry" },
+    );
+
+    // 2. Warm the document shell (captures the doc segment record + docKey).
+    await warmToHit(page.request, target);
+
+    // 3. Navigate again within the explicit ttl: the consumer's tier stays
+    //    authoritative — served from the ring-3 entry written in step 1 (same
+    //    execution stamp), reported honestly as explicit-cache-hit.
+    const warm = await enterFixture("warm");
+    assertPprReplayStatus(
+      { headers: new Headers(warm.response.headers()) },
+      { outcome: "BYPASS", reason: "explicit-cache-hit" },
+    );
+    // The served segments came from the EXPLICIT tier, not the shell
+    // snapshot: the tier holds step 1's proactive re-render (a later
+    // execution than the cold response — null-component partials re-render
+    // in the background before caching), while the snapshot's doc record
+    // froze the capture render's own execution. Equality with the document
+    // HIT's baked stamp would mean the snapshot supplied the match.
+    const doc = await page.request.get(target, { headers: HTML_HEADERS });
+    // Raw HTML carries React's text-node separator between the literal and
+    // the interpolated counter ("…execution-<!-- -->N").
+    const docStamp = (await doc.text()).match(
+      /scoped-home-execution-(?:<!-- -->)?(\d+)/,
+    )?.[1];
+    expect(docStamp).toBeTruthy();
+    expect(warm.stamp.match(/\d+$/)![0]).not.toBe(docStamp);
+  });
+
+  test("storefront shape: cache(false) and condition() opt-outs report cache-disabled before any shell read", async ({
+    request,
+  }) => {
+    for (const [path, testid] of [
+      ["/shell-cache/scoped-optout", "shell-scoped-optout"],
+      ["/shell-cache/scoped-condition", "shell-scoped-condition"],
+    ] as const) {
+      const probe = crypto.randomUUID();
+      const target = f.url(`${path}?probe=${probe}`);
+      // Document PPR is orthogonal to the route cache opt-out: the shell
+      // still captures and HITs.
+      await warmToHit(request, target);
+
+      const replay = await request.get(
+        `${target}&_rsc_partial=true&_rsc_segments=`,
+        { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+      );
+      expect(replay.status()).toBe(200);
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "BYPASS", reason: "cache-disabled" },
+      );
+      expect(await replay.text()).toContain(testid);
+    }
+  });
+
+  test("a context-less partial probe (curl shape) reports no-navigation-context, not a snapshot miss", async ({
+    request,
+  }) => {
+    const probe = crypto.randomUUID();
+    const target = f.url(`/shell-cache/scoped?probe=${probe}`);
+    // Warmed shell with an eligible snapshot: the old flow would seed it,
+    // fail to match (no navigation context), and blame `snapshot-miss`.
+    await warmToHit(request, target);
+
+    const replay = await request.get(
+      `${target}&_rsc_partial=true&_rsc_segments=`,
+    );
+    expect(replay.status()).toBe(200);
+    assertPprReplayStatus(
+      { headers: new Headers(replay.headers()) },
+      { outcome: "BYPASS", reason: "no-navigation-context" },
+    );
+  });
+
   test("stale SWR navigation replays the captured handler promise, top-level handles, and Meta", async ({
     page,
   }) => {
