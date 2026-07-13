@@ -598,6 +598,12 @@ const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
 expect(getByTestId("docs")).not.toHaveAttribute("data-prefetch");
 ```
 
+After the last mounted `renderRoute` tree is cleaned up, the helper also clears
+its cached `IntersectionObserver` and adaptive `matchMedia` query. Tests may
+install different browser stubs in successive cases without importing internal
+reset functions; concurrently mounted `renderRoute` trees continue sharing the
+same browser primitives until their final cleanup.
+
 Optional params vs an include mount — two different prefixes, don't confuse them.
 An optional param that is part of the matched PATTERN (`/:locale?/c/:group` at
 `/en/c/wine`) is auto-filled from the current match by `useReverse` exactly like

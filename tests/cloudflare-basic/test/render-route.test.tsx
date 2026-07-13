@@ -10,11 +10,12 @@ const activePrefetchElements = new Set<Element>();
 const observePrefetchElement = vi.fn((element: Element) =>
   activePrefetchElements.add(element),
 );
+const disconnectPrefetchObserver = vi.fn();
 
 class TestIntersectionObserver {
   observe = observePrefetchElement;
   unobserve = (element: Element) => activePrefetchElements.delete(element);
-  disconnect = vi.fn();
+  disconnect = disconnectPrefetchObserver;
 }
 
 beforeEach(() => {
@@ -98,8 +99,10 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(activePrefetchElements.has(getByTestId("docs-link"))).toBe(true);
 
     cleanup();
+    await Promise.resolve();
     configure({ reactStrictMode: false });
     expect(activePrefetchElements.size).toBe(0);
+    expect(disconnectPrefetchObserver).toHaveBeenCalledOnce();
 
     function FirstTree() {
       return <a href="/first" data-testid="first-link" />;
@@ -123,6 +126,14 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(activePrefetchElements.has(second.getByTestId("second-link"))).toBe(
       false,
     );
+
+    first.unmount();
+    await Promise.resolve();
+    expect(disconnectPrefetchObserver).toHaveBeenCalledOnce();
+
+    second.unmount();
+    await Promise.resolve();
+    expect(disconnectPrefetchObserver).toHaveBeenCalledTimes(2);
   });
 
   it("uses the shared IntersectionObserver test stub", async () => {
@@ -192,6 +203,94 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(observePrefetchElement).not.toHaveBeenCalledWith(
       result.getByTestId("svg-link"),
     );
+  });
+
+  it("uses the IntersectionObserver installed for each isolated render", async () => {
+    const firstObserve = vi.fn();
+    const firstDisconnect = vi.fn();
+    class FirstIntersectionObserver {
+      observe = firstObserve;
+      unobserve = vi.fn();
+      disconnect = firstDisconnect;
+    }
+    vi.stubGlobal("IntersectionObserver", FirstIntersectionObserver);
+
+    function ViewportAnchor() {
+      return <a href="/target" data-testid="target-link" />;
+    }
+
+    const first = await renderRoute(
+      [{ path: "/", Component: ViewportAnchor }],
+      { request: "/", defaultPrefetch: "viewport" },
+    );
+    const firstTarget = first.getByTestId("target-link");
+
+    cleanup();
+
+    const secondObserve = vi.fn();
+    class SecondIntersectionObserver {
+      observe = secondObserve;
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", SecondIntersectionObserver);
+
+    const second = await renderRoute(
+      [{ path: "/", Component: ViewportAnchor }],
+      { request: "/", defaultPrefetch: "viewport" },
+    );
+
+    expect(firstObserve).toHaveBeenCalledWith(firstTarget);
+    expect(firstDisconnect).toHaveBeenCalledOnce();
+    expect(secondObserve).toHaveBeenCalledWith(
+      second.getByTestId("target-link"),
+    );
+  });
+
+  it("uses the matchMedia query installed for each isolated render", async () => {
+    const firstAdd = vi.fn();
+    const firstRemove = vi.fn();
+    const firstMatchMedia = vi.fn(
+      () =>
+        ({
+          matches: false,
+          addEventListener: firstAdd,
+          removeEventListener: firstRemove,
+        }) as unknown as MediaQueryList,
+    );
+    vi.stubGlobal("matchMedia", firstMatchMedia);
+
+    function AdaptiveAnchor() {
+      return <a href="/target" />;
+    }
+
+    await renderRoute([{ path: "/", Component: AdaptiveAnchor }], {
+      request: "/",
+      defaultPrefetch: "adaptive",
+    });
+    expect(firstMatchMedia).toHaveBeenCalledWith("(hover: none)");
+
+    cleanup();
+    expect(firstRemove).toHaveBeenCalledWith("change", expect.any(Function));
+
+    const secondAdd = vi.fn();
+    const secondMatchMedia = vi.fn(
+      () =>
+        ({
+          matches: true,
+          addEventListener: secondAdd,
+          removeEventListener: vi.fn(),
+        }) as unknown as MediaQueryList,
+    );
+    vi.stubGlobal("matchMedia", secondMatchMedia);
+
+    await renderRoute([{ path: "/", Component: AdaptiveAnchor }], {
+      request: "/",
+      defaultPrefetch: "adaptive",
+    });
+
+    expect(secondMatchMedia).toHaveBeenCalledWith("(hover: none)");
+    expect(secondAdd).toHaveBeenCalledWith("change", expect.any(Function));
   });
 
   it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(

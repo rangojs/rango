@@ -63,9 +63,13 @@ import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
+import { resetAdaptiveStrategyForTesting } from "../browser/prefetch/default-strategy.js";
+import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const TEST_ORIGIN = "http://localhost";
+let activePrefetchRegistrations = 0;
+let pendingPrefetchReset: object | undefined;
 
 /**
  * Seed shape for `options.handle`, matching the handle wire format:
@@ -315,7 +319,31 @@ function DelegatedPrefetchRegistration({
   bridge: NavigationBridge;
 }): null {
   useEffect(() => {
-    return bridge.registerDelegatedPrefetch();
+    const unregister = bridge.registerDelegatedPrefetch();
+    pendingPrefetchReset = undefined;
+    activePrefetchRegistrations++;
+    return () => {
+      try {
+        unregister();
+      } finally {
+        activePrefetchRegistrations--;
+        if (activePrefetchRegistrations === 0) {
+          const reset = {};
+          pendingPrefetchReset = reset;
+          queueMicrotask(() => {
+            if (
+              pendingPrefetchReset !== reset ||
+              activePrefetchRegistrations !== 0
+            ) {
+              return;
+            }
+            pendingPrefetchReset = undefined;
+            resetPrefetchObserverForTesting();
+            resetAdaptiveStrategyForTesting();
+          });
+        }
+      }
+    };
   }, [bridge]);
   return null;
 }

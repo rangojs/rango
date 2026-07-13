@@ -9,6 +9,7 @@ import {
   subscribeToAdaptiveStrategyChange,
 } from "./prefetch/default-strategy.js";
 import { observeForPrefetch } from "./prefetch/observer.js";
+import { notifyListeners } from "./notify-listeners.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const ELIGIBILITY_ATTRIBUTES = {
@@ -87,7 +88,7 @@ function createPrefetchScopeObserverState(
         .querySelectorAll(LINK_COMPONENT_SELECTOR)
         .forEach(collect);
     }
-    affected.forEach((listener) => listener());
+    notifyListeners(affected, (listener) => listener());
   });
   observer.observe(ownerDocument.documentElement, {
     subtree: true,
@@ -116,10 +117,21 @@ export function subscribeToPrefetchScopeChange(
   }
   listeners.add(listener);
 
+  let active = true;
   return () => {
+    if (!active) return;
+    active = false;
     listeners.delete(listener);
-    if (listeners.size === 0) state.subscriptions.delete(element);
-    if (state.subscriptions.size === 0) {
+    if (
+      listeners.size === 0 &&
+      state.subscriptions.get(element) === listeners
+    ) {
+      state.subscriptions.delete(element);
+    }
+    if (
+      state.subscriptions.size === 0 &&
+      prefetchScopeObservers.get(ownerDocument) === state
+    ) {
       state.observer.disconnect();
       prefetchScopeObservers.delete(ownerDocument);
     }
@@ -359,7 +371,6 @@ export interface DelegatedPrefetchOptions {
 interface DelegatedPrefetchState {
   stopObserving?: () => void;
   cancelPending?: () => void;
-  locationHref: string;
 }
 
 export function setupDelegatedLinkPrefetch(
@@ -375,16 +386,13 @@ export function setupDelegatedLinkPrefetch(
   const getEligibility = customShouldPrefetch
     ? (link: HTMLAnchorElement): PrefetchEligibility => {
         if (isPrefetchScopeDisabled(link)) return "ineligible";
-        return customShouldPrefetch(link) ? "eligible" : "ineligible";
+        return customShouldPrefetch(link) ? "eligible" : "location-dependent";
       }
     : (link: HTMLAnchorElement) =>
         defaultPrefetchEligibilityInBasename(link, basename);
   const states = new Map<HTMLAnchorElement, DelegatedPrefetchState>();
   const parked = new Set<HTMLAnchorElement>();
   let strategy = resolveAdaptiveStrategy(defaultStrategy);
-
-  const currentLocationHref = () =>
-    options.eventController.getState().location.href;
 
   const disarm = (link: HTMLAnchorElement) => {
     const state = states.get(link);
@@ -423,7 +431,7 @@ export function setupDelegatedLinkPrefetch(
 
     let state = states.get(link);
     if (!state) {
-      state = { locationHref: currentLocationHref() };
+      state = {};
       states.set(link, state);
     }
     state.cancelPending?.();
@@ -443,9 +451,7 @@ export function setupDelegatedLinkPrefetch(
     if (eligibility !== "eligible") return;
     if (strategy === "hover") return;
 
-    const state: DelegatedPrefetchState = {
-      locationHref: currentLocationHref(),
-    };
+    const state: DelegatedPrefetchState = {};
     states.set(link, state);
 
     if (strategy === "render") {
@@ -551,14 +557,9 @@ export function setupDelegatedLinkPrefetch(
     defaultStrategy === "viewport" ||
     defaultStrategy === "render" ||
     defaultStrategy === "adaptive"
-      ? subscribeToLocationChange(options.eventController, (nextHref) => {
+      ? subscribeToLocationChange(options.eventController, () => {
           if (strategy !== "viewport" && strategy !== "render") return;
-          const affected = new Set(parked);
-          for (const [link, state] of states) {
-            if (state.locationHref === nextHref) continue;
-            affected.add(link);
-          }
-          for (const link of affected) {
+          for (const link of [...parked]) {
             if (link.isConnected && root.contains(link)) register(link);
             else forget(link);
           }

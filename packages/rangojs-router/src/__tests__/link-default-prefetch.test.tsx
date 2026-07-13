@@ -35,6 +35,7 @@ import {
   setDefaultPrefetchStrategy,
   getDefaultPrefetchStrategy,
 } from "../browser/prefetch/default-strategy.js";
+import { subscribeToPrefetchScopeChange } from "../browser/link-interceptor.js";
 import { DEFAULT_PREFETCH_STRATEGY } from "../router/prefetch-default.js";
 
 let location: URL;
@@ -90,6 +91,7 @@ describe("Link default prefetch fallback", () => {
     if (rootMounted) act(() => root.unmount());
     container.remove();
     setDefaultPrefetchStrategy(DEFAULT_PREFETCH_STRATEGY);
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -228,6 +230,89 @@ describe("Link default prefetch fallback", () => {
     act(() => root.unmount());
     rootMounted = false;
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a replacement scope subscription after stale cleanup", () => {
+    let notify!: MutationCallback;
+    vi.stubGlobal(
+      "MutationObserver",
+      class {
+        observe = vi.fn();
+        disconnect = vi.fn();
+
+        constructor(callback: MutationCallback) {
+          notify = callback;
+        }
+      },
+    );
+    const link = document.createElement("a");
+    const keepAlive = document.createElement("a");
+    document.body.append(link, keepAlive);
+
+    const staleCleanup = subscribeToPrefetchScopeChange(link, vi.fn());
+    const cleanupKeepAlive = subscribeToPrefetchScopeChange(keepAlive, vi.fn());
+    staleCleanup();
+    const replacement = vi.fn();
+    const cleanupReplacement = subscribeToPrefetchScopeChange(
+      link,
+      replacement,
+    );
+
+    staleCleanup();
+    notify(
+      [{ target: link } as unknown as MutationRecord],
+      {} as MutationObserver,
+    );
+
+    cleanupReplacement();
+    cleanupKeepAlive();
+    expect(replacement).toHaveBeenCalledOnce();
+  });
+
+  it("notifies every affected scope listener before surfacing an error", () => {
+    let notify!: MutationCallback;
+    vi.stubGlobal(
+      "MutationObserver",
+      class {
+        observe = vi.fn();
+        disconnect = vi.fn();
+
+        constructor(callback: MutationCallback) {
+          notify = callback;
+        }
+      },
+    );
+    const section = document.createElement("section");
+    const first = document.createElement("a");
+    const second = document.createElement("a");
+    first.dataset.linkComponent = "";
+    second.dataset.linkComponent = "";
+    section.append(first, second);
+    document.body.appendChild(section);
+    const error = new Error("scope listener failed");
+    const cleanupFirst = subscribeToPrefetchScopeChange(first, () => {
+      throw error;
+    });
+    const secondListener = vi.fn();
+    const cleanupSecond = subscribeToPrefetchScopeChange(
+      second,
+      secondListener,
+    );
+
+    let thrown: unknown;
+    try {
+      notify(
+        [{ target: section } as unknown as MutationRecord],
+        {} as MutationObserver,
+      );
+    } catch (caught) {
+      thrown = caught;
+    }
+
+    cleanupFirst();
+    cleanupSecond();
+    expect(thrown).toBe(error);
+    expect(secondListener).toHaveBeenCalledOnce();
   });
 
   it("uses an instance default without mutating the module default", () => {

@@ -367,11 +367,16 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
-  it("does not park a permanent custom-predicate rejection", () => {
+  it("re-evaluates a custom-predicate rejection after navigation", () => {
+    window.history.replaceState({}, "", "/custom-reject");
+    location = new URL(window.location.href);
     const link = document.createElement("a");
     link.href = "/custom-reject";
     document.body.appendChild(link);
-    const shouldPrefetch = vi.fn(() => false);
+    const shouldPrefetch = vi.fn(
+      (anchor: HTMLAnchorElement) =>
+        anchor.pathname !== window.location.pathname,
+    );
     const cleanup = setupPrefetch(
       vi.fn(),
       "viewport",
@@ -384,8 +389,12 @@ describe("delegated plain-anchor prefetch", () => {
     location = new URL(window.location.href);
     stateListeners.forEach((listener) => listener());
 
-    expect(shouldPrefetch).toHaveBeenCalledOnce();
     cleanup();
+    expect(shouldPrefetch).toHaveBeenCalledTimes(2);
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      link,
+      expect.any(Function),
+    );
   });
 
   it("accepts false as a container scope opt-out", () => {
@@ -545,24 +554,29 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
-  it("re-observes persistent anchors after SPA navigation", () => {
+  it("does not re-observe or re-trigger eligible anchors after navigation", () => {
     setDefaultPrefetchStrategy("viewport");
-    const link = document.createElement("a");
-    link.href = "/persistent-target";
-    document.body.appendChild(link);
-    const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
+    const visible = document.createElement("a");
+    visible.href = "/visible-target";
+    const pending = document.createElement("a");
+    pending.href = "/pending-target";
+    document.body.append(visible, pending);
+    const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
+    const cleanup = setupPrefetch(onPrefetch);
 
-    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(1);
-    prefetchObserver.callbacks.get(link)!();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
+    prefetchObserver.callbacks.get(visible)!();
+    expect(onPrefetch).toHaveBeenCalledOnce();
 
     location = new URL("/another-page", location);
     stateListeners.forEach((listener) => listener());
 
-    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
     cleanup();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
+    expect(onPrefetch).toHaveBeenCalledOnce();
   });
 
-  it("re-runs render prefetch for persistent anchors after SPA navigation", () => {
+  it("does not re-run render prefetch after SPA navigation", () => {
     setDefaultPrefetchStrategy("render");
     const link = document.createElement("a");
     link.href = "/persistent-target";
@@ -575,8 +589,8 @@ describe("delegated plain-anchor prefetch", () => {
     location = new URL("/another-page", location);
     stateListeners.forEach((listener) => listener());
 
-    expect(onPrefetch).toHaveBeenCalledTimes(2);
     cleanup();
+    expect(onPrefetch).toHaveBeenCalledOnce();
   });
 
   it("switches adaptive anchors from hover to viewport", () => {

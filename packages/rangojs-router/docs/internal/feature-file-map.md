@@ -17,7 +17,7 @@ resolution by
 [`browser/prefetch/default-strategy.ts`](../../src/browser/prefetch/default-strategy.ts),
 viewport subscriptions by
 [`browser/prefetch/observer.ts`](../../src/browser/prefetch/observer.ts), and
-shared navigation re-arming by
+shared location-change notification by
 [`browser/event-controller.ts`](../../src/browser/event-controller.ts). Their
 failure-isolated callback fan-outs share
 [`browser/notify-listeners.ts`](../../src/browser/notify-listeners.ts).
