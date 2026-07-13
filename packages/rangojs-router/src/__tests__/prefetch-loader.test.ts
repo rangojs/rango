@@ -9,12 +9,7 @@ const runtime = vi.hoisted(() => ({
   abortAllPrefetches: vi.fn(),
 }));
 
-const observer = vi.hoisted(() => ({
-  observeForPrefetch: vi.fn(() => vi.fn()),
-}));
-
 vi.mock("../browser/prefetch/runtime", () => runtime);
-vi.mock("../browser/prefetch/observer", () => observer);
 
 describe("lazy prefetch loader", () => {
   beforeEach(() => {
@@ -32,22 +27,6 @@ describe("lazy prefetch loader", () => {
 
     expect(runtime.setPrefetchDecoder).not.toHaveBeenCalled();
     expect(runtime.setPrefetchConcurrency).not.toHaveBeenCalled();
-  });
-
-  it("observes without loading the runtime", async () => {
-    vi.stubGlobal("IntersectionObserver", class {});
-    const loader = await import("../browser/prefetch/loader");
-    const element = {} as Element;
-    const callback = vi.fn();
-
-    const cleanup = loader.observeForPrefetch(element, callback);
-
-    expect(observer.observeForPrefetch).toHaveBeenCalledWith(element, callback);
-    expect(runtime.setPrefetchDecoder).not.toHaveBeenCalled();
-    cleanup();
-    expect(
-      observer.observeForPrefetch.mock.results[0]!.value,
-    ).toHaveBeenCalled();
   });
 
   it("runs scheduled prefetch work immediately when the router is idle", async () => {
@@ -164,18 +143,6 @@ describe("lazy prefetch loader", () => {
     expect(runtime.prefetchDirect).not.toHaveBeenCalled();
   });
 
-  it("does not load the runtime when IntersectionObserver is unavailable", async () => {
-    vi.stubGlobal("IntersectionObserver", undefined);
-    const loader = await import("../browser/prefetch/loader");
-
-    const cleanup = loader.observeForPrefetch({} as Element, vi.fn());
-
-    cleanup();
-    await Promise.resolve();
-    expect(observer.observeForPrefetch).not.toHaveBeenCalled();
-    expect(runtime.setPrefetchDecoder).not.toHaveBeenCalled();
-  });
-
   it("forwards cancellation once the runtime is loaded", async () => {
     const loader = await import("../browser/prefetch/loader");
     loader.prefetchDirect("/first", []);
@@ -186,22 +153,5 @@ describe("lazy prefetch loader", () => {
 
     expect(runtime.cancelAllPrefetches).toHaveBeenCalledWith("/keep");
     expect(runtime.abortAllPrefetches).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps observation in the facade once the runtime is loaded", async () => {
-    vi.stubGlobal("IntersectionObserver", class {});
-    const loader = await import("../browser/prefetch/loader");
-    loader.prefetchDirect("/first", []);
-    await vi.waitFor(() => expect(runtime.prefetchDirect).toHaveBeenCalled());
-    const element = {} as Element;
-    const callback = vi.fn();
-
-    const cleanup = loader.observeForPrefetch(element, callback);
-    expect(observer.observeForPrefetch).toHaveBeenCalledWith(element, callback);
-
-    cleanup();
-    expect(
-      observer.observeForPrefetch.mock.results[0]!.value,
-    ).toHaveBeenCalled();
   });
 });

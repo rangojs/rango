@@ -13,10 +13,8 @@ import React, {
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
-import {
-  isHashOnlyNavigation,
-  subscribeToLocationChange,
-} from "../link-interceptor.js";
+import { isHashOnlyNavigation } from "../link-interceptor.js";
+import { subscribeToLocationChange } from "../event-controller.js";
 import {
   isLocationStateEntry,
   type LocationStateEntry,
@@ -36,11 +34,11 @@ export type LinkState =
   | StateOrGetter<Record<string, unknown>>;
 
 import {
-  observeForPrefetch,
   prefetchDirect,
   prefetchQueued,
   schedulePrefetchWhenRouterIdle,
 } from "../prefetch/loader.js";
+import { observeForPrefetch } from "../prefetch/observer.js";
 import {
   getDefaultPrefetchStrategy,
   resolveAdaptiveStrategy,
@@ -404,16 +402,16 @@ export const Link: ForwardRefExoticComponent<
     };
 
     let disarmPrefetch = armPrefetch();
-    const unsubscribeLocation =
-      isViewport || isRender
-        ? subscribeToLocationChange(ctx.eventController, () => {
-            disarmPrefetch();
-            disarmPrefetch = armPrefetch();
-          })
-        : undefined;
+    const unsubscribeLocation = subscribeToLocationChange(
+      ctx.eventController,
+      () => {
+        disarmPrefetch();
+        disarmPrefetch = armPrefetch();
+      },
+    );
 
     return () => {
-      unsubscribeLocation?.();
+      unsubscribeLocation();
       disarmPrefetch();
     };
   }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);

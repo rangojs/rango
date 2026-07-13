@@ -16,9 +16,8 @@
 
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
-// Shared by React Links and delegated plain anchors. The MediaQueryList is
-// live, so re-reading `.matches` reflects changes without reallocating it.
 let hoverNoneQuery: MediaQueryList | null = null;
+let matchMediaSource: typeof window.matchMedia | null = null;
 
 // Mirrors DEFAULT_PREFETCH_STRATEGY without pulling router-layer code into the
 // client bundle. NODE_ENV is folded by the app build.
@@ -27,7 +26,10 @@ let defaultStrategy: PrefetchStrategy =
 
 function getHoverNoneQuery(): MediaQueryList | null {
   if (typeof window === "undefined") return null;
-  if (!hoverNoneQuery) {
+  // The browser query stays live and is reused across Links. Test DOMs replace
+  // matchMedia between cases, so key the cache by the current implementation.
+  if (!hoverNoneQuery || matchMediaSource !== window.matchMedia) {
+    matchMediaSource = window.matchMedia;
     hoverNoneQuery = window.matchMedia("(hover: none)");
   }
   return hoverNoneQuery;
@@ -60,6 +62,10 @@ export function subscribeToAdaptiveStrategyChange(
 ): () => void {
   const query = getHoverNoneQuery();
   if (!query) return () => {};
-  query.addEventListener("change", listener);
-  return () => query.removeEventListener("change", listener);
+  if (typeof query.addEventListener === "function") {
+    query.addEventListener("change", listener);
+    return () => query.removeEventListener("change", listener);
+  }
+  query.addListener(listener);
+  return () => query.removeListener(listener);
 }

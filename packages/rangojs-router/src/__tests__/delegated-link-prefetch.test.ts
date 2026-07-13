@@ -1,16 +1,16 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const prefetchLoader = vi.hoisted(() => ({
+const prefetchObserver = vi.hoisted(() => ({
   callbacks: new Map<Element, () => void>(),
   observeForPrefetch: vi.fn((element: Element, callback: () => void) => {
-    prefetchLoader.callbacks.set(element, callback);
-    return () => prefetchLoader.callbacks.delete(element);
+    prefetchObserver.callbacks.set(element, callback);
+    return () => prefetchObserver.callbacks.delete(element);
   }),
 }));
 
-vi.mock("../browser/prefetch/loader.js", () => ({
-  observeForPrefetch: prefetchLoader.observeForPrefetch,
+vi.mock("../browser/prefetch/observer.js", () => ({
+  observeForPrefetch: prefetchObserver.observeForPrefetch,
 }));
 
 import {
@@ -26,6 +26,7 @@ let stateListeners: Set<() => void>;
 function setupPrefetch(
   onPrefetch: DelegatedPrefetchCallback,
   defaultPrefetch?: "none" | "viewport",
+  basename?: string,
 ): () => void {
   const eventController = {
     getState: () => ({ location }),
@@ -39,13 +40,14 @@ function setupPrefetch(
   return setupDelegatedLinkPrefetch(onPrefetch, {
     eventController,
     defaultPrefetch,
+    basename,
   });
 }
 
 describe("delegated plain-anchor prefetch", () => {
   beforeEach(() => {
     document.body.replaceChildren();
-    prefetchLoader.callbacks.clear();
+    prefetchObserver.callbacks.clear();
     vi.clearAllMocks();
     location = new URL(window.location.href);
     stateListeners = new Set();
@@ -63,7 +65,7 @@ describe("delegated plain-anchor prefetch", () => {
 
     const cleanup = setupLinkInterception(vi.fn());
 
-    expect(prefetchLoader.observeForPrefetch).not.toHaveBeenCalled();
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
     cleanup();
   });
 
@@ -82,13 +84,13 @@ describe("delegated plain-anchor prefetch", () => {
 
     const cleanup = setupPrefetch(onPrefetch);
 
-    expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledTimes(1);
-    expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledWith(
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(1);
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
       plain,
       expect.any(Function),
     );
 
-    prefetchLoader.callbacks.get(plain)!();
+    prefetchObserver.callbacks.get(plain)!();
     expect(onPrefetch).toHaveBeenCalledWith(plain.href, "queued");
 
     cleanup();
@@ -105,8 +107,30 @@ describe("delegated plain-anchor prefetch", () => {
       "viewport",
     );
 
-    expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledWith(
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
       link,
+      expect.any(Function),
+    );
+    cleanup();
+  });
+
+  it("skips static resources and paths outside the router basename", () => {
+    document.body.innerHTML = `
+      <a href="/app/files/report.pdf" data-testid="asset">asset</a>
+      <a href="/app/files/report%2Epdf" data-testid="encoded-asset">encoded asset</a>
+      <a href="/app/report%ZZ" data-testid="malformed-path">malformed path</a>
+      <a href="/sibling/page" data-testid="sibling">sibling app</a>
+      <a href="/app/report.data" data-testid="route">suffix route</a>
+    `;
+    const route = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="route"]',
+    )!;
+
+    const cleanup = setupPrefetch(vi.fn(), "viewport", "/app");
+
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledOnce();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      route,
       expect.any(Function),
     );
     cleanup();
@@ -121,10 +145,10 @@ describe("delegated plain-anchor prefetch", () => {
 
     document.body.appendChild(link);
     await vi.waitFor(() => {
-      expect(prefetchLoader.callbacks.has(link)).toBe(true);
+      expect(prefetchObserver.callbacks.has(link)).toBe(true);
     });
 
-    prefetchLoader.callbacks.get(link)!();
+    prefetchObserver.callbacks.get(link)!();
     expect(onPrefetch).toHaveBeenCalledWith(link.href, "queued");
 
     cleanup();
@@ -139,11 +163,11 @@ describe("delegated plain-anchor prefetch", () => {
 
     document.body.appendChild(link);
     await vi.waitFor(() => {
-      expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledTimes(1);
+      expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(1);
     });
     stateListeners.forEach((listener) => listener());
 
-    expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledTimes(1);
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(1);
     cleanup();
   });
 
@@ -159,7 +183,7 @@ describe("delegated plain-anchor prefetch", () => {
       .mockReturnValueOnce(undefined);
     const cleanup = setupPrefetch(onPrefetch);
 
-    prefetchLoader.callbacks.get(link)!();
+    prefetchObserver.callbacks.get(link)!();
     link.dispatchEvent(
       new MouseEvent("mouseover", {
         bubbles: true,
@@ -180,13 +204,13 @@ describe("delegated plain-anchor prefetch", () => {
     document.body.appendChild(link);
     const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
 
-    expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledTimes(1);
-    prefetchLoader.callbacks.get(link)!();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(1);
+    prefetchObserver.callbacks.get(link)!();
 
     location = new URL("/another-page", location);
     stateListeners.forEach((listener) => listener());
 
-    expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledTimes(2);
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
     cleanup();
   });
 
@@ -236,13 +260,13 @@ describe("delegated plain-anchor prefetch", () => {
     document.body.appendChild(link);
     const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
 
-    expect(prefetchLoader.observeForPrefetch).not.toHaveBeenCalled();
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
     expect(observeMutations).not.toHaveBeenCalled();
 
     hoverNone = true;
     notifyChange!();
     expect(observeMutations).toHaveBeenCalledOnce();
-    expect(prefetchLoader.observeForPrefetch).toHaveBeenCalledWith(
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
       link,
       expect.any(Function),
     );

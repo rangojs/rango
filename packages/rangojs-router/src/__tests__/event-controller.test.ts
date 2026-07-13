@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createEventController,
+  subscribeToLocationChange,
   type EventController,
 } from "../browser/event-controller.js";
 
@@ -50,6 +51,127 @@ describe("createEventController", () => {
       expect(actionState.payload).toBeNull();
       expect(actionState.error).toBeNull();
       expect(actionState.result).toBeNull();
+    });
+  });
+
+  describe("location subscriptions", () => {
+    it("fans out through one controller subscription", () => {
+      let location = loc("/");
+      const controllerListeners = new Set<() => void>();
+      const unsubscribe = vi.fn();
+      const subscribe = vi.fn((listener: () => void) => {
+        controllerListeners.add(listener);
+        return unsubscribe;
+      });
+      const controller = {
+        getState: () => ({ location }),
+        subscribe,
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const first = vi.fn();
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      const stopSecond = subscribeToLocationChange(controller, second);
+      expect(subscribe).toHaveBeenCalledOnce();
+
+      location = loc("/next");
+      controllerListeners.forEach((listener) => listener());
+      expect(first).toHaveBeenCalledWith(location.href);
+      expect(second).toHaveBeenCalledWith(location.href);
+
+      stopFirst();
+      expect(unsubscribe).not.toHaveBeenCalled();
+      stopSecond();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("tracks each registration baseline and cleanup independently", () => {
+      let location = loc("/");
+      const controllerListeners = new Set<() => void>();
+      const unsubscribe = vi.fn();
+      const subscribe = vi.fn((listener: () => void) => {
+        controllerListeners.add(listener);
+        return unsubscribe;
+      });
+      const controller = {
+        getState: () => ({ location }),
+        subscribe,
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const listener = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, listener);
+      location = loc("/next");
+      const stopSecond = subscribeToLocationChange(controller, listener);
+      controllerListeners.forEach((current) => current());
+      expect(listener).toHaveBeenCalledOnce();
+
+      stopFirst();
+      stopFirst();
+      expect(unsubscribe).not.toHaveBeenCalled();
+      location = loc("/last");
+      controllerListeners.forEach((current) => current());
+      expect(listener).toHaveBeenCalledTimes(2);
+
+      stopSecond();
+      stopSecond();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("does not notify a registration removed during fan-out", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const unsubscribe = vi.fn();
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return unsubscribe;
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      let stopSecond!: () => void;
+      const first = vi.fn(() => stopSecond());
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      stopSecond = subscribeToLocationChange(controller, second);
+      location = loc("/next");
+      notifyController();
+
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).not.toHaveBeenCalled();
+      stopFirst();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("does not regress later listeners after a nested notification", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const first = vi.fn((href: string) => {
+        if (href === loc("/next").href) {
+          location = loc("/last");
+          notifyController();
+        }
+      });
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      const stopSecond = subscribeToLocationChange(controller, second);
+      location = loc("/next");
+      notifyController();
+
+      expect(first).toHaveBeenNthCalledWith(1, loc("/next").href);
+      expect(first).toHaveBeenNthCalledWith(2, loc("/last").href);
+      expect(second).toHaveBeenCalledOnce();
+      expect(second).toHaveBeenCalledWith(loc("/last").href);
+      stopFirst();
+      stopSecond();
     });
   });
 

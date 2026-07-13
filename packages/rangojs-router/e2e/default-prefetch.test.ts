@@ -117,6 +117,25 @@ function runDefaultPrefetchSpec(
 
     expect(requests).toHaveLength(0);
   });
+
+  test("a static-resource plain anchor never prefetches", async ({ page }) => {
+    const requests: string[] = [];
+    page.on("request", (req) => {
+      if (
+        isPrefetchRequest(req) &&
+        new URL(req.url()).pathname.endsWith("/files/report.pdf")
+      ) {
+        requests.push(req.url());
+      }
+    });
+
+    await page.goto(f.url("/hash-navigation"));
+    await waitForHydration(page);
+    await page.getByTestId("anchor-prefetch-resource").scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1_000);
+
+    expect(requests).toHaveLength(0);
+  });
 }
 
 test.describe("default-prefetch", () => {

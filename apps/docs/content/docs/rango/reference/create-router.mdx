@@ -196,7 +196,7 @@ const router = createRouter({ warmup: false }); // disable
 
 ## defaultPrefetch
 
-`"hover" | "viewport" | "render" | "adaptive" | "none"`. The default is `"none"` in development and `"viewport"` in production, matching Next.js production-only automatic prefetch. It applies to Links without an explicit strategy and intercepted plain anchors unless they set `data-prefetch="false"`. A per-Link `prefetch` prop always wins in both directions, and an explicit router default overrides the environment in either mode:
+`"hover" | "viewport" | "render" | "adaptive" | "none"`. The default is `"none"` in development and `"viewport"` in production, matching Next.js production-only automatic prefetch. It applies to Links without an explicit strategy and intercepted plain anchors inside the router's `basename`, unless they set `data-prefetch="false"`. Plain anchors whose path ends in a common static-resource extension (`.pdf`, images, archives, scripts, styles, fonts, media, or structured-data files) are excluded. A per-Link `prefetch` prop always wins in both directions, and an explicit router default overrides the environment in either mode:
 
 ```typescript
 const router = createRouter({ defaultPrefetch: "none" }); // manual mode everywhere
@@ -210,7 +210,7 @@ const router = createRouter({ defaultPrefetch: "none" }); // manual mode everywh
 <a href="/logout" data-prefetch="false">Log out</a> {/* explicitly opts out */}
 ```
 
-With the production default, every visible Link and eligible plain anchor triggers an RSC render on the server (loaders included). Mark side-effectful GET links such as `/logout` with `data-prefetch="false"`; the router cannot infer whether an endpoint is safe to call speculatively. Routes served from cache absorb prefetch cheaply; per-user dynamic routes pay full price per viewport entry — pick `"hover"`, `"adaptive"` (hover on pointer devices, viewport on touch), or `"none"` when that cost matters. To turn the prefetch subsystem off entirely (including per-Link opt-ins), use `prefetchCacheTTL: false`.
+With the production default, every visible Link and eligible plain anchor triggers an RSC render on the server (loaders included). The basename and static-resource checks prevent common cross-app and asset requests, but a root-mounted router cannot infer that an extensionless URL belongs to another app or that an endpoint has side effects. Mark links such as `/logout` with `data-prefetch="false"` when speculation is unsafe. Routes served from cache absorb prefetch cheaply; per-user dynamic routes pay full price per viewport entry — pick `"hover"`, `"adaptive"` (hover on pointer devices, viewport on touch), or `"none"` when that cost matters. To turn the prefetch subsystem off entirely (including per-Link opt-ins), use `prefetchCacheTTL: false`.
 
 Speculative requests carry the `X-Rango-Prefetch: 1` header, so middleware and loaders with side effects (cookies, counters, audit logs) can detect and skip them.
 

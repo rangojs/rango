@@ -543,8 +543,9 @@ analog but operates on loader/query reload, not RSC-segment render.
 `defaultPrefetch`, `"none"` in development and `"viewport"` in production), plus
 `prefetchKey` (`":source"` scopes a prefetch to the originating page for routes
 whose response branches on `currentUrl`). Intercepted plain `<a href>` elements
-follow the same router default unless they set `data-prefetch="false"`; use that
-opt-out for side-effectful GET links. The distinguishing part is the stability
+inside the router basename follow the same default; common static-resource
+extensions are excluded, and `data-prefetch="false"` opts out other unsafe GET
+links. The distinguishing part is the stability
 gating: a queued prefetch (`viewport`/`render`) will not fire until **both** the
 main thread is idle (`requestIdleCallback`, 200ms fallback) **and**
 `waitForViewportImages()` resolves — in-viewport images that are not `.complete`

@@ -111,4 +111,37 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(active.has(first.getByTestId("first-link"))).toBe(true);
     expect(active.has(second.getByTestId("second-link"))).toBe(false);
   });
+
+  it("uses the IntersectionObserver stub installed for the current test", async () => {
+    const observe = vi.fn();
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe = observe;
+        unobserve = vi.fn();
+        disconnect = vi.fn();
+      },
+    );
+
+    function CurrentTree() {
+      return (
+        <>
+          <a href="/app/current" data-testid="current-link" />
+          <a href="/app/files/report.pdf" data-testid="asset-link" />
+          <a href="/sibling/current" data-testid="sibling-link" />
+        </>
+      );
+    }
+    const result = await renderRoute([{ path: "/", Component: CurrentTree }], {
+      request: "/",
+      basename: "/app",
+      defaultPrefetch: "viewport",
+    });
+
+    expect(observe).toHaveBeenCalledWith(result.getByTestId("current-link"));
+    expect(observe).not.toHaveBeenCalledWith(result.getByTestId("asset-link"));
+    expect(observe).not.toHaveBeenCalledWith(
+      result.getByTestId("sibling-link"),
+    );
+  });
 });

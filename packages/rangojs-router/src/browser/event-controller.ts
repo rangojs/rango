@@ -269,6 +269,73 @@ export interface EventController {
   hadAnyConcurrentActions(): boolean;
 }
 
+type LocationChangeController = Pick<EventController, "getState" | "subscribe">;
+
+interface LocationChangeSubscription {
+  registrations: Map<
+    symbol,
+    { href: string; listener: (href: string) => void }
+  >;
+  notificationVersion: number;
+  unsubscribe: () => void;
+}
+
+const locationChangeSubscriptions = new WeakMap<
+  LocationChangeController,
+  LocationChangeSubscription
+>();
+
+/** Share one controller subscription across all location-change consumers. */
+export function subscribeToLocationChange(
+  eventController: LocationChangeController,
+  listener: (href: string) => void,
+): () => void {
+  let subscription = locationChangeSubscriptions.get(eventController);
+  if (!subscription) {
+    subscription = {
+      registrations: new Map(),
+      notificationVersion: 0,
+      unsubscribe: () => {},
+    };
+    locationChangeSubscriptions.set(eventController, subscription);
+    const currentSubscription = subscription;
+    subscription.unsubscribe = eventController.subscribe(() => {
+      const notificationVersion = ++currentSubscription.notificationVersion;
+      const nextHref = eventController.getState().location.href;
+      for (const [token, registration] of [
+        ...currentSubscription.registrations,
+      ]) {
+        if (notificationVersion !== currentSubscription.notificationVersion) {
+          return;
+        }
+        if (currentSubscription.registrations.get(token) !== registration) {
+          continue;
+        }
+        if (registration.href === nextHref) continue;
+        registration.href = nextHref;
+        registration.listener(nextHref);
+      }
+    });
+  }
+
+  const token = Symbol();
+  subscription.registrations.set(token, {
+    href: eventController.getState().location.href,
+    listener,
+  });
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    subscription!.registrations.delete(token);
+    if (subscription!.registrations.size > 0) return;
+    if (locationChangeSubscriptions.get(eventController) === subscription) {
+      locationChangeSubscriptions.delete(eventController);
+    }
+    subscription!.unsubscribe();
+  };
+}
+
 const DEFAULT_ACTION_STATE: TrackedActionState = {
   state: "idle",
   actionId: null,

@@ -363,6 +363,8 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version: version,
+    defaultPrefetch,
+    basename: initialPayload.metadata?.basename,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)

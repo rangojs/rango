@@ -1,11 +1,14 @@
 import type { LinkInterceptorOptions, NavigateOptions } from "./types.js";
-import type { EventController } from "./event-controller.js";
+import {
+  subscribeToLocationChange,
+  type EventController,
+} from "./event-controller.js";
 import {
   getDefaultPrefetchStrategy,
   resolveAdaptiveStrategy,
   subscribeToAdaptiveStrategyChange,
 } from "./prefetch/default-strategy.js";
-import { observeForPrefetch } from "./prefetch/loader.js";
+import { observeForPrefetch } from "./prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const ELIGIBILITY_ATTRIBUTES = {
@@ -21,6 +24,8 @@ const ELIGIBILITY_ATTRIBUTES = {
 const ELIGIBILITY_ATTRIBUTE_FILTER = Object.values(ELIGIBILITY_ATTRIBUTES);
 const ANCHOR_SELECTOR = "a";
 const ELIGIBLE_ANCHOR_SELECTOR = `a[${ELIGIBILITY_ATTRIBUTES.href}]`;
+const STATIC_RESOURCE_EXTENSION =
+  /\.(?:7z|avif|bmp|bz2|cjs|css|csv|docx?|eot|gif|gz|ico|jpe?g|js|json|m4a|map|mjs|mov|mp3|mp4|ogg|ogv|otf|pdf|png|pptx?|rar|svg|tar|tgz|tiff?|ttf|txt|wasm|wav|webm|webp|woff2?|xlsx?|xml|zip)$/i;
 
 /**
  * Check if an anchor points to the same page with only a hash change.
@@ -92,9 +97,23 @@ function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
 }
 
 /** Plain anchors follow the router default unless explicitly opted out. */
-export function defaultShouldPrefetch(link: HTMLAnchorElement): boolean {
+export function defaultShouldPrefetch(
+  link: HTMLAnchorElement,
+  basename?: string,
+): boolean {
+  const pathname = link.pathname.replace(/\/+$/, "");
+  let decodedPathname: string;
+  try {
+    decodedPathname = decodeURIComponent(pathname);
+  } catch {
+    return false;
+  }
   return (
     link.getAttribute(ELIGIBILITY_ATTRIBUTES.prefetch) !== "false" &&
+    (!basename ||
+      pathname === basename ||
+      pathname.startsWith(`${basename}/`)) &&
+    !STATIC_RESOURCE_EXTENSION.test(decodedPathname) &&
     isEligiblePlainAnchor(link)
   );
 }
@@ -173,19 +192,6 @@ export function setupLinkInterception(
   };
 }
 
-export function subscribeToLocationChange(
-  eventController: Pick<EventController, "getState" | "subscribe">,
-  listener: (href: string) => void,
-): () => void {
-  let locationHref = eventController.getState().location.href;
-  return eventController.subscribe(() => {
-    const nextHref = eventController.getState().location.href;
-    if (nextHref === locationHref) return;
-    locationHref = nextHref;
-    listener(nextHref);
-  });
-}
-
 export type DelegatedPrefetchCallback = (
   url: string,
   priority: "direct" | "queued",
@@ -196,6 +202,7 @@ export interface DelegatedPrefetchOptions {
   shouldPrefetch?: (link: HTMLAnchorElement) => boolean;
   defaultPrefetch?: PrefetchStrategy;
   root?: HTMLElement;
+  basename?: string;
 }
 
 interface DelegatedPrefetchState {
@@ -212,7 +219,10 @@ export function setupDelegatedLinkPrefetch(
     options.defaultPrefetch ?? getDefaultPrefetchStrategy();
   if (defaultStrategy === "none") return () => {};
 
-  const shouldPrefetch = options.shouldPrefetch ?? defaultShouldPrefetch;
+  const shouldPrefetch =
+    options.shouldPrefetch ??
+    ((link: HTMLAnchorElement) =>
+      defaultShouldPrefetch(link, options.basename));
   const states = new Map<HTMLAnchorElement, DelegatedPrefetchState>();
   let strategy = resolveAdaptiveStrategy(defaultStrategy);
 
@@ -300,22 +310,21 @@ export function setupDelegatedLinkPrefetch(
 
     mutationObserver = new MutationObserver((mutations) => {
       const affected = new Set<HTMLAnchorElement>();
+      const markAffected = (link: HTMLAnchorElement) => affected.add(link);
       for (const mutation of mutations) {
         if (mutation.type === "attributes") {
           if (
             mutation.target instanceof Element &&
-            mutation.target.matches("a")
+            mutation.target.matches(ANCHOR_SELECTOR)
           ) {
             affected.add(mutation.target as HTMLAnchorElement);
           }
           continue;
         }
-        mutation.removedNodes.forEach((node) => {
-          visitAnchors(node, (link) => affected.add(link));
-        });
-        mutation.addedNodes.forEach((node) => {
-          visitAnchors(node, (link) => affected.add(link));
-        });
+        mutation.removedNodes.forEach((node) =>
+          visitAnchors(node, markAffected),
+        );
+        mutation.addedNodes.forEach((node) => visitAnchors(node, markAffected));
       }
       for (const link of affected) {
         if (link.isConnected && root.contains(link)) register(link);

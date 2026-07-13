@@ -448,6 +448,7 @@ export async function renderRoute(
 
   const historyKey = generateHistoryKey(url.href);
   const mount = normalizeBasename(options.mount);
+  const basename = normalizeBasename(options.basename);
   // Fail loud on a request that cannot resolve the leaf route (a typo, or the
   // mount-prefixed-vs-relative confusion) instead of silently rendering empty
   // params (matchLeaf -> null -> {}). renderRoute paths are include-RELATIVE and
@@ -550,8 +551,11 @@ export async function renderRoute(
         store,
         eventController,
         () => undefined,
-        options.defaultPrefetch,
-        prefetchRoot,
+        {
+          defaultPrefetch: options.defaultPrefetch,
+          root: prefetchRoot,
+          basename,
+        },
       ),
     getVersion: () => undefined,
     updateVersion: () => {},
@@ -579,7 +583,7 @@ export async function renderRoute(
           eventController={eventController}
           initialPayload={{ root: initialTree, metadata: initialMetadata }}
           bridge={bridge}
-          basename={normalizeBasename(options.basename)}
+          basename={basename}
           themeConfig={
             options.theme === undefined
               ? null

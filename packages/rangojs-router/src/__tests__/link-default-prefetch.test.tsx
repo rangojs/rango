@@ -10,13 +10,16 @@ import { createRoot, type Root } from "react-dom/client";
 vi.mock("../browser/prefetch/loader.js", () => ({
   prefetchDirect: vi.fn(),
   prefetchQueued: vi.fn(() => "key"),
+  schedulePrefetchWhenRouterIdle: vi.fn(
+    (_eventController: unknown, callback: () => void) => callback(),
+  ),
+}));
+
+vi.mock("../browser/prefetch/observer.js", () => ({
   observeForPrefetch: vi.fn((_el: Element, cb: () => void) => {
     cb();
     return vi.fn();
   }),
-  schedulePrefetchWhenRouterIdle: vi.fn(
-    (_eventController: unknown, callback: () => void) => callback(),
-  ),
 }));
 
 import { prefetchQueued } from "../browser/prefetch/loader.js";

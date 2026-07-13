@@ -64,6 +64,9 @@ export const hashNavigationPatterns = urls(({ path }) => [
         >
           Prefetch opt-out plain anchor
         </a>
+        <a href="/files/report.pdf" data-testid="anchor-prefetch-resource">
+          Static resource plain anchor
+        </a>
       </div>
     ),
     { name: "index" },

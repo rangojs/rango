@@ -63,6 +63,16 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
   eventController: EventController;
   /** RSC version from initial payload metadata. */
   version?: string;
+  /** Server-resolved default used by both Links and delegated anchors. */
+  defaultPrefetch?: PrefetchStrategy;
+  /** Canonical router basename used to scope delegated anchor prefetch. */
+  basename?: string;
+}
+
+export interface NavigationBridgeDelegatedPrefetchOptions {
+  defaultPrefetch?: PrefetchStrategy;
+  root?: HTMLElement;
+  basename?: string;
 }
 
 /** Register delegated anchor prefetch with the production bridge wiring. */
@@ -70,8 +80,7 @@ export function setupNavigationBridgeDelegatedPrefetch(
   store: NavigationStore,
   eventController: EventController,
   getVersion: () => string | undefined,
-  defaultPrefetch?: PrefetchStrategy,
-  root?: HTMLElement,
+  options: NavigationBridgeDelegatedPrefetchOptions = {},
 ): () => void {
   return setupDelegatedLinkPrefetch(
     (url, priority) => {
@@ -94,7 +103,7 @@ export function setupNavigationBridgeDelegatedPrefetch(
 
       return schedulePrefetchWhenRouterIdle(eventController, trigger);
     },
-    { eventController, defaultPrefetch, root },
+    { eventController, ...options },
   );
 }
 
@@ -114,7 +123,15 @@ export function setupNavigationBridgeDelegatedPrefetch(
 export function createNavigationBridge(
   config: NavigationBridgeConfigWithController,
 ): NavigationBridge {
-  const { store, client, eventController, onUpdate, renderSegments } = config;
+  const {
+    store,
+    client,
+    eventController,
+    onUpdate,
+    renderSegments,
+    defaultPrefetch,
+    basename,
+  } = config;
   let version = config.version;
 
   // Create shared partial updater
@@ -772,6 +789,7 @@ export function createNavigationBridge(
         store,
         eventController,
         () => version,
+        { defaultPrefetch, basename },
       );
     },
 
