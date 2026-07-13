@@ -579,17 +579,17 @@ const { getByTestId } = await renderRoute(
 
 To test the router-wide prefetch fallback, pass the same strategy through
 `defaultPrefetch`. `renderRoute` applies it while the tree is mounted and uses
-the production delegated-anchor registration, so viewport observation remains
-explicit for plain anchors:
+the production delegated-anchor registration, including the plain-anchor
+opt-out:
 
 ```tsx
 const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
   request: "/",
   defaultPrefetch: "viewport",
 });
-// <a data-testid="docs" href="/docs" data-prefetch="true"> is observed.
-// An unmarked <a href="/logout"> is never observed.
-expect(getByTestId("docs")).toHaveAttribute("data-prefetch", "true");
+// An unmarked <a data-testid="docs" href="/docs"> is observed.
+// <a href="/logout" data-prefetch="false"> is never observed.
+expect(getByTestId("docs")).not.toHaveAttribute("data-prefetch");
 ```
 
 Optional params vs an include mount — two different prefixes, don't confuse them.

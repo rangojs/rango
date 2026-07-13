@@ -16,7 +16,7 @@ function isPrefetchRuntimeRequest(url: string): boolean {
  * (src/router.tsx), overriding the production viewport default. This pins both
  * sides of the manual-mode contract:
  *
- *   1. Bare Links and opted-in delegated plain anchors issue no speculative
+ *   1. Bare Links and delegated plain anchors issue no speculative
  *      prefetches because the resolved router default is "none".
  *   2. A per-Link strategy still opts in; manual mode only changes the fallback.
  *
@@ -25,7 +25,7 @@ function isPrefetchRuntimeRequest(url: string): boolean {
  */
 
 function runDefaultPrefetchNoneSpec(f: Fixture): void {
-  test("bare Links and opted-in plain anchors do not prefetch under defaultPrefetch: 'none'", async ({
+  test("bare Links and plain anchors do not prefetch under defaultPrefetch: 'none'", async ({
     page,
   }) => {
     const prefetchRequests: string[] = [];
@@ -35,7 +35,7 @@ function runDefaultPrefetchNoneSpec(f: Fixture): void {
       }
     });
 
-    // Home renders bare Links, an opted-in plain anchor, and explicit hover
+    // Home renders bare Links, a plain anchor, and explicit hover
     // Links, which cannot fire without a hover. A viewport fallback would
     // enqueue the bare Links and delegated anchor.
     await page.goto(f.url("/"));

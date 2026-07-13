@@ -121,7 +121,7 @@ interface RangoOptions<TEnv> {
   prefetchCacheTTL?: number | false;
 
   // Default prefetch strategy for Links without a `prefetch` prop and for
-  // intercepted plain anchors marked data-prefetch="true"
+  // intercepted plain anchors unless they set data-prefetch="false"
   // (dev: "none", production: "viewport").
   // Per-Link props win in both directions.
   defaultPrefetch?: "hover" | "viewport" | "render" | "adaptive" | "none";

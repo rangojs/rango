@@ -70,8 +70,8 @@ export interface InitBrowserAppOptions {
    * Enable global link interception for SPA navigation.
    * When enabled, clicks on same-origin anchor elements are intercepted
    * and handled via client-side navigation instead of full page loads. Plain
-   * anchors with `data-prefetch="true"` also follow the router's default
-   * prefetch strategy after hydration.
+   * anchors also follow the router's default prefetch strategy after hydration
+   * unless they set `data-prefetch="false"`.
    *
    * Links rendered with the Link component handle their own navigation
    * regardless of this setting.

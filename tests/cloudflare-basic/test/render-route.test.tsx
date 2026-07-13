@@ -51,7 +51,7 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(getByTestId("cr-cf-tenant").textContent).toBe("zeta");
   });
 
-  it("observes Links and only opted-in plain anchors under the router prefetch default", async () => {
+  it("observes Links and plain anchors except explicit opt-outs under the router prefetch default", async () => {
     const observe = vi.fn();
     const unobserve = vi.fn();
     vi.stubGlobal(
@@ -69,10 +69,12 @@ describe("renderRoute against cloudflare-basic client components", () => {
           <Link to="/pricing" data-testid="pricing-link">
             Pricing
           </Link>
-          <a href="/docs" data-prefetch="true" data-testid="docs-link">
+          <a href="/docs" data-testid="docs-link">
             Docs
           </a>
-          <a href="/logout">Log out</a>
+          <a href="/logout" data-prefetch="false">
+            Log out
+          </a>
         </>
       );
     }

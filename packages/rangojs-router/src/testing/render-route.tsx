@@ -277,7 +277,7 @@ export interface RenderRouteOptions {
   /**
    * Router default prefetch strategy to apply while this rendered tree is
    * mounted. This mirrors `createRouter({ defaultPrefetch })` for Links and
-   * opted-in plain anchors (`data-prefetch="true"`).
+   * plain anchors without `data-prefetch="false"`.
    */
   defaultPrefetch?: PrefetchStrategy;
 }

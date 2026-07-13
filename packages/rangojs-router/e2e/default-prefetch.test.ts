@@ -50,7 +50,7 @@ function runDefaultPrefetchSpec(
       pathname: "/blog/post-5",
     },
     {
-      label: "opted-in plain anchor",
+      label: "plain anchor",
       testId: "anchor-default-prefetch-offscreen",
       pathname: "/blog/post-6",
     },
@@ -99,7 +99,7 @@ function runDefaultPrefetchSpec(
     });
   }
 
-  test("an unmarked plain anchor never prefetches", async ({ page }) => {
+  test("an opted-out plain anchor never prefetches", async ({ page }) => {
     const requests: string[] = [];
     page.on("request", (req) => {
       if (
@@ -112,7 +112,7 @@ function runDefaultPrefetchSpec(
 
     await page.goto(f.url("/hash-navigation"));
     await waitForHydration(page);
-    await page.getByTestId("anchor-prefetch-unmarked").scrollIntoViewIfNeeded();
+    await page.getByTestId("anchor-prefetch-opt-out").scrollIntoViewIfNeeded();
     await page.waitForTimeout(1_000);
 
     expect(requests).toHaveLength(0);

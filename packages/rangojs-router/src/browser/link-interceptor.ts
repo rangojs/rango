@@ -75,10 +75,11 @@ function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
   return true;
 }
 
-/** Plain anchors opt into speculative requests explicitly. */
+/** Plain anchors follow the router default unless explicitly opted out. */
 export function defaultShouldPrefetch(link: HTMLAnchorElement): boolean {
   return (
-    link.getAttribute("data-prefetch") === "true" && isEligiblePlainAnchor(link)
+    link.getAttribute("data-prefetch") !== "false" &&
+    isEligiblePlainAnchor(link)
   );
 }
 

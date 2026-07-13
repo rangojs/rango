@@ -5,7 +5,8 @@
  * (router/prefetch-default.ts) and ships it in initial payload metadata; the
  * browser entry applies it here before hydration — same lifecycle as
  * `initPrefetchCache` / `setPrefetchConcurrency`. Every `<Link>` without an
- * explicit `prefetch` prop and every opted-in intercepted plain anchor uses it.
+ * explicit `prefetch` prop and every intercepted plain anchor that has not opted
+ * out with `data-prefetch="false"` uses it.
  *
  * The module initial value must equal the server resolver's environment default:
  * `"none"` in development and `"viewport"` in production. During SSR this
@@ -15,7 +16,7 @@
 
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
-// Shared by React Links and opted-in delegated anchors. The MediaQueryList is
+// Shared by React Links and delegated plain anchors. The MediaQueryList is
 // live, so re-reading `.matches` reflects changes without reallocating it.
 let hoverNoneQuery: MediaQueryList | null = null;
 
@@ -40,7 +41,7 @@ export function setDefaultPrefetchStrategy(strategy: PrefetchStrategy): void {
   defaultStrategy = strategy;
 }
 
-/** Current default strategy for Links and opted-in plain anchors. */
+/** Current default strategy for Links and delegated plain anchors. */
 export function getDefaultPrefetchStrategy(): PrefetchStrategy {
   return defaultStrategy;
 }

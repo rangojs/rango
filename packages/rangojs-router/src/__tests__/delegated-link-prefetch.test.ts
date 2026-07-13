@@ -52,7 +52,7 @@ describe("delegated plain-anchor prefetch", () => {
 
   it("does not start prefetch observation with click interception", () => {
     setDefaultPrefetchStrategy("viewport");
-    document.body.innerHTML = `<a href="/target" data-prefetch="true">target</a>`;
+    document.body.innerHTML = `<a href="/target">target</a>`;
 
     const cleanup = setupLinkInterception(vi.fn());
 
@@ -60,13 +60,13 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
-  it("observes only explicitly opted-in eligible anchors", () => {
+  it("observes eligible anchors except explicit opt-outs", () => {
     setDefaultPrefetchStrategy("viewport");
     document.body.innerHTML = `
-      <a href="/target" data-prefetch="true" data-testid="plain">plain</a>
-      <a href="/side-effect">unmarked side effect</a>
-      <a href="/ignored" data-prefetch="true" data-link-component>Link</a>
-      <a href="/reload" data-prefetch="true" data-no-intercept="true">reload</a>
+      <a href="/target" data-testid="plain">plain</a>
+      <a href="/side-effect" data-prefetch="false">opted-out side effect</a>
+      <a href="/ignored" data-link-component>Link</a>
+      <a href="/reload" data-no-intercept="true">reload</a>
     `;
     const plain = document.querySelector<HTMLAnchorElement>(
       '[data-testid="plain"]',
@@ -93,7 +93,6 @@ describe("delegated plain-anchor prefetch", () => {
     const cleanup = setupPrefetch(onPrefetch);
     const link = document.createElement("a");
     link.href = "/dynamic";
-    link.dataset.prefetch = "true";
 
     document.body.appendChild(link);
     await vi.waitFor(() => {
@@ -110,7 +109,6 @@ describe("delegated plain-anchor prefetch", () => {
     setDefaultPrefetchStrategy("viewport");
     const link = document.createElement("a");
     link.href = "/target";
-    link.dataset.prefetch = "true";
     document.body.appendChild(link);
     const cancelPending = vi.fn();
     const onPrefetch = vi
@@ -137,7 +135,6 @@ describe("delegated plain-anchor prefetch", () => {
     setDefaultPrefetchStrategy("viewport");
     const link = document.createElement("a");
     link.href = `${location.pathname}#faq`;
-    link.dataset.prefetch = "true";
     document.body.appendChild(link);
     const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
 
@@ -169,7 +166,6 @@ describe("delegated plain-anchor prefetch", () => {
     setDefaultPrefetchStrategy("adaptive");
     const link = document.createElement("a");
     link.href = "/target";
-    link.dataset.prefetch = "true";
     document.body.appendChild(link);
     const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
 
