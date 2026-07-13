@@ -49,6 +49,56 @@ describe("lazy prefetch loader", () => {
     expect(observer.unobserveForPrefetch).toHaveBeenCalledWith(element);
   });
 
+  it("runs scheduled prefetch work immediately when the router is idle", async () => {
+    const loader = await import("../browser/prefetch/loader");
+    const callback = vi.fn();
+    const subscribe = vi.fn();
+
+    const eventController = {
+      getState: () => ({ state: "idle", isStreaming: false }),
+      subscribe,
+    } as unknown as Parameters<typeof loader.schedulePrefetchWhenRouterIdle>[0];
+
+    const cleanup = loader.schedulePrefetchWhenRouterIdle(
+      eventController,
+      callback,
+    );
+
+    expect(callback).toHaveBeenCalledOnce();
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(cleanup).toBeUndefined();
+  });
+
+  it("unsubscribes before running scheduled work after the router becomes idle", async () => {
+    const loader = await import("../browser/prefetch/loader");
+    const calls: string[] = [];
+    let isIdle = false;
+    let listener: (() => void) | undefined;
+    const unsubscribe = vi.fn(() => calls.push("unsubscribe"));
+
+    const eventController = {
+      getState: () => ({
+        state: isIdle ? "idle" : "loading",
+        isStreaming: !isIdle,
+      }),
+      subscribe: (next: () => void) => {
+        listener = next;
+        return unsubscribe;
+      },
+    } as unknown as Parameters<typeof loader.schedulePrefetchWhenRouterIdle>[0];
+
+    const cleanup = loader.schedulePrefetchWhenRouterIdle(eventController, () =>
+      calls.push("callback"),
+    );
+
+    expect(calls).toEqual([]);
+    expect(cleanup).toBe(unsubscribe);
+
+    isIdle = true;
+    listener!();
+    expect(calls).toEqual(["unsubscribe", "callback"]);
+  });
+
   it("loads and configures the runtime on the first prefetch", async () => {
     const loader = await import("../browser/prefetch/loader");
     const decoder = vi.fn();

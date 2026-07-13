@@ -14,6 +14,9 @@ vi.mock("../browser/prefetch/loader.js", () => ({
     cb();
     return vi.fn();
   }),
+  schedulePrefetchWhenRouterIdle: vi.fn(
+    (_eventController: unknown, callback: () => void) => callback(),
+  ),
 }));
 
 import { prefetchQueued } from "../browser/prefetch/loader.js";

@@ -1,11 +1,11 @@
 /**
- * Router-wide default Link prefetch strategy (client seat).
+ * Router-wide default prefetch strategy (client seat).
  *
  * The server resolves `createRouter({ defaultPrefetch })` once at router init
  * (router/prefetch-default.ts) and ships it in initial payload metadata; the
  * browser entry applies it here before hydration — same lifecycle as
  * `initPrefetchCache` / `setPrefetchConcurrency`. Every `<Link>` without an
- * explicit `prefetch` prop reads the value at render time.
+ * explicit `prefetch` prop and every opted-in intercepted plain anchor uses it.
  *
  * The module initial value must equal the server resolver's environment default:
  * `"none"` in development and `"viewport"` in production. During SSR this
@@ -15,10 +15,22 @@
 
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
+// Shared by React Links and opted-in delegated anchors. The MediaQueryList is
+// live, so re-reading `.matches` reflects changes without reallocating it.
+let hoverNoneQuery: MediaQueryList | null = null;
+
 // Mirrors DEFAULT_PREFETCH_STRATEGY without pulling router-layer code into the
 // client bundle. NODE_ENV is folded by the app build.
 let defaultStrategy: PrefetchStrategy =
   process.env.NODE_ENV === "production" ? "viewport" : "none";
+
+function getHoverNoneQuery(): MediaQueryList | null {
+  if (typeof window === "undefined") return null;
+  if (!hoverNoneQuery) {
+    hoverNoneQuery = window.matchMedia("(hover: none)");
+  }
+  return hoverNoneQuery;
+}
 
 /**
  * Apply the server-resolved default strategy. Called once at browser app init
@@ -28,7 +40,25 @@ export function setDefaultPrefetchStrategy(strategy: PrefetchStrategy): void {
   defaultStrategy = strategy;
 }
 
-/** Current default strategy for Links without an explicit `prefetch` prop. */
+/** Current default strategy for Links and opted-in plain anchors. */
 export function getDefaultPrefetchStrategy(): PrefetchStrategy {
   return defaultStrategy;
+}
+
+/** Resolve adaptive to the strategy for the current input capability. */
+export function resolveAdaptiveStrategy(
+  strategy: PrefetchStrategy,
+): PrefetchStrategy {
+  if (strategy !== "adaptive") return strategy;
+  return getHoverNoneQuery()?.matches ? "viewport" : "hover";
+}
+
+/** Subscribe to changes in the input capability used by adaptive prefetch. */
+export function subscribeToAdaptiveStrategyChange(
+  listener: () => void,
+): () => void {
+  const query = getHoverNoneQuery();
+  if (!query) return () => {};
+  query.addEventListener("change", listener);
+  return () => query.removeEventListener("change", listener);
 }

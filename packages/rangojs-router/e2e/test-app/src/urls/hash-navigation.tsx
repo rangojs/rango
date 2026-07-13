@@ -54,6 +54,16 @@ export const hashNavigationPatterns = urls(({ path }) => [
         <Link to="/blog/post-5" data-testid="link-default-prefetch-offscreen">
           Offscreen default-prefetch link
         </Link>
+        <a
+          href="/blog/post-6"
+          data-prefetch="true"
+          data-testid="anchor-default-prefetch-offscreen"
+        >
+          Offscreen opted-in default-prefetch plain anchor
+        </a>
+        <a href="/blog/post-7" data-testid="anchor-prefetch-unmarked">
+          Unmarked plain anchor
+        </a>
       </div>
     ),
     { name: "index" },

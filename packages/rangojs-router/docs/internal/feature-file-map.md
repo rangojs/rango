@@ -60,7 +60,7 @@ The dev-discovery row's transport description is superseded: readiness is an act
 
 - Architecture core: [router/manifest.ts](../../src/router/manifest.ts), [router.ts](../../src/router.ts), [router/router-options.ts](../../src/router/router-options.ts).
 - Client app entrypoint: [browser/rsc-router.tsx](../../src/browser/rsc-router.tsx), [browser/react/NavigationProvider.tsx](../../src/browser/react/NavigationProvider.tsx), [browser/index.ts](../../src/browser/index.ts).
-- Default prefetch strategy: [router/prefetch-default.ts](../../src/router/prefetch-default.ts), [browser/prefetch/default-strategy.ts](../../src/browser/prefetch/default-strategy.ts), [browser/prefetch/loader.ts](../../src/browser/prefetch/loader.ts), [browser/prefetch/observer.ts](../../src/browser/prefetch/observer.ts), [browser/react/Link.tsx](../../src/browser/react/Link.tsx).
+- Default prefetch strategy: [router/prefetch-default.ts](../../src/router/prefetch-default.ts), [browser/prefetch/default-strategy.ts](../../src/browser/prefetch/default-strategy.ts), [browser/prefetch/loader.ts](../../src/browser/prefetch/loader.ts), [browser/prefetch/observer.ts](../../src/browser/prefetch/observer.ts), [browser/react/Link.tsx](../../src/browser/react/Link.tsx), [browser/link-interceptor.ts](../../src/browser/link-interceptor.ts).
 - Prefetch-aware e2e helpers: [testing/e2e/page-helpers.ts](../../src/testing/e2e/page-helpers.ts), [testing/e2e/parity.ts](../../src/testing/e2e/parity.ts).
 - Server entrypoint: [rsc/handler.ts](../../src/rsc/handler.ts), [ssr/index.tsx](../../src/ssr/index.tsx).
 - Response-route control flow: [rsc/response-route-handler.ts](../../src/rsc/response-route-handler.ts)

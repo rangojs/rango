@@ -525,6 +525,7 @@ export async function renderRoute(
     refresh: () => navigate(url.pathname + url.search),
     handlePopstate: async () => {},
     registerLinkInterception: () => () => {},
+    registerDelegatedPrefetch: () => () => {},
     getVersion: () => undefined,
     updateVersion: () => {},
   };

@@ -1,4 +1,5 @@
 import type { RscPayload } from "../types.js";
+import type { EventController } from "../event-controller.js";
 import {
   observeForPrefetch as observeElementForPrefetch,
   unobserveForPrefetch,
@@ -91,6 +92,27 @@ export function observeForPrefetch(
   return () => {
     unobserveForPrefetch(element);
   };
+}
+
+/** Run speculative work only when no navigation or stream is active. */
+export function schedulePrefetchWhenRouterIdle(
+  eventController: Pick<EventController, "getState" | "subscribe">,
+  callback: () => void,
+): (() => void) | undefined {
+  const state = eventController.getState();
+  if (state.state === "idle" && !state.isStreaming) {
+    callback();
+    return;
+  }
+
+  const unsubscribe = eventController.subscribe(() => {
+    const nextState = eventController.getState();
+    if (nextState.state === "idle" && !nextState.isStreaming) {
+      unsubscribe();
+      callback();
+    }
+  });
+  return unsubscribe;
 }
 
 export function cancelAllPrefetches(keepUrl?: string | null): void {

@@ -18,7 +18,8 @@ function restoreWindow(): void {
 /**
  * Install a window whose matchMedia("(hover: none)") returns a MediaQueryList
  * whose `.matches` is a LIVE getter driven by the mutable `getHoverNone` flag —
- * modelling the real browser object Link caches once and re-reads per render.
+ * modelling the real browser object shared prefetch strategy resolution caches
+ * once and re-reads for Links and delegated anchors.
  * Returns the matchMedia spy so a test can assert the query is created once.
  */
 function installWindow(getHoverNone: () => boolean): ReturnType<typeof vi.fn> {

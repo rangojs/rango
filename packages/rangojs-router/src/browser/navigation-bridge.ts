@@ -24,7 +24,10 @@ import {
 const addTransitionType: ((type: string) => void) | undefined =
   "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 
-import { setupLinkInterception } from "./link-interceptor.js";
+import {
+  setupDelegatedLinkPrefetch,
+  setupLinkInterception,
+} from "./link-interceptor.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { generateHistoryKey } from "./navigation-store.js";
 import type { EventController } from "./event-controller.js";
@@ -38,6 +41,11 @@ import {
 import { debugLog } from "./logging.js";
 import { ServerRedirect } from "../errors.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  prefetchDirect,
+  prefetchQueued,
+  schedulePrefetchWhenRouterIdle,
+} from "./prefetch/loader.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -722,6 +730,32 @@ export function createNavigationBridge(
         window.removeEventListener("popstate", handlePopstate);
         window.removeEventListener("pageshow", handlePageShow);
       };
+    },
+
+    registerDelegatedPrefetch(): () => void {
+      return setupDelegatedLinkPrefetch(
+        (url, priority) => {
+          const trigger = () => {
+            const segmentState = store.getSegmentState();
+            const prefetch =
+              priority === "direct" ? prefetchDirect : prefetchQueued;
+            prefetch(
+              url,
+              segmentState.currentSegmentIds,
+              version,
+              store.getRouterId?.(),
+            );
+          };
+
+          if (priority === "direct") {
+            trigger();
+            return;
+          }
+
+          return schedulePrefetchWhenRouterIdle(eventController, trigger);
+        },
+        { eventController },
+      );
     },
 
     getVersion(): string | undefined {

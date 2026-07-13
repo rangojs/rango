@@ -1,4 +1,11 @@
 import type { LinkInterceptorOptions, NavigateOptions } from "./types.js";
+import type { EventController } from "./event-controller.js";
+import {
+  getDefaultPrefetchStrategy,
+  resolveAdaptiveStrategy,
+  subscribeToAdaptiveStrategyChange,
+} from "./prefetch/default-strategy.js";
+import { observeForPrefetch } from "./prefetch/loader.js";
 
 /**
  * Check if an anchor points to the same page with only a hash change.
@@ -27,50 +34,59 @@ export function isHashOnlyNavigation(anchor: HTMLAnchorElement): boolean {
  * @returns true if the link should be intercepted
  */
 export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
-  // Only intercept same-origin links
+  if (!isEligiblePlainAnchor(link)) return false;
+
+  // Don't intercept hash-only navigation (same path, only fragment changes).
+  // Let the browser handle anchor scrolling natively.
+  return !isHashOnlyNavigation(link);
+}
+
+function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
+  // Only handle same-origin links
   if (link.origin !== window.location.origin) {
     return false;
   }
 
-  // Don't intercept if it has download attribute
+  // Skip links with a download attribute
   if (link.hasAttribute("download")) {
     return false;
   }
 
-  // Don't intercept if target is set to something other than _self
+  // Skip links targeting another browsing context
   if (link.target && link.target !== "_self") {
     return false;
   }
 
-  // Don't intercept if explicitly disabled
+  // Skip links explicitly excluded from delegated handling
   if (link.getAttribute("data-no-intercept") === "true") {
     return false;
   }
 
-  // Don't intercept Link component anchors - they handle their own navigation
+  // Link components handle their own navigation and prefetch
   if (link.hasAttribute("data-link-component")) {
     return false;
   }
 
-  // Don't intercept external links
+  // Skip links explicitly marked external
   if (link.hasAttribute("data-external")) {
-    return false;
-  }
-
-  // Don't intercept hash-only navigation (same path, only fragment changes).
-  // Let the browser handle anchor scrolling natively.
-  if (isHashOnlyNavigation(link)) {
     return false;
   }
 
   return true;
 }
 
+/** Plain anchors opt into speculative requests explicitly. */
+export function defaultShouldPrefetch(link: HTMLAnchorElement): boolean {
+  return (
+    link.getAttribute("data-prefetch") === "true" && isEligiblePlainAnchor(link)
+  );
+}
+
 /**
  * Set up link interception for SPA navigation
  *
- * Attaches a global click handler to intercept clicks on anchor elements
- * and call the onNavigate callback instead of performing a full page load.
+ * Attaches a global click handler to intercept clicks on anchor elements and
+ * call the onNavigate callback instead of performing a full page load.
  *
  * @param onNavigate - Callback when a link should navigate via SPA
  * @param options - Configuration options
@@ -137,5 +153,186 @@ export function setupLinkInterception(
 
   return () => {
     document.removeEventListener("click", handleClick);
+  };
+}
+
+export type DelegatedPrefetchCallback = (
+  url: string,
+  priority: "direct" | "queued",
+) => void | (() => void);
+
+export interface DelegatedPrefetchOptions {
+  eventController: Pick<EventController, "getState" | "subscribe">;
+  shouldPrefetch?: (link: HTMLAnchorElement) => boolean;
+}
+
+interface DelegatedPrefetchState {
+  stopObserving?: () => void;
+  cancelPending?: () => void;
+}
+
+export function setupDelegatedLinkPrefetch(
+  onPrefetch: DelegatedPrefetchCallback,
+  options: DelegatedPrefetchOptions,
+): () => void {
+  const defaultStrategy = getDefaultPrefetchStrategy();
+  if (defaultStrategy === "none") return () => {};
+
+  const shouldPrefetch = options.shouldPrefetch ?? defaultShouldPrefetch;
+  const states = new Map<HTMLAnchorElement, DelegatedPrefetchState>();
+  let strategy = resolveAdaptiveStrategy(defaultStrategy);
+
+  const unregister = (link: HTMLAnchorElement) => {
+    const state = states.get(link);
+    state?.stopObserving?.();
+    state?.cancelPending?.();
+    states.delete(link);
+  };
+
+  const isEligible = (link: HTMLAnchorElement) =>
+    link.hasAttribute("href") && shouldPrefetch(link);
+
+  const trigger = (link: HTMLAnchorElement, priority: "direct" | "queued") => {
+    if (!isEligible(link)) {
+      unregister(link);
+      return;
+    }
+
+    let state = states.get(link);
+    if (!state) {
+      state = {};
+      states.set(link, state);
+    }
+    state.cancelPending?.();
+    state.cancelPending = onPrefetch(link.href, priority) ?? undefined;
+    if (!state.stopObserving && !state.cancelPending) {
+      states.delete(link);
+    }
+  };
+
+  const register = (link: HTMLAnchorElement) => {
+    unregister(link);
+    if (!isEligible(link)) return;
+    if (strategy === "hover") return;
+
+    const state: DelegatedPrefetchState = {};
+    states.set(link, state);
+
+    if (strategy === "render") {
+      trigger(link, "queued");
+    } else if (strategy === "viewport") {
+      state.stopObserving = observeForPrefetch(link, () => {
+        state.stopObserving = undefined;
+        trigger(link, "queued");
+      });
+    }
+  };
+
+  const visitAnchors = (
+    node: Node,
+    visit: (link: HTMLAnchorElement) => void,
+  ) => {
+    if (!(node instanceof Element)) return;
+    if (node.matches("a[href]")) {
+      visit(node as HTMLAnchorElement);
+    }
+    node
+      .querySelectorAll<HTMLAnchorElement>("a[href]")
+      .forEach((link) => visit(link));
+  };
+
+  const root = document.documentElement;
+  const rescan = () => {
+    for (const link of [...states.keys()]) unregister(link);
+    strategy = resolveAdaptiveStrategy(defaultStrategy);
+    if ((strategy === "viewport" || strategy === "render") && root) {
+      visitAnchors(root, register);
+    }
+  };
+
+  rescan();
+
+  let mutationObserver: MutationObserver | undefined;
+  if (
+    defaultStrategy === "viewport" ||
+    defaultStrategy === "render" ||
+    defaultStrategy === "adaptive"
+  ) {
+    if (typeof MutationObserver !== "undefined" && root) {
+      mutationObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type === "attributes") {
+            if (
+              mutation.target instanceof Element &&
+              mutation.target.matches("a")
+            ) {
+              register(mutation.target as HTMLAnchorElement);
+            }
+            continue;
+          }
+          mutation.removedNodes.forEach((node) => {
+            visitAnchors(node, unregister);
+          });
+          mutation.addedNodes.forEach((node) => {
+            visitAnchors(node, register);
+          });
+        }
+      });
+      mutationObserver.observe(root, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: [
+          "href",
+          "target",
+          "download",
+          "data-no-intercept",
+          "data-link-component",
+          "data-external",
+          "data-prefetch",
+        ],
+      });
+    }
+  }
+
+  const handleMouseOver = (event: MouseEvent) => {
+    if (!(event.target instanceof Element)) return;
+
+    const link = event.target.closest<HTMLAnchorElement>("a[href]");
+    if (!link) return;
+    if (
+      event.relatedTarget instanceof Node &&
+      link.contains(event.relatedTarget)
+    ) {
+      return;
+    }
+    trigger(link, "direct");
+  };
+
+  if (strategy === "hover" || strategy === "viewport") {
+    document.addEventListener("mouseover", handleMouseOver);
+  }
+
+  let locationHref = options.eventController.getState().location.href;
+  const unsubscribeLocation =
+    defaultStrategy === "viewport" || defaultStrategy === "adaptive"
+      ? options.eventController.subscribe(() => {
+          const nextHref = options.eventController.getState().location.href;
+          if (nextHref === locationHref) return;
+          locationHref = nextHref;
+          if (strategy === "viewport") rescan();
+        })
+      : undefined;
+  const unsubscribeAdaptive =
+    defaultStrategy === "adaptive"
+      ? subscribeToAdaptiveStrategyChange(rescan)
+      : undefined;
+
+  return () => {
+    mutationObserver?.disconnect();
+    document.removeEventListener("mouseover", handleMouseOver);
+    unsubscribeLocation?.();
+    unsubscribeAdaptive?.();
+    for (const link of [...states.keys()]) unregister(link);
   };
 }

@@ -558,9 +558,12 @@ export interface RangoOptions<TEnv = any> {
 
   /**
    * Default prefetch strategy for every `<Link>` that does not set its own
-   * `prefetch` prop. A per-Link `prefetch` prop always wins, in both
-   * directions (a Link can opt out of an aggressive default with
-   * `prefetch="none"`, or opt in under `defaultPrefetch: "none"`).
+   * `prefetch` prop and every intercepted plain anchor with
+   * `data-prefetch="true"`. Plain anchors require this explicit opt-in because
+   * the router cannot know whether an arbitrary GET endpoint is safe to call
+   * speculatively. A per-Link `prefetch` prop always wins in both directions (a
+   * Link can opt out with `prefetch="none"`, or opt in under
+   * `defaultPrefetch: "none"`).
    *
    * - `"viewport"` (production default): prefetch when the link enters the viewport —
    *   idle-gated and queued (see `prefetchConcurrency`), so prefetches never

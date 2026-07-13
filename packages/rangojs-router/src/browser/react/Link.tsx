@@ -36,52 +36,20 @@ import {
   observeForPrefetch,
   prefetchDirect,
   prefetchQueued,
+  schedulePrefetchWhenRouterIdle,
 } from "../prefetch/loader.js";
-import { getDefaultPrefetchStrategy } from "../prefetch/default-strategy.js";
+import {
+  getDefaultPrefetchStrategy,
+  resolveAdaptiveStrategy,
+} from "../prefetch/default-strategy.js";
 import { getAppVersion } from "../app-version.js";
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
-
-// The (hover: none) MediaQueryList, created lazily on first client read and
-// reused across every Link render. matchMedia allocates and registers a live
-// query object; a fresh one per render (Link renders can be very frequent) is
-// wasteful when the same object's `.matches` is already live. Left null on the
-// server (no window).
-let hoverNoneQuery: MediaQueryList | null = null;
-
-/**
- * Read current touch/no-hover capability from the cached MediaQueryList. The
- * `.matches` read is live, so `prefetch="adaptive"` still reacts to
- * input-capability changes on hybrid devices (touch laptops, tablets gaining or
- * losing a pointer) and after SSR -> hydrate. The SSR guard returns a stable
- * `false` (pointer/hover default) so the resolved strategy doesn't drift on the
- * server vs the first client render.
- */
-function isTouchDevice(): boolean {
-  if (typeof window === "undefined") return false;
-  if (!hoverNoneQuery) {
-    hoverNoneQuery = window.matchMedia("(hover: none)");
-  }
-  return hoverNoneQuery.matches;
-}
 
 // The PrefetchStrategy union is defined in router/prefetch-default.ts (both
 // the server-side option resolver and this client seat consume it); re-export
 // so the public `PrefetchStrategy` import path via client.tsx is unchanged.
 export type { PrefetchStrategy } from "../../router/prefetch-default.js";
-
-/**
- * Resolve a prefetch strategy, expanding "adaptive" to the concrete strategy
- * for the CURRENT input capability: "viewport" on touch (no-hover) devices,
- * "hover" on pointer devices. Non-adaptive strategies pass through unchanged.
- * Reads touch capability live (not a module-load snapshot) so the result
- * tracks input-capability changes.
- */
-export function resolveAdaptiveStrategy(
-  prefetch: PrefetchStrategy,
-): PrefetchStrategy {
-  if (prefetch !== "adaptive") return prefetch;
-  return isTouchDevice() ? "viewport" : "hover";
-}
+export { resolveAdaptiveStrategy } from "../prefetch/default-strategy.js";
 
 /**
  * Link component props
@@ -260,10 +228,8 @@ export const Link: ForwardRefExoticComponent<
 
   // No explicit `prefetch` prop: fall back to the router-wide default
   // (server-resolved, applied at browser init — before hydration, so this
-  // render-time read never races the metadata). Then resolve adaptive:
-  // viewport on touch devices, hover on pointer devices. isTouchDevice() is
-  // read here (per render), not from a module-load snapshot, so a device
-  // whose input capability changes resolves to the current value.
+  // render-time read never races the metadata). Adaptive reads the current
+  // input capability rather than a module-load snapshot.
   const resolvedStrategy = resolveAdaptiveStrategy(
     prefetch ?? getDefaultPrefetchStrategy(),
   );
@@ -409,31 +375,19 @@ export const Link: ForwardRefExoticComponent<
       );
     };
 
-    // Schedule prefetch only when the app is idle (no navigation/streaming).
-    // This avoids competing with hydration and active navigation fetches.
-    const scheduleWhenIdle = (callback: () => void) => {
-      const state = ctx.eventController.getState();
-      if (state.state === "idle" && !state.isStreaming) {
-        callback();
-        return;
-      }
-      const unsub = ctx.eventController.subscribe(() => {
-        const s = ctx.eventController.getState();
-        if (s.state === "idle" && !s.isStreaming) {
-          unsub();
-          callback();
-        }
-      });
-      unsubIdle = unsub;
-    };
-
     if (isRender) {
-      scheduleWhenIdle(triggerPrefetch);
+      unsubIdle = schedulePrefetchWhenRouterIdle(
+        ctx.eventController,
+        triggerPrefetch,
+      );
     } else if (isViewport) {
       const element = internalRef.current;
       if (!element) return;
       stopObserving = observeForPrefetch(element, () => {
-        scheduleWhenIdle(triggerPrefetch);
+        unsubIdle = schedulePrefetchWhenRouterIdle(
+          ctx.eventController,
+          triggerPrefetch,
+        );
       });
     }
 
