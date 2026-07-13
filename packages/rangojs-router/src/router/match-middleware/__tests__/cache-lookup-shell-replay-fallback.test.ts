@@ -1,4 +1,24 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import type { PrerenderStore } from "../../../prerender/store.js";
+
+const requestContextAccess = vi.hoisted(() => ({ available: true }));
+const prerenderStoreGetMock = vi.hoisted(() =>
+  vi.fn<PrerenderStore["get"]>(async () => null),
+);
+
+vi.mock("../../../server/request-context.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../server/request-context.js")>();
+  return {
+    ...actual,
+    _getRequestContext: () =>
+      requestContextAccess.available ? actual._getRequestContext() : undefined,
+  };
+});
+
+vi.mock("../../../prerender/store.js", () => ({
+  createPrerenderStore: () => ({ get: prerenderStoreGetMock }),
+}));
 
 // lookupRoute deserializes cached segments through segment-codec; same
 // JSON-based Flight stand-in as cache-scope.test.ts, mocked at the
@@ -80,6 +100,7 @@ interface DrainResult {
   onHit: ReturnType<typeof vi.fn>;
   onExplicitHit: ReturnType<typeof vi.fn>;
   onExplicitBypass: ReturnType<typeof vi.fn>;
+  resolveRenderBarrier: ReturnType<typeof vi.spyOn>;
   reqCtx: RequestContext<any>;
 }
 
@@ -93,6 +114,8 @@ async function drain(options: {
   /** Omit the marker's store (report-only marker, no-eligible-snapshot path). */
   markerStore?: boolean;
   isIntercept?: boolean;
+  isPrerender?: boolean;
+  initialPostMatchReason?: "prerender-store" | "intercept";
   /** Explicit scope options (default `{ ttl: 30 }`). */
   scopeOptions?: import("../../../types.js").PartialCacheOptions;
 }): Promise<DrainResult> {
@@ -116,6 +139,8 @@ async function drain(options: {
   }) as RequestContext<any>;
   reqCtx.originalUrl = originalUrl;
   reqCtx._cacheStore = store;
+  reqCtx._pprReplayPostMatchReason = options.initialPostMatchReason;
+  const resolveRenderBarrier = vi.spyOn(reqCtx, "_resolveRenderBarrier");
 
   const snapshot: ShellSnapshotRecord[] = options.seededEntry
     ? [
@@ -156,7 +181,11 @@ async function drain(options: {
     prevParams: {},
     clientSegmentSet: new Set<string>(),
     entries: [],
-    matched: { params: {}, routeKey: "home" },
+    matched: {
+      params: {},
+      routeKey: "home",
+      pr: options.isPrerender ? true : undefined,
+    },
     routeKey: "home",
     metricsStore: undefined,
     stale: false,
@@ -176,19 +205,34 @@ async function drain(options: {
     }),
   );
 
-  return { yielded, state, onHit, onExplicitHit, onExplicitBypass, reqCtx };
+  return {
+    yielded,
+    state,
+    onHit,
+    onExplicitHit,
+    onExplicitBypass,
+    resolveRenderBarrier,
+    reqCtx,
+  };
 }
 
 describe("withCacheLookup — PPR replay composed with a route-derived cache() scope", () => {
+  beforeEach(() => {
+    requestContextAccess.available = true;
+    prerenderStoreGetMock.mockReset().mockResolvedValue(null);
+  });
+
   it("explicit tier COLD: the seeded doc record supplies the match and reports the replay hit", async () => {
     const result = await drain({
       seededEntry: await entryData(["seeded-R0", "seeded-R0.page"]),
+      initialPostMatchReason: "intercept",
     });
 
     expect(result.yielded).toEqual(["seeded-R0", "seeded-R0.page"]);
     expect(result.state.cacheHit).toBe(true);
     expect(result.onHit).toHaveBeenCalledTimes(1);
     expect(result.onExplicitHit).not.toHaveBeenCalled();
+    expect(result.reqCtx._pprReplayPostMatchReason).toBeUndefined();
   });
 
   it("explicit tier WARM: the explicit entry serves and reports explicit-cache-hit, never a replay hit", async () => {
@@ -310,19 +354,24 @@ describe("withCacheLookup — PPR replay composed with a route-derived cache() s
     expect(result.state.cacheHit).toBe(false);
     expect(result.onHit).not.toHaveBeenCalled();
     expect(result.onExplicitHit).not.toHaveBeenCalled();
+    expect(result.reqCtx._pprReplayPostMatchReason).toBe("intercept");
   });
 
-  it("stamps _resolvedIntercept from the match context (post-match replay truth)", async () => {
-    // The replay reporter reads this AFTER matchPartial resolves
-    // (reclassifyReplayStatus in rsc-rendering.ts): only the match knows
-    // whether findInterceptForRoute resolved an intercept — the
-    // intercept-source header proves nothing in either direction.
-    const intercept = await drain({ isIntercept: true });
-    expect(intercept.reqCtx._resolvedIntercept).toBe(true);
+  it("keeps prerender-store precedence and resolves the barrier when request ALS disappears", async () => {
+    const prerenderEntry = await entryData(["prerender-R0"]);
+    prerenderStoreGetMock.mockImplementationOnce(async () => {
+      requestContextAccess.available = false;
+      return {
+        segments: prerenderEntry.segments,
+        handles: prerenderEntry.handles,
+      };
+    });
 
-    // Stamped unconditionally: false resets a stale value from an earlier
-    // match on the same request context.
-    const normal = await drain({});
-    expect(normal.reqCtx._resolvedIntercept).toBe(false);
+    const result = await drain({ isIntercept: true, isPrerender: true });
+
+    expect(result.yielded).toEqual(["prerender-R0"]);
+    expect(result.state.cacheSource).toBe("prerender");
+    expect(result.reqCtx._pprReplayPostMatchReason).toBe("prerender-store");
+    expect(result.resolveRenderBarrier).toHaveBeenCalledTimes(1);
   });
 });

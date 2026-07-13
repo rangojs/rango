@@ -1323,8 +1323,8 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
 
   it("reclassifies a cold-shell miss to prerender-store when the store actually served, and suppresses the heal", async () => {
     // The pre-match probe reads only the non-intercept artifact; a baked /i
-    // variant serves inside the match (tryPrerenderLookup stamps
-    // _servedFromPrerenderStore). Reporting no-entry and scheduling a heal
+    // variant serves inside the match (tryPrerenderLookup stamps the
+    // post-match reason). Reporting no-entry and scheduling a heal
     // would blame a cold capture for a lane the prerender store owns — its
     // captures record no doc record, so the healed snapshot could never
     // become consumable.
@@ -1334,7 +1334,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       ppr: true,
       headers: { "X-RSC-Router-Intercept-Source": "/photos" },
       matchPartial: async () => {
-        getRequestContext()._servedFromPrerenderStore = true;
+        getRequestContext()._pprReplayPostMatchReason = "prerender-store";
         return emptyMatchResult();
       },
     });
@@ -1354,7 +1354,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       partial: true,
       ppr: true,
       matchPartial: async () => {
-        getRequestContext()._resolvedIntercept = true;
+        getRequestContext()._pprReplayPostMatchReason = "intercept";
         return emptyMatchResult();
       },
     });
@@ -1383,7 +1383,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
         };
       },
       matchPartial: async () => {
-        getRequestContext()._resolvedIntercept = true;
+        getRequestContext()._pprReplayPostMatchReason = "intercept";
         return emptyMatchResult();
       },
     });
