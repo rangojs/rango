@@ -577,6 +577,21 @@ const { getByTestId } = await renderRoute(
 // useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
 ```
 
+To test the router-wide prefetch fallback, pass the same strategy through
+`defaultPrefetch`. `renderRoute` applies it while the tree is mounted and uses
+the production delegated-anchor registration, so viewport observation remains
+explicit for plain anchors:
+
+```tsx
+const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
+  request: "/",
+  defaultPrefetch: "viewport",
+});
+// <a data-testid="docs" href="/docs" data-prefetch="true"> is observed.
+// An unmarked <a href="/logout"> is never observed.
+expect(getByTestId("docs")).toHaveAttribute("data-prefetch", "true");
+```
+
 Optional params vs an include mount — two different prefixes, don't confuse them.
 An optional param that is part of the matched PATTERN (`/:locale?/c/:group` at
 `/en/c/wine`) is auto-filled from the current match by `useReverse` exactly like

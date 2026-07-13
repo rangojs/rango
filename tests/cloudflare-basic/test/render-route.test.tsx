@@ -1,10 +1,14 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { renderRoute } from "@rangojs/router/testing/dom";
+import { Link } from "@rangojs/router/client";
 import { CRClientNav } from "../src/components/CRClientNav.js";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("renderRoute against cloudflare-basic client components", () => {
   // CRClientNav is a REAL "use client" component reading router context:
@@ -45,5 +49,41 @@ describe("renderRoute against cloudflare-basic client components", () => {
     await router.navigate("/cr/zeta/posts/p9");
     expect(router.params()).toMatchObject({ tenantId: "zeta", postId: "p9" });
     expect(getByTestId("cr-cf-tenant").textContent).toBe("zeta");
+  });
+
+  it("observes Links and only opted-in plain anchors under the router prefetch default", async () => {
+    const observe = vi.fn();
+    const unobserve = vi.fn();
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe = observe;
+        unobserve = unobserve;
+        disconnect = vi.fn();
+      },
+    );
+
+    function PlainAnchors() {
+      return (
+        <>
+          <Link to="/pricing" data-testid="pricing-link">
+            Pricing
+          </Link>
+          <a href="/docs" data-prefetch="true" data-testid="docs-link">
+            Docs
+          </a>
+          <a href="/logout">Log out</a>
+        </>
+      );
+    }
+
+    const { getByTestId } = await renderRoute(
+      [{ path: "/", Component: PlainAnchors }],
+      { request: "/", defaultPrefetch: "viewport" },
+    );
+
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(observe).toHaveBeenCalledWith(getByTestId("pricing-link"));
+    expect(observe).toHaveBeenCalledWith(getByTestId("docs-link"));
   });
 });

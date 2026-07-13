@@ -1,6 +1,7 @@
 import type {
   NavigationBridge,
   NavigationBridgeConfig,
+  NavigationStore,
   NavigateOptionsInternal,
   ResolvedSegment,
 } from "./types.js";
@@ -61,6 +62,37 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
   eventController: EventController;
   /** RSC version from initial payload metadata. */
   version?: string;
+}
+
+/** Register delegated anchor prefetch with the production bridge wiring. */
+export function setupNavigationBridgeDelegatedPrefetch(
+  store: NavigationStore,
+  eventController: EventController,
+  getVersion: () => string | undefined,
+): () => void {
+  return setupDelegatedLinkPrefetch(
+    (url, priority) => {
+      const trigger = () => {
+        const segmentState = store.getSegmentState();
+        const prefetch =
+          priority === "direct" ? prefetchDirect : prefetchQueued;
+        prefetch(
+          url,
+          segmentState.currentSegmentIds,
+          getVersion(),
+          store.getRouterId?.(),
+        );
+      };
+
+      if (priority === "direct") {
+        trigger();
+        return;
+      }
+
+      return schedulePrefetchWhenRouterIdle(eventController, trigger);
+    },
+    { eventController },
+  );
 }
 
 /**
@@ -733,28 +765,10 @@ export function createNavigationBridge(
     },
 
     registerDelegatedPrefetch(): () => void {
-      return setupDelegatedLinkPrefetch(
-        (url, priority) => {
-          const trigger = () => {
-            const segmentState = store.getSegmentState();
-            const prefetch =
-              priority === "direct" ? prefetchDirect : prefetchQueued;
-            prefetch(
-              url,
-              segmentState.currentSegmentIds,
-              version,
-              store.getRouterId?.(),
-            );
-          };
-
-          if (priority === "direct") {
-            trigger();
-            return;
-          }
-
-          return schedulePrefetchWhenRouterIdle(eventController, trigger);
-        },
-        { eventController },
+      return setupNavigationBridgeDelegatedPrefetch(
+        store,
+        eventController,
+        () => version,
       );
     },
 
