@@ -578,9 +578,8 @@ const { getByTestId } = await renderRoute(
 ```
 
 To test the router-wide prefetch fallback, pass the same strategy through
-`defaultPrefetch`. `renderRoute` applies it while the tree is mounted and uses
-the production delegated-anchor registration, including the plain-anchor
-opt-out:
+`defaultPrefetch`. `renderRoute` scopes it to that rendered tree and uses the
+production delegated-anchor registration, including the plain-anchor opt-out:
 
 ```tsx
 const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {

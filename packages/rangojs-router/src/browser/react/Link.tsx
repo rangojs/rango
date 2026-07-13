@@ -13,7 +13,10 @@ import React, {
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
-import { isHashOnlyNavigation } from "../link-interceptor.js";
+import {
+  isHashOnlyNavigation,
+  subscribeToLocationChange,
+} from "../link-interceptor.js";
 import {
   isLocationStateEntry,
   type LocationStateEntry,
@@ -231,7 +234,7 @@ export const Link: ForwardRefExoticComponent<
   // render-time read never races the metadata). Adaptive reads the current
   // input capability rather than a module-load snapshot.
   const resolvedStrategy = resolveAdaptiveStrategy(
-    prefetch ?? getDefaultPrefetchStrategy(),
+    prefetch ?? ctx?.defaultPrefetch ?? getDefaultPrefetchStrategy(),
   );
 
   // Internal ref for viewport observation; merge with forwarded ref
@@ -359,42 +362,59 @@ export const Link: ForwardRefExoticComponent<
     const isRender = resolvedStrategy === "render";
     if (!isViewport && !isRender) return;
 
-    let cancelled = false;
-    let unsubIdle: (() => void) | undefined;
-    let stopObserving: (() => void) | undefined;
+    const armPrefetch = (): (() => void) => {
+      let cancelled = false;
+      let unsubIdle: (() => void) | undefined;
+      let stopObserving: (() => void) | undefined;
 
-    const triggerPrefetch = () => {
-      if (cancelled) return;
-      const segmentState = ctx.store.getSegmentState();
-      prefetchQueued(
-        resolvedTo,
-        segmentState.currentSegmentIds,
-        getAppVersion(),
-        ctx.store.getRouterId?.(),
-        prefetchKey,
-      );
-    };
+      const triggerPrefetch = () => {
+        if (cancelled) return;
+        const segmentState = ctx.store.getSegmentState();
+        prefetchQueued(
+          resolvedTo,
+          segmentState.currentSegmentIds,
+          getAppVersion(),
+          ctx.store.getRouterId?.(),
+          prefetchKey,
+        );
+      };
 
-    if (isRender) {
-      unsubIdle = schedulePrefetchWhenRouterIdle(
-        ctx.eventController,
-        triggerPrefetch,
-      );
-    } else if (isViewport) {
-      const element = internalRef.current;
-      if (!element) return;
-      stopObserving = observeForPrefetch(element, () => {
+      if (isRender) {
         unsubIdle = schedulePrefetchWhenRouterIdle(
           ctx.eventController,
           triggerPrefetch,
         );
-      });
-    }
+      } else {
+        const element = internalRef.current;
+        if (element) {
+          stopObserving = observeForPrefetch(element, () => {
+            unsubIdle = schedulePrefetchWhenRouterIdle(
+              ctx.eventController,
+              triggerPrefetch,
+            );
+          });
+        }
+      }
+
+      return () => {
+        cancelled = true;
+        unsubIdle?.();
+        stopObserving?.();
+      };
+    };
+
+    let disarmPrefetch = armPrefetch();
+    const unsubscribeLocation =
+      isViewport || isRender
+        ? subscribeToLocationChange(ctx.eventController, () => {
+            disarmPrefetch();
+            disarmPrefetch = armPrefetch();
+          })
+        : undefined;
 
     return () => {
-      cancelled = true;
-      unsubIdle?.();
-      stopObserving?.();
+      unsubscribeLocation?.();
+      disarmPrefetch();
     };
   }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 

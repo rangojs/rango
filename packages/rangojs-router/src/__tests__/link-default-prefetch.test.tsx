@@ -29,14 +29,20 @@ import {
 } from "../browser/prefetch/default-strategy.js";
 import { DEFAULT_PREFETCH_STRATEGY } from "../router/prefetch-default.js";
 
+let location: URL;
+let stateListeners: Set<() => void>;
+
 const ctxValue = {
   store: {
     getSegmentState: () => ({ currentSegmentIds: [] }),
     getRouterId: () => "router_test",
   },
   eventController: {
-    getState: () => ({ state: "idle", isStreaming: false }),
-    subscribe: () => () => {},
+    getState: () => ({ state: "idle", isStreaming: false, location }),
+    subscribe: (listener: () => void) => {
+      stateListeners.add(listener);
+      return () => stateListeners.delete(listener);
+    },
   },
   navigate: async () => {},
   refresh: async () => {},
@@ -64,6 +70,9 @@ describe("Link default prefetch fallback", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    location = new URL(window.location.href);
+    stateListeners = new Set();
+    ctxValue.defaultPrefetch = undefined;
     vi.clearAllMocks();
   });
 
@@ -85,6 +94,28 @@ describe("Link default prefetch fallback", () => {
     expect(prefetchQueued).toHaveBeenCalledTimes(1);
     expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/target");
   });
+
+  it("uses an instance default without mutating the module default", () => {
+    ctxValue.defaultPrefetch = "viewport";
+    renderLink({ to: "/target" });
+
+    expect(prefetchQueued).toHaveBeenCalledOnce();
+    expect(getDefaultPrefetchStrategy()).toBe("none");
+  });
+
+  it.each(["viewport", "render"] as const)(
+    "re-arms %s prefetch after the committed location changes",
+    (strategy) => {
+      ctxValue.defaultPrefetch = strategy;
+      renderLink({ to: "/target" });
+      expect(prefetchQueued).toHaveBeenCalledOnce();
+
+      location = new URL("/another-page", location);
+      stateListeners.forEach((listener) => listener());
+
+      expect(prefetchQueued).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("an explicit prefetch prop wins over the router default in both directions", () => {
     // Opt OUT of an aggressive default.

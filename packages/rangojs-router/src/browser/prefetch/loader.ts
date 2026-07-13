@@ -1,9 +1,6 @@
 import type { RscPayload } from "../types.js";
 import type { EventController } from "../event-controller.js";
-import {
-  observeForPrefetch as observeElementForPrefetch,
-  unobserveForPrefetch,
-} from "./observer.js";
+import { observeForPrefetch as observeElementForPrefetch } from "./observer.js";
 
 type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
 
@@ -88,10 +85,7 @@ export function observeForPrefetch(
   callback: () => void,
 ): () => void {
   if (typeof IntersectionObserver === "undefined") return () => {};
-  observeElementForPrefetch(element, callback);
-  return () => {
-    unobserveForPrefetch(element);
-  };
+  return observeElementForPrefetch(element, callback);
 }
 
 /** Run speculative work only when no navigation or stream is active. */

@@ -47,6 +47,7 @@ import {
   prefetchQueued,
   schedulePrefetchWhenRouterIdle,
 } from "./prefetch/loader.js";
+import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -69,6 +70,8 @@ export function setupNavigationBridgeDelegatedPrefetch(
   store: NavigationStore,
   eventController: EventController,
   getVersion: () => string | undefined,
+  defaultPrefetch?: PrefetchStrategy,
+  root?: HTMLElement,
 ): () => void {
   return setupDelegatedLinkPrefetch(
     (url, priority) => {
@@ -91,7 +94,7 @@ export function setupNavigationBridgeDelegatedPrefetch(
 
       return schedulePrefetchWhenRouterIdle(eventController, trigger);
     },
-    { eventController },
+    { eventController, defaultPrefetch, root },
   );
 }
 

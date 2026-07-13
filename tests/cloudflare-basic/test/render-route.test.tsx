@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { Link } from "@rangojs/router/client";
 import { CRClientNav } from "../src/components/CRClientNav.js";
 
 afterEach(() => {
   cleanup();
+  configure({ reactStrictMode: false });
   vi.unstubAllGlobals();
 });
 
@@ -51,17 +52,17 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(getByTestId("cr-cf-tenant").textContent).toBe("zeta");
   });
 
-  it("observes Links and plain anchors except explicit opt-outs under the router prefetch default", async () => {
-    const observe = vi.fn();
-    const unobserve = vi.fn();
+  it("scopes defaultPrefetch per tree and preserves it through StrictMode", async () => {
+    const active = new Set<Element>();
     vi.stubGlobal(
       "IntersectionObserver",
       class {
-        observe = observe;
-        unobserve = unobserve;
+        observe = (element: Element) => active.add(element);
+        unobserve = (element: Element) => active.delete(element);
         disconnect = vi.fn();
       },
     );
+    configure({ reactStrictMode: true });
 
     function PlainAnchors() {
       return (
@@ -84,8 +85,30 @@ describe("renderRoute against cloudflare-basic client components", () => {
       { request: "/", defaultPrefetch: "viewport" },
     );
 
-    expect(observe).toHaveBeenCalledTimes(2);
-    expect(observe).toHaveBeenCalledWith(getByTestId("pricing-link"));
-    expect(observe).toHaveBeenCalledWith(getByTestId("docs-link"));
+    expect(active.has(getByTestId("pricing-link"))).toBe(true);
+    expect(active.has(getByTestId("docs-link"))).toBe(true);
+
+    cleanup();
+    configure({ reactStrictMode: false });
+    expect(active.size).toBe(0);
+
+    function FirstTree() {
+      return <a href="/first" data-testid="first-link" />;
+    }
+    function SecondTree() {
+      return <a href="/second" data-testid="second-link" />;
+    }
+
+    const first = await renderRoute([{ path: "/", Component: FirstTree }], {
+      request: "/",
+      defaultPrefetch: "viewport",
+    });
+    const second = await renderRoute([{ path: "/", Component: SecondTree }], {
+      request: "/",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(active.has(first.getByTestId("first-link"))).toBe(true);
+    expect(active.has(second.getByTestId("second-link"))).toBe(false);
   });
 });

@@ -6,6 +6,21 @@ import {
   subscribeToAdaptiveStrategyChange,
 } from "./prefetch/default-strategy.js";
 import { observeForPrefetch } from "./prefetch/loader.js";
+import type { PrefetchStrategy } from "../router/prefetch-default.js";
+
+const ELIGIBILITY_ATTRIBUTES = {
+  href: "href",
+  target: "target",
+  download: "download",
+  noIntercept: "data-no-intercept",
+  linkComponent: "data-link-component",
+  external: "data-external",
+  prefetch: "data-prefetch",
+} as const;
+
+const ELIGIBILITY_ATTRIBUTE_FILTER = Object.values(ELIGIBILITY_ATTRIBUTES);
+const ANCHOR_SELECTOR = "a";
+const ELIGIBLE_ANCHOR_SELECTOR = `a[${ELIGIBILITY_ATTRIBUTES.href}]`;
 
 /**
  * Check if an anchor points to the same page with only a hash change.
@@ -48,27 +63,28 @@ function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
   }
 
   // Skip links with a download attribute
-  if (link.hasAttribute("download")) {
+  if (link.hasAttribute(ELIGIBILITY_ATTRIBUTES.download)) {
     return false;
   }
 
   // Skip links targeting another browsing context
-  if (link.target && link.target !== "_self") {
+  const target = link.getAttribute(ELIGIBILITY_ATTRIBUTES.target);
+  if (target && target !== "_self") {
     return false;
   }
 
   // Skip links explicitly excluded from delegated handling
-  if (link.getAttribute("data-no-intercept") === "true") {
+  if (link.getAttribute(ELIGIBILITY_ATTRIBUTES.noIntercept) === "true") {
     return false;
   }
 
   // Link components handle their own navigation and prefetch
-  if (link.hasAttribute("data-link-component")) {
+  if (link.hasAttribute(ELIGIBILITY_ATTRIBUTES.linkComponent)) {
     return false;
   }
 
   // Skip links explicitly marked external
-  if (link.hasAttribute("data-external")) {
+  if (link.hasAttribute(ELIGIBILITY_ATTRIBUTES.external)) {
     return false;
   }
 
@@ -78,7 +94,7 @@ function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
 /** Plain anchors follow the router default unless explicitly opted out. */
 export function defaultShouldPrefetch(link: HTMLAnchorElement): boolean {
   return (
-    link.getAttribute("data-prefetch") !== "false" &&
+    link.getAttribute(ELIGIBILITY_ATTRIBUTES.prefetch) !== "false" &&
     isEligiblePlainAnchor(link)
   );
 }
@@ -157,6 +173,19 @@ export function setupLinkInterception(
   };
 }
 
+export function subscribeToLocationChange(
+  eventController: Pick<EventController, "getState" | "subscribe">,
+  listener: (href: string) => void,
+): () => void {
+  let locationHref = eventController.getState().location.href;
+  return eventController.subscribe(() => {
+    const nextHref = eventController.getState().location.href;
+    if (nextHref === locationHref) return;
+    locationHref = nextHref;
+    listener(nextHref);
+  });
+}
+
 export type DelegatedPrefetchCallback = (
   url: string,
   priority: "direct" | "queued",
@@ -165,33 +194,41 @@ export type DelegatedPrefetchCallback = (
 export interface DelegatedPrefetchOptions {
   eventController: Pick<EventController, "getState" | "subscribe">;
   shouldPrefetch?: (link: HTMLAnchorElement) => boolean;
+  defaultPrefetch?: PrefetchStrategy;
+  root?: HTMLElement;
 }
 
 interface DelegatedPrefetchState {
   stopObserving?: () => void;
   cancelPending?: () => void;
+  locationHref: string;
 }
 
 export function setupDelegatedLinkPrefetch(
   onPrefetch: DelegatedPrefetchCallback,
   options: DelegatedPrefetchOptions,
 ): () => void {
-  const defaultStrategy = getDefaultPrefetchStrategy();
+  const defaultStrategy =
+    options.defaultPrefetch ?? getDefaultPrefetchStrategy();
   if (defaultStrategy === "none") return () => {};
 
   const shouldPrefetch = options.shouldPrefetch ?? defaultShouldPrefetch;
   const states = new Map<HTMLAnchorElement, DelegatedPrefetchState>();
   let strategy = resolveAdaptiveStrategy(defaultStrategy);
 
+  const currentLocationHref = () =>
+    options.eventController.getState().location.href;
+
   const unregister = (link: HTMLAnchorElement) => {
     const state = states.get(link);
     state?.stopObserving?.();
     state?.cancelPending?.();
     states.delete(link);
+    if (strategy === "hover") syncMutationObserver();
   };
 
   const isEligible = (link: HTMLAnchorElement) =>
-    link.hasAttribute("href") && shouldPrefetch(link);
+    link.hasAttribute(ELIGIBILITY_ATTRIBUTES.href) && shouldPrefetch(link);
 
   const trigger = (link: HTMLAnchorElement, priority: "direct" | "queued") => {
     if (!isEligible(link)) {
@@ -201,13 +238,16 @@ export function setupDelegatedLinkPrefetch(
 
     let state = states.get(link);
     if (!state) {
-      state = {};
+      state = { locationHref: currentLocationHref() };
       states.set(link, state);
     }
     state.cancelPending?.();
-    state.cancelPending = onPrefetch(link.href, priority) ?? undefined;
-    if (!state.stopObserving && !state.cancelPending) {
-      states.delete(link);
+    state.cancelPending = undefined;
+    try {
+      state.cancelPending = onPrefetch(link.href, priority) ?? undefined;
+    } finally {
+      if (strategy === "hover" && !state.cancelPending) states.delete(link);
+      syncMutationObserver();
     }
   };
 
@@ -216,7 +256,9 @@ export function setupDelegatedLinkPrefetch(
     if (!isEligible(link)) return;
     if (strategy === "hover") return;
 
-    const state: DelegatedPrefetchState = {};
+    const state: DelegatedPrefetchState = {
+      locationHref: currentLocationHref(),
+    };
     states.set(link, state);
 
     if (strategy === "render") {
@@ -234,18 +276,64 @@ export function setupDelegatedLinkPrefetch(
     visit: (link: HTMLAnchorElement) => void,
   ) => {
     if (!(node instanceof Element)) return;
-    if (node.matches("a[href]")) {
+    if (node.matches(ANCHOR_SELECTOR)) {
       visit(node as HTMLAnchorElement);
     }
     node
-      .querySelectorAll<HTMLAnchorElement>("a[href]")
+      .querySelectorAll<HTMLAnchorElement>(ANCHOR_SELECTOR)
       .forEach((link) => visit(link));
   };
 
-  const root = document.documentElement;
+  const root = options.root ?? document.documentElement;
+  let mutationObserver: MutationObserver | undefined;
+  function syncMutationObserver(): void {
+    const shouldObserve =
+      strategy === "viewport" || strategy === "render" || states.size > 0;
+    if (!shouldObserve) {
+      mutationObserver?.disconnect();
+      mutationObserver = undefined;
+      return;
+    }
+    if (mutationObserver || typeof MutationObserver === "undefined" || !root) {
+      return;
+    }
+
+    mutationObserver = new MutationObserver((mutations) => {
+      const affected = new Set<HTMLAnchorElement>();
+      for (const mutation of mutations) {
+        if (mutation.type === "attributes") {
+          if (
+            mutation.target instanceof Element &&
+            mutation.target.matches("a")
+          ) {
+            affected.add(mutation.target as HTMLAnchorElement);
+          }
+          continue;
+        }
+        mutation.removedNodes.forEach((node) => {
+          visitAnchors(node, (link) => affected.add(link));
+        });
+        mutation.addedNodes.forEach((node) => {
+          visitAnchors(node, (link) => affected.add(link));
+        });
+      }
+      for (const link of affected) {
+        if (link.isConnected && root.contains(link)) register(link);
+        else unregister(link);
+      }
+    });
+    mutationObserver.observe(root, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ELIGIBILITY_ATTRIBUTE_FILTER,
+    });
+  }
+
   const rescan = () => {
     for (const link of [...states.keys()]) unregister(link);
     strategy = resolveAdaptiveStrategy(defaultStrategy);
+    syncMutationObserver();
     if ((strategy === "viewport" || strategy === "render") && root) {
       visitAnchors(root, register);
     }
@@ -253,54 +341,13 @@ export function setupDelegatedLinkPrefetch(
 
   rescan();
 
-  let mutationObserver: MutationObserver | undefined;
-  if (
-    defaultStrategy === "viewport" ||
-    defaultStrategy === "render" ||
-    defaultStrategy === "adaptive"
-  ) {
-    if (typeof MutationObserver !== "undefined" && root) {
-      mutationObserver = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          if (mutation.type === "attributes") {
-            if (
-              mutation.target instanceof Element &&
-              mutation.target.matches("a")
-            ) {
-              register(mutation.target as HTMLAnchorElement);
-            }
-            continue;
-          }
-          mutation.removedNodes.forEach((node) => {
-            visitAnchors(node, unregister);
-          });
-          mutation.addedNodes.forEach((node) => {
-            visitAnchors(node, register);
-          });
-        }
-      });
-      mutationObserver.observe(root, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        attributeFilter: [
-          "href",
-          "target",
-          "download",
-          "data-no-intercept",
-          "data-link-component",
-          "data-external",
-          "data-prefetch",
-        ],
-      });
-    }
-  }
-
   const handleMouseOver = (event: MouseEvent) => {
     if (!(event.target instanceof Element)) return;
 
-    const link = event.target.closest<HTMLAnchorElement>("a[href]");
-    if (!link) return;
+    const link = event.target.closest<HTMLAnchorElement>(
+      ELIGIBLE_ANCHOR_SELECTOR,
+    );
+    if (!link || !root.contains(link)) return;
     if (
       event.relatedTarget instanceof Node &&
       link.contains(event.relatedTarget)
@@ -311,17 +358,20 @@ export function setupDelegatedLinkPrefetch(
   };
 
   if (strategy === "hover" || strategy === "viewport") {
-    document.addEventListener("mouseover", handleMouseOver);
+    root.addEventListener("mouseover", handleMouseOver);
   }
 
-  let locationHref = options.eventController.getState().location.href;
   const unsubscribeLocation =
-    defaultStrategy === "viewport" || defaultStrategy === "adaptive"
-      ? options.eventController.subscribe(() => {
-          const nextHref = options.eventController.getState().location.href;
-          if (nextHref === locationHref) return;
-          locationHref = nextHref;
-          if (strategy === "viewport") rescan();
+    defaultStrategy === "viewport" ||
+    defaultStrategy === "render" ||
+    defaultStrategy === "adaptive"
+      ? subscribeToLocationChange(options.eventController, (nextHref) => {
+          if (strategy !== "viewport" && strategy !== "render") return;
+          for (const [link, state] of [...states]) {
+            if (state.locationHref === nextHref) continue;
+            if (link.isConnected && root.contains(link)) register(link);
+            else unregister(link);
+          }
         })
       : undefined;
   const unsubscribeAdaptive =
@@ -331,7 +381,7 @@ export function setupDelegatedLinkPrefetch(
 
   return () => {
     mutationObserver?.disconnect();
-    document.removeEventListener("mouseover", handleMouseOver);
+    root.removeEventListener("mouseover", handleMouseOver);
     unsubscribeLocation?.();
     unsubscribeAdaptive?.();
     for (const link of [...states.keys()]) unregister(link);

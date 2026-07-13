@@ -63,10 +63,6 @@ import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
-import {
-  getDefaultPrefetchStrategy,
-  setDefaultPrefetchStrategy,
-} from "../browser/prefetch/default-strategy.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const TEST_ORIGIN = "http://localhost";
@@ -275,9 +271,9 @@ export interface RenderRouteOptions {
    */
   nonce?: string;
   /**
-   * Router default prefetch strategy to apply while this rendered tree is
-   * mounted. This mirrors `createRouter({ defaultPrefetch })` for Links and
-   * plain anchors without `data-prefetch="false"`.
+   * Router default prefetch strategy scoped to this rendered tree. This mirrors
+   * `createRouter({ defaultPrefetch })` for Links and plain anchors without
+   * `data-prefetch="false"`.
    */
   defaultPrefetch?: PrefetchStrategy;
 }
@@ -313,18 +309,12 @@ interface ResolvedMatch {
 
 function DelegatedPrefetchRegistration({
   bridge,
-  restoreDefaultPrefetch,
 }: {
   bridge: NavigationBridge;
-  restoreDefaultPrefetch?: () => void;
 }): null {
   useEffect(() => {
-    const cleanup = bridge.registerDelegatedPrefetch();
-    return () => {
-      cleanup();
-      restoreDefaultPrefetch?.();
-    };
-  }, [bridge, restoreDefaultPrefetch]);
+    return bridge.registerDelegatedPrefetch();
+  }, [bridge]);
   return null;
 }
 
@@ -549,6 +539,7 @@ export async function renderRoute(
     });
   };
 
+  let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
     navigate: (target) => navigate(target),
     refresh: () => navigate(url.pathname + url.search),
@@ -559,16 +550,17 @@ export async function renderRoute(
         store,
         eventController,
         () => undefined,
+        options.defaultPrefetch,
+        prefetchRoot,
       ),
     getVersion: () => undefined,
     updateVersion: () => {},
   };
 
-  const initialMetadata = makeMetadata(
-    url.pathname,
-    initialSegments,
-    initialMatch.params,
-  );
+  const initialMetadata = {
+    ...makeMetadata(url.pathname, initialSegments, initialMatch.params),
+    defaultPrefetch: options.defaultPrefetch,
+  };
   const initialTree = await renderSegments(initialSegments);
 
   // Wrap render in an awaited async act so a tree that suspends (async loaders,
@@ -577,51 +569,29 @@ export async function renderRoute(
   // suspended inside an act scope, but the act call was not awaited") and the
   // resolved content never reaches the asserted DOM.
   let result!: Awaited<ReturnType<typeof render>>;
-  const previousDefaultPrefetch =
-    options.defaultPrefetch === undefined
-      ? undefined
-      : getDefaultPrefetchStrategy();
-  let defaultPrefetchRestored = false;
-  const restoreDefaultPrefetch =
-    previousDefaultPrefetch === undefined
-      ? undefined
-      : () => {
-          if (defaultPrefetchRestored) return;
-          defaultPrefetchRestored = true;
-          setDefaultPrefetchStrategy(previousDefaultPrefetch);
-        };
-  if (options.defaultPrefetch !== undefined) {
-    setDefaultPrefetchStrategy(options.defaultPrefetch);
-  }
-
-  try {
-    await act(async () => {
-      result = render(
-        <>
-          <NavigationProvider
-            store={store}
-            eventController={eventController}
-            initialPayload={{ root: initialTree, metadata: initialMetadata }}
-            bridge={bridge}
-            basename={normalizeBasename(options.basename)}
-            themeConfig={
-              options.theme === undefined
-                ? null
-                : resolveThemeConfig(options.theme)
-            }
-            nonce={options.nonce}
-          />
-          <DelegatedPrefetchRegistration
-            bridge={bridge}
-            restoreDefaultPrefetch={restoreDefaultPrefetch}
-          />
-        </>,
-      );
-    });
-  } catch (error) {
-    restoreDefaultPrefetch?.();
-    throw error;
-  }
+  const container = document.body.appendChild(document.createElement("div"));
+  prefetchRoot = container;
+  await act(async () => {
+    result = render(
+      <>
+        <NavigationProvider
+          store={store}
+          eventController={eventController}
+          initialPayload={{ root: initialTree, metadata: initialMetadata }}
+          bridge={bridge}
+          basename={normalizeBasename(options.basename)}
+          themeConfig={
+            options.theme === undefined
+              ? null
+              : resolveThemeConfig(options.theme)
+          }
+          nonce={options.nonce}
+        />
+        <DelegatedPrefetchRegistration bridge={bridge} />
+      </>,
+      { container },
+    );
+  });
 
   const router: TestRouterHandle = {
     navigate,

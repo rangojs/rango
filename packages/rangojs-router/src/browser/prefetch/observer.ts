@@ -14,23 +14,33 @@
 
 type PrefetchCallback = () => void;
 
-const callbacks = new Map<Element, PrefetchCallback>();
+const callbacks = new Map<Element, Map<symbol, PrefetchCallback>>();
 let observer: IntersectionObserver | null = null;
 
 function getObserver(): IntersectionObserver {
   if (!observer) {
     observer = new IntersectionObserver(
       (entries) => {
+        let callbackError: unknown;
+        let callbackFailed = false;
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            const callback = callbacks.get(entry.target);
-            if (callback) {
+            const subscriptions = callbacks.get(entry.target);
+            if (subscriptions) {
               observer!.unobserve(entry.target);
               callbacks.delete(entry.target);
-              callback();
+              for (const callback of [...subscriptions.values()]) {
+                try {
+                  callback();
+                } catch (error) {
+                  if (!callbackFailed) callbackError = error;
+                  callbackFailed = true;
+                }
+              }
             }
           }
         }
+        if (callbackFailed) throw callbackError;
       },
       { rootMargin: "200px" },
     );
@@ -47,19 +57,25 @@ function getObserver(): IntersectionObserver {
 export function observeForPrefetch(
   element: Element,
   onVisible: PrefetchCallback,
-): void {
-  if (typeof IntersectionObserver === "undefined") return;
-  callbacks.set(element, onVisible);
-  getObserver().observe(element);
-}
+): () => void {
+  if (typeof IntersectionObserver === "undefined") return () => {};
 
-/**
- * Stop observing an element. Used for cleanup when a Link unmounts
- * before entering the viewport.
- */
-export function unobserveForPrefetch(element: Element): void {
-  callbacks.delete(element);
-  if (observer) {
-    observer.unobserve(element);
+  let subscriptions = callbacks.get(element);
+  if (!subscriptions) {
+    subscriptions = new Map();
+    callbacks.set(element, subscriptions);
   }
+
+  const subscription = Symbol();
+  subscriptions.set(subscription, onVisible);
+  if (subscriptions.size === 1) getObserver().observe(element);
+
+  return () => {
+    const current = callbacks.get(element);
+    if (!current) return;
+    current.delete(subscription);
+    if (current.size > 0) return;
+    callbacks.delete(element);
+    observer?.unobserve(element);
+  };
 }

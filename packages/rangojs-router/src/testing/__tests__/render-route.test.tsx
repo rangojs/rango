@@ -14,6 +14,7 @@ import { useMount } from "../../browser/react/use-mount.js";
 import { createHandle, type Handle } from "../../handle.js";
 import type { LoaderDefinition } from "../../types.js";
 import { useNonce } from "../../browser/react/nonce-context.js";
+import { getDefaultPrefetchStrategy } from "../../browser/prefetch/default-strategy.js";
 import { renderRoute } from "../render-route.js";
 
 afterEach(() => {
@@ -30,6 +31,22 @@ describe("renderRoute option migration guard", () => {
         initialUrl: "/",
       } as any),
     ).rejects.toThrow(/`initialUrl` option was renamed to `request`/);
+  });
+});
+
+describe("renderRoute defaultPrefetch isolation", () => {
+  it("does not mutate the module-wide browser default", async () => {
+    function View() {
+      return <a href="/target">Target</a>;
+    }
+    const before = getDefaultPrefetchStrategy();
+
+    await renderRoute([{ path: "/", Component: View }], {
+      request: "/",
+      defaultPrefetch: before === "viewport" ? "none" : "viewport",
+    });
+
+    expect(getDefaultPrefetchStrategy()).toBe(before);
   });
 });
 

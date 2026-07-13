@@ -10,8 +10,7 @@ const runtime = vi.hoisted(() => ({
 }));
 
 const observer = vi.hoisted(() => ({
-  observeForPrefetch: vi.fn(),
-  unobserveForPrefetch: vi.fn(),
+  observeForPrefetch: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("../browser/prefetch/runtime", () => runtime);
@@ -46,7 +45,9 @@ describe("lazy prefetch loader", () => {
     expect(observer.observeForPrefetch).toHaveBeenCalledWith(element, callback);
     expect(runtime.setPrefetchDecoder).not.toHaveBeenCalled();
     cleanup();
-    expect(observer.unobserveForPrefetch).toHaveBeenCalledWith(element);
+    expect(
+      observer.observeForPrefetch.mock.results[0]!.value,
+    ).toHaveBeenCalled();
   });
 
   it("runs scheduled prefetch work immediately when the router is idle", async () => {
@@ -199,6 +200,8 @@ describe("lazy prefetch loader", () => {
     expect(observer.observeForPrefetch).toHaveBeenCalledWith(element, callback);
 
     cleanup();
-    expect(observer.unobserveForPrefetch).toHaveBeenCalledWith(element);
+    expect(
+      observer.observeForPrefetch.mock.results[0]!.value,
+    ).toHaveBeenCalled();
   });
 });
