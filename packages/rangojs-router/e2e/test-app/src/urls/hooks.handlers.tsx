@@ -269,28 +269,68 @@ export const InlineActionHandler: Handler<"inlineAction"> = () => {
   );
 };
 
-const INLINE_BOUND_PAGE_HOLE_DELAY_MS = 5_000;
-const INLINE_BOUND_ACTION_DELAY_MS = 250;
+const INLINE_BOUND_WARM_HOLE_DELAY_MS = 2_000;
+const INLINE_BOUND_PAGE_HOLE_FAILSAFE_MS = 30_000;
+const INLINE_BOUND_PAGE_HOLE_AFTER_ACTION_MS = 2_000;
+const INLINE_BOUND_ACTION_DELAY_MS = 1_000;
 const INLINE_BOUND_ACTION_STREAM_DELAY_MS = 1_200;
 
+// Probe-scoped resolvers make the ordering causal: the page hole cannot finish
+// until this page's action result has streamed. The long timer is only a leak
+// failsafe; API warm-up requests opt into the short timer via a test header.
+const inlineBoundPageHoleResolvers = new Map<string, Set<() => void>>();
+
+function createInlineBoundPageHole(
+  probe: string,
+  shortWarmup: boolean,
+): Promise<string> {
+  return new Promise((resolve) => {
+    const resolvers = inlineBoundPageHoleResolvers.get(probe) ?? new Set();
+    inlineBoundPageHoleResolvers.set(probe, resolvers);
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      clearTimeout(timeout);
+      resolvers.delete(finish);
+      if (resolvers.size === 0) inlineBoundPageHoleResolvers.delete(probe);
+      resolve("Page hole resolved");
+    };
+    resolvers.add(finish);
+    timeout = setTimeout(
+      finish,
+      shortWarmup
+        ? INLINE_BOUND_WARM_HOLE_DELAY_MS
+        : INLINE_BOUND_PAGE_HOLE_FAILSAFE_MS,
+    );
+  });
+}
+
+function resolveInlineBoundPageHoleAfterAction(probe: string): void {
+  setTimeout(() => {
+    for (const resolve of [
+      ...(inlineBoundPageHoleResolvers.get(probe) ?? []),
+    ]) {
+      resolve();
+    }
+  }, INLINE_BOUND_PAGE_HOLE_AFTER_ACTION_MS);
+}
+
 export const InlineBoundPageHoleLoader = createLoader(
-  async (): Promise<InlineBoundPageHoleData> => ({
-    pendingData: new Promise((resolve) =>
-      setTimeout(
-        () => resolve("Page hole resolved"),
-        INLINE_BOUND_PAGE_HOLE_DELAY_MS,
-      ),
+  async (ctx): Promise<InlineBoundPageHoleData> => ({
+    pendingData: createInlineBoundPageHole(
+      ctx.searchParams.get("probe") ?? "default",
+      ctx.request.headers.has("x-rango-test-short-inline-hole"),
     ),
   }),
 );
 
-export const InlineBoundActionHandler: Handler<"inlineBoundAction"> = () => {
+export const InlineBoundActionHandler: Handler<"inlineBoundAction"> = (ctx) => {
   // Render-scope value computed on the server. The inline action below closes
   // over it, so plugin-rsc treats it as a bound argument (encrypted in
   // production via encryptActionBoundArgs / decrypted via
   // decryptActionBoundArgs). The client can never see or reconstruct this
   // value, so a correct round-trip proves bound-arg serialization works.
   const captured = `server-token-${Date.now().toString(36)}`;
+  const probe = ctx.searchParams.get("probe") ?? "default";
 
   async function inlineBoundAction(
     _prev: { captured: string; submitted: string } | null,
@@ -305,10 +345,10 @@ export const InlineBoundActionHandler: Handler<"inlineBoundAction"> = () => {
       captured,
       submitted,
       streamed: new Promise((resolve) =>
-        setTimeout(
-          () => resolve(`completed:${captured}:${submitted}`),
-          INLINE_BOUND_ACTION_STREAM_DELAY_MS,
-        ),
+        setTimeout(() => {
+          resolve(`completed:${captured}:${submitted}`);
+          resolveInlineBoundPageHoleAfterAction(probe);
+        }, INLINE_BOUND_ACTION_STREAM_DELAY_MS),
       ),
     };
   }

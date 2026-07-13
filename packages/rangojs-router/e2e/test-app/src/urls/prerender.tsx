@@ -339,6 +339,9 @@ export const prerenderPatterns = urls(
         name: "pp.passthrough",
         ppr: { ttl: 300, swr: 120 },
       },
+      // Retaining the prerendered client boundary is part of this streaming
+      // contract. Default Passthrough revalidation replaces it with the live
+      // handler and therefore discards its local useActionState result.
       () => [revalidate(({ actionId }) => (actionId ? false : undefined))],
     ),
     // Build-shell eviction fixture (#699): tagged so updateTag can reject the

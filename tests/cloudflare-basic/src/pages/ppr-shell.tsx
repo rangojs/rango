@@ -1,5 +1,10 @@
 import { Suspense } from "react";
-import { Meta, Prerender, Passthrough } from "@rangojs/router";
+import {
+  getRequestContext,
+  Meta,
+  Prerender,
+  Passthrough,
+} from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -7,7 +12,10 @@ import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
 import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
 import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
-import { PprPrerenderSeqLoader } from "../loaders/ppr-shell.js";
+import {
+  PprPrerenderSeqLoader,
+  resolvePprInlineActionHoleAfterAction,
+} from "../loaders/ppr-shell.js";
 import { PprInlineActionHoleLoader } from "../loaders/ppr-shell.js";
 import { PprBakeSlowLoader, PprBakeHoleLoader } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
@@ -243,18 +251,22 @@ export function PprExecPage() {
 
 export function PprInlineActionPage() {
   const captured = `cf-server-token-${crypto.randomUUID()}`;
+  const probe = getRequestContext()?.searchParams.get("probe") ?? "default";
   async function submit(
     _previous: PprInlineActionState,
     formData: FormData,
   ): Promise<PprInlineActionState> {
     "use server";
     const submitted = String(formData.get("value"));
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
     return {
       captured,
       submitted,
       streamed: new Promise((resolve) =>
-        setTimeout(() => resolve(`completed:${captured}:${submitted}`), 1_200),
+        setTimeout(() => {
+          resolve(`completed:${captured}:${submitted}`);
+          resolvePprInlineActionHoleAfterAction(probe);
+        }, 1_200),
       ),
     };
   }

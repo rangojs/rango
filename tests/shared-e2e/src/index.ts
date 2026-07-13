@@ -53,6 +53,19 @@ export function checkoutPortOffset(): number {
 }
 
 /**
+ * Wait for hydration without waiting for DOMContentLoaded. A pending PPR hole
+ * keeps the document stream open, so the normal helper cannot reach its
+ * hydration check until the condition this kind of test needs to observe has
+ * already disappeared.
+ */
+export async function waitForShellHydration(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => document.documentElement.hasAttribute("data-hydrated"),
+    { timeout: 20_000 },
+  );
+}
+
+/**
  * Server-output marker emitted once per route re-discovery pass by the Rango
  * Vite plugin (see `discover-routers.ts`: `[rango] Router "<id>" -> N routes`).
  * It is a reliable signal that the dev server finished re-discovering routes

@@ -836,6 +836,9 @@ export const urlpatterns = urls(
             name: "pprShellPassthrough",
             ppr: { ttl: 300, swr: 120 },
           },
+          // Retaining the prerendered client boundary is part of this streaming
+          // contract. Default Passthrough revalidation replaces it with the live
+          // handler and discards its local useActionState result.
           () => [revalidate(({ actionId }) => (actionId ? false : undefined))],
         ),
         // Build-shell eviction fixture (#699): its own route + tag so the

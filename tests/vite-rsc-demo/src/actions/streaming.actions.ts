@@ -34,7 +34,7 @@ export async function addToCartSlowly(
           `Completed! Added ${quantity} ${productId}`,
         ),
       );
-    }, 6000);
+    }, 4000);
   });
 
   console.log(

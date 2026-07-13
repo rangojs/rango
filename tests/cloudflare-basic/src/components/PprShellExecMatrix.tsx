@@ -76,7 +76,11 @@ export function PprInlineActionForm({
           {`rendered:${renderedCaptured}`}
         </p>
         <input name="value" defaultValue="from-client" />
-        <button type="submit" data-testid="ppr-inline-action-submit">
+        <button
+          type="submit"
+          disabled={isPending}
+          data-testid="ppr-inline-action-submit"
+        >
           {isPending ? "Processing..." : "Submit"}
         </button>
         <p data-testid="ppr-inline-action-captured">

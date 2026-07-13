@@ -48,14 +48,15 @@ function readSeq(html: string): number {
 }
 
 function runPrerenderPprSpec(f: Fixture): void {
+  // These action assertions intentionally target the route's action-only
+  // revalidation opt-out. Default Passthrough revalidation replaces this client
+  // boundary with the live handler and discards its local useActionState result.
   const expectPrerenderAction = async (page: Page): Promise<void> => {
     const submit = testId(page, "prerender-ppr-action-submit");
     await expect(testId(page, "prerender-ppr-action-result")).toHaveCount(0);
     await submit.click();
     await expect(submit).toHaveText("Submitting...");
     await expect(testId(page, "prerender-ppr-action-fallback")).toBeVisible();
-    // The immutable prerendered tree stays mounted while the action return
-    // value streams into useActionState.
     await expect(testId(page, "ppp-source")).toHaveText("baked");
     await expect(testId(page, "prerender-ppr-action-result")).toHaveText(
       "prerender-ppr-action:from-client",
@@ -64,7 +65,7 @@ function runPrerenderPprSpec(f: Fixture): void {
     await expect(testId(page, "ppp-source")).toHaveText("baked");
   };
 
-  test("Passthrough Prerender+ppr document HIT streams a client-imported action", async ({
+  test("Passthrough Prerender+ppr document HIT streams with action revalidation opted out", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
