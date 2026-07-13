@@ -302,19 +302,27 @@ export function subscribeToLocationChange(
     subscription.unsubscribe = eventController.subscribe(() => {
       const notificationVersion = ++currentSubscription.notificationVersion;
       const nextHref = eventController.getState().location.href;
+      let listenerError: unknown;
+      let listenerFailed = false;
       for (const [token, registration] of [
         ...currentSubscription.registrations,
       ]) {
         if (notificationVersion !== currentSubscription.notificationVersion) {
-          return;
+          break;
         }
         if (currentSubscription.registrations.get(token) !== registration) {
           continue;
         }
         if (registration.href === nextHref) continue;
         registration.href = nextHref;
-        registration.listener(nextHref);
+        try {
+          registration.listener(nextHref);
+        } catch (error) {
+          if (!listenerFailed) listenerError = error;
+          listenerFailed = true;
+        }
       }
+      if (listenerFailed) throw listenerError;
     });
   }
 
@@ -375,7 +383,18 @@ function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
     if (timeout !== null) clearTimeout(timeout);
     timeout = setTimeout(() => {
       timeout = null;
-      listeners.forEach((listener) => listener());
+      let listenerError: unknown;
+      let listenerFailed = false;
+      for (const listener of [...listeners]) {
+        if (!listeners.has(listener)) continue;
+        try {
+          listener();
+        } catch (error) {
+          if (!listenerFailed) listenerError = error;
+          listenerFailed = true;
+        }
+      }
+      if (listenerFailed) throw listenerError;
     }, 0);
   };
 }

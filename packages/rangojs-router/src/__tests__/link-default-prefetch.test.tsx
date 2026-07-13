@@ -15,11 +15,16 @@ vi.mock("../browser/prefetch/loader.js", () => ({
   ),
 }));
 
-vi.mock("../browser/prefetch/observer.js", () => ({
-  observeForPrefetch: vi.fn((_el: Element, cb: () => void) => {
-    cb();
-    return vi.fn();
+const prefetchObserver = vi.hoisted(() => ({
+  cleanup: vi.fn(),
+  observe: vi.fn((_el: Element, callback: () => void) => {
+    callback();
+    return prefetchObserver.cleanup;
   }),
+}));
+
+vi.mock("../browser/prefetch/observer.js", () => ({
+  observeForPrefetch: prefetchObserver.observe,
 }));
 
 import { prefetchQueued } from "../browser/prefetch/loader.js";
@@ -55,6 +60,7 @@ const ctxValue = {
 
 let container: HTMLDivElement;
 let root: Root;
+let rootMounted: boolean;
 
 function renderLink(props: { to: string; prefetch?: "viewport" | "none" }) {
   act(() => {
@@ -73,6 +79,7 @@ describe("Link default prefetch fallback", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    rootMounted = true;
     location = new URL(window.location.href);
     stateListeners = new Set();
     ctxValue.defaultPrefetch = undefined;
@@ -80,9 +87,10 @@ describe("Link default prefetch fallback", () => {
   });
 
   afterEach(() => {
-    act(() => root.unmount());
+    if (rootMounted) act(() => root.unmount());
     container.remove();
     setDefaultPrefetchStrategy(DEFAULT_PREFETCH_STRATEGY);
+    vi.restoreAllMocks();
   });
 
   it("a bare Link stays quiet under the built-in development default", () => {
@@ -130,5 +138,46 @@ describe("Link default prefetch fallback", () => {
     renderLink({ to: "/other", prefetch: "viewport" });
     expect(prefetchQueued).toHaveBeenCalledTimes(1);
     expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/other");
+  });
+
+  it("re-arms a mounted adaptive Link when input capability changes", () => {
+    let hoverNone = false;
+    const listeners = new Set<() => void>();
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      () =>
+        ({
+          get matches() {
+            return hoverNone;
+          },
+          addEventListener: (_type: string, listener: () => void) => {
+            listeners.add(listener);
+          },
+          removeEventListener: (_type: string, listener: () => void) => {
+            listeners.delete(listener);
+          },
+        }) as unknown as MediaQueryList,
+    );
+    ctxValue.defaultPrefetch = "adaptive";
+    renderLink({ to: "/target" });
+    expect(prefetchQueued).not.toHaveBeenCalled();
+
+    hoverNone = true;
+    act(() => listeners.forEach((listener) => listener()));
+
+    expect(prefetchQueued).toHaveBeenCalledOnce();
+    expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/target");
+
+    hoverNone = false;
+    act(() => listeners.forEach((listener) => listener()));
+    expect(prefetchObserver.cleanup).toHaveBeenCalledOnce();
+
+    hoverNone = true;
+    act(() => listeners.forEach((listener) => listener()));
+    expect(prefetchQueued).toHaveBeenCalledTimes(2);
+
+    act(() => root.unmount());
+    rootMounted = false;
+    expect(prefetchObserver.cleanup).toHaveBeenCalledTimes(2);
+    expect(listeners.size).toBe(0);
   });
 });

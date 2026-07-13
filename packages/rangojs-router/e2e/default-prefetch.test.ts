@@ -54,6 +54,11 @@ function runDefaultPrefetchSpec(
       testId: "anchor-default-prefetch-offscreen",
       pathname: "/blog/post-6",
     },
+    {
+      label: "static-looking plain-anchor opt-in",
+      testId: "anchor-prefetch-resource-route",
+      pathname: "/blog/intro-to-node.js",
+    },
   ]) {
     test(`an offscreen ${label} follows the environment default`, async ({
       page,
@@ -104,7 +109,7 @@ function runDefaultPrefetchSpec(
     page.on("request", (req) => {
       if (
         isPrefetchRequest(req) &&
-        new URL(req.url()).pathname.endsWith("/blog/post-7")
+        ["/blog/post-7", "/blog/post-8"].includes(new URL(req.url()).pathname)
       ) {
         requests.push(req.url());
       }
@@ -113,6 +118,7 @@ function runDefaultPrefetchSpec(
     await page.goto(f.url("/hash-navigation"));
     await waitForHydration(page);
     await page.getByTestId("anchor-prefetch-opt-out").scrollIntoViewIfNeeded();
+    await page.getByTestId("anchor-prefetch-none").scrollIntoViewIfNeeded();
     await page.waitForTimeout(1_000);
 
     expect(requests).toHaveLength(0);
@@ -133,6 +139,27 @@ function runDefaultPrefetchSpec(
     await waitForHydration(page);
     await page.getByTestId("anchor-prefetch-resource").scrollIntoViewIfNeeded();
     await page.waitForTimeout(1_000);
+
+    expect(requests).toHaveLength(0);
+  });
+
+  test("an inline SVG anchor does not prefetch or break hydration", async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    page.on("request", (req) => {
+      if (
+        isPrefetchRequest(req) &&
+        new URL(req.url()).pathname.endsWith("/blog/svg-link")
+      ) {
+        requests.push(req.url());
+      }
+    });
+
+    await page.goto(f.url("/hash-navigation"));
+    await waitForHydration(page);
+    await page.getByTestId("svg-prefetch-link").scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
 
     expect(requests).toHaveLength(0);
   });

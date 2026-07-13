@@ -165,6 +165,31 @@ describe("prefetch observer", () => {
     expect(secondCallback).not.toHaveBeenCalled();
   });
 
+  it("does not re-observe detached elements after constructor replacement", async () => {
+    class FirstIntersectionObserver {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", FirstIntersectionObserver);
+    const { observeForPrefetch } = await import("../browser/prefetch/observer");
+    const detached = { isConnected: false } as Element;
+    observeForPrefetch(detached, vi.fn());
+
+    const secondObserve = vi.fn();
+    class SecondIntersectionObserver {
+      observe = secondObserve;
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", SecondIntersectionObserver);
+    const connected = {} as Element;
+    observeForPrefetch(connected, vi.fn());
+
+    expect(secondObserve).not.toHaveBeenCalledWith(detached);
+    expect(secondObserve).toHaveBeenCalledWith(connected);
+  });
+
   it("keeps another subscription active when one owner cleans up", async () => {
     let trigger!: (entries: IntersectionObserverEntry[]) => void;
     const unobserve = vi.fn();

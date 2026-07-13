@@ -15,6 +15,7 @@ vi.mock("../browser/prefetch/observer.js", () => ({
 
 import {
   type DelegatedPrefetchCallback,
+  defaultShouldPrefetch,
   setupDelegatedLinkPrefetch,
   setupLinkInterception,
 } from "../browser/link-interceptor.js";
@@ -25,7 +26,7 @@ let stateListeners: Set<() => void>;
 
 function setupPrefetch(
   onPrefetch: DelegatedPrefetchCallback,
-  defaultPrefetch?: "none" | "viewport",
+  defaultPrefetch?: "hover" | "none" | "viewport",
   basename?: string,
 ): () => void {
   const eventController = {
@@ -74,6 +75,7 @@ describe("delegated plain-anchor prefetch", () => {
     document.body.innerHTML = `
       <a href="/target" data-testid="plain">plain</a>
       <a href="/side-effect" data-prefetch="false">opted-out side effect</a>
+      <a href="/other-effect" data-prefetch="none">strategy-style opt-out</a>
       <a href="/ignored" data-link-component>Link</a>
       <a href="/reload" data-no-intercept="true">reload</a>
     `;
@@ -120,19 +122,130 @@ describe("delegated plain-anchor prefetch", () => {
       <a href="/app/files/report%2Epdf" data-testid="encoded-asset">encoded asset</a>
       <a href="/app/report%ZZ" data-testid="malformed-path">malformed path</a>
       <a href="/sibling/page" data-testid="sibling">sibling app</a>
+      <a href="/app/blog/intro.js" data-prefetch="true" data-testid="forced-route">forced route</a>
       <a href="/app/report.data" data-testid="route">suffix route</a>
     `;
+    const forcedRoute = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="forced-route"]',
+    )!;
     const route = document.querySelector<HTMLAnchorElement>(
       '[data-testid="route"]',
     )!;
 
     const cleanup = setupPrefetch(vi.fn(), "viewport", "/app");
 
-    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledOnce();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
     expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
       route,
       expect.any(Function),
     );
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      forcedRoute,
+      expect.any(Function),
+    );
+    cleanup();
+  });
+
+  it("matches a decoded pathname against a unicode basename", () => {
+    const link = document.createElement("a");
+    link.href = "/caf%C3%A9/menu";
+    document.body.appendChild(link);
+
+    const cleanup = setupPrefetch(vi.fn(), "viewport", "/café");
+
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      link,
+      expect.any(Function),
+    );
+    cleanup();
+  });
+
+  it("ignores inline SVG anchors without reading HTMLAnchorElement fields", () => {
+    document.body.innerHTML = `
+      <svg><a href="/dashboard" data-testid="svg-link"><path /></a></svg>
+      <a href="/dashboard" data-testid="html-link">dashboard</a>
+    `;
+    const htmlLink = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="html-link"]',
+    )!;
+    let cleanup!: () => void;
+
+    expect(() => {
+      cleanup = setupPrefetch(vi.fn(), "viewport");
+    }).not.toThrow();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledOnce();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      htmlLink,
+      expect.any(Function),
+    );
+    cleanup();
+  });
+
+  it("rejects ineligible and opted-out anchors before reading pathname", () => {
+    const external = document.createElement("a");
+    external.href = "https://example.com/target";
+    const externalPathname = vi.fn(() => {
+      throw new Error("external pathname read");
+    });
+    Object.defineProperty(external, "pathname", { get: externalPathname });
+
+    const optedOut = document.createElement("a");
+    optedOut.href = "/logout";
+    optedOut.dataset.prefetch = "none";
+    const optedOutPathname = vi.fn(() => {
+      throw new Error("opted-out pathname read");
+    });
+    Object.defineProperty(optedOut, "pathname", { get: optedOutPathname });
+
+    expect(defaultShouldPrefetch(external)).toBe(false);
+    expect(defaultShouldPrefetch(optedOut)).toBe(false);
+    expect(externalPathname).not.toHaveBeenCalled();
+    expect(optedOutPathname).not.toHaveBeenCalled();
+  });
+
+  it("reads one decoded pathname for basename and resource checks", () => {
+    const link = document.createElement("a");
+    link.href = "/caf%C3%A9/report.data";
+    const pathname = vi.fn(() => "/caf%C3%A9/report.data");
+    Object.defineProperty(link, "pathname", { get: pathname });
+
+    expect(defaultShouldPrefetch(link, "/café")).toBe(true);
+    expect(pathname).toHaveBeenCalledOnce();
+  });
+
+  it("re-evaluates a static-looking anchor when it explicitly opts in", async () => {
+    const link = document.createElement("a");
+    link.href = "/report.csv";
+    document.body.appendChild(link);
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
+
+    link.dataset.prefetch = "true";
+
+    await vi.waitFor(() =>
+      expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+        link,
+        expect.any(Function),
+      ),
+    );
+    cleanup();
+  });
+
+  it("honors explicit opt-in and opt-out values on direct hover", () => {
+    const optedIn = document.createElement("a");
+    optedIn.href = "/report.csv";
+    optedIn.dataset.prefetch = "true";
+    const optedOut = document.createElement("a");
+    optedOut.href = "/logout";
+    optedOut.dataset.prefetch = "none";
+    document.body.append(optedIn, optedOut);
+    const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
+    const cleanup = setupPrefetch(onPrefetch, "hover");
+
+    optedOut.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    expect(onPrefetch).not.toHaveBeenCalled();
+    optedIn.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    expect(onPrefetch).toHaveBeenCalledWith(optedIn.href, "direct");
     cleanup();
   });
 

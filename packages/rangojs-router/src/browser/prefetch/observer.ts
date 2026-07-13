@@ -50,7 +50,13 @@ function getObserver(): IntersectionObserver {
       },
       { rootMargin: "200px" },
     );
-    for (const element of callbacks.keys()) observer.observe(element);
+    for (const element of [...callbacks.keys()]) {
+      if (element.isConnected === false) {
+        callbacks.delete(element);
+        continue;
+      }
+      observer.observe(element);
+    }
   }
   return observer;
 }

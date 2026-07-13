@@ -8,8 +8,12 @@ const runtime = vi.hoisted(() => ({
   cancelAllPrefetches: vi.fn(),
   abortAllPrefetches: vi.fn(),
 }));
+const runtimeLoaded = vi.hoisted(() => vi.fn());
 
-vi.mock("../browser/prefetch/runtime", () => runtime);
+vi.mock("../browser/prefetch/runtime", () => {
+  runtimeLoaded();
+  return runtime;
+});
 
 describe("lazy prefetch loader", () => {
   beforeEach(() => {
@@ -25,8 +29,29 @@ describe("lazy prefetch loader", () => {
     loader.setPrefetchDecoder(decoder);
     loader.setPrefetchConcurrency(4);
 
+    expect(runtimeLoaded).not.toHaveBeenCalled();
     expect(runtime.setPrefetchDecoder).not.toHaveBeenCalled();
     expect(runtime.setPrefetchConcurrency).not.toHaveBeenCalled();
+  });
+
+  it("observes viewport eligibility without loading the runtime", async () => {
+    const observe = vi.fn();
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe = observe;
+        unobserve = vi.fn();
+        disconnect = vi.fn();
+      },
+    );
+    const { observeForPrefetch } = await import("../browser/prefetch/observer");
+    const element = {} as Element;
+
+    const cleanup = observeForPrefetch(element, vi.fn());
+
+    expect(observe).toHaveBeenCalledWith(element);
+    expect(runtimeLoaded).not.toHaveBeenCalled();
+    cleanup();
   });
 
   it("runs scheduled prefetch work immediately when the router is idle", async () => {

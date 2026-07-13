@@ -7,6 +7,7 @@ import React, {
   useEffect,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from "react";
@@ -42,6 +43,7 @@ import { observeForPrefetch } from "../prefetch/observer.js";
 import {
   getDefaultPrefetchStrategy,
   resolveAdaptiveStrategy,
+  subscribeToAdaptiveStrategyChange,
 } from "../prefetch/default-strategy.js";
 import { getAppVersion } from "../app-version.js";
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
@@ -51,6 +53,8 @@ import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 // so the public `PrefetchStrategy` import path via client.tsx is unchanged.
 export type { PrefetchStrategy } from "../../router/prefetch-default.js";
 export { resolveAdaptiveStrategy } from "../prefetch/default-strategy.js";
+
+const IGNORE_STRATEGY_CHANGES = (_listener: () => void) => () => {};
 
 /**
  * Link component props
@@ -231,8 +235,14 @@ export const Link: ForwardRefExoticComponent<
   // (server-resolved, applied at browser init — before hydration, so this
   // render-time read never races the metadata). Adaptive reads the current
   // input capability rather than a module-load snapshot.
-  const resolvedStrategy = resolveAdaptiveStrategy(
-    prefetch ?? ctx?.defaultPrefetch ?? getDefaultPrefetchStrategy(),
+  const configuredStrategy =
+    prefetch ?? ctx?.defaultPrefetch ?? getDefaultPrefetchStrategy();
+  const resolvedStrategy = useSyncExternalStore(
+    configuredStrategy === "adaptive"
+      ? subscribeToAdaptiveStrategyChange
+      : IGNORE_STRATEGY_CHANGES,
+    () => resolveAdaptiveStrategy(configuredStrategy),
+    () => (configuredStrategy === "adaptive" ? "hover" : configuredStrategy),
   );
 
   // Internal ref for viewport observation; merge with forwarded ref

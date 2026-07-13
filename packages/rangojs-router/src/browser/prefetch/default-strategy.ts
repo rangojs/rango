@@ -5,8 +5,8 @@
  * (router/prefetch-default.ts) and ships it in initial payload metadata; the
  * browser entry applies it here before hydration — same lifecycle as
  * `initPrefetchCache` / `setPrefetchConcurrency`. Every `<Link>` without an
- * explicit `prefetch` prop and every intercepted plain anchor that has not opted
- * out with `data-prefetch="false"` uses it.
+ * explicit `prefetch` prop and every eligible intercepted plain anchor that has
+ * not opted out with `data-prefetch="false"` or `data-prefetch="none"` uses it.
  *
  * The module initial value must equal the server resolver's environment default:
  * `"none"` in development and `"viewport"` in production. During SSR this

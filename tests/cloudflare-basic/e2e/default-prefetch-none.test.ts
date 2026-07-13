@@ -35,9 +35,10 @@ function runDefaultPrefetchNoneSpec(f: Fixture): void {
       }
     });
 
-    // Home renders bare Links, a plain anchor, and explicit hover
-    // Links, which cannot fire without a hover. A viewport fallback would
-    // enqueue the bare Links and delegated anchor.
+    // Home renders bare Links, a plain anchor, a true-marked static-looking
+    // route, and explicit hover Links, which cannot fire without a hover. A
+    // viewport fallback would enqueue the bare Links and delegated anchors;
+    // data-prefetch=true restores eligibility but cannot override manual mode.
     await page.goto(f.url("/"));
     await waitForHydration(page);
 

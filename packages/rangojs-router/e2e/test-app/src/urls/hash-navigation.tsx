@@ -64,9 +64,28 @@ export const hashNavigationPatterns = urls(({ path }) => [
         >
           Prefetch opt-out plain anchor
         </a>
+        <a
+          href="/blog/post-8"
+          data-prefetch="none"
+          data-testid="anchor-prefetch-none"
+        >
+          Strategy-style prefetch opt-out plain anchor
+        </a>
         <a href="/files/report.pdf" data-testid="anchor-prefetch-resource">
           Static resource plain anchor
         </a>
+        <a
+          href="/blog/intro-to-node.js"
+          data-prefetch="true"
+          data-testid="anchor-prefetch-resource-route"
+        >
+          Static-looking application route
+        </a>
+        <svg aria-label="SVG link fixture">
+          <a href="/blog/svg-link" data-testid="svg-prefetch-link">
+            <circle cx="5" cy="5" r="5" />
+          </a>
+        </svg>
       </div>
     ),
     { name: "index" },

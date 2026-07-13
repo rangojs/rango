@@ -22,6 +22,13 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
         ),
       )
       .toBe(true);
+    await expect
+      .poll(() =>
+        prefetches.some(
+          (url) => new URL(url).pathname === "/__prefetch-scope/target.js",
+        ),
+      )
+      .toBe(true);
     await page.waitForTimeout(500);
     expect(
       prefetches.some(
@@ -31,6 +38,16 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     expect(prefetches.some((url) => new URL(url).pathname === "/about")).toBe(
       false,
     );
+    expect(
+      prefetches.some(
+        (url) => new URL(url).pathname === "/__prefetch-scope/logout",
+      ),
+    ).toBe(false);
+    expect(
+      prefetches.some(
+        (url) => new URL(url).pathname === "/__prefetch-scope/svg-target",
+      ),
+    ).toBe(false);
 
     const navigationRequest = page.waitForRequest(
       (request) =>

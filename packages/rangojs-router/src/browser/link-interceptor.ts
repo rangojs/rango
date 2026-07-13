@@ -24,6 +24,7 @@ const ELIGIBILITY_ATTRIBUTES = {
 const ELIGIBILITY_ATTRIBUTE_FILTER = Object.values(ELIGIBILITY_ATTRIBUTES);
 const ANCHOR_SELECTOR = "a";
 const ELIGIBLE_ANCHOR_SELECTOR = `a[${ELIGIBILITY_ATTRIBUTES.href}]`;
+const PREFETCH_OPT_OUT_VALUES = new Set(["false", "none"]);
 const STATIC_RESOURCE_EXTENSION =
   /\.(?:7z|avif|bmp|bz2|cjs|css|csv|docx?|eot|gif|gz|ico|jpe?g|js|json|m4a|map|mjs|mov|mp3|mp4|ogg|ogv|otf|pdf|png|pptx?|rar|svg|tar|tgz|tiff?|ttf|txt|wasm|wav|webm|webp|woff2?|xlsx?|xml|zip)$/i;
 
@@ -62,6 +63,13 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
 }
 
 function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
+  if (
+    typeof HTMLAnchorElement !== "undefined" &&
+    !(link instanceof HTMLAnchorElement)
+  ) {
+    return false;
+  }
+
   // Only handle same-origin links
   if (link.origin !== window.location.origin) {
     return false;
@@ -101,21 +109,29 @@ export function defaultShouldPrefetch(
   link: HTMLAnchorElement,
   basename?: string,
 ): boolean {
-  const pathname = link.pathname.replace(/\/+$/, "");
-  let decodedPathname: string;
+  if (!isEligiblePlainAnchor(link)) return false;
+
+  const prefetch = link.getAttribute(ELIGIBILITY_ATTRIBUTES.prefetch);
+  if (prefetch && PREFETCH_OPT_OUT_VALUES.has(prefetch)) return false;
+
+  let pathname: string;
   try {
-    decodedPathname = decodeURIComponent(pathname);
+    pathname = decodeURIComponent(link.pathname).replace(/\/+$/, "");
   } catch {
     return false;
   }
-  return (
-    link.getAttribute(ELIGIBILITY_ATTRIBUTES.prefetch) !== "false" &&
-    (!basename ||
-      pathname === basename ||
-      pathname.startsWith(`${basename}/`)) &&
-    !STATIC_RESOURCE_EXTENSION.test(decodedPathname) &&
-    isEligiblePlainAnchor(link)
-  );
+
+  if (
+    basename &&
+    pathname !== basename &&
+    !pathname.startsWith(`${basename}/`)
+  ) {
+    return false;
+  }
+  if (prefetch !== "true" && STATIC_RESOURCE_EXTENSION.test(pathname)) {
+    return false;
+  }
+  return true;
 }
 
 /**

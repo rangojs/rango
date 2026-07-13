@@ -44,6 +44,13 @@ export function HomePage(ctx: HandlerContext) {
       <a href="/about?plain-prefetch=1" data-testid="plain-prefetch-link">
         Plain anchor prefetch fixture
       </a>
+      <a
+        href="/shop/default-none.html"
+        data-prefetch="true"
+        data-testid="plain-prefetch-forced-route"
+      >
+        Static-looking plain anchor under manual mode
+      </a>
       <p>It demonstrates:</p>
       <ul style={{ marginTop: "1rem", marginLeft: "1.5rem" }}>
         <li>React Server Components with RSC streaming</li>

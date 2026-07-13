@@ -22,16 +22,46 @@ const urlpatterns = urls(({ path }) => [
           </a>
         </p>
         <p>
-          <a href="/about" data-testid="prefetch-outside-basename">
+          <a
+            href="/__prefetch-scope/target.js"
+            data-prefetch="true"
+            data-testid="prefetch-resource-route"
+          >
+            Static-looking application route
+          </a>
+        </p>
+        <p>
+          <a
+            href="/__prefetch-scope/logout"
+            data-prefetch="none"
+            data-testid="prefetch-none"
+          >
+            Unsafe GET opt-out
+          </a>
+        </p>
+        <p>
+          <a
+            href="/about"
+            data-prefetch="true"
+            data-testid="prefetch-outside-basename"
+          >
             Outside basename
           </a>
         </p>
+        <svg aria-label="SVG link fixture">
+          <a href="/__prefetch-scope/svg-target" data-testid="prefetch-svg">
+            <circle cx="5" cy="5" r="5" />
+          </a>
+        </svg>
       </main>
     ),
     { name: "prefetchScopeHome" },
   ),
   path("/target", () => <h1>Prefetch target</h1>, {
     name: "prefetchScopeTarget",
+  }),
+  path("/target.js", () => <h1>Static-looking prefetch target</h1>, {
+    name: "prefetchScopeResourceRoute",
   }),
 ]);
 

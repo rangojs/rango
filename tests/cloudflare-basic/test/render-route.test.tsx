@@ -128,7 +128,16 @@ describe("renderRoute against cloudflare-basic client components", () => {
         <>
           <a href="/app/current" data-testid="current-link" />
           <a href="/app/files/report.pdf" data-testid="asset-link" />
+          <a
+            href="/app/reports/2026.csv"
+            data-prefetch="true"
+            data-testid="resource-route-link"
+          />
+          <a href="/app/logout" data-prefetch="none" data-testid="none-link" />
           <a href="/sibling/current" data-testid="sibling-link" />
+          <svg>
+            <a href="/app/svg" data-testid="svg-link" />
+          </svg>
         </>
       );
     }
@@ -140,8 +149,13 @@ describe("renderRoute against cloudflare-basic client components", () => {
 
     expect(observe).toHaveBeenCalledWith(result.getByTestId("current-link"));
     expect(observe).not.toHaveBeenCalledWith(result.getByTestId("asset-link"));
+    expect(observe).toHaveBeenCalledWith(
+      result.getByTestId("resource-route-link"),
+    );
+    expect(observe).not.toHaveBeenCalledWith(result.getByTestId("none-link"));
     expect(observe).not.toHaveBeenCalledWith(
       result.getByTestId("sibling-link"),
     );
+    expect(observe).not.toHaveBeenCalledWith(result.getByTestId("svg-link"));
   });
 });

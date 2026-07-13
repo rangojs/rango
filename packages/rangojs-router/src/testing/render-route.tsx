@@ -272,8 +272,10 @@ export interface RenderRouteOptions {
   nonce?: string;
   /**
    * Router default prefetch strategy scoped to this rendered tree. This mirrors
-   * `createRouter({ defaultPrefetch })` for Links and plain anchors without
-   * `data-prefetch="false"`.
+   * `createRouter({ defaultPrefetch })` for Links and eligible plain anchors
+   * inside `basename`. `data-prefetch="false"`/`"none"` opts out; `"true"`
+   * allows an application route with a common static-resource suffix but does
+   * not override a `"none"` default.
    */
   defaultPrefetch?: PrefetchStrategy;
 }

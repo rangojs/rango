@@ -1,12 +1,6 @@
-import {
-  expect,
-  test,
-  type BrowserContext,
-  type Page,
-  type Request,
-} from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration } from "./helper";
+import { isPrefetchRequest, waitForHydration } from "./helper";
 
 /**
  * Cross-tab rango-state invalidation tests.
@@ -54,7 +48,7 @@ async function testCrossTabInvalidation(
   // Both pages load the app and hydrate (binds the shared rango state cookie)
   await pageA.goto(baseUrl);
   await waitForHydration(pageA);
-  await pageB.goto(baseUrl);
+  await pageB.goto(new URL("/link-behavior", baseUrl).href);
   await waitForHydration(pageB);
 
   // Read the initial rango-state from the shared cookie jar
@@ -65,6 +59,20 @@ async function testCrossTabInvalidation(
   // Verify pageB has the same initial state (shared jar)
   const pageBInitialState = await readRangoState(pageB);
   expect(pageBInitialState).toBe(initialState);
+
+  // Warm a real rendered Link under the initial state. Its explicit hover
+  // strategy keeps this deterministic in both development and production.
+  const link = pageB.getByTestId("link-prefetch-hover");
+  const warmResponsePromise = pageB.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/blog" && isPrefetchRequest(response.request());
+  });
+  await link.hover();
+  const warmResponse = await warmResponsePromise;
+  await warmResponse.finished();
+  expect(await warmResponse.request().headerValue("x-rango-state")).toBe(
+    initialState,
+  );
 
   // Page A simulates invalidation: rotates the shared rango state cookie. The
   // cookie jar is shared across tabs, so pageB reads the new value on its next
@@ -84,30 +92,21 @@ async function testCrossTabInvalidation(
   const pageBUpdatedState = await readRangoState(pageB);
   expect(pageBUpdatedState).toBe(newState);
 
-  // Use a dedicated non-prefetched link so this assertion observes the request
-  // created after the cookie rotation, not a production-default warm response.
-  await pageB.evaluate(() => {
-    const link = document.createElement("a");
-    link.href = "/blog?cross-tab-invalidation=1";
-    link.dataset.prefetch = "false";
-    link.dataset.testid = "cross-tab-navigation";
-    link.textContent = "Navigate";
-    document.body.appendChild(link);
+  // The old-state warm entry must not satisfy this click. The state-keyed
+  // lookup misses and issues a navigation request with the rotated value.
+  const navigationRequestPromise = pageB.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === "/blog" &&
+      url.searchParams.has("_rsc_partial") &&
+      !isPrefetchRequest(request)
+    );
   });
-  const headerPromise = new Promise<string>((resolve) => {
-    const onRequest = (request: Request) => {
-      if (!request.url().includes("_rsc_partial")) return;
-      const header = request.headers()["x-rango-state"];
-      if (!header) return;
-      pageB.off("request", onRequest);
-      resolve(header);
-    };
-    pageB.on("request", onRequest);
-  });
-  await pageB.click('[data-testid="cross-tab-navigation"]');
+  await link.click();
 
   // Wait for the navigation request and check the header
-  const sentHeader = await headerPromise;
+  const navigationRequest = await navigationRequestPromise;
+  const sentHeader = await navigationRequest.headerValue("x-rango-state");
   expect(sentHeader).toBe(newState);
 
   await pageA.close();

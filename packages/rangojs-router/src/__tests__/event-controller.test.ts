@@ -173,6 +173,62 @@ describe("createEventController", () => {
       stopFirst();
       stopSecond();
     });
+
+    it("notifies later registrations when an earlier listener throws", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const second = vi.fn();
+      const stopFirst = subscribeToLocationChange(controller, () => {
+        throw new Error("first failed");
+      });
+      const stopSecond = subscribeToLocationChange(controller, second);
+
+      location = loc("/next");
+      expect(() => notifyController()).toThrow("first failed");
+      expect(second).toHaveBeenCalledWith(location.href);
+
+      stopFirst();
+      stopSecond();
+    });
+
+    it("notifies raw controller subscribers after a location listener throws", () => {
+      const controller = createController();
+      const stopLocation = subscribeToLocationChange(controller, () => {
+        throw new Error("location failed");
+      });
+      const rawListener = vi.fn();
+      const stopRaw = controller.subscribe(rawListener);
+
+      controller.setLocation(loc("/next"));
+      expect(() => vi.runOnlyPendingTimers()).toThrow("location failed");
+      expect(rawListener).toHaveBeenCalledOnce();
+
+      stopLocation();
+      stopRaw();
+    });
+
+    it("does not notify a raw subscriber removed during dispatch", () => {
+      const controller = createController();
+      let stopSecond!: () => void;
+      const first = vi.fn(() => stopSecond());
+      const second = vi.fn();
+      const stopFirst = controller.subscribe(first);
+      stopSecond = controller.subscribe(second);
+
+      controller.setLocation(loc("/next"));
+      vi.runOnlyPendingTimers();
+
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).not.toHaveBeenCalled();
+      stopFirst();
+    });
   });
 
   // ======================================================================

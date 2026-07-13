@@ -590,7 +590,8 @@ const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
 });
 // An unmarked <a data-testid="docs" href="/app/docs"> is observed.
 // /files/report.pdf and /sibling/docs are not observed.
-// <a href="/logout" data-prefetch="false"> is never observed.
+// <a href="/logout" data-prefetch="none"> is never observed (false also works).
+// <a href="/app/report.csv" data-prefetch="true"> is observed as a route.
 expect(getByTestId("docs")).not.toHaveAttribute("data-prefetch");
 ```
 
