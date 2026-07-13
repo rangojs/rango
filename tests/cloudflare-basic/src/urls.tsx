@@ -73,6 +73,7 @@ import {
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
+  PprInlineActionHoleLoader,
   PprShellSettledLoader,
   PprShellExecLoader,
   pprExecCounters,
@@ -169,6 +170,7 @@ export const urlpatterns = urls(
     include,
     middleware,
     transition,
+    revalidate,
     errorBoundary,
   }) => [
     // API routes (response routes - skip RSC pipeline)
@@ -792,10 +794,15 @@ export const urlpatterns = urls(
             ]),
           ],
         ),
-        path("/ppr-shell/inline-action", PprInlineActionPage, {
-          name: "pprShellInlineAction",
-          ppr: { ttl: 300, swr: 120 },
-        }),
+        path(
+          "/ppr-shell/inline-action",
+          PprInlineActionPage,
+          {
+            name: "pprShellInlineAction",
+            ppr: { ttl: 300, swr: 120 },
+          },
+          () => [loader(PprInlineActionHoleLoader)],
+        ),
         // Prerender + ppr composition (docs/design/shell-fast-path.md):
         // build-time segments are the frozen prelude; the slot-owned loader
         // is the badge-sized streaming hole. See pages/ppr-shell.tsx.
@@ -822,10 +829,18 @@ export const urlpatterns = urls(
         // Passthrough + Prerender + ppr (replay gate existence probe): only
         // "baked" bakes; other slugs render live and must keep navigation
         // replay on the real CFCacheStore/KV path.
-        path("/ppr-shell/passthrough/:slug", PprPrerenderedPassthroughArticle, {
-          name: "pprShellPassthrough",
-          ppr: { ttl: 300, swr: 120 },
-        }),
+        path(
+          "/ppr-shell/passthrough/:slug",
+          PprPrerenderedPassthroughArticle,
+          {
+            name: "pprShellPassthrough",
+            ppr: { ttl: 300, swr: 120 },
+          },
+          // Retaining the prerendered client boundary is part of this streaming
+          // contract. Default Passthrough revalidation replaces it with the live
+          // handler and discards its local useActionState result.
+          () => [revalidate(({ actionId }) => (actionId ? false : undefined))],
+        ),
         // Build-shell eviction fixture (#699): its own route + tag so the
         // eviction e2e's updateTag cannot blast the sibling prerendered
         // entries (baked manifest entries are immutable — eviction is a tag

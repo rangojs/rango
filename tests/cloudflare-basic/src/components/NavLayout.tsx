@@ -86,6 +86,13 @@ export function NavLayout() {
         >
           PPR inline action
         </Link>
+        <Link
+          to="/ppr-shell/passthrough/baked?probe=ppp-action-nav"
+          data-testid="nav-prerender-ppr-action"
+          prefetch="none"
+        >
+          Prerender PPR action
+        </Link>
       </nav>
       <BreadcrumbNav />
       <Outlet />

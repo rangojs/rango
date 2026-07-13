@@ -578,6 +578,24 @@ Actions do not re-render pre-rendered segments. The frozen handler output
 stays. Loaders can be revalidated by actions. With `Passthrough()` routes and
 `revalidate()`, the live handler can re-render.
 
+A client component can directly import and invoke a module-level action from a
+`Passthrough(Prerender(...), liveHandler) + ppr` page. If actions should leave
+the frozen build-time tree mounted, attach
+`revalidate(({ actionId }) => (actionId ? false : undefined))`: action
+revalidation is suppressed while ordinary navigations retain their default
+params-changed behavior. The action result, including a nested pending value,
+then streams into `useActionState` without replacing the client boundary with
+the Passthrough live handler. This opt-out is part of the streaming guarantee:
+default Passthrough action revalidation replaces the prerendered client boundary
+with the live handler, so local `useActionState` state from that boundary does
+not survive. The dev + production fixtures therefore pin the retained-tree path
+for both a producer-B document HIT and prerender-store partial navigation; they
+do not claim that a streamed action result survives default tree replacement.
+
+This does not extend to an inline closure-bound action embedded in the stored
+Flight payload. That path remains blocked by #584 / plugin-rsc #1246; runtime
+`ppr` covers encrypted bound actions separately.
+
 ### Handle Data
 
 Values pushed via `ctx.use()` during pre-rendering are baked into the Flight

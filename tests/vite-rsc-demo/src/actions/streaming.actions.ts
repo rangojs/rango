@@ -1,41 +1,47 @@
 "use server";
 
+import { createElement, type ReactNode } from "react";
+
 /**
  * Streaming action demo - returns a Promise that resolves on the client
  *
  * This demonstrates RSC's ability to stream Promises to the client,
  * where they can be awaited using Suspense boundaries.
  */
-export async function addToCartSlowly(productId: string, quantity: number = 1) {
+export interface StreamingCartResult {
+  promise: Promise<ReactNode>;
+}
+
+export async function addToCartSlowly(
+  _previous: StreamingCartResult | null,
+  formData: FormData,
+): Promise<StreamingCartResult> {
+  const productId = String(formData.get("productId"));
+  const quantity = Number(formData.get("quantity") ?? 1);
   console.log(`[Action] addToCartSlowly: Starting for ${productId}...`);
 
-  // Return a Promise immediately (don't await!)
-  // This Promise will be serialized and sent to the client
-  // oxlint-disable-next-line no-async-promise-executor -- intentional: stream result after delay
-  const resultPromise = new Promise(async (resolve) => {
-    // Simulate slow operation (3 seconds)
-    await new Promise((wait) => setTimeout(wait, 1000));
-
-    console.log(`[Action] addToCartSlowly: Completed after 3s`);
-
-    resolve({
-      success: true,
-      message: `Successfully added ${quantity} ${productId} after 1 seconds!`,
-      timestamp: new Date().toISOString(),
-      cart: {
-        productId,
-        quantity,
-        totalItems: quantity, // Simplified
-      },
-    });
+  // Keep the action pending first, then return a nested promise. Returning the
+  // promise itself from an async action would assimilate it and remove the
+  // Suspense streaming phase entirely.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const resultPromise = new Promise<ReactNode>((resolve) => {
+    setTimeout(() => {
+      console.log(`[Action] addToCartSlowly: Stream completed`);
+      resolve(
+        createElement(
+          "span",
+          null,
+          `Completed! Added ${quantity} ${productId}`,
+        ),
+      );
+    }, 4000);
   });
 
   console.log(
     `[Action] addToCartSlowly: Returning Promise (will stream to client)`,
   );
 
-  // Return the Promise - RSC will serialize it and stream to client
-  return resultPromise;
+  return { promise: resultPromise };
 }
 
 /**

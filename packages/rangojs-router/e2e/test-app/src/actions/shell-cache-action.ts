@@ -41,3 +41,20 @@ export async function updateBannerAction(
   await updateTag(SHELL_ACTION_BANNER_TAG);
   return { banner };
 }
+
+export interface PrerenderPprActionResult {
+  streamed: Promise<string>;
+}
+
+export async function submitPrerenderPprAction(
+  _previous: PrerenderPprActionResult | null,
+  formData: FormData,
+): Promise<PrerenderPprActionResult> {
+  const value = String(formData.get("value"));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  return {
+    streamed: new Promise((resolve) =>
+      setTimeout(() => resolve(`prerender-ppr-action:${value}`), 1_200),
+    ),
+  };
+}

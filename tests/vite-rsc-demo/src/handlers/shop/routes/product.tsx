@@ -15,7 +15,6 @@ import {
   addToCartWithResult,
   getCartCount,
 } from "@/handlers/shop/actions/shop.actions.js";
-import { addToCartSlowly } from "@/actions/streaming.actions.js";
 import {
   PDPNavbar,
   ProductCard,
@@ -178,13 +177,10 @@ export const ProductsDetailRoute: Handler<"/product/:slug"> = async (ctx) => {
                   <h4>4. Streaming Updates</h4>
                   <StreamingActionStatus />
                   <p style={{ fontSize: "0.9rem", color: "#666" }}>
-                    Real-time progress (3s delay)
+                    Pending action followed by a streamed result
                   </p>
                   <LoadingSpinner />
-                  <StreamingActionForm
-                    productId={product.id}
-                    action={addToCartSlowly}
-                  >
+                  <StreamingActionForm productId={product.id}>
                     Add product (Streaming)
                   </StreamingActionForm>
                 </div>

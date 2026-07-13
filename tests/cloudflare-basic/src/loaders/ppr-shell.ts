@@ -80,6 +80,56 @@ export const PprShellStreamLoader = createLoader(
   },
 );
 
+const PPR_INLINE_ACTION_WARM_HOLE_DELAY_MS = 2_000;
+const PPR_INLINE_ACTION_HOLE_FAILSAFE_MS = 30_000;
+const PPR_INLINE_ACTION_HOLE_AFTER_ACTION_MS = 2_000;
+
+// Probe-scoped resolvers make the ordering causal: the page hole cannot finish
+// until this page's action result has streamed. The long timer is only a leak
+// failsafe; API warm-up requests opt into the short timer via a test header.
+const pprInlineActionHoleResolvers = new Map<string, Set<() => void>>();
+
+export function resolvePprInlineActionHoleAfterAction(probe: string): void {
+  setTimeout(() => {
+    for (const resolve of [
+      ...(pprInlineActionHoleResolvers.get(probe) ?? []),
+    ]) {
+      resolve();
+    }
+  }, PPR_INLINE_ACTION_HOLE_AFTER_ACTION_MS);
+}
+
+export interface PprInlineActionHoleData {
+  pendingData: Promise<string>;
+}
+
+// Bake-lane container with a nested promise: the form remains shell material,
+// while the nested value is masked during capture and streams fresh per serve.
+export const PprInlineActionHoleLoader = createLoader(
+  async (ctx): Promise<PprInlineActionHoleData> => {
+    const probe = ctx.searchParams.get("probe") ?? "default";
+    const resolvers = pprInlineActionHoleResolvers.get(probe) ?? new Set();
+    pprInlineActionHoleResolvers.set(probe, resolvers);
+    const pendingData = new Promise<string>((resolve) => {
+      let timeout: ReturnType<typeof setTimeout>;
+      const finish = () => {
+        clearTimeout(timeout);
+        resolvers.delete(finish);
+        if (resolvers.size === 0) pprInlineActionHoleResolvers.delete(probe);
+        resolve("CF page hole resolved");
+      };
+      resolvers.add(finish);
+      timeout = setTimeout(
+        finish,
+        ctx.request.headers.has("x-rango-test-short-inline-hole")
+          ? PPR_INLINE_ACTION_WARM_HOLE_DELAY_MS
+          : PPR_INLINE_ACTION_HOLE_FAILSAFE_MS,
+      );
+    });
+    return { pendingData };
+  },
+);
+
 // Layout-loader bake-lane fixture (the storefront shape: an app-wide layout
 // registering session/basket-style loaders, no loading() on the layout).
 // Executes at capture (the gate holds for the 100ms), bakes, and is
