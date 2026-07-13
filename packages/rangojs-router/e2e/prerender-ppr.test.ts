@@ -1,5 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
+import {
+  expectNoPageError,
+  expectNoReload,
+  testId,
+  waitForHydration,
+} from "./helper";
+import { guardHydrationErrors } from "@shared/e2e";
+import { assertPprReplayStatus } from "@rangojs/router/testing/e2e";
 
 // Prerender + ppr COMPOSITION (docs/design/shell-fast-path.md): one route
 // carries both a build-time prerendered handler (trie pr:true) and the ppr
@@ -40,6 +48,60 @@ function readSeq(html: string): number {
 }
 
 function runPrerenderPprSpec(f: Fixture): void {
+  const expectPrerenderAction = async (page: Page): Promise<void> => {
+    await expect(testId(page, "prerender-ppr-action-result")).toHaveText(
+      "none",
+    );
+    await testId(page, "prerender-ppr-action-submit").click();
+    await expect(testId(page, "prerender-ppr-action-result")).toHaveText(
+      "prerender-ppr-action:from-client",
+    );
+    // The explicit revalidation opt-out keeps the immutable prerendered tree
+    // mounted while the action return value updates useActionState.
+    await expect(testId(page, "ppp-source")).toHaveText("baked");
+  };
+
+  test("Passthrough Prerender+ppr document HIT invokes a client-imported action", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    const url = f.url("/ppp/baked");
+    await warmToHit(page.request, url);
+
+    const response = await page.goto(url);
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await using ___ = await expectNoReload(page);
+    await expect(testId(page, "ppp-source")).toHaveText("baked");
+    await expectPrerenderAction(page);
+  });
+
+  test("Prerender-store partial navigation invokes a client-imported action", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await using ___ = await expectNoReload(page);
+    const partialResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === "/ppp/baked" && url.searchParams.has("_rsc_partial")
+      );
+    });
+
+    await testId(page, "nav-prerender-ppr-action").click();
+    const partialResponse = await partialResponsePromise;
+    assertPprReplayStatus(
+      { headers: new Headers(partialResponse.headers()) },
+      { outcome: "BYPASS", reason: "prerender-store" },
+    );
+    await expect(testId(page, "ppp-source")).toHaveText("baked");
+    await expectPrerenderAction(page);
+  });
+
   test("MISS serves the prerendered content live, then the route flips to HIT", async ({
     request,
   }) => {
@@ -157,6 +219,17 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(liveBody).toContain("PPP content for live-one");
     expect(liveBody).toContain("live");
     expect(liveBody).toContain("ppp-exec-");
+
+    // The action-only revalidation opt-out must defer on navigation. A hard
+    // false here would incorrectly retain live-one for this same-route param
+    // change.
+    const nextLiveUrl = f.url("/ppp/live-two?probe=ppp-live-next");
+    const nextLive = await request.get(
+      `${nextLiveUrl}&_rsc_partial=true&_rsc_segments=`,
+      { headers: { "X-RSC-Router-Client-Path": liveUrl } },
+    );
+    expect(nextLive.status()).toBe(200);
+    expect(await nextLive.text()).toContain("PPP content for live-two");
   });
 
   // Fragment splice (issue #700) on the Prerender+ppr composition: the HIT

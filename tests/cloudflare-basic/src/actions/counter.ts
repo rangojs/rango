@@ -16,3 +16,11 @@ export async function decrementCounter(): Promise<number> {
 export async function getCounter(): Promise<number> {
   return counter;
 }
+
+export async function submitPrerenderPprAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string> {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  return `cf-prerender-ppr-action:${String(formData.get("value"))}`;
+}

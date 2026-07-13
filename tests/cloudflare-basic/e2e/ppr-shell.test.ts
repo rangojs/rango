@@ -74,20 +74,47 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
 }
 
 async function expectInlineActionRoundTrip(page: Page): Promise<void> {
-  await expect(testId(page, "ppr-inline-action-page")).toBeVisible();
-  const rendered = await testId(
-    page,
-    "ppr-inline-action-rendered",
-  ).textContent();
+  const root = page.locator('[data-testid="ppr-inline-action-page"]:visible');
+  await expect(root).toBeVisible();
+  const rendered = await root
+    .locator('[data-testid="ppr-inline-action-rendered"]')
+    .textContent();
   const captured = rendered!.replace(/^rendered:/, "");
   expect(captured).toMatch(/^cf-server-token-/);
 
-  await testId(page, "ppr-inline-action-submit").click();
-  await expect(testId(page, "ppr-inline-action-captured")).toHaveText(
-    `captured:${captured}`,
+  const pageFallback = root.locator(
+    '[data-testid="ppr-inline-page-hole-fallback"]',
   );
-  await expect(testId(page, "ppr-inline-action-submitted")).toHaveText(
-    "submitted:from-client",
+  const submit = root.locator('[data-testid="ppr-inline-action-submit"]');
+  await expect(pageFallback).toBeVisible();
+
+  await submit.click();
+  await expect(submit).toHaveText("Processing...");
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-stream-fallback"]'),
+  ).toBeVisible();
+  await expect(pageFallback).toBeVisible();
+
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-stream-result"]'),
+  ).toHaveText(`completed:${captured}:from-client`, { timeout: 5_000 });
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-captured"]'),
+  ).toHaveText(`captured:${captured}`);
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-submitted"]'),
+  ).toHaveText("submitted:from-client");
+
+  await expect(pageFallback).toBeVisible();
+  await expect(
+    root.locator('[data-testid="ppr-inline-page-hole-result"]'),
+  ).toHaveText("CF page hole resolved", { timeout: 10_000 });
+}
+
+async function waitForShellHydration(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => document.documentElement.hasAttribute("data-hydrated"),
+    { timeout: 20_000 },
   );
 }
 
@@ -135,24 +162,95 @@ function describePprShell(mode: "dev" | "build") {
   test.describe(`ppr-shell caching (${label})`, () => {
     const f = useFixture({ root: ".", mode });
 
-    test("runtime shell HIT preserves an embedded bound action", async ({
+    const expectPrerenderAction = async (page: Page): Promise<void> => {
+      await expect(testId(page, "ppr-prerender-action-result")).toHaveText(
+        "none",
+      );
+      await testId(page, "ppr-prerender-action-submit").click();
+      await expect(testId(page, "ppr-prerender-action-result")).toHaveText(
+        "cf-prerender-ppr-action:from-client",
+      );
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
+    };
+
+    test("Passthrough Prerender+ppr document HIT invokes a client-imported action", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
-      const url = f.url("/ppr-shell/inline-action?probe=ppr-inline-hit");
+      using __ = guardHydrationErrors(page);
+      const url = f.url("/ppr-shell/passthrough/baked");
       await warmToHit(page.request, url);
 
       const response = await page.goto(url);
       expect(response?.headers()["x-rango-shell"]).toBe("HIT");
       await waitForHydration(page);
-      await using __ = await expectNoReload(page);
-      await expectInlineActionRoundTrip(page);
+      await using ___ = await expectNoReload(page);
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
+      await expectPrerenderAction(page);
     });
 
-    test("partial PPR navigation preserves an embedded bound action", async ({
+    test("Prerender-store partial navigation invokes a client-imported action", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using ___ = await expectNoReload(page);
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === "/ppr-shell/passthrough/baked" &&
+          url.searchParams.has("_rsc_partial")
+        );
+      });
+
+      await testId(page, "nav-prerender-ppr-action").click();
+      const partialResponse = await partialResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(partialResponse.headers()) },
+        { outcome: "BYPASS", reason: "prerender-store" },
+      );
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
+      await expectPrerenderAction(page);
+    });
+
+    test("document MISS streams a bound action while a page hole is pending", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const url = f.url(
+        `/ppr-shell/inline-action?probe=ppr-inline-miss-stream-${crypto.randomUUID()}`,
+      );
+
+      const response = await page.goto(url, { waitUntil: "commit" });
+      expect(response?.headers()["x-rango-shell"]).toBe("MISS");
+      await waitForShellHydration(page);
+      await using ___ = await expectNoReload(page);
+      await expectInlineActionRoundTrip(page);
+    });
+
+    test("document HIT streams a bound action while a page hole is pending", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const url = f.url("/ppr-shell/inline-action?probe=ppr-inline-hit-stream");
+      await warmToHit(page.request, url);
+
+      const response = await page.goto(url, { waitUntil: "commit" });
+      expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForShellHydration(page);
+      await using ___ = await expectNoReload(page);
+      await expectInlineActionRoundTrip(page);
+    });
+
+    test("partial PPR replay streams a bound action while a page hole is pending", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
       await warmToHit(
         page.request,
         f.url("/ppr-shell/inline-action?probe=ppr-inline-nav"),
@@ -160,8 +258,20 @@ function describePprShell(mode: "dev" | "build") {
 
       await page.goto(f.url("/"));
       await waitForHydration(page);
-      await using __ = await expectNoReload(page);
+      await using ___ = await expectNoReload(page);
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === "/ppr-shell/inline-action" &&
+          url.searchParams.has("_rsc_partial")
+        );
+      });
       await testId(page, "nav-ppr-inline-action").click();
+      const partialResponse = await partialResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(partialResponse.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
       await expect(page).toHaveURL(
         /ppr-shell\/inline-action\?probe=ppr-inline-nav$/,
       );
@@ -1037,6 +1147,16 @@ function describePprShell(mode: "dev" | "build") {
       expect(liveBody).toContain("PPR-PPP content for live-one");
       expect(liveBody).toContain("live");
       expect(liveBody).toContain("ppr-ppp-exec-");
+
+      const nextLiveUrl = f.url(
+        "/ppr-shell/passthrough/live-two?probe=cf-ppp-live-next",
+      );
+      const nextLive = await request.get(
+        `${nextLiveUrl}&_rsc_partial=true&_rsc_segments=`,
+        { headers: { "X-RSC-Router-Client-Path": liveUrl } },
+      );
+      expect(nextLive.status()).toBe(200);
+      expect(await nextLive.text()).toContain("PPR-PPP content for live-two");
     });
 
     // --- Storefront shape: replay composed with an ancestor cache() scope

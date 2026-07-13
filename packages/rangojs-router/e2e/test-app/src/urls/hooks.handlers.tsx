@@ -1,5 +1,5 @@
 import type { Handler } from "@rangojs/router";
-import { cookies, Meta } from "@rangojs/router";
+import { cookies, createLoader, Meta } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { PeHeaderProbeLoader } from "../loaders.js";
 import {
@@ -15,7 +15,11 @@ import {
   ComposingFetchableUsesNonFetchable,
 } from "../loaders.js";
 import { FetchLoaderTest } from "../components/FetchLoaderTest.js";
-import { InlineBoundActionForm } from "../components/InlineBoundActionForm.js";
+import {
+  InlineBoundActionForm,
+  type InlineBoundPageHoleData,
+  type InlineBoundResult,
+} from "../components/InlineBoundActionForm.js";
 import {
   UseLoaderTest,
   UseFetchLoaderPreloadedTest,
@@ -265,6 +269,21 @@ export const InlineActionHandler: Handler<"inlineAction"> = () => {
   );
 };
 
+const INLINE_BOUND_PAGE_HOLE_DELAY_MS = 5_000;
+const INLINE_BOUND_ACTION_DELAY_MS = 250;
+const INLINE_BOUND_ACTION_STREAM_DELAY_MS = 1_200;
+
+export const InlineBoundPageHoleLoader = createLoader(
+  async (): Promise<InlineBoundPageHoleData> => ({
+    pendingData: new Promise((resolve) =>
+      setTimeout(
+        () => resolve("Page hole resolved"),
+        INLINE_BOUND_PAGE_HOLE_DELAY_MS,
+      ),
+    ),
+  }),
+);
+
 export const InlineBoundActionHandler: Handler<"inlineBoundAction"> = () => {
   // Render-scope value computed on the server. The inline action below closes
   // over it, so plugin-rsc treats it as a bound argument (encrypted in
@@ -276,10 +295,22 @@ export const InlineBoundActionHandler: Handler<"inlineBoundAction"> = () => {
   async function inlineBoundAction(
     _prev: { captured: string; submitted: string } | null,
     formData: FormData,
-  ): Promise<{ captured: string; submitted: string }> {
+  ): Promise<InlineBoundResult> {
     "use server";
     const submitted = String(formData.get("submitted") ?? "");
-    return { captured, submitted };
+    await new Promise((resolve) =>
+      setTimeout(resolve, INLINE_BOUND_ACTION_DELAY_MS),
+    );
+    return {
+      captured,
+      submitted,
+      streamed: new Promise((resolve) =>
+        setTimeout(
+          () => resolve(`completed:${captured}:${submitted}`),
+          INLINE_BOUND_ACTION_STREAM_DELAY_MS,
+        ),
+      ),
+    };
   }
 
   return (
@@ -291,7 +322,10 @@ export const InlineBoundActionHandler: Handler<"inlineBoundAction"> = () => {
       <p data-testid="inline-bound-action-rendered-captured">
         rendered:{captured}
       </p>
-      <InlineBoundActionForm boundAction={inlineBoundAction} />
+      <InlineBoundActionForm
+        boundAction={inlineBoundAction}
+        pageHoleLoader={InlineBoundPageHoleLoader}
+      />
     </div>
   );
 };

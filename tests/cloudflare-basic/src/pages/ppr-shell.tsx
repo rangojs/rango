@@ -8,6 +8,7 @@ import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
 import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
 import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
 import { PprPrerenderSeqLoader } from "../loaders/ppr-shell.js";
+import { PprInlineActionHoleLoader } from "../loaders/ppr-shell.js";
 import { PprBakeSlowLoader, PprBakeHoleLoader } from "../loaders/ppr-shell.js";
 import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
 import {
@@ -22,6 +23,7 @@ import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
 import {
   PprInlineActionForm,
+  PprPrerenderActionForm,
   PprShellExecMatrix,
   type PprInlineActionState,
 } from "../components/PprShellExecMatrix.js";
@@ -246,13 +248,24 @@ export function PprInlineActionPage() {
     formData: FormData,
   ): Promise<PprInlineActionState> {
     "use server";
+    const submitted = String(formData.get("value"));
+    await new Promise((resolve) => setTimeout(resolve, 250));
     return {
       captured,
-      submitted: String(formData.get("value")),
+      submitted,
+      streamed: new Promise((resolve) =>
+        setTimeout(() => resolve(`completed:${captured}:${submitted}`), 1_200),
+      ),
     };
   }
 
-  return <PprInlineActionForm action={submit} renderedCaptured={captured} />;
+  return (
+    <PprInlineActionForm
+      action={submit}
+      renderedCaptured={captured}
+      pageHoleLoader={PprInlineActionHoleLoader}
+    />
+  );
 }
 
 // Prerender + ppr composition (docs/design/shell-fast-path.md): build-time
@@ -296,6 +309,7 @@ export const PprPrerenderedPassthroughDef = Prerender<{ slug: string }>(
     <div data-testid="ppr-ppp-article">
       <p data-testid="ppr-ppp-source">baked</p>
       <p data-testid="ppr-ppp-content">{`PPR-PPP content for ${ctx.params.slug}`}</p>
+      <PprPrerenderActionForm />
     </div>
   ),
 );
@@ -309,6 +323,7 @@ export const PprPrerenderedPassthroughArticle = Passthrough(
         <p data-testid="ppr-ppp-source">live</p>
         <p data-testid="ppr-ppp-content">{`PPR-PPP content for ${ctx.params.slug}`}</p>
         <p data-testid="ppr-ppp-exec">{`ppr-ppp-exec-${pprPpPassthroughExec}`}</p>
+        <PprPrerenderActionForm />
       </div>
     );
   },

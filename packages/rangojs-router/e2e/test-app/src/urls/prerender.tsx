@@ -14,6 +14,7 @@ import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { PrerenderPprSeq } from "../components/PrerenderPprSeq.js";
+import { PrerenderPprActionForm } from "../components/InlineBoundActionForm.js";
 // Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
 // resolve.alias. Reaching this through build-time Static/Prerender handlers
 // asserts discovery's runner honors third-party resolvers (issue #500).
@@ -277,6 +278,7 @@ export const PrerenderPprPassthroughDef = Prerender<{ slug: string }>(
     <div data-testid="ppp-article">
       <p data-testid="ppp-source">baked</p>
       <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
+      <PrerenderPprActionForm />
     </div>
   ),
 );
@@ -290,13 +292,22 @@ export const PrerenderPprPassthroughArticle = Passthrough(
         <p data-testid="ppp-source">live</p>
         <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
         <p data-testid="ppp-exec">{`ppp-exec-${ppPassthroughExec}`}</p>
+        <PrerenderPprActionForm />
       </div>
     );
   },
 );
 
 export const prerenderPatterns = urls(
-  ({ path, loader, loading, parallel, middleware, notFoundBoundary }) => [
+  ({
+    path,
+    loader,
+    loading,
+    parallel,
+    middleware,
+    notFoundBoundary,
+    revalidate,
+  }) => [
     path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
     path("/docs", DocsPage, { name: "docs" }),
     // Prerender + ppr on ONE route: build-time segments become the frozen
@@ -321,10 +332,15 @@ export const prerenderPatterns = urls(
     ),
     // Passthrough + Prerender + ppr (replay gate existence probe): only
     // "baked" bakes; other slugs render live and must keep navigation replay.
-    path("/ppp/:slug", PrerenderPprPassthroughArticle, {
-      name: "pp.passthrough",
-      ppr: { ttl: 300, swr: 120 },
-    }),
+    path(
+      "/ppp/:slug",
+      PrerenderPprPassthroughArticle,
+      {
+        name: "pp.passthrough",
+        ppr: { ttl: 300, swr: 120 },
+      },
+      () => [revalidate(({ actionId }) => (actionId ? false : undefined))],
+    ),
     // Build-shell eviction fixture (#699): tagged so updateTag can reject the
     // baked entry via the store's tag markers (manifest entries are immutable
     // — eviction is a marker comparison, not a deletion).

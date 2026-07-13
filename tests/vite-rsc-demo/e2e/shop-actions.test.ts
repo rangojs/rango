@@ -6,6 +6,7 @@ import {
   expectNoPageError,
   goBack,
   clearCart,
+  expectNoReload,
   prodDescribe,
 } from "./helper";
 
@@ -72,17 +73,19 @@ async function shopConcurrentAddToCart(page: Page, url: UrlResolver) {
   });
 
   const withResultButton = page
-    .locator("button")
-    .filter({ hasText: "Add to Cart (With Result)" })
-    .first();
-  const streamingButton = page
-    .locator("button")
-    .filter({ hasText: "Add product (Streaming)" })
-    .first();
+    .getByRole("heading", { name: "2. With Return Value" })
+    .locator("..")
+    .getByRole("button");
+  const streamingButton = page.getByTestId("shop-streaming-submit");
 
   // Fire both actions back to back (concurrent actions).
   await withResultButton.click();
   await streamingButton.click();
+
+  // Both actions overlap; a serialized coordinator would never expose these
+  // two pending labels at the same time.
+  await expect(withResultButton).toHaveText("Adding...");
+  await expect(streamingButton).toHaveText("Processing...");
 
   // "With Result" action settles and reports success.
   await expect(withResultButton).not.toHaveText("Adding...", {
@@ -92,15 +95,49 @@ async function shopConcurrentAddToCart(page: Page, url: UrlResolver) {
     timeout: 10000,
   });
 
-  // Streaming action settles too (button leaves the "Processing..." state).
-  await expect(streamingButton).not.toHaveText("Processing...", {
-    timeout: 20000,
-  });
+  // The nested action promise reaches its resolved UI, not merely the point
+  // where the top-level action stopped showing "Processing...".
+  await expect(page.getByTestId("shop-streaming-result")).toContainText(
+    "Completed!",
+    { timeout: 20_000 },
+  );
 
   // Page remains functional after both concurrent actions.
   await expect(
     page.locator("h2:has-text('Wireless Headphones')"),
   ).toBeVisible();
+}
+
+async function expectShopStreamingAction(
+  page: Page,
+  url: UrlResolver,
+): Promise<void> {
+  using _ = expectNoPageError(page);
+  await page.goto(url("/shop/product/wireless-headphones"));
+  await waitForHydration(page);
+  await using __ = await expectNoReload(page);
+
+  await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const button = page.getByTestId("shop-streaming-submit");
+  const status = page.getByTestId("shop-streaming-status");
+  await expect(button).toBeVisible();
+  await expect(status).toContainText("idle");
+
+  await button.click();
+  await expect(button).toHaveText("Processing...");
+  await expect(status).toContainText("loading");
+  await expect(page.getByTestId("shop-streaming-fallback")).toBeVisible();
+  await expect(status).toContainText("streaming");
+  await expect(button).toHaveText("Add product (Streaming)");
+  await expect(button).toBeEnabled();
+  await expect(page.getByTestId("shop-streaming-result")).toContainText(
+    "Completed! Added 1 1",
+    { timeout: 10_000 },
+  );
+  await expect(status).toContainText("idle");
 }
 
 async function shopActionDuringNavigation(page: Page, url: UrlResolver) {
@@ -191,39 +228,9 @@ devTest.describe("shop-actions", () => {
   devTest(
     "should show streaming action updates",
     async ({ page, devServerURL }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(
-        devURL(devServerURL, "/shop/product/wireless-headphones"),
+      await expectShopStreamingAction(page, (path) =>
+        devURL(devServerURL, path),
       );
-      await waitForHydration(page);
-
-      // Wait for product to load
-      await expect(
-        page.locator("h2:has-text('Wireless Headphones')"),
-      ).toBeVisible({
-        timeout: 10000,
-      });
-
-      // Wait for the add to cart section to be visible
-      await expect(page.locator("text=Add to Cart - Tests")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Click streaming add to cart button
-      const streamingButton = page
-        .locator("button")
-        .filter({ hasText: "Add product (Streaming)" })
-        .first();
-      await streamingButton.click();
-
-      // Wait for streaming action to complete (has 3s delay)
-      await page.waitForTimeout(4000);
-
-      // Page should still be functional
-      await expect(
-        page.locator("h2:has-text('Wireless Headphones')"),
-      ).toBeVisible();
     },
   );
 
@@ -799,6 +806,10 @@ test.describe("shop-actions (production)", () => {
 
     // Verify cart details are shown
     await expect(page.locator("text=Total items in cart:")).toBeVisible();
+  });
+
+  test("should show streaming action updates", async ({ page }) => {
+    await expectShopStreamingAction(page, (path) => f.url(path));
   });
 
   test("should update cart quantity from intercept modal", async ({ page }) => {

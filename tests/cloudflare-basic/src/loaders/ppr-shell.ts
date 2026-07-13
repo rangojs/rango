@@ -80,6 +80,25 @@ export const PprShellStreamLoader = createLoader(
   },
 );
 
+const PPR_INLINE_ACTION_HOLE_DELAY_MS = 5_000;
+
+export interface PprInlineActionHoleData {
+  pendingData: Promise<string>;
+}
+
+// Bake-lane container with a nested promise: the form remains shell material,
+// while the nested value is masked during capture and streams fresh per serve.
+export const PprInlineActionHoleLoader = createLoader(
+  async (): Promise<PprInlineActionHoleData> => ({
+    pendingData: new Promise((resolve) =>
+      setTimeout(
+        () => resolve("CF page hole resolved"),
+        PPR_INLINE_ACTION_HOLE_DELAY_MS,
+      ),
+    ),
+  }),
+);
+
 // Layout-loader bake-lane fixture (the storefront shape: an app-wide layout
 // registering session/basket-style loaders, no loading() on the layout).
 // Executes at capture (the gate holds for the 100ms), bakes, and is

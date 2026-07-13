@@ -14,6 +14,7 @@ import {
   LoaderCompositionHandler,
   InlineActionHandler,
   InlineBoundActionHandler,
+  InlineBoundPageHoleLoader,
   ProgressiveEnhancementHandler,
   ParityCounterHandler,
   PeRedirectHandler,
@@ -63,10 +64,15 @@ export const hooksPatterns = urls(({ path, loader }) => [
     name: "loaderComposition",
   }),
   path("/inline-action", InlineActionHandler, { name: "inlineAction" }),
-  path("/inline-bound-action", InlineBoundActionHandler, {
-    name: "inlineBoundAction",
-    ppr: true,
-  }),
+  path(
+    "/inline-bound-action",
+    InlineBoundActionHandler,
+    {
+      name: "inlineBoundAction",
+      ppr: true,
+    },
+    () => [loader(InlineBoundPageHoleLoader)],
+  ),
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",
   }),

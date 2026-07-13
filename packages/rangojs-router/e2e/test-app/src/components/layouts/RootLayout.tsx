@@ -69,6 +69,13 @@ export function RootLayout(ctx: any) {
         >
           PPR inline action
         </Link>
+        <Link
+          to="/ppp/baked?probe=ppp-action-nav"
+          data-testid="nav-prerender-ppr-action"
+          prefetch="none"
+        >
+          Prerender PPR action
+        </Link>
         <NavigationStatus testId="nav-status" />
       </nav>
       <BreadcrumbNav testId="breadcrumbs" />

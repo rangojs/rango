@@ -1420,7 +1420,10 @@ are not revived.
   FIDELITY (middleware ctx value photographed into the prelude); the
   middleware-run counter (capture never re-runs the chain); action correctness
   (hole mutation stays HIT; updateTag drops + recaptures the shell; PE POST
-  never composes). `(production)` describe-title bucketing rules apply.
+  never composes); inline closure-bound action streaming while an independent
+  page hole remains pending on document MISS, document HIT, and partial replay;
+  client-imported module actions from Passthrough+Prerender+ppr document and
+  partial paths. `(production)` describe-title bucketing rules apply.
 - Semantic matrix rows `[PPR1]` (commit-after-all-middleware + capture never
   re-runs the chain + scope fidelity) and `[PPR2]` (serve-time guarding: HIT
   runs the full chain, loader hole fresh) must stay green, alongside the
