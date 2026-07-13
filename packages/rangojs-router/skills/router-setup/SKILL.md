@@ -123,8 +123,10 @@ interface RangoOptions<TEnv> {
   // Default prefetch strategy for Links without a `prefetch` prop and for
   // intercepted plain anchors inside basename. false/none opts out; true allows
   // an application route whose path has a common static-resource extension.
+  // data-prefetch-scope="false"/"none" on a container is a hard subtree
+  // opt-out for both Links and plain anchors, including explicit opt-ins.
   // (dev: "none", production: "viewport").
-  // Per-Link props win in both directions.
+  // Per-Link props win over the router default, not a disabled container scope.
   defaultPrefetch?: "hover" | "viewport" | "render" | "adaptive" | "none";
 
   // CSP nonce provider (for router.fetch)

@@ -129,6 +129,69 @@ function runDefaultPrefetchSpec(
     expect(requests).toHaveLength(0);
   });
 
+  test("a container scope disables Link and plain-anchor prefetch", async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    page.on("request", (req) => {
+      if (
+        isPrefetchRequest(req) &&
+        ["/blog/post-9", "/blog/post-10"].includes(new URL(req.url()).pathname)
+      ) {
+        requests.push(req.url());
+      }
+    });
+
+    await page.goto(f.url("/hash-navigation"));
+    await waitForHydration(page);
+    const componentLink = page.getByTestId("link-prefetch-scope-opt-out");
+    const plainLink = page.getByTestId("anchor-prefetch-scope-opt-out");
+    await componentLink.scrollIntoViewIfNeeded();
+    await componentLink.hover();
+    await plainLink.scrollIntoViewIfNeeded();
+    await plainLink.hover();
+    await page.waitForTimeout(1_000);
+
+    expect(requests).toHaveLength(0);
+
+    const navigationRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname === "/blog/post-10" &&
+        url.searchParams.get("_rsc_partial") === "true" &&
+        !isPrefetchRequest(request)
+      );
+    });
+    await plainLink.click();
+    await navigationRequest;
+    await expect(page).toHaveURL(/\/blog\/post-10$/);
+  });
+
+  test("removing a container scope re-arms its Link", async ({ page }) => {
+    const requests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        isPrefetchRequest(request) &&
+        new URL(request.url()).pathname === "/blog/post-9"
+      ) {
+        requests.push(request.url());
+      }
+    });
+
+    await page.goto(f.url("/hash-navigation"));
+    await waitForHydration(page);
+    const link = page.getByTestId("link-prefetch-scope-opt-out");
+    await link.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
+    expect(requests).toHaveLength(0);
+
+    await page
+      .getByTestId("prefetch-scope-opt-out")
+      .evaluate((element) => element.removeAttribute("data-prefetch-scope"));
+
+    await expect.poll(() => requests.length).toBeGreaterThan(0);
+  });
+
   test("a static-resource plain anchor never prefetches", async ({ page }) => {
     const requests: string[] = [];
     page.on("request", (req) => {

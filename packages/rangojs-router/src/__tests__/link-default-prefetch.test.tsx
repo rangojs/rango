@@ -122,6 +122,114 @@ describe("Link default prefetch fallback", () => {
     expect(prefetchDirect).not.toHaveBeenCalled();
   });
 
+  it("does not prefetch a Link inside a disabled container scope", () => {
+    act(() => {
+      root.render(
+        <NavigationStoreContext.Provider value={ctxValue}>
+          <section data-prefetch-scope="none">
+            <Link to="/scoped" prefetch="viewport" data-testid="scoped-link">
+              scoped
+            </Link>
+          </section>
+          <Link to="/outside" prefetch="viewport">
+            outside
+          </Link>
+        </NavigationStoreContext.Provider>,
+      );
+    });
+
+    expect(prefetchQueued).toHaveBeenCalledOnce();
+    expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/outside");
+
+    act(() => {
+      container
+        .querySelector<HTMLAnchorElement>('[data-testid="scoped-link"]')!
+        .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(prefetchDirect).not.toHaveBeenCalled();
+  });
+
+  it("accepts false as a Link container scope opt-out", () => {
+    act(() => {
+      root.render(
+        <NavigationStoreContext.Provider value={ctxValue}>
+          <section data-prefetch-scope="false">
+            <Link to="/scoped" prefetch="viewport">
+              scoped
+            </Link>
+          </section>
+        </NavigationStoreContext.Provider>,
+      );
+    });
+
+    expect(prefetchObserver.observe).not.toHaveBeenCalled();
+    expect(prefetchQueued).not.toHaveBeenCalled();
+  });
+
+  it("re-arms a Link when its container scope is removed", async () => {
+    act(() => {
+      root.render(
+        <NavigationStoreContext.Provider value={ctxValue}>
+          <section data-prefetch-scope="none" data-testid="scope">
+            <Link to="/scoped" prefetch="viewport">
+              scoped
+            </Link>
+          </section>
+          <section data-prefetch-scope="none">
+            <Link to="/still-scoped" prefetch="viewport">
+              still scoped
+            </Link>
+          </section>
+        </NavigationStoreContext.Provider>,
+      );
+    });
+    expect(prefetchQueued).not.toHaveBeenCalled();
+
+    container
+      .querySelector<HTMLElement>('[data-testid="scope"]')!
+      .removeAttribute("data-prefetch-scope");
+
+    await vi.waitFor(() => expect(prefetchQueued).toHaveBeenCalledOnce());
+    expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/scoped");
+  });
+
+  it("shares and releases one scope observer across Links", () => {
+    const construct = vi.fn();
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "MutationObserver",
+      class {
+        observe = observe;
+        disconnect = disconnect;
+
+        constructor(_callback: MutationCallback) {
+          construct();
+        }
+      },
+    );
+
+    act(() => {
+      root.render(
+        <NavigationStoreContext.Provider value={ctxValue}>
+          <Link to="/first" prefetch="viewport">
+            first
+          </Link>
+          <Link to="/second" prefetch="viewport">
+            second
+          </Link>
+        </NavigationStoreContext.Provider>,
+      );
+    });
+
+    expect(construct).toHaveBeenCalledOnce();
+    expect(observe).toHaveBeenCalledOnce();
+
+    act(() => root.unmount());
+    rootMounted = false;
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
   it("uses an instance default without mutating the module default", () => {
     ctxValue.defaultPrefetch = "viewport";
     renderLink({ to: "/target" });

@@ -1,10 +1,27 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { createPortal } from "react-dom";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { Link } from "@rangojs/router/client";
 import { CRClientNav } from "../src/components/CRClientNav.js";
+
+const activePrefetchElements = new Set<Element>();
+const observePrefetchElement = vi.fn((element: Element) =>
+  activePrefetchElements.add(element),
+);
+
+class TestIntersectionObserver {
+  observe = observePrefetchElement;
+  unobserve = (element: Element) => activePrefetchElements.delete(element);
+  disconnect = vi.fn();
+}
+
+beforeEach(() => {
+  activePrefetchElements.clear();
+  vi.clearAllMocks();
+  vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
+});
 
 afterEach(() => {
   cleanup();
@@ -54,15 +71,6 @@ describe("renderRoute against cloudflare-basic client components", () => {
   });
 
   it("scopes defaultPrefetch per tree and preserves it through StrictMode", async () => {
-    const active = new Set<Element>();
-    vi.stubGlobal(
-      "IntersectionObserver",
-      class {
-        observe = (element: Element) => active.add(element);
-        unobserve = (element: Element) => active.delete(element);
-        disconnect = vi.fn();
-      },
-    );
     configure({ reactStrictMode: true });
 
     function PlainAnchors() {
@@ -86,12 +94,12 @@ describe("renderRoute against cloudflare-basic client components", () => {
       { request: "/", defaultPrefetch: "viewport" },
     );
 
-    expect(active.has(getByTestId("pricing-link"))).toBe(true);
-    expect(active.has(getByTestId("docs-link"))).toBe(true);
+    expect(activePrefetchElements.has(getByTestId("pricing-link"))).toBe(true);
+    expect(activePrefetchElements.has(getByTestId("docs-link"))).toBe(true);
 
     cleanup();
     configure({ reactStrictMode: false });
-    expect(active.size).toBe(0);
+    expect(activePrefetchElements.size).toBe(0);
 
     function FirstTree() {
       return <a href="/first" data-testid="first-link" />;
@@ -109,21 +117,15 @@ describe("renderRoute against cloudflare-basic client components", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(active.has(first.getByTestId("first-link"))).toBe(true);
-    expect(active.has(second.getByTestId("second-link"))).toBe(false);
+    expect(activePrefetchElements.has(first.getByTestId("first-link"))).toBe(
+      true,
+    );
+    expect(activePrefetchElements.has(second.getByTestId("second-link"))).toBe(
+      false,
+    );
   });
 
-  it("uses the IntersectionObserver stub installed for the current test", async () => {
-    const observe = vi.fn();
-    vi.stubGlobal(
-      "IntersectionObserver",
-      class {
-        observe = observe;
-        unobserve = vi.fn();
-        disconnect = vi.fn();
-      },
-    );
-
+  it("uses the shared IntersectionObserver test stub", async () => {
     function CurrentTree() {
       return (
         <>
@@ -137,6 +139,20 @@ describe("renderRoute against cloudflare-basic client components", () => {
           <a href="/app/logout" data-prefetch="none" data-testid="none-link" />
           <a href="/sibling/current" data-testid="sibling-link" />
           <a href="/app%2Fadmin" data-testid="encoded-separator-link" />
+          <section data-prefetch-scope="false">
+            <Link
+              to="/current"
+              prefetch="viewport"
+              data-testid="scoped-component-link"
+            >
+              Scoped Link
+            </Link>
+            <a
+              href="/app/scoped"
+              data-prefetch="true"
+              data-testid="scoped-plain-link"
+            />
+          </section>
           <svg>
             <a href="/app/svg" data-testid="svg-link" />
           </svg>
@@ -149,33 +165,38 @@ describe("renderRoute against cloudflare-basic client components", () => {
       defaultPrefetch: "viewport",
     });
 
-    expect(observe).toHaveBeenCalledWith(result.getByTestId("current-link"));
-    expect(observe).not.toHaveBeenCalledWith(result.getByTestId("asset-link"));
-    expect(observe).toHaveBeenCalledWith(
+    expect(observePrefetchElement).toHaveBeenCalledWith(
+      result.getByTestId("current-link"),
+    );
+    expect(observePrefetchElement).not.toHaveBeenCalledWith(
+      result.getByTestId("asset-link"),
+    );
+    expect(observePrefetchElement).toHaveBeenCalledWith(
       result.getByTestId("resource-route-link"),
     );
-    expect(observe).not.toHaveBeenCalledWith(result.getByTestId("none-link"));
-    expect(observe).not.toHaveBeenCalledWith(
+    expect(observePrefetchElement).not.toHaveBeenCalledWith(
+      result.getByTestId("none-link"),
+    );
+    expect(observePrefetchElement).not.toHaveBeenCalledWith(
       result.getByTestId("sibling-link"),
     );
-    expect(observe).not.toHaveBeenCalledWith(
+    expect(observePrefetchElement).not.toHaveBeenCalledWith(
       result.getByTestId("encoded-separator-link"),
     );
-    expect(observe).not.toHaveBeenCalledWith(result.getByTestId("svg-link"));
+    expect(observePrefetchElement).not.toHaveBeenCalledWith(
+      result.getByTestId("scoped-component-link"),
+    );
+    expect(observePrefetchElement).not.toHaveBeenCalledWith(
+      result.getByTestId("scoped-plain-link"),
+    );
+    expect(observePrefetchElement).not.toHaveBeenCalledWith(
+      result.getByTestId("svg-link"),
+    );
   });
 
   it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(
     "normalizes encoded basename spelling %s through the URL parser",
     async (basename) => {
-      const observe = vi.fn();
-      vi.stubGlobal(
-        "IntersectionObserver",
-        class {
-          observe = observe;
-          unobserve = vi.fn();
-          disconnect = vi.fn();
-        },
-      );
       function EncodedTree() {
         return <a href="/caf%C3%A9/menu" data-testid="encoded-link" />;
       }
@@ -189,7 +210,9 @@ describe("renderRoute against cloudflare-basic client components", () => {
         },
       );
 
-      expect(observe).toHaveBeenCalledWith(result.getByTestId("encoded-link"));
+      expect(observePrefetchElement).toHaveBeenCalledWith(
+        result.getByTestId("encoded-link"),
+      );
     },
   );
 

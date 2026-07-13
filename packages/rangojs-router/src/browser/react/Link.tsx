@@ -14,7 +14,11 @@ import React, {
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
-import { isHashOnlyNavigation } from "../link-interceptor.js";
+import {
+  isHashOnlyNavigation,
+  isPrefetchScopeDisabled,
+  subscribeToPrefetchScopeChange,
+} from "../link-interceptor.js";
 import { subscribeToLocationChange } from "../event-controller.js";
 import {
   isLocationStateEntry,
@@ -93,7 +97,9 @@ export interface LinkProps extends Omit<
    * Prefetch strategy for the link destination. When omitted, falls back to
    * the router-wide default (`createRouter({ defaultPrefetch })`: `"none"` in
    * development, `"viewport"` in production). An explicit value always wins
-   * over the router default, including `"none"` to opt a single Link out.
+   * over the router default, including `"none"` to opt a single Link out. An
+   * ancestor with `data-prefetch-scope="false"` or `"none"` remains a hard
+   * subtree opt-out.
    *
    * @default the router's environment-aware `defaultPrefetch`
    */
@@ -347,7 +353,8 @@ export const Link: ForwardRefExoticComponent<
       (resolvedStrategy === "hover" || resolvedStrategy === "viewport") &&
       !isExternal &&
       ctx?.store &&
-      (!element || !isHashOnlyNavigation(element))
+      (!element ||
+        (!isHashOnlyNavigation(element) && !isPrefetchScopeDisabled(element)))
     ) {
       // For "hover", this is the primary prefetch trigger.
       // For "viewport", this upgrades/prioritizes a potentially queued
@@ -374,7 +381,12 @@ export const Link: ForwardRefExoticComponent<
 
     const armPrefetch = (): (() => void) => {
       const element = internalRef.current;
-      if (element && isHashOnlyNavigation(element)) return () => {};
+      if (
+        element &&
+        (isHashOnlyNavigation(element) || isPrefetchScopeDisabled(element))
+      ) {
+        return () => {};
+      }
 
       let cancelled = false;
       let unsubIdle: (() => void) | undefined;
@@ -382,6 +394,8 @@ export const Link: ForwardRefExoticComponent<
 
       const triggerPrefetch = () => {
         if (cancelled) return;
+        const currentElement = internalRef.current;
+        if (currentElement && isPrefetchScopeDisabled(currentElement)) return;
         const segmentState = ctx.store.getSegmentState();
         prefetchQueued(
           resolvedTo,
@@ -417,6 +431,13 @@ export const Link: ForwardRefExoticComponent<
     };
 
     let disarmPrefetch = armPrefetch();
+    const element = internalRef.current;
+    const unsubscribeScope = element
+      ? subscribeToPrefetchScopeChange(element, () => {
+          disarmPrefetch();
+          disarmPrefetch = armPrefetch();
+        })
+      : undefined;
     const unsubscribeLocation = subscribeToLocationChange(
       ctx.eventController,
       () => {
@@ -426,6 +447,7 @@ export const Link: ForwardRefExoticComponent<
     );
 
     return () => {
+      unsubscribeScope?.();
       unsubscribeLocation();
       disarmPrefetch();
     };

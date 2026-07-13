@@ -16,7 +16,6 @@ vi.mock("../browser/prefetch/observer.js", () => ({
 import {
   type DelegatedPrefetchCallback,
   defaultShouldIntercept,
-  defaultShouldPrefetch,
   setupDelegatedLinkPrefetch,
   setupLinkInterception,
 } from "../browser/link-interceptor.js";
@@ -29,6 +28,7 @@ function setupPrefetch(
   onPrefetch: DelegatedPrefetchCallback,
   defaultPrefetch?: "hover" | "none" | "viewport",
   basename?: string,
+  shouldPrefetch?: (link: HTMLAnchorElement) => boolean,
 ): () => void {
   const eventController = {
     getState: () => ({ location }),
@@ -43,12 +43,14 @@ function setupPrefetch(
     eventController,
     defaultPrefetch,
     basename,
+    shouldPrefetch,
   });
 }
 
 describe("delegated plain-anchor prefetch", () => {
   beforeEach(() => {
     document.body.replaceChildren();
+    window.history.replaceState({}, "", "/");
     prefetchObserver.callbacks.clear();
     vi.clearAllMocks();
     location = new URL(window.location.href);
@@ -183,6 +185,44 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
+  it("re-evaluates a parked hash-only anchor after location changes", () => {
+    window.history.replaceState({}, "", "/docs");
+    location = new URL(window.location.href);
+    const link = document.createElement("a");
+    link.href = "/docs#install";
+    document.body.appendChild(link);
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
+
+    window.history.replaceState({}, "", "/other");
+    location = new URL(window.location.href);
+    stateListeners.forEach((listener) => listener());
+
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      link,
+      expect.any(Function),
+    );
+    cleanup();
+  });
+
+  it("does not park permanent eligibility failures", () => {
+    const link = document.createElement("a");
+    link.href = "/report.pdf";
+    const pathname = vi.fn(() => "/report.pdf");
+    Object.defineProperty(link, "pathname", { get: pathname });
+    document.body.appendChild(link);
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+    expect(pathname).toHaveBeenCalledOnce();
+
+    window.history.replaceState({}, "", "/other");
+    location = new URL(window.location.href);
+    stateListeners.forEach((listener) => listener());
+
+    expect(pathname).toHaveBeenCalledOnce();
+    cleanup();
+  });
+
   it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(
     "matches a canonical encoded pathname against basename %s",
     (basename) => {
@@ -236,7 +276,6 @@ describe("delegated plain-anchor prefetch", () => {
 
     expect(foreignLink).not.toBeInstanceOf(HTMLAnchorElement);
     expect(defaultShouldIntercept(foreignLink)).toBe(true);
-    expect(defaultShouldPrefetch(foreignLink)).toBe(true);
   });
 
   it("registers and hovers an adopted cross-realm anchor", async () => {
@@ -279,11 +318,89 @@ describe("delegated plain-anchor prefetch", () => {
       throw new Error("opted-out pathname read");
     });
     Object.defineProperty(optedOut, "pathname", { get: optedOutPathname });
+    document.body.append(external, optedOut);
 
-    expect(defaultShouldPrefetch(external)).toBe(false);
-    expect(defaultShouldPrefetch(optedOut)).toBe(false);
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
     expect(externalPathname).not.toHaveBeenCalled();
     expect(optedOutPathname).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("treats a container prefetch scope as a hard opt-out", () => {
+    const section = document.createElement("section");
+    section.dataset.prefetchScope = "none";
+    const link = document.createElement("a");
+    link.href = "/reports/2026.csv";
+    link.dataset.prefetch = "true";
+    const pathname = vi.fn(() => "/reports/2026.csv");
+    Object.defineProperty(link, "pathname", { get: pathname });
+    section.appendChild(link);
+    document.body.appendChild(section);
+
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
+    expect(pathname).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("does not let a custom predicate override a container scope", () => {
+    const section = document.createElement("section");
+    section.dataset.prefetchScope = "none";
+    const link = document.createElement("a");
+    link.href = "/scoped";
+    section.appendChild(link);
+    document.body.appendChild(section);
+    const shouldPrefetch = vi.fn(() => true);
+
+    const cleanup = setupPrefetch(
+      vi.fn(),
+      "viewport",
+      undefined,
+      shouldPrefetch,
+    );
+
+    expect(shouldPrefetch).not.toHaveBeenCalled();
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("does not park a permanent custom-predicate rejection", () => {
+    const link = document.createElement("a");
+    link.href = "/custom-reject";
+    document.body.appendChild(link);
+    const shouldPrefetch = vi.fn(() => false);
+    const cleanup = setupPrefetch(
+      vi.fn(),
+      "viewport",
+      undefined,
+      shouldPrefetch,
+    );
+    expect(shouldPrefetch).toHaveBeenCalledOnce();
+
+    window.history.replaceState({}, "", "/other");
+    location = new URL(window.location.href);
+    stateListeners.forEach((listener) => listener());
+
+    expect(shouldPrefetch).toHaveBeenCalledOnce();
+    cleanup();
+  });
+
+  it("accepts false as a container scope opt-out", () => {
+    const section = document.createElement("section");
+    section.dataset.prefetchScope = "false";
+    const link = document.createElement("a");
+    link.href = "/scoped";
+    link.dataset.prefetch = "true";
+    section.appendChild(link);
+    document.body.appendChild(section);
+
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
+    cleanup();
   });
 
   it("reads one pathname for encoded scope and resource checks", () => {
@@ -291,9 +408,16 @@ describe("delegated plain-anchor prefetch", () => {
     link.href = "/caf%C3%A9/report.data";
     const pathname = vi.fn(() => "/caf%C3%A9/report.data");
     Object.defineProperty(link, "pathname", { get: pathname });
+    document.body.appendChild(link);
 
-    expect(defaultShouldPrefetch(link, "/café")).toBe(true);
+    const cleanup = setupPrefetch(vi.fn(), "viewport", "/café");
+
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      link,
+      expect.any(Function),
+    );
     expect(pathname).toHaveBeenCalledOnce();
+    cleanup();
   });
 
   it("re-evaluates a static-looking anchor when it explicitly opts in", async () => {
@@ -311,6 +435,34 @@ describe("delegated plain-anchor prefetch", () => {
         expect.any(Function),
       ),
     );
+    cleanup();
+  });
+
+  it("re-evaluates only anchors in a changed container scope", async () => {
+    const section = document.createElement("section");
+    const scopedLink = document.createElement("a");
+    scopedLink.href = "/scoped";
+    section.appendChild(scopedLink);
+    const outsideLink = document.createElement("a");
+    outsideLink.href = "/outside";
+    document.body.append(section, outsideLink);
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+
+    expect(prefetchObserver.callbacks.has(scopedLink)).toBe(true);
+    expect(prefetchObserver.callbacks.has(outsideLink)).toBe(true);
+
+    section.dataset.prefetchScope = "none";
+    await vi.waitFor(() => {
+      expect(prefetchObserver.callbacks.has(scopedLink)).toBe(false);
+    });
+    expect(prefetchObserver.callbacks.has(outsideLink)).toBe(true);
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
+
+    section.removeAttribute("data-prefetch-scope");
+    await vi.waitFor(() => {
+      expect(prefetchObserver.callbacks.has(scopedLink)).toBe(true);
+    });
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(3);
     cleanup();
   });
 

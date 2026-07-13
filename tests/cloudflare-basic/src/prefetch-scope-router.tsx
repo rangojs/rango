@@ -56,6 +56,15 @@ const urlpatterns = urls(({ path }) => [
             Unsafe GET opt-out
           </a>
         </p>
+        <section data-prefetch-scope="none">
+          <a
+            href="/__prefetch-scope/target?container-scope=none"
+            data-prefetch="true"
+            data-testid="prefetch-container-scope-none"
+          >
+            Container-scoped target
+          </a>
+        </section>
         <p>
           <a
             href="/about"

@@ -581,7 +581,7 @@ const { getByTestId } = await renderRoute(
 To test the router-wide prefetch fallback, pass the same strategy through
 `defaultPrefetch`. `renderRoute` scopes it to that rendered tree and uses the
 production delegated-anchor registration, including basename/resource checks
-and the plain-anchor opt-out:
+and individual or container-level opt-outs:
 
 ```tsx
 const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
@@ -593,6 +593,8 @@ const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
 // /files/report.pdf and /sibling/docs are not observed.
 // <a href="/logout" data-prefetch="none"> is never observed (false also works).
 // <a href="/app/report.csv" data-prefetch="true"> is observed as a route.
+// Descendant Links and anchors under data-prefetch-scope="none" are never observed
+// (data-prefetch-scope="false" is equivalent).
 expect(getByTestId("docs")).not.toHaveAttribute("data-prefetch");
 ```
 

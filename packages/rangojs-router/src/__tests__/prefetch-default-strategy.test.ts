@@ -40,15 +40,16 @@ describe("default prefetch strategy (client seat)", () => {
     }
   });
 
-  it("reads the current matchMedia result for each adaptive tree", async () => {
+  it("resets the cached query before a test replaces matchMedia", async () => {
     const firstMatchMedia = vi.fn(() => ({ matches: false }) as MediaQueryList);
     vi.stubGlobal("window", { matchMedia: firstMatchMedia });
-    const { resolveAdaptiveStrategy } =
+    const { resetAdaptiveStrategyForTesting, resolveAdaptiveStrategy } =
       await import("../browser/prefetch/default-strategy.js");
 
     expect(resolveAdaptiveStrategy("adaptive")).toBe("hover");
     const secondMatchMedia = vi.fn(() => ({ matches: true }) as MediaQueryList);
     window.matchMedia = secondMatchMedia;
+    resetAdaptiveStrategyForTesting();
     expect(resolveAdaptiveStrategy("adaptive")).toBe("viewport");
     expect(firstMatchMedia).toHaveBeenCalledOnce();
     expect(secondMatchMedia).toHaveBeenCalledOnce();

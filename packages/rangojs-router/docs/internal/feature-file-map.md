@@ -10,7 +10,8 @@ Conditional view-transition gates are owned by
 [`types/segments.ts`](../../src/types/segments.ts), and
 [`testing/run-transition-when.ts`](../../src/testing/run-transition-when.ts).
 
-Delegated prefetch eligibility and DOM observation are owned by
+Delegated prefetch eligibility, parked location-dependent anchors,
+container-scope lookup, and shared subtree-only DOM re-evaluation are owned by
 [`browser/link-interceptor.ts`](../../src/browser/link-interceptor.ts), strategy
 resolution by
 [`browser/prefetch/default-strategy.ts`](../../src/browser/prefetch/default-strategy.ts),

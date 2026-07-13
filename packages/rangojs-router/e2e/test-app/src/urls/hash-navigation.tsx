@@ -92,6 +92,25 @@ export const hashNavigationPatterns = urls(({ path }) => [
         >
           Malformed-percent application route
         </a>
+        <section
+          data-prefetch-scope="false"
+          data-testid="prefetch-scope-opt-out"
+        >
+          <Link
+            to="/blog/post-9"
+            prefetch="viewport"
+            data-testid="link-prefetch-scope-opt-out"
+          >
+            Container-scoped Link
+          </Link>
+          <a
+            href="/blog/post-10"
+            data-prefetch="true"
+            data-testid="anchor-prefetch-scope-opt-out"
+          >
+            Container-scoped plain anchor
+          </a>
+        </section>
         <svg aria-label="SVG link fixture">
           <a href="/blog/svg-link" data-testid="svg-prefetch-link">
             <circle cx="5" cy="5" r="5" />

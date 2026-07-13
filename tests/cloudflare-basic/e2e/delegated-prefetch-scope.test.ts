@@ -65,6 +65,11 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
           new URL(url).pathname.toLowerCase() === "/__prefetch-scope%2fadmin",
       ),
     ).toBe(false);
+    expect(
+      prefetches.some(
+        (url) => new URL(url).searchParams.get("container-scope") === "none",
+      ),
+    ).toBe(false);
 
     const realmIdentity = await page.evaluate(() => {
       const iframe = document.createElement("iframe");
@@ -137,6 +142,39 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     const body = await response.text();
     expect(body).toMatch(/"defaultPrefetch"\s*:\s*"viewport"/);
     expect(body).toMatch(/"basename"\s*:\s*"\/__prefetch-scope"/);
+  });
+
+  test("a hash-only anchor becomes eligible after navigation", async ({
+    page,
+  }) => {
+    const prefetches: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        isPrefetchRequest(request) &&
+        url.pathname === "/__prefetch-scope" &&
+        url.searchParams.get("parked") === "1"
+      ) {
+        prefetches.push(request.url());
+      }
+    });
+
+    await page.goto(f.url("/__prefetch-scope?parked=1"));
+    await waitForHydration(page);
+    await page.evaluate(() => {
+      const link = document.createElement("a");
+      link.href = "/__prefetch-scope?parked=1#hash-target";
+      link.textContent = "Persistent hash link";
+      link.style.cssText =
+        "position:fixed;top:0;left:0;pointer-events:none;z-index:-1";
+      document.body.appendChild(link);
+    });
+    await page.waitForTimeout(500);
+    expect(prefetches).toHaveLength(0);
+
+    await page.getByTestId("prefetch-target").click();
+    await expect(page).toHaveURL(/\/__prefetch-scope\/target$/);
+    await expect.poll(() => prefetches.length).toBeGreaterThan(0);
   });
 }
 

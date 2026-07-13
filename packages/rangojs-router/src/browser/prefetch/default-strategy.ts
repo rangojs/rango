@@ -7,6 +7,8 @@
  * `initPrefetchCache` / `setPrefetchConcurrency`. Every `<Link>` without an
  * explicit `prefetch` prop and every eligible intercepted plain anchor that has
  * not opted out with `data-prefetch="false"` or `data-prefetch="none"` uses it.
+ * Containers use the same `false`/`none` vocabulary via
+ * `data-prefetch-scope`.
  *
  * The module initial value must equal the server resolver's environment default:
  * `"none"` in development and `"viewport"` in production. During SSR this
@@ -17,7 +19,6 @@
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
 let hoverNoneQuery: MediaQueryList | null = null;
-let matchMediaSource: typeof window.matchMedia | null = null;
 
 // Mirrors DEFAULT_PREFETCH_STRATEGY without pulling router-layer code into the
 // client bundle. NODE_ENV is folded by the app build.
@@ -26,13 +27,15 @@ let defaultStrategy: PrefetchStrategy =
 
 function getHoverNoneQuery(): MediaQueryList | null {
   if (typeof window === "undefined") return null;
-  // The browser query stays live and is reused across Links. Test DOMs replace
-  // matchMedia between cases, so key the cache by the current implementation.
-  if (!hoverNoneQuery || matchMediaSource !== window.matchMedia) {
-    matchMediaSource = window.matchMedia;
+  if (!hoverNoneQuery) {
     hoverNoneQuery = window.matchMedia("(hover: none)");
   }
   return hoverNoneQuery;
+}
+
+/** Reset module state between tests that replace browser media globals. */
+export function resetAdaptiveStrategyForTesting(): void {
+  hoverNoneQuery = null;
 }
 
 /**

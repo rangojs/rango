@@ -18,21 +18,15 @@ type PrefetchCallback = () => void;
 
 const callbacks = new Map<Element, Map<symbol, PrefetchCallback>>();
 let observer: IntersectionObserver | null = null;
-let observerConstructor: typeof IntersectionObserver | null = null;
 
 function getObserver(): IntersectionObserver {
-  const Constructor = IntersectionObserver;
-  if (!observer || observerConstructor !== Constructor) {
-    observer?.disconnect();
-    observerConstructor = Constructor;
-    observer = new Constructor(
+  if (!observer) {
+    observer = new IntersectionObserver(
       (entries, currentObserver) => {
-        if (currentObserver !== observer) return;
         function* intersectingCallbacks(): Generator<
           [Map<symbol, PrefetchCallback>, symbol, PrefetchCallback]
         > {
           for (const entry of entries) {
-            if (currentObserver !== observer) return;
             if (entry.isIntersecting) {
               const subscriptions = callbacks.get(entry.target);
               if (subscriptions) {
@@ -56,6 +50,13 @@ function getObserver(): IntersectionObserver {
     for (const element of callbacks.keys()) observer.observe(element);
   }
   return observer;
+}
+
+/** Reset module state between tests that replace browser observer globals. */
+export function resetPrefetchObserverForTesting(): void {
+  observer?.disconnect();
+  observer = null;
+  callbacks.clear();
 }
 
 /**

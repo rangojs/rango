@@ -19,13 +19,18 @@ const ELIGIBILITY_ATTRIBUTES = {
   linkComponent: "data-link-component",
   external: "data-external",
   prefetch: "data-prefetch",
+  prefetchScope: "data-prefetch-scope",
 } as const;
 
 const ELIGIBILITY_ATTRIBUTE_FILTER = Object.values(ELIGIBILITY_ATTRIBUTES);
 const ANCHOR_SELECTOR = "a";
 const ELIGIBLE_ANCHOR_SELECTOR = `a[${ELIGIBILITY_ATTRIBUTES.href}]`;
+const LINK_COMPONENT_SELECTOR = `a[${ELIGIBILITY_ATTRIBUTES.linkComponent}]`;
 const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
 const PREFETCH_OPT_OUT_VALUES = new Set(["false", "none"]);
+const PREFETCH_SCOPE_OPT_OUT_SELECTOR =
+  `[${ELIGIBILITY_ATTRIBUTES.prefetchScope}="false"],` +
+  `[${ELIGIBILITY_ATTRIBUTES.prefetchScope}="none"]`;
 const STATIC_RESOURCE_EXTENSION =
   /\.(?:7z|avif|bmp|bz2|cjs|css|csv|docx?|eot|gif|gz|ico|jpe?g|js|json|m4a|map|mjs|mov|mp3|mp4|ogg|ogv|otf|pdf|png|pptx?|rar|svg|tar|tgz|tiff?|ttf|txt|wasm|wav|webm|webp|woff2?|xlsx?|xml|zip)$/i;
 
@@ -44,6 +49,81 @@ function isNode(value: unknown): value is Node {
     value !== null &&
     typeof (value as Node).nodeType === "number"
   );
+}
+
+type PrefetchScopeChangeListener = () => void;
+
+interface PrefetchScopeObserverState {
+  observer: MutationObserver;
+  subscriptions: Map<Element, Set<PrefetchScopeChangeListener>>;
+}
+
+const prefetchScopeObservers = new WeakMap<
+  Document,
+  PrefetchScopeObserverState
+>();
+
+function createPrefetchScopeObserverState(
+  ownerDocument: Document,
+): PrefetchScopeObserverState | undefined {
+  if (
+    typeof MutationObserver === "undefined" ||
+    !ownerDocument.documentElement
+  ) {
+    return undefined;
+  }
+
+  const subscriptions = new Map<Element, Set<PrefetchScopeChangeListener>>();
+  const observer = new MutationObserver((mutations) => {
+    const affected = new Set<PrefetchScopeChangeListener>();
+    const collect = (element: Element) => {
+      subscriptions.get(element)?.forEach((listener) => affected.add(listener));
+    };
+
+    for (const mutation of mutations) {
+      if (!isElementNode(mutation.target)) continue;
+      collect(mutation.target);
+      mutation.target
+        .querySelectorAll(LINK_COMPONENT_SELECTOR)
+        .forEach(collect);
+    }
+    affected.forEach((listener) => listener());
+  });
+  observer.observe(ownerDocument.documentElement, {
+    subtree: true,
+    attributes: true,
+    attributeFilter: [ELIGIBILITY_ATTRIBUTES.prefetchScope],
+  });
+  return { observer, subscriptions };
+}
+
+export function subscribeToPrefetchScopeChange(
+  element: HTMLAnchorElement,
+  listener: PrefetchScopeChangeListener,
+): () => void {
+  const ownerDocument = element.ownerDocument;
+  let state = prefetchScopeObservers.get(ownerDocument);
+  if (!state) {
+    state = createPrefetchScopeObserverState(ownerDocument);
+    if (!state) return () => {};
+    prefetchScopeObservers.set(ownerDocument, state);
+  }
+
+  let listeners = state.subscriptions.get(element);
+  if (!listeners) {
+    listeners = new Set();
+    state.subscriptions.set(element, listeners);
+  }
+  listeners.add(listener);
+
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) state.subscriptions.delete(element);
+    if (state.subscriptions.size === 0) {
+      state.observer.disconnect();
+      prefetchScopeObservers.delete(ownerDocument);
+    }
+  };
 }
 
 /**
@@ -140,27 +220,39 @@ function canonicalizeBasenamePathname(basename?: string): string | undefined {
   return normalizePathname(new URL(basename, window.location.origin).pathname);
 }
 
-function defaultShouldPrefetchInBasename(
+export function isPrefetchScopeDisabled(element: Element): boolean {
+  return (
+    typeof element.closest === "function" &&
+    element.closest(PREFETCH_SCOPE_OPT_OUT_SELECTOR) !== null
+  );
+}
+
+type PrefetchEligibility = "eligible" | "location-dependent" | "ineligible";
+
+function defaultPrefetchEligibilityInBasename(
   link: HTMLAnchorElement,
   basename?: string,
-): boolean {
-  if (!isEligiblePlainAnchor(link)) return false;
+): PrefetchEligibility {
+  if (!isEligiblePlainAnchor(link)) return "ineligible";
+  if (isPrefetchScopeDisabled(link)) return "ineligible";
 
   const prefetch = link.getAttribute(ELIGIBILITY_ATTRIBUTES.prefetch);
-  if (prefetch && PREFETCH_OPT_OUT_VALUES.has(prefetch)) return false;
+  if (prefetch && PREFETCH_OPT_OUT_VALUES.has(prefetch)) return "ineligible";
 
   const rawPathname = link.pathname;
-  if (isHashOnlyNavigationToPath(link, rawPathname)) return false;
+  if (isHashOnlyNavigationToPath(link, rawPathname)) {
+    return "location-dependent";
+  }
   const pathname = normalizePathname(rawPathname);
   if (
     basename !== undefined &&
     pathname !== basename &&
     !pathname.startsWith(`${basename}/`)
   ) {
-    return false;
+    return "ineligible";
   }
 
-  if (prefetch === "true") return true;
+  if (prefetch === "true") return "eligible";
 
   // Scope is decided on canonical encoded path segments. Decode only for
   // resource classification so malformed escapes cannot expand router scope.
@@ -168,23 +260,12 @@ function defaultShouldPrefetchInBasename(
   try {
     resourcePathname = decodeURIComponent(pathname);
   } catch {
-    return false;
+    return "ineligible";
   }
   if (STATIC_RESOURCE_EXTENSION.test(resourcePathname)) {
-    return false;
+    return "ineligible";
   }
-  return true;
-}
-
-/** Plain anchors follow the router default unless explicitly opted out. */
-export function defaultShouldPrefetch(
-  link: HTMLAnchorElement,
-  basename?: string,
-): boolean {
-  return defaultShouldPrefetchInBasename(
-    link,
-    canonicalizeBasenamePathname(basename),
-  );
+  return "eligible";
 }
 
 /**
@@ -290,17 +371,22 @@ export function setupDelegatedLinkPrefetch(
   if (defaultStrategy === "none") return () => {};
 
   const basename = canonicalizeBasenamePathname(options.basename);
-  const shouldPrefetch =
-    options.shouldPrefetch ??
-    ((link: HTMLAnchorElement) =>
-      defaultShouldPrefetchInBasename(link, basename));
+  const customShouldPrefetch = options.shouldPrefetch;
+  const getEligibility = customShouldPrefetch
+    ? (link: HTMLAnchorElement): PrefetchEligibility => {
+        if (isPrefetchScopeDisabled(link)) return "ineligible";
+        return customShouldPrefetch(link) ? "eligible" : "ineligible";
+      }
+    : (link: HTMLAnchorElement) =>
+        defaultPrefetchEligibilityInBasename(link, basename);
   const states = new Map<HTMLAnchorElement, DelegatedPrefetchState>();
+  const parked = new Set<HTMLAnchorElement>();
   let strategy = resolveAdaptiveStrategy(defaultStrategy);
 
   const currentLocationHref = () =>
     options.eventController.getState().location.href;
 
-  const unregister = (link: HTMLAnchorElement) => {
+  const disarm = (link: HTMLAnchorElement) => {
     const state = states.get(link);
     state?.stopObserving?.();
     state?.cancelPending?.();
@@ -308,12 +394,30 @@ export function setupDelegatedLinkPrefetch(
     if (strategy === "hover") syncMutationObserver();
   };
 
-  const isEligible = (link: HTMLAnchorElement) =>
-    link.hasAttribute(ELIGIBILITY_ATTRIBUTES.href) && shouldPrefetch(link);
+  const evaluateEligibility = (link: HTMLAnchorElement): PrefetchEligibility =>
+    link.hasAttribute(ELIGIBILITY_ATTRIBUTES.href)
+      ? getEligibility(link)
+      : "ineligible";
+
+  const updateParked = (
+    link: HTMLAnchorElement,
+    eligibility: PrefetchEligibility,
+  ) => {
+    if (eligibility === "location-dependent" && strategy !== "hover") {
+      parked.add(link);
+    } else parked.delete(link);
+  };
+
+  const forget = (link: HTMLAnchorElement) => {
+    disarm(link);
+    parked.delete(link);
+  };
 
   const trigger = (link: HTMLAnchorElement, priority: "direct" | "queued") => {
-    if (!isEligible(link)) {
-      unregister(link);
+    const eligibility = evaluateEligibility(link);
+    updateParked(link, eligibility);
+    if (eligibility !== "eligible") {
+      disarm(link);
       return;
     }
 
@@ -333,8 +437,10 @@ export function setupDelegatedLinkPrefetch(
   };
 
   const register = (link: HTMLAnchorElement) => {
-    unregister(link);
-    if (!isEligible(link)) return;
+    disarm(link);
+    const eligibility = evaluateEligibility(link);
+    updateParked(link, eligibility);
+    if (eligibility !== "eligible") return;
     if (strategy === "hover") return;
 
     const state: DelegatedPrefetchState = {
@@ -384,7 +490,9 @@ export function setupDelegatedLinkPrefetch(
       const markAffected = (link: HTMLAnchorElement) => affected.add(link);
       for (const mutation of mutations) {
         if (mutation.type === "attributes") {
-          if (
+          if (mutation.attributeName === ELIGIBILITY_ATTRIBUTES.prefetchScope) {
+            visitAnchors(mutation.target, markAffected);
+          } else if (
             isElementNode(mutation.target) &&
             mutation.target.matches(ANCHOR_SELECTOR)
           ) {
@@ -399,7 +507,7 @@ export function setupDelegatedLinkPrefetch(
       }
       for (const link of affected) {
         if (link.isConnected && root.contains(link)) register(link);
-        else unregister(link);
+        else forget(link);
       }
     });
     mutationObserver.observe(root, {
@@ -411,7 +519,8 @@ export function setupDelegatedLinkPrefetch(
   }
 
   const rescan = () => {
-    for (const link of [...states.keys()]) unregister(link);
+    for (const link of [...states.keys()]) disarm(link);
+    parked.clear();
     strategy = resolveAdaptiveStrategy(defaultStrategy);
     syncMutationObserver();
     if ((strategy === "viewport" || strategy === "render") && root) {
@@ -444,10 +553,14 @@ export function setupDelegatedLinkPrefetch(
     defaultStrategy === "adaptive"
       ? subscribeToLocationChange(options.eventController, (nextHref) => {
           if (strategy !== "viewport" && strategy !== "render") return;
-          for (const [link, state] of [...states]) {
+          const affected = new Set(parked);
+          for (const [link, state] of states) {
             if (state.locationHref === nextHref) continue;
+            affected.add(link);
+          }
+          for (const link of affected) {
             if (link.isConnected && root.contains(link)) register(link);
-            else unregister(link);
+            else forget(link);
           }
         })
       : undefined;
@@ -461,6 +574,7 @@ export function setupDelegatedLinkPrefetch(
     root.removeEventListener("mouseover", handleMouseOver);
     unsubscribeLocation?.();
     unsubscribeAdaptive?.();
-    for (const link of [...states.keys()]) unregister(link);
+    for (const link of [...states.keys()]) disarm(link);
+    parked.clear();
   };
 }
