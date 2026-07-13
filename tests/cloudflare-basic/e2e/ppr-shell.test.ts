@@ -163,17 +163,20 @@ function describePprShell(mode: "dev" | "build") {
     const f = useFixture({ root: ".", mode });
 
     const expectPrerenderAction = async (page: Page): Promise<void> => {
-      await expect(testId(page, "ppr-prerender-action-result")).toHaveText(
-        "none",
-      );
-      await testId(page, "ppr-prerender-action-submit").click();
+      const submit = testId(page, "ppr-prerender-action-submit");
+      await expect(testId(page, "ppr-prerender-action-result")).toHaveCount(0);
+      await submit.click();
+      await expect(submit).toHaveText("Submitting...");
+      await expect(testId(page, "ppr-prerender-action-fallback")).toBeVisible();
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
       await expect(testId(page, "ppr-prerender-action-result")).toHaveText(
         "cf-prerender-ppr-action:from-client",
       );
+      await expect(submit).toHaveText("Submit prerender action");
       await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
     };
 
-    test("Passthrough Prerender+ppr document HIT invokes a client-imported action", async ({
+    test("Passthrough Prerender+ppr document HIT streams a client-imported action", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -189,7 +192,7 @@ function describePprShell(mode: "dev" | "build") {
       await expectPrerenderAction(page);
     });
 
-    test("Prerender-store partial navigation invokes a client-imported action", async ({
+    test("Prerender-store partial navigation streams a client-imported action", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);

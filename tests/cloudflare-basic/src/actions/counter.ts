@@ -17,10 +17,19 @@ export async function getCounter(): Promise<number> {
   return counter;
 }
 
+export interface PrerenderPprActionResult {
+  streamed: Promise<string>;
+}
+
 export async function submitPrerenderPprAction(
-  _previous: string | null,
+  _previous: PrerenderPprActionResult | null,
   formData: FormData,
-): Promise<string> {
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  return `cf-prerender-ppr-action:${String(formData.get("value"))}`;
+): Promise<PrerenderPprActionResult> {
+  const value = String(formData.get("value"));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  return {
+    streamed: new Promise((resolve) =>
+      setTimeout(() => resolve(`cf-prerender-ppr-action:${value}`), 1_200),
+    ),
+  };
 }

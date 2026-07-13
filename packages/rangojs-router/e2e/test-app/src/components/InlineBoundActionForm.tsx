@@ -117,7 +117,20 @@ export function PrerenderPprActionForm() {
       >
         {isPending ? "Submitting..." : "Submit prerender action"}
       </button>
-      <p data-testid="prerender-ppr-action-result">{state ?? "none"}</p>
+      {state && (
+        <Suspense
+          fallback={
+            <p data-testid="prerender-ppr-action-fallback">
+              Streaming prerender action result...
+            </p>
+          }
+        >
+          <PendingText
+            promise={state.streamed}
+            testId="prerender-ppr-action-result"
+          />
+        </Suspense>
+      )}
     </form>
   );
 }

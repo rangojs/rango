@@ -583,10 +583,10 @@ A client component can directly import and invoke a module-level action from a
 the frozen build-time tree mounted, attach
 `revalidate(({ actionId }) => (actionId ? false : undefined))`: action
 revalidation is suppressed while ordinary navigations retain their default
-params-changed behavior. The action result then updates `useActionState`
-without replacing the client boundary with the Passthrough live handler. The
-dev + production fixtures pin both a producer-B document HIT and a
-prerender-store partial navigation.
+params-changed behavior. The action result, including a nested pending value,
+then streams into `useActionState` without replacing the client boundary with
+the Passthrough live handler. The dev + production fixtures pin both a
+producer-B document HIT and a prerender-store partial navigation.
 
 This does not extend to an inline closure-bound action embedded in the stored
 Flight payload. That path remains blocked by #584 / plugin-rsc #1246; runtime
