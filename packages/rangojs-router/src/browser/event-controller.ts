@@ -467,19 +467,31 @@ export function createEventController(
   function notifyActionListenerSets(
     subscriptions: Iterable<[string, Set<ActionStateListener>]>,
   ): void {
-    const notifications: Array<{
+    const subscriptionSnapshots = [...subscriptions].map(
+      ([subscriptionId, listeners]) => ({
+        listenerSnapshot: [...listeners],
+        listeners,
+        subscriptionId,
+      }),
+    );
+    function* notifications(): Generator<{
       listener: ActionStateListener;
       listeners: Set<ActionStateListener>;
       state: TrackedActionState;
-    }> = [];
-    for (const [subscriptionId, listeners] of subscriptions) {
-      const state = getActionState(subscriptionId);
-      for (const listener of listeners) {
-        notifications.push({ listener, listeners, state });
+    }> {
+      for (const {
+        listenerSnapshot,
+        listeners,
+        subscriptionId,
+      } of subscriptionSnapshots) {
+        const state = getActionState(subscriptionId);
+        for (const listener of listenerSnapshot) {
+          yield { listener, listeners, state };
+        }
       }
     }
     notifyListeners(
-      notifications,
+      notifications(),
       ({ listener, state }) => listener(state),
       ({ listener, listeners }) => listeners.has(listener),
     );

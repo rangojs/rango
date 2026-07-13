@@ -148,6 +148,41 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
+  it("allows explicit opt-in when only resource decoding is malformed", () => {
+    const link = document.createElement("a");
+    link.href = "/app/promo/50%off";
+    link.dataset.prefetch = "true";
+    document.body.appendChild(link);
+
+    const cleanup = setupPrefetch(vi.fn(), "viewport", "/app");
+
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      link,
+      expect.any(Function),
+    );
+    cleanup();
+  });
+
+  it("skips same-page hash anchors before observer registration", () => {
+    const hashOnly = document.createElement("a");
+    hashOnly.href = `${window.location.pathname}${window.location.search}#section`;
+    const otherPage = document.createElement("a");
+    otherPage.href = "/other#section";
+    document.body.append(hashOnly, otherPage);
+
+    const cleanup = setupPrefetch(vi.fn(), "viewport");
+
+    expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalledWith(
+      hashOnly,
+      expect.any(Function),
+    );
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+      otherPage,
+      expect.any(Function),
+    );
+    cleanup();
+  });
+
   it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(
     "matches a canonical encoded pathname against basename %s",
     (basename) => {
@@ -358,10 +393,10 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
-  it("re-observes persistent same-page anchors after SPA navigation", () => {
+  it("re-observes persistent anchors after SPA navigation", () => {
     setDefaultPrefetchStrategy("viewport");
     const link = document.createElement("a");
-    link.href = `${location.pathname}#faq`;
+    link.href = "/persistent-target";
     document.body.appendChild(link);
     const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
 
@@ -378,7 +413,7 @@ describe("delegated plain-anchor prefetch", () => {
   it("re-runs render prefetch for persistent anchors after SPA navigation", () => {
     setDefaultPrefetchStrategy("render");
     const link = document.createElement("a");
-    link.href = `${location.pathname}#faq`;
+    link.href = "/persistent-target";
     document.body.appendChild(link);
     const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
     const cleanup = setupPrefetch(onPrefetch);

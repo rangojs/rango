@@ -51,12 +51,19 @@ function isNode(value: unknown): value is Node {
  * Used by both Link component and link-interceptor to let the browser
  * handle anchor scrolling natively.
  */
-export function isHashOnlyNavigation(anchor: HTMLAnchorElement): boolean {
+function isHashOnlyNavigationToPath(
+  anchor: HTMLAnchorElement,
+  pathname: string,
+): boolean {
   return (
-    anchor.pathname === window.location.pathname &&
+    pathname === window.location.pathname &&
     anchor.search === window.location.search &&
     !!anchor.hash
   );
+}
+
+export function isHashOnlyNavigation(anchor: HTMLAnchorElement): boolean {
+  return isHashOnlyNavigationToPath(anchor, anchor.pathname);
 }
 
 /**
@@ -128,7 +135,7 @@ function normalizePathname(pathname: string): string {
     .replace(/\/+$/, "");
 }
 
-function normalizeBasename(basename?: string): string | undefined {
+function canonicalizeBasenamePathname(basename?: string): string | undefined {
   if (!basename) return undefined;
   return normalizePathname(new URL(basename, window.location.origin).pathname);
 }
@@ -142,7 +149,9 @@ function defaultShouldPrefetchInBasename(
   const prefetch = link.getAttribute(ELIGIBILITY_ATTRIBUTES.prefetch);
   if (prefetch && PREFETCH_OPT_OUT_VALUES.has(prefetch)) return false;
 
-  const pathname = normalizePathname(link.pathname);
+  const rawPathname = link.pathname;
+  if (isHashOnlyNavigationToPath(link, rawPathname)) return false;
+  const pathname = normalizePathname(rawPathname);
   if (
     basename !== undefined &&
     pathname !== basename &&
@@ -151,15 +160,17 @@ function defaultShouldPrefetchInBasename(
     return false;
   }
 
-  // Scope is decided on canonical encoded path segments. Decode only after
-  // that boundary check so encoded separators can never expand router scope.
+  if (prefetch === "true") return true;
+
+  // Scope is decided on canonical encoded path segments. Decode only for
+  // resource classification so malformed escapes cannot expand router scope.
   let resourcePathname: string;
   try {
     resourcePathname = decodeURIComponent(pathname);
   } catch {
     return false;
   }
-  if (prefetch !== "true" && STATIC_RESOURCE_EXTENSION.test(resourcePathname)) {
+  if (STATIC_RESOURCE_EXTENSION.test(resourcePathname)) {
     return false;
   }
   return true;
@@ -170,7 +181,10 @@ export function defaultShouldPrefetch(
   link: HTMLAnchorElement,
   basename?: string,
 ): boolean {
-  return defaultShouldPrefetchInBasename(link, normalizeBasename(basename));
+  return defaultShouldPrefetchInBasename(
+    link,
+    canonicalizeBasenamePathname(basename),
+  );
 }
 
 /**
@@ -275,7 +289,7 @@ export function setupDelegatedLinkPrefetch(
     options.defaultPrefetch ?? getDefaultPrefetchStrategy();
   if (defaultStrategy === "none") return () => {};
 
-  const basename = normalizeBasename(options.basename);
+  const basename = canonicalizeBasenamePathname(options.basename);
   const shouldPrefetch =
     options.shouldPrefetch ??
     ((link: HTMLAnchorElement) =>

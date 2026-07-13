@@ -59,6 +59,11 @@ function runDefaultPrefetchSpec(
       testId: "anchor-prefetch-resource-route",
       pathname: "/blog/intro-to-node.js",
     },
+    {
+      label: "malformed-percent plain-anchor opt-in",
+      testId: "anchor-prefetch-malformed-route",
+      pathname: "/blog/50%off",
+    },
   ]) {
     test(`an offscreen ${label} follows the environment default`, async ({
       page,

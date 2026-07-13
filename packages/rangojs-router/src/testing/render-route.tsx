@@ -595,7 +595,7 @@ export async function renderRoute(
         />
         <DelegatedPrefetchRegistration bridge={bridge} />
       </>,
-      { container },
+      { baseElement: document.body, container },
     );
   });
 

@@ -342,10 +342,12 @@ export const Link: ForwardRefExoticComponent<
   );
 
   const handleMouseEnter = useCallback(() => {
+    const element = internalRef.current;
     if (
       (resolvedStrategy === "hover" || resolvedStrategy === "viewport") &&
       !isExternal &&
-      ctx?.store
+      ctx?.store &&
+      (!element || !isHashOnlyNavigation(element))
     ) {
       // For "hover", this is the primary prefetch trigger.
       // For "viewport", this upgrades/prioritizes a potentially queued
@@ -371,6 +373,9 @@ export const Link: ForwardRefExoticComponent<
     if (!isViewport && !isRender) return;
 
     const armPrefetch = (): (() => void) => {
+      const element = internalRef.current;
+      if (element && isHashOnlyNavigation(element)) return () => {};
+
       let cancelled = false;
       let unsubIdle: (() => void) | undefined;
       let stopObserving: (() => void) | undefined;
@@ -393,9 +398,9 @@ export const Link: ForwardRefExoticComponent<
           triggerPrefetch,
         );
       } else {
-        const element = internalRef.current;
-        if (element) {
-          stopObserving = observeForPrefetch(element, () => {
+        const viewportElement = internalRef.current;
+        if (viewportElement) {
+          stopObserving = observeForPrefetch(viewportElement, () => {
             unsubIdle = schedulePrefetchWhenRouterIdle(
               ctx.eventController,
               triggerPrefetch,

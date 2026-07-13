@@ -5,7 +5,13 @@ import {
   type Page,
 } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError, testId, waitForHydration } from "./helper";
+import {
+  expectNoPageError,
+  expectNoReload,
+  isPrefetchRequest,
+  testId,
+  waitForHydration,
+} from "./helper";
 import {
   assertPprReplayStatus,
   assertShellStatus,
@@ -347,23 +353,69 @@ const matrixRows: SemanticMatrixRow[] = [
     execution: "full-render",
     scope: "n/a",
     url: "/",
-    assert: async ({ page }) => {
+    assert: async ({ build, page }) => {
       // Home page (from.pathname="/") does not match the prerender-intercept
       // when condition: from.pathname.startsWith("/prerender-intercept")
+      const prefetchResponsePromise =
+        build === "prod"
+          ? page.waitForResponse((response) => {
+              const url = new URL(response.url());
+              return (
+                url.pathname === "/prerender-intercept/alpha" &&
+                url.searchParams.has("_rsc_partial") &&
+                isPrefetchRequest(response.request())
+              );
+            })
+          : null;
+      const clickResponsePromise =
+        build === "dev"
+          ? page.waitForResponse((response) => {
+              const url = new URL(response.url());
+              return (
+                url.pathname === "/prerender-intercept/alpha" &&
+                url.searchParams.has("_rsc_partial") &&
+                !isPrefetchRequest(response.request())
+              );
+            })
+          : null;
+      const clickPartials: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (
+          url.pathname === "/prerender-intercept/alpha" &&
+          url.searchParams.has("_rsc_partial") &&
+          !isPrefetchRequest(request)
+        ) {
+          clickPartials.push(request.url());
+        }
+      });
       await page.evaluate(() => {
         const a = document.createElement("a");
         a.href = "/prerender-intercept/alpha";
-        a.dataset.prefetch = "false";
         a.textContent = "go";
         a.setAttribute("data-testid", "temp-nav-link");
         document.body.appendChild(a);
       });
-      await testId(page, "temp-nav-link").click();
+      const link = testId(page, "temp-nav-link");
+      await using _ = await expectNoReload(page);
+      if (prefetchResponsePromise) {
+        await link.scrollIntoViewIfNeeded();
+        const prefetchResponse = await prefetchResponsePromise;
+        expect(prefetchResponse.ok()).toBe(true);
+        expect(await prefetchResponse.finished()).toBeNull();
+      }
+      await link.click();
+      if (clickResponsePromise) {
+        const clickResponse = await clickResponsePromise;
+        expect(clickResponse.ok()).toBe(true);
+        expect(await clickResponse.finished()).toBeNull();
+      }
       await page.waitForURL("**/prerender-intercept/alpha");
       await waitForHydration(page);
       // when() returned false: full page renders, no modal
       await expect(testId(page, "pri-detail")).toBeVisible();
       await expect(testId(page, "pri-modal")).not.toBeVisible();
+      if (build === "prod") expect(clickPartials).toHaveLength(0);
     },
   },
   {
@@ -762,16 +814,43 @@ const matrixRows: SemanticMatrixRow[] = [
           responseUrl.searchParams.has("_rsc_partial")
         );
       });
+      const clickPartials: string[] = [];
+      page.on("request", (request) => {
+        const responseUrl = new URL(request.url());
+        if (
+          responseUrl.pathname === "/shell-cache/slot-hole" &&
+          responseUrl.searchParams.get("probe") === probe &&
+          responseUrl.searchParams.has("_rsc_partial") &&
+          !isPrefetchRequest(request)
+        ) {
+          clickPartials.push(request.url());
+        }
+      });
       await page.evaluate((href) => {
         const link = document.createElement("a");
         link.href = href;
-        link.dataset.prefetch = "false";
         link.dataset.testid = "matrix-cold-partial-link";
         link.textContent = "Cold partial";
         document.body.append(link);
       }, baseUrl(targetPath));
-      await testId(page, "matrix-cold-partial-link").click();
-      const firstResponse = await firstResponsePromise;
+      const link = testId(page, "matrix-cold-partial-link");
+      await using _ = await expectNoReload(page);
+      let firstResponse;
+      if (build === "prod") {
+        await link.scrollIntoViewIfNeeded();
+        firstResponse = await firstResponsePromise;
+        expect(isPrefetchRequest(firstResponse.request())).toBe(true);
+        expect(firstResponse.ok()).toBe(true);
+        expect(await firstResponse.finished()).toBeNull();
+        await link.click();
+      } else {
+        await link.click();
+        firstResponse = await firstResponsePromise;
+        expect(isPrefetchRequest(firstResponse.request())).toBe(false);
+      }
+      await page.waitForURL((url) => url.href === baseUrl(targetPath));
+      await expect(testId(page, "shell-slot-home")).toBeVisible();
+      if (build === "prod") expect(clickPartials).toHaveLength(0);
       assertPprReplayStatus(
         { headers: new Headers(firstResponse.headers()) },
         { outcome: "BYPASS", reason: "no-entry" },

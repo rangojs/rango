@@ -15,6 +15,14 @@ const urlpatterns = urls(({ path }) => [
         </p>
         <p>
           <a
+            href="/__prefetch-scope#hash-target"
+            data-testid="prefetch-hash-only"
+          >
+            Same-page hash
+          </a>
+        </p>
+        <p>
+          <a
             href="/__prefetch-scope/files/report.pdf"
             data-testid="prefetch-resource"
           >
@@ -28,6 +36,15 @@ const urlpatterns = urls(({ path }) => [
             data-testid="prefetch-resource-route"
           >
             Static-looking application route
+          </a>
+        </p>
+        <p>
+          <a
+            href="/__prefetch-scope/promo/50%off"
+            data-prefetch="true"
+            data-testid="prefetch-malformed-route"
+          >
+            Malformed-percent application route
           </a>
         </p>
         <p>
@@ -62,6 +79,7 @@ const urlpatterns = urls(({ path }) => [
             <circle cx="5" cy="5" r="5" />
           </a>
         </svg>
+        <div id="hash-target">Hash target</div>
       </main>
     ),
     { name: "prefetchScopeHome" },

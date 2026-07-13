@@ -1349,6 +1349,23 @@ describe("createEventController", () => {
       );
     });
 
+    it("reads each subscription state when its fan-out begins", () => {
+      const ctrl = createController();
+      const observed: unknown[] = [];
+      ctrl.subscribeToAction("hash#save", () => {
+        vi.setSystemTime(new Date(Date.now() + 1));
+        ctrl.startAction("new#save", ["new"]);
+      });
+      ctrl.subscribeToAction("save", (state) => {
+        observed.push(state.payload);
+      });
+
+      ctrl.startAction("hash#save", ["old"]);
+      vi.advanceTimersByTime(0);
+
+      expect(observed[0]).toEqual(["new"]);
+    });
+
     it("subscribeToAction does not notify for non-matching action", () => {
       const ctrl = createController();
       const listener = vi.fn();

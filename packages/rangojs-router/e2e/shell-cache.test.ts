@@ -4,6 +4,7 @@ import {
   waitForHydration,
   expectNoPageError,
   expectNoReload,
+  isPrefetchRequest,
   testId,
   waitForNavigation,
   goBack,
@@ -108,7 +109,7 @@ function splitPrelude(html: string): { prelude: string; resumed: string } {
   };
 }
 
-function runShellCacheSpec(f: Fixture): void {
+function runShellCacheSpec(f: Fixture, production: boolean): void {
   // --- Working today: engagement, bypass matrix, live-path render/hydration. ---
 
   test("engages for an HTML document GET and tags x-rango-shell: MISS", async ({
@@ -1298,19 +1299,42 @@ function runShellCacheSpec(f: Fixture): void {
 
     // Enter /2 through a real partial request without warming it. This pins the
     // bounded bypass signal and gives the /2 -> /1 fresh replay control.
+    const bypassResponsePromise = waitForPartialResponse(
+      "/shell-cache/stale-replay/2",
+    );
+    const clickPartials: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname === "/shell-cache/stale-replay/2" &&
+        url.searchParams.get("probe") === probe &&
+        url.searchParams.has("_rsc_partial") &&
+        !isPrefetchRequest(request)
+      ) {
+        clickPartials.push(request.url());
+      }
+    });
     await page.evaluate((href) => {
       const link = document.createElement("a");
       link.href = href;
-      link.dataset.prefetch = "false";
       link.dataset.testid = "shell-stale-replay-entry";
       link.textContent = "Enter stale replay fixture";
       document.body.append(link);
     }, two);
-    const bypassResponsePromise = waitForPartialResponse(
-      "/shell-cache/stale-replay/2",
-    );
-    await testId(page, "shell-stale-replay-entry").click();
-    const bypassResponse = await bypassResponsePromise;
+    const entryLink = testId(page, "shell-stale-replay-entry");
+    let bypassResponse;
+    if (production) {
+      await entryLink.scrollIntoViewIfNeeded();
+      bypassResponse = await bypassResponsePromise;
+      expect(isPrefetchRequest(bypassResponse.request())).toBe(true);
+      expect(bypassResponse.ok()).toBe(true);
+      expect(await bypassResponse.finished()).toBeNull();
+      await entryLink.click();
+    } else {
+      await entryLink.click();
+      bypassResponse = await bypassResponsePromise;
+      expect(isPrefetchRequest(bypassResponse.request())).toBe(false);
+    }
     assertPprReplayStatus(
       { headers: new Headers(bypassResponse.headers()) },
       { outcome: "BYPASS", reason: "no-entry" },
@@ -1318,6 +1342,7 @@ function runShellCacheSpec(f: Fixture): void {
     await expect(testId(page, "shell-stale-replay-data")).toContainText(
       /^shell-stale-2-execution-\d+$/,
     );
+    if (production) expect(clickPartials).toHaveLength(0);
 
     const freshResponsePromise = waitForPartialResponse(
       "/shell-cache/stale-replay/1",
@@ -1560,7 +1585,7 @@ test.describe("shell-cache (dev)", () => {
     mode: "dev",
     isolatedServer: true,
   });
-  runShellCacheSpec(f);
+  runShellCacheSpec(f, false);
 });
 
 test.describe("shell-cache (production)", () => {
@@ -1569,5 +1594,5 @@ test.describe("shell-cache (production)", () => {
     mode: "build",
     isolatedServer: true,
   });
-  runShellCacheSpec(f);
+  runShellCacheSpec(f, true);
 });

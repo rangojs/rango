@@ -539,7 +539,8 @@ it("exposes navigation state and re-resolves on navigate()", async () => {
 `RenderRouteSpec = { path, Component, layout?, loaderIds?, name? }`; the array is
 the layout chain root-to-leaf, last entry is the leaf. Seed `useLoader` reads via
 `options.loaderData` keyed by `$$id`; route them to a layout with that spec's
-`loaderIds`.
+`loaderIds`. Returned RTL queries are bound to `document.body`, so they also find
+modals, toasts, and other content rendered there with `createPortal`.
 
 Testing a component that reads `useLoader`: seed the loader BY REFERENCE via the
 `loaders` option, not `loaderData`. A real `createLoader(fn)` handle has

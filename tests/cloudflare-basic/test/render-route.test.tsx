@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, configure } from "@testing-library/react";
+import { createPortal } from "react-dom";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { Link } from "@rangojs/router/client";
 import { CRClientNav } from "../src/components/CRClientNav.js";
@@ -191,4 +192,21 @@ describe("renderRoute against cloudflare-basic client components", () => {
       expect(observe).toHaveBeenCalledWith(result.getByTestId("encoded-link"));
     },
   );
+
+  it("binds returned queries to document.body for portaled content", async () => {
+    function PortalTree() {
+      return (
+        <>
+          <main>Page content</main>
+          {createPortal(<div role="dialog">Saved</div>, document.body)}
+        </>
+      );
+    }
+
+    const result = await renderRoute([{ path: "/", Component: PortalTree }], {
+      request: "/",
+    });
+
+    expect(result.getByRole("dialog").textContent).toBe("Saved");
+  });
 });

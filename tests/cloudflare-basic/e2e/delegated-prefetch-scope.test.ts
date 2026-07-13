@@ -14,11 +14,19 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
 
     await page.goto(f.url("/__prefetch-scope"));
     await waitForHydration(page);
+    await page.getByTestId("prefetch-hash-only").scrollIntoViewIfNeeded();
 
     await expect
       .poll(() =>
         prefetches.some(
           (url) => new URL(url).pathname === "/__prefetch-scope/target",
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        prefetches.some(
+          (url) => new URL(url).pathname === "/__prefetch-scope/promo/50%off",
         ),
       )
       .toBe(true);
@@ -38,6 +46,9 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     expect(prefetches.some((url) => new URL(url).pathname === "/about")).toBe(
       false,
     );
+    expect(
+      prefetches.some((url) => new URL(url).pathname === "/__prefetch-scope"),
+    ).toBe(false);
     expect(
       prefetches.some(
         (url) => new URL(url).pathname === "/__prefetch-scope/logout",

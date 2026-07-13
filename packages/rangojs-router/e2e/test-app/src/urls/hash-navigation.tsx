@@ -14,7 +14,11 @@ export const hashNavigationPatterns = urls(({ path }) => [
         <nav data-testid="hash-nav-links">
           <ul>
             <li>
-              <Link to="#section-a" data-testid="link-hash-a">
+              <Link
+                to="#section-a"
+                prefetch="viewport"
+                data-testid="link-hash-a"
+              >
                 Jump to Section A (Link)
               </Link>
             </li>
@@ -80,6 +84,13 @@ export const hashNavigationPatterns = urls(({ path }) => [
           data-testid="anchor-prefetch-resource-route"
         >
           Static-looking application route
+        </a>
+        <a
+          href="/blog/50%off"
+          data-prefetch="true"
+          data-testid="anchor-prefetch-malformed-route"
+        >
+          Malformed-percent application route
         </a>
         <svg aria-label="SVG link fixture">
           <a href="/blog/svg-link" data-testid="svg-prefetch-link">

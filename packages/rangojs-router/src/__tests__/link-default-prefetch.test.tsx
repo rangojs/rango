@@ -27,7 +27,7 @@ vi.mock("../browser/prefetch/observer.js", () => ({
   observeForPrefetch: prefetchObserver.observe,
 }));
 
-import { prefetchQueued } from "../browser/prefetch/loader.js";
+import { prefetchDirect, prefetchQueued } from "../browser/prefetch/loader.js";
 import { Link } from "../browser/react/Link.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
@@ -104,6 +104,22 @@ describe("Link default prefetch fallback", () => {
     renderLink({ to: "/target" });
     expect(prefetchQueued).toHaveBeenCalledTimes(1);
     expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/target");
+  });
+
+  it("does not arm or hover-prefetch a same-page hash Link", () => {
+    ctxValue.defaultPrefetch = "viewport";
+    renderLink({
+      to: `${window.location.pathname}${window.location.search}#section`,
+    });
+
+    expect(prefetchObserver.observe).not.toHaveBeenCalled();
+    expect(prefetchQueued).not.toHaveBeenCalled();
+    act(() => {
+      container
+        .querySelector("a")!
+        .dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(prefetchDirect).not.toHaveBeenCalled();
   });
 
   it("uses an instance default without mutating the module default", () => {
