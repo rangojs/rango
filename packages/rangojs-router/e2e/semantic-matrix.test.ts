@@ -353,6 +353,7 @@ const matrixRows: SemanticMatrixRow[] = [
       await page.evaluate(() => {
         const a = document.createElement("a");
         a.href = "/prerender-intercept/alpha";
+        a.dataset.prefetch = "false";
         a.textContent = "go";
         a.setAttribute("data-testid", "temp-nav-link");
         document.body.appendChild(a);
@@ -764,6 +765,7 @@ const matrixRows: SemanticMatrixRow[] = [
       await page.evaluate((href) => {
         const link = document.createElement("a");
         link.href = href;
+        link.dataset.prefetch = "false";
         link.dataset.testid = "matrix-cold-partial-link";
         link.textContent = "Cold partial";
         document.body.append(link);

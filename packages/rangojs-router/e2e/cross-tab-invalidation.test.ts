@@ -1,4 +1,10 @@
-import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type Page,
+  type Request,
+} from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
@@ -60,16 +66,6 @@ async function testCrossTabInvalidation(
   const pageBInitialState = await readRangoState(pageB);
   expect(pageBInitialState).toBe(initialState);
 
-  // Intercept the next partial navigation request from pageB to capture X-Rango-State
-  const headerPromise = new Promise<string | null>((resolve) => {
-    pageB.on("request", (req) => {
-      const header = req.headerValue("x-rango-state");
-      if (req.url().includes("_rsc_partial") && header) {
-        resolve(header);
-      }
-    });
-  });
-
   // Page A simulates invalidation: rotates the shared rango state cookie. The
   // cookie jar is shared across tabs, so pageB reads the new value on its next
   // fetch (the per-request cookie read IS the cross-tab value sync).
@@ -88,8 +84,27 @@ async function testCrossTabInvalidation(
   const pageBUpdatedState = await readRangoState(pageB);
   expect(pageBUpdatedState).toBe(newState);
 
-  // Now trigger a client-side navigation in pageB by clicking a link
-  await pageB.click('a[href*="/blog"]');
+  // Use a dedicated non-prefetched link so this assertion observes the request
+  // created after the cookie rotation, not a production-default warm response.
+  await pageB.evaluate(() => {
+    const link = document.createElement("a");
+    link.href = "/blog?cross-tab-invalidation=1";
+    link.dataset.prefetch = "false";
+    link.dataset.testid = "cross-tab-navigation";
+    link.textContent = "Navigate";
+    document.body.appendChild(link);
+  });
+  const headerPromise = new Promise<string>((resolve) => {
+    const onRequest = (request: Request) => {
+      if (!request.url().includes("_rsc_partial")) return;
+      const header = request.headers()["x-rango-state"];
+      if (!header) return;
+      pageB.off("request", onRequest);
+      resolve(header);
+    };
+    pageB.on("request", onRequest);
+  });
+  await pageB.click('[data-testid="cross-tab-navigation"]');
 
   // Wait for the navigation request and check the header
   const sentHeader = await headerPromise;

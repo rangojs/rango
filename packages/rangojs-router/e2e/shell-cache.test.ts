@@ -1125,6 +1125,7 @@ function runShellCacheSpec(f: Fixture): void {
       await page.evaluate((href) => {
         const link = document.createElement("a");
         link.href = href;
+        link.dataset.prefetch = "false";
         link.dataset.testid = "shell-scoped-entry";
         link.textContent = "Enter scoped fixture";
         document.body.append(link);
@@ -1172,6 +1173,7 @@ function runShellCacheSpec(f: Fixture): void {
         ([href, id]) => {
           const link = document.createElement("a");
           link.href = href!;
+          link.dataset.prefetch = "false";
           link.dataset.testid = id!;
           link.textContent = "Enter scoped fixture";
           document.body.append(link);
@@ -1299,6 +1301,7 @@ function runShellCacheSpec(f: Fixture): void {
     await page.evaluate((href) => {
       const link = document.createElement("a");
       link.href = href;
+      link.dataset.prefetch = "false";
       link.dataset.testid = "shell-stale-replay-entry";
       link.textContent = "Enter stale replay fixture";
       document.body.append(link);

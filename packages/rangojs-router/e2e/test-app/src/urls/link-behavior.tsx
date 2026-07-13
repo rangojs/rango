@@ -25,7 +25,11 @@ export const linkBehaviorPatterns = urls(({ path }) => [
               </a>
             </li>
             <li>
-              <a href="/blog" data-testid="anchor-intercepted">
+              <a
+                href="/blog"
+                data-prefetch="false"
+                data-testid="anchor-intercepted"
+              >
                 Blog (should SPA navigate)
               </a>
             </li>
