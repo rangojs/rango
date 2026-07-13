@@ -138,6 +138,7 @@ describe("prefetch observer", () => {
     const firstElement = {} as Element;
     const secondElement = {} as Element;
     const replacementElement = {} as Element;
+    const coOwnerCallback = vi.fn();
     const secondCallback = vi.fn();
     observeForPrefetch(firstElement, () => {
       class SecondIntersectionObserver {
@@ -148,6 +149,7 @@ describe("prefetch observer", () => {
       vi.stubGlobal("IntersectionObserver", SecondIntersectionObserver);
       observeForPrefetch(replacementElement, vi.fn());
     });
+    observeForPrefetch(firstElement, coOwnerCallback);
     observeForPrefetch(secondElement, secondCallback);
 
     trigger([
@@ -162,10 +164,11 @@ describe("prefetch observer", () => {
     ]);
 
     expect(disconnect).toHaveBeenCalledOnce();
+    expect(coOwnerCallback).toHaveBeenCalledOnce();
     expect(secondCallback).not.toHaveBeenCalled();
   });
 
-  it("does not re-observe detached elements after constructor replacement", async () => {
+  it("preserves momentarily detached subscriptions after constructor replacement", async () => {
     class FirstIntersectionObserver {
       observe = vi.fn();
       unobserve = vi.fn();
@@ -174,20 +177,30 @@ describe("prefetch observer", () => {
     vi.stubGlobal("IntersectionObserver", FirstIntersectionObserver);
     const { observeForPrefetch } = await import("../browser/prefetch/observer");
     const detached = { isConnected: false } as Element;
-    observeForPrefetch(detached, vi.fn());
+    const detachedCallback = vi.fn();
+    observeForPrefetch(detached, detachedCallback);
 
     const secondObserve = vi.fn();
+    let secondTrigger!: (entries: IntersectionObserverEntry[]) => void;
     class SecondIntersectionObserver {
       observe = secondObserve;
       unobserve = vi.fn();
       disconnect = vi.fn();
+
+      constructor(callback: IntersectionObserverCallback) {
+        secondTrigger = (entries) => callback(entries, this as any);
+      }
     }
     vi.stubGlobal("IntersectionObserver", SecondIntersectionObserver);
     const connected = {} as Element;
     observeForPrefetch(connected, vi.fn());
 
-    expect(secondObserve).not.toHaveBeenCalledWith(detached);
+    expect(secondObserve).toHaveBeenCalledWith(detached);
     expect(secondObserve).toHaveBeenCalledWith(connected);
+    secondTrigger([
+      { isIntersecting: true, target: detached } as IntersectionObserverEntry,
+    ]);
+    expect(detachedCallback).toHaveBeenCalledOnce();
   });
 
   it("keeps another subscription active when one owner cleans up", async () => {
@@ -222,6 +235,33 @@ describe("prefetch observer", () => {
     expect(unobserve).toHaveBeenCalledWith(element);
   });
 
+  it("does not notify an owner removed by an earlier callback", async () => {
+    let trigger!: (entries: IntersectionObserverEntry[]) => void;
+
+    class MockIntersectionObserver {
+      observe = vi.fn();
+      unobserve = vi.fn();
+
+      constructor(callback: IntersectionObserverCallback) {
+        trigger = (entries) => callback(entries, this as any);
+      }
+    }
+
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+    const { observeForPrefetch } = await import("../browser/prefetch/observer");
+    const element = {} as Element;
+    let cleanupSecond!: () => void;
+    const second = vi.fn();
+    observeForPrefetch(element, () => cleanupSecond());
+    cleanupSecond = observeForPrefetch(element, second);
+
+    trigger([
+      { isIntersecting: true, target: element } as IntersectionObserverEntry,
+    ]);
+
+    expect(second).not.toHaveBeenCalled();
+  });
+
   it("notifies every owner when an earlier callback throws", async () => {
     let trigger!: (entries: IntersectionObserverEntry[]) => void;
 
@@ -238,16 +278,64 @@ describe("prefetch observer", () => {
     const { observeForPrefetch } = await import("../browser/prefetch/observer");
     const element = {} as Element;
     const second = vi.fn();
+    const error = new Error("first failed");
     observeForPrefetch(element, () => {
-      throw new Error("first failed");
+      throw error;
     });
     observeForPrefetch(element, second);
 
-    expect(() =>
+    let thrown: unknown;
+    try {
       trigger([
         { isIntersecting: true, target: element } as IntersectionObserverEntry,
-      ]),
-    ).toThrow("first failed");
+      ]);
+    } catch (current) {
+      thrown = current;
+    }
+    expect(thrown).toBe(error);
     expect(second).toHaveBeenCalledOnce();
+  });
+
+  it("aggregates every owner error after notifying the full fan-out", async () => {
+    let trigger!: (entries: IntersectionObserverEntry[]) => void;
+
+    class MockIntersectionObserver {
+      observe = vi.fn();
+      unobserve = vi.fn();
+
+      constructor(callback: IntersectionObserverCallback) {
+        trigger = (entries) => callback(entries, this as any);
+      }
+    }
+
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+    const { observeForPrefetch } = await import("../browser/prefetch/observer");
+    const element = {} as Element;
+    const firstError = new Error("first failed");
+    const secondError = new Error("second failed");
+    const third = vi.fn();
+    observeForPrefetch(element, () => {
+      throw firstError;
+    });
+    observeForPrefetch(element, () => {
+      throw secondError;
+    });
+    observeForPrefetch(element, third);
+
+    let thrown: unknown;
+    try {
+      trigger([
+        { isIntersecting: true, target: element } as IntersectionObserverEntry,
+      ]);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).errors).toEqual([
+      firstError,
+      secondError,
+    ]);
+    expect(third).toHaveBeenCalledOnce();
   });
 });

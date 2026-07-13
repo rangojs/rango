@@ -163,6 +163,40 @@ function runDefaultPrefetchSpec(
 
     expect(requests).toHaveLength(0);
   });
+
+  test("an adopted cross-realm anchor keeps delegated SPA interception", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/hash-navigation"));
+    await waitForHydration(page);
+    const isCurrentRealm = await page.evaluate(() => {
+      const iframe = document.createElement("iframe");
+      document.body.appendChild(iframe);
+      const foreignLink = iframe.contentDocument!.createElement("a");
+      const adoptedLink = document.adoptNode(foreignLink);
+      iframe.remove();
+      adoptedLink.href = "/blog?cross-realm-click=1";
+      adoptedLink.dataset.prefetch = "false";
+      adoptedLink.dataset.testid = "cross-realm-click";
+      adoptedLink.textContent = "Cross-realm blog link";
+      document.body.appendChild(adoptedLink);
+      return adoptedLink instanceof HTMLAnchorElement;
+    });
+    expect(isCurrentRealm).toBe(false);
+
+    const navigationRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname === "/blog" &&
+        url.searchParams.get("cross-realm-click") === "1" &&
+        url.searchParams.has("_rsc_partial") &&
+        !isPrefetchRequest(request)
+      );
+    });
+    await page.getByTestId("cross-realm-click").click();
+    await navigationRequest;
+    await expect(page).toHaveURL(/\/blog\?cross-realm-click=1$/);
+  });
 }
 
 test.describe("default-prefetch", () => {

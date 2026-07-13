@@ -15,6 +15,7 @@ vi.mock("../browser/prefetch/observer.js", () => ({
 
 import {
   type DelegatedPrefetchCallback,
+  defaultShouldIntercept,
   defaultShouldPrefetch,
   setupDelegatedLinkPrefetch,
   setupLinkInterception,
@@ -122,6 +123,7 @@ describe("delegated plain-anchor prefetch", () => {
       <a href="/app/files/report%2Epdf" data-testid="encoded-asset">encoded asset</a>
       <a href="/app/report%ZZ" data-testid="malformed-path">malformed path</a>
       <a href="/sibling/page" data-testid="sibling">sibling app</a>
+      <a href="/app%2Fadmin" data-testid="encoded-separator">encoded separator</a>
       <a href="/app/blog/intro.js" data-prefetch="true" data-testid="forced-route">forced route</a>
       <a href="/app/report.data" data-testid="route">suffix route</a>
     `;
@@ -146,19 +148,22 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
-  it("matches a decoded pathname against a unicode basename", () => {
-    const link = document.createElement("a");
-    link.href = "/caf%C3%A9/menu";
-    document.body.appendChild(link);
+  it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(
+    "matches a canonical encoded pathname against basename %s",
+    (basename) => {
+      const link = document.createElement("a");
+      link.href = "/caf%C3%A9/menu";
+      document.body.appendChild(link);
 
-    const cleanup = setupPrefetch(vi.fn(), "viewport", "/café");
+      const cleanup = setupPrefetch(vi.fn(), "viewport", basename);
 
-    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
-      link,
-      expect.any(Function),
-    );
-    cleanup();
-  });
+      expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+        link,
+        expect.any(Function),
+      );
+      cleanup();
+    },
+  );
 
   it("ignores inline SVG anchors without reading HTMLAnchorElement fields", () => {
     document.body.innerHTML = `
@@ -179,6 +184,49 @@ describe("delegated plain-anchor prefetch", () => {
       expect.any(Function),
     );
     cleanup();
+  });
+
+  it("accepts HTML anchors from another realm without instanceof identity", () => {
+    const url = new URL("/dashboard", window.location.href);
+    const foreignLink = {
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      href: url.href,
+      origin: url.origin,
+      pathname: url.pathname,
+      search: url.search,
+      hash: url.hash,
+      hasAttribute: () => false,
+      getAttribute: () => null,
+    } as unknown as HTMLAnchorElement;
+
+    expect(foreignLink).not.toBeInstanceOf(HTMLAnchorElement);
+    expect(defaultShouldIntercept(foreignLink)).toBe(true);
+    expect(defaultShouldPrefetch(foreignLink)).toBe(true);
+  });
+
+  it("registers and hovers an adopted cross-realm anchor", async () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const foreignLink = iframe.contentDocument!.createElement("a");
+    const adoptedLink = document.adoptNode(foreignLink);
+    iframe.remove();
+    adoptedLink.href = "/dashboard";
+    const viewportCleanup = setupPrefetch(vi.fn(), "viewport");
+
+    document.body.appendChild(adoptedLink);
+    await vi.waitFor(() =>
+      expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
+        adoptedLink,
+        expect.any(Function),
+      ),
+    );
+    viewportCleanup();
+
+    const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
+    const hoverCleanup = setupPrefetch(onPrefetch, "hover");
+    adoptedLink.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    expect(onPrefetch).toHaveBeenCalledWith(adoptedLink.href, "direct");
+    hoverCleanup();
   });
 
   it("rejects ineligible and opted-out anchors before reading pathname", () => {
@@ -203,7 +251,7 @@ describe("delegated plain-anchor prefetch", () => {
     expect(optedOutPathname).not.toHaveBeenCalled();
   });
 
-  it("reads one decoded pathname for basename and resource checks", () => {
+  it("reads one pathname for encoded scope and resource checks", () => {
     const link = document.createElement("a");
     link.href = "/caf%C3%A9/report.data";
     const pathname = vi.fn(() => "/caf%C3%A9/report.data");

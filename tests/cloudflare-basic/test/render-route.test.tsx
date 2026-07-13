@@ -135,6 +135,7 @@ describe("renderRoute against cloudflare-basic client components", () => {
           />
           <a href="/app/logout" data-prefetch="none" data-testid="none-link" />
           <a href="/sibling/current" data-testid="sibling-link" />
+          <a href="/app%2Fadmin" data-testid="encoded-separator-link" />
           <svg>
             <a href="/app/svg" data-testid="svg-link" />
           </svg>
@@ -156,6 +157,38 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(observe).not.toHaveBeenCalledWith(
       result.getByTestId("sibling-link"),
     );
+    expect(observe).not.toHaveBeenCalledWith(
+      result.getByTestId("encoded-separator-link"),
+    );
     expect(observe).not.toHaveBeenCalledWith(result.getByTestId("svg-link"));
   });
+
+  it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(
+    "normalizes encoded basename spelling %s through the URL parser",
+    async (basename) => {
+      const observe = vi.fn();
+      vi.stubGlobal(
+        "IntersectionObserver",
+        class {
+          observe = observe;
+          unobserve = vi.fn();
+          disconnect = vi.fn();
+        },
+      );
+      function EncodedTree() {
+        return <a href="/caf%C3%A9/menu" data-testid="encoded-link" />;
+      }
+
+      const result = await renderRoute(
+        [{ path: "/", Component: EncodedTree }],
+        {
+          request: "/",
+          basename,
+          defaultPrefetch: "viewport",
+        },
+      );
+
+      expect(observe).toHaveBeenCalledWith(result.getByTestId("encoded-link"));
+    },
+  );
 });

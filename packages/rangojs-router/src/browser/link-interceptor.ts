@@ -24,9 +24,27 @@ const ELIGIBILITY_ATTRIBUTES = {
 const ELIGIBILITY_ATTRIBUTE_FILTER = Object.values(ELIGIBILITY_ATTRIBUTES);
 const ANCHOR_SELECTOR = "a";
 const ELIGIBLE_ANCHOR_SELECTOR = `a[${ELIGIBILITY_ATTRIBUTES.href}]`;
+const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
 const PREFETCH_OPT_OUT_VALUES = new Set(["false", "none"]);
 const STATIC_RESOURCE_EXTENSION =
   /\.(?:7z|avif|bmp|bz2|cjs|css|csv|docx?|eot|gif|gz|ico|jpe?g|js|json|m4a|map|mjs|mov|mp3|mp4|ogg|ogv|otf|pdf|png|pptx?|rar|svg|tar|tgz|tiff?|ttf|txt|wasm|wav|webm|webp|woff2?|xlsx?|xml|zip)$/i;
+
+function isElementNode(value: unknown): value is Element {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Node).nodeType === 1 &&
+    typeof (value as Element).matches === "function"
+  );
+}
+
+function isNode(value: unknown): value is Node {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Node).nodeType === "number"
+  );
+}
 
 /**
  * Check if an anchor points to the same page with only a hash change.
@@ -63,10 +81,10 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
 }
 
 function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
-  if (
-    typeof HTMLAnchorElement !== "undefined" &&
-    !(link instanceof HTMLAnchorElement)
-  ) {
+  // Namespace identity survives adoptNode/importNode across realms; instanceof
+  // does not. Structural test doubles omit namespaceURI and retain the legacy
+  // property-based behavior.
+  if (link.namespaceURI && link.namespaceURI !== HTML_NAMESPACE) {
     return false;
   }
 
@@ -104,8 +122,18 @@ function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
   return true;
 }
 
-/** Plain anchors follow the router default unless explicitly opted out. */
-export function defaultShouldPrefetch(
+function normalizePathname(pathname: string): string {
+  return pathname
+    .replace(/%[0-9a-f]{2}/gi, (escape) => escape.toUpperCase())
+    .replace(/\/+$/, "");
+}
+
+function normalizeBasename(basename?: string): string | undefined {
+  if (!basename) return undefined;
+  return normalizePathname(new URL(basename, window.location.origin).pathname);
+}
+
+function defaultShouldPrefetchInBasename(
   link: HTMLAnchorElement,
   basename?: string,
 ): boolean {
@@ -114,24 +142,35 @@ export function defaultShouldPrefetch(
   const prefetch = link.getAttribute(ELIGIBILITY_ATTRIBUTES.prefetch);
   if (prefetch && PREFETCH_OPT_OUT_VALUES.has(prefetch)) return false;
 
-  let pathname: string;
-  try {
-    pathname = decodeURIComponent(link.pathname).replace(/\/+$/, "");
-  } catch {
-    return false;
-  }
-
+  const pathname = normalizePathname(link.pathname);
   if (
-    basename &&
+    basename !== undefined &&
     pathname !== basename &&
     !pathname.startsWith(`${basename}/`)
   ) {
     return false;
   }
-  if (prefetch !== "true" && STATIC_RESOURCE_EXTENSION.test(pathname)) {
+
+  // Scope is decided on canonical encoded path segments. Decode only after
+  // that boundary check so encoded separators can never expand router scope.
+  let resourcePathname: string;
+  try {
+    resourcePathname = decodeURIComponent(pathname);
+  } catch {
+    return false;
+  }
+  if (prefetch !== "true" && STATIC_RESOURCE_EXTENSION.test(resourcePathname)) {
     return false;
   }
   return true;
+}
+
+/** Plain anchors follow the router default unless explicitly opted out. */
+export function defaultShouldPrefetch(
+  link: HTMLAnchorElement,
+  basename?: string,
+): boolean {
+  return defaultShouldPrefetchInBasename(link, normalizeBasename(basename));
 }
 
 /**
@@ -167,7 +206,8 @@ export function setupLinkInterception(
       return;
     }
 
-    const target = event.target as HTMLElement;
+    if (!isElementNode(event.target)) return;
+    const target = event.target;
     const link = target.closest("a");
 
     if (!link || !shouldIntercept(link)) {
@@ -235,10 +275,11 @@ export function setupDelegatedLinkPrefetch(
     options.defaultPrefetch ?? getDefaultPrefetchStrategy();
   if (defaultStrategy === "none") return () => {};
 
+  const basename = normalizeBasename(options.basename);
   const shouldPrefetch =
     options.shouldPrefetch ??
     ((link: HTMLAnchorElement) =>
-      defaultShouldPrefetch(link, options.basename));
+      defaultShouldPrefetchInBasename(link, basename));
   const states = new Map<HTMLAnchorElement, DelegatedPrefetchState>();
   let strategy = resolveAdaptiveStrategy(defaultStrategy);
 
@@ -301,7 +342,7 @@ export function setupDelegatedLinkPrefetch(
     node: Node,
     visit: (link: HTMLAnchorElement) => void,
   ) => {
-    if (!(node instanceof Element)) return;
+    if (!isElementNode(node)) return;
     if (node.matches(ANCHOR_SELECTOR)) {
       visit(node as HTMLAnchorElement);
     }
@@ -330,7 +371,7 @@ export function setupDelegatedLinkPrefetch(
       for (const mutation of mutations) {
         if (mutation.type === "attributes") {
           if (
-            mutation.target instanceof Element &&
+            isElementNode(mutation.target) &&
             mutation.target.matches(ANCHOR_SELECTOR)
           ) {
             affected.add(mutation.target as HTMLAnchorElement);
@@ -367,16 +408,13 @@ export function setupDelegatedLinkPrefetch(
   rescan();
 
   const handleMouseOver = (event: MouseEvent) => {
-    if (!(event.target instanceof Element)) return;
+    if (!isElementNode(event.target)) return;
 
     const link = event.target.closest<HTMLAnchorElement>(
       ELIGIBLE_ANCHOR_SELECTOR,
     );
     if (!link || !root.contains(link)) return;
-    if (
-      event.relatedTarget instanceof Node &&
-      link.contains(event.relatedTarget)
-    ) {
+    if (isNode(event.relatedTarget) && link.contains(event.relatedTarget)) {
       return;
     }
     trigger(link, "direct");

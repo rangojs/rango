@@ -12,6 +12,8 @@
  * scrolls in and out repeatedly.
  */
 
+import { notifyListeners } from "../notify-listeners.js";
+
 type PrefetchCallback = () => void;
 
 const callbacks = new Map<Element, Map<symbol, PrefetchCallback>>();
@@ -26,37 +28,32 @@ function getObserver(): IntersectionObserver {
     observer = new Constructor(
       (entries, currentObserver) => {
         if (currentObserver !== observer) return;
-        let callbackError: unknown;
-        let callbackFailed = false;
-        for (const entry of entries) {
-          if (currentObserver !== observer) break;
-          if (entry.isIntersecting) {
-            const subscriptions = callbacks.get(entry.target);
-            if (subscriptions) {
-              currentObserver.unobserve(entry.target);
-              callbacks.delete(entry.target);
-              for (const callback of [...subscriptions.values()]) {
-                try {
-                  callback();
-                } catch (error) {
-                  if (!callbackFailed) callbackError = error;
-                  callbackFailed = true;
+        function* intersectingCallbacks(): Generator<
+          [Map<symbol, PrefetchCallback>, symbol, PrefetchCallback]
+        > {
+          for (const entry of entries) {
+            if (currentObserver !== observer) return;
+            if (entry.isIntersecting) {
+              const subscriptions = callbacks.get(entry.target);
+              if (subscriptions) {
+                currentObserver.unobserve(entry.target);
+                callbacks.delete(entry.target);
+                for (const [subscription, callback] of subscriptions) {
+                  yield [subscriptions, subscription, callback];
                 }
               }
             }
           }
         }
-        if (callbackFailed) throw callbackError;
+        notifyListeners(
+          intersectingCallbacks(),
+          ([, , callback]) => callback(),
+          ([subscriptions, subscription]) => subscriptions.has(subscription),
+        );
       },
       { rootMargin: "200px" },
     );
-    for (const element of [...callbacks.keys()]) {
-      if (element.isConnected === false) {
-        callbacks.delete(element);
-        continue;
-      }
-      observer.observe(element);
-    }
+    for (const element of callbacks.keys()) observer.observe(element);
   }
   return observer;
 }
@@ -86,8 +83,8 @@ export function observeForPrefetch(
 
   return () => {
     const current = callbacks.get(element);
-    if (!current) return;
-    current.delete(subscription);
+    subscriptions.delete(subscription);
+    if (current !== subscriptions) return;
     if (current.size > 0) return;
     callbacks.delete(element);
     observer?.unobserve(element);

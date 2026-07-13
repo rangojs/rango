@@ -14,6 +14,7 @@ import {
   filterSegmentOrder,
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
+import { notifyListeners } from "./notify-listeners.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -302,27 +303,17 @@ export function subscribeToLocationChange(
     subscription.unsubscribe = eventController.subscribe(() => {
       const notificationVersion = ++currentSubscription.notificationVersion;
       const nextHref = eventController.getState().location.href;
-      let listenerError: unknown;
-      let listenerFailed = false;
-      for (const [token, registration] of [
-        ...currentSubscription.registrations,
-      ]) {
-        if (notificationVersion !== currentSubscription.notificationVersion) {
-          break;
-        }
-        if (currentSubscription.registrations.get(token) !== registration) {
-          continue;
-        }
-        if (registration.href === nextHref) continue;
-        registration.href = nextHref;
-        try {
+      notifyListeners(
+        [...currentSubscription.registrations],
+        ([, registration]) => {
+          if (registration.href === nextHref) return;
+          registration.href = nextHref;
           registration.listener(nextHref);
-        } catch (error) {
-          if (!listenerFailed) listenerError = error;
-          listenerFailed = true;
-        }
-      }
-      if (listenerFailed) throw listenerError;
+        },
+        ([token, registration]) =>
+          currentSubscription.registrations.get(token) === registration,
+        () => notificationVersion === currentSubscription.notificationVersion,
+      );
     });
   }
 
@@ -383,18 +374,11 @@ function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
     if (timeout !== null) clearTimeout(timeout);
     timeout = setTimeout(() => {
       timeout = null;
-      let listenerError: unknown;
-      let listenerFailed = false;
-      for (const listener of [...listeners]) {
-        if (!listeners.has(listener)) continue;
-        try {
-          listener();
-        } catch (error) {
-          if (!listenerFailed) listenerError = error;
-          listenerFailed = true;
-        }
-      }
-      if (listenerFailed) throw listenerError;
+      notifyListeners(
+        [...listeners],
+        (listener) => listener(),
+        (listener) => listeners.has(listener),
+      );
     }, 0);
   };
 }
@@ -480,6 +464,27 @@ export function createEventController(
 
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
+  function notifyActionListenerSets(
+    subscriptions: Iterable<[string, Set<ActionStateListener>]>,
+  ): void {
+    const notifications: Array<{
+      listener: ActionStateListener;
+      listeners: Set<ActionStateListener>;
+      state: TrackedActionState;
+    }> = [];
+    for (const [subscriptionId, listeners] of subscriptions) {
+      const state = getActionState(subscriptionId);
+      for (const listener of listeners) {
+        notifications.push({ listener, listeners, state });
+      }
+    }
+    notifyListeners(
+      notifications,
+      ({ listener, state }) => listener(state),
+      ({ listener, listeners }) => listeners.has(listener),
+    );
+  }
+
   function notifyAction(actionId: string) {
     const existing = actionNotifyTimeouts.get(actionId);
     if (existing !== undefined) {
@@ -489,12 +494,11 @@ export function createEventController(
       actionId,
       setTimeout(() => {
         actionNotifyTimeouts.delete(actionId);
-        for (const [subscriptionId, listeners] of actionListeners) {
-          if (matchesActionId(subscriptionId, actionId)) {
-            const state = getActionState(subscriptionId);
-            listeners.forEach((listener) => listener(state));
-          }
-        }
+        notifyActionListenerSets(
+          [...actionListeners].filter(([subscriptionId]) =>
+            matchesActionId(subscriptionId, actionId),
+          ),
+        );
       }, 0),
     );
   }
@@ -932,10 +936,7 @@ export function createEventController(
     // "addToCart"), not full entry actionIds. Passing them to notifyAction
     // would fail the suffix matcher — instead, notify each subscriber with
     // its own state.
-    for (const [subscriptionId, listeners] of actionListeners) {
-      const state = getActionState(subscriptionId);
-      listeners.forEach((listener) => listener(state));
-    }
+    notifyActionListenerSets(actionListeners);
   }
 
   // ========================================================================

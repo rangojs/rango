@@ -45,7 +45,7 @@ export function HomePage(ctx: HandlerContext) {
         Plain anchor prefetch fixture
       </a>
       <a
-        href="/shop/default-none.html"
+        href="/reports/default-none.csv"
         data-prefetch="true"
         data-testid="plain-prefetch-forced-route"
       >

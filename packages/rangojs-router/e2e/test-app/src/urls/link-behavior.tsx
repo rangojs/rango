@@ -33,6 +33,15 @@ export const linkBehaviorPatterns = urls(({ path }) => [
                 Blog (should SPA navigate)
               </a>
             </li>
+            <li>
+              <a
+                href="/blog?cross-tab-delegated=1"
+                data-prefetch="false"
+                data-testid="cross-tab-delegated-navigation"
+              >
+                Blog (cross-tab delegated navigation fixture)
+              </a>
+            </li>
           </ul>
         </section>
 

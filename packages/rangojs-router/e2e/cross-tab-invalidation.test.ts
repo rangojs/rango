@@ -44,12 +44,15 @@ async function testCrossTabInvalidation(
   // Open two pages in the same browser context (shared cookie jar)
   const pageA = await context.newPage();
   const pageB = await context.newPage();
+  const pageC = await context.newPage();
 
   // Both pages load the app and hydrate (binds the shared rango state cookie)
   await pageA.goto(baseUrl);
   await waitForHydration(pageA);
   await pageB.goto(new URL("/link-behavior", baseUrl).href);
   await waitForHydration(pageB);
+  await pageC.goto(new URL("/link-behavior", baseUrl).href);
+  await waitForHydration(pageC);
 
   // Read the initial rango-state from the shared cookie jar
   const cookieName = await findRangoStateCookieName(pageA);
@@ -102,15 +105,32 @@ async function testCrossTabInvalidation(
       !isPrefetchRequest(request)
     );
   });
-  await link.click();
+  await link.focus();
+  await pageB.keyboard.press("Enter");
 
   // Wait for the navigation request and check the header
   const navigationRequest = await navigationRequestPromise;
   const sentHeader = await navigationRequest.headerValue("x-rango-state");
   expect(sentHeader).toBe(newState);
 
+  // A rendered plain anchor takes the delegated-interceptor click path. Keep a
+  // unique query so this request cannot reuse pageB's navigation response.
+  const delegatedRequestPromise = pageC.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === "/blog" &&
+      url.searchParams.get("cross-tab-delegated") === "1" &&
+      url.searchParams.has("_rsc_partial") &&
+      !isPrefetchRequest(request)
+    );
+  });
+  await pageC.getByTestId("cross-tab-delegated-navigation").click();
+  const delegatedRequest = await delegatedRequestPromise;
+  expect(await delegatedRequest.headerValue("x-rango-state")).toBe(newState);
+
   await pageA.close();
   await pageB.close();
+  await pageC.close();
 }
 
 test.describe("cross-tab rango-state invalidation (dev)", () => {
@@ -119,7 +139,7 @@ test.describe("cross-tab rango-state invalidation (dev)", () => {
     mode: "dev",
   });
 
-  test("pageB sends updated X-Rango-State after pageA invalidates", async ({
+  test("Link and delegated anchors send updated X-Rango-State after pageA invalidates", async ({
     context,
   }) => {
     await testCrossTabInvalidation(context, f.url("/"));
@@ -134,7 +154,7 @@ test.describe("cross-tab rango-state invalidation (production)", () => {
     mode: "build",
   });
 
-  test("pageB sends updated X-Rango-State after pageA invalidates", async ({
+  test("Link and delegated anchors send updated X-Rango-State after pageA invalidates", async ({
     context,
   }) => {
     await testCrossTabInvalidation(context, f.url("/"));

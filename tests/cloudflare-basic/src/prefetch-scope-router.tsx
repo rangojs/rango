@@ -48,6 +48,15 @@ const urlpatterns = urls(({ path }) => [
             Outside basename
           </a>
         </p>
+        <p>
+          <a
+            href="/__prefetch-scope%2Fadmin"
+            data-prefetch="true"
+            data-testid="prefetch-encoded-separator"
+          >
+            Encoded separator outside basename
+          </a>
+        </p>
         <svg aria-label="SVG link fixture">
           <a href="/__prefetch-scope/svg-target" data-testid="prefetch-svg">
             <circle cx="5" cy="5" r="5" />

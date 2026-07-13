@@ -48,6 +48,57 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
         (url) => new URL(url).pathname === "/__prefetch-scope/svg-target",
       ),
     ).toBe(false);
+    expect(
+      prefetches.some(
+        (url) =>
+          new URL(url).pathname.toLowerCase() === "/__prefetch-scope%2fadmin",
+      ),
+    ).toBe(false);
+
+    const realmIdentity = await page.evaluate(() => {
+      const iframe = document.createElement("iframe");
+      document.body.appendChild(iframe);
+      const viewportLink = iframe.contentDocument!.createElement("a");
+      const hoverLink = iframe.contentDocument!.createElement("a");
+      const sourcePrototype = Object.getPrototypeOf(viewportLink);
+      const adoptedViewportLink = document.adoptNode(viewportLink);
+      const adoptedHoverLink = document.adoptNode(hoverLink);
+      iframe.remove();
+
+      adoptedViewportLink.href =
+        "/__prefetch-scope/target?cross-realm-viewport=1";
+      adoptedViewportLink.textContent = "Cross-realm viewport target";
+      document.body.appendChild(adoptedViewportLink);
+
+      adoptedHoverLink.href = "/__prefetch-scope/target?cross-realm-hover=1";
+      adoptedHoverLink.textContent = "Cross-realm hover target";
+      adoptedHoverLink.style.cssText = "position:absolute;top:100000px;left:0";
+      document.body.appendChild(adoptedHoverLink);
+      adoptedHoverLink.dispatchEvent(
+        new MouseEvent("mouseover", { bubbles: true }),
+      );
+
+      return {
+        current: adoptedViewportLink instanceof HTMLAnchorElement,
+        source: sourcePrototype.isPrototypeOf(adoptedViewportLink),
+      };
+    });
+    expect(realmIdentity).toEqual({ current: false, source: true });
+    await expect
+      .poll(() =>
+        prefetches.some(
+          (url) =>
+            new URL(url).searchParams.get("cross-realm-viewport") === "1",
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        prefetches.some(
+          (url) => new URL(url).searchParams.get("cross-realm-hover") === "1",
+        ),
+      )
+      .toBe(true);
 
     const navigationRequest = page.waitForRequest(
       (request) =>
