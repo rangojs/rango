@@ -349,6 +349,7 @@ export function NavigationProvider({
       eventController,
       navigate,
       refresh,
+      defaultPrefetch: initialPayload.metadata.defaultPrefetch,
     } as NavigationStoreContextValue;
     Object.defineProperty(value, "basename", {
       configurable: true,

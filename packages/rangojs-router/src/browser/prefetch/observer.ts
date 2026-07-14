@@ -12,30 +12,51 @@
  * scrolls in and out repeatedly.
  */
 
+import { notifyListeners } from "../notify-listeners.js";
+
 type PrefetchCallback = () => void;
 
-const callbacks = new Map<Element, PrefetchCallback>();
+const callbacks = new Map<Element, Map<symbol, PrefetchCallback>>();
 let observer: IntersectionObserver | null = null;
 
 function getObserver(): IntersectionObserver {
   if (!observer) {
     observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const callback = callbacks.get(entry.target);
-            if (callback) {
-              observer!.unobserve(entry.target);
-              callbacks.delete(entry.target);
-              callback();
+      (entries, currentObserver) => {
+        function* intersectingCallbacks(): Generator<
+          [Map<symbol, PrefetchCallback>, symbol, PrefetchCallback]
+        > {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              const subscriptions = callbacks.get(entry.target);
+              if (subscriptions) {
+                currentObserver.unobserve(entry.target);
+                callbacks.delete(entry.target);
+                for (const [subscription, callback] of subscriptions) {
+                  yield [subscriptions, subscription, callback];
+                }
+              }
             }
           }
         }
+        notifyListeners(
+          intersectingCallbacks(),
+          ([, , callback]) => callback(),
+          ([subscriptions, subscription]) => subscriptions.has(subscription),
+        );
       },
       { rootMargin: "200px" },
     );
+    for (const element of callbacks.keys()) observer.observe(element);
   }
   return observer;
+}
+
+/** Reset module state between tests that replace browser observer globals. */
+export function resetPrefetchObserverForTesting(): void {
+  observer?.disconnect();
+  observer = null;
+  callbacks.clear();
 }
 
 /**
@@ -47,19 +68,26 @@ function getObserver(): IntersectionObserver {
 export function observeForPrefetch(
   element: Element,
   onVisible: PrefetchCallback,
-): void {
-  if (typeof IntersectionObserver === "undefined") return;
-  callbacks.set(element, onVisible);
-  getObserver().observe(element);
-}
+): () => void {
+  if (typeof IntersectionObserver === "undefined") return () => {};
+  const currentObserver = getObserver();
 
-/**
- * Stop observing an element. Used for cleanup when a Link unmounts
- * before entering the viewport.
- */
-export function unobserveForPrefetch(element: Element): void {
-  callbacks.delete(element);
-  if (observer) {
-    observer.unobserve(element);
+  let subscriptions = callbacks.get(element);
+  if (!subscriptions) {
+    subscriptions = new Map();
+    callbacks.set(element, subscriptions);
   }
+
+  const subscription = Symbol();
+  subscriptions.set(subscription, onVisible);
+  if (subscriptions.size === 1) currentObserver.observe(element);
+
+  return () => {
+    const current = callbacks.get(element);
+    subscriptions.delete(subscription);
+    if (current !== subscriptions) return;
+    if (current.size > 0) return;
+    callbacks.delete(element);
+    observer?.unobserve(element);
+  };
 }

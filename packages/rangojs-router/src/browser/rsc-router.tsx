@@ -68,8 +68,11 @@ export interface InitBrowserAppOptions {
 
   /**
    * Enable global link interception for SPA navigation.
-   * When enabled, clicks on same-origin anchor elements are intercepted
-   * and handled via client-side navigation instead of full page loads.
+   * When enabled, clicks on eligible same-origin HTML anchor elements are intercepted
+   * and handled via client-side navigation instead of full page loads. Plain
+   * anchors inside the router basename also follow its default prefetch strategy
+   * after hydration. `data-prefetch="false"`/`"none"` opts out; `"true"` allows
+   * an application route with a common static-resource suffix.
    *
    * Links rendered with the Link component handle their own navigation
    * regardless of this setting.
@@ -124,6 +127,8 @@ export interface BrowserAppContext {
   warmupEnabled?: boolean;
   /** Whether the hydrated tree should be wrapped in React.StrictMode */
   strictMode?: boolean;
+  /** Whether plain-anchor click interception and delegated prefetch are enabled */
+  linkInterceptionEnabled?: boolean;
   /** App version for prefetch version mismatch detection */
   version?: string;
   /**
@@ -359,6 +364,8 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version: version,
+    defaultPrefetch,
+    basename: initialPayload.metadata?.basename,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)
@@ -541,6 +548,7 @@ export async function initBrowserApp(
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
     strictMode: initialPayload.metadata?.strictMode ?? true,
+    linkInterceptionEnabled: linkInterception,
     version,
     appShellRef,
   };
@@ -614,6 +622,7 @@ export function Rango(_props: RangoProps): React.ReactElement {
     warmupEnabled,
     version,
     appShellRef,
+    linkInterceptionEnabled,
   } = getBrowserAppContext();
 
   // Signal that the React tree has hydrated. useEffect only fires after
@@ -621,11 +630,15 @@ export function Rango(_props: RangoProps): React.ReactElement {
   // that does not depend on React internals like __reactFiber.
   React.useEffect(() => {
     document.documentElement.dataset.hydrated = "";
+    const cleanupPrefetch = linkInterceptionEnabled
+      ? bridge.registerDelegatedPrefetch()
+      : undefined;
     if (IS_BROWSER_DEBUG && !hydrationCommitLogged) {
       hydrationCommitLogged = true;
       bootLog("hydration commit (root effect flushed)");
     }
-  }, []);
+    return cleanupPrefetch;
+  }, [bridge, linkInterceptionEnabled]);
 
   return (
     <NavigationProvider

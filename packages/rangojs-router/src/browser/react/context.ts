@@ -3,6 +3,7 @@
 import { createContext, type Context } from "react";
 import type { NavigationStore, NavigateOptions } from "../types.js";
 import type { EventController } from "../event-controller.js";
+import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
 /**
  * Navigation context value provided by NavigationProvider
@@ -52,6 +53,9 @@ export interface NavigationStoreContextValue {
    * Used by Link and useRouter() to auto-prefix app-local paths.
    */
   basename: string | undefined;
+
+  /** Router default from this instance's initial payload. */
+  defaultPrefetch?: PrefetchStrategy;
 }
 
 /**

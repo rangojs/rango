@@ -38,7 +38,7 @@
  * (the segment chain is wrapped in a MountContext exactly as in production).
  */
 
-import type { ReactNode, ComponentType } from "react";
+import { useEffect, type ReactNode, type ComponentType } from "react";
 import type { RenderResult } from "@testing-library/react";
 import { renderSegments } from "../segment-system.js";
 import {
@@ -62,8 +62,14 @@ import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
+import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
+import { resetAdaptiveStrategyForTesting } from "../browser/prefetch/default-strategy.js";
+import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
+import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const TEST_ORIGIN = "http://localhost";
+let activePrefetchRegistrations = 0;
+let pendingPrefetchReset: object | undefined;
 
 /**
  * Seed shape for `options.handle`, matching the handle wire format:
@@ -268,6 +274,14 @@ export interface RenderRouteOptions {
    * expect(getByTestId("nonce").textContent).toBe("test-nonce");
    */
   nonce?: string;
+  /**
+   * Router default prefetch strategy scoped to this rendered tree. This mirrors
+   * `createRouter({ defaultPrefetch })` for Links and eligible plain anchors
+   * inside `basename`. `data-prefetch="false"`/`"none"` opts out; `"true"`
+   * allows an application route with a common static-resource suffix but does
+   * not override a `"none"` default.
+   */
+  defaultPrefetch?: PrefetchStrategy;
 }
 
 /**
@@ -297,6 +311,41 @@ export type RenderRouteResult = RenderResult & { router: TestRouterHandle };
 interface ResolvedMatch {
   params: Record<string, string>;
   pathname: string;
+}
+
+function DelegatedPrefetchRegistration({
+  bridge,
+}: {
+  bridge: NavigationBridge;
+}): null {
+  useEffect(() => {
+    const unregister = bridge.registerDelegatedPrefetch();
+    pendingPrefetchReset = undefined;
+    activePrefetchRegistrations++;
+    return () => {
+      try {
+        unregister();
+      } finally {
+        activePrefetchRegistrations--;
+        if (activePrefetchRegistrations === 0) {
+          const reset = {};
+          pendingPrefetchReset = reset;
+          queueMicrotask(() => {
+            if (
+              pendingPrefetchReset !== reset ||
+              activePrefetchRegistrations !== 0
+            ) {
+              return;
+            }
+            pendingPrefetchReset = undefined;
+            resetPrefetchObserverForTesting();
+            resetAdaptiveStrategyForTesting();
+          });
+        }
+      }
+    };
+  }, [bridge]);
+  return null;
 }
 
 function matchLeaf(
@@ -429,6 +478,7 @@ export async function renderRoute(
 
   const historyKey = generateHistoryKey(url.href);
   const mount = normalizeBasename(options.mount);
+  const basename = normalizeBasename(options.basename);
   // Fail loud on a request that cannot resolve the leaf route (a typo, or the
   // mount-prefixed-vs-relative confusion) instead of silently rendering empty
   // params (matchLeaf -> null -> {}). renderRoute paths are include-RELATIVE and
@@ -520,20 +570,31 @@ export async function renderRoute(
     });
   };
 
+  let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
     navigate: (target) => navigate(target),
     refresh: () => navigate(url.pathname + url.search),
     handlePopstate: async () => {},
     registerLinkInterception: () => () => {},
+    registerDelegatedPrefetch: () =>
+      setupNavigationBridgeDelegatedPrefetch(
+        store,
+        eventController,
+        () => undefined,
+        {
+          defaultPrefetch: options.defaultPrefetch,
+          root: prefetchRoot,
+          basename,
+        },
+      ),
     getVersion: () => undefined,
     updateVersion: () => {},
   };
 
-  const initialMetadata = makeMetadata(
-    url.pathname,
-    initialSegments,
-    initialMatch.params,
-  );
+  const initialMetadata = {
+    ...makeMetadata(url.pathname, initialSegments, initialMatch.params),
+    defaultPrefetch: options.defaultPrefetch,
+  };
   const initialTree = await renderSegments(initialSegments);
 
   // Wrap render in an awaited async act so a tree that suspends (async loaders,
@@ -542,19 +603,27 @@ export async function renderRoute(
   // suspended inside an act scope, but the act call was not awaited") and the
   // resolved content never reaches the asserted DOM.
   let result!: Awaited<ReturnType<typeof render>>;
+  const container = document.body.appendChild(document.createElement("div"));
+  prefetchRoot = container;
   await act(async () => {
     result = render(
-      <NavigationProvider
-        store={store}
-        eventController={eventController}
-        initialPayload={{ root: initialTree, metadata: initialMetadata }}
-        bridge={bridge}
-        basename={normalizeBasename(options.basename)}
-        themeConfig={
-          options.theme === undefined ? null : resolveThemeConfig(options.theme)
-        }
-        nonce={options.nonce}
-      />,
+      <>
+        <NavigationProvider
+          store={store}
+          eventController={eventController}
+          initialPayload={{ root: initialTree, metadata: initialMetadata }}
+          bridge={bridge}
+          basename={basename}
+          themeConfig={
+            options.theme === undefined
+              ? null
+              : resolveThemeConfig(options.theme)
+          }
+          nonce={options.nonce}
+        />
+        <DelegatedPrefetchRegistration bridge={bridge} />
+      </>,
+      { baseElement: document.body, container },
     );
   });
 

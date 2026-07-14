@@ -14,6 +14,7 @@ import {
   filterSegmentOrder,
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
+import { notifyListeners } from "./notify-listeners.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -269,6 +270,71 @@ export interface EventController {
   hadAnyConcurrentActions(): boolean;
 }
 
+type LocationChangeController = Pick<EventController, "getState" | "subscribe">;
+
+interface LocationChangeSubscription {
+  registrations: Map<
+    symbol,
+    { href: string; listener: (href: string) => void }
+  >;
+  notificationVersion: number;
+  unsubscribe: () => void;
+}
+
+const locationChangeSubscriptions = new WeakMap<
+  LocationChangeController,
+  LocationChangeSubscription
+>();
+
+/** Share one controller subscription across all location-change consumers. */
+export function subscribeToLocationChange(
+  eventController: LocationChangeController,
+  listener: (href: string) => void,
+): () => void {
+  let subscription = locationChangeSubscriptions.get(eventController);
+  if (!subscription) {
+    subscription = {
+      registrations: new Map(),
+      notificationVersion: 0,
+      unsubscribe: () => {},
+    };
+    locationChangeSubscriptions.set(eventController, subscription);
+    const currentSubscription = subscription;
+    subscription.unsubscribe = eventController.subscribe(() => {
+      const notificationVersion = ++currentSubscription.notificationVersion;
+      const nextHref = eventController.getState().location.href;
+      notifyListeners(
+        [...currentSubscription.registrations],
+        ([, registration]) => {
+          if (registration.href === nextHref) return;
+          registration.href = nextHref;
+          registration.listener(nextHref);
+        },
+        ([token, registration]) =>
+          currentSubscription.registrations.get(token) === registration,
+        () => notificationVersion === currentSubscription.notificationVersion,
+      );
+    });
+  }
+
+  const token = Symbol();
+  subscription.registrations.set(token, {
+    href: eventController.getState().location.href,
+    listener,
+  });
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    subscription!.registrations.delete(token);
+    if (subscription!.registrations.size > 0) return;
+    if (locationChangeSubscriptions.get(eventController) === subscription) {
+      locationChangeSubscriptions.delete(eventController);
+    }
+    subscription!.unsubscribe();
+  };
+}
+
 const DEFAULT_ACTION_STATE: TrackedActionState = {
   state: "idle",
   actionId: null,
@@ -308,7 +374,11 @@ function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
     if (timeout !== null) clearTimeout(timeout);
     timeout = setTimeout(() => {
       timeout = null;
-      listeners.forEach((listener) => listener());
+      notifyListeners(
+        [...listeners],
+        (listener) => listener(),
+        (listener) => listeners.has(listener),
+      );
     }, 0);
   };
 }
@@ -394,6 +464,39 @@ export function createEventController(
 
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
+  function notifyActionListenerSets(
+    subscriptions: Iterable<[string, Set<ActionStateListener>]>,
+  ): void {
+    const subscriptionSnapshots = [...subscriptions].map(
+      ([subscriptionId, listeners]) => ({
+        listenerSnapshot: [...listeners],
+        listeners,
+        subscriptionId,
+      }),
+    );
+    function* notifications(): Generator<{
+      listener: ActionStateListener;
+      listeners: Set<ActionStateListener>;
+      state: TrackedActionState;
+    }> {
+      for (const {
+        listenerSnapshot,
+        listeners,
+        subscriptionId,
+      } of subscriptionSnapshots) {
+        const state = getActionState(subscriptionId);
+        for (const listener of listenerSnapshot) {
+          yield { listener, listeners, state };
+        }
+      }
+    }
+    notifyListeners(
+      notifications(),
+      ({ listener, state }) => listener(state),
+      ({ listener, listeners }) => listeners.has(listener),
+    );
+  }
+
   function notifyAction(actionId: string) {
     const existing = actionNotifyTimeouts.get(actionId);
     if (existing !== undefined) {
@@ -403,12 +506,11 @@ export function createEventController(
       actionId,
       setTimeout(() => {
         actionNotifyTimeouts.delete(actionId);
-        for (const [subscriptionId, listeners] of actionListeners) {
-          if (matchesActionId(subscriptionId, actionId)) {
-            const state = getActionState(subscriptionId);
-            listeners.forEach((listener) => listener(state));
-          }
-        }
+        notifyActionListenerSets(
+          [...actionListeners].filter(([subscriptionId]) =>
+            matchesActionId(subscriptionId, actionId),
+          ),
+        );
       }, 0),
     );
   }
@@ -846,10 +948,7 @@ export function createEventController(
     // "addToCart"), not full entry actionIds. Passing them to notifyAction
     // would fail the suffix matcher — instead, notify each subscriber with
     // its own state.
-    for (const [subscriptionId, listeners] of actionListeners) {
-      const state = getActionState(subscriptionId);
-      listeners.forEach((listener) => listener(state));
-    }
+    notifyActionListenerSets(actionListeners);
   }
 
   // ========================================================================

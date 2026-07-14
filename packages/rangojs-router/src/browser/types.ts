@@ -613,6 +613,7 @@ export interface NavigationBridge {
   refresh(): Promise<void>;
   handlePopstate(): Promise<void>;
   registerLinkInterception(): () => void;
+  registerDelegatedPrefetch(): () => void;
   /** Current RSC version (live, reflects the latest updateVersion). */
   getVersion(): string | undefined;
   /** Update the RSC version (e.g. after HMR). Clears prefetch cache. */

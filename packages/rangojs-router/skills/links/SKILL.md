@@ -423,6 +423,30 @@ Don't edit the file by hand — re-run codegen when patterns change.
 }
 ```
 
+## Prefetch boundaries
+
+`Link` follows its `prefetch` prop or the router's `defaultPrefetch`; eligible
+plain anchors follow the router default. When a whole DOM section must never
+speculate, mark its container instead of repeating per-link opt-outs:
+
+```tsx
+<section data-prefetch-scope="none">
+  <Link to="/activity" prefetch="viewport">
+    Activity
+  </Link>
+  <a href="/export">Export</a>
+</section>
+```
+
+The scope is a hard opt-out for every descendant Link and plain anchor; `"false"`
+and `"none"` are equivalent. An explicit `prefetch` prop or
+`data-prefetch="true"` cannot override it, and navigation still works normally.
+Use `data-prefetch="false"` or `"none"` directly on a plain anchor when only that
+anchor is unsafe. Dynamic scope changes re-evaluate only descendant anchors and
+mounted viewport/render Links. Links share one document-level scope observer,
+not one observer per Link or container. Adding a scope cannot recall work already
+queued or in flight; removing it re-arms both Link types.
+
 ## When to use what
 
 | Context          | API                                                | Resolves                                  | Use for                                                          |

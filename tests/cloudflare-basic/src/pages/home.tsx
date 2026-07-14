@@ -41,6 +41,16 @@ export function HomePage(ctx: HandlerContext) {
     <main data-testid="home-page">
       <h1 data-testid="home-title">Welcome to RSC Router</h1>
       <p>This is a minimal example running on Cloudflare Workers.</p>
+      <a href="/about?plain-prefetch=1" data-testid="plain-prefetch-link">
+        Plain anchor prefetch fixture
+      </a>
+      <a
+        href="/reports/default-none.csv"
+        data-prefetch="true"
+        data-testid="plain-prefetch-forced-route"
+      >
+        Static-looking plain anchor under manual mode
+      </a>
       <p>It demonstrates:</p>
       <ul style={{ marginTop: "1rem", marginLeft: "1.5rem" }}>
         <li>React Server Components with RSC streaming</li>

@@ -542,7 +542,13 @@ analog but operates on loader/query reload, not RSC-segment render.
 `<Link prefetch="hover|viewport|render|adaptive|none">` (default: the router's
 `defaultPrefetch`, `"none"` in development and `"viewport"` in production), plus
 `prefetchKey` (`":source"` scopes a prefetch to the originating page for routes
-whose response branches on `currentUrl`). The distinguishing part is the stability
+whose response branches on `currentUrl`). Intercepted plain `<a href>` elements
+inside the router basename follow the same default; common static-resource
+extensions are excluded unless `data-prefetch="true"` identifies an application
+route, and `data-prefetch="false"` or `"none"` opts out unsafe GET links. A
+container with `data-prefetch-scope="false"` or `"none"` is a hard subtree boundary for both
+Links and plain anchors, so one annotation suppresses speculative work for a
+whole navigation section. The distinguishing part is the stability
 gating: a queued prefetch (`viewport`/`render`) will not fire until **both** the
 main thread is idle (`requestIdleCallback`, 200ms fallback) **and**
 `waitForViewportImages()` resolves — in-viewport images that are not `.complete`

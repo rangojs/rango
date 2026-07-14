@@ -539,7 +539,8 @@ it("exposes navigation state and re-resolves on navigate()", async () => {
 `RenderRouteSpec = { path, Component, layout?, loaderIds?, name? }`; the array is
 the layout chain root-to-leaf, last entry is the leaf. Seed `useLoader` reads via
 `options.loaderData` keyed by `$$id`; route them to a layout with that spec's
-`loaderIds`.
+`loaderIds`. Returned RTL queries are bound to `document.body`, so they also find
+modals, toasts, and other content rendered there with `createPortal`.
 
 Testing a component that reads `useLoader`: seed the loader BY REFERENCE via the
 `loaders` option, not `loaderData`. A real `createLoader(fn)` handle has
@@ -576,6 +577,32 @@ const { getByTestId } = await renderRoute(
 );
 // useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
 ```
+
+To test the router-wide prefetch fallback, pass the same strategy through
+`defaultPrefetch`. `renderRoute` scopes it to that rendered tree and uses the
+production delegated-anchor registration, including basename/resource checks
+and individual or container-level opt-outs:
+
+```tsx
+const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
+  request: "/",
+  basename: "/app",
+  defaultPrefetch: "viewport",
+});
+// An unmarked <a data-testid="docs" href="/app/docs"> is observed.
+// /files/report.pdf and /sibling/docs are not observed.
+// <a href="/logout" data-prefetch="none"> is never observed (false also works).
+// <a href="/app/report.csv" data-prefetch="true"> is observed as a route.
+// Descendant Links and anchors under data-prefetch-scope="none" are never observed
+// (data-prefetch-scope="false" is equivalent).
+expect(getByTestId("docs")).not.toHaveAttribute("data-prefetch");
+```
+
+After the last mounted `renderRoute` tree is cleaned up, the helper also clears
+its cached `IntersectionObserver` and adaptive `matchMedia` query. Tests may
+install different browser stubs in successive cases without importing internal
+reset functions; concurrently mounted `renderRoute` trees continue sharing the
+same browser primitives until their final cleanup.
 
 Optional params vs an include mount — two different prefixes, don't confuse them.
 An optional param that is part of the matched PATTERN (`/:locale?/c/:group` at

@@ -1,6 +1,7 @@
 import type {
   NavigationBridge,
   NavigationBridgeConfig,
+  NavigationStore,
   NavigateOptionsInternal,
   ResolvedSegment,
 } from "./types.js";
@@ -24,7 +25,10 @@ import {
 const addTransitionType: ((type: string) => void) | undefined =
   "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 
-import { setupLinkInterception } from "./link-interceptor.js";
+import {
+  setupDelegatedLinkPrefetch,
+  setupLinkInterception,
+} from "./link-interceptor.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { generateHistoryKey } from "./navigation-store.js";
 import type { EventController } from "./event-controller.js";
@@ -38,6 +42,12 @@ import {
 import { debugLog } from "./logging.js";
 import { ServerRedirect } from "../errors.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  prefetchDirect,
+  prefetchQueued,
+  schedulePrefetchWhenRouterIdle,
+} from "./prefetch/loader.js";
+import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -53,6 +63,48 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
   eventController: EventController;
   /** RSC version from initial payload metadata. */
   version?: string;
+  /** Server-resolved default used by both Links and delegated anchors. */
+  defaultPrefetch?: PrefetchStrategy;
+  /** Canonical router basename used to scope delegated anchor prefetch. */
+  basename?: string;
+}
+
+export interface NavigationBridgeDelegatedPrefetchOptions {
+  defaultPrefetch?: PrefetchStrategy;
+  root?: HTMLElement;
+  basename?: string;
+}
+
+/** Register delegated anchor prefetch with the production bridge wiring. */
+export function setupNavigationBridgeDelegatedPrefetch(
+  store: NavigationStore,
+  eventController: EventController,
+  getVersion: () => string | undefined,
+  options: NavigationBridgeDelegatedPrefetchOptions = {},
+): () => void {
+  return setupDelegatedLinkPrefetch(
+    (url, priority) => {
+      const trigger = () => {
+        const segmentState = store.getSegmentState();
+        const prefetch =
+          priority === "direct" ? prefetchDirect : prefetchQueued;
+        prefetch(
+          url,
+          segmentState.currentSegmentIds,
+          getVersion(),
+          store.getRouterId?.(),
+        );
+      };
+
+      if (priority === "direct") {
+        trigger();
+        return;
+      }
+
+      return schedulePrefetchWhenRouterIdle(eventController, trigger);
+    },
+    { eventController, ...options },
+  );
 }
 
 /**
@@ -71,7 +123,15 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
 export function createNavigationBridge(
   config: NavigationBridgeConfigWithController,
 ): NavigationBridge {
-  const { store, client, eventController, onUpdate, renderSegments } = config;
+  const {
+    store,
+    client,
+    eventController,
+    onUpdate,
+    renderSegments,
+    defaultPrefetch,
+    basename,
+  } = config;
   let version = config.version;
 
   // Create shared partial updater
@@ -722,6 +782,15 @@ export function createNavigationBridge(
         window.removeEventListener("popstate", handlePopstate);
         window.removeEventListener("pageshow", handlePageShow);
       };
+    },
+
+    registerDelegatedPrefetch(): () => void {
+      return setupNavigationBridgeDelegatedPrefetch(
+        store,
+        eventController,
+        () => version,
+        { defaultPrefetch, basename },
+      );
     },
 
     getVersion(): string | undefined {

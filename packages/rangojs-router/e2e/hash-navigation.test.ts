@@ -13,6 +13,28 @@ function isNavigationPartial(req: PWRequest): boolean {
   return req.url().includes("_rsc_partial") && !isPrefetchRequest(req);
 }
 
+function registerHashPrefetchTest(f: ReturnType<typeof useFixture>): void {
+  test("same-page hash links do not prefetch", async ({ page }) => {
+    const hashPrefetches: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (isPrefetchRequest(request) && url.pathname === "/hash-navigation") {
+        hashPrefetches.push(request.url());
+      }
+    });
+
+    await page.goto(f.url("/hash-navigation"));
+    await waitForHydration(page);
+    await page.locator('[data-testid="link-hash-a"]').scrollIntoViewIfNeeded();
+    await page
+      .locator('[data-testid="anchor-hash-a"]')
+      .scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
+
+    expect(hashPrefetches).toHaveLength(0);
+  });
+}
+
 /**
  * Hash-only navigation must bypass the SPA router and use native
  * browser anchor behavior. Clicking a hash link should NOT trigger
@@ -23,6 +45,7 @@ test.describe("hash-navigation", () => {
     root: "./e2e/test-app",
     mode: "dev",
   });
+  registerHashPrefetchTest(f);
 
   test("Link with hash-only href does not trigger RSC fetch", async ({
     page,
@@ -101,6 +124,7 @@ test.describe("hash-navigation (production)", () => {
     root: "./e2e/test-app",
     mode: "build",
   });
+  registerHashPrefetchTest(f);
 
   test("Link with hash-only href does not trigger RSC fetch", async ({
     page,

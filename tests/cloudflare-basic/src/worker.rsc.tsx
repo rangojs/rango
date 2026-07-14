@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import { router } from "./router.js";
+import { prefetchScopeRouter } from "./prefetch-scope-router.js";
 import type { AppBindings } from "./env.js";
 import { createRecordingTracer } from "./trace-debug.js";
 // Registers a fetchable loader the trace-spans e2e hits via _rsc_loader to
@@ -24,6 +25,13 @@ export default {
       url.pathname.startsWith("/.well-known/")
     ) {
       return new Response(null, { status: 404 });
+    }
+
+    if (
+      url.pathname === "/__prefetch-scope" ||
+      url.pathname.startsWith("/__prefetch-scope/")
+    ) {
+      return prefetchScopeRouter.fetch(request, { env, ctx });
     }
 
     // Test-only: return the fetchable trace-probe loader's resolved $$id so the
