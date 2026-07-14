@@ -8,6 +8,11 @@ import type {
   HandleData,
 } from "./types.js";
 import { clearPrefetchCache } from "./prefetch/cache.js";
+import {
+  adoptRangoState,
+  getRangoState,
+  getRangoStateCookieName,
+} from "./rango-state.js";
 
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
@@ -316,6 +321,8 @@ export function createNavigationStore(
         type: "invalidate",
         path: currentPath,
         segmentIds: currentSegmentIds,
+        rangoState: getRangoState(),
+        stateCookieName: getRangoStateCookieName(),
       });
     }
   }
@@ -341,7 +348,23 @@ export function createNavigationStore(
             return;
           }
 
-          markCacheAsStaleInternal();
+          const rangoState = event.data.rangoState;
+          const stateCookieName = event.data.stateCookieName;
+          if (
+            typeof rangoState === "string" &&
+            typeof stateCookieName === "string"
+          ) {
+            if (stateCookieName !== getRangoStateCookieName()) return;
+            // The sender already rotated the same-origin cookie. Adopt that
+            // value before clearing locally so tabs cannot ping-pong rotations
+            // and obsolete each other's post-invalidation prefetches.
+            const adopted = adoptRangoState(rangoState);
+            markHistoryStale();
+            clearPrefetchCache(!adopted);
+          } else {
+            // Compatibility with an already-open tab running an older sender.
+            markCacheAsStaleInternal();
+          }
 
           // Auto-refresh if enabled and callback is registered
           if (crossTabAutoRefresh && crossTabRefreshCallback) {

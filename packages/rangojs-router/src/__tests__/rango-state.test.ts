@@ -129,6 +129,29 @@ describe("rango-state (cookie)", () => {
     expect(getRangoState()).toBe("v1:701");
   });
 
+  it("adopts a cross-tab state when the shared cookie is unreadable", async () => {
+    const throwingDoc = {
+      get cookie(): string {
+        throw new Error("blocked");
+      },
+      set cookie(_v: string) {
+        throw new Error("blocked");
+      },
+    };
+    vi.stubGlobal("document", throwingDoc);
+    vi.spyOn(Date, "now").mockReturnValue(700);
+
+    const { adoptRangoState, getRangoState, initRangoState } =
+      await import("../browser/rango-state");
+    initRangoState("v1", NAME);
+    expect(adoptRangoState("v1:900")).toBe(true);
+
+    expect(getRangoState()).toBe("v1:900");
+    expect(adoptRangoState("v1:800")).toBe(false);
+    expect(adoptRangoState("other:1000")).toBe(false);
+    expect(getRangoState()).toBe("v1:900");
+  });
+
   it("deletes legacy localStorage keys on boot (no value porting)", async () => {
     const data = {
       "rango-state": "old",

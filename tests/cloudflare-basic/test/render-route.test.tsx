@@ -293,6 +293,27 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(secondAdd).toHaveBeenCalledWith("change", expect.any(Function));
   });
 
+  it("re-arms delegated viewport prefetch after cache invalidation", async () => {
+    function PrefetchAnchor() {
+      return <a href="/target" data-testid="prefetch-target" />;
+    }
+
+    const result = await renderRoute(
+      [{ path: "/", Component: PrefetchAnchor }],
+      { request: "/", defaultPrefetch: "viewport" },
+    );
+    const target = result.getByTestId("prefetch-target");
+    expect(observePrefetchElement).toHaveBeenCalledOnce();
+    expect(observePrefetchElement).toHaveBeenCalledWith(target);
+
+    result.router.store.markCacheAsStaleAndBroadcast();
+
+    await vi.waitFor(() =>
+      expect(observePrefetchElement).toHaveBeenCalledTimes(2),
+    );
+    expect(observePrefetchElement).toHaveBeenLastCalledWith(target);
+  });
+
   it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(
     "normalizes encoded basename spelling %s through the URL parser",
     async (basename) => {

@@ -190,8 +190,8 @@ Public API (`Rango` interface):
   Same-page hash anchors stay native and never arm prefetch. Location-dependent
   rejects are parked separately from permanent failures, so a persistent
   hash-only anchor is re-evaluated after navigation without a full DOM rescan.
-  Because an internal custom delegated predicate returns only a boolean, its
-  false results are conservatively parked for the next location.
+  A false internal custom delegated predicate result is permanently ineligible;
+  only location dependence the router can identify itself is parked.
   Basename and anchor pathnames compare in canonical encoded form:
   Unicode/encoded basename spellings match, but `%2F` remains one out-of-scope
   segment instead of expanding router ownership. `data-prefetch="false"` or
@@ -212,8 +212,11 @@ Public API (`Rango` interface):
   observers, while adding one cannot recall queued or in-flight work. Delegated
   location notifications revisit only parked rejects; already eligible anchors
   stay armed or completed instead of being parsed and prefetched again after
-  every navigation. `observer.ts` and adaptive strategy caching expose test-only
-  resets instead of carrying test-global identity branches in production.
+  every navigation. A completed local prefetch-cache invalidation separately
+  re-arms tracked viewport/render anchors under the new Rango-state key without
+  scanning rejected anchors or the document. `observer.ts` and adaptive strategy
+  caching expose test-only resets instead of carrying test-global identity
+  branches in production.
   Per-Link `prefetch` wins over the router default unless an ancestor scope
   disables the entire subtree.
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
@@ -365,7 +368,7 @@ Internal: `handleProgressiveEnhancement()` (in `src/rsc/progressive-enhancement.
 
 Public: `invalidateClientCache()` (root entry, both seats) forces the client's caches to miss after a mutation the router can't see.
 
-Internal: the rango state lives in a session cookie (`src/browser/rango-state.ts`), so cross-tab value sync is the shared cookie jar, read on every fetch. The jar-divergence observer (`src/browser/navigation-store-handle.ts`) marks the history cache stale when a sibling tab or a server `Set-Cookie` rotates the value; the `BroadcastChannel` in `navigation-store.ts` still pushes action-driven invalidation to tabs sharing a segment.
+Internal: the rango state lives in a session cookie (`src/browser/rango-state.ts`), so cross-tab value sync is the shared cookie jar, read on every fetch. The jar-divergence observer (`src/browser/navigation-store-handle.ts`) marks the history cache stale when a sibling tab or a server `Set-Cookie` rotates the value; the `BroadcastChannel` in `navigation-store.ts` still pushes action-driven invalidation to tabs sharing a segment. Its message carries the sender's rotated state and resolved cookie name so only the same router adopts a newer value, then clears locally without rotating the shared cookie again.
 
 ### Theming
 

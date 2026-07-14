@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { abortAllPrefetchesMock, invalidateRangoStateMock } = vi.hoisted(() => ({
+const {
+  abortAllPrefetchesMock,
+  invalidateRangoStateMock,
+  notifyPrefetchCacheInvalidatedMock,
+} = vi.hoisted(() => ({
   abortAllPrefetchesMock: vi.fn(),
   invalidateRangoStateMock: vi.fn(),
+  notifyPrefetchCacheInvalidatedMock: vi.fn(),
 }));
 
 vi.mock("../browser/prefetch/loader", () => ({
@@ -11,6 +16,10 @@ vi.mock("../browser/prefetch/loader", () => ({
 
 vi.mock("../browser/rango-state", () => ({
   invalidateRangoState: invalidateRangoStateMock,
+}));
+
+vi.mock("../browser/prefetch/invalidation", () => ({
+  notifyPrefetchCacheInvalidated: notifyPrefetchCacheInvalidatedMock,
 }));
 
 import {
@@ -48,6 +57,7 @@ describe("prefetch cache", () => {
     clearPrefetchCache();
     abortAllPrefetchesMock.mockClear();
     invalidateRangoStateMock.mockClear();
+    notifyPrefetchCacheInvalidatedMock.mockClear();
   });
 
   afterEach(() => {
@@ -136,6 +146,15 @@ describe("prefetch cache", () => {
     expect(hasPrefetch("http://localhost/\0/b")).toBe(false);
     expect(abortAllPrefetchesMock).toHaveBeenCalledTimes(1);
     expect(invalidateRangoStateMock).toHaveBeenCalledTimes(1);
+    expect(notifyPrefetchCacheInvalidatedMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("can clear a receiving tab without rotating shared rango state", () => {
+    clearPrefetchCache(false);
+
+    expect(abortAllPrefetchesMock).toHaveBeenCalledOnce();
+    expect(invalidateRangoStateMock).not.toHaveBeenCalled();
+    expect(notifyPrefetchCacheInvalidatedMock).toHaveBeenCalledOnce();
   });
 
   it("evicts oldest entry at the default max capacity (100)", () => {
