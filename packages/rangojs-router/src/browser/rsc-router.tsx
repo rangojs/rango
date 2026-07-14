@@ -201,6 +201,12 @@ export async function initBrowserApp(
   }
   const initialHistoryKey = generateHistoryKey(window.location.href);
 
+  // Resolve the state namespace before the store installs its BroadcastChannel
+  // listener. A streaming handle payload can delay hydration below; leaving the
+  // default name active during that wait would discard this router's messages.
+  const version = initialPayload.metadata?.version;
+  initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
+
   // Create navigation store with history-based caching
   const store = createNavigationStore({
     initialLocation: window.location,
@@ -276,7 +282,6 @@ export async function initBrowserApp(
   // It is set once from the initial payload and not swapped within a session:
   // a cross-app navigation is a full document load (X-RSC-Reload), so the
   // target app establishes its own shell on load.
-  const version = initialPayload.metadata?.version;
   const appShellRef = createAppShellRef({
     routerId: initialPayload.metadata?.routerId,
     rootLayout: initialPayload.metadata?.rootLayout,
@@ -284,11 +289,6 @@ export async function initBrowserApp(
     version,
   });
 
-  // Initialize the rango state cookie for cache invalidation. The build version
-  // busts cached prefetches on deploy; the server-resolved cookie name
-  // namespaces the cookie so sibling apps on the same origin don't collide
-  // (falls back to the bare default prefix if metadata lacks the name).
-  initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
   setAppVersion(version);
 
   // Initialize the in-memory prefetch cache (TTL + max size) and the prefetch

@@ -9,8 +9,21 @@ const prefetchObserver = vi.hoisted(() => ({
   }),
 }));
 
+const prefetchCache = vi.hoisted(() => ({
+  invalidationListeners: new Set<() => void>(),
+  subscribeToPrefetchCacheInvalidation: vi.fn((listener: () => void) => {
+    prefetchCache.invalidationListeners.add(listener);
+    return () => prefetchCache.invalidationListeners.delete(listener);
+  }),
+}));
+
 vi.mock("../browser/prefetch/observer.js", () => ({
   observeForPrefetch: prefetchObserver.observeForPrefetch,
+}));
+
+vi.mock("../browser/prefetch/invalidation.js", () => ({
+  subscribeToPrefetchCacheInvalidation:
+    prefetchCache.subscribeToPrefetchCacheInvalidation,
 }));
 
 import {
@@ -26,7 +39,7 @@ let stateListeners: Set<() => void>;
 
 function setupPrefetch(
   onPrefetch: DelegatedPrefetchCallback,
-  defaultPrefetch?: "hover" | "none" | "viewport",
+  defaultPrefetch?: "hover" | "none" | "render" | "viewport",
   basename?: string,
   shouldPrefetch?: (link: HTMLAnchorElement) => boolean,
 ): () => void {
@@ -52,6 +65,7 @@ describe("delegated plain-anchor prefetch", () => {
     document.body.replaceChildren();
     window.history.replaceState({}, "", "/");
     prefetchObserver.callbacks.clear();
+    prefetchCache.invalidationListeners.clear();
     vi.clearAllMocks();
     location = new URL(window.location.href);
     stateListeners = new Set();
@@ -190,10 +204,16 @@ describe("delegated plain-anchor prefetch", () => {
     location = new URL(window.location.href);
     const link = document.createElement("a");
     link.href = "/docs#install";
+    const pathname = vi.fn(() => "/docs");
+    Object.defineProperty(link, "pathname", { get: pathname });
     document.body.appendChild(link);
     const cleanup = setupPrefetch(vi.fn(), "viewport");
 
     expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
+    expect(pathname).toHaveBeenCalledOnce();
+
+    prefetchCache.invalidationListeners.forEach((listener) => listener());
+    expect(pathname).toHaveBeenCalledOnce();
 
     window.history.replaceState({}, "", "/other");
     location = new URL(window.location.href);
@@ -203,6 +223,7 @@ describe("delegated plain-anchor prefetch", () => {
       link,
       expect.any(Function),
     );
+    expect(pathname).toHaveBeenCalledTimes(2);
     cleanup();
   });
 
@@ -367,16 +388,11 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
-  it("re-evaluates a custom-predicate rejection after navigation", () => {
-    window.history.replaceState({}, "", "/custom-reject");
-    location = new URL(window.location.href);
+  it("does not retain a permanent custom-predicate rejection", () => {
     const link = document.createElement("a");
     link.href = "/custom-reject";
     document.body.appendChild(link);
-    const shouldPrefetch = vi.fn(
-      (anchor: HTMLAnchorElement) =>
-        anchor.pathname !== window.location.pathname,
-    );
+    const shouldPrefetch = vi.fn(() => false);
     const cleanup = setupPrefetch(
       vi.fn(),
       "viewport",
@@ -388,13 +404,10 @@ describe("delegated plain-anchor prefetch", () => {
     window.history.replaceState({}, "", "/other");
     location = new URL(window.location.href);
     stateListeners.forEach((listener) => listener());
+    prefetchCache.invalidationListeners.forEach((listener) => listener());
 
     cleanup();
-    expect(shouldPrefetch).toHaveBeenCalledTimes(2);
-    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
-      link,
-      expect.any(Function),
-    );
+    expect(shouldPrefetch).toHaveBeenCalledOnce();
   });
 
   it("accepts false as a container scope opt-out", () => {
@@ -591,6 +604,40 @@ describe("delegated plain-anchor prefetch", () => {
 
     cleanup();
     expect(onPrefetch).toHaveBeenCalledOnce();
+  });
+
+  it("re-arms tracked viewport anchors after cache invalidation", () => {
+    const visible = document.createElement("a");
+    visible.href = "/visible-target";
+    const pending = document.createElement("a");
+    pending.href = "/pending-target";
+    document.body.append(visible, pending);
+    const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
+    const cleanup = setupPrefetch(onPrefetch, "viewport");
+
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
+    prefetchObserver.callbacks.get(visible)!();
+    expect(onPrefetch).toHaveBeenCalledOnce();
+
+    prefetchCache.invalidationListeners.forEach((listener) => listener());
+
+    cleanup();
+    expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(4);
+    expect(onPrefetch).toHaveBeenCalledOnce();
+  });
+
+  it("re-runs tracked render prefetch after cache invalidation", () => {
+    const link = document.createElement("a");
+    link.href = "/persistent-target";
+    document.body.appendChild(link);
+    const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
+    const cleanup = setupPrefetch(onPrefetch, "render");
+
+    expect(onPrefetch).toHaveBeenCalledOnce();
+    prefetchCache.invalidationListeners.forEach((listener) => listener());
+
+    cleanup();
+    expect(onPrefetch).toHaveBeenCalledTimes(2);
   });
 
   it("switches adaptive anchors from hover to viewport", () => {

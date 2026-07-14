@@ -9,6 +9,7 @@ import {
   subscribeToAdaptiveStrategyChange,
 } from "./prefetch/default-strategy.js";
 import { observeForPrefetch } from "./prefetch/observer.js";
+import { subscribeToPrefetchCacheInvalidation } from "./prefetch/invalidation.js";
 import { notifyListeners } from "./notify-listeners.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
@@ -386,7 +387,7 @@ export function setupDelegatedLinkPrefetch(
   const getEligibility = customShouldPrefetch
     ? (link: HTMLAnchorElement): PrefetchEligibility => {
         if (isPrefetchScopeDisabled(link)) return "ineligible";
-        return customShouldPrefetch(link) ? "eligible" : "location-dependent";
+        return customShouldPrefetch(link) ? "eligible" : "ineligible";
       }
     : (link: HTMLAnchorElement) =>
         defaultPrefetchEligibilityInBasename(link, basename);
@@ -569,12 +570,20 @@ export function setupDelegatedLinkPrefetch(
     defaultStrategy === "adaptive"
       ? subscribeToAdaptiveStrategyChange(rescan)
       : undefined;
+  const unsubscribeInvalidation = subscribeToPrefetchCacheInvalidation(() => {
+    if (strategy !== "viewport" && strategy !== "render") return;
+    for (const link of [...states.keys()]) {
+      if (link.isConnected && root.contains(link)) register(link);
+      else forget(link);
+    }
+  });
 
   return () => {
     mutationObserver?.disconnect();
     root.removeEventListener("mouseover", handleMouseOver);
     unsubscribeLocation?.();
     unsubscribeAdaptive?.();
+    unsubscribeInvalidation();
     for (const link of [...states.keys()]) disarm(link);
     parked.clear();
   };

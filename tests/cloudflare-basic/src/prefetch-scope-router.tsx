@@ -1,6 +1,8 @@
 import { createRouter, urls } from "@rangojs/router";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
+import { Counter } from "./components/Counter.js";
+import { PrefetchInvalidationButton } from "./components/PrefetchInvalidationButton.js";
 
 const urlpatterns = urls(({ path }) => [
   path(
@@ -13,6 +15,16 @@ const urlpatterns = urls(({ path }) => [
             In-scope route
           </a>
         </p>
+        <p>
+          <a
+            href="/__prefetch-scope/target?invalidation=1"
+            data-testid="prefetch-invalidation-target"
+          >
+            Persistent invalidation target
+          </a>
+        </p>
+        <PrefetchInvalidationButton />
+        <Counter initialCount={0} />
         <p>
           <a
             href="/__prefetch-scope#hash-target"

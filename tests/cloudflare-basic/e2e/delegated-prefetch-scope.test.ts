@@ -1,7 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 import { isPrefetchRequest } from "@rangojs/router/testing/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration } from "./helper";
+
+function isInvalidationTarget(request: Request): boolean {
+  const url = new URL(request.url());
+  return (
+    isPrefetchRequest(request) &&
+    url.pathname === "/__prefetch-scope/target" &&
+    url.searchParams.get("invalidation") === "1"
+  );
+}
 
 function runDelegatedPrefetchScopeSpec(f: Fixture): void {
   test("plain-anchor prefetch stays within the router URL namespace", async ({
@@ -175,6 +184,65 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     await page.getByTestId("prefetch-target").click();
     await expect(page).toHaveURL(/\/__prefetch-scope\/target$/);
     await expect.poll(() => prefetches.length).toBeGreaterThan(0);
+  });
+
+  test("cache invalidation re-warms a persistent plain anchor", async ({
+    page,
+  }) => {
+    const targetRequests: Request[] = [];
+    page.on("request", (request) => {
+      if (isInvalidationTarget(request)) targetRequests.push(request);
+    });
+
+    await page.goto(f.url("/__prefetch-scope"));
+    await waitForHydration(page);
+    await expect.poll(() => targetRequests.length).toBeGreaterThan(0);
+    const initialState = targetRequests[0]!.headers()["x-rango-state"];
+    expect(initialState).toBeTruthy();
+    const anchor = await page
+      .getByTestId("prefetch-invalidation-target")
+      .elementHandle();
+
+    const rewarmed = page.waitForRequest(
+      (request) =>
+        isInvalidationTarget(request) &&
+        request.headers()["x-rango-state"] !== initialState,
+    );
+    await page.getByTestId("prefetch-invalidation-button").click();
+    const request = await rewarmed;
+
+    expect(request.headers()["x-rango-state"]).toBeTruthy();
+    expect(request.headers()["x-rango-state"]).not.toBe(initialState);
+    expect(await anchor!.evaluate((element) => element.isConnected)).toBe(true);
+  });
+
+  test("server-action invalidation re-warms after the action fence", async ({
+    page,
+  }) => {
+    const targetRequests: Request[] = [];
+    page.on("request", (request) => {
+      if (isInvalidationTarget(request)) targetRequests.push(request);
+    });
+
+    await page.goto(f.url("/__prefetch-scope"));
+    await waitForHydration(page);
+    await expect.poll(() => targetRequests.length).toBeGreaterThan(0);
+    const initialState = targetRequests[0]!.headers()["x-rango-state"];
+    const anchor = await page
+      .getByTestId("prefetch-invalidation-target")
+      .elementHandle();
+
+    const rewarmed = page.waitForRequest(
+      (request) =>
+        isInvalidationTarget(request) &&
+        request.headers()["x-rango-state"] !== initialState,
+    );
+    await page.getByTestId("counter-increment").click();
+    const request = await rewarmed;
+
+    expect(request.headers()["x-rango-state"]).toBeTruthy();
+    expect(request.headers()["x-rango-state"]).not.toBe(initialState);
+    expect(await anchor!.evaluate((element) => element.isConnected)).toBe(true);
   });
 }
 

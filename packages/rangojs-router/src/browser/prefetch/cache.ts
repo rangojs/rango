@@ -40,6 +40,7 @@
  */
 
 import { abortAllPrefetches } from "./loader.js";
+import { notifyPrefetchCacheInvalidated } from "./invalidation.js";
 import { invalidateRangoState } from "../rango-state.js";
 import type { RscPayload } from "../types.js";
 
@@ -368,7 +369,7 @@ export function clearPrefetchInflight(key: string): void {
   });
 }
 
-export function clearPrefetchCache(): void {
+export function clearPrefetchCache(rotateRangoState = true): void {
   generation++;
   inflight.clear();
   inflightPromises.clear();
@@ -377,5 +378,6 @@ export function clearPrefetchCache(): void {
   cache.clear();
   earliestTimestamp = Infinity;
   abortAllPrefetches();
-  invalidateRangoState();
+  if (rotateRangoState) invalidateRangoState();
+  notifyPrefetchCacheInvalidated();
 }
