@@ -13,7 +13,25 @@ the end. For the design rationale behind these APIs, read
 [Why Rango](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/why-rango.md); this page shows how it feels, that page
 argues why it's right.
 
-## Install
+## Start a new app
+
+The recommended path is to scaffold a complete app with
+[`create-rango`](https://github.com/rangojs/templates):
+
+```bash
+pnpm create rango my-app
+```
+
+Select a deployment target with `--template basic`, `--template cloudflare`, or
+`--template vercel`. The templates include streaming RSC, typed routes, Server
+Actions, Tailwind CSS, and production deployment configuration. For a plain
+JavaScript Node app, add `--template basic --js`. With npm, run
+`npm create rango@latest my-app`. The scaffolder currently requires Node.js 24
+or newer.
+
+## Install manually
+
+If you are adding Rango to an existing Vite RSC project:
 
 ```bash
 npm install @rangojs/router@experimental react @vitejs/plugin-rsc

@@ -85,12 +85,34 @@ for the detailed design and capability comparison.
 
 ## Getting Started
 
+### Create an app
+
+Start from a complete Rango template with [`create-rango`](https://github.com/rangojs/templates):
+
+```bash
+pnpm create rango my-app
+```
+
+Choose a deployment target non-interactively:
+
+```bash
+pnpm create rango my-app --template basic       # Node
+pnpm create rango my-app --template cloudflare  # Cloudflare Workers
+pnpm create rango my-app --template vercel      # Vercel
+pnpm create rango my-app --template basic --js  # Node, JavaScript
+```
+
+Each template is a complete streaming RSC app with routes, Server Actions, and
+production build/deployment configuration already wired. Use
+`npm create rango@latest my-app` if you prefer npm. The scaffolder currently
+requires Node.js 24 or newer.
+
 ### Prerequisites
 
-- Node.js `^20.19.0 || >=22.12.0` (the `@rangojs/router` `engines` floor, matching Vite 8); CI tests on Node 24 (see `.nvmrc`)
+- Node.js `^20.19.0 || >=22.12.0` for this repository (the `@rangojs/router` `engines` floor, matching Vite 8); CI tests on Node 24 (see `.nvmrc`)
 - pnpm 11+ (`packageManager` is `pnpm@11.9.0`)
 
-### Installation
+### Repository development
 
 ```bash
 pnpm install
