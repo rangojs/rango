@@ -75,6 +75,11 @@ import {
 } from "./discovery/virtual-module-codegen.js";
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
 import { createDiscoveryGate } from "./discovery/gate-state.js";
+import {
+  createMcpRouteSnapshot,
+  createMcpRouterSnapshot,
+} from "./discovery/mcp-snapshot.js";
+import { installRangoMcp } from "./devtools-mcp.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 import { resolveRscEntryFromConfig } from "./utils/shared-utils.js";
 import {
@@ -545,6 +550,64 @@ export function createRouterDiscoveryPlugin(
       const getDevServerOrigin = () =>
         server.resolvedUrls?.local?.[0]?.replace(/\/$/, "") ||
         `http://localhost:${server.config.server.port || 5173}`;
+      const mcp = installRangoMcp({
+        server,
+        projectRoot: s.projectRoot,
+        preset: opts?.preset ?? "node",
+        mode: viteMode,
+        entryFile: s.resolvedEntryPath,
+      });
+      const publishMcpRoutes = (
+        attempt: ReturnType<typeof mcp.beginDiscovery>,
+      ): void => {
+        try {
+          mcp.publishRoutes(
+            createMcpRouteSnapshot(s),
+            createMcpRouterSnapshot(s),
+            attempt,
+          );
+        } catch (error) {
+          mcp.failDiscovery(error, attempt);
+          server.config.logger.warn(
+            "[rango] MCP route snapshot projection failed; route discovery remains active",
+          );
+        }
+      };
+      const probeInitialCloudflareConvergence = (
+        expectedEpoch: number,
+      ): void => {
+        void (async () => {
+          const deadline = Date.now() + 15_000;
+          do {
+            if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch)
+              return;
+            try {
+              const response = await fetch(getDevServerOrigin() + "/", {
+                cache: "no-store",
+                headers: {
+                  [DEV_DISCOVERY_PROBE_HEADER]: String(expectedEpoch),
+                },
+                signal: AbortSignal.timeout(1_000),
+              });
+              if (
+                !devServerClosed &&
+                expectedEpoch === s.devDiscoveryEpoch &&
+                response.headers.get(DEV_DISCOVERY_EPOCH_HEADER) ===
+                  String(expectedEpoch)
+              ) {
+                mcp.markRuntimeConvergence("ready");
+                publishDevDiscoveryReady(expectedEpoch);
+                return;
+              }
+            } catch {}
+            await new Promise<void>((resolve) => setTimeout(resolve, 25));
+          } while (Date.now() < deadline);
+
+          if (expectedEpoch === s.devDiscoveryEpoch) {
+            mcp.markRuntimeConvergence("timeout");
+          }
+        })();
+      };
       let devServerClosed = false;
 
       // Shared temp server for Cloudflare dev (no module runner in workerd).
@@ -827,6 +890,7 @@ export function createRouterDiscoveryPlugin(
 
       const discover = async () => {
         const discoverStart = performance.now();
+        const discoveryAttempt = mcp.beginDiscovery();
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
           // Cloudflare dev: no module runner available (workerd-based RSC env).
@@ -857,17 +921,22 @@ export function createRouterDiscoveryPlugin(
                 getOrCreateTempServer(),
               )
             ).env;
-            if (tempRscEnv) {
-              optimizerHashBefore =
-                tempRscEnv.depsOptimizer?.metadata?.browserHash;
-              await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
-                discoverRouters(s, tempRscEnv),
-              );
-              timedSync(debugDiscovery, "writeRouteTypesFiles", () =>
-                writeRouteTypesFiles(s),
+            if (!tempRscEnv) {
+              throw new Error(
+                "temp runner unavailable for cloudflare route discovery",
               );
             }
+            optimizerHashBefore =
+              tempRscEnv.depsOptimizer?.metadata?.browserHash;
+            await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
+              discoverRouters(s, tempRscEnv),
+            );
+            timedSync(debugDiscovery, "writeRouteTypesFiles", () =>
+              writeRouteTypesFiles(s),
+            );
+            publishMcpRoutes(discoveryAttempt);
           } catch (err: any) {
+            mcp.failDiscovery(err, discoveryAttempt);
             emitDiscoveryFailure(
               err,
               optimizerHashBefore,
@@ -938,7 +1007,9 @@ export function createRouterDiscoveryPlugin(
           await timed(debugDiscovery, "propagateDiscoveryState", () =>
             propagateDiscoveryState(rscEnv),
           );
+          publishMcpRoutes(discoveryAttempt);
         } catch (err: any) {
+          mcp.failDiscovery(err, discoveryAttempt);
           emitDiscoveryFailure(
             err,
             optimizerHashBefore,
@@ -958,10 +1029,21 @@ export function createRouterDiscoveryPlugin(
       // resolved when discover() finishes, so the virtual manifest module's
       // load() awaits the populated state.
       beginDiscoveryGate();
-      setTimeout(
-        () => discover().then(resolveDiscoveryGate, resolveDiscoveryGate),
-        0,
-      );
+      setTimeout(() => {
+        const finishInitialDiscovery = (): void => {
+          resolveDiscoveryGate();
+          const rscEnv = (server.environments as any)?.rsc;
+          if (
+            !rscEnv?.runner &&
+            s.devDiscoveryEpoch !== undefined &&
+            mcp.getDiscoveryStatus().phase === "ready"
+          ) {
+            mcp.markRuntimeConvergence("pending");
+            probeInitialCloudflareConvergence(s.devDiscoveryEpoch);
+          }
+        };
+        void discover().then(finishInitialDiscovery, finishInitialDiscovery);
+      }, 0);
 
       // Dev-mode on-demand prerender endpoint.
       // When workerd hits a prerender route, it fetches this endpoint instead of
@@ -1530,6 +1612,7 @@ export function createRouterDiscoveryPlugin(
           let previousRouteShape = routeShapeSignature();
           await gate.runRefreshCycle(async () => {
             const hmrStart = performance.now();
+            const discoveryAttempt = mcp.beginDiscovery();
             try {
               if (hasMainRunner) {
                 await timed(debugDiscovery, "hmr discoverRouters", () =>
@@ -1566,6 +1649,7 @@ export function createRouterDiscoveryPlugin(
                   writeRouteTypesFiles(s),
                 );
               }
+              publishMcpRoutes(discoveryAttempt);
               if (s.lastDiscoveryError) {
                 debugDiscovery?.(
                   "hmr: cleared lastDiscoveryError (%s) after successful rediscovery",
@@ -1593,9 +1677,13 @@ export function createRouterDiscoveryPlugin(
                   s.devDiscoveryEpoch = expectedEpoch;
                 }
                 previousRouteShape = nextRouteShape;
+                if (expectedEpoch !== undefined) {
+                  mcp.markRuntimeConvergence("pending");
+                }
                 forceCloudflareWorkerReload(rscEnv, expectedEpoch);
               }
             } catch (err: any) {
+              mcp.failDiscovery(err, discoveryAttempt);
               s.lastDiscoveryError = {
                 message: err?.message ?? String(err),
                 at: Date.now(),
@@ -1646,7 +1734,12 @@ export function createRouterDiscoveryPlugin(
           rscEnv: any,
           expectedEpoch: number | undefined,
         ) => {
-          if (!rscEnv?.hot) return;
+          if (!rscEnv?.hot) {
+            if (expectedEpoch !== undefined) {
+              mcp.markRuntimeConvergence("timeout");
+            }
+            return;
+          }
 
           const graph = rscEnv.moduleGraph;
           const reloadWorkerd = () => {
@@ -1686,6 +1779,7 @@ export function createRouterDiscoveryPlugin(
                   response.headers.get(DEV_DISCOVERY_EPOCH_HEADER) ===
                     String(expectedEpoch)
                 ) {
+                  mcp.markRuntimeConvergence("ready");
                   publishDevDiscoveryReady(expectedEpoch);
                   return;
                 }
@@ -1700,6 +1794,9 @@ export function createRouterDiscoveryPlugin(
               "hmr: workerd readiness probe timed out at epoch %d",
               expectedEpoch,
             );
+            if (expectedEpoch === s.devDiscoveryEpoch) {
+              mcp.markRuntimeConvergence("timeout");
+            }
           })();
         };
 
@@ -1855,6 +1952,7 @@ export function createRouterDiscoveryPlugin(
             // by the trailing refreshRuntimeDiscovery() cycle.
             if (s.perRouterManifests.length > 0) {
               gate.noteRouteEvent();
+              mcp.markDiscoveryPending();
             }
             scheduleRouteRegeneration();
           } catch (readErr: any) {

@@ -128,6 +128,18 @@ test("build test-app", async () => {
       .join("\n")}`,
   ).toEqual([]);
 
+  const mcpLeaks = readJsFiles(path.join(cwd, "dist"))
+    .filter(
+      (file) =>
+        file.src.includes("/__rango/mcp") ||
+        file.src.includes("@modelcontextprotocol/sdk"),
+    )
+    .map((file) => path.relative(cwd, file.file));
+  expect(
+    mcpLeaks,
+    "Production application bundles must not contain the dev-only MCP endpoint or SDK",
+  ).toEqual([]);
+
   // Prefetch fetch/queue machinery must stay off the eager startup path. The
   // request header is a stable marker owned by browser/prefetch/fetch.ts; the
   // small shared viewport observer intentionally remains eager so it can load

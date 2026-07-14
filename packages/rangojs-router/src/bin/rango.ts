@@ -59,6 +59,41 @@ if (command === "generate") {
   } else {
     runStaticGeneration(positionalArgs, mode);
   }
+} else if (command === "mcp") {
+  let projectRoot = process.cwd();
+  let instanceId: string | undefined;
+
+  for (let i = 0; i < rawArgs.length; i++) {
+    const arg = rawArgs[i];
+    if (arg === "--root") {
+      const value = rawArgs[++i];
+      if (!value) {
+        console.error("[rango] --root requires a path argument");
+        process.exit(1);
+      }
+      projectRoot = resolve(value);
+    } else if (arg === "--instance") {
+      instanceId = rawArgs[++i];
+      if (!instanceId) {
+        console.error("[rango] --instance requires an ID argument");
+        process.exit(1);
+      }
+    } else {
+      console.error(`[rango] Unknown MCP option: ${arg}`);
+      process.exit(1);
+    }
+  }
+
+  import("../devtools-mcp/stdio-connector.js")
+    .then(({ runRangoMcpConnector }) =>
+      runRangoMcpConnector({ projectRoot, instanceId }),
+    )
+    .catch((error: unknown) => {
+      console.error(
+        `[rango] MCP connector failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    });
 } else {
   if (
     command &&
@@ -68,7 +103,9 @@ if (command === "generate") {
   ) {
     console.error(`[rango] Unknown command: ${command}\n`);
   }
-  console.log(`Usage: rango generate <file|dir> [file2 ...] [--runtime|--static] [--config <path>]
+  console.log(`Usage:
+  rango generate <file|dir> [file2 ...] [--runtime|--static] [--config <path>]
+  rango mcp [--root <path>] [--instance <id>]
 
   Auto-detects file type (createRouter, urls) and generates
   the appropriate .gen.ts route type files.
@@ -81,6 +118,8 @@ Modes:
 
 Options:
   --config <path>  Path to vite.config.ts (--runtime only, auto-detected if omitted)
+  --root <path>    Project root for MCP runtime discovery (defaults to cwd)
+  --instance <id>  Select one dev server when multiple instances use the same root
 
 Examples:
   rango generate src/router.tsx

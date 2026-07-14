@@ -339,6 +339,33 @@ export default createRouter({ document: Document }).routes(urlpatterns);
 
 Use `/typesafety` for type-safe href and environment setup.
 
+## CLI: `rango mcp`
+
+`rango mcp` is the stdio connector for Rango's development-only MCP endpoint.
+With the Vite dev server running, an agent can inspect live project metadata,
+runtime-discovered routes, and route-discovery freshness/errors. The tools are
+read-only; request traces, logs, browser state, and runtime errors are not part
+of the current surface.
+
+Treat `stale: true` as last-good route data, not current readiness. Route edits
+mark it immediately, before HMR's debounce. On Cloudflare,
+`runtimeConvergence: "pending" | "timeout"` means workerd has not yet proven it
+is serving the discovered route generation. Follow `nextCursor` until null;
+route records and pages report `truncated` when safety limits apply.
+Project metadata similarly reports `routersTruncated` when its router summary is
+bounded and `urlsTruncated` when its server URL summary is bounded. Complete tool
+results are capped at 256 KiB.
+
+```bash
+rango mcp
+rango mcp --root ./apps/store
+rango mcp --root ./apps/store --instance <id>
+```
+
+The connector discovers a token-protected loopback endpoint and bypasses HTTP
+proxy environment variables. Production builds and preview servers do not mount
+it.
+
 ## CLI: `npx rango generate`
 
 Single command to generate `.gen.ts` route type files. Auto-detects file type and

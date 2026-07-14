@@ -71,6 +71,42 @@ is at `skills/catalog.json`.
   The files are plain markdown; cross-references like `/loader` name sibling
   skill directories.
 
+## Inspecting a running app with MCP
+
+Rango's development server exposes live project, route, and discovery metadata
+to MCP-compatible coding agents. Add the connector to your project's MCP
+configuration:
+
+```json
+{
+  "mcpServers": {
+    "rango-devtools": {
+      "command": "npx",
+      "args": ["-y", "@rangojs/router@experimental", "mcp"]
+    }
+  }
+}
+```
+
+Start the app with `pnpm dev`. The connector discovers the running Rango server
+for the project and provides three read-only tools:
+
+- `get_project_metadata` - root, preset, entry, version, server URLs, and routers;
+- `get_routes` - paginated runtime-discovered routes, including dynamic factories;
+- `get_discovery_status` - generation, freshness, route counts, and the latest
+  discovery error. On Cloudflare it also reports whether workerd has adopted the
+  discovered route generation.
+
+Use `rango mcp --root <path>` when the MCP process does not start in the project
+root. When multiple dev servers use one root, select one with
+`--instance <id>`. The Streamable HTTP endpoint is development-only,
+loopback-only, and protected by a per-process credential that the connector
+reads from an owner-only runtime descriptor. It is not mounted by `vite build`
+or `vite preview`. The connector ignores HTTP proxy environment variables for
+this credential-bearing loopback connection. For a local HTTPS server with a
+self-signed certificate, use Node's standard `NODE_TLS_REJECT_UNAUTHORIZED=0`
+development override.
+
 ## 1. Pages
 
 A router is a tree. `path()` places a page, `layout()` wraps children,

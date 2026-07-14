@@ -93,6 +93,15 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 `rango generate` — static/runtime route-type extraction for CI and repo bootstrapping.
 
+`rango mcp` — stdio MCP connector for the running Vite development server. It
+discovers owner-only runtime descriptors under `~/.rango/mcp`, forwards the
+read-only `get_project_metadata`, `get_routes`, and `get_discovery_status` tools
+to the token-protected `/__rango/mcp` Streamable HTTP endpoint, and supports
+`--root` / `--instance` selection. The endpoint exists only in `configureServer`;
+build and preview do not mount it. Discovery snapshots are last-good and
+attempt-ordered; cursors bind to one process and generation. Cloudflare status
+separately reports workerd route-generation convergence.
+
 ---
 
 ## Client API

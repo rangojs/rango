@@ -33,4 +33,12 @@ describe("package manifest", () => {
   it("keeps the typescript range on compiler-API majors (5/6)", () => {
     expect(pkg.dependencies.typescript).toBe("^5.3.0 || ^6.0.0");
   });
+
+  it("ships the MCP SDK and its schema peer for the Vite endpoint and CLI", () => {
+    expect(pkg.dependencies["@modelcontextprotocol/sdk"]).toBe("1.29.0");
+    expect(pkg.dependencies.undici).toBe("^7.28.0");
+    expect(pkg.dependencies.zod).toBe("^4.0.0");
+    expect(pkg.devDependencies["@modelcontextprotocol/sdk"]).toBeUndefined();
+    expect(pkg.devDependencies.zod).toBeUndefined();
+  });
 });
