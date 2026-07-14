@@ -175,8 +175,13 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       name: "@rangojs/router:cloudflare-integration",
       enforce: "pre",
 
-      config() {
+      config(_userConfig, configEnv) {
         return {
+          define: {
+            __RANGO_DEV_DIAGNOSTICS__: JSON.stringify(
+              configEnv.command === "serve",
+            ),
+          },
           optimizeDeps: {
             exclude: excludeDeps,
             rolldownOptions: sharedRolldownOptions,
@@ -364,6 +369,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       enforce: "pre",
 
       config(_userConfig, configEnv) {
+        const diagnosticsDefine = {
+          __RANGO_DEV_DIAGNOSTICS__: JSON.stringify(
+            configEnv.command === "serve",
+          ),
+        };
         // Fold NODE_ENV for the vercel preset's build. The cloudflare plugin
         // does this automatically and node apps do it themselves; vercel has no
         // platform plugin, so without this React's CJS dev branch survives and
@@ -390,7 +400,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             ? { resolve: { noExternal: true as const } }
             : undefined;
         return {
-          ...(vercelDefine ? { define: vercelDefine } : {}),
+          define: { ...diagnosticsDefine, ...vercelDefine },
           optimizeDeps: {
             exclude: excludeDeps,
             rolldownOptions: sharedRolldownOptions,

@@ -386,27 +386,31 @@ describe("telemetry sink", () => {
   });
 
   describe("getRequestId", () => {
-    it("returns header value when x-request-id is set", () => {
+    it("does not trust x-request-id as the telemetry identity", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-request-id": "abc-123" },
       });
-      expect(getRequestId(req)).toBe("abc-123");
+      expect(getRequestId(req)).toMatch(/^req-[0-9a-f-]{36}$/);
+      expect(getRequestId(req)).not.toBe("abc-123");
     });
 
-    it("prefers x-rsc-router-request-id over x-request-id", () => {
+    it("does not trust x-rsc-router-request-id as the telemetry identity", () => {
       const req = new Request("http://localhost/", {
         headers: {
           "x-rsc-router-request-id": "rsc-1",
           "x-request-id": "generic-1",
         },
       });
-      expect(getRequestId(req)).toBe("rsc-1");
+      expect(getRequestId(req)).toMatch(/^req-[0-9a-f-]{36}$/);
+      expect(getRequestId(req)).not.toBe("rsc-1");
     });
 
-    it("generates an internal ID when no header is present", () => {
+    it("generates a cryptographically random server ID", () => {
       const req = new Request("http://localhost/");
       const id = getRequestId(req);
-      expect(id).toMatch(/^t-[0-9a-z]+$/);
+      expect(id).toMatch(
+        /^req-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
     });
 
     it("returns the same ID for the same Request object", () => {

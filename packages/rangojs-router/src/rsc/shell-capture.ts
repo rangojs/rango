@@ -56,6 +56,7 @@ import {
   getRecordingStore,
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
+import { runWithDevelopmentDiagnosticsDisabled } from "../router/diagnostics/channel.js";
 import type { SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
@@ -1158,49 +1159,56 @@ async function attemptCapture(
   );
   const captureStartedAt = Date.now();
 
-  return runWithRequestContext(derivedCtx, async () => {
-    const match = await ctx.router.match(request, { env });
-    // A route that redirects has no shell to capture — bail (no store write, no
-    // retry: a redirect is deterministic).
-    if (match.redirect) return "redirect";
+  const capture = () =>
+    runWithRequestContext(derivedCtx, async () => {
+      const match = await ctx.router.match(request, { env });
+      // A route that redirects has no shell to capture — bail (no store write, no
+      // retry: a redirect is deterministic).
+      if (match.redirect) return "redirect";
 
-    setRequestContextParams(match.params, match.routeName);
+      setRequestContextParams(match.params, match.routeName);
 
-    const payload = buildFullPayload(
-      match,
-      ctx,
-      url,
-      derivedCtx,
-      freshHandleStore,
-    );
-    const flightStage = renderRscFlightStage({
-      ctx,
-      request,
-      env,
-      url,
-      payload,
-      tracking: {
-        mode: "full",
-        routeKey: derivedCtx._routeName,
-      },
+      const payload = buildFullPayload(
+        match,
+        ctx,
+        url,
+        derivedCtx,
+        freshHandleStore,
+      );
+      const flightStage = renderRscFlightStage({
+        ctx,
+        request,
+        env,
+        url,
+        payload,
+        tracking: {
+          mode: "full",
+          routeKey: derivedCtx._routeName,
+        },
+      });
+
+      // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
+      // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
+      // captureAndStoreShell, not here: a tag recorded AFTER an await in async shell
+      // content (and tags propagated by async cache()/"use cache" reads) lands after
+      // this synchronous construction point, so snapshotting here dropped it — the
+      // shell-tag snapshot must sit behind the quiesce gate (issue #676).
+      return captureAndStoreShell(
+        ssrModule,
+        flightStage.stream,
+        freshHandleStore,
+        derivedCtx,
+        descriptor,
+        stats,
+        captureStartedAt,
+      );
     });
-
-    // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
-    // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
-    // captureAndStoreShell, not here: a tag recorded AFTER an await in async shell
-    // content (and tags propagated by async cache()/"use cache" reads) lands after
-    // this synchronous construction point, so snapshotting here dropped it — the
-    // shell-tag snapshot must sit behind the quiesce gate (issue #676).
-    return captureAndStoreShell(
-      ssrModule,
-      flightStage.stream,
-      freshHandleStore,
-      derivedCtx,
-      descriptor,
-      stats,
-      captureStartedAt,
-    );
-  });
+  return runWithDevelopmentDiagnosticsDisabled(
+    request,
+    ctx.router.id,
+    "shellCapture",
+    capture,
+  );
 }
 
 /**

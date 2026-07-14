@@ -60,9 +60,10 @@
  *   after finalizeResponse (segmentCount 0 / cacheHit false — dispatch renders no
  *   RSC segments and holds no match-cache state), and a thrown non-Response error
  *   emits request.error with phase "routing". All three carry the same requestId
- *   (getRequestId). Emission is gated entirely on a configured sink; with none,
- *   dispatch does zero new work and stays byte-identical for existing callers.
- *   Lets a consumer unit-test their sink wiring in-process instead of only at e2e.
+ *   (getRequestId). Public emission remains gated on a configured sink;
+ *   development also projects the same lifecycle into the internal diagnostic
+ *   hub through a no-op sink. Lets a consumer unit-test their sink wiring
+ *   in-process instead of only at e2e.
  * - Response-route `renderStartMs` timeouts and `onTimeout`: dispatch races the
  *   same terminal response work, reports the timeout through onError/telemetry,
  *   and invokes the configured callback. `context.render` is absent because this
@@ -154,6 +155,12 @@ import {
   withTimeout,
 } from "../router/timeout.js";
 import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
+import {
+  isDevelopmentDiagnosticsEnabled,
+  runWithRequestDiagnostics,
+} from "../router/diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "../router/diagnostics/hub.js";
+import { runWithRequestTransaction } from "../router/request-identity.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -330,7 +337,7 @@ function serializeResponseRouteError(
  * expect(await res.json()).toEqual({ ok: true });
  * ```
  */
-export async function dispatch<TEnv = any>(
+export function dispatch<TEnv = any>(
   publicRouter: Rango<TEnv, any>,
   opts: DispatchOptions<TEnv>,
 ): Promise<Response> {
@@ -339,11 +346,33 @@ export async function dispatch<TEnv = any>(
   // real router with no cast.
   const router = publicRouter as unknown as DispatchableRouter<TEnv>;
   const req = toRequest(opts.request);
+  const routerId = router.id ?? router.routerId;
+  const execute = (): Promise<Response> =>
+    DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled()
+      ? runWithRequestTransaction(
+          req,
+          "match",
+          () => dispatchRequest(router, opts, req, routerId),
+          { routerId: routerId ?? "unknown", diagnosticsEnabled: true },
+        )
+      : dispatchRequest(router, opts, req, routerId);
+  return DEVELOPMENT_DIAGNOSTICS_ENABLED
+    ? runWithRequestDiagnostics(req, routerId ?? "unknown", execute, {
+        echoRequestId: false,
+      })
+    : execute();
+}
+
+async function dispatchRequest<TEnv>(
+  router: DispatchableRouter<TEnv>,
+  opts: DispatchOptions<TEnv>,
+  req: Request,
+  routerId: string | undefined,
+): Promise<Response> {
   const url = new URL(req.url);
   const env = (opts.env ?? {}) as TEnv;
 
   // Seed the per-router manifest so reverse() resolves during handler execution.
-  const routerId = router.id ?? router.routerId;
   if (routerId) {
     setRouterManifest(routerId, router.routeMap as Record<string, string>);
   }
@@ -452,15 +481,16 @@ export async function dispatch<TEnv = any>(
   // Telemetry: mirror the router's match-transaction lifecycle onto the
   // configured sink so a consumer can unit-test createRouter({ telemetry })
   // wiring in-process (the dogfood gap the RSC-free dispatch left — see
-  // tests/cloudflare-basic/test/cache-status.test.ts). Every emit is gated on
-  // `sink` truthiness: with no sink configured dispatch does zero new work and
-  // stays byte-identical for existing callers. Only request.start/end/error are
-  // reachable here — cache.decision and loader.* originate in the real match()/
-  // matchPartial() + RSC render pipeline dispatch deliberately does not run
-  // (module header), so fabricating them would violate the no-fake rule.
+  // tests/cloudflare-basic/test/cache-status.test.ts). Public emission remains
+  // gated on `sink`; development also feeds the internal diagnostic hub through
+  // the no-op sink. Only request.start/end/error are reachable here —
+  // cache.decision and loader.* originate in the real match()/matchPartial() +
+  // RSC render pipeline dispatch deliberately does not run (module header), so
+  // fabricating them would violate the no-fake rule.
   const sink = router.telemetry;
-  const telemetryRequestId = sink ? getRequestId(req) : undefined;
-  const telemetryStart = sink ? performance.now() : 0;
+  const emitEvents = sink !== undefined || isDevelopmentDiagnosticsEnabled();
+  const telemetryRequestId = emitEvents ? getRequestId(req) : undefined;
+  const telemetryStart = emitEvents ? performance.now() : 0;
 
   return runWithRequestContext(requestContext, async () => {
     // Set params before middleware/handler run, so global middleware sees
@@ -705,7 +735,7 @@ export async function dispatch<TEnv = any>(
         },
         "RSC",
       );
-      if (sink) {
+      if (emitEvents) {
         safeEmit(resolveSink(sink), {
           type: "request.timeout",
           timestamp: performance.now(),
@@ -766,7 +796,7 @@ export async function dispatch<TEnv = any>(
     // request.start opens the match transaction, mirroring match-handlers.ts.
     // transaction is always "match" (dispatch has no matchPartial split);
     // isPartial carries the ?_rsc_partial signal the same way production does.
-    if (sink) {
+    if (emitEvents) {
       safeEmit(resolveSink(sink), {
         type: "request.start",
         timestamp: telemetryStart,
@@ -831,7 +861,7 @@ export async function dispatch<TEnv = any>(
       // request.end closes the transaction. dispatch produces no RSC segments and
       // holds no match-cache state, so segmentCount/cacheHit are 0/false — the
       // same shape production emits for its own redirect (segment-less) result.
-      if (sink) {
+      if (emitEvents) {
         safeEmit(resolveSink(sink), {
           type: "request.end",
           timestamp: performance.now(),
@@ -856,7 +886,7 @@ export async function dispatch<TEnv = any>(
       // redirects are already resolved at createSimpleRedirectResponse time.
       return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
     } catch (error) {
-      if (sink) {
+      if (emitEvents) {
         if (error instanceof Response) {
           // executeMiddleware absorbs a middleware-thrown Response and returns it
           // (middleware.ts:566), so a thrown Response never actually reaches this

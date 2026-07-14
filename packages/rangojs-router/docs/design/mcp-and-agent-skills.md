@@ -1,6 +1,6 @@
 # Rango MCP and agent skills
 
-Status: **Phase 0 implemented; request diagnostics proposed**.
+Status: **Phases 0-1 implemented; request MCP tools proposed**.
 
 Rango already ships version-matched reference skills, route-manifest inspection,
 structured telemetry, performance waterfalls, cache signals, PPR signals, and a
@@ -48,11 +48,20 @@ MCP tool result, including its text and structured representations, is capped at
 Discovery error text is bounded, strips control characters, makes project paths
 relative, and redacts credential-shaped and URL-query values before MCP output.
 
-This phase does not claim request traces, compilation state, browser state,
-runtime errors, logs, or cache/PPR/loader explanations. Those require the
-cross-runtime diagnostic hub described below. Keeping the boundary explicit
-prevents a route-inspection tool from presenting partial telemetry as a complete
-request explanation.
+Phase 1 adds a development-only runtime diagnostic core. One server-owned
+request ID now joins logging, telemetry, and bounded request traces; inbound
+browser/proxy IDs remain separate client-correlation hints. Existing request
+classification, phase/loader timing, coarse cache events, errors, revalidation
+traces, and foreground render stages project into a fail-open in-memory hub even
+when the application has no `TelemetrySink`. PPR shell-capture work is excluded
+until it can receive a separate linked background trace.
+
+The hub is still realm-local. The Vite-hosted MCP endpoint does not claim request
+traces, compilation state, browser state, logs, or detailed cache/PPR/loader-lane
+explanations yet. Phase 2 owns the explicit bounded bridge from Node module-runner
+realms and Cloudflare workerd into Vite plus the request/error tools. Keeping that
+boundary visible prevents route inspection from presenting partial telemetry as
+a complete request explanation.
 
 ## Goals
 
@@ -166,10 +175,10 @@ skills consume. Human formatting is a presentation layer, not the protocol.
 router and Vite instrumentation sites
                  |
                  v
-       development diagnostic hub (proposed)
+       development diagnostic hub (Phase 1)
        - request-correlated events
        - bounded in-memory retention
-       - explanation projection
+       - redacted raw request traces
                  |
                  v
         Vite development endpoint
@@ -205,10 +214,11 @@ should still happen at one instrumentation site: the runtime may project a
 public telemetry event and a richer development event from the same local facts,
 but two independently maintained emit paths are rejected.
 
-The current code has separate request-ID stores in `router/telemetry.ts` and
-`router/logging.ts`. MCP correlation requires one request identity service used
-by logging, telemetry, debug headers, and the diagnostic hub. Unifying that is a
-prerequisite, not an optional cleanup.
+`router/request-identity.ts` is the single request and transaction identity
+service used by logging, telemetry, testing dispatch, and the diagnostic hub.
+The server ID is cryptographically random. A bounded
+`x-rsc-router-request-id`, `x-request-id`, or `cf-ray` value is retained only as
+`clientCorrelationId`, never trusted as the trace identity.
 
 ### Vite endpoint and MCP transport
 
@@ -250,11 +260,11 @@ but it never replaces the server identity: browser counters restart, callers can
 reuse values, and arbitrary header values are untrusted.
 
 The initial document request cannot be stamped by client JavaScript. In
-development, ordinary application responses may echo the server-owned ID only
-from an outer response adapter after cache capture or retrieval. It must never be
-baked into a document or PPR shell cache, and protocol-switch/WebSocket responses
-are exempt when rewrapping would lose platform state. The response header and
-all browser-side correlation code are absent from production builds.
+development, the outer response adapter echoes the server-owned ID as
+`X-Rango-Request-Id` after cache capture or retrieval. It is never baked into a
+document or PPR shell cache, and protocol-switch/WebSocket responses are exempt
+when rewrapping would lose platform state. The response header and all
+browser-side correlation code are absent from production builds.
 
 When a driver cannot set a request header, tools support bounded lookup by
 router, pathname, transport kind, and start time. That fallback must report
@@ -639,19 +649,21 @@ Exit criterion: an MCP client can inspect truthful runtime route state in both
 Node and Cloudflare development, while paired production tests receive no MCP
 response.
 
-### Phase 1: correlation and diagnostic core
+### Phase 1: correlation and diagnostic core (implemented)
 
 - Unify request and transaction identity across logging, telemetry, debug
   signals, and the new hub.
 - Add the bounded, redacting diagnostic hub behind a compile-time development
   gate.
 - Project current request, loader, error, cache, and revalidation events into
-  traces without changing public telemetry.
+  traces without changing the public telemetry event vocabulary or sink
+  delivery. Telemetry `requestId` values become server-owned; inbound IDs remain
+  separate, bounded client correlation.
 - Add dropped-event and truncation reporting.
 
 Exit criterion: one full request and one partial request can be retrieved by
 request ID with route, loader timing, coarse cache state, revalidation, and
-errors.
+errors inside the runtime realm. Cross-realm MCP retrieval remains Phase 2.
 
 ### Phase 2: MCP and Vite integration
 

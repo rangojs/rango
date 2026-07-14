@@ -325,8 +325,14 @@ const router = createRouter({
 ## Event Types
 
 All events include a `timestamp` (from `performance.now()`) and an optional
-`requestId` extracted from request headers. The router checks
-`x-rsc-router-request-id`, `x-request-id`, and `cf-ray` (in that order).
+cryptographically random, server-owned `requestId`. The same `Request` keeps one
+ID across logging, telemetry, and development diagnostics. Inbound
+`x-rsc-router-request-id`, `x-request-id`, and `cf-ray` values are untrusted
+correlation hints: development diagnostics retain the first present, bounded
+value separately as `clientCorrelationId`; it never replaces `requestId`.
+Ordinary development responses expose the same server-owned value through
+`X-Rango-Request-Id` for browser/framework correlation. The header is absent in
+production and is added after cache capture or retrieval.
 
 | Event                     | Lifecycle                                             |
 | ------------------------- | ----------------------------------------------------- |

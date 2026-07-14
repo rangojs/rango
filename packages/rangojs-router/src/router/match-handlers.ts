@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
-import { sanitizeError } from "../errors";
+import { isRouteNotFoundError, sanitizeError } from "../errors";
 import type {
   ErrorBoundaryHandler,
   ErrorInfo,
@@ -33,7 +33,6 @@ import { previewMatch as _previewMatch } from "./preview-match.js";
 import {
   runWithRouterLogContext,
   withRouterLogScope,
-  isRouterDebugEnabled,
   startRevalidationTrace,
   flushRevalidationTrace,
 } from "./logging.js";
@@ -48,6 +47,7 @@ import {
 } from "./telemetry.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { evaluatePprTransitionWhen } from "./transition-when.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "./diagnostics/hub.js";
 
 /**
  * Per-call telemetry lifecycle emitter for match()/matchPartial(). Each method
@@ -164,6 +164,7 @@ export interface MatchHandlerDeps<TEnv = any> {
     selectorContext: InterceptSelectorContext | null,
     isAction: boolean,
   ) => { intercept: InterceptEntry; entry: EntryData } | null;
+  routerId?: string;
   telemetry?: TelemetrySink;
   /**
    * DEVELOPMENT/TEST ONLY gate for the X-Rango-Cache debug header. When true,
@@ -219,6 +220,7 @@ export function createMatchHandlers<TEnv = any>(
   } = deps;
   const hasTelemetry = !!deps.telemetry;
   const telemetry = resolveSink(deps.telemetry);
+  const diagnosticsAvailable = DEVELOPMENT_DIAGNOSTICS_ENABLED;
   const cacheSignalEnabled = !!deps.cacheSignalEnabled;
   const buildSignal = (
     routeKey: string,
@@ -301,14 +303,24 @@ export function createMatchHandlers<TEnv = any>(
     // cache.decision/request.end stamped with the same WeakMap-keyed requestId
     // would double-count dashboards. Derived here (inside the capture's active
     // request-context ALS) so the read sees the derived context, not module state.
-    const emitTelemetry =
-      hasTelemetry && !_getRequestContext()?._shellCaptureRun;
-    const requestId = emitTelemetry ? getRequestId(request) : undefined;
-    return runWithRouterLogContext({ request, transaction: "match" }, () => {
+    const shellCapture = _getRequestContext()?._shellCaptureRun === true;
+    const emitTelemetry = hasTelemetry && !shellCapture;
+    const emitDiagnostics = diagnosticsAvailable && !shellCapture;
+    const emitEvents = emitTelemetry || emitDiagnostics;
+    const requestId = emitEvents ? getRequestId(request) : undefined;
+    const logOptions = {
+      request,
+      transaction: "match",
+      ...(DEVELOPMENT_DIAGNOSTICS_ENABLED && {
+        routerId: deps.routerId,
+        diagnosticsEnabled: emitDiagnostics,
+      }),
+    } as const;
+    return runWithRouterLogContext(logOptions, () => {
       const routerCtx = buildRouterContext();
       // Also mute in-pipeline observeEvent emitters (revalidation.decision,
       // cache-lookup's cache.decision) which read routerCtx.telemetry.
-      if (!emitTelemetry) routerCtx.telemetry = undefined;
+      routerCtx.telemetry = emitEvents ? telemetry : undefined;
       routerCtx.requestId = requestId;
       return runWithRouterContext(routerCtx, async () =>
         withRouterLogScope("match", async () => {
@@ -317,7 +329,7 @@ export function createMatchHandlers<TEnv = any>(
             _getRequestContext()?.url?.pathname ??
             new URL(request.url).pathname;
           const emitter = createLifecycleEmitter({
-            enabled: emitTelemetry,
+            enabled: emitEvents,
             sink: telemetry,
             requestId,
             method: request.method,
@@ -329,7 +341,24 @@ export function createMatchHandlers<TEnv = any>(
           emitter.start();
 
           const ctxBuildStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
-          const result = await createMatchContextForFull(request, env);
+          let result: Awaited<ReturnType<typeof createMatchContextForFull>>;
+          try {
+            result = await createMatchContextForFull(request, env);
+          } catch (error) {
+            if (error instanceof Response) {
+              emitter.end(0, false, error.status);
+              throw error;
+            }
+            if (isRouteNotFoundError(error)) {
+              emitter.end(0, false, 404);
+              throw error;
+            }
+            emitter.error(
+              error instanceof Error ? error : new Error(String(error)),
+              "routing",
+            );
+            throw error;
+          }
           if (INTERNAL_RANGO_DEBUG) {
             console.log(
               `[Server][match] context built +${Math.round(performance.now() - ctxBuildStart)}ms (abs ${Math.round(performance.now())})`,
@@ -349,9 +378,9 @@ export function createMatchHandlers<TEnv = any>(
           }
 
           const ctx = result as MatchContext<TEnv>;
-          evaluatePprTransitionWhenForMatch(ctx, false);
 
           try {
+            evaluatePprTransitionWhenForMatch(ctx, false);
             const state = createPipelineState();
             const pipeline = createMatchPartialPipeline(ctx, state);
             const pipeStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
@@ -361,7 +390,7 @@ export function createMatchHandlers<TEnv = any>(
                 `[Server][match] pipeline collected +${Math.round(performance.now() - pipeStart)}ms (abs ${Math.round(performance.now())})`,
               );
             }
-            if (hasTelemetry || cacheSignalEnabled) {
+            if (emitEvents || cacheSignalEnabled) {
               const signalSegments = buildSignal(ctx.routeKey, state);
               recordSignalIfEnabled(signalSegments);
               emitter.cacheDecision(ctx.routeKey, state, signalSegments);
@@ -425,14 +454,23 @@ export function createMatchHandlers<TEnv = any>(
   ): Promise<MatchResult | null> {
     // See match() above: the PPR shell capture re-runs matchPartial() under a
     // _shellCaptureRun context and must stay invisible to the sink.
-    const emitTelemetry =
-      hasTelemetry && !_getRequestContext()?._shellCaptureRun;
-    const partialRequestId = emitTelemetry ? getRequestId(request) : undefined;
+    const shellCapture = _getRequestContext()?._shellCaptureRun === true;
+    const emitTelemetry = hasTelemetry && !shellCapture;
+    const emitDiagnostics = diagnosticsAvailable && !shellCapture;
+    const emitEvents = emitTelemetry || emitDiagnostics;
+    const partialRequestId = emitEvents ? getRequestId(request) : undefined;
     return runWithRouterLogContext(
-      { request, transaction: "matchPartial" },
+      {
+        request,
+        transaction: "matchPartial",
+        ...(DEVELOPMENT_DIAGNOSTICS_ENABLED && {
+          routerId: deps.routerId,
+          diagnosticsEnabled: emitDiagnostics,
+        }),
+      },
       () => {
         const routerCtx = buildRouterContext();
-        if (!emitTelemetry) routerCtx.telemetry = undefined;
+        routerCtx.telemetry = emitEvents ? telemetry : undefined;
         routerCtx.requestId = partialRequestId;
         return runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("matchPartial", async () => {
@@ -441,7 +479,7 @@ export function createMatchHandlers<TEnv = any>(
               _getRequestContext()?.url?.pathname ??
               new URL(request.url).pathname;
             const emitter = createLifecycleEmitter({
-              enabled: emitTelemetry,
+              enabled: emitEvents,
               sink: telemetry,
               requestId: partialRequestId,
               method: request.method,
@@ -452,18 +490,35 @@ export function createMatchHandlers<TEnv = any>(
             });
             emitter.start();
 
-            const ctx = await createMatchContextForPartial(
-              request,
-              context,
-              actionContext,
-            );
+            let ctx: Awaited<ReturnType<typeof createMatchContextForPartial>>;
+            try {
+              ctx = await createMatchContextForPartial(
+                request,
+                context,
+                actionContext,
+              );
+            } catch (error) {
+              if (error instanceof Response) {
+                emitter.end(0, false, error.status);
+                throw error;
+              }
+              if (isRouteNotFoundError(error)) {
+                emitter.end(0, false, 404);
+                throw error;
+              }
+              emitter.error(
+                error instanceof Error ? error : new Error(String(error)),
+                "routing",
+              );
+              throw error;
+            }
             if (!ctx) {
               emitter.end(0, false);
               return null;
             }
-            evaluatePprTransitionWhenForMatch(ctx, true);
 
-            if (isRouterDebugEnabled()) {
+            try {
+              evaluatePprTransitionWhenForMatch(ctx, true);
               startRevalidationTrace({
                 method: request.method,
                 prevUrl: ctx.prevUrl.href,
@@ -472,9 +527,6 @@ export function createMatchHandlers<TEnv = any>(
                 isAction: !!actionContext,
                 stale: ctx.stale || undefined,
               });
-            }
-
-            try {
               const state = createPipelineState();
               const pipeline = createMatchPartialPipeline(ctx, state);
               const matchResult = await collectMatchResult(
@@ -483,7 +535,7 @@ export function createMatchHandlers<TEnv = any>(
                 state,
               );
               flushRevalidationTrace();
-              if (hasTelemetry || cacheSignalEnabled) {
+              if (emitEvents || cacheSignalEnabled) {
                 const signalSegments = buildSignal(ctx.routeKey, state);
                 recordSignalIfEnabled(signalSegments);
                 emitter.cacheDecision(ctx.routeKey, state, signalSegments);

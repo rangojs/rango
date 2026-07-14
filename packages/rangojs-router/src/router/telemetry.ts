@@ -14,10 +14,14 @@
  *   - revalidation.decision          (revalidation evaluation)
  */
 
+import { recordTelemetryDiagnostic } from "./diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "./diagnostics/hub.js";
+import { getServerRequestId } from "./request-identity.js";
+
 interface BaseEvent {
   /** Monotonic timestamp from performance.now() */
   timestamp: number;
-  /** Request ID (from header or generated) */
+  /** Cryptographically random, server-owned request ID. */
   requestId?: string;
 }
 
@@ -271,6 +275,13 @@ export function resolveSink(sink: TelemetrySink | undefined): TelemetrySink {
  * telemetry failures from affecting request handling.
  */
 export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
+  if (DEVELOPMENT_DIAGNOSTICS_ENABLED) {
+    try {
+      recordTelemetryDiagnostic(event);
+    } catch {
+      // Development diagnostics must never prevent public telemetry delivery.
+    }
+  }
   try {
     sink.emit(event);
   } catch (e) {
@@ -281,37 +292,14 @@ export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
   }
 }
 
-const requestIds = new WeakMap<Request, string>();
-let telemetryRequestCounter = 0;
-
 /**
  * Get or create a request ID for telemetry correlation.
- * Checks standard headers first (x-rsc-router-request-id, x-request-id,
- * cf-ray), then generates an internal ID when none is present.
- * Generated IDs use format "t-{base36}" to distinguish from header values.
+ * The ID is always server-owned. Inbound x-rsc-router-request-id, x-request-id,
+ * and cf-ray values are retained separately as bounded client correlation by
+ * request-identity.ts and never become the trace identity.
  */
 export function getRequestId(request: Request): string {
-  const existing = requestIds.get(request);
-  if (existing) return existing;
-
-  const candidate =
-    request.headers.get("x-rsc-router-request-id") ??
-    request.headers.get("x-request-id") ??
-    request.headers.get("cf-ray");
-
-  let id: string;
-  if (candidate) {
-    const trimmed = candidate.trim();
-    id =
-      trimmed.length > 0
-        ? trimmed
-        : `t-${(++telemetryRequestCounter).toString(36)}`;
-  } else {
-    id = `t-${(++telemetryRequestCounter).toString(36)}`;
-  }
-
-  requestIds.set(request, id);
-  return id;
+  return getServerRequestId(request);
 }
 
 /**

@@ -26,6 +26,14 @@ import { CacheScope } from "../../cache/cache-scope.js";
 import { cacheTag, recordRequestTags } from "../../cache/cache-tag.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
+import {
+  getDevelopmentDiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../../router/diagnostics/hub.js";
+import {
+  getRequestIdentity,
+  runWithRequestTransaction,
+} from "../../router/request-identity.js";
 
 // The drain lazily imports the Flight codec only for SETTLED bake-lane
 // containers; the real module pulls the virtual @vitejs/plugin-rsc import that
@@ -2173,6 +2181,47 @@ describe("runShellCapture", () => {
     );
 
     expect((reqCtx as any)._shellCaptureRun).toBeUndefined();
+  });
+
+  it("does not append capture render stages to the foreground diagnostic trace", async () => {
+    resetDevelopmentDiagnosticHub();
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({ prelude: enc("<body>x</body>"), postponed: null })),
+    );
+    const reqCtx = makeReqCtx();
+    const request = new Request("http://localhost/p");
+
+    try {
+      await runWithRequestTransaction(
+        request,
+        "request",
+        () =>
+          runShellCapture(
+            ctx,
+            request,
+            {},
+            new URL(request.url),
+            reqCtx,
+            ssrModule,
+            {
+              key: "/p:shell",
+              buildVersion: "test-build",
+              store: { putShell } as any,
+            },
+          ),
+        { routerId: "test-router", diagnosticsEnabled: true },
+      );
+
+      expect(
+        getDevelopmentDiagnosticHub()!.getTrace(
+          getRequestIdentity(request).requestId,
+        ),
+      ).toBeNull();
+    } finally {
+      resetDevelopmentDiagnosticHub();
+    }
   });
 });
 

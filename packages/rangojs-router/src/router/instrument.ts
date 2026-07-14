@@ -43,6 +43,13 @@ import {
   type TracePhase,
   type TraceSpan,
 } from "./tracing.js";
+import {
+  isDevelopmentDiagnosticsEnabled,
+  recordPhaseCompleted,
+  recordPhaseFailed,
+  recordPhaseStarted,
+} from "./diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "./diagnostics/hub.js";
 
 /**
  * Perf-metric boundary for a phase, or `false` for span-only. `false` means the
@@ -71,6 +78,8 @@ export interface PhaseSpec {
    * undefined to add nothing.
    */
   lazyAttributes?: () => Record<string, string | number | boolean> | undefined;
+  /** Bounded application/framework label projected into development diagnostics. */
+  diagnosticLabel?: string | (() => string | undefined);
 }
 
 /**
@@ -96,6 +105,7 @@ export const PHASES = {
     metric: false,
     tracePhase: "request",
     spanName: "rango.request",
+    diagnosticLabel: "request",
   } as PhaseSpec,
 
   /** One middleware (incl. its downstream onion). Span only — the perf metric
@@ -107,6 +117,7 @@ export const PHASES = {
     tracePhase: "middleware",
     spanName: "rango.middleware",
     attributes: { "rango.middleware_name": metricLabel },
+    diagnosticLabel: metricLabel,
   }),
 
   /** The server-action execution (decode args + run the action body), before
@@ -118,6 +129,7 @@ export const PHASES = {
     tracePhase: "action",
     spanName: "rango.action",
     attributes: { "rango.action_id": id },
+    diagnosticLabel: id,
   }),
 
   /**
@@ -130,6 +142,7 @@ export const PHASES = {
     tracePhase: "loader",
     spanName: "rango.loader",
     attributes: { "rango.loader_id": id },
+    diagnosticLabel: id,
   }),
 
   /** One segment route/layout handler execution (the component/handler that
@@ -144,6 +157,7 @@ export const PHASES = {
     tracePhase: "handler",
     spanName: "rango.handler",
     attributes: { "rango.handler_id": id },
+    diagnosticLabel: id,
   }),
 
   /** Whole render phase: match + serialize + SSR. The metric label is resolved
@@ -167,6 +181,7 @@ export const PHASES = {
       const routeName = currentRouteName();
       return routeName ? { "rango.route": routeName } : undefined;
     },
+    diagnosticLabel: currentRouteName,
   } as PhaseSpec,
 
   /** SSR HTML render from the RSC stream. Colon-delimited like the other ssr:*
@@ -175,6 +190,7 @@ export const PHASES = {
     metric: { label: "ssr:render-html" },
     tracePhase: "ssr",
     spanName: "rango.ssr",
+    diagnosticLabel: "html",
   } as PhaseSpec,
 } as const;
 
@@ -229,9 +245,11 @@ export function observePhase<T>(
   const reqCtx = _getRequestContext();
   const store = reqCtx?._metricsStore;
   const tracing = reqCtx?._tracing;
+  const diagnostics =
+    DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled();
 
   // Neither surface active: direct call, zero overhead.
-  if (!store && !tracing) return fn(NOOP_TRACE_SPAN);
+  if (!store && !tracing && !diagnostics) return fn(NOOP_TRACE_SPAN);
 
   // Attributes only land on a real span. Build the attribute/lazy wrapper only
   // when this phase's span is actually enabled (not toggled off via `spans`), and
@@ -280,15 +298,57 @@ export function observePhase<T>(
   const runSpan = (): T =>
     traceSpan(tracing, spec.tracePhase, spec.spanName, wrapped);
 
-  // Span-only — no perf metric to record (metric:false, or perf surface off).
-  const metric = spec.metric;
-  if (!store || metric === false) return runSpan();
+  const runInstrumented = (): T => {
+    // Span-only — no perf metric to record (metric:false, or perf surface off).
+    const metric = spec.metric;
+    if (!store || metric === false) return runSpan();
 
-  // Record the phase duration on EVERY termination — success or failure — so a
-  // failed loader/render still shows its timing in the perf report (parity with
-  // the old track().finally() path it replaced).
-  const start = performance.now();
-  return runThenSettle(runSpan, () => recordPhaseMetric(store, metric, start));
+    // Record the phase duration on EVERY termination — success or failure — so a
+    // failed loader/render still shows its timing in the perf report (parity with
+    // the old track().finally() path it replaced).
+    const start = performance.now();
+    return runThenSettle(runSpan, () =>
+      recordPhaseMetric(store, metric, start),
+    );
+  };
+
+  if (!diagnostics) return runInstrumented();
+
+  const diagnosticStart = performance.now();
+  recordPhaseStarted(spec, diagnosticStart);
+  try {
+    const result = runInstrumented();
+    if (result instanceof Promise) {
+      return result.then(
+        (value) => {
+          const completedAt = performance.now();
+          recordPhaseCompleted(
+            spec,
+            completedAt,
+            completedAt - diagnosticStart,
+          );
+          return value;
+        },
+        (error) => {
+          const completedAt = performance.now();
+          recordPhaseFailed(
+            spec,
+            completedAt,
+            completedAt - diagnosticStart,
+            error,
+          );
+          throw error;
+        },
+      ) as T;
+    }
+    const completedAt = performance.now();
+    recordPhaseCompleted(spec, completedAt, completedAt - diagnosticStart);
+    return result;
+  } catch (error) {
+    const completedAt = performance.now();
+    recordPhaseFailed(spec, completedAt, completedAt - diagnosticStart, error);
+    throw error;
+  }
 }
 
 /**
@@ -307,7 +367,12 @@ export function observeHandler<C, R>(
   ctx: C,
 ): R {
   const tracing = _getRequestContext()?._tracing;
-  if (!tracing || tracing.phases.handler === false) return handler(ctx);
+  if (
+    (!DEVELOPMENT_DIAGNOSTICS_ENABLED || !isDevelopmentDiagnosticsEnabled()) &&
+    (!tracing || tracing.phases.handler === false)
+  ) {
+    return handler(ctx);
+  }
   return observePhase(PHASES.handler(id), () => handler(ctx));
 }
 

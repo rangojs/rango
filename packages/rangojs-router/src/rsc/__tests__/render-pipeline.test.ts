@@ -18,6 +18,14 @@ import type {
 } from "../render-pipeline.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload } from "../types.js";
+import {
+  getDevelopmentDiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../../router/diagnostics/hub.js";
+import {
+  getRequestIdentity,
+  runWithRequestTransaction,
+} from "../../router/request-identity.js";
 
 function payload(pathname: string): RscPayload {
   return { metadata: { pathname, segments: [] } };
@@ -140,6 +148,41 @@ describe("RSC render pipeline", () => {
     ]);
     expect(events.map((event) => event.context.progress.completed)).toEqual([
       0, 1, 1, 2, 2, 3,
+    ]);
+  });
+
+  it("records render stages without an application stage-event callback", async () => {
+    resetDevelopmentDiagnosticHub();
+    const { input, requestContext } = makeInput(
+      () => new ReadableStream<Uint8Array>(),
+    );
+
+    await runWithRequestTransaction(
+      input.request,
+      "request",
+      () =>
+        runWithRequestContext(requestContext, () =>
+          renderRscResponse({
+            ...input,
+            tracking: { mode: "partial", routeKey: "routes/pipeline" },
+          }),
+        ),
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    const requestId = getRequestIdentity(input.request).requestId;
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(requestId)!;
+    expect(
+      trace.events.map((event) => [
+        event.type,
+        event.data.phase,
+        event.routeKey,
+      ]),
+    ).toEqual([
+      ["render.stage:start", "flight", "routes/pipeline"],
+      ["render.stage:complete", "flight", "routes/pipeline"],
+      ["render.stage:start", "response", "routes/pipeline"],
+      ["render.stage:complete", "response", "routes/pipeline"],
     ]);
   });
 

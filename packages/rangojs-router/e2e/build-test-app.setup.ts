@@ -128,7 +128,8 @@ test("build test-app", async () => {
       .join("\n")}`,
   ).toEqual([]);
 
-  const mcpLeaks = readJsFiles(path.join(cwd, "dist"))
+  const productionFiles = readJsFiles(path.join(cwd, "dist"));
+  const mcpLeaks = productionFiles
     .filter(
       (file) =>
         file.src.includes("/__rango/mcp") ||
@@ -138,6 +139,26 @@ test("build test-app", async () => {
   expect(
     mcpLeaks,
     "Production application bundles must not contain the dev-only MCP endpoint or SDK",
+  ).toEqual([]);
+
+  const diagnosticImplementationMarkers = [
+    "clientCorrelationId",
+    "event-too-large",
+    "request.started",
+    "revalidation.trace",
+    "sanitizeDiagnosticText",
+    "[unsupported]",
+  ];
+  const diagnosticLeaks = productionFiles
+    .filter((file) =>
+      diagnosticImplementationMarkers.some((marker) =>
+        file.src.includes(marker),
+      ),
+    )
+    .map((file) => path.relative(cwd, file.file));
+  expect(
+    diagnosticLeaks,
+    "Production application bundles must not contain development diagnostic collection or retention code",
   ).toEqual([]);
 
   // Prefetch fetch/queue machinery must stay off the eager startup path. The

@@ -52,6 +52,10 @@ describe("react/react-dom auto-dedupe", () => {
       it(`${preset} preset (${command}) dedupes react+react-dom in client, ssr, and rsc`, async () => {
         const config = await resolveRangoConfig(preset, command, root);
 
+        expect(config.define?.__RANGO_DEV_DIAGNOSTICS__).toBe(
+          command === "serve" ? "true" : "false",
+        );
+
         // Root-level dedupe is set (child environments inherit from it).
         expect(config.resolve?.dedupe).toEqual(
           expect.arrayContaining(["react", "react-dom"]),
