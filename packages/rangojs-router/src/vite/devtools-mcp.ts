@@ -16,6 +16,8 @@ import {
   type RangoMcpSnapshotStore,
 } from "../devtools-mcp/snapshot-store.js";
 import { createSnapshotToolHandlers } from "../devtools-mcp/server.js";
+import { createRangoMcpDiagnosticStore } from "../devtools-mcp/diagnostic-store.js";
+import { installRangoDevtoolsDiagnostics } from "./devtools-diagnostics.js";
 import { rangoVersion } from "./utils/banner.js";
 
 export interface InstallRangoMcpOptions {
@@ -71,12 +73,23 @@ export function installRangoMcp(
     startedAt: identity.startedAt,
     getDevServerUrls: () => serverUrls(options.server),
   });
+  const diagnostics = createRangoMcpDiagnosticStore({
+    instanceId: identity.instanceId,
+    projectRoot: options.projectRoot,
+    getRouteSource: (routerId, routeKey, routePattern) =>
+      store.getRouteSource(routerId, routeKey, routePattern),
+  });
+  const disposeDiagnostics = installRangoDevtoolsDiagnostics({
+    server: options.server,
+    projectRoot: options.projectRoot,
+    store: diagnostics,
+  });
 
   options.server.middlewares.use(
     createRangoMcpHttpMiddleware({
       token: identity.token,
       version: rangoVersion,
-      handlers: createSnapshotToolHandlers(store),
+      handlers: createSnapshotToolHandlers(store, diagnostics),
     }),
   );
 
@@ -116,6 +129,7 @@ export function installRangoMcp(
 
   options.server.httpServer?.once("close", () => {
     closed = true;
+    disposeDiagnostics();
     void registration?.dispose();
   });
 

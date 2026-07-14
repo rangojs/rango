@@ -2,7 +2,7 @@ import type { Plugin } from "vite";
 import { resolve } from "node:path";
 import * as Vite from "vite";
 import { resolveRscEntryFromConfig } from "../utils/shared-utils.js";
-import { RSC_ENTRY_BOOTSTRAP_IMPORTS } from "./virtual-entries.js";
+import { getRscEntryBootstrapImports } from "./virtual-entries.js";
 
 /**
  * Plugin that auto-injects VERSION, routes-manifest, and loader-manifest into
@@ -27,12 +27,14 @@ export function createVersionInjectorPlugin(
   rscEntryPath: string | undefined,
 ): Plugin {
   let resolvedEntryPath = "";
+  let developmentDiagnostics = false;
 
   return {
     name: "@rangojs/router:version-injector",
     enforce: "pre",
 
     configResolved(config) {
+      developmentDiagnostics = config.command === "serve";
       let entryPath = rscEntryPath;
       if (!entryPath) entryPath = resolveRscEntryFromConfig(config);
       if (entryPath) {
@@ -51,9 +53,9 @@ export function createVersionInjectorPlugin(
 
       // Same startup bootstrap imports the generated virtual RSC entry uses,
       // from the single shared list so the two paths cannot drift.
-      const prepend: string[] = RSC_ENTRY_BOOTSTRAP_IMPORTS.map(
-        (id) => `import "${id}";`,
-      );
+      const prepend: string[] = getRscEntryBootstrapImports(
+        developmentDiagnostics,
+      ).map((id) => `import "${id}";`);
       let newCode = code;
       const needsVersion =
         code.includes("createRSCHandler") &&

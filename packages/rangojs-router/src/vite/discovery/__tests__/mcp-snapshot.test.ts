@@ -1,7 +1,12 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildCombinedRouteDetailsForRouterFile } from "../../../build/route-types/router-processing.js";
 import {
   createMcpRouteSnapshot,
   createMcpRouterSnapshot,
+  createMcpSourceOwnershipSnapshot,
 } from "../mcp-snapshot.js";
 import { createDiscoveryState } from "../state.js";
 
@@ -112,5 +117,68 @@ describe("MCP route snapshot", () => {
       Buffer.byteLength(multibyteRoute!.pattern, "utf8"),
     ).toBeLessThanOrEqual(4_096);
     expect(multibyteRoute!.truncated).toBe(true);
+  });
+
+  it("maps named routes to declaration files without evaluating route code", () => {
+    const root = mkdtempSync(join(tmpdir(), "rango-mcp-source-"));
+    const src = join(root, "src");
+    mkdirSync(src);
+    const routerFile = join(src, "router.tsx");
+    writeFileSync(
+      routerFile,
+      `import { createRouter } from "@rangojs/router";
+import { patterns } from "./urls.js";
+export const router = createRouter({ urls: patterns });
+`,
+    );
+    writeFileSync(
+      join(src, "urls.tsx"),
+      `import { urls } from "@rangojs/router";
+export const patterns = urls(({ path }) => [
+  path("/blog/:postId", null, { name: "blog.post" }),
+]);
+`,
+    );
+    try {
+      const state = createDiscoveryState(routerFile, { preset: "node" });
+      state.projectRoot = root;
+      state.perRouterManifests = [
+        {
+          id: "app",
+          sourceFile: routerFile,
+          routeSourceFiles:
+            buildCombinedRouteDetailsForRouterFile(routerFile).sourceFiles,
+          routeManifest: {
+            "blog.post": "/blog/:postId",
+            factoryOnly: "/factory",
+          },
+        },
+      ];
+
+      expect(createMcpSourceOwnershipSnapshot(state)).toEqual([
+        {
+          routerId: "app",
+          routeName: "blog.post",
+          routePattern: "/blog/:postId",
+          source: {
+            file: "src/urls.tsx",
+            kind: "route",
+            precision: "declaration-file",
+          },
+        },
+        {
+          routerId: "app",
+          routeName: "factoryOnly",
+          routePattern: "/factory",
+          source: {
+            file: "src/router.tsx",
+            kind: "route",
+            precision: "router-file",
+          },
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

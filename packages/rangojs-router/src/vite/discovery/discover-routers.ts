@@ -7,10 +7,10 @@
  */
 
 import {
-  buildCombinedRouteMapForRouterFile,
   formatNestedRouterConflictError,
   findNestedRouterConflict,
 } from "../../build/generate-route-types.js";
+import { buildCombinedRouteDetailsForRouterFile } from "../../build/route-types/router-processing.js";
 // Pure data transforms over generateManifestFull's output. Imported directly
 // from source (not the public ./build barrel, and not the runner) because they
 // are realm-independent: buildRouteTrie/buildPerRouterTrie operate on plain
@@ -215,10 +215,12 @@ export async function discoverRouters(
     // by factory functions (e.g. createDocsPatterns()) and should always be
     // supplemented on file change since HMR won't re-discover them.
     let factoryOnlyPrefixes: Set<string> | undefined;
+    let routeSourceFiles: Record<string, string> | undefined;
     if (router.__sourceFile) {
-      const staticParsed = buildCombinedRouteMapForRouterFile(
+      const staticParsed = buildCombinedRouteDetailsForRouterFile(
         router.__sourceFile,
       );
+      routeSourceFiles = staticParsed.sourceFiles;
       const staticNames = new Set(Object.keys(staticParsed.routes));
       factoryOnlyPrefixes = new Set<string>();
       for (const name of Object.keys(manifest.routeManifest)) {
@@ -238,6 +240,7 @@ export async function discoverRouters(
       routeTrailingSlash: manifest.routeTrailingSlash,
       routeSearchSchemas: manifest.routeSearchSchemas,
       sourceFile: router.__sourceFile,
+      routeSourceFiles,
       factoryOnlyPrefixes,
     });
 

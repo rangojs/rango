@@ -343,9 +343,10 @@ Use `/typesafety` for type-safe href and environment setup.
 
 `rango mcp` is the stdio connector for Rango's development-only MCP endpoint.
 With the Vite dev server running, an agent can inspect live project metadata,
-runtime-discovered routes, and route-discovery freshness/errors. The tools are
-read-only; request traces, logs, browser state, and runtime errors are not part
-of the current surface.
+runtime-discovered routes, route-discovery freshness, compilation issues,
+request summaries, exact request traces, and runtime errors. The tools are
+read-only; browser state and arbitrary application logs are not part of the
+current surface.
 
 Treat `stale: true` as last-good route data, not current readiness. Route edits
 mark it immediately, before HMR's debounce. On Cloudflare,
@@ -355,6 +356,11 @@ route records and pages report `truncated` when safety limits apply.
 Project metadata similarly reports `routersTruncated` when its router summary is
 bounded and `urlsTruncated` when its server URL summary is bounded. Complete tool
 results are capped at 256 KiB.
+
+For browser failures, read `X-Rango-Request-Id` from the document or Flight
+response, pass it to `list_requests`, then use the same value with
+`get_request_trace` and `get_errors`. Treat `outputTruncated`, `truncated`, and
+drop counters as evidence that the retained trace is incomplete.
 
 ```bash
 rango mcp

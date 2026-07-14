@@ -62,6 +62,7 @@ export interface PerRouterManifestEntry {
   routeTrailingSlash?: Record<string, string>;
   routeSearchSchemas?: Record<string, Record<string, string>>;
   sourceFile?: string;
+  routeSourceFiles?: Record<string, string>;
   factoryOnlyPrefixes?: Set<string>;
 }
 

@@ -131,6 +131,18 @@ function recordDiagnostic(
   }
 }
 
+export function injectDevelopmentDiagnosticFailureForTesting(): void {
+  const unsupported = new Proxy<Record<string, unknown>>(
+    {},
+    {
+      ownKeys(): never {
+        throw new Error("injected diagnostic projection failure");
+      },
+    },
+  );
+  recordDiagnostic("test.failure", unsupported);
+}
+
 export function areDevelopmentDiagnosticsAvailable(): boolean {
   return DEVELOPMENT_DIAGNOSTICS_ENABLED;
 }

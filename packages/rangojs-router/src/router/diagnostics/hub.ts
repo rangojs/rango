@@ -31,7 +31,11 @@ interface StoredTrace {
   trace: DiagnosticTrace;
   encodedBytes: number;
   eventEncodedBytes: number[];
+  observedAt: number;
 }
+
+type DiagnosticEventListener = (event: DiagnosticEvent) => void;
+type DiagnosticDropListener = (count: number) => void;
 
 function encodedBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -52,6 +56,8 @@ function addReason(
 export class DiagnosticHub {
   private readonly limits: DiagnosticHubLimits;
   private readonly traces = new Map<string, StoredTrace>();
+  private readonly listeners = new Set<DiagnosticEventListener>();
+  private readonly dropListeners = new Set<DiagnosticDropListener>();
   private sequence = 0;
   private eventCount = 0;
   private totalEncodedBytes = 0;
@@ -97,15 +103,21 @@ export class DiagnosticHub {
 
   private sweepAge(now: number): void {
     for (const [requestId, stored] of this.traces) {
-      if (now - stored.trace.updatedAt <= this.limits.maxAgeMs) continue;
+      if (now - stored.observedAt <= this.limits.maxAgeMs) continue;
       this.removeTrace(requestId);
       this.evictedByAge++;
     }
   }
 
-  private getOrCreateTrace(input: DiagnosticEventInput): StoredTrace {
+  private getOrCreateTrace(
+    input: DiagnosticEventInput,
+    observedAt: number,
+  ): StoredTrace {
     const existing = this.traces.get(input.requestId);
-    if (existing) return existing;
+    if (existing) {
+      existing.observedAt = observedAt;
+      return existing;
+    }
 
     while (this.traces.size >= this.limits.maxRequests) {
       const oldest = this.traces.keys().next().value as string | undefined;
@@ -132,6 +144,7 @@ export class DiagnosticHub {
       trace,
       encodedBytes: encodedBytes(trace),
       eventEncodedBytes: [],
+      observedAt,
     };
     this.traces.set(input.requestId, stored);
     this.totalEncodedBytes += stored.encodedBytes;
@@ -167,9 +180,12 @@ export class DiagnosticHub {
     return false;
   }
 
-  record(input: DiagnosticEventInput): void {
-    this.sweepAge(input.timestamp);
-    const stored = this.getOrCreateTrace(input);
+  record(
+    input: DiagnosticEventInput,
+    observedAt: number = input.timestamp,
+  ): DiagnosticEvent | null {
+    this.sweepAge(observedAt);
+    const stored = this.getOrCreateTrace(input, observedAt);
     const event: DiagnosticEvent = {
       ...input,
       schemaVersion: 1,
@@ -180,6 +196,7 @@ export class DiagnosticHub {
       stored.trace.updatedAt = input.timestamp;
       stored.trace.droppedEvents++;
       this.droppedEvents++;
+      this.notifyDroppedInputs(1);
       const addedReason = addReason(stored.trace, "event-too-large");
       this.addBytes(
         stored,
@@ -188,7 +205,7 @@ export class DiagnosticHub {
           (addedReason ? encodedBytes("event-too-large") + 1 : 0),
       );
       this.enforceEncodedByteLimit();
-      return;
+      return null;
     }
 
     const hadEvents = stored.trace.events.length > 0;
@@ -210,6 +227,13 @@ export class DiagnosticHub {
       if (!this.dropOldestEvent("event-count")) break;
     }
     this.enforceEncodedByteLimit();
+
+    for (const listener of this.listeners) {
+      try {
+        listener(structuredClone(event));
+      } catch {}
+    }
+    return event;
   }
 
   private enforceEncodedByteLimit(): void {
@@ -225,13 +249,44 @@ export class DiagnosticHub {
   }
 
   noteDroppedEvent(requestId?: string): void {
-    this.droppedEvents++;
+    this.noteDroppedEvents(1, requestId);
+  }
+
+  noteDroppedEvents(count: number, requestId?: string): void {
+    const boundedCount = Number.isFinite(count)
+      ? Math.max(0, Math.floor(count))
+      : 0;
+    if (boundedCount === 0) return;
+    this.droppedEvents += boundedCount;
+    this.notifyDroppedInputs(boundedCount);
     if (!requestId) return;
     const stored = this.traces.get(requestId);
     if (!stored) return;
-    stored.trace.droppedEvents++;
+    stored.trace.droppedEvents += boundedCount;
     this.addBytes(stored, encodedBytes(stored.trace.droppedEvents));
     this.enforceEncodedByteLimit();
+  }
+
+  subscribe(listener: DiagnosticEventListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  subscribeDroppedInputs(listener: DiagnosticDropListener): () => void {
+    this.dropListeners.add(listener);
+    return () => {
+      this.dropListeners.delete(listener);
+    };
+  }
+
+  private notifyDroppedInputs(count: number): void {
+    for (const listener of this.dropListeners) {
+      try {
+        listener(count);
+      } catch {}
+    }
   }
 
   getTrace(
@@ -246,6 +301,18 @@ export class DiagnosticHub {
   listTraces(now: number = performance.now()): DiagnosticTrace[] {
     this.sweepAge(now);
     return [...this.traces.values()].map(({ trace }) => structuredClone(trace));
+  }
+
+  getRetainedEventSequences(
+    now: number = performance.now(),
+  ): Map<string, Set<number>> {
+    this.sweepAge(now);
+    return new Map(
+      [...this.traces].map(([requestId, { trace }]) => [
+        requestId,
+        new Set(trace.events.map((event) => event.sequence)),
+      ]),
+    );
   }
 
   getStats(now: number = performance.now()): DiagnosticHubStats {

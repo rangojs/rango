@@ -1,6 +1,6 @@
 # Rango MCP and agent skills
 
-Status: **Phases 0-1 implemented; request MCP tools proposed**.
+Status: **Phases 0-2 implemented; render explanation and workflow skills proposed**.
 
 Rango already ships version-matched reference skills, route-manifest inspection,
 structured telemetry, performance waterfalls, cache signals, PPR signals, and a
@@ -56,12 +56,18 @@ traces, and foreground render stages project into a fail-open in-memory hub even
 when the application has no `TelemetrySink`. PPR shell-capture work is excluded
 until it can receive a separate linked background trace.
 
-The hub is still realm-local. The Vite-hosted MCP endpoint does not claim request
-traces, compilation state, browser state, logs, or detailed cache/PPR/loader-lane
-explanations yet. Phase 2 owns the explicit bounded bridge from Node module-runner
-realms and Cloudflare workerd into Vite plus the request/error tools. Keeping that
-boundary visible prevents route inspection from presenting partial telemetry as
-a complete request explanation.
+Phase 2 bridges the realm-local runtime hub into Vite over the RSC environment's
+custom hot channel. Node's module runner and Cloudflare's workerd runner use the
+same versioned, bounded batch envelope. Vite validates and redacts each batch
+again, deduplicates realm sequences, retains request receipt time on the host
+clock, and never lets transport or ingestion failure affect a request.
+
+The MCP now exposes bounded compilation issues, runtime errors, request summaries,
+and exact request traces. Structured Vite transform errors are current until a
+successful update for their file; Vite logger warnings are explicitly
+`recent-only` because Vite has no stable current-warning registry. Detailed
+scope-level cache/PPR decisions, loader consumption lanes, browser state, and logs
+remain outside the implemented boundary.
 
 ## Goals
 
@@ -179,6 +185,15 @@ router and Vite instrumentation sites
        - request-correlated events
        - bounded in-memory retention
        - redacted raw request traces
+                 |
+                 v
+   bounded RSC hot-channel bridge (Phase 2)
+   - Node module runner or Cloudflare workerd
+   - versioned batches, duplicate rejection
+   - second-pass validation and redaction
+                 |
+                 v
+        Vite-hosted diagnostic hub
                  |
                  v
         Vite development endpoint
@@ -433,18 +448,18 @@ from the other.
 The first protocol should stay small. High-level tools are more stable than one
 tool per internal event.
 
-| Tool                     | Phase    | Returns                                                                                                                                           |
-| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_project_metadata`   | shipped  | project root, package version, Vite mode, routers, dev-server URLs, capabilities and tool schema version                                          |
-| `get_routes`             | shipped  | paginated runtime route maps, router source ownership, patterns, names, search schemas, trailing-slash behavior, generation and freshness         |
-| `get_discovery_status`   | shipped  | route-discovery phase, attempts, generation, counts, freshness and the latest discovery error                                                     |
-| `match_route`            | proposed | the route, params, layouts, parallels, intercept candidates, middleware, loaders, and cache/PPR declarations for a URL without executing handlers |
-| `get_compilation_issues` | proposed | current Vite/RSC transform errors and warnings with source locations                                                                              |
-| `get_errors`             | proposed | Vite compilation and Rango request/runtime errors retained by the hub, filterable by request or time                                              |
-| `list_requests`          | proposed | bounded request summaries used to select an unambiguous trace                                                                                     |
-| `get_request_trace`      | proposed | the complete structured trace for one trace ID                                                                                                    |
-| `explain_render`         | proposed | concise projection joining `cache()`, PPR, handlers, and loader lanes for one request                                                             |
-| `explain_revalidation`   | proposed | segment/loader recomputation decisions for an action or navigation request                                                                        |
+| Tool                     | Phase    | Returns                                                                                                                                              |
+| ------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_project_metadata`   | shipped  | project root, package version, Vite mode, routers, dev-server URLs, capabilities and tool schema version                                             |
+| `get_routes`             | shipped  | paginated runtime route maps, router source ownership, patterns, names, search schemas, trailing-slash behavior, generation and freshness            |
+| `get_discovery_status`   | shipped  | route-discovery phase, attempts, generation, counts, freshness and the latest discovery error                                                        |
+| `match_route`            | proposed | the route, params, layouts, parallels, intercept candidates, middleware, loaders, and cache/PPR declarations for a URL without executing handlers    |
+| `get_compilation_issues` | shipped  | current structured Vite/RSC transform errors plus bounded recent-only logger warnings, with sanitized source locations and explicit capture coverage |
+| `get_errors`             | shipped  | Rango request/runtime errors retained by the hub, filterable by request, router, or receipt time                                                     |
+| `list_requests`          | shipped  | bounded request summaries with exact request-ID selection, route declaration ownership, opaque cursors, and bridge drop statistics                   |
+| `get_request_trace`      | shipped  | the bounded structured trace and route declaration ownership for one exact server request ID                                                         |
+| `explain_render`         | proposed | concise projection joining `cache()`, PPR, handlers, and loader lanes for one request                                                                |
+| `explain_revalidation`   | proposed | segment/loader recomputation decisions for an action or navigation request                                                                           |
 
 `match_route` is read-only discovery, not a dry-run render. It must not execute
 middleware, handlers, loaders, cache stores, or user predicates with side
@@ -665,7 +680,7 @@ Exit criterion: one full request and one partial request can be retrieved by
 request ID with route, loader timing, coarse cache state, revalidation, and
 errors inside the runtime realm. Cross-realm MCP retrieval remains Phase 2.
 
-### Phase 2: MCP and Vite integration
+### Phase 2: MCP and Vite integration (implemented)
 
 - Add the explicit bounded ingestion bridge from Node module-runner realms and
   Cloudflare workerd into the Vite-hosted hub.
@@ -673,6 +688,19 @@ errors inside the runtime realm. Cross-realm MCP retrieval remains Phase 2.
   state.
 - Add structural source ownership through a dev-only side table; do not execute
   user handlers or lazy include providers from inspection tools.
+
+The bridge uses `import.meta.hot.send()` from the development-only RSC bootstrap.
+Both supported server runners already transport that custom event to Vite, so the
+implementation does not add a Cloudflare-only side channel. Runtime queues and
+batches have independent count and encoded-byte bounds; the Vite host applies the
+same limits again, tracks duplicate/rejected batches, and uses host receipt time
+for retention so workerd and Vite monotonic clocks are never compared.
+
+Route declaration ownership comes from the existing static include-tree parser
+and is committed with the last-good discovery generation. Statically resolvable
+named routes point to their declaration module; factory-only and otherwise
+unresolvable routes fall back truthfully to the router module. The side table
+never enters the runtime route manifest or a production application bundle.
 
 Exit criterion: an MCP client can select a request generated by a browser and
 cross-check its route and errors without reading terminal logs.
@@ -761,17 +789,11 @@ accidental remote introspection service.
 
 ## Open questions
 
-1. Which bounded, fail-open transport should carry batched diagnostic events from
-   Node module-runner realms and Cloudflare workerd to the Vite-hosted hub?
-2. What count, age, and byte limits preserve enough concurrent loader/PPR detail
+1. What count, age, and byte limits preserve enough concurrent loader/PPR detail
    without making large applications expensive? Measure before fixing defaults.
-3. Can every supported browser driver inject `x-rsc-router-request-id` into
+2. Can every supported browser driver inject `x-rsc-router-request-id` into
    document and framework fetches, or should the browser runtime expose a
    development-only navigation ID hook?
-4. How much source ownership can the generated route manifest expose without
-   increasing production manifest size? Prefer a dev-only side table.
-5. Should background shell capture have its own root trace linked by
+3. Should background shell capture have its own root trace linked by
    `causedByRequestId`, or remain a child transaction of the triggering request?
    The answer must preserve captures that outlive request completion.
-6. Which compilation diagnostics can Vite expose as current state rather than
-   transient websocket messages? The tool must say when its view is incomplete.

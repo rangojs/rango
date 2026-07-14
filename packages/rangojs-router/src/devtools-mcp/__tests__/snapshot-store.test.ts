@@ -47,7 +47,18 @@ describe("Rango MCP snapshot store", () => {
     const store = createStore();
 
     const firstAttempt = store.beginDiscovery();
-    store.publishRoutes([route("home", "/")], routers("app"), firstAttempt);
+    store.publishRoutes([route("home", "/")], routers("app"), firstAttempt, [
+      {
+        routerId: "app",
+        routeName: "home",
+        routePattern: "/",
+        source: {
+          file: "src/urls.tsx",
+          kind: "route",
+          precision: "declaration-file",
+        },
+      },
+    ]);
     vi.setSystemTime(new Date("2026-07-14T10:01:00.000Z"));
     const secondAttempt = store.beginDiscovery();
     store.failDiscovery(new Error("broken include"), secondAttempt);
@@ -64,6 +75,11 @@ describe("Rango MCP snapshot store", () => {
     expect(store.getRoutes().routes).toEqual([
       expect.objectContaining({ name: "home", pattern: "/" }),
     ]);
+    expect(store.getRouteSource("app", "home", "/")).toEqual({
+      file: "src/urls.tsx",
+      kind: "route",
+      precision: "declaration-file",
+    });
     vi.useRealTimers();
   });
 
@@ -113,7 +129,7 @@ describe("Rango MCP snapshot store", () => {
       routes: [expect.objectContaining({ routerId: "api", name: "health" })],
     });
     expect(store.getProjectMetadata()).toMatchObject({
-      toolSchemaVersion: 1,
+      toolSchemaVersion: 2,
       entryFile: "src/router.tsx",
       routers: [
         { id: "api", file: "src/router.tsx" },
@@ -124,7 +140,10 @@ describe("Rango MCP snapshot store", () => {
       capabilities: {
         routes: true,
         discoveryStatus: true,
-        recentRequests: false,
+        compilationIssues: true,
+        recentRequests: true,
+        runtimeErrors: true,
+        sourceOwnership: true,
       },
     });
   });
@@ -265,6 +284,49 @@ describe("Rango MCP snapshot store", () => {
       stale: false,
       runtimeConvergence: "ready",
     });
+  });
+
+  it("distinguishes source ownership for route variants sharing a pattern", () => {
+    const store = createStore();
+    const attempt = store.beginDiscovery();
+    store.publishRoutes(
+      [
+        route("productPage", "/products/:id"),
+        route("productJson", "/products/:id"),
+      ],
+      routers("app"),
+      attempt,
+      [
+        {
+          routerId: "app",
+          routeName: "productPage",
+          routePattern: "/products/:id",
+          source: {
+            file: "src/pages.tsx",
+            kind: "route",
+            precision: "declaration-file",
+          },
+        },
+        {
+          routerId: "app",
+          routeName: "productJson",
+          routePattern: "/products/:id",
+          source: {
+            file: "src/api.ts",
+            kind: "route",
+            precision: "declaration-file",
+          },
+        },
+      ],
+    );
+
+    expect(
+      store.getRouteSource("app", "productPage", "/products/:id"),
+    ).toMatchObject({ file: "src/pages.tsx" });
+    expect(
+      store.getRouteSource("app", "productJson", "/products/:id"),
+    ).toMatchObject({ file: "src/api.ts" });
+    expect(store.getRouteSource("app", null, "/products/:id")).toBeNull();
   });
 
   it("bounds router metadata while preserving the total router count", () => {

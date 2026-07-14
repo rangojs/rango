@@ -51,6 +51,9 @@ const DIAGNOSTIC_IMPLEMENTATION_MARKERS = [
   "request.started",
   "revalidation.trace",
   "sanitizeDiagnosticText",
+  "rango:diagnostics:batch",
+  "internal/dev-diagnostics",
+  "acceptedBatches",
   "[unsupported]",
 ];
 

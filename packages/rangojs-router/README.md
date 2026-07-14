@@ -89,13 +89,17 @@ configuration:
 ```
 
 Start the app with `pnpm dev`. The connector discovers the running Rango server
-for the project and provides three read-only tools:
+for the project and provides seven read-only tools:
 
 - `get_project_metadata` - root, preset, entry, version, server URLs, and routers;
 - `get_routes` - paginated runtime-discovered routes, including dynamic factories;
 - `get_discovery_status` - generation, freshness, route counts, and the latest
   discovery error. On Cloudflare it also reports whether workerd has adopted the
-  discovered route generation.
+  discovered route generation;
+- `get_compilation_issues` - current transform errors and recent Vite warnings;
+- `list_requests` - bounded request summaries with transport, route, and status;
+- `get_request_trace` - the retained execution trace for an exact request ID;
+- `get_errors` - runtime errors with request, route, phase, and source context.
 
 Use `rango mcp --root <path>` when the MCP process does not start in the project
 root. When multiple dev servers use one root, select one with

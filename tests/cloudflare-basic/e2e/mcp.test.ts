@@ -14,7 +14,9 @@ test.describe("MCP devtools", () => {
     await mcp.close();
   });
 
-  test("reports Cloudflare runtime route discovery", async () => {
+  test("reports Cloudflare routes and request diagnostics", async ({
+    page,
+  }) => {
     const [project, routes] = await Promise.all([
       mcp.client.callTool({ name: "get_project_metadata" }),
       mcp.client.callTool({
@@ -25,6 +27,11 @@ test.describe("MCP devtools", () => {
     expect(project.structuredContent).toMatchObject({
       preset: "cloudflare",
       mode: "development",
+      capabilities: {
+        recentRequests: true,
+        runtimeErrors: true,
+        sourceOwnership: true,
+      },
     });
 
     await expect
@@ -48,13 +55,90 @@ test.describe("MCP devtools", () => {
         }),
       ]),
     );
+
+    const response = await page.goto(f.url("/api/products/1"));
+    expect(response?.status()).toBe(200);
+    const requestId = await response?.headerValue("x-rango-request-id");
+    expect(requestId).toBeTruthy();
+
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "list_requests",
+          arguments: { requestId },
+        });
+        return result.structuredContent?.requests;
+      })
+      .toEqual([
+        expect.objectContaining({
+          requestId,
+          transport: "response-route",
+          routePattern: "/api/products/:id",
+          completed: true,
+          source: expect.objectContaining({
+            file: "src/api/urls.tsx",
+            precision: "declaration-file",
+          }),
+        }),
+      ]);
+
+    const trace = await mcp.client.callTool({
+      name: "get_request_trace",
+      arguments: { requestId },
+    });
+    expect(trace.structuredContent).toMatchObject({
+      trace: { requestId, completed: true },
+      source: { file: "src/api/urls.tsx", precision: "declaration-file" },
+    });
+
+    const errorResponse = await page.goto(
+      f.url("/features/mcp-missing-feature"),
+    );
+    const errorRequestId =
+      await errorResponse?.headerValue("x-rango-request-id");
+    expect(errorRequestId).toBeTruthy();
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "get_errors",
+          arguments: { requestId: errorRequestId },
+        });
+        return result.structuredContent?.errors;
+      })
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            requestId: errorRequestId,
+            type: expect.stringMatching(/failed|error/),
+          }),
+        ]),
+      );
+
+    const failOpenResponse = await page.goto(
+      f.url("/api/products/1?inject-diagnostic-failure=1"),
+    );
+    expect(failOpenResponse?.status()).toBe(200);
+    const failOpenRequestId =
+      await failOpenResponse?.headerValue("x-rango-request-id");
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "list_requests",
+          arguments: { requestId: failOpenRequestId },
+        });
+        const content = result.structuredContent;
+        return content?.requests?.[0]?.requestId === failOpenRequestId
+          ? content.stats?.bridgeDroppedEvents
+          : 0;
+      })
+      .toBeGreaterThan(0);
   });
 });
 
 test.describe("MCP devtools (production)", () => {
   const f = useFixture({ root: ".", mode: "build" });
 
-  test("does not return an MCP response", async ({ request }) => {
+  test("does not return an MCP response", async ({ page, request }) => {
     const response = await request.post(f.url("/__rango/mcp"), {
       data: {
         jsonrpc: "2.0",
@@ -70,5 +154,10 @@ test.describe("MCP devtools (production)", () => {
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("text/html");
     expect(await response.text()).not.toContain('"jsonrpc"');
+    const appResponse = await page.goto(
+      f.url("/api/products/1?inject-diagnostic-failure=1"),
+    );
+    expect(appResponse?.status()).toBe(200);
+    expect(await appResponse?.headerValue("x-rango-request-id")).toBeNull();
   });
 });

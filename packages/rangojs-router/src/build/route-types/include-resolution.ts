@@ -470,12 +470,19 @@ function extractUrlsBlockForVariable(
 // Combined route map building
 // ---------------------------------------------------------------------------
 
+export interface CombinedRouteMap {
+  routes: Record<string, string>;
+  searchSchemas: Record<string, Record<string, string>>;
+  sourceFiles: Record<string, string>;
+}
+
 function buildRouteMapFromBlock(
   block: string,
   fullSource: string,
   filePath: string,
   visited: Set<string>,
   searchSchemasOut?: Record<string, Record<string, string>>,
+  sourceFilesOut?: Record<string, string>,
   diagnosticsOut?: UnresolvableInclude[],
   memo?: ScanMemo,
 ): Record<string, string> {
@@ -488,6 +495,7 @@ function buildRouteMapFromBlock(
   const localRoutes = extractRoutesFromSource(block, blockSourceFile);
   for (const { name, pattern, search } of localRoutes) {
     routeMap[name] = pattern;
+    if (sourceFilesOut) sourceFilesOut[name] = filePath;
     if (search && searchSchemasOut) {
       searchSchemasOut[name] = search;
     }
@@ -507,10 +515,7 @@ function buildRouteMapFromBlock(
 
   for (const inc of includes) {
     const { pathPrefix, namePrefix } = inc;
-    let childResult: {
-      routes: Record<string, string>;
-      searchSchemas: Record<string, Record<string, string>>;
-    };
+    let childResult: CombinedRouteMap;
 
     if (inc.moduleSpecifier) {
       // Async include `() => import("./mod")`: resolve the imported module's
@@ -644,6 +649,9 @@ function buildRouteMapFromBlock(
       if (childResult.searchSchemas[name] && searchSchemasOut) {
         searchSchemasOut[prefixedName] = childResult.searchSchemas[name];
       }
+      if (childResult.sourceFiles[name] && sourceFilesOut) {
+        sourceFilesOut[prefixedName] = childResult.sourceFiles[name];
+      }
     }
   }
 
@@ -674,10 +682,7 @@ function resolveIncludedVariable(opts: {
   namePrefix: string | null;
   fileNotFoundDetail: (specifier: string) => string;
   notFoundDetail: () => string;
-}): {
-  routes: Record<string, string>;
-  searchSchemas: Record<string, Record<string, string>>;
-} | null {
+}): CombinedRouteMap | null {
   const {
     variableName,
     resolutionFile,
@@ -756,17 +761,14 @@ export function buildCombinedRouteMapWithSearch(
   diagnosticsOut?: UnresolvableInclude[],
   inlineBlock?: string,
   memo?: ScanMemo,
-): {
-  routes: Record<string, string>;
-  searchSchemas: Record<string, Record<string, string>>;
-} {
+): CombinedRouteMap {
   visited = visited ?? new Set();
   memo = memo ?? createScanMemo();
   const realPath = resolve(filePath);
   const key = variableName ? `${realPath}:${variableName}` : realPath;
   if (visited.has(key)) {
     console.warn(`[rango] Circular include detected, skipping: ${key}`);
-    return { routes: {}, searchSchemas: {} };
+    return { routes: {}, searchSchemas: {}, sourceFiles: {} };
   }
   visited.add(key);
 
@@ -774,7 +776,7 @@ export function buildCombinedRouteMapWithSearch(
   try {
     source = readSourceMemoized(memo, realPath);
   } catch {
-    return { routes: {}, searchSchemas: {} };
+    return { routes: {}, searchSchemas: {}, sourceFiles: {} };
   }
 
   let block: string;
@@ -786,19 +788,21 @@ export function buildCombinedRouteMapWithSearch(
       variableName,
       parseBlock(memo, source),
     );
-    if (!extracted) return { routes: {}, searchSchemas: {} };
+    if (!extracted) return { routes: {}, searchSchemas: {}, sourceFiles: {} };
     block = extracted;
   } else {
     block = source;
   }
 
   const searchSchemas: Record<string, Record<string, string>> = {};
+  const sourceFiles: Record<string, string> = {};
   const routes = buildRouteMapFromBlock(
     block,
     source,
     realPath,
     visited,
     searchSchemas,
+    sourceFiles,
     diagnosticsOut,
     memo,
   );
@@ -808,5 +812,5 @@ export function buildCombinedRouteMapWithSearch(
   // recursion path should trigger the cycle guard.
   visited.delete(key);
 
-  return { routes, searchSchemas };
+  return { routes, searchSchemas, sourceFiles };
 }

@@ -147,6 +147,9 @@ test("build test-app", async () => {
     "request.started",
     "revalidation.trace",
     "sanitizeDiagnosticText",
+    "rango:diagnostics:batch",
+    "internal/dev-diagnostics",
+    "acceptedBatches",
     "[unsupported]",
   ];
   const diagnosticLeaks = productionFiles

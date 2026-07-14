@@ -75,9 +75,12 @@ Cross-tab invalidation state adoption and no-rotate receiving clears are owned b
 Development request identity and realm-local diagnostic retention are owned by
 [`router/request-identity.ts`](../../src/router/request-identity.ts),
 [`router/diagnostics/types.ts`](../../src/router/diagnostics/types.ts),
+[`router/diagnostics/bridge-protocol.ts`](../../src/router/diagnostics/bridge-protocol.ts),
 [`router/diagnostics/redaction.ts`](../../src/router/diagnostics/redaction.ts),
 [`router/diagnostics/hub.ts`](../../src/router/diagnostics/hub.ts), and
 [`router/diagnostics/channel.ts`](../../src/router/diagnostics/channel.ts).
+The development-only realm-to-Vite sender is
+[`router/diagnostics/runtime-bridge.ts`](../../src/router/diagnostics/runtime-bridge.ts).
 Runtime event ownership stays with
 [`router/instrument.ts`](../../src/router/instrument.ts),
 [`router/telemetry.ts`](../../src/router/telemetry.ts),
@@ -97,11 +100,19 @@ Development MCP devtools are owned by
 [`devtools-mcp/http-endpoint.ts`](../../src/devtools-mcp/http-endpoint.ts),
 [`devtools-mcp/runtime-registry.ts`](../../src/devtools-mcp/runtime-registry.ts),
 [`devtools-mcp/snapshot-store.ts`](../../src/devtools-mcp/snapshot-store.ts),
+[`devtools-mcp/diagnostic-store.ts`](../../src/devtools-mcp/diagnostic-store.ts),
 [`devtools-mcp/stdio-connector.ts`](../../src/devtools-mcp/stdio-connector.ts),
 [`vite/devtools-mcp.ts`](../../src/vite/devtools-mcp.ts),
+[`vite/devtools-diagnostics.ts`](../../src/vite/devtools-diagnostics.ts),
 [`vite/discovery/mcp-snapshot.ts`](../../src/vite/discovery/mcp-snapshot.ts),
 [`vite/router-discovery.ts`](../../src/vite/router-discovery.ts), and
 [`bin/rango.ts`](../../src/bin/rango.ts).
+Static declaration ownership reuses
+[`build/route-types/include-resolution.ts`](../../src/build/route-types/include-resolution.ts)
+and
+[`build/route-types/router-processing.ts`](../../src/build/route-types/router-processing.ts);
+the resulting side table is Vite-only and is never emitted into production route
+manifests.
 
 The dev-discovery row's transport description is superseded: readiness is an active request from `vite/router-discovery.ts` to the reloaded router's probe header in `router.ts`, while browser startup and reconnect queries use Vite's client hot channel. Successful discovery advances the epoch only when the path, name, trailing-slash, or search-schema shape changes. The old router cannot satisfy the next epoch, and superseded probes stop before publishing, so readiness confirms the new router instance rather than predicting workerd reload completion.
 

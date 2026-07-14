@@ -114,6 +114,7 @@ export function createVirtualEntriesPlugin(
 ): Plugin {
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
+  let developmentDiagnostics = false;
 
   if (entries.client === VIRTUAL_IDS.browser) {
     virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
@@ -133,6 +134,10 @@ export function createVirtualEntriesPlugin(
   return {
     name: "@rangojs/router:virtual-entries",
     enforce: "pre",
+
+    configResolved(config) {
+      developmentDiagnostics = config.command === "serve";
+    },
 
     resolveId(id) {
       if (knownIds.has(id)) {
@@ -159,8 +164,8 @@ export function createVirtualEntriesPlugin(
           // Normalize backslashes for Windows (path.join/slice preserve native separators)
           const absoluteRouterPath = raw.replaceAll("\\", "/");
           return routerPathRef.kind === "host"
-            ? getVirtualEntryRSCHost(absoluteRouterPath)
-            : getVirtualEntryRSC(absoluteRouterPath);
+            ? getVirtualEntryRSCHost(absoluteRouterPath, developmentDiagnostics)
+            : getVirtualEntryRSC(absoluteRouterPath, developmentDiagnostics);
         }
       }
       return null;

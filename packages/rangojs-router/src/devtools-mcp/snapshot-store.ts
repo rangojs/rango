@@ -1,12 +1,16 @@
 import {
   RANGO_MCP_MAX_RESULT_BYTES,
   RANGO_MCP_SCHEMA_VERSION,
+  RANGO_MCP_TOOL_SCHEMA_VERSION,
+  serializedToolResultBytes,
   type DiscoveryStatusSnapshot,
   type GetRoutesInput,
   type ProjectMetadataSnapshot,
   type RouteRecord,
   type RouterRecord,
   type RoutesPageSnapshot,
+  type RouteOwnershipRecord,
+  type RouteSourceOwnership,
   type RangoPreset,
 } from "./protocol.js";
 
@@ -43,12 +47,18 @@ export interface RangoMcpSnapshotStore {
     routes: RouteRecord[],
     routers: RouterRecord[],
     attempt: DiscoveryAttempt,
+    ownership?: RouteOwnershipRecord[],
   ): void;
   failDiscovery(error: unknown, attempt: DiscoveryAttempt): void;
   markRuntimeConvergence(state: "ready" | "pending" | "timeout"): void;
   getProjectMetadata(): ProjectMetadataSnapshot;
   getDiscoveryStatus(): DiscoveryStatusSnapshot;
   getRoutes(input?: GetRoutesInput): RoutesPageSnapshot;
+  getRouteSource(
+    routerId: string,
+    routeKey: string | null,
+    routePattern: string | null,
+  ): RouteSourceOwnership | null;
 }
 
 export interface DiscoveryAttempt {
@@ -86,16 +96,6 @@ function boundUtf8(value: string, maxBytes: number): string {
     .toString("utf8")
     .replace(/\ufffd$/u, "")
     .concat("...");
-}
-
-function serializedToolResultBytes(value: object): number {
-  return Buffer.byteLength(
-    JSON.stringify({
-      content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
-      structuredContent: value,
-    }),
-    "utf8",
-  );
 }
 
 function redactCredentialAssignment(
@@ -202,6 +202,8 @@ export function createRangoMcpSnapshotStore(
   let generation = 0;
   let routes: RouteRecord[] = [];
   let routers: RouterRecord[] = [];
+  let routeSourcesByName = new Map<string, RouteSourceOwnership | null>();
+  let routeSourcesByPattern = new Map<string, RouteSourceOwnership | null>();
   let changeRevision = 0;
   let lastAttemptAt: number | null = null;
   let lastSuccessAt: number | null = null;
@@ -246,6 +248,7 @@ export function createRangoMcpSnapshotStore(
       nextRoutes: RouteRecord[],
       nextRouters: RouterRecord[],
       discoveryAttempt: DiscoveryAttempt,
+      ownership: RouteOwnershipRecord[] = [],
     ): void {
       if (discoveryAttempt.id !== attempt) return;
       routes = [...nextRoutes].sort((a, b) => {
@@ -256,6 +259,23 @@ export function createRangoMcpSnapshotStore(
         );
       });
       routers = [...nextRouters].sort((a, b) => a.id.localeCompare(b.id));
+      routeSourcesByName = new Map();
+      routeSourcesByPattern = new Map();
+      for (const entry of ownership) {
+        if (entry.routeName) {
+          routeSourcesByName.set(
+            `${entry.routerId}\0${entry.routeName}`,
+            entry.source,
+          );
+        }
+        const patternKey = `${entry.routerId}\0${entry.routePattern}`;
+        const previous = routeSourcesByPattern.get(patternKey);
+        if (!routeSourcesByPattern.has(patternKey)) {
+          routeSourcesByPattern.set(patternKey, entry.source);
+        } else if (JSON.stringify(previous) !== JSON.stringify(entry.source)) {
+          routeSourcesByPattern.set(patternKey, null);
+        }
+      }
       generation++;
       phase =
         discoveryAttempt.changeRevision === changeRevision
@@ -289,7 +309,7 @@ export function createRangoMcpSnapshotStore(
       let selectedRouters = routers.slice(0, MAX_PROJECT_ROUTERS);
       const createMetadata = (): ProjectMetadataSnapshot => ({
         schemaVersion: RANGO_MCP_SCHEMA_VERSION,
-        toolSchemaVersion: RANGO_MCP_SCHEMA_VERSION,
+        toolSchemaVersion: RANGO_MCP_TOOL_SCHEMA_VERSION,
         projectRoot: options.projectRoot,
         preset: options.preset,
         mode: options.mode,
@@ -309,8 +329,10 @@ export function createRangoMcpSnapshotStore(
         capabilities: {
           routes: true,
           discoveryStatus: true,
-          recentRequests: false,
-          runtimeErrors: false,
+          compilationIssues: true,
+          recentRequests: true,
+          runtimeErrors: true,
+          sourceOwnership: true,
           browserState: false,
           logs: false,
         },
@@ -430,6 +452,37 @@ export function createRangoMcpSnapshotStore(
       }
       const nextOffset = offset + page.length;
       return createPage(page, nextOffset, stoppedForSize);
+    },
+
+    getRouteSource(
+      routerId: string,
+      routeKey: string | null,
+      routePattern: string | null,
+    ): RouteSourceOwnership | null {
+      if (routeKey) {
+        const nameKey = `${routerId}\0${routeKey}`;
+        if (routeSourcesByName.has(nameKey)) {
+          return routeSourcesByName.get(nameKey) ?? null;
+        }
+      }
+      if (!routePattern) return null;
+      const patternKey = `${routerId}\0${routePattern}`;
+      if (routeSourcesByPattern.has(patternKey)) {
+        return routeSourcesByPattern.get(patternKey) ?? null;
+      }
+      const routerFile = routes.find(
+        (route) =>
+          route.routerId === routerId &&
+          route.pattern === routePattern &&
+          (!routeKey || route.name === routeKey),
+      )?.routerFile;
+      return routerFile
+        ? {
+            file: routerFile,
+            kind: "route",
+            precision: "router-file",
+          }
+        : null;
     },
   };
 }

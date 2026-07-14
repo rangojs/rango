@@ -15,14 +15,20 @@ import {
   findHostRouterFiles,
 } from "../../build/route-types/router-processing.js";
 
-const loadRsc = (routerPathRef: {
-  path?: string;
-  kind?: "router" | "host";
-}): string => {
+const loadRsc = (
+  routerPathRef: {
+    path?: string;
+    kind?: "router" | "host";
+  },
+  command?: "serve" | "build",
+): string => {
   const plugin = createVirtualEntriesPlugin(
     { client: "client.tsx", ssr: "ssr.tsx", rsc: VIRTUAL_IDS.rsc },
     routerPathRef,
   );
+  if (command) {
+    (plugin as any).configResolved({ command });
+  }
   const load = (plugin as any).load as (id: string) => string | null;
   const result = load("\0" + VIRTUAL_IDS.rsc);
   expect(result).toBeTruthy();
@@ -98,6 +104,35 @@ describe("createVirtualEntriesPlugin entry kind", () => {
     // createRouter() also exposes .match(), so .host() disambiguates a mistaken
     // `hostRouter` path (which would otherwise return a non-Response MatchResult).
     expect(host).toContain('typeof candidate.host === "function"');
+  });
+
+  it("injects the diagnostic bridge only into development entries", () => {
+    const development = loadRsc(
+      { path: "./src/router.tsx", kind: "router" },
+      "serve",
+    );
+    const production = loadRsc(
+      { path: "./src/router.tsx", kind: "router" },
+      "build",
+    );
+
+    expect(development).toContain(
+      'import "@rangojs/router/internal/dev-diagnostics";',
+    );
+    expect(production).not.toContain("dev-diagnostics");
+
+    const developmentHost = loadRsc(
+      { path: "./src/worker.rsc.tsx", kind: "host" },
+      "serve",
+    );
+    const productionHost = loadRsc(
+      { path: "./src/worker.rsc.tsx", kind: "host" },
+      "build",
+    );
+    expect(developmentHost).toContain(
+      'import "@rangojs/router/internal/dev-diagnostics";',
+    );
+    expect(productionHost).not.toContain("dev-diagnostics");
   });
 });
 

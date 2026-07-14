@@ -75,19 +75,20 @@ package's Node 24 engine floor. `VercelPresetOptions.runtime` can override it.
 
 These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. They are not part of the public API and may change without notice.
 
-| Export                               | Description                                                                                |
-| ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `./server`                           | Manifest/build internals: plugin bridge, route-map management, router discovery registries |
-| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                                             |
-| `./internal/deps/browser`            | Browser runtime dependency bridge                                                          |
-| `./internal/deps/ssr`                | SSR runtime dependency bridge (`createFromReadableStream`, `setOnClientReference`)         |
-| `./internal/deps/rsc`                | RSC runtime dependency bridge                                                              |
-| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                                                       |
-| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                                                       |
-| `./internal/rsc-handler`             | RSC handler internals                                                                      |
-| `./internal/browser/dev-discovery`   | Browser-only Cloudflare dev stale-document convergence helper                              |
-| `./cache-runtime`                    | Cache runtime dependencies                                                                 |
-| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module                         |
+| Export                               | Description                                                                                                                                                                  |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `./server`                           | Manifest/build internals: plugin bridge, route-map management, router discovery registries                                                                                   |
+| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                                                                                                                               |
+| `./internal/deps/browser`            | Browser runtime dependency bridge                                                                                                                                            |
+| `./internal/deps/ssr`                | SSR runtime dependency bridge (`createFromReadableStream`, `setOnClientReference`)                                                                                           |
+| `./internal/deps/rsc`                | RSC runtime dependency bridge                                                                                                                                                |
+| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                                                                                                                                         |
+| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                                                                                                                                         |
+| `./internal/rsc-handler`             | RSC handler internals                                                                                                                                                        |
+| `./internal/browser/dev-discovery`   | Browser-only Cloudflare dev stale-document convergence helper                                                                                                                |
+| `./internal/dev-diagnostics`         | Development-only RSC bootstrap that batches the realm-local diagnostic hub onto Vite's hot channel; its test-only failure injector proves fail-open behavior in real servers |
+| `./cache-runtime`                    | Cache runtime dependencies                                                                                                                                                   |
+| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module                                                                                                           |
 
 ### CLI
 
@@ -101,12 +102,14 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 `rango mcp` — stdio MCP connector for the running Vite development server. It
 discovers owner-only runtime descriptors under `~/.rango/mcp`, forwards the
-read-only `get_project_metadata`, `get_routes`, and `get_discovery_status` tools
-to the token-protected `/__rango/mcp` Streamable HTTP endpoint, and supports
+read-only `get_project_metadata`, `get_routes`, `get_discovery_status`,
+`get_compilation_issues`, `list_requests`, `get_request_trace`, and `get_errors`
+tools to the token-protected `/__rango/mcp` Streamable HTTP endpoint, and supports
 `--root` / `--instance` selection. The endpoint exists only in `configureServer`;
 build and preview do not mount it. Discovery snapshots are last-good and
-attempt-ordered; cursors bind to one process and generation. Cloudflare status
-separately reports workerd route-generation convergence.
+attempt-ordered; cursors bind to one process and generation. Request/error cursors
+bind to their own host-retention revisions. Cloudflare status separately reports
+workerd route-generation convergence.
 
 ---
 
@@ -450,8 +453,12 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - `router/diagnostics/redaction.ts` bounds untrusted labels and errors, strips control characters, redacts credential-shaped text and URL query values, stores search names rather than values, and makes retained stack paths project-relative
 - `router/diagnostics/channel.ts` is the fail-open projection boundary. Existing request classification, phase instrumentation, public telemetry owners, `invokeOnError`, revalidation tracing, and render-stage events feed the hub; a diagnostic failure cannot replace a response or suppress a public telemetry event
 - Collection is transaction-scoped, not merely development-global. PPR background shell capture disables the foreground channel until Phase 3 gives outliving background work its own linked trace
+- `router/diagnostics/runtime-bridge.ts` subscribes to accepted hub events and sends bounded batches over the RSC environment's hot channel. Node's module runner and Cloudflare workerd share the same envelope; queue overflow and send failure drop evidence rather than delaying a response
+- `devtools-mcp/diagnostic-store.ts` validates and redacts batches again, deduplicates realm sequences, retains traces against Vite host receipt time, and owns bounded pagination for request, trace, error, and compilation tools. Tool schema version 2 remains independent from diagnostic event schema version 1
+- Route source ownership is a Vite-only side table generated by static include-tree parsing. Resolvable named routes point to their declaration module; dynamic/factory-only routes fall back to the router module without executing inspection-time user code
+- Structured Vite hot-channel errors remain current until a successful update for their file. Logger warnings are labeled `recent-only`; MCP does not claim Vite exposes a complete current-warning registry
 - Production constant-folding removes the hub, retention/redaction implementation, event vocabulary, and client-correlation storage. `e2e/build-test-app.setup.ts` guards the Node test app, while `tools/check-bundle-guards.mjs` scans Node and Cloudflare production chunks
-- The hub is internal and realm-local in Phase 1. `/__rango/mcp` does not expose request tools until Phase 2 adds the explicit Node module-runner/Cloudflare workerd ingestion bridge
+- `get_request_trace` exposes the current Phase 1 event detail. Scope-level cache/PPR explanations and loader consumption lanes remain Phase 3 rather than being inferred from coarse events
 
 ### Dev and HMR
 

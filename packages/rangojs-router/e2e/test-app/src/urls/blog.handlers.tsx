@@ -53,7 +53,15 @@ export const BlogIndexHandler: Handler<"blog.index"> = (ctx) => {
 /**
  * Blog post detail handler
  */
-export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
+export const BlogPostHandler: Handler<"blog.post"> = async (ctx) => {
+  if (
+    import.meta.env.DEV &&
+    ctx.url.searchParams.has("inject-diagnostic-failure")
+  ) {
+    const { injectDevelopmentDiagnosticFailureForTesting } =
+      await import("@rangojs/router/internal/dev-diagnostics");
+    injectDevelopmentDiagnosticFailureForTesting();
+  }
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
   pushBreadcrumb({ label: "Blog", href: ctx.reverse("blog.index") });

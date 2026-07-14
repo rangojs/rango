@@ -78,6 +78,7 @@ import { createDiscoveryGate } from "./discovery/gate-state.js";
 import {
   createMcpRouteSnapshot,
   createMcpRouterSnapshot,
+  createMcpSourceOwnershipSnapshot,
 } from "./discovery/mcp-snapshot.js";
 import { installRangoMcp } from "./devtools-mcp.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
@@ -565,6 +566,7 @@ export function createRouterDiscoveryPlugin(
             createMcpRouteSnapshot(s),
             createMcpRouterSnapshot(s),
             attempt,
+            createMcpSourceOwnershipSnapshot(s),
           );
         } catch (error) {
           mcp.failDiscovery(error, attempt);

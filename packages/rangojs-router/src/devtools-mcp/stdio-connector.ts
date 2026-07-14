@@ -120,6 +120,11 @@ export async function runRangoMcpConnector(
     getProjectMetadata: () => proxy.call("get_project_metadata", {}),
     getDiscoveryStatus: () => proxy.call("get_discovery_status", {}),
     getRoutes: (input) => proxy.call("get_routes", { ...input }),
+    getCompilationIssues: (input) =>
+      proxy.call("get_compilation_issues", { ...input }),
+    getErrors: (input) => proxy.call("get_errors", { ...input }),
+    listRequests: (input) => proxy.call("list_requests", { ...input }),
+    getRequestTrace: (input) => proxy.call("get_request_trace", { ...input }),
   });
   const transport = new StdioServerTransport();
   transport.onclose = () => {
