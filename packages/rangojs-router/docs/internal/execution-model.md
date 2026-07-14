@@ -215,10 +215,11 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   the navigation IS an intercept — and therefore which artifact variant the
   middleware reads — is resolved DURING the match (`findInterceptForRoute`;
   the `X-RSC-Router-Intercept-Source` header proves nothing in either
-  direction). The match pipeline stamps the post-match facts on the request
-  context (`_servedFromPrerenderStore` from the prerender lookup that
-  actually served, `_resolvedIntercept` from the match context) and every
-  BYPASS is reclassified from them (`reclassifyReplayStatus`): a prerender
+  direction). The match pipeline stamps one ordered post-match reason on the
+  request context (`_pprReplayPostMatchReason`): the match context supplies
+  `intercept`, then an actual prerender serve overwrites it with
+  `prerender-store` because that is the response source. Every BYPASS is
+  reclassified from it (`reclassifyReplayStatus`): a prerender
   serve reports `prerender-store`, an intercept resolution reports
   `intercept`, and both suppress the heal capture (a prerender capture
   records no doc record; an intercept never consults replay). A `condition()`

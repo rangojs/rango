@@ -99,10 +99,9 @@ import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
-import type { HandleStore } from "../../server/handle-store.js";
 import {
-  getRequestContext,
   _getRequestContext,
+  type RequestContext,
 } from "../../server/request-context.js";
 import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
@@ -127,17 +126,13 @@ let _decodeHandles:
 let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
-let _lazyGetRequestContext:
-  | typeof import("../../server/request-context.js").getRequestContext
-  | undefined;
 
 async function ensurePrerenderDeps() {
   if (!_deserializeSegments) {
-    const [codec, snapshot, paramHash, reqCtx, store] = await Promise.all([
+    const [codec, snapshot, paramHash, store] = await Promise.all([
       import("../../cache/segment-codec.js"),
       import("../../cache/handle-snapshot.js"),
       import("../../prerender/param-hash.js"),
-      import("../../server/request-context.js"),
       import("../../prerender/store.js"),
     ]);
     _deserializeSegments = codec.deserializeSegments;
@@ -145,7 +140,6 @@ async function ensurePrerenderDeps() {
     _restoreHandles = snapshot.restoreHandles;
     _decodeHandles = snapshot.decodeHandles;
     _hashParams = paramHash.hashParams;
-    _lazyGetRequestContext = reqCtx.getRequestContext;
     if (prerenderStoreInstance === undefined) {
       prerenderStoreInstance = store.createPrerenderStore();
     }
@@ -237,18 +231,16 @@ async function* yieldFromStore<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
   pipelineStart: number,
-  handleStoreRef?: HandleStore,
+  reqCtx: RequestContext<TEnv> | undefined,
+  resolveLoadersOnly: RouterContext<TEnv>["resolveLoadersOnly"],
+  resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
 ): AsyncGenerator<ResolvedSegment> {
-  const { resolveLoadersOnlyWithRevalidation, resolveLoadersOnly } =
-    getRouterContext<TEnv>();
-
   if (
     !_deserializeSegments ||
     !_fragmentSegments ||
     !_restoreHandles ||
     !_decodeHandles ||
-    !_hashParams ||
-    !_lazyGetRequestContext
+    !_hashParams
   ) {
     throw new Error("yieldFromStore called before ensurePrerenderDeps");
   }
@@ -257,14 +249,14 @@ async function* yieldFromStore<TEnv>(
   // store (the prerender lookup runs before the cache scope), so the fragment
   // splice must apply here too — otherwise producer B entries re-serialize the
   // whole tree per request while producer A entries do not.
-  const segments = _getRequestContext()?._shellFragmentPayload
+  const segments = reqCtx?._shellFragmentPayload
     ? await _fragmentSegments(entry.segments)
     : await _deserializeSegments(entry.segments);
 
   // Replay handle data (same as runtime cache hit path). entry.handles is a
   // Flight-encoded string ("" when none) — decode before restore so
   // Promise/ReactNode handle values are revived, not the corrupted JSON form.
-  const handleStore = handleStoreRef ?? _lazyGetRequestContext()?._handleStore;
+  const handleStore = reqCtx?._handleStore;
   if (handleStore && entry.handles) {
     const handlesRecord = await _decodeHandles(entry.handles);
     if (handlesRecord) {
@@ -278,17 +270,14 @@ async function* yieldFromStore<TEnv>(
   state.cachedMatchedIds = segments.map((s) => s.id);
 
   // Set streaming flag (once) and resolve render barrier.
-  const reqCtx = handleStoreRef ? undefined : _lazyGetRequestContext?.();
-  const barrierReqCtx = reqCtx ?? _getRequestContext();
-  // Post-match serve-source truth for the PPR replay reporter: the store
-  // ACTUALLY served (this covers both artifact variants — the replay gate's
-  // pre-match probe cannot know which one tryPrerenderLookup will read).
-  if (barrierReqCtx) barrierReqCtx._servedFromPrerenderStore = true;
-  if (barrierReqCtx) {
-    if (barrierReqCtx._treeHasStreaming === undefined) {
-      barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+  // Post-match serve-source truth for the PPR replay reporter. This overwrites
+  // `intercept` because the prerender store is the response source.
+  if (reqCtx) {
+    reqCtx._pprReplayPostMatchReason = "prerender-store";
+    if (reqCtx._treeHasStreaming === undefined) {
+      reqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
     }
-    barrierReqCtx._resolveRenderBarrier(segments);
+    reqCtx._resolveRenderBarrier(segments);
   }
 
   // For partial navigation, nullify components the client already has
@@ -353,9 +342,8 @@ export async function prerenderEntryExists(
   // Non-intercept variant only: whether the navigation IS an intercept (and
   // therefore whether tryPrerenderLookup reads `paramHash + "/i"`) resolves
   // during the match, so this pre-match fast path can only guess the normal
-  // artifact. A wrong guess is reclassified post-match from the
-  // `_servedFromPrerenderStore` / `_resolvedIntercept` stamps
-  // (reclassifyReplayStatus in rsc-rendering.ts).
+  // artifact. A wrong guess is reclassified post-match from the match
+  // pipeline's `_pprReplayPostMatchReason` stamp.
   const entry = await prerenderStoreInstance.get(
     routeKey,
     _hashParams!(params),
@@ -381,7 +369,9 @@ async function* tryPrerenderLookup<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
   pipelineStart: number,
-  handleStoreRef?: HandleStore,
+  reqCtx: RequestContext<TEnv> | undefined,
+  resolveLoadersOnly: RouterContext<TEnv>["resolveLoadersOnly"],
+  resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
 ): AsyncGenerator<ResolvedSegment, boolean> {
   const paramHash = _hashParams!(ctx.matched.params);
   const isPassthroughPrerenderRoute = ctx.entries.some(
@@ -397,7 +387,15 @@ async function* tryPrerenderLookup<TEnv>(
     },
   );
   if (!entry) return false;
-  yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
+  yield* yieldFromStore(
+    entry,
+    ctx,
+    state,
+    pipelineStart,
+    reqCtx,
+    resolveLoadersOnly,
+    resolveLoadersOnlyWithRevalidation,
+  );
   return true;
 }
 
@@ -436,14 +434,14 @@ export function withCacheLookup<TEnv>(
     // can disrupt AsyncLocalStorage, causing getRequestContext() to return
     // undefined afterward. Capturing the reference early ensures handle replay
     // and handler handle-push work regardless of ALS state.
-    const pipelineReqCtx = _getRequestContext();
-    const handleStoreRef = pipelineReqCtx?._handleStore;
-    // Post-match intercept truth for the PPR replay reporter: interception is
-    // resolved by match-api's findInterceptForRoute while BUILDING this match
-    // context — with or without an intercept-source header — so only the
-    // match itself can answer it. Stamped unconditionally (false resets a
-    // stale value from an earlier match on the same request context).
-    if (pipelineReqCtx) pipelineReqCtx._resolvedIntercept = ctx.isIntercept;
+    const pipelineReqCtx = _getRequestContext<TEnv>();
+    // Only the match can determine interception; the source header proves
+    // nothing in either direction. Clear a stale reason on normal matches.
+    if (pipelineReqCtx) {
+      pipelineReqCtx._pprReplayPostMatchReason = ctx.isIntercept
+        ? "intercept"
+        : undefined;
+    }
 
     const {
       evaluateRevalidation,
@@ -462,7 +460,9 @@ export function withCacheLookup<TEnv>(
           ctx,
           state,
           pipelineStart,
-          handleStoreRef,
+          pipelineReqCtx,
+          resolveLoadersOnly,
+          resolveLoadersOnlyWithRevalidation,
         );
         if (served) return;
       }
@@ -483,7 +483,9 @@ export function withCacheLookup<TEnv>(
             ctx,
             state,
             pipelineStart,
-            handleStoreRef,
+            pipelineReqCtx,
+            resolveLoadersOnly,
+            resolveLoadersOnlyWithRevalidation,
           );
           if (served) return;
         }
@@ -529,7 +531,7 @@ export function withCacheLookup<TEnv>(
     // of re-running handlers (breaking SWR recapture freshness). Intercepts
     // stay source-dependent on their normal cache path (match-api never arms
     // replay for them).
-    const replayMarker = _getRequestContext()?._shellImplicitCache;
+    const replayMarker = pipelineReqCtx?._shellImplicitCache;
     if (
       replayMarker?.onExplicitHit &&
       !ctx.isIntercept &&
@@ -572,8 +574,7 @@ export function withCacheLookup<TEnv>(
     state.shouldRevalidate = cacheResult.shouldRevalidate;
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
-    const pprTransitionDecisions =
-      _getRequestContext()?._pprTransitionDecisions;
+    const pprTransitionDecisions = pipelineReqCtx?._pprTransitionDecisions;
 
     const canCheckSegmentRevalidation =
       !ctx.isFullMatch &&
@@ -693,7 +694,7 @@ export function withCacheLookup<TEnv>(
       yield segment;
     }
 
-    const barrierReqCtx = _getRequestContext();
+    const barrierReqCtx = pipelineReqCtx;
     if (barrierReqCtx) {
       if (barrierReqCtx._treeHasStreaming === undefined) {
         barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);

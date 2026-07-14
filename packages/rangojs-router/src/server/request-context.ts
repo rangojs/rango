@@ -213,19 +213,13 @@ export interface RequestContext<
 
   /**
    * @internal Post-match serve-source truth for the PPR replay reporter.
-   * Stamped by the match pipeline: withCacheLookup's prerender lookup sets
-   * `_servedFromPrerenderStore` when a baked entry actually served (either
-   * artifact variant), and withCacheLookup stamps `_resolvedIntercept` from
-   * the match context (intercept resolution is decided by match-api's
-   * findInterceptForRoute DURING the match — the intercept-source header
-   * alone proves nothing in either direction). matchPartialWithPprReplay
-   * reads both AFTER matchPartial resolves to reclassify its pre-match
-   * bypass guesses and to suppress heal captures that could never produce a
-   * consumable snapshot (prerender-served) or never be consulted (intercept).
+   * Stamped from the match context as `intercept`, then overwritten as
+   * `prerender-store` if that lookup actually serves. The latter wins because
+   * it identifies the response source. matchPartialWithPprReplay reads this
+   * AFTER matching to reclassify its pre-match guess and suppress pointless
+   * heal captures.
    */
-  _servedFromPrerenderStore?: boolean;
-  /** @internal See _servedFromPrerenderStore. */
-  _resolvedIntercept?: boolean;
+  _pprReplayPostMatchReason?: "prerender-store" | "intercept";
 
   /** @internal Cache store for segment caching (optional, used by CacheScope) */
   _cacheStore?: SegmentCacheStore;
@@ -712,8 +706,7 @@ export type PublicRequestContext<
   | "_handleStore"
   | "_transitionWhen"
   | "_pprTransitionDecisions"
-  | "_servedFromPrerenderStore"
-  | "_resolvedIntercept"
+  | "_pprReplayPostMatchReason"
   | "_cacheStore"
   | "_searchParamsFilter"
   | "_shellCaptureRun"

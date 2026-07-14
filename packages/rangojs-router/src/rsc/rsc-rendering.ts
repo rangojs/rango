@@ -171,37 +171,18 @@ function shouldHealReplayMiss(
  * whether the prerender store ACTUALLY served (either artifact variant — the
  * gate's probe reads only the non-intercept one), and whether the navigation
  * resolved to an intercept (findInterceptForRoute runs during the match; the
- * intercept-source header proves nothing in either direction). Both are
- * stamped on the request context by withCacheLookup. A replay HIT is never
- * overridden — the seeded record was demonstrably consumed, so neither fact
- * can be true.
+ * intercept-source header proves nothing in either direction). The resulting
+ * reason is stamped on the request context by withCacheLookup. A replay HIT is
+ * never overridden — the seeded record was demonstrably consumed, so neither
+ * fact can be true.
  */
 function reclassifyReplayStatus(
   reqCtx: RequestContext<any>,
-  status: PprReplayStatus | undefined,
-): PprReplayStatus | undefined {
-  if (!status || status.outcome === "HIT") return status;
-  if (reqCtx._servedFromPrerenderStore) {
-    return { outcome: "BYPASS", reason: "prerender-store" };
-  }
-  if (reqCtx._resolvedIntercept) {
-    return { outcome: "BYPASS", reason: "intercept" };
-  }
-  return status;
-}
-
-/**
- * Heal captures are pointless when the match served from the prerender store
- * (its captures record no doc segment record, so the healed snapshot could
- * never become consumable) or resolved an intercept (replay is never armed
- * for intercept navigations — match-api keeps their normal cache path).
- * Read AFTER matchPartial resolves; see reclassifyReplayStatus.
- */
-function replayHealSuppressed(reqCtx: RequestContext<any>): boolean {
-  return (
-    reqCtx._servedFromPrerenderStore === true ||
-    reqCtx._resolvedIntercept === true
-  );
+  status: PprReplayStatus,
+): PprReplayStatus {
+  if (status.outcome === "HIT") return status;
+  const reason = reqCtx._pprReplayPostMatchReason;
+  return reason ? { outcome: "BYPASS", reason } : status;
 }
 
 function resolveDevShellLookup(
@@ -779,12 +760,16 @@ async function matchPartialWithPprReplay<TEnv>(
       describePprReplayStatus(status),
     );
   };
+  const finalizeReplayStatus = (status: PprReplayStatus): PprReplayStatus => {
+    const finalStatus = reclassifyReplayStatus(reqCtx, status);
+    recordReplayStatus(finalStatus);
+    return finalStatus;
+  };
   const runMatch = async (status?: PprReplayStatus) => {
     const result = await ctx.router.matchPartial(request, { env });
     // The match may have settled a fact the pre-match gate could only guess
     // at (prerender serve, intercept resolution) — report the truth.
-    const finalStatus = reclassifyReplayStatus(reqCtx, status);
-    if (finalStatus) recordReplayStatus(finalStatus);
+    const finalStatus = status ? finalizeReplayStatus(status) : undefined;
     return { result, status: finalStatus };
   };
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
@@ -970,13 +955,12 @@ async function matchPartialWithPprReplay<TEnv>(
       };
       try {
         const result = await ctx.router.matchPartial(request, { env });
-        const preStatus: PprReplayStatus = explicitCacheBypass
+        const provisionalStatus: PprReplayStatus = explicitCacheBypass
           ? { outcome: "BYPASS", reason: "cache-disabled" }
           : explicitCacheHit
             ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
             : { outcome: "BYPASS", reason: bypassReason ?? "no-entry" };
-        const status = reclassifyReplayStatus(reqCtx, preStatus) ?? preStatus;
-        recordReplayStatus(status);
+        const status = finalizeReplayStatus(provisionalStatus);
         return {
           result,
           status,
@@ -993,7 +977,7 @@ async function matchPartialWithPprReplay<TEnv>(
           // lookup refuses, so explicitCacheBypass suppresses the heal.
           captureNeeded:
             !explicitCacheBypass &&
-            !replayHealSuppressed(reqCtx) &&
+            reqCtx._pprReplayPostMatchReason === undefined &&
             (shouldHealReplayMiss(bypassReason) ||
               bypassReason === "no-segment-snapshot"),
         };
@@ -1008,7 +992,8 @@ async function matchPartialWithPprReplay<TEnv>(
     return {
       ...match,
       captureNeeded:
-        !replayHealSuppressed(reqCtx) && shouldHealReplayMiss(bypassReason),
+        reqCtx._pprReplayPostMatchReason === undefined &&
+        shouldHealReplayMiss(bypassReason),
     };
   }
 
@@ -1043,7 +1028,7 @@ async function matchPartialWithPprReplay<TEnv>(
 
   try {
     const result = await ctx.router.matchPartial(request, { env });
-    const preStatus: PprReplayStatus = segmentReplayHit
+    const provisionalStatus: PprReplayStatus = segmentReplayHit
       ? { outcome: "HIT", freshness }
       : explicitCacheHit
         ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
@@ -1054,8 +1039,7 @@ async function matchPartialWithPprReplay<TEnv>(
     // unconsulted (prerender short-circuits before the scope; intercepts
     // keep snapshot.cacheScope) — the "snapshot-miss" guess would blame the
     // capture for a lane that was never in play.
-    const status = reclassifyReplayStatus(reqCtx, preStatus) ?? preStatus;
-    recordReplayStatus(status);
+    const status = finalizeReplayStatus(provisionalStatus);
     return { result, status };
   } finally {
     reqCtx._shellImplicitCache = previousImplicitCache;

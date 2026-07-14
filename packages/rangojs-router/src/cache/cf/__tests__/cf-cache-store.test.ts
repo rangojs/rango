@@ -899,7 +899,7 @@ describe("CFCacheStore", () => {
         debug: (e) => events.push(e),
       });
 
-      const result = hit(await store.get("absent"));
+      const result = await store.get("absent");
 
       // No entry and no KV -> a genuine miss, distinct from match-timeout.
       expect(result).toBeNull();
@@ -1156,17 +1156,6 @@ describe("CFCacheStore", () => {
 
       expect(await store.get("l1-fail-kv-miss")).toBe(CACHE_READ_ERROR);
       expect(kv.get).toHaveBeenCalled();
-
-      matchSpy.mockRestore();
-    });
-
-    it("a genuine L1 miss without KV stays a plain miss (null, not an error)", async () => {
-      const matchSpy = vi
-        .spyOn(mockCaches.default, "match")
-        .mockResolvedValue(undefined);
-      const store = new CFCacheStore({ ctx: createMockCtx() });
-
-      expect(await store.get("plain-miss")).toBeNull();
 
       matchSpy.mockRestore();
     });
