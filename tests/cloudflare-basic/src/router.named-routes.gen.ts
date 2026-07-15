@@ -2,6 +2,7 @@
 export const NamedRoutes = {
   about: "/about",
   actionLocationState: "/action-location-state",
+  "api.cacheInvalidate": "/api/cache/invalidate",
   "api.health": "/api/health",
   "api.productDetail": "/api/products/:id",
   "api.products": "/api/products",
@@ -17,6 +18,7 @@ export const NamedRoutes = {
   "buildSkip.staticSkip": "/build-skip/static-skip",
   "buildSkip.workingStatic": "/build-skip/working-static",
   cachedHandles: "/cached-handles",
+  cacheLab: "/cache-lab",
   catchAll: "/*",
   "composition.detail": "/composition/detail",
   "composition.index": "/composition",
