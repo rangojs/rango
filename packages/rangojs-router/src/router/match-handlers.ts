@@ -525,6 +525,7 @@ export function createMatchHandlers<TEnv = any>(
                 nextUrl: ctx.url.href,
                 routeKey: ctx.routeKey,
                 isAction: !!actionContext,
+                actionId: actionContext?.actionId,
                 stale: ctx.stale || undefined,
               });
               const state = createPipelineState();

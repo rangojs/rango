@@ -56,7 +56,14 @@ import {
   getRecordingStore,
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
-import { runWithDevelopmentDiagnosticsDisabled } from "../router/diagnostics/channel.js";
+import {
+  getDevelopmentDiagnosticLink,
+  isDevelopmentDiagnosticsEnabled,
+  recordLinkedPprCaptureDiagnostic,
+  recordPprDiagnostic,
+  runWithDevelopmentDiagnosticsDisabled,
+  type DevelopmentDiagnosticLink,
+} from "../router/diagnostics/channel.js";
 import type { SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
@@ -453,7 +460,7 @@ export interface ShellCaptureDebugEvent {
   /** A bake-lane loader settled into a shell that uses TTL/SWR-only invalidation. */
   untaggedBake?: true;
   /** Outcome reported by a store that supports shell-write acknowledgements. */
-  storeWrite?: "stored" | "invalidated";
+  storeWrite?: "stored" | "invalidated" | "failed";
   /** Consecutive failure count in the key's backoff entry, when one exists. */
   backoffFailures?: number;
   /** Ms remaining in the key's backoff window, when one exists. */
@@ -574,9 +581,42 @@ export function takeCaptureDebugEventForTiming(
  * throwing sink is swallowed — diagnostics must never fail a capture.
  */
 function publishCaptureDebugEvent(
-  descriptor: Pick<ShellCaptureDescriptor, "debugSink">,
+  descriptor: Pick<ShellCaptureDescriptor, "debugSink" | "navigationOnly">,
   event: ShellCaptureDebugEvent,
+  diagnosticReason?: string,
+  diagnosticLink?: DevelopmentDiagnosticLink,
 ): void {
+  if (diagnosticLink || isDevelopmentDiagnosticsEnabled()) {
+    const reason =
+      diagnosticReason ??
+      (event.outcome === "skip-in-flight"
+        ? "in-flight"
+        : event.outcome === "skip-backoff" || event.outcome === "backoff"
+          ? "backoff"
+          : event.outcome === "skip-capacity"
+            ? "capacity"
+            : event.outcome === "error"
+              ? "internal-error"
+              : event.outcome === "redirect"
+                ? "redirect"
+                : event.outcome === "no-shell"
+                  ? "timeout-or-empty-shell"
+                  : null);
+    const diagnosticData = {
+      outcome: event.outcome,
+      reason,
+      navigationOnly: descriptor.navigationOnly === true,
+      attempt: event.attempt ?? null,
+      durationMs: event.attemptMs ?? null,
+      snapshotSkipped: event.snapshotSkipped ?? false,
+      storeWrite: event.storeWrite ?? null,
+    };
+    if (diagnosticLink) {
+      recordLinkedPprCaptureDiagnostic(diagnosticLink, diagnosticData);
+    } else {
+      recordPprDiagnostic("capture", diagnosticData);
+    }
+  }
   if (isDevMode() && TIMING_RECORDED_OUTCOMES.has(event.outcome)) {
     // Refresh insertion order for the FIFO cap, then evict the oldest key.
     lastCaptureEventsForTiming.delete(event.key);
@@ -594,6 +634,8 @@ function publishCaptureDebugEvent(
     // Diagnostics only: a throwing consumer sink must never fail the capture.
   }
 }
+
+type CaptureEventPublisher = typeof publishCaptureDebugEvent;
 
 /** Current backoff state fields for `key` (empty when no backoff entry). */
 function backoffFields(
@@ -837,16 +879,26 @@ export function scheduleShellCapture(
     | SSRModule
     | ((request: Request, url: URL) => Promise<SSRModule | null>),
   descriptor: ShellCaptureDescriptor,
+  diagnosticLink: DevelopmentDiagnosticLink | null = getDevelopmentDiagnosticLink(),
 ): void {
   const key = descriptor.key;
+  const publish: CaptureEventPublisher = diagnosticLink
+    ? (captureDescriptor, event, reason) =>
+        publishCaptureDebugEvent(
+          captureDescriptor,
+          event,
+          reason,
+          diagnosticLink,
+        )
+    : publishCaptureDebugEvent;
   if (inFlightCaptures.has(key)) {
-    publishCaptureDebugEvent(descriptor, { key, outcome: "skip-in-flight" });
+    publish(descriptor, { key, outcome: "skip-in-flight" });
     return;
   }
   // Refused/failed within the window → skip the doomed re-render (one probe per
   // key per window per isolate). Expired entries self-evict inside the check.
   if (isCaptureBackedOff(key)) {
-    publishCaptureDebugEvent(descriptor, {
+    publish(descriptor, {
       key,
       outcome: "skip-backoff",
       ...backoffFields(key),
@@ -871,6 +923,11 @@ export function scheduleShellCapture(
         !resolvedSsrModule.resumeShellHTML ||
         !resolvedSsrModule.captureShellHTML
       ) {
+        publish(
+          descriptor,
+          { key, outcome: "refused" },
+          "unsupported-renderer",
+        );
         return;
       }
       const outcome = await runShellCapture(
@@ -881,6 +938,8 @@ export function scheduleShellCapture(
         reqCtx,
         resolvedSsrModule,
         descriptor,
+        SHELL_CAPTURE_RETRY_DELAY_MS,
+        publish,
       );
       // Update the negative cache off the terminal outcome. A stored shell clears
       // any prior backoff; a `no-shell` (after the in-place retry) backs the key
@@ -889,7 +948,7 @@ export function scheduleShellCapture(
       if (outcome === "stored") clearCaptureBackoff(key);
       else if (outcome === "no-shell") {
         markCaptureBackoff(key);
-        publishCaptureDebugEvent(descriptor, {
+        publish(descriptor, {
           key,
           outcome: "backoff",
           ...backoffFields(key),
@@ -900,7 +959,7 @@ export function scheduleShellCapture(
       // context is gone. A genuine failure recurs, so back it off too (re-probe
       // once per window, not every request) and report it once.
       markCaptureBackoff(key);
-      publishCaptureDebugEvent(descriptor, {
+      publish(descriptor, {
         key,
         outcome: "error",
         ...backoffFields(key),
@@ -921,7 +980,7 @@ export function scheduleShellCapture(
     } catch (error) {
       if (error instanceof CaptureQueueFullError) {
         inFlightCaptures.delete(key);
-        publishCaptureDebugEvent(descriptor, {
+        publish(descriptor, {
           key,
           outcome: "skip-capacity",
         });
@@ -983,7 +1042,7 @@ type CaptureAttemptStats = Pick<
   | "snapshotSkipped"
   | "untaggedBake"
   | "storeWrite"
->;
+> & { diagnosticReason?: string };
 
 /**
  * Run the shell capture with a single in-place retry, then store the result.
@@ -1012,6 +1071,7 @@ async function runShellCapture(
   ssrModule: SSRModule,
   descriptor: ShellCaptureDescriptor,
   retryDelayMs: number = SHELL_CAPTURE_RETRY_DELAY_MS,
+  publish: CaptureEventPublisher = publishCaptureDebugEvent,
 ): Promise<CaptureAttemptOutcome> {
   const captureUrl = descriptor.navigationOnly ? stripInternalParams(url) : url;
   const captureRequest = descriptor.navigationOnly
@@ -1041,13 +1101,18 @@ async function runShellCapture(
       descriptor,
       stats,
     );
-    publishCaptureDebugEvent(descriptor, {
-      key: descriptor.key,
-      outcome,
-      attempt,
-      attemptMs: Math.round(performance.now() - start),
-      ...stats,
-    });
+    const { diagnosticReason, ...eventStats } = stats;
+    publish(
+      descriptor,
+      {
+        key: descriptor.key,
+        outcome,
+        attempt,
+        attemptMs: Math.round(performance.now() - start),
+        ...eventStats,
+      },
+      diagnosticReason,
+    );
     return outcome;
   };
 
@@ -1476,6 +1541,7 @@ async function captureAndStoreShell(
   const refuseOnGuardTrip = (): "refused" | undefined => {
     const fnName = reqCtx._shellCaptureGuardTripped;
     if (!fnName) return undefined;
+    if (stats) stats.diagnosticReason = "identity-read";
     // Name the recorded source instead of hardcoding a lane. Under the
     // consumption-lane rule, handler-INVOKED loader bodies are exempt from
     // the guard (their value is a baked shared copy, mirroring cache()), so a
@@ -1542,6 +1608,7 @@ async function captureAndStoreShell(
     if (refused) return refused;
 
     if (result === null) {
+      if (stats) stats.diagnosticReason = "timeout-or-empty-shell";
       return "no-shell";
     }
     if (stats) stats.preludeBytes = result.prelude.length;
@@ -1614,6 +1681,7 @@ async function captureAndStoreShell(
       for (const [segmentKey, containerPromise] of loaderRecords) {
         const elided = await elideLoaderContainer(containerPromise);
         if (elided.state === "rejected") {
+          if (stats) stats.diagnosticReason = "loader-error";
           warnCaptureRefusedOnce(
             capture.key,
             `the loader for segment "${segmentKey}" rejected during capture; its error UI must not bake into the shared shell. ` +
@@ -1741,6 +1809,7 @@ async function captureAndStoreShell(
         );
         if (stats && storeWrite) stats.storeWrite = storeWrite;
         if (storeWrite === "invalidated") {
+          if (stats) stats.diagnosticReason = "invalidated-generation";
           warnCaptureRefusedOnce(
             capture.key,
             "one of the shell's tags was invalidated after this capture generation started, so the store rejected the write. " +
@@ -1750,6 +1819,10 @@ async function captureAndStoreShell(
           return "refused";
         }
       } catch (error) {
+        if (stats) {
+          stats.storeWrite = "failed";
+          stats.diagnosticReason = "store-write-failed";
+        }
         // Best-effort: a failed put must never throw out of the background task.
         reportCacheError(
           error,

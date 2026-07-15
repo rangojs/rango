@@ -125,6 +125,9 @@ export async function runRangoMcpConnector(
     getErrors: (input) => proxy.call("get_errors", { ...input }),
     listRequests: (input) => proxy.call("list_requests", { ...input }),
     getRequestTrace: (input) => proxy.call("get_request_trace", { ...input }),
+    explainRender: (input) => proxy.call("explain_render", { ...input }),
+    explainRevalidation: (input) =>
+      proxy.call("explain_revalidation", { ...input }),
   });
   const transport = new StdioServerTransport();
   transport.onclose = () => {

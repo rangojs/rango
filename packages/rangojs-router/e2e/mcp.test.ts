@@ -17,6 +17,8 @@ test.describe("MCP devtools", () => {
   test("reports live routes and request diagnostics", async ({ page }) => {
     const tools = await mcp.client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "explain_render",
+      "explain_revalidation",
       "get_compilation_issues",
       "get_discovery_status",
       "get_errors",
@@ -37,7 +39,13 @@ test.describe("MCP devtools", () => {
     expect(project.structuredContent).toMatchObject({
       preset: "node",
       mode: "development",
-      capabilities: { routes: true, discoveryStatus: true },
+      toolSchemaVersion: 3,
+      capabilities: {
+        routes: true,
+        discoveryStatus: true,
+        renderExplanation: true,
+        revalidationExplanation: true,
+      },
     });
 
     expect(status.structuredContent).toMatchObject({
@@ -96,6 +104,132 @@ test.describe("MCP devtools", () => {
         precision: "declaration-file",
       },
     });
+
+    const renderUrl = f.url(
+      `/shell-cache/scoped?probe=mcp-render-${crypto.randomUUID()}`,
+    );
+    const coldRender = await page.goto(renderUrl);
+    expect(await coldRender?.headerValue("x-rango-shell")).toBe("MISS");
+    const captureRequestId =
+      await coldRender?.headerValue("x-rango-request-id");
+    expect(captureRequestId).toBeTruthy();
+    await expect
+      .poll(
+        async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_render",
+            arguments: { requestId: captureRequestId },
+          });
+          return result.structuredContent?.ppr?.capture;
+        },
+        { timeout: 30_000 },
+      )
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ outcome: "captured" }),
+        ]),
+      );
+
+    let renderRequestId: string | null = null;
+    await expect
+      .poll(
+        async () => {
+          const scoped = await page.goto(renderUrl);
+          if ((await scoped?.headerValue("x-rango-shell")) !== "HIT") {
+            return null;
+          }
+          renderRequestId =
+            (await scoped?.headerValue("x-rango-request-id")) ?? null;
+          return renderRequestId;
+        },
+        { timeout: 30_000 },
+      )
+      .toBeTruthy();
+
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "explain_render",
+          arguments: { requestId: renderRequestId },
+        });
+        return result.structuredContent;
+      })
+      .toMatchObject({
+        request: {
+          requestId: renderRequestId,
+          transport: "document",
+        },
+        renderCache: expect.arrayContaining([
+          expect.objectContaining({ kind: "inherited", outcome: "hit" }),
+        ]),
+        ppr: {
+          document: expect.arrayContaining([
+            expect.objectContaining({ outcome: "hit" }),
+          ]),
+        },
+        loaders: expect.arrayContaining([
+          expect.objectContaining({
+            registrations: expect.arrayContaining([
+              expect.objectContaining({ lane: "live" }),
+            ]),
+            consumers: expect.arrayContaining([
+              expect.objectContaining({
+                lane: "live",
+                containerValue: "request",
+              }),
+            ]),
+          }),
+          expect.objectContaining({
+            registrations: expect.arrayContaining([
+              expect.objectContaining({ lane: "baked" }),
+            ]),
+            cacheDecisions: expect.arrayContaining([
+              expect.objectContaining({ outcome: "hit" }),
+            ]),
+            consumers: expect.arrayContaining([
+              expect.objectContaining({
+                lane: "baked",
+                containerValue: "capture-generation",
+              }),
+            ]),
+          }),
+        ]),
+      });
+
+    await page.goto(f.url("/revalidation-contract"));
+    const actionResponse = page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === "POST" &&
+        new URL(candidate.url()).pathname === "/revalidation-contract",
+    );
+    await page.getByTestId("revalidation-contract-action-btn").click();
+    const actionRequestId = await (
+      await actionResponse
+    ).headerValue("x-rango-request-id");
+    expect(actionRequestId).toBeTruthy();
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "explain_revalidation",
+          arguments: { requestId: actionRequestId },
+        });
+        return result.structuredContent;
+      })
+      .toMatchObject({
+        requestId: actionRequestId,
+        isAction: true,
+        actionId: expect.any(String),
+        decisions: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "segment",
+            finalShouldRevalidate: true,
+          }),
+          expect.objectContaining({
+            kind: "segment",
+            finalShouldRevalidate: false,
+          }),
+        ]),
+      });
 
     const errorResponse = await page.goto(f.url("/__test/throw-handler-error"));
     expect(errorResponse?.status()).toBe(500);
@@ -162,5 +296,13 @@ test.describe("MCP devtools (production)", () => {
     );
     expect(appResponse?.status()).toBe(200);
     expect(await appResponse?.headerValue("x-rango-request-id")).toBeNull();
+
+    await page.goto(f.url("/shell-cache/scoped?probe=mcp-render-production"));
+    await expect(page.getByTestId("shell-scoped-home")).toBeVisible();
+    await page.goto(f.url("/revalidation-contract"));
+    await page.getByTestId("revalidation-contract-action-btn").click();
+    await expect(
+      page.getByTestId("revalidation-contract-action-cookie"),
+    ).toHaveText("set");
   });
 });

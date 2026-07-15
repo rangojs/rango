@@ -344,9 +344,9 @@ Use `/typesafety` for type-safe href and environment setup.
 `rango mcp` is the stdio connector for Rango's development-only MCP endpoint.
 With the Vite dev server running, an agent can inspect live project metadata,
 runtime-discovered routes, route-discovery freshness, compilation issues,
-request summaries, exact request traces, and runtime errors. The tools are
-read-only; browser state and arbitrary application logs are not part of the
-current surface.
+request summaries, exact request traces, runtime errors, render decisions, and
+revalidation decisions. The tools are read-only; browser state and arbitrary
+application logs are not part of the current surface.
 
 Treat `stale: true` as last-good route data, not current readiness. Route edits
 mark it immediately, before HMR's debounce. On Cloudflare,
@@ -359,8 +359,17 @@ results are capped at 256 KiB.
 
 For browser failures, read `X-Rango-Request-Id` from the document or Flight
 response, pass it to `list_requests`, then use the same value with
-`get_request_trace` and `get_errors`. Treat `outputTruncated`, `truncated`, and
-drop counters as evidence that the retained trace is incomplete.
+`get_request_trace`, `explain_render`, and `get_errors`. For an action or
+navigation, pass its request ID to `explain_revalidation`; add a transaction ID
+only to select one transaction within that request. Treat `outputTruncated`,
+`omittedTransactions`, `truncated`, and drop counters as evidence that the
+retained trace is incomplete.
+
+Keep the two freshness axes separate. `explain_render` reports which stored
+segment, loader, or shell generation was served. `explain_revalidation` reports
+which client-visible segments recomputed. A cache hit does not imply that a
+segment should skip revalidation, and a revalidation decision does not describe
+cache freshness.
 
 ```bash
 rango mcp

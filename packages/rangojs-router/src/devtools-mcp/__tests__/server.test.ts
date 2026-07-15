@@ -20,6 +20,8 @@ async function createClient(): Promise<Client> {
     getErrors: (input) => jsonToolResult({ input, errors: [] }),
     listRequests: (input) => jsonToolResult({ input, requests: [] }),
     getRequestTrace: (input) => jsonToolResult({ input, trace: null }),
+    explainRender: (input) => jsonToolResult({ input, renderCache: [] }),
+    explainRevalidation: (input) => jsonToolResult({ input, decisions: [] }),
   });
   const client = new Client({ name: "test", version: "1.0.0" });
   await server.connect(serverTransport);
@@ -32,11 +34,13 @@ async function createClient(): Promise<Client> {
 }
 
 describe("Rango MCP server", () => {
-  it("exposes the Phase 0 and Phase 2 read-only tools", async () => {
+  it("exposes the read-only inspection tools", async () => {
     const client = await createClient();
     const tools = await client.listTools();
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "explain_render",
+      "explain_revalidation",
       "get_compilation_issues",
       "get_discovery_status",
       "get_errors",

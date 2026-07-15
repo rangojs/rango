@@ -129,7 +129,7 @@ describe("Rango MCP snapshot store", () => {
       routes: [expect.objectContaining({ routerId: "api", name: "health" })],
     });
     expect(store.getProjectMetadata()).toMatchObject({
-      toolSchemaVersion: 2,
+      toolSchemaVersion: 3,
       entryFile: "src/router.tsx",
       routers: [
         { id: "api", file: "src/router.tsx" },
@@ -143,6 +143,8 @@ describe("Rango MCP snapshot store", () => {
         compilationIssues: true,
         recentRequests: true,
         runtimeErrors: true,
+        renderExplanation: true,
+        revalidationExplanation: true,
         sourceOwnership: true,
       },
     });

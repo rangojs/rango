@@ -1078,9 +1078,13 @@ export function isInsideHandlerInvokedLoaderBody(): boolean {
 const PUSH_CALLBACK_SCOPE_KEY = Symbol.for(
   "rangojs-router:push-callback-scope",
 );
-const pushCallbackScopeALS: AsyncLocalStorage<{ active: true }> = ((
-  globalThis as any
-)[PUSH_CALLBACK_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+const pushCallbackScopeALS: AsyncLocalStorage<{
+  active: true;
+  ownerSegmentId?: string;
+}> = ((globalThis as any)[PUSH_CALLBACK_SCOPE_KEY] ??= new AsyncLocalStorage<{
+  active: true;
+  ownerSegmentId?: string;
+}>());
 
 /**
  * Check if the current execution is inside a handle push callback (sync or an
@@ -1091,11 +1095,19 @@ export function isInsidePushCallbackScope(): boolean {
   return pushCallbackScopeALS.getStore()?.active === true;
 }
 
+/** @internal Segment that owns the active handle push callback. */
+export function getPushCallbackOwnerSegmentId(): string | undefined {
+  return pushCallbackScopeALS.getStore()?.ownerSegmentId;
+}
+
 /**
  * Run `fn` inside a push-callback scope. Wraps the invocation of a handle push
  * callback so that any ctx.use(loader) it makes — including after one of its own
  * awaits — is exempt from the deadlock guard.
  */
-export function runInsidePushCallbackScope<T>(fn: () => T): T {
-  return pushCallbackScopeALS.run({ active: true }, fn);
+export function runInsidePushCallbackScope<T>(
+  fn: () => T,
+  ownerSegmentId?: string,
+): T {
+  return pushCallbackScopeALS.run({ active: true, ownerSegmentId }, fn);
 }

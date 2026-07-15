@@ -87,8 +87,14 @@ Runtime event ownership stays with
 [`router/logging.ts`](../../src/router/logging.ts),
 [`router/error-handling.ts`](../../src/router/error-handling.ts),
 [`router/match-handlers.ts`](../../src/router/match-handlers.ts),
+[`cache/cache-scope.ts`](../../src/cache/cache-scope.ts),
+[`router/loader-resolution.ts`](../../src/router/loader-resolution.ts),
+[`router/segment-resolution/fresh.ts`](../../src/router/segment-resolution/fresh.ts),
+[`router/segment-resolution/loader-cache.ts`](../../src/router/segment-resolution/loader-cache.ts),
 [`rsc/handler.ts`](../../src/rsc/handler.ts), and
-[`rsc/render-pipeline.ts`](../../src/rsc/render-pipeline.ts).
+[`rsc/render-pipeline.ts`](../../src/rsc/render-pipeline.ts),
+[`rsc/rsc-rendering.ts`](../../src/rsc/rsc-rendering.ts), and
+[`rsc/shell-capture.ts`](../../src/rsc/shell-capture.ts).
 Root request lifecycle, public testing coverage, and compile-time gating are
 integrated by [`router.ts`](../../src/router.ts),
 [`testing/dispatch.ts`](../../src/testing/dispatch.ts), and

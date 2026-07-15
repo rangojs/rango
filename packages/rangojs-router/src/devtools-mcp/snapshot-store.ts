@@ -332,6 +332,8 @@ export function createRangoMcpSnapshotStore(
           compilationIssues: true,
           recentRequests: true,
           runtimeErrors: true,
+          renderExplanation: true,
+          revalidationExplanation: true,
           sourceOwnership: true,
           browserState: false,
           logs: false,

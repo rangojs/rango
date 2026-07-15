@@ -493,6 +493,14 @@ export interface CachedEntryData {
   tags?: string[];
   /** Timestamp (ms since epoch) when tags were attached, for distributed invalidation */
   taggedAt?: number;
+  /** @internal Development-only loader generation ownership for cache-hit diagnostics. */
+  diagnosticLoaderConsumers?: Array<{
+    loaderId: string;
+    kind: "handler" | "loader-dependency";
+    consumerId: string;
+  }>;
+  /** @internal Development-only effective freshness policy for cache-hit diagnostics. */
+  diagnosticCachePolicy?: { ttl: number; swr: number | null };
 }
 
 /**

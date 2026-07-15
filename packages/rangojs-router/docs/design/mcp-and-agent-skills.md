@@ -432,8 +432,9 @@ current request.
 
 The existing revalidation trace already records defaults, custom predicates,
 final decisions, sources, and reasons. MCP exposes that structure directly and
-adds action identity, previous/next URL, and whether the decision affected a
-handler segment or loader registration.
+adds action identity, whether the path changed, previous/next search-parameter
+names, and whether the decision affected a handler segment or loader
+registration. Raw URLs and search values remain private.
 
 This keeps Rango's two freshness axes visible:
 
@@ -458,8 +459,8 @@ tool per internal event.
 | `get_errors`             | shipped  | Rango request/runtime errors retained by the hub, filterable by request, router, or receipt time                                                     |
 | `list_requests`          | shipped  | bounded request summaries with exact request-ID selection, route declaration ownership, opaque cursors, and bridge drop statistics                   |
 | `get_request_trace`      | shipped  | the bounded structured trace and route declaration ownership for one exact server request ID                                                         |
-| `explain_render`         | proposed | concise projection joining `cache()`, PPR, handlers, and loader lanes for one request                                                                |
-| `explain_revalidation`   | proposed | segment/loader recomputation decisions for an action or navigation request                                                                           |
+| `explain_render`         | shipped  | concise projection joining `cache()`, PPR, handlers, and loader lanes for one request                                                                |
+| `explain_revalidation`   | shipped  | segment/loader recomputation decisions for an action or navigation request                                                                           |
 
 `match_route` is read-only discovery, not a dry-run render. It must not execute
 middleware, handlers, loaders, cache stores, or user predicates with side

@@ -2183,7 +2183,7 @@ describe("runShellCapture", () => {
     expect((reqCtx as any)._shellCaptureRun).toBeUndefined();
   });
 
-  it("does not append capture render stages to the foreground diagnostic trace", async () => {
+  it("retains the terminal capture outcome without internal render stages", async () => {
     resetDevelopmentDiagnosticHub();
     const putShell = makePutShell();
     const { ctx, ssrModule } = makeCtx(
@@ -2214,11 +2214,15 @@ describe("runShellCapture", () => {
         { routerId: "test-router", diagnosticsEnabled: true },
       );
 
-      expect(
-        getDevelopmentDiagnosticHub()!.getTrace(
-          getRequestIdentity(request).requestId,
-        ),
-      ).toBeNull();
+      const trace = getDevelopmentDiagnosticHub()!.getTrace(
+        getRequestIdentity(request).requestId,
+      )!;
+      expect(trace.events).toEqual([
+        expect.objectContaining({
+          type: "ppr.capture",
+          data: expect.objectContaining({ outcome: "stored" }),
+        }),
+      ]);
     } finally {
       resetDevelopmentDiagnosticHub();
     }

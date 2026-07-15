@@ -89,7 +89,7 @@ configuration:
 ```
 
 Start the app with `pnpm dev`. The connector discovers the running Rango server
-for the project and provides seven read-only tools:
+for the project and provides nine read-only tools:
 
 - `get_project_metadata` - root, preset, entry, version, server URLs, and routers;
 - `get_routes` - paginated runtime-discovered routes, including dynamic factories;
@@ -99,6 +99,10 @@ for the project and provides seven read-only tools:
 - `get_compilation_issues` - current transform errors and recent Vite warnings;
 - `list_requests` - bounded request summaries with transport, route, and status;
 - `get_request_trace` - the retained execution trace for an exact request ID;
+- `explain_render` - segment `cache()`, PPR, handler, loader-cache, and loader
+  visible-generation decisions for one request;
+- `explain_revalidation` - the separate segment and loader recomputation
+  decisions for one request, optionally narrowed to one of its transactions;
 - `get_errors` - runtime errors with request, route, phase, and source context.
 
 Use `rango mcp --root <path>` when the MCP process does not start in the project

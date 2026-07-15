@@ -36,6 +36,7 @@ export interface RevalidationTraceMeta {
   nextUrl: string;
   routeKey: string;
   isAction: boolean;
+  actionId?: string;
   stale?: boolean;
 }
 

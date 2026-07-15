@@ -5,6 +5,8 @@ import {
   RANGO_MCP_MAX_RESULT_BYTES,
   RANGO_MCP_SERVER_NAME,
   REQUEST_TRANSPORTS,
+  type ExplainRenderInput,
+  type ExplainRevalidationInput,
   type GetCompilationIssuesInput,
   type GetErrorsInput,
   type GetRequestTraceInput,
@@ -29,6 +31,12 @@ export interface RangoMcpToolHandlers {
   ): Promise<CallToolResult> | CallToolResult;
   getRequestTrace(
     input: GetRequestTraceInput,
+  ): Promise<CallToolResult> | CallToolResult;
+  explainRender(
+    input: ExplainRenderInput,
+  ): Promise<CallToolResult> | CallToolResult;
+  explainRevalidation(
+    input: ExplainRevalidationInput,
   ): Promise<CallToolResult> | CallToolResult;
 }
 
@@ -67,6 +75,9 @@ export function createSnapshotToolHandlers(
     listRequests: (input) => jsonToolResult(diagnostics.listRequests(input)),
     getRequestTrace: (input) =>
       jsonToolResult(diagnostics.getRequestTrace(input)),
+    explainRender: (input) => jsonToolResult(diagnostics.explainRender(input)),
+    explainRevalidation: (input) =>
+      jsonToolResult(diagnostics.explainRevalidation(input)),
   };
 }
 
@@ -175,6 +186,33 @@ export function createRangoMcpServer(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     handlers.getErrors,
+  );
+
+  server.registerTool(
+    "explain_render",
+    {
+      description:
+        "Explain segment cache, PPR, handler, and loader execution and visible generations for one retained request.",
+      inputSchema: {
+        requestId: z.string().min(1).max(128),
+      },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    handlers.explainRender,
+  );
+
+  server.registerTool(
+    "explain_revalidation",
+    {
+      description:
+        "Explain the separate segment and loader recomputation decisions for one retained request, optionally selecting one of its transactions.",
+      inputSchema: {
+        requestId: z.string().min(1).max(128),
+        transactionId: z.string().min(1).max(128).optional(),
+      },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    handlers.explainRevalidation,
   );
 
   return server;

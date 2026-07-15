@@ -21,11 +21,22 @@ import {
   type CompilationIssueRecord,
   type CompilationIssuesPageSnapshot,
   type DiagnosticBridgeStats,
+  type CacheScopeExplanation,
   type ErrorsPageSnapshot,
+  type ExplainRenderInput,
+  type ExplainRevalidationInput,
   type GetCompilationIssuesInput,
   type GetErrorsInput,
   type GetRequestTraceInput,
+  type HandlerExplanation,
+  type LoaderCacheExplanation,
+  type LoaderConsumerExplanation,
+  type LoaderExplanation,
   type ListRequestsInput,
+  type PprExplanationEvent,
+  type RenderExplanationSnapshot,
+  type RevalidationDecisionExplanation,
+  type RevalidationExplanationSnapshot,
   type RequestSummary,
   type RequestsPageSnapshot,
   type RequestTraceSnapshot,
@@ -39,6 +50,8 @@ const MAX_PAGE_SIZE = 200;
 const MAX_REALMS = 64;
 const MAX_COMPILATION_ISSUES = 100;
 const MAX_RECENT_ISSUE_AGE_MS = 5 * 60_000;
+const MAX_EXPLANATION_ITEMS = 64;
+const MAX_TRACE_TRANSACTION_IDS = 128;
 
 interface StoreCursor {
   instanceId: string;
@@ -85,6 +98,10 @@ export interface RangoMcpDiagnosticStore {
   ): boolean;
   listRequests(input?: ListRequestsInput): RequestsPageSnapshot;
   getRequestTrace(input: GetRequestTraceInput): RequestTraceSnapshot;
+  explainRender(input: ExplainRenderInput): RenderExplanationSnapshot;
+  explainRevalidation(
+    input: ExplainRevalidationInput,
+  ): RevalidationExplanationSnapshot;
   getErrors(input?: GetErrorsInput): ErrorsPageSnapshot;
   recordCompilationIssue(input: CompilationIssueInput): void;
   resolveCompilationFiles(files: string[], environment?: string): void;
@@ -254,6 +271,461 @@ function classifiedEvent(trace: DiagnosticTrace): DiagnosticEvent | undefined {
 function routePattern(event: DiagnosticEvent | undefined): string | null {
   const value = event?.data.routePattern;
   return typeof value === "string" ? value : null;
+}
+
+function diagnosticString(value: DiagnosticValue | undefined): string | null {
+  return typeof value === "string" ? sanitizeDiagnosticText(value, 256) : null;
+}
+
+function diagnosticNumber(value: DiagnosticValue | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function diagnosticBoolean(value: DiagnosticValue | undefined): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function diagnosticStrings(value: DiagnosticValue | undefined): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .slice(0, 8)
+        .map((item) => sanitizeDiagnosticText(item, 128))
+    : [];
+}
+
+function diagnosticStringsWithTruncation(value: DiagnosticValue | undefined): {
+  values: string[];
+  truncated: boolean;
+} {
+  if (!Array.isArray(value)) return { values: [], truncated: value != null };
+  const strings = value.filter(
+    (item): item is string => typeof item === "string",
+  );
+  return {
+    values: diagnosticStrings(value),
+    truncated: strings.length !== value.length || strings.length > 8,
+  };
+}
+
+function diagnosticErrorSummary(value: DiagnosticValue): DiagnosticValue {
+  if (typeof value === "string") return sanitizeDiagnosticText(value, 512);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const name = diagnosticString(value.name);
+  const message = diagnosticString(value.message);
+  return {
+    ...(name ? { name } : {}),
+    ...(message ? { message } : {}),
+  };
+}
+
+function loaderNameFromId(loaderId: string): string | null {
+  const separator = loaderId.lastIndexOf("#");
+  return separator >= 0 && separator < loaderId.length - 1
+    ? loaderId.slice(separator + 1)
+    : null;
+}
+
+function pprExplanation(event: DiagnosticEvent): PprExplanationEvent {
+  const rawOutcome = diagnosticString(event.data.outcome) ?? "unknown";
+  return {
+    outcome:
+      event.type === "ppr.capture" && rawOutcome === "stored"
+        ? "captured"
+        : rawOutcome,
+    reason: diagnosticString(event.data.reason),
+    freshness: diagnosticString(event.data.freshness),
+    source: diagnosticString(event.data.source),
+    backgroundCaptureRequested:
+      diagnosticBoolean(event.data.backgroundCaptureRequested) ?? false,
+    navigationOnly: diagnosticBoolean(event.data.navigationOnly) ?? false,
+    storeWrite: diagnosticString(event.data.storeWrite),
+  };
+}
+
+interface MutableLoaderExplanation {
+  value: LoaderExplanation;
+  completedDuration: number | null;
+  failedDuration: number | null;
+  failedHandledByBoundary: boolean;
+}
+
+function projectRenderExplanation(
+  trace: DiagnosticTrace,
+): RenderExplanationSnapshot {
+  const classified = classifiedEvent(trace);
+  const started = trace.events.find(
+    (event) => event.type === "request.started",
+  );
+  const transport = classified?.data.transport;
+  const renderCache: CacheScopeExplanation[] = [];
+  const ppr: RenderExplanationSnapshot["ppr"] = {
+    document: [],
+    capture: [],
+    navigationReplay: [],
+  };
+  const loaders = new Map<string, MutableLoaderExplanation>();
+  const loadersBySegment = new Map<string, MutableLoaderExplanation>();
+  const handlers: HandlerExplanation[] = [];
+  const renderStages: RenderExplanationSnapshot["renderStages"] = [];
+  const errors: RenderExplanationSnapshot["errors"] = [];
+  let explanationItems = 0;
+  let truncated = trace.truncated;
+
+  const claimItem = (): boolean => {
+    if (explanationItems >= MAX_EXPLANATION_ITEMS) {
+      truncated = true;
+      return false;
+    }
+    explanationItems++;
+    return true;
+  };
+  const loader = (loaderId: string): MutableLoaderExplanation | null => {
+    const existing = loaders.get(loaderId);
+    if (existing) return existing;
+    if (!claimItem()) return null;
+    const created: MutableLoaderExplanation = {
+      value: {
+        loaderId,
+        loaderName: loaderNameFromId(loaderId),
+        registrations: [],
+        execution: { outcome: "unknown" },
+        cacheDecisions: [],
+        consumers: [],
+      },
+      completedDuration: null,
+      failedDuration: null,
+      failedHandledByBoundary: false,
+    };
+    loaders.set(loaderId, created);
+    return created;
+  };
+
+  for (const event of trace.events) {
+    if (event.type === "cache.scope") {
+      const kind = diagnosticString(event.data.kind);
+      const outcome = diagnosticString(event.data.outcome);
+      const source = diagnosticString(event.data.source);
+      const tags = diagnosticStrings(event.data.tags);
+      if (
+        Array.isArray(event.data.tags) &&
+        event.data.tags.length > tags.length
+      ) {
+        truncated = true;
+      }
+      if (
+        (kind === "explicit" ||
+          kind === "inherited" ||
+          kind === "implicit-shell" ||
+          kind === "disabled" ||
+          kind === "prerender") &&
+        (outcome === "hit" ||
+          outcome === "miss" ||
+          outcome === "stale" ||
+          outcome === "prerendered" ||
+          outcome === "bypass" ||
+          outcome === "error") &&
+        (source === "runtime" || source === "prerender") &&
+        claimItem()
+      ) {
+        renderCache.push({
+          segmentId: event.segmentId ?? null,
+          ownerType: diagnosticString(event.data.ownerType),
+          kind,
+          outcome,
+          reason: diagnosticString(event.data.reason),
+          source,
+          storeKind: diagnosticString(event.data.storeKind),
+          ttl: diagnosticNumber(event.data.ttl),
+          swr: diagnosticNumber(event.data.swr),
+          freshForMs: diagnosticNumber(event.data.freshForMs),
+          tags,
+          identityDigest: diagnosticString(event.data.identityDigest),
+          backgroundRevalidationClaimed:
+            diagnosticBoolean(event.data.backgroundRevalidationClaimed) ??
+            false,
+        });
+      }
+      continue;
+    }
+
+    if (event.type.startsWith("ppr.")) {
+      const target =
+        event.type === "ppr.document"
+          ? ppr.document
+          : event.type === "ppr.capture"
+            ? ppr.capture
+            : event.type === "ppr.navigation-replay"
+              ? ppr.navigationReplay
+              : null;
+      if (target && claimItem()) target.push(pprExplanation(event));
+      continue;
+    }
+
+    if (event.type === "loader.registered") {
+      const loaderId = diagnosticString(event.data.loaderId);
+      const lane = diagnosticString(event.data.lane);
+      const boundary = diagnosticString(event.data.boundary);
+      const dataCache = diagnosticString(event.data.dataCache);
+      const registeredBy = diagnosticString(event.data.registeredBy);
+      const segmentId = event.segmentId;
+      const current = loaderId ? loader(loaderId) : null;
+      if (
+        current &&
+        registeredBy &&
+        segmentId &&
+        (lane === "live" || lane === "baked") &&
+        (boundary === "loading" || boundary === "none") &&
+        (dataCache === "configured" ||
+          dataCache === "disabled" ||
+          dataCache === "none") &&
+        claimItem()
+      ) {
+        current.value.registrations.push({
+          registeredBy,
+          segmentId,
+          lane,
+          boundary,
+          dataCache,
+        });
+        loadersBySegment.set(segmentId, current);
+      }
+      continue;
+    }
+
+    if (event.type === "loader.cache") {
+      const loaderId = diagnosticString(event.data.loaderId);
+      const outcome = diagnosticString(event.data.outcome);
+      const current = loaderId ? loader(loaderId) : null;
+      if (
+        current &&
+        (outcome === "hit" ||
+          outcome === "stale" ||
+          outcome === "miss" ||
+          outcome === "bypass") &&
+        claimItem()
+      ) {
+        const decision: LoaderCacheExplanation = {
+          outcome,
+          reason: diagnosticString(event.data.reason),
+          ttl: diagnosticNumber(event.data.ttl),
+          swr: diagnosticNumber(event.data.swr),
+          backgroundRevalidationRequested:
+            diagnosticBoolean(event.data.backgroundRevalidationRequested) ??
+            false,
+        };
+        current.value.cacheDecisions.push(decision);
+      }
+      continue;
+    }
+
+    if (event.type === "loader.consumer") {
+      const loaderId = diagnosticString(event.data.loaderId);
+      const kind = diagnosticString(event.data.kind);
+      let lane = diagnosticString(event.data.lane);
+      let boundary = diagnosticString(event.data.boundary);
+      const containerValue = diagnosticString(event.data.containerValue);
+      const nestedPromises = diagnosticString(event.data.nestedPromises);
+      const consumerId = diagnosticString(event.data.consumerId);
+      if (kind === "loader-dependency" && lane === "inherit") {
+        const registration = consumerId
+          ? loaders.get(consumerId)?.value.registrations.at(-1)
+          : undefined;
+        lane = registration?.lane ?? null;
+        boundary = registration?.boundary ?? null;
+      }
+      const current = loaderId ? loader(loaderId) : null;
+      if (
+        current &&
+        (kind === "dsl-client" ||
+          kind === "handler" ||
+          kind === "loader-dependency") &&
+        (lane === "live" || lane === "baked") &&
+        (boundary === "loading" ||
+          boundary === "consumer-suspense" ||
+          boundary === "none") &&
+        (containerValue === "request" ||
+          containerValue === "capture-generation") &&
+        (nestedPromises === "none" || nestedPromises === "request") &&
+        claimItem()
+      ) {
+        const consumer: LoaderConsumerExplanation = {
+          kind,
+          consumerId,
+          lane,
+          boundary,
+          containerValue,
+          nestedPromises,
+        };
+        current.value.consumers.push(consumer);
+      }
+      continue;
+    }
+
+    if (event.type === "phase.completed" || event.type === "phase.failed") {
+      const phase = diagnosticString(event.data.phase);
+      const label = diagnosticString(event.data.label);
+      const durationMs = diagnosticNumber(event.data.durationMs) ?? 0;
+      if (phase === "loader" && label) {
+        const current = loader(label);
+        if (current) {
+          if (event.type === "phase.completed") {
+            current.completedDuration = durationMs;
+          } else {
+            current.failedDuration = durationMs;
+          }
+        }
+      } else if (phase === "handler" && label && claimItem()) {
+        handlers.push({
+          handlerId: label,
+          outcome: event.type === "phase.completed" ? "ran" : "error",
+          durationMs,
+        });
+      }
+    }
+
+    if (event.type.startsWith("render.stage:") && claimItem()) {
+      renderStages.push({
+        type: event.type.slice("render.".length),
+        phase: diagnosticString(event.data.phase),
+        durationMs: diagnosticNumber(event.data.durationMs),
+      });
+    }
+
+    if (
+      event.type === "error.reported" &&
+      diagnosticString(event.data.phase) === "loader"
+    ) {
+      const current = event.segmentId
+        ? loadersBySegment.get(event.segmentId)
+        : undefined;
+      if (current) {
+        current.failedHandledByBoundary =
+          diagnosticBoolean(event.data.handledByBoundary) ?? false;
+      }
+    }
+
+    if (isErrorEvent(event) && claimItem()) {
+      errors.push({
+        type: event.type,
+        phase: diagnosticString(event.data.phase),
+        error: diagnosticErrorSummary(event.data.error ?? event.data),
+      });
+    }
+  }
+
+  const projectedLoaders = [...loaders.values()].map((current) => {
+    const cached = current.value.cacheDecisions.find(
+      (decision) => decision.outcome === "hit" || decision.outcome === "stale",
+    );
+    if (cached) {
+      current.value.execution = {
+        outcome: "cached",
+        freshness: cached.outcome === "stale" ? "stale" : "fresh",
+      };
+    } else if (current.failedDuration !== null) {
+      current.value.execution = {
+        outcome: "error",
+        durationMs: current.failedDuration,
+        handledByBoundary: current.failedHandledByBoundary,
+      };
+    } else if (current.completedDuration !== null) {
+      current.value.execution = {
+        outcome: "ran",
+        durationMs: current.completedDuration,
+      };
+    }
+    return current.value;
+  });
+  const transactionIds = trace.transactionIds.slice(0, MAX_EXPLANATION_ITEMS);
+  if (transactionIds.length < trace.transactionIds.length) truncated = true;
+
+  return {
+    schemaVersion: RANGO_MCP_SCHEMA_VERSION,
+    request: {
+      requestId: trace.requestId,
+      transactionIds,
+      method: diagnosticString(started?.data.method),
+      transport: isRequestTransport(transport) ? transport : null,
+      routeKey: classified?.routeKey ?? null,
+      routePattern: routePattern(classified),
+    },
+    renderCache,
+    ppr,
+    loaders: projectedLoaders,
+    handlers,
+    renderStages,
+    errors,
+    truncated,
+  };
+}
+
+function projectRevalidationExplanation(
+  trace: DiagnosticTrace,
+  event: DiagnosticEvent,
+): RevalidationExplanationSnapshot {
+  const rawEntries = Array.isArray(event.data.entries)
+    ? event.data.entries
+    : [];
+  let truncated =
+    trace.truncated ||
+    diagnosticBoolean(event.data.entriesTruncated) === true ||
+    rawEntries.length > MAX_EXPLANATION_ITEMS;
+  const decisions: RevalidationDecisionExplanation[] = [];
+  for (const value of rawEntries.slice(0, MAX_EXPLANATION_ITEMS)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      truncated = true;
+      continue;
+    }
+    const entry = value as Record<string, DiagnosticValue>;
+    const segmentId = diagnosticString(entry.segmentId);
+    const segmentType = diagnosticString(entry.segmentType);
+    const source = diagnosticString(entry.source);
+    const reason = diagnosticString(entry.reason);
+    if (!segmentId || !segmentType || !source || !reason) {
+      truncated = true;
+      continue;
+    }
+    decisions.push({
+      segmentId,
+      segmentType,
+      kind:
+        source === "loader" || source === "intercept-loader"
+          ? "loader"
+          : "segment",
+      belongsToRoute: diagnosticBoolean(entry.belongsToRoute) ?? false,
+      source,
+      defaultShouldRevalidate:
+        diagnosticBoolean(entry.defaultShouldRevalidate) ?? false,
+      finalShouldRevalidate:
+        diagnosticBoolean(entry.finalShouldRevalidate) ?? false,
+      reason,
+      customRevalidators: diagnosticNumber(entry.customRevalidators) ?? 0,
+    });
+  }
+  const previousSearchNames = diagnosticStringsWithTruncation(
+    event.data.previousSearchNames,
+  );
+  const nextSearchNames = diagnosticStringsWithTruncation(
+    event.data.nextSearchNames,
+  );
+  truncated ||= previousSearchNames.truncated || nextSearchNames.truncated;
+
+  return {
+    schemaVersion: RANGO_MCP_SCHEMA_VERSION,
+    requestId: trace.requestId,
+    transactionId: event.transactionId,
+    routeKey: event.routeKey ?? diagnosticString(event.data.routeKey),
+    method: diagnosticString(event.data.method),
+    isAction: diagnosticBoolean(event.data.isAction) ?? false,
+    actionId: diagnosticString(event.data.actionId),
+    stale: diagnosticBoolean(event.data.stale) ?? false,
+    pathChanged: diagnosticBoolean(event.data.pathChanged) ?? false,
+    previousSearchNames: previousSearchNames.values,
+    nextSearchNames: nextSearchNames.values,
+    decisions,
+    truncated,
+  };
 }
 
 function traceSource(
@@ -567,12 +1039,23 @@ export function createRangoMcpDiagnosticStore(
         throw new Error(`No retained request trace for ${input.requestId}`);
       }
       const originalEventCount = trace.events.length;
+      const originalTransactionCount = trace.transactionIds.length;
+      const transactionIds =
+        originalTransactionCount <= MAX_TRACE_TRANSACTION_IDS
+          ? trace.transactionIds
+          : [
+              ...trace.transactionIds.slice(0, 2),
+              ...trace.transactionIds.slice(-(MAX_TRACE_TRANSACTION_IDS - 2)),
+            ];
+      const omittedTransactions =
+        originalTransactionCount - transactionIds.length;
       const snapshot: RequestTraceSnapshot = {
         schemaVersion: RANGO_MCP_SCHEMA_VERSION,
-        trace,
+        trace: { ...trace, transactionIds },
         source: traceSource(trace, options.getRouteSource),
-        outputTruncated: false,
+        outputTruncated: omittedTransactions > 0,
         omittedEvents: 0,
+        omittedTransactions,
       };
       if (serializedToolResultBytes(snapshot) > RANGO_MCP_MAX_RESULT_BYTES) {
         const events = trace.events;
@@ -588,7 +1071,7 @@ export function createRangoMcpDiagnosticStore(
           ];
           const candidate: RequestTraceSnapshot = {
             ...snapshot,
-            trace: { ...trace, events: candidateEvents },
+            trace: { ...trace, events: candidateEvents, transactionIds },
             outputTruncated: true,
             omittedEvents: originalEventCount - candidateEvents.length,
           };
@@ -609,6 +1092,53 @@ export function createRangoMcpDiagnosticStore(
         throw new Error("Rango MCP request trace exceeded its output limit");
       }
       return snapshot;
+    },
+
+    explainRender(input: ExplainRenderInput): RenderExplanationSnapshot {
+      const trace = hub.getTrace(input.requestId, performance.now());
+      if (!trace) {
+        throw new Error(`No retained request trace for ${input.requestId}`);
+      }
+      const explanation = projectRenderExplanation(trace);
+      if (serializedToolResultBytes(explanation) > RANGO_MCP_MAX_RESULT_BYTES) {
+        throw new Error(
+          "Rango MCP render explanation exceeded its output limit",
+        );
+      }
+      return explanation;
+    },
+
+    explainRevalidation(
+      input: ExplainRevalidationInput,
+    ): RevalidationExplanationSnapshot {
+      const trace = hub.getTrace(input.requestId, performance.now());
+      let event: DiagnosticEvent | undefined;
+      if (trace) {
+        for (let index = trace.events.length - 1; index >= 0; index--) {
+          const candidate = trace.events[index]!;
+          if (
+            candidate.type === "revalidation.trace" &&
+            (!input.transactionId ||
+              candidate.transactionId === input.transactionId)
+          ) {
+            event = candidate;
+            break;
+          }
+        }
+      }
+      if (!trace || !event) {
+        const selector = input.transactionId
+          ? `${input.requestId}/${input.transactionId}`
+          : input.requestId;
+        throw new Error(`No retained revalidation trace for ${selector}`);
+      }
+      const explanation = projectRevalidationExplanation(trace, event);
+      if (serializedToolResultBytes(explanation) > RANGO_MCP_MAX_RESULT_BYTES) {
+        throw new Error(
+          "Rango MCP revalidation explanation exceeded its output limit",
+        );
+      }
+      return explanation;
     },
 
     getErrors(input: GetErrorsInput = {}): ErrorsPageSnapshot {

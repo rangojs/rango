@@ -21,6 +21,7 @@ import {
   serializeDiagnosticError,
 } from "./redaction.js";
 import type { DiagnosticValue } from "./types.js";
+import { _getRequestContext } from "../../server/request-context.js";
 
 interface RecordOptions {
   request?: Request;
@@ -33,7 +34,80 @@ interface RecordOptions {
   timestamp?: number;
 }
 
+const MAX_RETAINED_LOADER_CONSUMERS = 512;
+
 type DiagnosticData = Record<string, unknown> | (() => Record<string, unknown>);
+
+const UINT64_MASK = 0xffff_ffff_ffff_ffffn;
+let cacheDiagnosticKey: readonly [bigint, bigint] | undefined;
+
+function rotateLeft64(value: bigint, bits: bigint): bigint {
+  return ((value << bits) | (value >> (64n - bits))) & UINT64_MASK;
+}
+
+function sipRound(
+  state: readonly [bigint, bigint, bigint, bigint],
+): [bigint, bigint, bigint, bigint] {
+  let [v0, v1, v2, v3] = state;
+  v0 = (v0 + v1) & UINT64_MASK;
+  v1 = rotateLeft64(v1, 13n) ^ v0;
+  v0 = rotateLeft64(v0, 32n);
+  v2 = (v2 + v3) & UINT64_MASK;
+  v3 = rotateLeft64(v3, 16n) ^ v2;
+  v0 = (v0 + v3) & UINT64_MASK;
+  v3 = rotateLeft64(v3, 21n) ^ v0;
+  v2 = (v2 + v1) & UINT64_MASK;
+  v1 = rotateLeft64(v1, 17n) ^ v2;
+  v2 = rotateLeft64(v2, 32n);
+  return [v0, v1, v2, v3];
+}
+
+const cacheIdentityDigest: ((value: string) => string) | undefined =
+  DEVELOPMENT_DIAGNOSTICS_ENABLED
+    ? function keyedCacheIdentityDigest(value: string): string {
+        if (!cacheDiagnosticKey) {
+          const random = new Uint32Array(4);
+          globalThis.crypto.getRandomValues(random);
+          cacheDiagnosticKey = [
+            BigInt(random[0]!) | (BigInt(random[1]!) << 32n),
+            BigInt(random[2]!) | (BigInt(random[3]!) << 32n),
+          ];
+        }
+        const [key0, key1] = cacheDiagnosticKey;
+        let state: [bigint, bigint, bigint, bigint] = [
+          key0 ^ 0x736f_6d65_7073_6575n,
+          key1 ^ 0x646f_7261_6e64_6f6dn,
+          key0 ^ 0x6c79_6765_6e65_7261n,
+          key1 ^ 0x7465_6462_7974_6573n,
+        ];
+        const bytes = new TextEncoder().encode(value);
+        const completeBytes = bytes.length - (bytes.length % 8);
+        for (let offset = 0; offset < completeBytes; offset += 8) {
+          let word = 0n;
+          for (let index = 0; index < 8; index++) {
+            word |= BigInt(bytes[offset + index]!) << BigInt(index * 8);
+          }
+          state[3] ^= word;
+          state = sipRound(sipRound(state));
+          state[0] ^= word;
+        }
+        let tail = BigInt(bytes.length & 0xff) << 56n;
+        for (let index = completeBytes; index < bytes.length; index++) {
+          tail |= BigInt(bytes[index]!) << BigInt((index - completeBytes) * 8);
+        }
+        state[3] ^= tail;
+        state = sipRound(sipRound(state));
+        state[0] ^= tail;
+        state[2] ^= 0xffn;
+        state = sipRound(sipRound(sipRound(sipRound(state))));
+        const digest = state[0] ^ state[1] ^ state[2] ^ state[3];
+        return `cache-${digest.toString(16).padStart(16, "0")}`;
+      }
+    : undefined;
+
+export function cacheDiagnosticIdentity(value: string): string | null {
+  return cacheIdentityDigest?.(value) ?? null;
+}
 
 interface RequestDiagnosticOptions {
   echoRequestId?: boolean;
@@ -152,6 +226,25 @@ export function isDevelopmentDiagnosticsEnabled(): boolean {
     DEVELOPMENT_DIAGNOSTICS_ENABLED &&
     getActiveRequestTransaction()?.diagnosticsEnabled === true
   );
+}
+
+export interface DevelopmentDiagnosticLink {
+  requestId: string;
+  transactionId: string;
+  clientCorrelationId: string | null;
+  routerId: string;
+}
+
+export function getDevelopmentDiagnosticLink(): DevelopmentDiagnosticLink | null {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return null;
+  const active = getActiveRequestTransaction();
+  if (!active?.diagnosticsEnabled || !active.routerId) return null;
+  return {
+    requestId: active.requestId,
+    transactionId: active.transactionId,
+    clientCorrelationId: active.clientCorrelationId,
+    routerId: active.routerId,
+  };
 }
 
 export function runWithDevelopmentDiagnosticsDisabled<T>(
@@ -336,6 +429,135 @@ export function recordRequestFailed(
   );
 }
 
+export interface CacheScopeDiagnostic {
+  kind: "explicit" | "inherited" | "implicit-shell" | "disabled" | "prerender";
+  ownerType: string | null;
+  outcome: "hit" | "miss" | "stale" | "prerendered" | "bypass" | "error";
+  reason?: string;
+  source: "runtime" | "prerender";
+  storeKind: string | null;
+  ttl: number | null;
+  swr: number | null;
+  freshForMs: number | null;
+  tags: string[];
+  identityDigest: string | null;
+  backgroundRevalidationClaimed: boolean;
+}
+
+export function recordCacheScopeDiagnostic(
+  diagnostic: CacheScopeDiagnostic | (() => CacheScopeDiagnostic),
+  segmentId?: string,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic(
+    "cache.scope",
+    () => {
+      const value =
+        typeof diagnostic === "function" ? diagnostic() : diagnostic;
+      return { ...value, reason: value.reason ?? null };
+    },
+    { segmentId },
+  );
+}
+
+export interface LoaderRegistrationDiagnostic {
+  loaderId: string;
+  registeredBy: string;
+  lane: "live" | "baked";
+  boundary: "loading" | "none";
+  dataCache: "configured" | "disabled" | "none";
+}
+
+export function recordLoaderRegistrationDiagnostic(
+  diagnostic: LoaderRegistrationDiagnostic,
+  segmentId: string,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic("loader.registered", { ...diagnostic }, { segmentId });
+}
+
+export function recordLoaderCacheDiagnostic(
+  loaderId: string,
+  outcome: "hit" | "stale" | "miss" | "bypass",
+  options: {
+    reason?: string;
+    ttl?: number;
+    swr?: number;
+    backgroundRevalidationRequested?: boolean;
+  } = {},
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic("loader.cache", {
+    loaderId,
+    outcome,
+    reason: options.reason ?? null,
+    ttl: options.ttl ?? null,
+    swr: options.swr ?? null,
+    backgroundRevalidationRequested:
+      options.backgroundRevalidationRequested ?? false,
+  });
+}
+
+export function recordLoaderConsumerDiagnostic(
+  loaderId: string,
+  consumer: {
+    kind: "dsl-client" | "handler" | "loader-dependency";
+    consumerId: string | null;
+    lane: "live" | "baked" | "inherit";
+    boundary: "loading" | "none" | "consumer-suspense" | "inherit";
+    containerValue: "request" | "capture-generation";
+    nestedPromises: "request" | "none";
+  },
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  if (
+    consumer.kind !== "dsl-client" &&
+    consumer.consumerId &&
+    consumer.containerValue === "request"
+  ) {
+    const requestContext = _getRequestContext();
+    if (requestContext) {
+      const consumers = (requestContext._diagnosticLoaderConsumers ??= []);
+      const retainedLoaderId = sanitizeDiagnosticText(loaderId, 256);
+      const retainedConsumerId = sanitizeDiagnosticText(
+        consumer.consumerId,
+        256,
+      );
+      const key = JSON.stringify([
+        retainedLoaderId,
+        consumer.kind,
+        retainedConsumerId,
+      ]);
+      const keys = (requestContext._diagnosticLoaderConsumerKeys ??= new Set());
+      if (keys.size < MAX_RETAINED_LOADER_CONSUMERS && !keys.has(key)) {
+        keys.add(key);
+        consumers.push({
+          loaderId: retainedLoaderId,
+          kind: consumer.kind,
+          consumerId: retainedConsumerId,
+        });
+      }
+    }
+  }
+  recordDiagnostic("loader.consumer", { loaderId, ...consumer });
+}
+
+export function recordPprDiagnostic(
+  stage: "document" | "capture" | "navigation-replay",
+  data: Record<string, unknown>,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic(`ppr.${stage}`, data);
+}
+
+export function recordLinkedPprCaptureDiagnostic(
+  link: DevelopmentDiagnosticLink,
+  data: Record<string, unknown>,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic("ppr.capture", data, link);
+}
+
 export function recordReportedError<TEnv>(
   error: unknown,
   phase: ErrorPhase,
@@ -512,33 +734,43 @@ export function recordTelemetryDiagnostic(event: TelemetryEvent): void {
 
 export function recordRevalidationTrace(trace: RevalidationTrace): void {
   if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
-  const safeSearchNames = (value: string): string[] => {
+  const safeUrl = (value: string): URL | null => {
     try {
-      return diagnosticSearchNames(new URL(value));
+      return new URL(value);
     } catch {
-      return [];
+      return null;
     }
   };
   recordDiagnostic(
     "revalidation.trace",
-    () => ({
-      method: trace.meta.method,
-      routeKey: trace.meta.routeKey,
-      isAction: trace.meta.isAction,
-      stale: trace.meta.stale ?? false,
-      previousSearchNames: safeSearchNames(trace.meta.prevUrl),
-      nextSearchNames: safeSearchNames(trace.meta.nextUrl),
-      entries: trace.entries.map((entry) => ({
-        segmentId: entry.segmentId,
-        segmentType: entry.segmentType,
-        belongsToRoute: entry.belongsToRoute,
-        source: entry.source,
-        defaultShouldRevalidate: entry.defaultShouldRevalidate,
-        finalShouldRevalidate: entry.finalShouldRevalidate,
-        reason: entry.reason,
-        customRevalidators: entry.customRevalidators ?? 0,
-      })),
-    }),
+    () => {
+      const previous = safeUrl(trace.meta.prevUrl);
+      const next = safeUrl(trace.meta.nextUrl);
+      return {
+        method: trace.meta.method,
+        routeKey: trace.meta.routeKey,
+        isAction: trace.meta.isAction,
+        stale: trace.meta.stale ?? false,
+        actionId: trace.meta.actionId ?? null,
+        pathChanged:
+          previous !== null && next !== null
+            ? previous.pathname !== next.pathname
+            : false,
+        previousSearchNames: previous ? diagnosticSearchNames(previous) : [],
+        nextSearchNames: next ? diagnosticSearchNames(next) : [],
+        entriesTruncated: trace.entries.length > 128,
+        entries: trace.entries.slice(0, 128).map((entry) => ({
+          segmentId: entry.segmentId,
+          segmentType: entry.segmentType,
+          belongsToRoute: entry.belongsToRoute,
+          source: entry.source,
+          defaultShouldRevalidate: entry.defaultShouldRevalidate,
+          finalShouldRevalidate: entry.finalShouldRevalidate,
+          reason: entry.reason,
+          customRevalidators: entry.customRevalidators ?? 0,
+        })),
+      };
+    },
     { routeKey: trace.meta.routeKey },
   );
 }

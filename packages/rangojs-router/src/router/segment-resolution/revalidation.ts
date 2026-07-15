@@ -46,6 +46,11 @@ import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeHandler } from "../instrument.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
+import { entryLoadingMasksLoaders } from "./loader-mask.js";
+import {
+  isDevelopmentDiagnosticsEnabled,
+  recordLoaderRegistrationDiagnostic,
+} from "../diagnostics/channel.js";
 import {
   track,
   RangoContext,
@@ -127,6 +132,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
+  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
   const loaderMeta = loaderEntries.map((loaderEntry, i) => ({
     loaderEntry,
@@ -135,6 +141,25 @@ export async function resolveLoadersWithRevalidation<TEnv>(
     segmentId: `${shortCode}D${i}.${loaderEntry.loader.$$id}`,
     index: i,
   }));
+
+  if (isDevelopmentDiagnosticsEnabled()) {
+    for (const { loaderEntry, segmentId } of loaderMeta) {
+      recordLoaderRegistrationDiagnostic(
+        {
+          loaderId: loaderEntry.loader.$$id,
+          registeredBy: entry.id,
+          lane: bakeLane ? "baked" : "live",
+          boundary: bakeLane ? "none" : "loading",
+          dataCache: !loaderEntry.cache
+            ? "none"
+            : loaderEntry.cache.options === false
+              ? "disabled"
+              : "configured",
+        },
+        segmentId,
+      );
+    }
+  }
 
   const matchedIds = loaderMeta.map((m) => m.segmentId);
 
@@ -218,7 +243,12 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
         runInsideLoaderScope(() =>
-          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+          resolveLoaderData(
+            loaderEntry,
+            ctx,
+            ctx.pathname,
+            bakeLane ? segmentId : null,
+          ),
         ),
         entry,
         segmentId,

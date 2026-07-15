@@ -18,12 +18,17 @@ The router has two complementary observability systems:
 During `vite dev`, `rango mcp` adds a third, read-only adapter over the same owned
 request facts. It can list exact server request IDs, retrieve a bounded trace,
 query sanitized runtime errors, and report route declaration ownership without
-requiring a `TelemetrySink`. Node module-runner and Cloudflare workerd requests
-use the same bounded hot-channel bridge into Vite. This adapter is absent from
-production builds and is not a production observability backend; keep using
-telemetry and tracing there.
+requiring a `TelemetrySink`. It also projects segment-cache, PPR, loader
+visible-generation, and revalidation decisions without running handlers or
+predicates again. Node module-runner and Cloudflare workerd requests use the same
+bounded hot-channel bridge into Vite. This adapter is absent from production
+builds and is not a production observability backend; keep using telemetry and
+tracing there.
 
 The request tools are `list_requests`, `get_request_trace`, and `get_errors`.
+`explain_render` joins cache, PPR, handler, and loader events for one request;
+`explain_revalidation` keeps client-visible recomputation decisions on their
+separate freshness axis.
 `get_compilation_issues` also reports structured transform errors and bounded
 recent Vite warnings. Its response marks warning coverage as `recent-only`
 because Vite does not expose a stable current-warning registry.

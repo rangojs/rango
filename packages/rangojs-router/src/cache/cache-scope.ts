@@ -41,6 +41,15 @@ import {
   resolveTagsOption,
 } from "./cache-policy.js";
 import type { RequestContext } from "../server/request-context.js";
+import {
+  areDevelopmentDiagnosticsAvailable,
+  cacheDiagnosticIdentity,
+  isDevelopmentDiagnosticsEnabled,
+  recordCacheScopeDiagnostic,
+  recordLoaderConsumerDiagnostic,
+} from "../router/diagnostics/channel.js";
+
+const MAX_CACHED_LOADER_CONSUMERS = 128;
 
 export function resolveCacheTags(
   config: PartialCacheOptions | false,
@@ -111,6 +120,50 @@ function getDefaultRouteCacheKey(
 
 const CACHE_HIT_OBSERVERS = new WeakMap<CacheScope, () => void>();
 
+function diagnosticConsumersForSegments(
+  segments: ResolvedSegment[],
+  consumers: RequestContext["_diagnosticLoaderConsumers"],
+): NonNullable<CachedEntryData["diagnosticLoaderConsumers"]> | undefined {
+  if (!consumers?.length) return undefined;
+  const consumersByOwner = new Map<string, typeof consumers>();
+  for (const consumer of consumers) {
+    const owned = consumersByOwner.get(consumer.consumerId);
+    if (owned) owned.push(consumer);
+    else consumersByOwner.set(consumer.consumerId, [consumer]);
+  }
+  const selected: NonNullable<CachedEntryData["diagnosticLoaderConsumers"]> =
+    [];
+  const owners = segments.map((segment) => segment.id);
+  const visitedOwners = new Set<string>();
+  for (let index = 0; index < owners.length; index++) {
+    const owner = owners[index]!;
+    if (visitedOwners.has(owner)) continue;
+    visitedOwners.add(owner);
+    for (const consumer of consumersByOwner.get(owner) ?? []) {
+      selected.push(consumer);
+      if (selected.length >= MAX_CACHED_LOADER_CONSUMERS) return selected;
+      owners.push(consumer.loaderId);
+    }
+  }
+  return selected.length > 0 ? selected : undefined;
+}
+
+function replayCachedLoaderConsumers(cached: CachedEntryData): void {
+  if (!isDevelopmentDiagnosticsEnabled()) return;
+  try {
+    for (const consumer of cached.diagnosticLoaderConsumers ?? []) {
+      recordLoaderConsumerDiagnostic(consumer.loaderId, {
+        kind: consumer.kind,
+        consumerId: consumer.consumerId,
+        lane: "baked",
+        boundary: "none",
+        containerValue: "capture-generation",
+        nestedPromises: "none",
+      });
+    }
+  } catch {}
+}
+
 /**
  * Discriminated outcome of a route cache lookup — see
  * {@link CacheScope.lookupRouteDetailed} for what each status licenses.
@@ -149,11 +202,72 @@ export class CacheScope {
     config: PartialCacheOptions | false,
     parent: CacheScope | null = null,
     private readonly defaultKeyPrefix?: "doc",
+    private readonly owner?: {
+      segmentId: string;
+      segmentType: string;
+      inherited: boolean;
+    },
   ) {
     this.config = config;
     this.parent = parent;
     // Extract and store explicit store reference
     this.explicitStore = config !== false ? config.store : undefined;
+  }
+
+  private recordLookup(
+    outcome:
+      | "hit"
+      | "miss"
+      | "stale"
+      | "prerendered"
+      | "bypass"
+      | "error"
+      | (() => "hit" | "stale"),
+    reason?: string,
+    store: SegmentCacheStore | null = null,
+    details: {
+      key?: string;
+      cached?: CachedEntryData;
+      backgroundRevalidationClaimed?: boolean;
+    } = {},
+  ): void {
+    recordCacheScopeDiagnostic(() => {
+      const expiresAt = details.cached?.expiresAt;
+      return {
+        kind: !this.enabled
+          ? "disabled"
+          : this.isShellImplicitDocScope
+            ? "implicit-shell"
+            : this.owner?.inherited
+              ? "inherited"
+              : "explicit",
+        ownerType: this.owner?.segmentType ?? null,
+        outcome: typeof outcome === "function" ? outcome() : outcome,
+        reason,
+        source: "runtime",
+        storeKind: store ? "segment-cache" : null,
+        ttl:
+          details.cached?.diagnosticCachePolicy?.ttl ??
+          (this.enabled ? this.ttl : null),
+        swr:
+          details.cached?.diagnosticCachePolicy?.swr ??
+          (this.enabled ? (this.swr ?? null) : null),
+        freshForMs: expiresAt === undefined ? null : expiresAt - Date.now(),
+        // Cached tags may contain request-derived tenant/user identifiers. The
+        // diagnostic channel only emits tags with proven static provenance.
+        tags: [],
+        identityDigest: details.key
+          ? cacheDiagnosticIdentity(details.key)
+          : null,
+        backgroundRevalidationClaimed:
+          details.backgroundRevalidationClaimed ?? false,
+      };
+    }, this.owner?.segmentId);
+  }
+
+  /** @internal Record a pipeline bypass that occurs before lookupRouteDetailed. */
+  recordDiagnosticBypass(reason: "action" | "disabled"): void {
+    this.recordLookup("bypass", reason);
   }
 
   /**
@@ -356,11 +470,20 @@ export class CacheScope {
     params: Record<string, string>,
     isIntercept?: boolean,
   ): Promise<CacheRouteLookupOutcome> {
-    if (!this.enabled) return { status: "bypass" };
-    if (!this.conditionAllows("read")) return { status: "bypass" };
+    if (!this.enabled) {
+      this.recordLookup("bypass", "disabled");
+      return { status: "bypass" };
+    }
+    if (!this.conditionAllows("read")) {
+      this.recordLookup("bypass", "condition");
+      return { status: "bypass" };
+    }
 
     const store = this.getStore();
-    if (!store) return { status: "bypass" };
+    if (!store) {
+      this.recordLookup("bypass", "store-unavailable");
+      return { status: "bypass" };
+    }
 
     // Resolve cache key INSIDE the try so a throwing consumer key() (or a
     // store.keyGenerator) degrades to a cache miss (return null -> render
@@ -379,11 +502,13 @@ export class CacheScope {
       // replay composition renders uncached instead of substituting the
       // seeded doc record for a tier whose backend never answered.
       if (result === CACHE_READ_ERROR) {
+        this.recordLookup("error", "store-read", store, { key });
         return { status: "error" };
       }
 
       if (!result) {
         debugCacheLog(`[CacheScope] MISS: ${key}`);
+        this.recordLookup("miss", undefined, store, { key });
         return { status: "miss" };
       }
 
@@ -417,6 +542,7 @@ export class CacheScope {
           .catch((e) =>
             reportCacheError(e, "cache-delete", `[CacheScope] ${key}: evict`),
           );
+        this.recordLookup("miss", "corrupt-entry", store, { key });
         return { status: "miss" };
       }
 
@@ -425,6 +551,7 @@ export class CacheScope {
       // to invalidate any full-page entry built on top of it. The write path
       // records via cacheRoute (resolveCacheTags); the hit path records here.
       recordRequestTags(cached.tags);
+      replayCachedLoaderConsumers(cached);
 
       // Replay handle data. An empty string means the route pushed no handles —
       // skip the decode entirely (the common case). Otherwise decode the
@@ -448,6 +575,16 @@ export class CacheScope {
       }
 
       CACHE_HIT_OBSERVERS.get(this)?.();
+      this.recordLookup(
+        () => (Date.now() > cached.expiresAt ? "stale" : "hit"),
+        undefined,
+        store,
+        {
+          key,
+          cached,
+          backgroundRevalidationClaimed: shouldRevalidate,
+        },
+      );
       return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
@@ -459,6 +596,7 @@ export class CacheScope {
         "cache-read",
         `[CacheScope] lookup ${key ?? "(key resolution failed)"}`,
       );
+      this.recordLookup("error", "lookup-failed", store, { key });
       return { status: "error" };
     }
   }
@@ -608,6 +746,15 @@ export class CacheScope {
           handles: encodedHandles,
           expiresAt: Date.now() + ttl * 1000,
           tags,
+          ...(areDevelopmentDiagnosticsAvailable()
+            ? {
+                diagnosticLoaderConsumers: diagnosticConsumersForSegments(
+                  nonLoaderSegments,
+                  requestCtx._diagnosticLoaderConsumers,
+                ),
+                diagnosticCachePolicy: { ttl, swr: swr ?? null },
+              }
+            : {}),
         };
 
         if (INTERNAL_RANGO_DEBUG) {
@@ -641,9 +788,10 @@ export class CacheScope {
 export function createCacheScope(
   config: { options: PartialCacheOptions | false } | undefined,
   parent: CacheScope | null = null,
+  owner?: { segmentId: string; segmentType: string; inherited: boolean },
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent
-  return new CacheScope(config.options, parent);
+  return new CacheScope(config.options, parent, undefined, owner);
 }
 
 type ShellImplicitCacheMarker = NonNullable<

@@ -106,6 +106,27 @@ import {
 import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
+import { recordCacheScopeDiagnostic } from "../diagnostics/channel.js";
+
+function recordPrerenderCacheHit<TEnv>(ctx: MatchContext<TEnv>): void {
+  const leafEntry = ctx.entries.at(-1);
+  recordCacheScopeDiagnostic(
+    {
+      kind: "prerender",
+      ownerType: leafEntry?.type ?? null,
+      outcome: "prerendered",
+      source: "prerender",
+      storeKind: "prerender-store",
+      ttl: null,
+      swr: null,
+      freshForMs: null,
+      tags: [],
+      identityDigest: null,
+      backgroundRevalidationClaimed: false,
+    },
+    leafEntry?.id,
+  );
+}
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -464,7 +485,10 @@ export function withCacheLookup<TEnv>(
           resolveLoadersOnly,
           resolveLoadersOnlyWithRevalidation,
         );
-        if (served) return;
+        if (served) {
+          recordPrerenderCacheHit(ctx);
+          return;
+        }
       }
     }
 
@@ -487,12 +511,18 @@ export function withCacheLookup<TEnv>(
             resolveLoadersOnly,
             resolveLoadersOnlyWithRevalidation,
           );
-          if (served) return;
+          if (served) {
+            recordPrerenderCacheHit(ctx);
+            return;
+          }
         }
       }
     }
 
     if (ctx.isAction || !ctx.cacheScope?.enabled) {
+      ctx.cacheScope?.recordDiagnosticBypass(
+        ctx.isAction ? "action" : "disabled",
+      );
       yield* source;
       if (ms) {
         ms.metrics.push({

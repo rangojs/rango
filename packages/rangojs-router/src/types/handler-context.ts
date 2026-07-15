@@ -455,6 +455,8 @@ export type InternalHandlerContext<
    * table (so a loader cannot await its own in-flight memoized promise).
    */
   _loaderCacheOriginalUse?: (item: any) => any;
+  /** @internal Consumer recorder called by loader-cache overrides before reuse. */
+  _recordLoaderConsumer?: (item: LoaderDefinition<any, any>) => void;
 };
 
 /**

@@ -5,7 +5,7 @@ import type {
 
 export const RANGO_MCP_ENDPOINT = "/__rango/mcp";
 export const RANGO_MCP_SCHEMA_VERSION = 1 as const;
-export const RANGO_MCP_TOOL_SCHEMA_VERSION = 2 as const;
+export const RANGO_MCP_TOOL_SCHEMA_VERSION = 3 as const;
 export const RANGO_MCP_SERVER_NAME = "Rango DevTools";
 export const RANGO_MCP_MAX_RESULT_BYTES: number = 256 * 1024;
 
@@ -37,6 +37,8 @@ export interface ProjectMetadataSnapshot {
     compilationIssues: boolean;
     recentRequests: boolean;
     runtimeErrors: boolean;
+    renderExplanation: boolean;
+    revalidationExplanation: boolean;
     sourceOwnership: boolean;
     browserState: boolean;
     logs: boolean;
@@ -189,6 +191,145 @@ export interface RequestTraceSnapshot {
   source: RouteSourceOwnership | null;
   outputTruncated: boolean;
   omittedEvents: number;
+  omittedTransactions: number;
+}
+
+export interface ExplainRenderInput {
+  requestId: string;
+}
+
+export interface CacheScopeExplanation {
+  segmentId: string | null;
+  ownerType: string | null;
+  kind: "explicit" | "inherited" | "implicit-shell" | "disabled" | "prerender";
+  outcome: "hit" | "miss" | "stale" | "prerendered" | "bypass" | "error";
+  reason: string | null;
+  source: "runtime" | "prerender";
+  storeKind: string | null;
+  ttl: number | null;
+  swr: number | null;
+  freshForMs: number | null;
+  tags: string[];
+  identityDigest: string | null;
+  backgroundRevalidationClaimed: boolean;
+}
+
+export interface LoaderCacheExplanation {
+  outcome: "hit" | "stale" | "miss" | "bypass";
+  reason: string | null;
+  ttl: number | null;
+  swr: number | null;
+  backgroundRevalidationRequested: boolean;
+}
+
+export interface LoaderConsumerExplanation {
+  kind: "dsl-client" | "handler" | "loader-dependency";
+  consumerId: string | null;
+  lane: "live" | "baked";
+  boundary: "loading" | "consumer-suspense" | "none";
+  containerValue: "request" | "capture-generation";
+  nestedPromises: "none" | "request";
+}
+
+export interface LoaderRegistrationExplanation {
+  registeredBy: string;
+  segmentId: string;
+  lane: "live" | "baked";
+  boundary: "loading" | "none";
+  dataCache: "configured" | "disabled" | "none";
+}
+
+export interface LoaderExplanation {
+  loaderId: string;
+  loaderName: string | null;
+  registrations: LoaderRegistrationExplanation[];
+  execution:
+    | { outcome: "ran"; durationMs: number }
+    | { outcome: "cached"; freshness: "fresh" | "stale" }
+    | { outcome: "error"; durationMs: number; handledByBoundary: boolean }
+    | { outcome: "unknown" };
+  cacheDecisions: LoaderCacheExplanation[];
+  consumers: LoaderConsumerExplanation[];
+}
+
+export interface HandlerExplanation {
+  handlerId: string;
+  outcome: "ran" | "error";
+  durationMs: number;
+}
+
+export interface PprExplanationEvent {
+  outcome: string;
+  reason: string | null;
+  freshness: string | null;
+  source: string | null;
+  backgroundCaptureRequested: boolean;
+  navigationOnly: boolean;
+  storeWrite: string | null;
+}
+
+export interface RenderExplanationSnapshot {
+  schemaVersion: typeof RANGO_MCP_SCHEMA_VERSION;
+  request: {
+    requestId: string;
+    transactionIds: string[];
+    method: string | null;
+    transport: RequestTransport | null;
+    routeKey: string | null;
+    routePattern: string | null;
+  };
+  renderCache: CacheScopeExplanation[];
+  ppr: {
+    document: PprExplanationEvent[];
+    capture: PprExplanationEvent[];
+    navigationReplay: PprExplanationEvent[];
+  };
+  loaders: LoaderExplanation[];
+  handlers: HandlerExplanation[];
+  renderStages: Array<{
+    type: string;
+    phase: string | null;
+    durationMs: number | null;
+  }>;
+  errors: Array<{
+    type: string;
+    phase: string | null;
+    error: DiagnosticValue;
+  }>;
+  truncated: boolean;
+}
+
+export interface ExplainRevalidationInput {
+  requestId: string;
+  transactionId?: string;
+}
+
+export interface RevalidationDecisionExplanation {
+  segmentId: string;
+  segmentType: string;
+  kind: "segment" | "loader";
+  belongsToRoute: boolean;
+  source: string;
+  defaultShouldRevalidate: boolean;
+  finalShouldRevalidate: boolean;
+  reason: string;
+  customRevalidators: number;
+}
+
+export interface RevalidationExplanationSnapshot {
+  schemaVersion: typeof RANGO_MCP_SCHEMA_VERSION;
+  requestId: string;
+  transactionId: string;
+  routeKey: string | null;
+  method: string | null;
+  isAction: boolean;
+  actionId: string | null;
+  stale: boolean;
+  pathChanged: boolean;
+  previousSearchNames: string[];
+  nextSearchNames: string[];
+  decisions: RevalidationDecisionExplanation[];
+  truncated: boolean;
 }
 
 export interface GetErrorsInput {

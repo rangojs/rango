@@ -346,6 +346,27 @@ describe("loader-cache", () => {
       expect(loader).not.toHaveBeenCalled();
     });
 
+    it("records handler consumption when ctx.use reuses the cache override", async () => {
+      const store = createMockStore({
+        getItem: vi.fn(
+          async (): Promise<CacheItemResult> => ({
+            value: JSON.stringify({ name: "cached" }),
+            shouldRevalidate: false,
+          }),
+        ),
+      });
+      const loader = createMockLoader("handler-cache-hit");
+      const entry = createLoaderEntry(loader, { store });
+      const ctx = createMockCtx();
+      ctx._recordLoaderConsumer = vi.fn();
+
+      await resolveLoaderData(entry, ctx, "/product");
+      await ctx.use(loader);
+
+      expect(ctx._recordLoaderConsumer).toHaveBeenCalledWith(loader);
+      expect(loader).not.toHaveBeenCalled();
+    });
+
     it("executes loader and caches on miss", async () => {
       const freshData = { name: "fresh product" };
       const store = createMockStore();

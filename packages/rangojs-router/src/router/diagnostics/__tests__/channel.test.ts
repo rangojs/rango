@@ -18,7 +18,12 @@ import {
   resetDevelopmentDiagnosticHub,
 } from "../hub.js";
 import {
+  recordCacheScopeDiagnostic,
+  recordLoaderCacheDiagnostic,
+  recordLoaderConsumerDiagnostic,
+  recordLoaderRegistrationDiagnostic,
   recordPhaseStarted,
+  recordPprDiagnostic,
   recordRequestStarted,
   runWithRequestDiagnostics,
 } from "../channel.js";
@@ -227,6 +232,75 @@ describe("diagnostic channel", () => {
       data: {
         previousSearchNames: ["view"],
         nextSearchNames: ["view"],
+      },
+    });
+  });
+
+  it("records render-cache, PPR, and loader generation facts", () => {
+    const request = new Request("http://localhost/products");
+    runWithRequestTransaction(
+      request,
+      "request",
+      () => {
+        recordCacheScopeDiagnostic(
+          {
+            kind: "explicit",
+            ownerType: "route",
+            outcome: "stale",
+            source: "runtime",
+            storeKind: "MemorySegmentCacheStore",
+            ttl: 60,
+            swr: 30,
+            freshForMs: -10,
+            tags: ["products"],
+            identityDigest: "cache-12345678",
+            backgroundRevalidationClaimed: true,
+          },
+          "products.route",
+        );
+        recordPprDiagnostic("document", {
+          outcome: "hit",
+          freshness: "fresh",
+          source: "runtime",
+        });
+        recordLoaderRegistrationDiagnostic(
+          {
+            loaderId: "products-loader",
+            registeredBy: "products.route",
+            lane: "baked",
+            boundary: "none",
+            dataCache: "configured",
+          },
+          "products.loader",
+        );
+        recordLoaderCacheDiagnostic("products-loader", "hit", { ttl: 60 });
+        recordLoaderConsumerDiagnostic("products-loader", {
+          kind: "dsl-client",
+          consumerId: "products.loader",
+          lane: "baked",
+          boundary: "consumer-suspense",
+          containerValue: "capture-generation",
+          nestedPromises: "request",
+        });
+      },
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "cache.scope",
+      "ppr.document",
+      "loader.registered",
+      "loader.cache",
+      "loader.consumer",
+    ]);
+    expect(trace.events.at(-1)).toMatchObject({
+      data: {
+        lane: "baked",
+        containerValue: "capture-generation",
+        nestedPromises: "request",
       },
     });
   });

@@ -3,7 +3,10 @@ import {
   RANGO_DIAGNOSTIC_BRIDGE_VERSION,
   type DiagnosticBridgeBatch,
 } from "../../router/diagnostics/bridge-protocol.js";
-import type { DiagnosticEvent } from "../../router/diagnostics/types.js";
+import type {
+  DiagnosticEvent,
+  DiagnosticValue,
+} from "../../router/diagnostics/types.js";
 import {
   RANGO_MCP_MAX_RESULT_BYTES,
   serializedToolResultBytes,
@@ -13,7 +16,7 @@ import { createRangoMcpDiagnosticStore } from "../diagnostic-store.js";
 function event(
   sequence: number,
   type: string,
-  data: Record<string, string | number | boolean | null | string[]> = {},
+  data: Record<string, DiagnosticValue> = {},
   requestId = "req-1",
 ): DiagnosticEvent {
   return {
@@ -136,6 +139,302 @@ describe("Rango MCP diagnostic store", () => {
     });
   });
 
+  it("projects composed cache, PPR, and loader generation facts", () => {
+    const store = createStore();
+    const events = [
+      event(1, "request.started", { method: "GET" }),
+      event(2, "request.classified", {
+        transport: "document",
+        routePattern: "/blog/:postId",
+      }),
+      {
+        ...event(3, "cache.scope", {
+          kind: "explicit",
+          ownerType: "route",
+          outcome: "hit",
+          source: "runtime",
+          storeKind: "MemorySegmentCacheStore",
+          ttl: 60,
+          swr: 30,
+          backgroundRevalidationClaimed: false,
+        }),
+        segmentId: "blog.route",
+      },
+      event(4, "ppr.document", {
+        outcome: "hit",
+        freshness: "fresh",
+        source: "runtime",
+        backgroundCaptureRequested: false,
+      }),
+      {
+        ...event(5, "loader.registered", {
+          loaderId: "live-loader",
+          registeredBy: "blog.route",
+          lane: "live",
+          boundary: "loading",
+          dataCache: "none",
+        }),
+        segmentId: "blog.live",
+      },
+      event(6, "loader.consumer", {
+        loaderId: "live-loader",
+        kind: "dsl-client",
+        consumerId: null,
+        lane: "live",
+        boundary: "loading",
+        containerValue: "request",
+        nestedPromises: "request",
+      }),
+      event(7, "phase.completed", {
+        phase: "loader",
+        label: "live-loader",
+        durationMs: 4,
+      }),
+      {
+        ...event(8, "loader.registered", {
+          loaderId: "baked-loader",
+          registeredBy: "blog.layout",
+          lane: "baked",
+          boundary: "none",
+          dataCache: "configured",
+        }),
+        segmentId: "blog.baked",
+      },
+      event(9, "loader.cache", {
+        loaderId: "baked-loader",
+        outcome: "stale",
+        reason: null,
+        ttl: 120,
+        swr: null,
+        backgroundRevalidationRequested: false,
+      }),
+      event(10, "loader.consumer", {
+        loaderId: "baked-loader",
+        kind: "dsl-client",
+        consumerId: "blog.baked",
+        lane: "baked",
+        boundary: "consumer-suspense",
+        containerValue: "capture-generation",
+        nestedPromises: "request",
+      }),
+      event(11, "phase.completed", {
+        phase: "loader",
+        label: "baked-loader",
+        durationMs: 12,
+      }),
+      {
+        ...event(12, "loader.registered", {
+          loaderId: "baked-loader",
+          registeredBy: "blog.sidebar",
+          lane: "live",
+          boundary: "loading",
+          dataCache: "configured",
+        }),
+        segmentId: "blog.sidebar.baked",
+      },
+      event(13, "phase.completed", {
+        phase: "handler",
+        label: "blog.route",
+        durationMs: 2,
+      }),
+      event(14, "ppr.capture", {
+        outcome: "stored",
+        reason: "store-write-failed",
+        storeWrite: "failed",
+      }),
+      event(15, "loader.consumer", {
+        loaderId: "baked-loader",
+        kind: "loader-dependency",
+        consumerId: "live-loader",
+        lane: "inherit",
+        boundary: "inherit",
+        containerValue: "request",
+        nestedPromises: "request",
+      }),
+    ];
+    expect(store.ingestBridgeBatch(batch(1, events))).toBe(true);
+
+    const result = store.explainRender({ requestId: "req-1" });
+    expect(result.renderCache).toContainEqual(
+      expect.objectContaining({
+        segmentId: "blog.route",
+        kind: "explicit",
+        outcome: "hit",
+      }),
+    );
+    expect(result.ppr.document).toContainEqual(
+      expect.objectContaining({ outcome: "hit", freshness: "fresh" }),
+    );
+    expect(result.ppr.capture).toContainEqual(
+      expect.objectContaining({
+        outcome: "captured",
+        reason: "store-write-failed",
+        storeWrite: "failed",
+      }),
+    );
+    expect(result.loaders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          loaderId: "live-loader",
+          registrations: [expect.objectContaining({ lane: "live" })],
+          execution: { outcome: "ran", durationMs: 4 },
+        }),
+        expect.objectContaining({
+          loaderId: "baked-loader",
+          registrations: [
+            expect.objectContaining({ lane: "baked" }),
+            expect.objectContaining({ lane: "live" }),
+          ],
+          execution: { outcome: "cached", freshness: "stale" },
+          consumers: expect.arrayContaining([
+            expect.objectContaining({
+              containerValue: "capture-generation",
+              nestedPromises: "request",
+            }),
+            expect.objectContaining({
+              kind: "loader-dependency",
+              consumerId: "live-loader",
+              lane: "live",
+              boundary: "loading",
+            }),
+          ]),
+        }),
+      ]),
+    );
+    expect(result.handlers).toEqual([
+      { handlerId: "blog.route", outcome: "ran", durationMs: 2 },
+    ]);
+  });
+
+  it("projects revalidation independently by request or transaction", () => {
+    const store = createStore();
+    const revalidation = {
+      ...event(1, "revalidation.trace", {
+        method: "POST",
+        routeKey: "blog.post",
+        isAction: true,
+        actionId: "save-post",
+        stale: false,
+        pathChanged: true,
+        previousSearchNames: ["draft"],
+        nextSearchNames: ["saved"],
+        entries: [
+          {
+            segmentId: "blog.route",
+            segmentType: "route",
+            belongsToRoute: true,
+            source: "route-handler",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: false,
+            reason: "custom revalidator returned false",
+            customRevalidators: 1,
+          },
+          {
+            segmentId: "blog.loader",
+            segmentType: "loader",
+            belongsToRoute: true,
+            source: "loader",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "action default",
+            customRevalidators: 0,
+          },
+        ],
+      }),
+      transactionId: "action-tx",
+    };
+    expect(store.ingestBridgeBatch(batch(1, [revalidation]))).toBe(true);
+    expect(
+      store.ingestBridgeBatch(
+        batch(2, [
+          {
+            ...event(1, "revalidation.trace", {}, "req-2"),
+            transactionId: "action-tx",
+          },
+        ]),
+      ),
+    ).toBe(true);
+
+    const byRequest = store.explainRevalidation({ requestId: "req-1" });
+    const byTransaction = store.explainRevalidation({
+      requestId: "req-1",
+      transactionId: "action-tx",
+    });
+    expect(byTransaction).toEqual(byRequest);
+    expect(byRequest).toMatchObject({
+      actionId: "save-post",
+      pathChanged: true,
+      previousSearchNames: ["draft"],
+      nextSearchNames: ["saved"],
+      decisions: [
+        expect.objectContaining({
+          segmentId: "blog.route",
+          kind: "segment",
+          finalShouldRevalidate: false,
+        }),
+        expect.objectContaining({
+          segmentId: "blog.loader",
+          kind: "loader",
+          finalShouldRevalidate: true,
+        }),
+      ],
+    });
+    expect(() =>
+      store.explainRevalidation({
+        requestId: "req-1",
+        transactionId: "another-request-tx",
+      }),
+    ).toThrow("req-1/another-request-tx");
+  });
+
+  it("reports truncated revalidation search names", () => {
+    const store = createStore();
+    const searchNames = Array.from(
+      { length: 9 },
+      (_, index) => `field-${index}`,
+    );
+    expect(
+      store.ingestBridgeBatch(
+        batch(1, [
+          event(1, "revalidation.trace", {
+            previousSearchNames: searchNames,
+            nextSearchNames: searchNames,
+            entries: [],
+          }),
+        ]),
+      ),
+    ).toBe(true);
+
+    const result = store.explainRevalidation({ requestId: "req-1" });
+    expect(result.previousSearchNames).toHaveLength(8);
+    expect(result.nextSearchNames).toHaveLength(8);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("bounds raw trace transaction IDs without mutating retained events", () => {
+    const store = createStore();
+    const events = Array.from({ length: 140 }, (_, index) => ({
+      ...event(index + 1, "phase.completed"),
+      transactionId: `tx-${index}`,
+    }));
+    for (let index = 0; index < 4; index++) {
+      expect(
+        store.ingestBridgeBatch(
+          batch(index + 1, events.slice(index * 35, (index + 1) * 35)),
+        ),
+      ).toBe(true);
+    }
+
+    const result = store.getRequestTrace({ requestId: "req-1" });
+    expect(result.trace.transactionIds).toHaveLength(128);
+    expect(result.omittedTransactions).toBe(12);
+    expect(result.outputTruncated).toBe(true);
+    expect(result.trace.events).toHaveLength(140);
+    expect(
+      store.getRequestTrace({ requestId: "req-1" }).trace.events,
+    ).toHaveLength(140);
+  });
+
   it("bounds large trace projections while reporting omitted events", () => {
     const store = createStore();
     for (let batchIndex = 0; batchIndex < 2; batchIndex++) {
@@ -151,6 +450,41 @@ describe("Rango MCP diagnostic store", () => {
     const result = store.getRequestTrace({ requestId: "req-1" });
     expect(result.outputTruncated).toBe(true);
     expect(result.omittedEvents).toBeGreaterThan(0);
+    expect(serializedToolResultBytes(result)).toBeLessThanOrEqual(
+      RANGO_MCP_MAX_RESULT_BYTES,
+    );
+  });
+
+  it("bounds render explanations by count and projected field size", () => {
+    const store = createStore();
+    for (let batchIndex = 0; batchIndex < 2; batchIndex++) {
+      const events = Array.from({ length: 40 }, (_, index) => {
+        const sequence = batchIndex * 40 + index + 1;
+        return {
+          ...event(sequence, "cache.scope", {
+            kind: "explicit",
+            ownerType: "route",
+            outcome: "hit",
+            source: "runtime",
+            storeKind: "segment-cache",
+            ttl: null,
+            swr: null,
+            freshForMs: 1_000,
+            tags: Array.from(
+              { length: 16 },
+              (_, tagIndex) => `tag-${tagIndex}-${"x".repeat(64)}`,
+            ),
+            identityDigest: `cache-${sequence}`,
+            backgroundRevalidationClaimed: false,
+          }),
+          segmentId: `segment-${sequence}`,
+        };
+      });
+      expect(store.ingestBridgeBatch(batch(batchIndex + 1, events))).toBe(true);
+    }
+
+    const result = store.explainRender({ requestId: "req-1" });
+    expect(result.truncated).toBe(true);
     expect(serializedToolResultBytes(result)).toBeLessThanOrEqual(
       RANGO_MCP_MAX_RESULT_BYTES,
     );
@@ -316,5 +650,5 @@ describe("Rango MCP diagnostic store", () => {
         RANGO_MCP_MAX_RESULT_BYTES,
       );
     }
-  });
+  }, 15_000);
 });

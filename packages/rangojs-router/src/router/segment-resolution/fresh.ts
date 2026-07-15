@@ -37,6 +37,10 @@ import { getRouterContext } from "../router-context.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import { observeHandler } from "../instrument.js";
 import {
+  isDevelopmentDiagnosticsEnabled,
+  recordLoaderRegistrationDiagnostic,
+} from "../diagnostics/channel.js";
+import {
   track,
   RangoContext,
   runInsideLoaderScope,
@@ -84,6 +88,27 @@ export async function resolveLoaders<TEnv>(
   // fresh). Computed per entry; resolveLoaderData applies the policy.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
+  const recordRegistration = (
+    loaderEntry: (typeof loaderEntries)[number],
+    segmentId: string,
+  ): void => {
+    if (!isDevelopmentDiagnosticsEnabled()) return;
+    recordLoaderRegistrationDiagnostic(
+      {
+        loaderId: loaderEntry.loader.$$id,
+        registeredBy: entry.id,
+        lane: bakeLane ? "baked" : "live",
+        boundary: bakeLane ? "none" : "loading",
+        dataCache: !loaderEntry.cache
+          ? "none"
+          : loaderEntry.cache.options === false
+            ? "disabled"
+            : "configured",
+      },
+      segmentId,
+    );
+  };
+
   // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
   // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
   // telemetry event — wrapLoaderPromise only builds the onError/telemetry path
@@ -96,6 +121,7 @@ export async function resolveLoaders<TEnv>(
     const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
+      recordRegistration(loaderEntry, segmentId);
       return {
         id: segmentId,
         namespace: entry.id,
@@ -138,6 +164,7 @@ export async function resolveLoaders<TEnv>(
   const pendingLoaderData = loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
+    recordRegistration(loaderEntry, segmentId);
     const wrapped = deps.wrapLoaderPromise(
       runInsideLoaderScope(() =>
         resolveLoaderData(

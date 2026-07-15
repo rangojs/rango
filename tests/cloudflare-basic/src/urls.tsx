@@ -626,10 +626,23 @@ export const urlpatterns = urls(
         // keeps the tier's warm window test-controllable.
         cache({ ttl: 30, swr: 604_800 }, () => [
           layout(PprScopedChromeLayout, () => [
-            path("/ppr-scoped", PprScopedHomePage, {
-              name: "pprScoped",
-              ppr: { ttl: 300, swr: 120 },
-            }),
+            loader(PprShellSettledLoader, () => [cache({ ttl: 300 })]),
+            path(
+              "/ppr-scoped",
+              PprScopedHomePage,
+              {
+                name: "pprScoped",
+                ppr: { ttl: 300, swr: 120 },
+              },
+              () => [
+                loader(PprShellPriceLoader),
+                loading(
+                  <div data-testid="ppr-scoped-fallback">
+                    Loading scoped...
+                  </div>,
+                ),
+              ],
+            ),
           ]),
           // Consumer opt-outs stay absolute on the replay path: cache(false)
           // and a false condition() report `cache-disabled` pre-read.

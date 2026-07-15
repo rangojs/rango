@@ -45,6 +45,11 @@ import {
   isShellCaptureActive,
   createMaskedLoaderPromise,
 } from "./loader-mask.js";
+import {
+  isDevelopmentDiagnosticsEnabled,
+  recordLoaderCacheDiagnostic,
+  recordLoaderConsumerDiagnostic,
+} from "../diagnostics/channel.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -140,6 +145,21 @@ export function resolveLoaderData<TEnv>(
   // One ALS read serves the capture check, the record registration, and the
   // seed lookup — this runs for every loader on every request.
   const reqCtx = _getRequestContext();
+  const loaderId = loaderEntry.loader.$$id;
+  const recordClientConsumer = (
+    containerValue: "request" | "capture-generation",
+    nestedPromises: "request" | "none",
+  ): void => {
+    if (!isDevelopmentDiagnosticsEnabled()) return;
+    recordLoaderConsumerDiagnostic(loaderId, {
+      kind: "dsl-client",
+      consumerId: bakeSegmentKey ?? null,
+      lane: bakeSegmentKey ? "baked" : "live",
+      boundary: bakeSegmentKey ? "consumer-suspense" : "loading",
+      containerValue,
+      nestedPromises,
+    });
+  };
   // PPR shell capture policy — gated here, the single funnel every loader
   // segment path routes through (fresh resolveLoaders, cache-hit
   // resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation).
@@ -157,8 +177,13 @@ export function resolveLoaderData<TEnv>(
   //   payload matches the frozen prelude byte-for-byte.
   if (isShellCaptureActive(reqCtx)) {
     if (!bakeSegmentKey) {
+      recordClientConsumer("request", "none");
+      recordLoaderCacheDiagnostic(loaderId, "bypass", {
+        reason: "live-lane-capture",
+      });
       return createMaskedLoaderPromise();
     }
+    recordClientConsumer("capture-generation", "request");
     const containerPromise = executeLoaderData(loaderEntry, ctx, pathname);
     // Pre-attach a no-op catch: a bake-lane rejection during capture must
     // surface through the drain's refusal (and the wrapper's error boundary),
@@ -186,6 +211,10 @@ export function resolveLoaderData<TEnv>(
     const seed = reqCtx?._shellLoaderSeed;
     if (seed && seed.has(bakeSegmentKey)) {
       const recorded = seed.get(bakeSegmentKey)!;
+      recordClientConsumer(
+        "capture-generation",
+        recorded.holes ? "request" : "none",
+      );
       if (!recorded.holes) {
         // Pin-first (hole-free record): the pinned container is what the
         // payload serves either way (recorded paths win wholesale), so
@@ -228,6 +257,7 @@ export function resolveLoaderData<TEnv>(
     }
   }
 
+  recordClientConsumer("request", "request");
   return executeLoaderData(loaderEntry, ctx, pathname);
 }
 
@@ -238,14 +268,21 @@ function executeLoaderData<TEnv>(
   pathname: string,
 ): Promise<any> {
   const cacheConfig = loaderEntry.cache;
+  const loaderId = loaderEntry.loader.$$id;
 
   // No cache config or disabled — run fresh (zero overhead path)
   if (!cacheConfig || cacheConfig.options === false) {
+    recordLoaderCacheDiagnostic(loaderId, "bypass", {
+      reason: cacheConfig ? "disabled" : "not-configured",
+    });
     return ctx.use(loaderEntry.loader);
   }
 
   const store = getLoaderStore(loaderEntry);
   if (!store?.getItem || !store?.setItem) {
+    recordLoaderCacheDiagnostic(loaderId, "bypass", {
+      reason: "store-unavailable",
+    });
     return ctx.use(loaderEntry.loader);
   }
 
@@ -254,11 +291,12 @@ function executeLoaderData<TEnv>(
   if (options.condition) {
     const requestCtx = getRequestContext();
     if (requestCtx && !options.condition(requestCtx)) {
+      recordLoaderCacheDiagnostic(loaderId, "bypass", {
+        reason: "condition",
+      });
       return ctx.use(loaderEntry.loader);
     }
   }
-
-  const loaderId = loaderEntry.loader.$$id;
 
   // A handler that later awaits this same loader via ctx.use(loader) must get
   // THIS memoized promise, not a fresh execution. Rather than rebind ctx.use
@@ -276,7 +314,10 @@ function executeLoaderData<TEnv>(
     internal._loaderCacheOriginalUse = originalUse;
     ctx.use = ((item: any) => {
       const cached = overrides!.get(item?.$$id);
-      if (cached) return cached;
+      if (cached) {
+        internal._recordLoaderConsumer?.(item);
+        return cached;
+      }
       return originalUse(item);
     }) as typeof ctx.use;
   }
@@ -332,9 +373,22 @@ function executeLoaderData<TEnv>(
       serialize: (d) => codec.serializeResult(d),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
-      onHit: () => debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`),
-      onStale: () => debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`),
-      onMiss: () => debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`),
+      onHit: () => {
+        debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`);
+        recordLoaderCacheDiagnostic(loaderId, "hit", { ttl, swr });
+      },
+      onStale: () => {
+        debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`);
+        recordLoaderCacheDiagnostic(loaderId, "stale", {
+          ttl,
+          swr,
+          backgroundRevalidationRequested: true,
+        });
+      },
+      onMiss: () => {
+        debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`);
+        recordLoaderCacheDiagnostic(loaderId, "miss", { ttl, swr });
+      },
       onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
       host: requestCtxForExecute,
     });

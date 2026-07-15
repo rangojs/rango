@@ -32,6 +32,8 @@ async function startEndpoint(): Promise<URL> {
       getErrors: () => jsonToolResult({ errors: [] }),
       listRequests: () => jsonToolResult({ requests: [] }),
       getRequestTrace: () => jsonToolResult({ trace: null }),
+      explainRender: () => jsonToolResult({ renderCache: [] }),
+      explainRevalidation: () => jsonToolResult({ decisions: [] }),
     },
   });
   const server = createServer((request, response) => {
@@ -63,7 +65,7 @@ describe("Rango MCP HTTP endpoint", () => {
     );
 
     const tools = await client.listTools();
-    expect(tools.tools).toHaveLength(7);
+    expect(tools.tools).toHaveLength(9);
     const result = await client.callTool({ name: "get_project_metadata" });
     expect(result.structuredContent).toEqual({ projectRoot: "/app" });
   });
