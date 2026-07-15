@@ -37,9 +37,9 @@ PPR is a DOCUMENT-level property declared on the page route via the `ppr` path
 option. Serving is **integral to the router** — there is nothing to mount. The
 only prerequisite is an app-level `createRouter({ cache })` store that
 implements the shell family (`getShell`/`putShell`): `MemorySegmentCacheStore`
-(dev/tests), `CFCacheStore` (Cloudflare KV), or `VercelCacheStore` (runtime
-cache). A ppr route on a store without the family stays on axis 1 with a
-once-per-key warning.
+(dev/tests), `CFCacheStore` (Cache API L1 + KV L2), or `VercelCacheStore`
+(runtime cache). A ppr route on a store without the family stays on axis 1 with
+a once-per-key warning.
 
 ```typescript
 import { createRouter, urls } from "@rangojs/router";
@@ -344,9 +344,10 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
 - A ppr-declared route that CANNOT be honored (missing shell store family,
   per-request nonce) serves plain axis 1 with NO header and warns once per
   key — no header + a declared `ppr` means look for that warning.
-- On Cloudflare, `CFCacheStore` WITHOUT a KV namespace has an inert shell
-  family (the shell tier is KV-only): every ppr route stays `MISS` forever.
-  The store warns once per isolate — bind KV
+- On Cloudflare, `CFCacheStore` reads PPR shells from the per-colo Cache API,
+  falls through to KV on a miss, and promotes the KV hit back into that colo.
+  WITHOUT a KV namespace its shell family remains inert: every ppr route stays
+  `MISS` forever. The store warns once per isolate — bind KV
   (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use another store.
 - Structured capture diagnostics: `createRouter({ debugShellCapture: true })`
   logs one line per capture attempt/skip (outcome, durations, prelude and

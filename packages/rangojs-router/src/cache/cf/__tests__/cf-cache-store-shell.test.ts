@@ -3,8 +3,28 @@ import { CFCacheStore } from "../cf-cache-store";
 import type { ShellCacheEntry } from "../../types";
 
 // ============================================================================
-// Mock KV (the shell family is KV-only — no Cache API tier in v1)
+// Mock Cache API (L1) + KV (L2)
 // ============================================================================
+
+function cacheKey(request: RequestInfo | URL): string {
+  return request instanceof Request ? request.url : String(request);
+}
+
+class MockCache {
+  store = new Map<string, Response>();
+
+  async match(request: RequestInfo | URL): Promise<Response | undefined> {
+    return this.store.get(cacheKey(request))?.clone();
+  }
+
+  async put(request: RequestInfo | URL, response: Response): Promise<void> {
+    this.store.set(cacheKey(request), response.clone());
+  }
+
+  async delete(request: RequestInfo | URL): Promise<boolean> {
+    return this.store.delete(cacheKey(request));
+  }
+}
 
 class MockKV {
   store = new Map<string, { value: string; expirationTtl?: number }>();
@@ -52,21 +72,8 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   };
 }
 
-// Install a mock caches global so the store's getCache() (used elsewhere in the
-// class, though not on the shell path) never touches a real Cache API.
-(globalThis as any).caches ??= {
-  default: {
-    async match() {
-      return undefined;
-    },
-    async put() {},
-    async delete() {
-      return false;
-    },
-  },
-};
-
-describe("CFCacheStore shell family (KV-only)", () => {
+describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
+  let mockCache: MockCache;
   let mockKV: MockKV;
   let mockCtx: ReturnType<typeof createMockCtx>;
 
@@ -74,24 +81,46 @@ describe("CFCacheStore shell family (KV-only)", () => {
     vi.restoreAllMocks();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+    mockCache = new MockCache();
     mockKV = new MockKV();
     mockCtx = createMockCtx();
+    vi.stubGlobal("caches", {
+      default: mockCache,
+      open: async () => mockCache,
+    });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  it("round-trips a shell entry through KV", async () => {
+  it("serves a shell entry from L1 without reading KV", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     const entry = shellEntry();
     await store.putShell("k", entry, 300, 30);
     await drain(mockCtx);
+    expect(mockCache.store.size).toBe(1);
+    mockKV.store.clear();
 
     const hit = await store.getShell("k");
     expect(hit).not.toBeNull();
     expect(hit?.entry).toEqual(entry);
     expect(hit?.shouldRevalidate).toBe(false);
+  });
+
+  it("promotes a KV fallback into L1 for the next read", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const entry = shellEntry();
+    await store.putShell("k", entry, 300, 30);
+    await drain(mockCtx);
+
+    mockCache.store.clear();
+    expect((await store.getShell("k"))?.entry).toEqual(entry);
+    await drain(mockCtx);
+
+    mockKV.store.clear();
+    expect((await store.getShell("k"))?.entry).toEqual(entry);
   });
 
   it("returns null on a miss", async () => {
@@ -121,6 +150,7 @@ describe("CFCacheStore shell family (KV-only)", () => {
     });
     await store.putShell("k", entry, 300, 30);
     await drain(mockCtx);
+    mockCache.store.clear();
 
     const hit = await store.getShell("k");
     expect(hit?.entry.initialTheme).toBe("dark");
@@ -143,6 +173,7 @@ describe("CFCacheStore shell family (KV-only)", () => {
       30,
     );
     await drain(mockCtx);
+    mockCache.store.clear();
 
     const entry = (await store.getShell("k"))?.entry;
     expect(entry?.handlerLiveHoles).toBe(true);
@@ -164,6 +195,7 @@ describe("CFCacheStore shell family (KV-only)", () => {
       30,
     );
     await drain(mockCtx);
+    mockCache.store.clear();
 
     expect((await store.getShell("k"))?.entry.docKey).toBe("doc:localhost/p");
   });
@@ -208,11 +240,12 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(inertWarnings()).toHaveLength(1);
   });
 
-  it("skips the KV write when ttl+swr is below the 60s KV floor", async () => {
+  it("stores short-lived shells in L1 while skipping KV below its 60s floor", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     await store.putShell("k", shellEntry(), 10, 0); // total 10 < 60
     await drain(mockCtx);
-    expect(await store.getShell("k")).toBeNull();
+    expect(await store.getShell("k")).not.toBeNull();
+    expect(mockCache.store.size).toBe(1);
     expect(mockKV.store.size).toBe(0);
   });
 
@@ -239,6 +272,27 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(await store.getShell("k")).not.toBeNull();
 
     await store.invalidateTags(["home"]);
+    expect(await store.getShell("k")).toBeNull();
+  });
+
+  it("purges a tagged L1 shell but still checks its generation marker", async () => {
+    const tagPurge = vi.fn(async () => {});
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      kv: mockKV as any,
+      tagPurge,
+    });
+    await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+    await drain(mockCtx);
+
+    const cached = [...mockCache.store.values()][0];
+    expect(cached.headers.get("Cache-Tag")).toContain("rg:default:e:home");
+
+    await store.invalidateTags(["home"]);
+    expect(tagPurge).toHaveBeenCalledWith(["rg:default:e:home"]);
+    // The mock purge does not evict. Shell L1 reads must still reject the old
+    // capture through the marker, unlike ordinary purge-mode L1 data reads.
+    expect(mockCache.store.size).toBe(1);
     expect(await store.getShell("k")).toBeNull();
   });
 
@@ -303,8 +357,31 @@ describe("CFCacheStore shell family (KV-only)", () => {
       k.includes("shell:k"),
     )!;
     mockKV.store.set(shellKvKey, { value: "{not-json" });
+    mockCache.store.clear();
 
     expect(await store.getShell("k")).toBeNull();
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("falls through to KV when the L1 shell body is corrupt", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const entry = shellEntry();
+    await store.putShell("k", entry, 300, 30);
+    await drain(mockCtx);
+
+    const l1Key = [...mockCache.store.keys()][0];
+    mockCache.store.set(
+      l1Key,
+      new Response("{not-json", {
+        headers: { "Cache-Control": "public, max-age=330" },
+      }),
+    );
+
+    expect((await store.getShell("k"))?.entry).toEqual(entry);
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });

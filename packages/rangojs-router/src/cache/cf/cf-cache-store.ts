@@ -262,10 +262,10 @@ interface KVItemEnvelope {
 }
 
 /**
- * KV envelope for PPR shell cache entries.
+ * Coupled Cache API/KV envelope for PPR shell cache entries.
  * @internal
  */
-interface KVShellEnvelope {
+interface CFShellEnvelope {
   /** base64-encoded prelude bytes */
   p: string;
   /** postponed state JSON, or null (DATA variant — no holes) */
@@ -307,6 +307,35 @@ interface KVShellEnvelope {
   tw?: true;
   /** ShellCacheEntry.navigationOnly; its partial-context prelude is not document-safe. */
   no?: true;
+}
+
+/** Validate the coupled PPR shell envelope before any field reaches resume. */
+function isShellEnvelope(value: unknown): value is CFShellEnvelope {
+  if (value == null || typeof value !== "object") return false;
+  const envelope = value as Partial<CFShellEnvelope>;
+  return (
+    typeof envelope.p === "string" &&
+    (envelope.po === null || typeof envelope.po === "string") &&
+    typeof envelope.rv === "string" &&
+    (envelope.bv === undefined || typeof envelope.bv === "string") &&
+    typeof envelope.c === "number" &&
+    Number.isFinite(envelope.c) &&
+    typeof envelope.s === "number" &&
+    Number.isFinite(envelope.s) &&
+    typeof envelope.e === "number" &&
+    Number.isFinite(envelope.e) &&
+    (envelope.t === undefined ||
+      (Array.isArray(envelope.t) &&
+        envelope.t.every((tag) => typeof tag === "string"))) &&
+    (envelope.ta === undefined ||
+      (typeof envelope.ta === "number" && Number.isFinite(envelope.ta))) &&
+    (envelope.i === undefined || typeof envelope.i === "string") &&
+    (envelope.sn === undefined || Array.isArray(envelope.sn)) &&
+    (envelope.dk === undefined || typeof envelope.dk === "string") &&
+    (envelope.lh === undefined || typeof envelope.lh === "boolean") &&
+    (envelope.tw === undefined || envelope.tw === true) &&
+    (envelope.no === undefined || envelope.no === true)
+  );
 }
 
 /**
@@ -1765,17 +1794,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   // ============================================================================
-  // Shell Cache Methods (PPR shell resume) — KV-only in v1
+  // Shell Cache Methods (PPR shell resume) — Cache API L1 + KV L2
   // ============================================================================
   //
-  // Unlike the segment/item/document tiers, the shell family has NO Cache-API L1
-  // tier: the prelude bytes + postponed blob are large and version-coupled, and a
-  // per-colo L1 for them is a deliberate follow-up (see the PPR shell-resume
-  // design doc). Shell entries live only in KV (the global tier), so the family
-  // requires a configured KV namespace; without one, getShell/putShell no-op and
-  // the integrated PPR serve path fails open to a full HTML render. Tag invalidation
-  // still applies: shell entries carry tags/taggedAt and are checked against the
-  // same KV markers isGloballyInvalidated() reads for every other tier.
+  // KV remains the durable, cross-colo shell tier. Cache API is a per-colo
+  // read-through accelerator: writes populate both tiers, and a valid KV hit
+  // promotes the same coupled envelope into L1. The family still requires KV;
+  // without it, getShell/putShell no-op and PPR fails open to a full HTML render.
+  //
+  // Shell L1 hits deliberately keep the KV generation-marker check even in
+  // purge mode. A shell's taggedAt is its CAPTURE START, not its write time: an
+  // invalidation can purge while an older capture is still running, then that
+  // capture can land after the purge. The marker check rejects that resurrection.
 
   /**
    * Warn once per isolate that the shell family is inert: getShell/putShell
@@ -1799,10 +1829,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Get a cached PPR shell entry by key from KV (no L1). Applies the KV read
-   * budget, corrupt-entry eviction, hard-expiry, and tag invalidation exactly
-   * like kvGetItem, minus the L1 promote. SWR is a plain staleness flag — KV has
-   * no REVALIDATING herd guard, so the capture scheduler's module-level
+   * Get a cached PPR shell entry from Cache API, falling through to KV and
+   * promoting a valid KV hit. Both tiers store one envelope so the prelude,
+   * postponed state, snapshot, versions, and generation metadata cannot mix.
+   * SWR remains a plain staleness flag; the capture scheduler's module-level
    * in-flight set is the recapture stampede guard.
    */
   async getShell(
@@ -1813,56 +1843,70 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       return null;
     }
     try {
-      const kvKey = this.toKVKey(`shell:${key}`);
-      const { value: envelope, timedOut } =
-        await this.kvGetOrEvict<KVShellEnvelope>(
-          kvKey,
-          (e) =>
-            typeof e.p === "string" &&
-            (e.po === null || typeof e.po === "string") &&
-            typeof e.rv === "string" &&
-            typeof e.e === "number" &&
-            typeof e.s === "number",
+      const cache = await this.getCache();
+      const request = this.keyToRequest(`shell:${key}`);
+      const { response, error: matchError } = await this.matchWithTimeout(
+        cache,
+        request,
+      );
+
+      if (!response || response.status !== 200) {
+        if (matchError) {
+          reportCacheError(
+            matchError,
+            "cache-read",
+            "[CFCacheStore] getShell L1 match",
+          );
+        }
+        return this.kvGetShell(key);
+      }
+
+      const { value, errored, error } =
+        await this.readJsonWithTimeout<unknown>(response);
+      if (value === undefined) {
+        if (errored) {
+          return this.healCorruptL1(cache, request, error, "getShell", () =>
+            this.kvGetShell(key),
+          );
+        }
+        return this.kvGetShell(key);
+      }
+      if (!isShellEnvelope(value)) {
+        return this.healCorruptL1(
+          cache,
+          request,
+          new Error("malformed/partial L1 shell envelope"),
           "getShell",
+          () => this.kvGetShell(key),
         );
-      // A timeout, a missing key, or an already-evicted corrupt entry is a miss.
-      if (timedOut || !envelope) return null;
+      }
 
       const now = Date.now();
-      if (now > envelope.e) return null;
+      if (now > value.e) return this.kvGetShell(key);
 
-      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
+      // Unlike other L1 families, shells always check the durable generation
+      // marker. See the capture-start/purge race documented above.
+      if (await this.isGloballyInvalidated(value.t, value.ta)) {
         return null;
       }
 
-      const shouldRevalidate = envelope.s > 0 && now > envelope.s;
+      const shouldRevalidate = value.s > 0 && now > value.s;
       return {
-        entry: {
-          prelude: envelope.p,
-          postponed: envelope.po,
-          reactVersion: envelope.rv,
-          buildVersion: envelope.bv,
-          initialTheme: envelope.i,
-          snapshot: envelope.sn,
-          docKey: envelope.dk,
-          handlerLiveHoles: envelope.lh,
-          transitionWhen: envelope.tw,
-          navigationOnly: envelope.no,
-          createdAt: envelope.c,
-        },
+        entry: this.shellEnvelopeToEntry(value),
         shouldRevalidate,
       };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
-      return null;
+      return this.kvGetShell(key);
     }
   }
 
   /**
-   * Store a PPR shell entry in KV with TTL and optional SWR window. The write is
-   * registered with waitUntil and awaited so invalidation rejection can be
-   * acknowledged to the capture scheduler. The tags/taggedAt ride in the envelope
-   * so isGloballyInvalidated() can invalidate the shell via the shared KV markers.
+   * Store a PPR shell envelope in Cache API and, when its retention meets KV's
+   * 60-second floor, KV. The shared write is registered with waitUntil and
+   * awaited so invalidation rejection can be acknowledged to the capture
+   * scheduler. Short-lived shells remain useful in L1 even though KV rejects
+   * them.
    */
   async putShell(
     key: string,
@@ -1871,9 +1915,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     swrSeconds?: number,
     tags?: string[],
   ): Promise<"stored" | "invalidated" | void> {
-    // KV-only tier: needs a KV namespace and waitUntil. The same write promise is
-    // registered for isolate lifetime and awaited so invalidation rejection can
-    // be acknowledged to the capture scheduler.
+    // KV remains required for durable generation markers and cross-colo reads.
     if (!this.kv) {
       this.warnShellFamilyInertOnce();
       return;
@@ -1883,9 +1925,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
       const totalTtl = ttl + swrWindow;
-      // KV requires expirationTtl >= 60s; skip a shorter-lived shell rather than
-      // letting kv.put reject inside waitUntil (mirrors setItem/kvSetSegment).
-      if (totalTtl < 60) return;
 
       const retentionTtl =
         tags && tags.length > 0 && this.tagInvalidationTtl
@@ -1898,55 +1937,86 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
       const kvKey = this.toKVKey(`shell:${key}`);
-      // A key over the KV limit makes kv.put reject deep inside waitUntil; report
-      // and skip the doomed write (mirrors kvSetSegment).
+      let writeKv = retentionTtl >= KV_MIN_EXPIRATION_TTL;
       const kvKeyBytes = kvKeyByteLength(kvKey);
       if (kvKeyBytes > KV_MAX_KEY_BYTES) {
         reportCacheError(
           new Error(
             `shell cache key produces a ${kvKeyBytes}-byte KV key, over the ` +
-              `${KV_MAX_KEY_BYTES}-byte limit; the shell was not persisted.`,
+              `${KV_MAX_KEY_BYTES}-byte limit; the shell was not persisted to KV (L2).`,
           ),
           "cache-write",
           "[CFCacheStore] putShell",
         );
-        return;
+        writeKv = false;
       }
 
       const write = (async (): Promise<"stored" | "invalidated" | void> => {
-        try {
-          if (
-            tags &&
-            tags.length > 0 &&
-            (await this.isGloballyInvalidated(tags, entry.createdAt))
-          ) {
-            return "invalidated";
-          }
-          const envelope: KVShellEnvelope = {
-            p: entry.prelude,
-            po: entry.postponed,
-            rv: entry.reactVersion,
-            bv: entry.buildVersion,
-            c: entry.createdAt,
-            s: staleAt,
-            e: expiresAt,
-            t: tags,
-            ta: taggedAt,
-            i: entry.initialTheme,
-            sn: entry.snapshot,
-            dk: entry.docKey,
-            lh: entry.handlerLiveHoles,
-            tw: entry.transitionWhen,
-            no: entry.navigationOnly,
-          };
-          await this.kv!.put(kvKey, JSON.stringify(envelope), {
-            expirationTtl: retentionTtl,
-          });
-          return "stored";
-        } catch (error) {
-          reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
-          return undefined;
+        if (
+          tags &&
+          tags.length > 0 &&
+          (await this.isGloballyInvalidated(tags, entry.createdAt))
+        ) {
+          return "invalidated";
         }
+
+        const envelope: CFShellEnvelope = {
+          p: entry.prelude,
+          po: entry.postponed,
+          rv: entry.reactVersion,
+          bv: entry.buildVersion,
+          c: entry.createdAt,
+          s: staleAt,
+          e: expiresAt,
+          t: tags,
+          ta: taggedAt,
+          i: entry.initialTheme,
+          sn: entry.snapshot,
+          dk: entry.docKey,
+          lh: entry.handlerLiveHoles,
+          tw: entry.transitionWhen,
+          no: entry.navigationOnly,
+        };
+        const body = JSON.stringify(envelope);
+        const writes: Promise<boolean>[] = [
+          (async () => {
+            try {
+              const cache = await this.getCache();
+              await cache.put(
+                this.keyToRequest(`shell:${key}`),
+                this.shellEnvelopeResponse(body, envelope),
+              );
+              return true;
+            } catch (error) {
+              reportCacheError(
+                error,
+                "cache-write",
+                "[CFCacheStore] putShell L1",
+              );
+              return false;
+            }
+          })(),
+        ];
+        if (writeKv) {
+          writes.push(
+            (async () => {
+              try {
+                await this.kv!.put(kvKey, body, {
+                  expirationTtl: retentionTtl,
+                });
+                return true;
+              } catch (error) {
+                reportCacheError(
+                  error,
+                  "cache-write",
+                  "[CFCacheStore] putShell L2",
+                );
+                return false;
+              }
+            })(),
+          );
+        }
+        return (await Promise.all(writes)).some(Boolean) ? "stored" : undefined;
       })();
       this.waitUntil(async () => {
         await write;
@@ -1955,6 +2025,96 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
     }
+  }
+
+  /** Rebuild the public shell entry from its validated storage envelope. */
+  private shellEnvelopeToEntry(envelope: CFShellEnvelope): ShellCacheEntry {
+    return {
+      prelude: envelope.p,
+      postponed: envelope.po,
+      reactVersion: envelope.rv,
+      buildVersion: envelope.bv,
+      initialTheme: envelope.i,
+      snapshot: envelope.sn,
+      docKey: envelope.dk,
+      handlerLiveHoles: envelope.lh,
+      transitionWhen: envelope.tw,
+      navigationOnly: envelope.no,
+      createdAt: envelope.c,
+    };
+  }
+
+  /** Build the Cache API representation of the coupled shell envelope. */
+  private shellEnvelopeResponse(
+    body: string,
+    envelope: CFShellEnvelope,
+  ): Response {
+    const remainingTtl = Math.max(
+      1,
+      Math.floor((envelope.e - Date.now()) / 1000),
+    );
+    return new Response(body, {
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": `public, max-age=${remainingTtl}`,
+        [CACHE_STALE_AT_HEADER]: String(envelope.s),
+        [CACHE_EXPIRES_AT_HEADER]: String(envelope.e),
+        [CACHE_STATUS_HEADER]: "HIT",
+        ...this.tagHeaderEntries(envelope.t, envelope.ta),
+      },
+    });
+  }
+
+  /** KV shell fallback with corruption checks and background L1 promotion. */
+  private async kvGetShell(
+    key: string,
+  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    if (!this.kv) return null;
+    try {
+      const kvKey = this.toKVKey(`shell:${key}`);
+      const { value: envelope, timedOut } =
+        await this.kvGetOrEvict<CFShellEnvelope>(
+          kvKey,
+          isShellEnvelope,
+          "getShell",
+        );
+      if (timedOut || !envelope) return null;
+
+      const now = Date.now();
+      if (now > envelope.e) return null;
+      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
+        return null;
+      }
+
+      this.promoteShellToL1(key, envelope);
+      return {
+        entry: this.shellEnvelopeToEntry(envelope),
+        shouldRevalidate: envelope.s > 0 && now > envelope.s,
+      };
+    } catch (error) {
+      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetShell");
+      return null;
+    }
+  }
+
+  /** Promote a valid KV shell into the per-colo Cache API tier. */
+  private promoteShellToL1(key: string, envelope: CFShellEnvelope): void {
+    if (!this.waitUntil) return;
+    this.waitUntil(() =>
+      reportingAsync(
+        async () => {
+          if (Date.now() > envelope.e) return;
+          const cache = await this.getCache();
+          const body = JSON.stringify(envelope);
+          await cache.put(
+            this.keyToRequest(`shell:${key}`),
+            this.shellEnvelopeResponse(body, envelope),
+          );
+        },
+        "cache-write",
+        "[CFCacheStore] promoteShellToL1",
+      ),
+    );
   }
 
   // ============================================================================
