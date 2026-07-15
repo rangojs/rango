@@ -424,8 +424,9 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       await drain(mockCtx);
 
       const request = new Request("https://test.internal/?probe=debug", {
-        headers: { "cf-ray": "1234abcd-SJC" },
+        headers: { "cf-ray": "1234abcd" },
       });
+      Object.defineProperty(request, "cf", { value: { colo: "SJC" } });
       const reqCtx = createRequestContext({
         env: {},
         request,
@@ -472,7 +473,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           outcome: "l1-hit",
-          ray: "1234abcd-SJC",
+          ray: "1234abcd",
           colo: "SJC",
         }),
       );

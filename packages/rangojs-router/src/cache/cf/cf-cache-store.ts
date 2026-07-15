@@ -584,9 +584,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     details: CFShellDebugDetails = {},
   ): void {
     if (!INTERNAL_RANGO_DEBUG) return;
-    const ray =
-      _getRequestContext()?.request.headers.get("cf-ray") ?? undefined;
-    const colo = ray?.split("-").at(-1);
+    const request = _getRequestContext()?.request as
+      | (Request & { cf?: { colo?: unknown } })
+      | undefined;
+    const ray = request?.headers.get("cf-ray") ?? undefined;
+    const cfColo = request?.cf?.colo;
+    const colo =
+      typeof cfColo === "string"
+        ? cfColo
+        : ray?.includes("-")
+          ? ray.slice(ray.lastIndexOf("-") + 1)
+          : undefined;
     console.log(
       `[CFCacheStore][shell] ${JSON.stringify({
         key,
