@@ -42,6 +42,7 @@ import {
   _getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { VERSION } from "@rangojs/router:version";
 import {
   isPerClientSignalHeader,
@@ -309,6 +310,38 @@ interface CFShellEnvelope {
   no?: true;
 }
 
+type CFShellDebugOutcome =
+  | "l1-hit"
+  | "l1-miss"
+  | "kv-hit"
+  | "kv-miss"
+  | "kv-promoted"
+  | "marker-invalidated"
+  | "l1-stored"
+  | "kv-stored"
+  | "write-invalidated";
+
+interface CFShellDebugDetails {
+  tier?: "l1" | "kv";
+  reason?:
+    | "absent"
+    | "timeout"
+    | "error"
+    | "non-200"
+    | "corrupt"
+    | "malformed"
+    | "expired"
+    | "unavailable";
+  freshness?: "fresh" | "stale";
+  status?: number;
+  matchMs?: number;
+  bodyReadMs?: number;
+  markerMs?: number;
+  readMs?: number;
+  expiresAt?: number;
+  remainingTtl?: number;
+}
+
 /** Validate the coupled PPR shell envelope before any field reaches resume. */
 function isShellEnvelope(value: unknown): value is CFShellEnvelope {
   if (value == null || typeof value !== "object") return false;
@@ -542,6 +575,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } catch {
       // A broken debug sink must not affect the request.
     }
+  }
+
+  /** Build-time-gated shell tier trace for deployed cross-colo diagnostics. */
+  private debugShell(
+    key: string,
+    outcome: CFShellDebugOutcome,
+    details: CFShellDebugDetails = {},
+  ): void {
+    if (!INTERNAL_RANGO_DEBUG) return;
+    const ray =
+      _getRequestContext()?.request.headers.get("cf-ray") ?? undefined;
+    const colo = ray?.split("-").at(-1);
+    console.log(
+      `[CFCacheStore][shell] ${JSON.stringify({
+        key,
+        outcome,
+        at: Date.now(),
+        ray,
+        colo,
+        ...details,
+      })}`,
+    );
   }
 
   /**
@@ -1845,12 +1900,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`shell:${key}`);
-      const { response, error: matchError } = await this.matchWithTimeout(
-        cache,
-        request,
-      );
+      const matchStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
+      const {
+        response,
+        timedOut,
+        error: matchError,
+      } = await this.matchWithTimeout(cache, request);
+      const matchMs = INTERNAL_RANGO_DEBUG
+        ? Date.now() - matchStartedAt
+        : undefined;
 
-      if (!response || response.status !== 200) {
+      if (!response) {
         if (matchError) {
           reportCacheError(
             matchError,
@@ -1858,12 +1918,33 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             "[CFCacheStore] getShell L1 match",
           );
         }
+        this.debugShell(key, "l1-miss", {
+          reason: matchError ? "error" : timedOut ? "timeout" : "absent",
+          matchMs,
+        });
+        return this.kvGetShell(key);
+      }
+      if (response.status !== 200) {
+        this.debugShell(key, "l1-miss", {
+          reason: "non-200",
+          status: response.status,
+          matchMs,
+        });
         return this.kvGetShell(key);
       }
 
+      const bodyStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
       const { value, errored, error } =
         await this.readJsonWithTimeout<unknown>(response);
+      const bodyReadMs = INTERNAL_RANGO_DEBUG
+        ? Date.now() - bodyStartedAt
+        : undefined;
       if (value === undefined) {
+        this.debugShell(key, "l1-miss", {
+          reason: errored ? "corrupt" : "timeout",
+          matchMs,
+          bodyReadMs,
+        });
         if (errored) {
           return this.healCorruptL1(cache, request, error, "getShell", () =>
             this.kvGetShell(key),
@@ -1872,6 +1953,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetShell(key);
       }
       if (!isShellEnvelope(value)) {
+        this.debugShell(key, "l1-miss", {
+          reason: "malformed",
+          matchMs,
+          bodyReadMs,
+        });
         return this.healCorruptL1(
           cache,
           request,
@@ -1882,21 +1968,48 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
 
       const now = Date.now();
-      if (now > value.e) return this.kvGetShell(key);
+      if (now > value.e) {
+        this.debugShell(key, "l1-miss", {
+          reason: "expired",
+          matchMs,
+          bodyReadMs,
+          expiresAt: value.e,
+        });
+        return this.kvGetShell(key);
+      }
 
       // Unlike other L1 families, shells always check the durable generation
       // marker. See the capture-start/purge race documented above.
-      if (await this.isGloballyInvalidated(value.t, value.ta)) {
+      const markerStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
+      const invalidated = await this.isGloballyInvalidated(value.t, value.ta);
+      const markerMs = INTERNAL_RANGO_DEBUG
+        ? Date.now() - markerStartedAt
+        : undefined;
+      if (invalidated) {
+        this.debugShell(key, "marker-invalidated", {
+          tier: "l1",
+          matchMs,
+          bodyReadMs,
+          markerMs,
+        });
         return null;
       }
 
       const shouldRevalidate = value.s > 0 && now > value.s;
+      this.debugShell(key, "l1-hit", {
+        freshness: shouldRevalidate ? "stale" : "fresh",
+        matchMs,
+        bodyReadMs,
+        markerMs,
+        expiresAt: value.e,
+      });
       return {
         entry: this.shellEnvelopeToEntry(value),
         shouldRevalidate,
       };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
+      this.debugShell(key, "l1-miss", { reason: "error" });
       return this.kvGetShell(key);
     }
   }
@@ -1957,6 +2070,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           tags.length > 0 &&
           (await this.isGloballyInvalidated(tags, entry.createdAt))
         ) {
+          this.debugShell(key, "write-invalidated");
           return "invalidated";
         }
 
@@ -1986,6 +2100,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
                 this.keyToRequest(`shell:${key}`),
                 this.shellEnvelopeResponse(body, envelope),
               );
+              this.debugShell(key, "l1-stored", {
+                expiresAt: envelope.e,
+              });
               return true;
             } catch (error) {
               reportCacheError(
@@ -2003,6 +2120,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               try {
                 await this.kv!.put(kvKey, body, {
                   expirationTtl: retentionTtl,
+                });
+                this.debugShell(key, "kv-stored", {
+                  expiresAt: envelope.e,
                 });
                 return true;
               } catch (error) {
@@ -2071,6 +2191,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
     if (!this.kv) return null;
     try {
+      const readStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
       const kvKey = this.toKVKey(`shell:${key}`);
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<CFShellEnvelope>(
@@ -2078,21 +2199,58 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           isShellEnvelope,
           "getShell",
         );
-      if (timedOut || !envelope) return null;
-
-      const now = Date.now();
-      if (now > envelope.e) return null;
-      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
+      const readMs = INTERNAL_RANGO_DEBUG
+        ? Date.now() - readStartedAt
+        : undefined;
+      if (timedOut || !envelope) {
+        this.debugShell(key, "kv-miss", {
+          reason: timedOut ? "timeout" : "unavailable",
+          readMs,
+        });
         return null;
       }
 
+      const now = Date.now();
+      if (now > envelope.e) {
+        this.debugShell(key, "kv-miss", {
+          reason: "expired",
+          readMs,
+          expiresAt: envelope.e,
+        });
+        return null;
+      }
+      const markerStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
+      const invalidated = await this.isGloballyInvalidated(
+        envelope.t,
+        envelope.ta,
+      );
+      const markerMs = INTERNAL_RANGO_DEBUG
+        ? Date.now() - markerStartedAt
+        : undefined;
+      if (invalidated) {
+        this.debugShell(key, "marker-invalidated", {
+          tier: "kv",
+          readMs,
+          markerMs,
+        });
+        return null;
+      }
+
+      const shouldRevalidate = envelope.s > 0 && now > envelope.s;
+      this.debugShell(key, "kv-hit", {
+        freshness: shouldRevalidate ? "stale" : "fresh",
+        readMs,
+        markerMs,
+        expiresAt: envelope.e,
+      });
       this.promoteShellToL1(key, envelope);
       return {
         entry: this.shellEnvelopeToEntry(envelope),
-        shouldRevalidate: envelope.s > 0 && now > envelope.s,
+        shouldRevalidate,
       };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetShell");
+      this.debugShell(key, "kv-miss", { reason: "error" });
       return null;
     }
   }
@@ -2110,6 +2268,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             this.keyToRequest(`shell:${key}`),
             this.shellEnvelopeResponse(body, envelope),
           );
+          this.debugShell(key, "kv-promoted", {
+            remainingTtl: Math.max(
+              1,
+              Math.floor((envelope.e - Date.now()) / 1000),
+            ),
+            expiresAt: envelope.e,
+          });
         },
         "cache-write",
         "[CFCacheStore] promoteShellToL1",

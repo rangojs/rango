@@ -1296,6 +1296,17 @@ ms>;desc="…"` — the same consume-on-read doctrine as the `ppr-capture`
 mirror above. Production folds the collection away (`NODE_ENV` literal);
 `INTERNAL_RANGO_DEBUG` remains the raw console narration of the same window.
 
+**Cloudflare shell-tier trace.** A build made with `INTERNAL_RANGO_DEBUG=1`
+also emits compact `[CFCacheStore][shell]` JSON lines for runtime shell storage
+decisions: `l1-stored`, `kv-stored`, `l1-hit`, `l1-miss`, `kv-hit`,
+`kv-miss`, `kv-promoted`, `marker-invalidated`, and `write-invalidated`. The
+event carries the shell key, epoch timestamp, incoming `cf-ray`/colo when
+available, freshness/expiry, and the bounded match/body/marker/KV timings that
+apply to that decision. This is the deployed cross-colo diagnostic: tail the
+Worker while sending the exact same shell URL from multiple regions. The flag
+is resolved at Vite build time, so setting it only as a Worker runtime variable
+does not enable the trace.
+
 **Inert shell family.** `CFCacheStore` uses Cache API as the per-colo shell L1
 and KV as the durable cross-colo L2. KV remains required: with no namespace
 bound, `getShell`/`putShell` no-op and every ppr route is a permanent MISS — the

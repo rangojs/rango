@@ -385,4 +385,107 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
+
+  it("does not emit shell tier decisions when internal debug is disabled", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    await store.putShell("quiet-key", shellEntry(), 300, 30);
+    await drain(mockCtx);
+    expect(await store.getShell("quiet-key")).not.toBeNull();
+
+    expect(
+      consoleLog.mock.calls.some(
+        ([message]) =>
+          typeof message === "string" &&
+          message.startsWith("[CFCacheStore][shell] "),
+      ),
+    ).toBe(false);
+    consoleLog.mockRestore();
+  });
+
+  it("emits shell tier decisions when INTERNAL_RANGO_DEBUG is enabled", async () => {
+    vi.stubEnv("INTERNAL_RANGO_DEBUG", "1");
+    vi.resetModules();
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const [
+        { CFCacheStore: DebugCFCacheStore },
+        { createRequestContext, runWithRequestContext },
+      ] = await Promise.all([
+        import("../cf-cache-store"),
+        import("../../../server/request-context"),
+      ]);
+      const store = new DebugCFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        baseUrl: "https://test.internal/",
+      });
+      await store.putShell("debug-key", shellEntry(), 300, 30);
+      await drain(mockCtx);
+
+      const request = new Request("https://test.internal/?probe=debug", {
+        headers: { "cf-ray": "1234abcd-SJC" },
+      });
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      expect(
+        await runWithRequestContext(reqCtx, () => store.getShell("debug-key")),
+      ).not.toBeNull();
+      mockCache.store.clear();
+      expect(await store.getShell("debug-key")).not.toBeNull();
+      await drain(mockCtx);
+
+      await store.putShell("tagged-debug-key", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      await store.invalidateTags(["home"]);
+      expect(await store.getShell("tagged-debug-key")).toBeNull();
+
+      const prefix = "[CFCacheStore][shell] ";
+      const events = consoleLog.mock.calls.flatMap(([message]) => {
+        if (typeof message !== "string" || !message.startsWith(prefix)) {
+          return [];
+        }
+        return [
+          JSON.parse(message.slice(prefix.length)) as {
+            outcome: string;
+            tier?: string;
+            ray?: string;
+            colo?: string;
+          },
+        ];
+      });
+      expect(events.map((event) => event.outcome)).toEqual(
+        expect.arrayContaining([
+          "l1-stored",
+          "kv-stored",
+          "l1-hit",
+          "l1-miss",
+          "kv-hit",
+          "kv-promoted",
+          "marker-invalidated",
+        ]),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          outcome: "l1-hit",
+          ray: "1234abcd-SJC",
+          colo: "SJC",
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          outcome: "marker-invalidated",
+          tier: "l1",
+        }),
+      );
+    } finally {
+      consoleLog.mockRestore();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
 });
