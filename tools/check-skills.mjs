@@ -15,11 +15,14 @@
 //      look like a skill reference but aren't one).
 //   4. Every relative markdown link target (`./...` or `../...`) in a skill
 //      file resolves to a real file/directory on disk.
+//   5. Workflow skills preserve the shared section order and ship fixture
+//      artifacts: a task, an applicable setup patch, and a valid verifier script.
 //
 // Run: node tools/check-skills.mjs   (exits non-zero on any violation)
 
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(
@@ -28,6 +31,31 @@ const REPO_ROOT = path.resolve(
 );
 
 const SKILLS_ROOT = path.join(REPO_ROOT, "packages/rangojs-router/skills");
+const WORKFLOW_SKILLS = new Set([
+  "dev-loop",
+  "render-cache-adoption",
+  "render-cache-optimizer",
+  "stale-data-debugger",
+]);
+const WORKFLOW_HEADINGS = [
+  "## Requires",
+  "## Preflight",
+  "## Scope Selection",
+  "## Diagnostic Loop",
+  "## Edit Rules",
+  "## Browser Verification",
+  "## Dev And Production Verification",
+  "## Bailout Conditions",
+  "## Teardown",
+  "## Reference Links",
+];
+const FIXTURE_HEADINGS = [
+  "## Broken State",
+  "## Expected Diagnosis",
+  "## Required Edit",
+  "## Dev Verification",
+  "## Production Verification",
+];
 
 // Backtick `/token` references that are NOT skill cross-references. Every
 // entry was verified at its cited usage before being added: route examples,
@@ -131,6 +159,21 @@ function checkFrontmatter(skillName, skillMdAbs) {
   }
 }
 
+function checkOrderedHeadings(file, headings) {
+  const text = fs.readFileSync(file, "utf8");
+  const lines = text.split("\n");
+  let previous = 0;
+  for (const heading of headings) {
+    const index = lines.indexOf(heading);
+    if (index < 0) {
+      addViolation(file, 1, `missing required heading "${heading}"`);
+    } else if (index < previous) {
+      addViolation(file, index + 1, `heading "${heading}" is out of order`);
+    }
+    previous = Math.max(previous, index);
+  }
+}
+
 // --- 3 & 4: cross-references and relative links -----------------------------
 
 const SKILL_TOKEN = /`(\/[a-z][a-z0-9-]*)`/g;
@@ -187,6 +230,37 @@ for (const skillName of skillDirs) {
   }
 
   checkFrontmatter(skillName, skillMdAbs);
+  if (WORKFLOW_SKILLS.has(skillName)) {
+    checkOrderedHeadings(skillMdAbs, WORKFLOW_HEADINGS);
+    const fixtureTask = path.join(skillDirAbs, "fixtures", "task.md");
+    if (!fs.existsSync(fixtureTask)) {
+      addViolation(fixtureTask, 1, "workflow fixture task does not exist");
+    } else {
+      checkOrderedHeadings(fixtureTask, FIXTURE_HEADINGS);
+    }
+    for (const artifact of ["setup.patch", "verify.mjs"]) {
+      const file = path.join(skillDirAbs, "fixtures", artifact);
+      if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
+        addViolation(file, 1, `workflow fixture ${artifact} does not exist`);
+      } else {
+        const command =
+          artifact === "setup.patch"
+            ? ["git", ["apply", "--check", file]]
+            : [process.execPath, ["--check", file]];
+        const result = spawnSync(command[0], command[1], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+        });
+        if (result.status !== 0) {
+          addViolation(
+            file,
+            1,
+            `workflow fixture ${artifact} is invalid: ${(result.stderr || result.stdout).trim()}`,
+          );
+        }
+      }
+    }
+  }
 
   const mdFiles = [];
   (function walk(dir) {
@@ -214,11 +288,12 @@ if (violations.length > 0) {
   }
   console.error(
     "\nFix the skill's frontmatter/reference, or if this is a legitimate non-skill\n" +
-      "URL example, add it to URL_EXAMPLES in tools/check-skills.mjs.\n",
+      "URL example, add it to URL_EXAMPLES in tools/check-skills.mjs. Workflow\n" +
+      "skills must also preserve their required sections and fixture artifacts.\n",
   );
   process.exit(1);
 }
 
 console.log(
-  `Skills guard: OK — ${skillDirs.length} skills, frontmatter valid, all cross-references resolve.`,
+  `Skills guard: OK — ${skillDirs.length} skills, frontmatter/references and workflow fixture artifacts valid.`,
 );

@@ -71,6 +71,11 @@ is at `skills/catalog.json`.
   The files are plain markdown; cross-references like `/loader` name sibling
   skill directories.
 
+For evidence-driven work, use `/dev-loop` after an edit,
+`/render-cache-adoption` before adding `cache()` or PPR,
+`/render-cache-optimizer` for measured warm-path improvements, and
+`/stale-data-debugger` when mutations or navigation leave visible data stale.
+
 ## Inspecting a running app with MCP
 
 Rango's development server exposes live project, route, and discovery metadata
@@ -104,6 +109,10 @@ for the project and provides nine read-only tools:
 - `explain_revalidation` - the separate segment and loader recomputation
   decisions for one request, optionally narrowed to one of its transactions;
 - `get_errors` - runtime errors with request, route, phase, and source context.
+
+The workflow skills combine these development facts with a real browser and
+paired production verification. They do not treat MCP output as a substitute for
+DOM/network checks, and the MCP endpoint remains absent from production.
 
 Use `rango mcp --root <path>` when the MCP process does not start in the project
 root. When multiple dev servers use one root, select one with

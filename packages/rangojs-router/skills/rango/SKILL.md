@@ -295,6 +295,15 @@ Grouped by concern — read when you need to…
 | `/bundle-analysis` | Audit your app's production bundle for server leaks and oversized chunks |
 | `/debug-manifest`  | Inspect route manifest structure                                         |
 
+**Evidence-driven workflows**:
+
+| Skill                     | Description                                                        |
+| ------------------------- | ------------------------------------------------------------------ |
+| `/dev-loop`               | Correlate one browser interaction with exact MCP request evidence  |
+| `/render-cache-adoption`  | Add `cache()`/PPR while preserving live loader and middleware data |
+| `/render-cache-optimizer` | Measure and improve a semantically correct cached route            |
+| `/stale-data-debugger`    | Separate loader, cache, revalidation, and browser-staleness axes   |
+
 **Deployment**:
 
 | Skill                 | Description                                                                                                      |

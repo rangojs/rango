@@ -460,6 +460,7 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - Structured Vite hot-channel errors remain current until a successful update for their file. Logger warnings are labeled `recent-only`; MCP does not claim Vite exposes a complete current-warning registry
 - Production constant-folding removes the hub, retention/redaction implementation, event vocabulary, and client-correlation storage. `e2e/build-test-app.setup.ts` guards the Node test app, while `tools/check-bundle-guards.mjs` scans Node and Cloudflare production chunks
 - `get_request_trace` exposes bounded event and transaction detail. `explain_render` projects scope-level cache/PPR decisions and loader consumption lanes; `explain_revalidation` projects the separate recomputation axis from the authoritative trace
+- Published workflow skills turn those facts into browser-correlated edit loops: `/dev-loop`, `/render-cache-adoption`, `/render-cache-optimizer`, and `/stale-data-debugger`. `tools/check-skills.mjs` validates their common structure and fixture artifacts; their shared verifier runs the selected contract in Node and Cloudflare development and production
 
 ### Dev and HMR
 

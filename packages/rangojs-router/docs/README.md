@@ -105,8 +105,8 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   sinks
 - [MCP and agent skills design](./design/mcp-and-agent-skills.md) - the shipped
   development-only MCP transport, route/discovery tools, cross-realm request and
-  error inspection, and source ownership, plus the proposed render explanations
-  and workflow skills
+  error inspection, source ownership, render/revalidation explanations, and the
+  `/dev-loop`, render-cache, and stale-data workflow skills
 
 ## Design Notes
 

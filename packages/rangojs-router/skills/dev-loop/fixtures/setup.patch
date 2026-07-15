@@ -1,0 +1,13 @@
+diff --git a/packages/rangojs-router/e2e/test-app/src/urls/blog.handlers.tsx b/packages/rangojs-router/e2e/test-app/src/urls/blog.handlers.tsx
+--- a/packages/rangojs-router/e2e/test-app/src/urls/blog.handlers.tsx
++++ b/packages/rangojs-router/e2e/test-app/src/urls/blog.handlers.tsx
+@@ -62,6 +62,9 @@ export const BlogPostHandler: Handler<"blog.post"> = async (ctx) => {
+       await import("@rangojs/router/internal/dev-diagnostics");
+     injectDevelopmentDiagnosticFailureForTesting();
+   }
++  if (ctx.params.postId === "mcp-phase-2") {
++    throw new Error("Fixture route regression");
++  }
+   const pushBreadcrumb = ctx.use(Breadcrumbs);
+   const meta = ctx.use(Meta);
+   pushBreadcrumb({ label: "Blog", href: ctx.reverse("blog.index") });

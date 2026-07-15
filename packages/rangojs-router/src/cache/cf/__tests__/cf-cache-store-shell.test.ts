@@ -94,6 +94,51 @@ describe("CFCacheStore shell family (KV-only)", () => {
     expect(hit?.shouldRevalidate).toBe(false);
   });
 
+  it("returns after scheduling the waitUntil KV write", async () => {
+    const originalPut = mockKV.put.bind(mockKV);
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    vi.spyOn(mockKV, "put").mockImplementation(async (...args) => {
+      await originalPut(...args);
+      await writeGate;
+    });
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+    await expect(store.putShell("k", shellEntry(), 300, 30)).resolves.toBe(
+      undefined,
+    );
+    expect(mockCtx.waitUntil).toHaveBeenCalledOnce();
+
+    releaseWrite();
+    await drain(mockCtx);
+  });
+
+  it("serves a pending shell without another KV read", async () => {
+    const originalPut = mockKV.put.bind(mockKV);
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    vi.spyOn(mockKV, "put").mockImplementation(async (...args) => {
+      await writeGate;
+      await originalPut(...args);
+    });
+    const writer = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const reader = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const get = vi.spyOn(mockKV, "get");
+
+    await writer.putShell("k", shellEntry(), 300, 30);
+    await expect(reader.getShell("k")).resolves.toMatchObject({
+      entry: { prelude: shellEntry().prelude },
+    });
+    expect(get).not.toHaveBeenCalled();
+
+    releaseWrite();
+    await drain(mockCtx);
+  });
+
   it("returns null on a miss", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     expect(await store.getShell("absent")).toBeNull();

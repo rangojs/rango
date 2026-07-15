@@ -336,6 +336,20 @@ interface KVResponseEnvelope {
 // CFCacheStore Implementation
 // ============================================================================
 
+const pendingShellWrites = new WeakMap<
+  KVNamespace,
+  Map<string, KVShellEnvelope>
+>();
+
+function shellWritesFor(kv: KVNamespace): Map<string, KVShellEnvelope> {
+  let writes = pendingShellWrites.get(kv);
+  if (!writes) {
+    writes = new Map();
+    pendingShellWrites.set(kv, writes);
+  }
+  return writes;
+}
+
 export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   readonly supportsPassiveShellReads: true = true;
   readonly defaults?: CacheDefaults;
@@ -1799,10 +1813,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Get a cached PPR shell entry by key from KV (no L1). Applies the KV read
-   * budget, corrupt-entry eviction, hard-expiry, and tag invalidation exactly
-   * like kvGetItem, minus the L1 promote. SWR is a plain staleness flag — KV has
-   * no REVALIDATING herd guard, so the capture scheduler's module-level
+   * Get a cached PPR shell entry by key from an accepted pending write or KV (no
+   * L1). Applies hard-expiry and tag invalidation to both; durable reads also use
+   * the KV budget and corrupt-entry eviction. SWR is a plain staleness flag — KV
+   * has no REVALIDATING herd guard, so the capture scheduler's module-level
    * in-flight set is the recapture stampede guard.
    */
   async getShell(
@@ -1814,8 +1828,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
     try {
       const kvKey = this.toKVKey(`shell:${key}`);
-      const { value: envelope, timedOut } =
-        await this.kvGetOrEvict<KVShellEnvelope>(
+      const pendingWrite = pendingShellWrites.get(this.kv)?.get(kvKey);
+      let envelope: KVShellEnvelope | null;
+      let timedOut = false;
+      if (pendingWrite) {
+        envelope = pendingWrite;
+      } else {
+        const read = await this.kvGetOrEvict<KVShellEnvelope>(
           kvKey,
           (e) =>
             typeof e.p === "string" &&
@@ -1825,6 +1844,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             typeof e.s === "number",
           "getShell",
         );
+        envelope = read.value;
+        timedOut = read.timedOut;
+      }
       // A timeout, a missing key, or an already-evicted corrupt entry is a miss.
       if (timedOut || !envelope) return null;
 
@@ -1859,10 +1881,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Store a PPR shell entry in KV with TTL and optional SWR window. The write is
-   * registered with waitUntil and awaited so invalidation rejection can be
-   * acknowledged to the capture scheduler. The tags/taggedAt ride in the envelope
-   * so isGloballyInvalidated() can invalidate the shell via the shared KV markers.
+   * Store a PPR shell entry in KV with TTL and optional SWR window. Existing tag
+   * invalidation is checked before the write is accepted; the envelope remains
+   * readable in this isolate while the KV write runs through waitUntil because
+   * awaiting it inside the enclosing capture waitUntil prevents workerd from
+   * resuming the capture. A racing invalidation is still enforced at read time
+   * through the tags/taggedAt envelope fields.
    */
   async putShell(
     key: string,
@@ -1871,9 +1895,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     swrSeconds?: number,
     tags?: string[],
   ): Promise<"stored" | "invalidated" | void> {
-    // KV-only tier: needs a KV namespace and waitUntil. The same write promise is
-    // registered for isolate lifetime and awaited so invalidation rejection can
-    // be acknowledged to the capture scheduler.
+    // KV-only tier: the enclosing shell-capture task owns capture lifetime, while
+    // this store's waitUntil keeps the accepted KV write alive.
     if (!this.kv) {
       this.warnShellFamilyInertOnce();
       return;
@@ -1913,45 +1936,45 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return;
       }
 
-      const write = (async (): Promise<"stored" | "invalidated" | void> => {
-        try {
-          if (
-            tags &&
-            tags.length > 0 &&
-            (await this.isGloballyInvalidated(tags, entry.createdAt))
-          ) {
-            return "invalidated";
-          }
-          const envelope: KVShellEnvelope = {
-            p: entry.prelude,
-            po: entry.postponed,
-            rv: entry.reactVersion,
-            bv: entry.buildVersion,
-            c: entry.createdAt,
-            s: staleAt,
-            e: expiresAt,
-            t: tags,
-            ta: taggedAt,
-            i: entry.initialTheme,
-            sn: entry.snapshot,
-            dk: entry.docKey,
-            lh: entry.handlerLiveHoles,
-            tw: entry.transitionWhen,
-            no: entry.navigationOnly,
-          };
-          await this.kv!.put(kvKey, JSON.stringify(envelope), {
+      if (
+        tags &&
+        tags.length > 0 &&
+        (await this.isGloballyInvalidated(tags, entry.createdAt))
+      ) {
+        return "invalidated";
+      }
+      const envelope: KVShellEnvelope = {
+        p: entry.prelude,
+        po: entry.postponed,
+        rv: entry.reactVersion,
+        bv: entry.buildVersion,
+        c: entry.createdAt,
+        s: staleAt,
+        e: expiresAt,
+        t: tags,
+        ta: taggedAt,
+        i: entry.initialTheme,
+        sn: entry.snapshot,
+        dk: entry.docKey,
+        lh: entry.handlerLiveHoles,
+        tw: entry.transitionWhen,
+        no: entry.navigationOnly,
+      };
+      const writes = shellWritesFor(this.kv);
+      const write = reportingAsync(
+        () =>
+          this.kv!.put(kvKey, JSON.stringify(envelope), {
             expirationTtl: retentionTtl,
-          });
-          return "stored";
-        } catch (error) {
-          reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
-          return undefined;
-        }
-      })();
-      this.waitUntil(async () => {
-        await write;
+          }),
+        "cache-write",
+        "[CFCacheStore] putShell",
+      );
+      writes.set(kvKey, envelope);
+      void write.then(() => {
+        if (writes.get(kvKey) === envelope) writes.delete(kvKey);
       });
-      return await write;
+      this.waitUntil(() => write);
+      return undefined;
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
     }

@@ -159,7 +159,11 @@ function recordDiagnostic(
 ): void {
   if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
   const active = getActiveRequestTransaction();
-  if (!active?.diagnosticsEnabled) return;
+  const hasExplicitIdentity =
+    options.requestId !== undefined &&
+    options.transactionId !== undefined &&
+    options.routerId !== undefined;
+  if (!active?.diagnosticsEnabled && !hasExplicitIdentity) return;
   let requestId: string | undefined;
   let hub: ReturnType<typeof getDevelopmentDiagnosticHub> = null;
   try {
@@ -168,11 +172,11 @@ function recordDiagnostic(
     const identity = options.request
       ? getRequestIdentity(options.request)
       : undefined;
-    requestId = options.requestId ?? identity?.requestId ?? active.requestId;
+    requestId = options.requestId ?? identity?.requestId ?? active?.requestId;
     const transactionId =
       options.transactionId ??
-      (active.requestId === requestId ? active.transactionId : undefined);
-    const routerId = options.routerId ?? active.routerId;
+      (active?.requestId === requestId ? active?.transactionId : undefined);
+    const routerId = options.routerId ?? active?.routerId;
     if (!requestId || !transactionId || !routerId) return;
     hub.record({
       type,

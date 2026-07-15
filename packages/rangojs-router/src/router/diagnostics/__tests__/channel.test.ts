@@ -18,7 +18,9 @@ import {
   resetDevelopmentDiagnosticHub,
 } from "../hub.js";
 import {
+  getDevelopmentDiagnosticLink,
   recordCacheScopeDiagnostic,
+  recordLinkedPprCaptureDiagnostic,
   recordLoaderCacheDiagnostic,
   recordLoaderConsumerDiagnostic,
   recordLoaderRegistrationDiagnostic,
@@ -54,6 +56,29 @@ describe("diagnostic channel", () => {
       searchNames: ["token"],
     });
     expect(JSON.stringify(trace)).not.toContain("secret");
+  });
+
+  it("records a linked background capture after its request transaction exits", () => {
+    const request = new Request("http://localhost/products");
+    const link = runWithRequestTransaction(
+      request,
+      "request",
+      () => getDevelopmentDiagnosticLink(),
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    expect(link).not.toBeNull();
+    recordLinkedPprCaptureDiagnostic(link!, { outcome: "captured" });
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    );
+    expect(trace?.events).toEqual([
+      expect.objectContaining({
+        type: "ppr.capture",
+        data: { outcome: "captured" },
+      }),
+    ]);
   });
 
   it("masks an inherited diagnostic transaction when a nested run disables it", async () => {
