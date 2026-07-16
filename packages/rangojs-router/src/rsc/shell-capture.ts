@@ -945,8 +945,9 @@ export function scheduleShellCapture(
  *   I/O failure is reported separately and does NOT make the attempt retryable —
  *   the capture itself worked).
  * - `redirect`: the matched route redirects, so there is no shell to capture.
- * - `no-shell`: the prelude came back trivial (no <body>) OR captureShellHTML
- *   rejected with our own abort. This is the only RETRYABLE outcome.
+ * - `no-shell`: captureShellHTML returned null because the prelude was unusable
+ *   or its private capture abort landed before the shell completed. This is the
+ *   only RETRYABLE outcome.
  */
 type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
 
@@ -995,9 +996,9 @@ type CaptureAttemptStats = Pick<
  * when we froze the shell; the attempt itself warmed the module graph, so a second
  * attempt a short beat later usually completes the shell in the SAME background
  * task. That kills the old multi-request warmup where the caller had to re-issue
- * several HTTP requests before a capture stuck. We retry ONLY on `no-shell` (and a
- * defensively-caught abort); a genuine render error is NOT retried — it propagates
- * to scheduleShellCapture's reportCacheError. See docs/design/ppr-shell-resume.md.
+ * several HTTP requests before a capture stuck. We retry ONLY on `no-shell`; a
+ * genuine render error is NOT retried — it propagates to scheduleShellCapture's
+ * reportCacheError. See docs/design/ppr-shell-resume.md.
  *
  * `retryDelayMs` is a parameter (defaulting to the module const) so unit tests can
  * drive the retry without a real 400ms wall-clock wait.
@@ -1395,9 +1396,10 @@ export function deriveShellCaptureContext(
  * capture worked; only the store I/O failed). `ssrModule.captureShellHTML` MUST be
  * present (eligibility is checked before scheduling).
  *
- * A `no-shell` result (trivial prelude, or a defensively-caught abort) is the only
- * retryable outcome; a genuine (non-abort) captureShellHTML error propagates so it
- * reaches reportCacheError and is NOT retried.
+ * A `no-shell` result from captureShellHTML is the only retryable outcome. Every
+ * captureShellHTML error propagates to reportCacheError and is NOT retried. The
+ * capture handler converts only its own private abort sentinel to null before this
+ * layer sees it.
  */
 async function captureAndStoreShell(
   ssrModule: SSRModule,
@@ -1504,19 +1506,13 @@ async function captureAndStoreShell(
         }),
       );
     } catch (error) {
-      // Guard-tripped rejection arrives here (not at the drain) — refuse
-      // BEFORE the AbortError-vs-rethrow decision below.
+      // Guard-tripped rejection arrives here (not at the drain), so refuse it
+      // before propagating other capture errors.
       const refused = refuseOnGuardTrip();
       if (refused) return refused;
-      // captureShellHTML normally converts its OWN deliberate abort to a null
-      // return (index.tsx). This catch is defensive: if an AbortError still escapes
-      // (a runtime where the abort surfaces as a stream rejection outside its
-      // guard), treat it as the same retryable "no usable shell" degradation rather
-      // than a failure — do NOT report it as an error. A genuine (non-abort) render
-      // error is a real failure: rethrow so it reaches reportCacheError (no retry).
-      if ((error as { name?: string } | null)?.name === "AbortError") {
-        return "no-shell";
-      }
+      // captureShellHTML converts its OWN deliberate abort to null by sentinel
+      // identity. An escaped AbortError can therefore be a component's real
+      // cancellation and must not be hidden or retried by name.
       throw error;
     }
 
