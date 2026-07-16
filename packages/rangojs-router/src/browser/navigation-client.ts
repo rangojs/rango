@@ -14,6 +14,7 @@ import {
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
 import { isActionFenceActive } from "./action-fence.js";
+import { expandPayloadFragments } from "../segment-fragments.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
@@ -46,7 +47,10 @@ import { cancelAllPrefetches } from "./prefetch/loader.js";
  * @returns NavigationClient instance
  */
 export function createNavigationClient(
-  deps: Pick<RscBrowserDependencies, "createFromFetch">,
+  deps: Pick<
+    RscBrowserDependencies,
+    "createFromFetch" | "createFromReadableStream"
+  >,
 ): NavigationClient {
   return {
     /**
@@ -333,6 +337,10 @@ export function createNavigationClient(
         // dev gzip); fast means the block, if any, is downstream in render.
         const vtDebugStart = isBrowserDebugEnabled() ? performance.now() : 0;
         const payload = await payloadPromise;
+        // Fragment envelopes (#700): expand replay-HIT envelopes before any
+        // consumer renders — this await is the single point all three payload
+        // sources (fresh fetch, warm prefetch, adopted inflight) flow through.
+        await expandPayloadFragments(payload, deps.createFromReadableStream);
         if (isBrowserDebugEnabled()) {
           debugLog("[VT-DIAG] payloadResolved", {
             ms: Math.round(performance.now() - vtDebugStart),

@@ -933,6 +933,21 @@ flush the settled shell, and mark still-pending boundaries as postponed — prec
 tick, so the fizz needs more post-quiesce turns to render the shell before the abort
 — see "Abort ordering" above.)
 
+**Follow-up, upstream-gated: `onPostpone` as the abort signal.** The hop count
+is the LAST heuristic left in the capture gate — a counted guess at "React has
+marked the expected holes postponed." React's renderers expose an `onPostpone`
+callback (per postponed boundary); vite-plugin-react PR #1285 adds it to
+plugin-rsc's option types. When a plugin-rsc release ships it (> 0.5.27, our
+current pin), spike replacing the fixed hop count with an event-driven cutoff:
+abort once every masked-loader hole has fired `onPostpone` (the hole set is
+known before the render — it IS the masked loaders). Keep the hop count as the
+fallback: it is proven against #702 (ready-but-queued multi-MB outlined
+boundaries must never lose the race), and any `onPostpone`-driven cutoff must
+beat "known-good and deterministic" before it replaces the count. Verify first
+that the HTML-side `react-dom/static.edge` prerender — the pass we actually
+abort — surfaces a usable `onPostpone` in the vendored build, not just the
+Flight-side renderer.
+
 ### The hole contract: a hole needs a loading() boundary
 
 This started as "the capture prerender hangs" — the HIT e2e was `test.fixme` and

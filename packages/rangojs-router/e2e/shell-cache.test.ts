@@ -1057,6 +1057,11 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
         { headers: new Headers(partialResponse.headers()) },
         { outcome: "HIT", freshness: "fresh" },
       );
+      // Fragment splice (#700) on navigation: a replay HIT's segments ride as
+      // verbatim __rangoFragment envelopes; the client expands them before
+      // render, so the content assertions below prove they are
+      // consumer-invisible.
+      expect(await partialResponse.text()).toContain("__rangoFragment");
       await expect(testId(page, "shell-exec-chrome")).toHaveText(
         "Exec matrix static chrome",
       );
@@ -1576,6 +1581,39 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     // The masked slot hole stayed live: the badge value streamed in fresh
     // through the expanded-fragment shell.
     await expect(testId(page, "shell-badge-value")).toContainText(/badge-\d/);
+  });
+
+  test("partial replay HIT carries verbatim fragment envelopes; a context-less probe carries none", async ({
+    request,
+  }) => {
+    // #700 extended to navigation: the same doc segment record that fragments
+    // the document HIT tail now fragments the partial replay serve — the
+    // navigation-client/prefetch decoders expand the envelopes client-side.
+    await warmFragmentGraph(request);
+    const url = f.url("/shell-cache/slot-hole?probe=fragnav");
+    await warmToHit(request, url);
+
+    const replay = await request.get(
+      `${url}&_rsc_partial=true&_rsc_segments=`,
+      { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+    );
+    expect(replay.status()).toBe(200);
+    assertPprReplayStatus(
+      { headers: new Headers(replay.headers()) },
+      { outcome: "HIT", freshness: "fresh" },
+    );
+    const body = await replay.text();
+    expect(body).toContain("__rangoFragment");
+    // Payload completeness: the replayed content still reaches the client —
+    // inside the fragment strings, not as re-serialized element rows.
+    expect(body).toContain("Slot home static content");
+
+    // Context-less probe (curl shape): the replay gate bypasses BEFORE the
+    // fragment arming, so the fallback render serializes real elements — no
+    // envelope may reach a consumer that cannot expand them.
+    const probe = await request.get(`${url}&_rsc_partial=true&_rsc_segments=`);
+    expect(probe.status()).toBe(200);
+    expect(await probe.text()).not.toContain("__rangoFragment");
   });
 }
 

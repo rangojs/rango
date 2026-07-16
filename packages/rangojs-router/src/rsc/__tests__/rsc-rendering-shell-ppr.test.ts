@@ -138,6 +138,8 @@ interface RunOpts {
   store?: unknown;
   url?: string;
   partial?: boolean;
+  /** Request method (default GET). The replay gate bypasses non-GET. */
+  method?: string;
   /**
    * Partial requests carry a navigation-context header by default (matching a
    * real client navigation — the replay gate bypasses without one). Set false
@@ -173,6 +175,7 @@ async function run(opts: RunOpts): Promise<{
         ? "http://localhost/p?_rsc_partial=true&_rsc_segments=L0"
         : "http://localhost/p"),
     {
+      method: opts.method ?? "GET",
       headers: {
         accept: opts.partial ? "text/x-component" : "text/html",
         ...(opts.partial && opts.navContext !== false
@@ -1202,6 +1205,106 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       { __rsc_ls_key: "flash", __rsc_ls_value: "preserved" },
     ]);
   });
+
+  it("arms _shellFragmentPayload on the SHARED context for the partial match and restores it after (fragment passthrough #700)", async () => {
+    let flagDuringMatch: boolean | undefined;
+    let baseContext: RequestContext<unknown> | undefined;
+    let sameContext = false;
+
+    const { reqCtx, response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      arm: (active) => {
+        baseContext = active;
+      },
+      matchPartial: async () => {
+        const active = getRequestContext();
+        // Mutate-restore on the SHARED reqCtx, not a derived context: the
+        // pipeline's ambient writes during the match (_pprReplayPostMatchReason,
+        // location state, _treeHasStreaming) must land on reqCtx.
+        sameContext = active === baseContext;
+        flagDuringMatch = active._shellFragmentPayload;
+        const replayStore = active._shellImplicitCache!.store!;
+        if ((await replayStore.get(DOC_KEY)) !== null) {
+          active._shellImplicitCache!.onHit?.();
+        }
+        return emptyMatchResult();
+      },
+    });
+
+    expect(flagDuringMatch).toBe(true);
+    expect(sameContext).toBe(true);
+    // Assign-back restore leaves an own `undefined` (the _shellImplicitCache
+    // idiom) — assert the value, not hasOwnProperty.
+    expect(reqCtx._shellFragmentPayload).toBeUndefined();
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
+  });
+
+  it("restores _shellFragmentPayload when the partial match throws a Response (redirect short-circuit)", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: "/next" },
+    });
+    let flagDuringMatch: boolean | undefined;
+    let captured: RequestContext<unknown> | undefined;
+
+    await expect(
+      run({
+        ssrModule: fullSsrModule(),
+        partial: true,
+        ppr: true,
+        shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+        arm: (active) => {
+          captured = active;
+        },
+        matchPartial: async () => {
+          flagDuringMatch = getRequestContext()._shellFragmentPayload;
+          throw redirect;
+        },
+      }),
+    ).rejects.toBe(redirect);
+
+    expect(flagDuringMatch).toBe(true);
+    expect(captured!._shellFragmentPayload).toBeUndefined();
+  });
+
+  it.each([
+    ["method (non-GET action)", { method: "POST" }],
+    [
+      "dynamic",
+      {
+        arm: (active: RequestContext<unknown>) => {
+          active._dynamic = true;
+        },
+      },
+    ],
+    ["nonce", { nonce: "n-test" }],
+    ["no-navigation-context", { navContext: false as const }],
+    ["undeclared ppr", { ppr: undefined }],
+  ] as const)(
+    "keeps _shellFragmentPayload unarmed on the %s bypass lane",
+    async (_lane, extra) => {
+      let flagDuringMatch: boolean | undefined = false;
+
+      await run({
+        ssrModule: fullSsrModule(),
+        partial: true,
+        ppr: true,
+        shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+        ...extra,
+        matchPartial: async () => {
+          flagDuringMatch = getRequestContext()._shellFragmentPayload;
+          return emptyMatchResult();
+        },
+      });
+
+      expect(flagDuringMatch).toBeUndefined();
+    },
+  );
 
   it("declines replay when a custom store does not opt into passive shell reads", async () => {
     const getShell = vi.fn();

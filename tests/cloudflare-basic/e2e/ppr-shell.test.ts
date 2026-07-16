@@ -1017,6 +1017,11 @@ function describePprShell(mode: "dev" | "build") {
           { headers: new Headers(partialResponse.headers()) },
           { outcome: "HIT", freshness: "fresh" },
         );
+        // Fragment splice (#700) on navigation: a replay HIT's segments ride
+        // as verbatim __rangoFragment envelopes; the client expands them
+        // before render, so the content assertions below prove they are
+        // consumer-invisible on workerd too.
+        expect(await partialResponse.text()).toContain("__rangoFragment");
         await expect(testId(page, "ppr-exec-chrome")).toHaveText(
           "Exec matrix static chrome",
         );
@@ -1088,6 +1093,40 @@ function describePprShell(mode: "dev" | "build") {
       });
       expect(document.status()).toBe(200);
       assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
+    });
+
+    test("partial replay HIT carries verbatim fragment envelopes; a context-less probe carries none", async ({
+      request,
+    }) => {
+      // #700 extended to navigation on the real KV/workerd path: the doc
+      // segment record that fragments the document HIT tail also fragments
+      // the partial replay serve; the client decoders expand the envelopes.
+      await warmToHit(request, f.url("/ppr-shell?probe=fragwarmup"));
+      const url = f.url("/ppr-shell/slot-hole?probe=fragnav");
+      await warmToHit(request, url);
+
+      const replay = await request.get(
+        `${url}&_rsc_partial=true&_rsc_segments=`,
+        { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+      );
+      expect(replay.status()).toBe(200);
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+      const body = await replay.text();
+      expect(body).toContain("__rangoFragment");
+      // Payload completeness: the replayed content still reaches the client,
+      // inside the fragment strings.
+      expect(body).toContain("Slot home static content");
+
+      // Context-less probe (curl shape): the replay gate bypasses BEFORE the
+      // fragment arming, so the fallback render serializes real elements.
+      const probe = await request.get(
+        `${url}&_rsc_partial=true&_rsc_segments=`,
+      );
+      expect(probe.status()).toBe(200);
+      expect(await probe.text()).not.toContain("__rangoFragment");
     });
 
     test("partial PPR replay applies a fresh transition({ when }) drop decision", async ({

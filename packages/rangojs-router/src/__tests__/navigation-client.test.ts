@@ -122,6 +122,80 @@ describe("navigation-client", () => {
     await expect(result.streamComplete).resolves.toBeUndefined();
   });
 
+  it("expands fragment envelopes in the payload before returning it (#700 partial passthrough)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+
+    const decoded = { $$typeof: Symbol.for("react.element") };
+    const segment = {
+      id: "R0",
+      component: { __rangoFragment: 1, f: "ENCODED-FLIGHT" },
+    };
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return {
+          metadata: { segments: [segment], isPartial: true },
+        };
+      },
+    );
+    const createFromReadableStream = vi.fn(
+      async (stream: ReadableStream<Uint8Array>) => {
+        const text = await new Response(stream).text();
+        expect(text).toBe("ENCODED-FLIGHT");
+        return decoded;
+      },
+    );
+
+    const client = createNavigationClient({
+      createFromFetch,
+      createFromReadableStream,
+    } as any);
+    const result = await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    // The envelope was expanded IN the returned payload — consumers
+    // (renderSegments) only ever see real nodes.
+    expect(createFromReadableStream).toHaveBeenCalledTimes(1);
+    expect(result.payload.metadata!.segments![0]!.component).toBe(decoded);
+  });
+
+  it("never invokes the fragment decoder for an envelope-free payload", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return {
+          metadata: {
+            segments: [{ id: "R0", component: null }],
+            isPartial: true,
+          },
+        };
+      },
+    );
+    const createFromReadableStream = vi.fn();
+
+    const client = createNavigationClient({
+      createFromFetch,
+      createFromReadableStream,
+    } as any);
+    await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    expect(createFromReadableStream).not.toHaveBeenCalled();
+  });
+
   it("reads rango state once per fetch, threading it into the header (B6)", async () => {
     getRangoStateMock.mockClear();
     const fetchMock = vi.fn(

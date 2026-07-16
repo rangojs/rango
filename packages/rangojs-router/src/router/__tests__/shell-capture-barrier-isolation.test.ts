@@ -201,6 +201,25 @@ describe("PPR capture: render-barrier isolation (#684 plan 009)", () => {
     expect(reqCtx._renderBarrierHandleSnapshot).toBe(foregroundSnapshot);
   });
 
+  it("resets _shellFragmentPayload as an own property: a capture render never inherits fragment passthrough", async () => {
+    const reqCtx = await foregroundMatch("/plain");
+    // A foreground that armed passthrough (document tail / partial replay
+    // arming windows) must not leak envelopes into the capture: an envelope
+    // reaching serializeSegments would bake a double-encoded fragment.
+    reqCtx._shellFragmentPayload = true;
+
+    const { derivedCtx } = deriveShellCaptureContext(reqCtx, {
+      ttl: 60,
+      swr: 0,
+    });
+
+    expect(
+      Object.getOwnPropertyDescriptor(derivedCtx, "_shellFragmentPayload"),
+    ).toBeDefined();
+    expect(derivedCtx._shellFragmentPayload).toBe(false);
+    expect(reqCtx._shellFragmentPayload).toBe(true);
+  });
+
   it("on a streaming tree the capture-lane rendered() waits for the CAPTURE's streamed push", async () => {
     const reqCtx = await foregroundMatch("/streaming");
 

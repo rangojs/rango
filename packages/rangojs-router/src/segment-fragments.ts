@@ -108,6 +108,21 @@ export async function expandSegmentFragments(
 }
 
 /**
+ * Expand every envelope in an RscPayload-shaped object, in place. The
+ * hasSegmentFragments pre-scan keeps envelope-free payloads — every
+ * non-replay response — to one synchronous field walk; this runs on every
+ * navigation and prefetch decode.
+ */
+export async function expandPayloadFragments(
+  payload: { metadata?: { segments?: ResolvedSegment[] } },
+  decode: FragmentDecoder,
+): Promise<void> {
+  const segments = payload.metadata?.segments;
+  if (!hasSegmentFragments(segments)) return;
+  await expandSegmentFragments(segments, decode);
+}
+
+/**
  * True when any segment carries an unexpanded envelope. Cheap scan used by
  * consumers that only need to know whether an expansion pass is required.
  */

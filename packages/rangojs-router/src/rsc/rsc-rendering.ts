@@ -765,8 +765,30 @@ async function matchPartialWithPprReplay<TEnv>(
     recordReplayStatus(finalStatus);
     return finalStatus;
   };
+  let armFragments = false;
+  /**
+   * Every matchPartial in this function runs through this helper so the
+   * fragment flag (#700 passthrough, armed below the navigation-context gate)
+   * can never outlive a match or miss a lane — a thrown-Response redirect
+   * exit included. Mutate-restore on the SHARED reqCtx, never a derived
+   * context: the pipeline writes ambient state during the match that must
+   * land on reqCtx (_pprReplayPostMatchReason, location state,
+   * _treeHasStreaming read by the render-barrier closure). Assign-back
+   * restore leaves an own `undefined` after the first arm, matching the
+   * _shellImplicitCache idiom.
+   */
+  const matchPartialForReplay = async () => {
+    if (!armFragments) return ctx.router.matchPartial(request, { env });
+    const prevFragmentPayload = reqCtx._shellFragmentPayload;
+    reqCtx._shellFragmentPayload = true;
+    try {
+      return await ctx.router.matchPartial(request, { env });
+    } finally {
+      reqCtx._shellFragmentPayload = prevFragmentPayload;
+    }
+  };
   const runMatch = async (status?: PprReplayStatus) => {
-    const result = await ctx.router.matchPartial(request, { env });
+    const result = await matchPartialForReplay();
     // The match may have settled a fact the pre-match gate could only guess
     // at (prerender serve, intercept resolution) — report the truth.
     const finalStatus = status ? finalizeReplayStatus(status) : undefined;
@@ -803,6 +825,12 @@ async function matchPartialWithPprReplay<TEnv>(
   if (!getNavigationContextHeader(request)) {
     return runMatch({ outcome: "BYPASS", reason: "no-navigation-context" });
   }
+  // Fragment passthrough (#700), extended to partial replay: every lane past
+  // this gate is a hydrated-client GET navigation, so cached-segment reads
+  // during the match (seeded doc record, explicit cache() tier, prerender
+  // store) emit verbatim fragment envelopes; the client's navigation/prefetch
+  // decoders expand them. The unarmed lanes above keep decoded elements.
+  armFragments = true;
   // The prerender probe and the cache-opt-out gate below both need the
   // classified snapshot; resolve (and persist) it once.
   const routeSnapshot = classifiedRouteSnapshot(reqCtx);
@@ -954,7 +982,7 @@ async function matchPartialWithPprReplay<TEnv>(
         },
       };
       try {
-        const result = await ctx.router.matchPartial(request, { env });
+        const result = await matchPartialForReplay();
         const provisionalStatus: PprReplayStatus = explicitCacheBypass
           ? { outcome: "BYPASS", reason: "cache-disabled" }
           : explicitCacheHit
@@ -1027,7 +1055,7 @@ async function matchPartialWithPprReplay<TEnv>(
   };
 
   try {
-    const result = await ctx.router.matchPartial(request, { env });
+    const result = await matchPartialForReplay();
     const provisionalStatus: PprReplayStatus = segmentReplayHit
       ? { outcome: "HIT", freshness }
       : explicitCacheHit

@@ -183,11 +183,34 @@ never-emitting masked-loader rows, so raw byte reuse means row-id surgery):
   the codec has always done, just moved to the consumer — so there is no
   row-id collision or shared-row dedupe hazard, and hydration sees the same
   trees the double round trip produced.
-- **Scope**: the flag lives on the derived tail context ONLY and must never
-  reach a capture render (`deriveShellCaptureContext` bases off the clean
-  reqCtx): a capture serializes segments into records, and an envelope
-  reaching `serializeSegments` would store a double-encoded fragment.
-  Non-HIT payloads carry no envelopes and pay one field scan on the client.
+- **Scope**: the flag has two arming sites, each bounded to a render/match
+  window and never left on the shared request context as an own property.
+  Document HITs: `serveShellHit` arms a DERIVED tail context. Partial
+  navigations: `matchPartialWithPprReplay` arms the SHARED reqCtx with
+  mutate-restore around each `matchPartial` execution
+  (`matchPartialForReplay`) — a derived context is NOT usable there because
+  the match pipeline writes ambient state that must land on reqCtx
+  (`_pprReplayPostMatchReason`, location state, `_treeHasStreaming` read by
+  the render-barrier closure). Only hydrated-client GET navigation lanes arm
+  (past the method/dynamic/nonce/store/navigation-context gates), so actions,
+  `ctx.dynamic()` requests, nonce'd requests, and context-less probes keep
+  decoded elements. A capture render must never see the flag: a capture
+  serializes segments into records, and an envelope reaching
+  `serializeSegments` would store a double-encoded fragment —
+  `deriveShellCaptureContext` resets `_shellFragmentPayload` as an own
+  property (defense-in-depth; the arming windows already close before any
+  capture is scheduled). Non-HIT payloads carry no envelopes and pay one
+  field scan on the client.
+- **Partial-navigation consumers** (#700 extension): the client expands
+  envelopes at its two decode chokepoints — `navigation-client.ts` at the
+  single payload await all three sources flow through (fresh fetch, warm
+  prefetch, adopted inflight), and the prefetch decoder wrapper in
+  `rsc-router.tsx` (BEFORE the payload enters the prefetch cache, so cached
+  entries only ever resolve expanded). Expansion is idempotent — an expanded
+  field no longer matches the envelope marker. On an armed partial match,
+  every cached segment source envelopes: the seeded doc record, an explicit
+  route `cache()` tier hit, and the prerender store (`Prerender()+ppr`
+  partials) — all covered by the same client expansion.
 - **Failure posture**: the splice skips the tail-side decode that used to
   validate a record server-side; a corrupt fragment now fails at the CONSUMER
   decode, which rejects the payload — the SSR tail errors and `serveShellHit`
@@ -301,8 +324,10 @@ basket badge still streams live; the homepage is a runtime capture with a
 - **Routes with their own `cache()` keep their semantics** — including
   `cache(false)` (opt-out respected; full tail) and nested boundaries
   (their records already fast-path the covered subtree today).
-- **Prefetch renders and partial navigations** — unchanged; the fast path is
-  document-HIT-tail only. The PDP-prefetch starvation lever is follow-up.
+- **Prefetch renders and partial navigations** — the fragment splice was
+  document-HIT-tail only in v1; partial navigation replay (and with it the
+  prefetch-warm path) gained the splice since — see "The fragment splice, as
+  built". The PDP-prefetch starvation lever remains follow-up.
 - **Prerender unification (producer B)** — shipped since as #699 (see the
   Unification section above); it was out of the v1 scope this section
   records.

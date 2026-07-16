@@ -173,10 +173,13 @@ function runPrerenderPprSpec(f: Fixture): void {
     expect(replay.headers()["x-rango-ppr-replay"]).toBe(
       "BYPASS; reason=prerender-store",
     );
+    const body = await replay.text();
     // Build-time segments supplied the partial match.
-    expect(await replay.text()).toContain(
-      "Prerendered shell content for alpha",
-    );
+    expect(body).toContain("Prerendered shell content for alpha");
+    // Fragment splice (#700) engages on the prerender-store partial lane too:
+    // the baked segments ride as verbatim envelopes (cache-lookup's store
+    // branch), expanded client-side exactly like doc-record replays.
+    expect(body).toContain("__rangoFragment");
   });
 
   test("passthrough param with a baked artifact reports prerender-store; a live param keeps replay", async ({
