@@ -369,7 +369,11 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-cache-header")).toHaveText(
       "Shell Cache Demo",
     );
-    await expect(testId(page, "shell-price")).toContainText("Live price:");
+    // Flight can hydrate the boundary before fizz's $RV removes its hidden
+    // S:n reveal copy. Wait globally so a permanent duplicate still fails.
+    const price = testId(page, "shell-price");
+    await expect(price).toHaveCount(1);
+    await expect(price).toContainText("Live price:");
 
     const counter = testId(page, "shell-counter");
     await counter.click();
@@ -696,24 +700,16 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     using __ = guardHydrationErrors(page);
     await page.goto(url);
     await waitForHydration(page);
-    // Scope to the ShellSettledValue container (data-testid="shell-settled").
-    // When the nested promise's Flight payload lands client-side before fizz's
-    // `$RC("B:0","S:0")` completeSegment script executes (a streaming race the
-    // #706 fragment splice widens — the baked payload is now a byte copy that
-    // finishes well ahead of the resume), React client-renders the dehydrated
-    // boundary in place and leaves fizz's HIDDEN segment container
-    // (`<div hidden id="S:0">`, a direct child of <body>) orphaned in the DOM.
-    // That orphan carries the `hidden` attribute — invisible, zero layout, out
-    // of the a11y tree — but it holds a second `shell-settled-fast` node, so a
-    // bare testid locator strict-mode-collides with it. The container scope
-    // keeps only the visible in-place copy (the orphan lives outside it).
+    // Flight can hydrate this boundary before fizz's $RC/$RV reveal cleanup.
+    // During that normal seam the visible node and hidden S:n copy coexist;
+    // wait globally so a permanently orphaned copy remains a test failure.
+    const fast = testId(page, "shell-settled-fast");
+    await expect(fast).toHaveCount(1);
     const settled = testId(page, "shell-settled");
     await expect(settled.getByTestId("shell-settled-label")).toHaveText(
       /Settled outer \d+/,
     );
-    await expect(settled.getByTestId("shell-settled-fast")).toHaveText(
-      /Settled fast \d+/,
-    );
+    await expect(fast).toHaveText(/Settled fast \d+/);
   });
 
   // --- The layout-loader shapes (storefront) on the bake lane. ---
@@ -1358,6 +1354,9 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     assertPprReplayStatus(
       { headers: new Headers(freshResponse.headers()) },
       { outcome: "HIT", freshness: "fresh" },
+    );
+    await expect(testId(page, "shell-stale-replay-data")).toContainText(
+      /^shell-stale-1-execution-\d+$/,
     );
     const capturedData = await testId(
       page,

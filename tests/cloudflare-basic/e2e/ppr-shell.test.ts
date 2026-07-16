@@ -425,7 +425,11 @@ function describePprShell(mode: "dev" | "build") {
       await expect(testId(page, "ppr-shell-header")).toHaveText(
         "PPR Shell Demo",
       );
-      await expect(testId(page, "ppr-price")).toContainText("Live price:");
+      // Flight can hydrate the boundary before fizz's $RV removes its hidden
+      // S:n reveal copy. Wait globally so a permanent duplicate still fails.
+      const price = testId(page, "ppr-price");
+      await expect(price).toHaveCount(1);
+      await expect(price).toContainText("Live price:");
 
       const counter = testId(page, "ppr-counter");
       await counter.click();
@@ -737,24 +741,16 @@ function describePprShell(mode: "dev" | "build") {
       using __ = guardHydrationErrors(page);
       await page.goto(url);
       await waitForHydration(page);
-      // Scope to the PprShellSettled container (data-testid="ppr-settled").
-      // When the nested promise's Flight payload lands client-side before fizz's
-      // `$RC("B:0","S:0")` completeSegment script executes (a streaming race the
-      // #706 fragment splice widens — the baked payload is now a byte copy that
-      // finishes well ahead of the resume), React client-renders the dehydrated
-      // boundary in place and leaves fizz's HIDDEN segment container
-      // (`<div hidden id="S:0">`, a direct child of <body>) orphaned in the DOM.
-      // That orphan carries the `hidden` attribute — invisible, zero layout, out
-      // of the a11y tree — but it holds a second `ppr-settled-fast` node, so a
-      // bare testid locator strict-mode-collides with it. The container scope
-      // keeps only the visible in-place copy (the orphan lives outside it).
+      // Flight can hydrate this boundary before fizz's $RC/$RV reveal cleanup.
+      // During that normal seam the visible node and hidden S:n copy coexist;
+      // wait globally so a permanently orphaned copy remains a test failure.
+      const fast = testId(page, "ppr-settled-fast");
+      await expect(fast).toHaveCount(1);
       const settled = page.getByTestId("ppr-settled");
       await expect(settled.getByTestId("ppr-settled-label")).toHaveText(
         /Settled outer \d+/,
       );
-      await expect(settled.getByTestId("ppr-settled-fast")).toHaveText(
-        /Settled fast \d+/,
-      );
+      await expect(fast).toHaveText(/Settled fast \d+/);
     });
 
     // --- Per-request nonce via the ContextVar token: ppr stays on axis 1 (#656) ---
@@ -1604,6 +1600,9 @@ function describePprShell(mode: "dev" | "build") {
       assertPprReplayStatus(
         { headers: new Headers(freshResponse.headers()) },
         { outcome: "HIT", freshness: "fresh" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toContainText(
+        /^ppr-stale-1-execution-\d+$/,
       );
       const capturedData = await testId(
         page,
